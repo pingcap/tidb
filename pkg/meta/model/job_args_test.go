@@ -465,7 +465,7 @@ func TestRenameTableArgs(t *testing.T) {
 	}
 }
 
-func TestGetRenameTablesArgs(t *testing.T) {
+func TestRenameTablesArgs(t *testing.T) {
 	inArgs := &RenameTablesArgs{
 		RenameTableInfos: []*RenameTableArgs{
 			{OldSchemaID: 1, OldSchemaName: model.CIStr{O: "db1", L: "db1"},
@@ -484,6 +484,16 @@ func TestGetRenameTablesArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, inArgs.RenameTableInfos[0], args.RenameTableInfos[0])
 		require.Equal(t, inArgs.RenameTableInfos[1], args.RenameTableInfos[1])
+
+		if v == JobVersion1 {
+			// Mock the job is executed in old version TiDB, where the last arg is truncated.
+			j2.args = j2.args[:len(j2.args)-1]
+			bytes, err := j2.Encode(true)
+			require.NoError(t, err)
+			require.NoError(t, j2.Decode(bytes))
+			_, err = GetRenameTablesArgs(j2)
+			require.NoError(t, err)
+		}
 	}
 }
 
@@ -1134,7 +1144,7 @@ func TestModifyColumnsArgs(t *testing.T) {
 		if v == JobVersion1 {
 			var rawArgs []json.RawMessage
 			require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
-			require.Len(t, rawArgs, 8)
+			require.Len(t, rawArgs, 9)
 		}
 	}
 

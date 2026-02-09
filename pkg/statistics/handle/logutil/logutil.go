@@ -27,13 +27,29 @@ func StatsLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("category", "stats"))
 }
 
+// StatsErrVerboseLogger is used to log error messages with verbose details.
+// Do not use it to log the message that is not related to statistics.
+func StatsErrVerboseLogger() *zap.Logger {
+	return logutil.ErrVerboseLogger().With(zap.String("category", "stats"))
+}
+
 var (
 	sampleLoggerFactory = logutil.SampleLoggerFactory(5*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
+	// sampleErrVerboseLoggerFactory creates a logger for error messages with a higher
+	// sampling rate (once per 10 minutes) since error logs tend to be more verbose.
+	sampleErrVerboseLoggerFactory = logutil.SampleErrVerboseLoggerFactory(10*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 )
 
-// SingletonStatsSamplerLogger with category "stats" is used to log statistic related messages.
+// StatsSampleLogger with category "stats" is used to log statistic related messages.
 // It is used to sample the log to avoid too many logs.
 // Do not use it to log the message that is not related to statistics.
-func SingletonStatsSamplerLogger() *zap.Logger {
+func StatsSampleLogger() *zap.Logger {
 	return sampleLoggerFactory()
+}
+
+// StatsErrVerboseSampleLogger with category "stats" is used to log statistics-related messages with verbose error details.
+// It is used to sample the log to avoid too many logs.
+// Do not use it to log the message that is not related to statistics.
+func StatsErrVerboseSampleLogger() *zap.Logger {
+	return sampleErrVerboseLoggerFactory()
 }

@@ -54,8 +54,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		return nil
 	}
 
-	if p.PrunePartitions(b.ctx) {
-		// no matching partitions
+	isTableDual, err := p.PrunePartitions(b.ctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if isTableDual {
 		return &TableDualExec{
 			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), p.Schema(), p.ID()),
 			numDualRows:    0,
@@ -69,6 +73,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 			b.inSelectLockStmt = false
 		}()
 	}
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &PointGetExecutor{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
@@ -268,10 +274,11 @@ func (e *PointGetExecutor) Close() error {
 		tableID := e.tblInfo.ID
 		physicalTableID := GetPhysID(e.tblInfo, e.partitionDefIdx)
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
+		rows := e.RuntimeStats().GetActRows()
 		if e.idxInfo != nil {
-			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, kvReqTotal, rows)
 		} else {
-			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, kvReqTotal, rows)
 		}
 	}
 	e.done = false
@@ -582,7 +589,13 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 
 	if e.lock {
 		seVars := e.Ctx().GetSessionVars()
-		lockCtx, err := newLockCtx(e.Ctx(), e.lockWaitTime, 1)
+		lockWaitTime := e.lockWaitTime
+
+		if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
+			return nil, err
+		}
+
+		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1)
 		if err != nil {
 			return nil, err
 		}
@@ -642,7 +655,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = e.txn.GetMemBuffer().Get(ctx, key)
+		val, err = kv.GetValue(ctx, e.txn.GetMemBuffer(), key)
 		if err == nil {
 			return val, err
 		}
@@ -672,7 +685,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
-	return e.snapshot.Get(ctx, key)
+	return kv.GetValue(ctx, e.snapshot, key)
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
@@ -704,7 +717,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
 	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
-		return rd.DecodeToChunk(rowVal, handle, chk)
+		return rd.DecodeToChunk(rowVal, 0, handle, chk)
 	}
 	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk)
 }

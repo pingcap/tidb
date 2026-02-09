@@ -40,33 +40,38 @@ import (
 	atomic2 "go.uber.org/atomic"
 )
 
-// stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
-type stmtSummaryByDigestKey struct {
-	// Same statements may appear in different schema, but they refer to different tables.
-	schemaName string
-	digest     string
-	// The digest of the previous statement.
-	prevDigest string
-	// The digest of the plan of this SQL.
-	planDigest string
-	// `resourceGroupName` is the resource group's name of this statement is bind to.
-	resourceGroupName string
+// StmtDigestKeyPool is the pool for StmtDigestKey.
+var StmtDigestKeyPool = sync.Pool{
+	New: func() any {
+		return &StmtDigestKey{}
+	},
+}
+
+// StmtDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
+type StmtDigestKey struct {
 	// `hash` is the hash value of this object.
 	hash []byte
+}
+
+// Init initialize the hash key.
+func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName string) {
+	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName)
+	if cap(key.hash) < length {
+		key.hash = make([]byte, 0, length)
+	} else {
+		key.hash = key.hash[:0]
+	}
+	key.hash = append(key.hash, hack.Slice(digest)...)
+	key.hash = append(key.hash, hack.Slice(schemaName)...)
+	key.hash = append(key.hash, hack.Slice(prevDigest)...)
+	key.hash = append(key.hash, hack.Slice(planDigest)...)
+	key.hash = append(key.hash, hack.Slice(resourceGroupName)...)
 }
 
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
-func (key *stmtSummaryByDigestKey) Hash() []byte {
-	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
-		key.hash = append(key.hash, hack.Slice(key.digest)...)
-		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
-		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.resourceGroupName)...)
-	}
+func (key *StmtDigestKey) Hash() []byte {
 	return key.hash
 }
 
@@ -223,38 +228,37 @@ type stmtSummaryByDigestElement struct {
 
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
+
+	storageKV  bool // query read from TiKV
+	storageMPP bool // query read from TiFlash
 }
 
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
-	SchemaName          string
-	OriginalSQL         fmt.Stringer
-	Charset             string
-	Collation           string
-	NormalizedSQL       string
-	Digest              string
-	PrevSQL             string
-	PrevSQLDigest       string
-	PlanGenerator       func() (string, string, any)
-	BinaryPlanGenerator func() string
-	PlanDigest          string
-	PlanDigestGen       func() string
-	User                string
-	TotalLatency        time.Duration
-	ParseLatency        time.Duration
-	CompileLatency      time.Duration
-	StmtCtx             *stmtctx.StatementContext
-	CopTasks            *execdetails.CopTasksDetails
-	ExecDetail          *execdetails.ExecDetails
-	MemMax              int64
-	DiskMax             int64
-	StartTime           time.Time
-	IsInternal          bool
-	Succeed             bool
-	PlanInCache         bool
-	PlanInBinding       bool
-	ExecRetryCount      uint
-	ExecRetryTime       time.Duration
+	SchemaName     string
+	Charset        string
+	Collation      string
+	NormalizedSQL  string
+	Digest         string
+	PrevSQL        string
+	PrevSQLDigest  string
+	PlanDigest     string
+	User           string
+	TotalLatency   time.Duration
+	ParseLatency   time.Duration
+	CompileLatency time.Duration
+	StmtCtx        *stmtctx.StatementContext
+	CopTasks       *execdetails.CopTasksSummary
+	ExecDetail     execdetails.ExecDetails
+	MemMax         int64
+	DiskMax        int64
+	StartTime      time.Time
+	IsInternal     bool
+	Succeed        bool
+	PlanInCache    bool
+	PlanInBinding  bool
+	ExecRetryCount uint
+	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
 	ResultRows        int64
 	TiKVExecDetails   util.ExecDetails
@@ -266,6 +270,16 @@ type StmtExecInfo struct {
 	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
+
+	LazyInfo StmtExecLazyInfo
+}
+
+// StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.
+type StmtExecLazyInfo interface {
+	GetOriginalSQL() string
+	GetEncodedPlan() (string, string, any)
+	GetBinaryPlan() string
+	GetPlanDigest() string
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -291,7 +305,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
-		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+		newSsMap.other.AddEvicted(k.(*StmtDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
 	return newSsMap
 }
@@ -315,16 +329,11 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	intervalSeconds := ssMap.refreshInterval()
 	historySize := ssMap.historySize()
 
-	key := &stmtSummaryByDigestKey{
-		schemaName:        sei.SchemaName,
-		digest:            sei.Digest,
-		prevDigest:        sei.PrevSQLDigest,
-		planDigest:        sei.PlanDigest,
-		resourceGroupName: sei.ResourceGroupName,
-	}
-	// Calculate hash value in advance, to reduce the time holding the lock.
-	key.Hash()
+	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
+	// Init hash value in advance, to reduce the time holding the lock.
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 
+	var exist bool
 	// Enclose the block in a function to ensure the lock will always be released.
 	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
 		ssMap.Lock()
@@ -345,9 +354,10 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
-		value, ok := ssMap.summaryMap.Get(key)
+		var value kvcache.Value
+		value, exist = ssMap.summaryMap.Get(key)
 		var summary *stmtSummaryByDigest
-		if !ok {
+		if !exist {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
 			ssMap.summaryMap.Put(key, summary)
@@ -360,6 +370,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// Lock a single entry, not the whole cache.
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
+	}
+	if exist {
+		StmtDigestKeyPool.Put(key)
 	}
 }
 
@@ -566,9 +579,9 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	tableNames := buffer.String()
 
 	planDigest := sei.PlanDigest
-	if sei.PlanDigestGen != nil && len(planDigest) == 0 {
+	if len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
-		planDigest = sei.PlanDigestGen()
+		planDigest = sei.LazyInfo.GetPlanDigest()
 	}
 	ssbd.schemaName = sei.SchemaName
 	ssbd.digest = sei.Digest
@@ -652,23 +665,20 @@ var MaxEncodedPlanSizeInBytes = 1024 * 1024
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint, e := sei.PlanGenerator()
+	samplePlan, planHint, e := sei.LazyInfo.GetEncodedPlan()
 	if e != nil {
 		return nil
 	}
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
-	binPlan := ""
-	if sei.BinaryPlanGenerator != nil {
-		binPlan = sei.BinaryPlanGenerator()
-		if len(binPlan) > MaxEncodedPlanSizeInBytes {
-			binPlan = plancodec.BinaryPlanDiscardedEncoded
-		}
+	binPlan := sei.LazyInfo.GetBinaryPlan()
+	if len(binPlan) > MaxEncodedPlanSizeInBytes {
+		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
-		sampleSQL: formatSQL(sei.OriginalSQL.String()),
+		sampleSQL: formatSQL(sei.LazyInfo.GetOriginalSQL()),
 		charset:   sei.Charset,
 		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -747,15 +757,16 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	// coprocessor
-	numCopTasks := int64(sei.CopTasks.NumCopTasks)
-	ssElement.sumNumCopTasks += numCopTasks
-	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
-		ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
-		ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
-	}
-	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
-		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
-		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
+	if sei.CopTasks != nil {
+		ssElement.sumNumCopTasks += int64(sei.CopTasks.NumCopTasks)
+		if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
+			ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
+			ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
+		}
+		if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
+			ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
+			ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
+		}
 	}
 
 	// TiKV
@@ -921,6 +932,9 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 
 	// request-units
 	ssElement.StmtRUSummary.Add(sei.RUDetail)
+
+	ssElement.storageKV = sei.StmtCtx.IsTiKV.Load()
+	ssElement.storageMPP = sei.StmtCtx.IsTiFlash.Load()
 }
 
 // Truncate SQL to maxSQLLength.

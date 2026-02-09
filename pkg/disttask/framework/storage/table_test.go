@@ -362,13 +362,14 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		proto.TaskStateRunning,
 		proto.TaskStateReverting,
 		proto.TaskStateCancelling,
-		proto.TaskStatePausing,
-		proto.TaskStateResuming,
+		proto.TaskStatePausing,  // key/5
+		proto.TaskStateResuming, // key/6
 		proto.TaskStateFailed,
 		proto.TaskStatePending,
 		proto.TaskStatePending,
 		proto.TaskStatePending,
 		proto.TaskStatePending,
+		proto.TaskStateModifying,
 	}
 	for i, state := range taskStates {
 		taskKey := fmt.Sprintf("key/%d", i)
@@ -403,17 +404,26 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				select count(1) from mysql.tidb_global_task`)
 		require.Len(t, rs, 1)
-		require.Equal(t, int64(12), rs[0].GetInt64(0))
+		require.Equal(t, int64(13), rs[0].GetInt64(0))
 		return err
 	}))
+	getTaskKeys := func(tasks []*proto.TaskBase) []string {
+		taskKeys := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			taskKeys = append(taskKeys, task.Key)
+		}
+		return taskKeys
+	}
 	tasks, err := gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
 	require.Len(t, tasks, 8)
-	taskKeys := make([]string, 0, len(tasks))
-	for _, task := range tasks {
-		taskKeys = append(taskKeys, task.Key)
-	}
-	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, taskKeys)
+	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, getTaskKeys(tasks))
+
+	proto.MaxConcurrentTask = 6
+	tasks, err = gm.GetTopUnfinishedTasks(ctx)
+	require.NoError(t, err)
+	require.Len(t, tasks, 11)
+	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
 }
 
 func TestGetUsedSlotsOnNodes(t *testing.T) {
@@ -508,16 +518,12 @@ func TestSubTaskTable(t *testing.T) {
 	require.Len(t, cntByStates, 1)
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStatePending])
 
-	ok, err := sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
-	require.NoError(t, err)
-	require.True(t, ok)
-
 	ts := time.Now()
 	time.Sleep(time.Second)
 	require.NoError(t, sm.StartSubtask(ctx, 1, "tidb1"))
 
 	err = sm.StartSubtask(ctx, 1, "tidb2")
-	require.Error(t, storage.ErrSubtaskNotFound, err)
+	require.ErrorIs(t, err, storage.ErrSubtaskNotFound)
 
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
@@ -545,14 +551,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), cntByStates[proto.SubtaskStatePending])
 
-	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
-	require.NoError(t, err)
-	require.False(t, ok)
 	require.NoError(t, testutil.DeleteSubtasksByTaskID(ctx, sm, 1))
-
-	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending, proto.SubtaskStateRunning)
-	require.NoError(t, err)
-	require.False(t, ok)
 
 	testutil.CreateSubTask(t, sm, 2, proto.StepOne, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
 
@@ -824,7 +823,9 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Len(t, subTasks, 3)
 
 	// test GC history table.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", func(interval *int) {
+		*interval = 1
+	})
 	time.Sleep(2 * time.Second)
 
 	subTask4 := testutil.CreateSubTask(t, sm, taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, 11)
@@ -949,16 +950,16 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 func TestTaskNotFound(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 	task, err := gm.GetTaskByID(ctx, 1)
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 	task, err = gm.GetTaskByIDWithHistory(ctx, 1)
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 	task, err = gm.GetTaskByKey(ctx, "key")
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 	task, err = gm.GetTaskByKeyWithHistory(ctx, "key")
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 }
 
@@ -1179,4 +1180,35 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 	require.Equal(t, 6, taskExecInfos[1].SubtaskConcurrency)
 	checkBasicTaskEq(t, &tasks[3].TaskBase, taskExecInfos[2].TaskBase)
 	require.Equal(t, 8, taskExecInfos[2].SubtaskConcurrency)
+	// :4002, no such subtasks
+	taskExecInfos, err = tm.GetTaskExecInfoByExecID(ctx, ":4002")
+	require.NoError(t, err)
+	require.Empty(t, taskExecInfos)
+}
+
+func TestTaskManagerEntrySize(t *testing.T) {
+	store, tm, ctx := testutil.InitTableTest(t)
+	getMeta := func(l int) []byte {
+		meta := make([]byte, l)
+		for i := 0; i < l; i++ {
+			meta[i] = 'a'
+		}
+		return meta
+	}
+	insertSubtask := func(meta []byte) error {
+		return tm.WithNewSession(func(se sessionctx.Context) error {
+			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
+				`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')`,
+				1, "1", "execID", meta, proto.SubtaskStatePending, proto.Type2Int(proto.TaskTypeExample), 1)
+			return err
+		})
+	}
+	meta6m := getMeta(6 << 20)
+	require.ErrorContains(t, insertSubtask(meta6m), "entry too large")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("set global tidb_txn_entry_size_limit = %d", 7<<20))
+	require.NoError(t, insertSubtask(meta6m))
+	// TiKV also have a limit raftstore.raft-entry-max-size which is 8M by default,
+	// we won't test that param here
 }

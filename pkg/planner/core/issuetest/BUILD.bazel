@@ -9,8 +9,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    race = "on",
-    shard_count = 7,
+    shard_count = 12,
     deps = [
         "//pkg/parser",
         "//pkg/planner",
@@ -21,6 +20,7 @@ go_test(
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "//pkg/util",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

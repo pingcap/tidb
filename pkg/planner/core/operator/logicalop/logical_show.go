@@ -60,6 +60,8 @@ type ShowContents struct {
 	Limit       *ast.Limit // Used for limit Result Set row number.
 
 	ImportJobID *int64 // Used for SHOW LOAD DATA JOB <jobID>
+
+	DistributionJobID *int64 // Used for SHOW DISTRIBUTION JOB <JobID>
 }
 
 const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
@@ -41,7 +42,7 @@ func TestLogicalPlan(t *testing.T) {
 		JobID:             1,
 		Plan:              importer.Plan{},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
+		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
 		ChunkMap:          map[int32][]Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
@@ -62,7 +63,7 @@ func TestToPhysicalPlan(t *testing.T) {
 			},
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
+		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
 		ChunkMap:          map[int32][]Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
@@ -75,9 +76,11 @@ func TestToPhysicalPlan(t *testing.T) {
 			{
 				ID: 0,
 				Pipeline: &ImportSpec{
-					ID:     chunkID,
-					Plan:   logicalPlan.Plan,
-					Chunks: logicalPlan.ChunkMap[chunkID],
+					ImportStepMeta: &ImportStepMeta{
+						ID:     chunkID,
+						Chunks: logicalPlan.ChunkMap[chunkID],
+					},
+					Plan: logicalPlan.Plan,
 				},
 				Output: planner.OutputSpec{
 					Links: []planner.LinkSpec{
@@ -123,6 +126,15 @@ func TestToPhysicalPlan(t *testing.T) {
 	bs, err = json.Marshal(subtaskMeta2)
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{bs}, subtaskMetas2)
+
+	planCtx = planner.PlanCtx{
+		NextTaskStep: proto.ImportStepImport,
+		GlobalSort:   true,
+	}
+	logicalPlan.Plan.CloudStorageURI = "unknown://bucket"
+	_, err = logicalPlan.ToPhysicalPlan(planCtx)
+	// error when build controller plan
+	require.ErrorContains(t, err, "provide a valid URI")
 }
 
 func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
@@ -166,10 +178,10 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 }
 
 func TestGenerateMergeSortSpecs(t *testing.T) {
-	stepBak := external.MergeSortFileCountStep
-	external.MergeSortFileCountStep = 2
+	stepBak := external.MaxMergeSortFileCountStep
+	external.MaxMergeSortFileCountStep = 2
 	t.Cleanup(func() {
-		external.MergeSortFileCountStep = stepBak
+		external.MaxMergeSortFileCountStep = stepBak
 	})
 	// force merge sort for data kv
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
@@ -183,8 +195,23 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 		},
+		ThreadCnt: 16,
 	}
-	specs, err := generateMergeSortSpecs(planCtx, &LogicalPlan{})
+	p := &LogicalPlan{
+		Plan: importer.Plan{
+			DBName: "db",
+			TableInfo: &model.TableInfo{
+				Name:  pmodel.NewCIStr("tb"),
+				State: model.StatePublic,
+			},
+			LineFieldsInfo: core.LineFieldsInfo{
+				FieldsTerminatedBy: "\t",
+				LinesTerminatedBy:  "\n",
+			},
+		},
+		Stmt: `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+	}
+	specs, err := generateMergeSortSpecs(planCtx, p)
 	require.NoError(t, err)
 	require.Len(t, specs, 2)
 	require.Len(t, specs[0].(*MergeSortSpec).DataFiles, 2)
@@ -197,7 +224,8 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 
 	// force merge sort for all kv groups
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
-	specs, err = generateMergeSortSpecs(planCtx, &LogicalPlan{Plan: importer.Plan{ForceMergeStep: true}})
+	p.Plan.ForceMergeStep = true
+	specs, err = generateMergeSortSpecs(planCtx, p)
 	require.NoError(t, err)
 	require.Len(t, specs, 4)
 	data0, data1 := specs[0].(*MergeSortSpec), specs[1].(*MergeSortSpec)
@@ -251,7 +279,7 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 
 func TestGetSortedKVMetas(t *testing.T) {
 	encodeStepMetaBytes := genEncodeStepMetas(t, 3)
-	kvMetas, err := getSortedKVMetasOfEncodeStep(encodeStepMetaBytes)
+	kvMetas, err := getSortedKVMetasOfEncodeStep(context.Background(), encodeStepMetaBytes, nil)
 	require.NoError(t, err)
 	require.Len(t, kvMetas, 2)
 	require.Contains(t, kvMetas, "data")
@@ -263,7 +291,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 	require.Equal(t, []byte("i1_2_c"), kvMetas["1"].EndKey)
 
 	mergeStepMetas := genMergeStepMetas(t, 3)
-	kvMetas2, err := getSortedKVMetasOfMergeStep(mergeStepMetas)
+	kvMetas2, err := getSortedKVMetasOfMergeStep(context.Background(), mergeStepMetas, nil)
 	require.NoError(t, err)
 	require.Len(t, kvMetas2, 1)
 	require.Equal(t, []byte("x_0_a"), kvMetas2["data"].StartKey)
@@ -279,13 +307,19 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
-	}, &LogicalPlan{})
+		ThreadCnt: 16,
+	}, &LogicalPlan{}, nil)
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
 	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)
 	require.Equal(t, []byte("x_2_c"), allKVMetas["data"].EndKey)
 	require.Equal(t, []byte("i1_0_a"), allKVMetas["1"].StartKey)
 	require.Equal(t, []byte("i1_2_c"), allKVMetas["1"].EndKey)
+}
+
+func writeAndGetFiles(t *testing.T, writer *external.Writer, keys [][]byte, values [][]byte) (
+	dataFiles []string, statsFiles []string) {
+	return
 }
 
 func TestSplitForOneSubtask(t *testing.T) {
@@ -313,9 +347,11 @@ func TestSplitForOneSubtask(t *testing.T) {
 			multiFileStat = s.MultipleFilesStats
 		}).
 		Build(store, "/mock-test", "0")
-	_, _, err = external.MockExternalEngineWithWriter(
-		store, writer, "/mock-test", keys, values,
-	)
+	for i := range keys {
+		err := writer.WriteRow(ctx, keys[i], values[i], nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close(ctx))
 	require.NoError(t, err)
 	kvMeta := &external.SortedKVMeta{
 		StartKey:           keys[0],

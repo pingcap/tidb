@@ -9,7 +9,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -29,6 +29,7 @@ go_test(
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "//pkg/util/dbutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

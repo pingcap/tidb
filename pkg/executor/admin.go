@@ -378,7 +378,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if result.scanRowCount >= int64(e.batchSize) {
 				return e.recoverRows, nil
 			}
-			handle, err := e.handleCols.BuildHandle(row)
+			handle, err := e.handleCols.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
 			if err != nil {
 				return nil, err
 			}
@@ -468,7 +468,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 		}
 	}
 
-	values, err := txn.BatchGet(context.Background(), e.batchKeys)
+	values, err := kv.BatchGetValue(context.Background(), txn, e.batchKeys)
 	if err != nil {
 		return err
 	}
@@ -622,7 +622,7 @@ func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte
 		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
 		return true
 	})
-	values, err := txn.BatchGet(context.Background(), e.batchKeys)
+	values, err := kv.BatchGetValue(context.Background(), txn, e.batchKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +692,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 		}
 		iter := chunk.NewIterator4Chunk(e.idxChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, err := e.handleCols.BuildHandle(row)
+			handle, err := e.handleCols.BuildHandle(sc, row)
 			if err != nil {
 				return err
 			}

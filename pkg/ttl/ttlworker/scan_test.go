@@ -554,3 +554,21 @@ func TestScanTaskCancelStmt(t *testing.T) {
 	task.ctx, cancel = context.WithCancel(context.Background())
 	testCancel(context.Background(), cancel)
 }
+
+// NewTTLScanTask creates a new TTL scan task for test.
+func NewTTLScanTask(ctx context.Context, tbl *cache.PhysicalTable, ttlTask *cache.TTLTask) *ttlScanTask {
+	return &ttlScanTask{
+		ctx:        ctx,
+		tbl:        tbl,
+		TTLTask:    ttlTask,
+		statistics: &ttlStatistics{},
+	}
+}
+
+// DoScan is an exported version of `doScan` for test.
+func (t *ttlScanTask) DoScan(ctx context.Context, delCh chan<- *TTLDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
+	return t.doScan(ctx, delCh, sessPool)
+}
+
+// TTLDeleteTask is an exported version of `ttlDeleteTask` for test.
+type TTLDeleteTask = ttlDeleteTask

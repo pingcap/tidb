@@ -35,12 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // Fragment is cut from the whole pushed-down plan by network communication.
@@ -579,15 +577,11 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		return nil, errors.Trace(err)
 	}
 
-	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)
-	if err != nil {
-		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
-		ttl = 30 * time.Second
-	}
+	// ttl is always 0, `tidb_mpp_store_fail_ttl` variable has been deprecated
+	ttl := time.Duration(0)
 	dispatchPolicy := tiflashcompute.DispatchPolicyInvalid
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
-		ttl = time.Duration(0)
 	}
 	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
 

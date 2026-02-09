@@ -226,6 +226,12 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"NO_ORDER_INDEX(t1@sel_1 c1)", "NO_ORDER_INDEX(`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(@sel_1 t1 c1)", "INDEX_LOOKUP_PUSHDOWN(@`sel_1` `t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1`@`sel_1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 partition(p0) c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
@@ -388,6 +394,9 @@ func TestRedactURL(t *testing.T) {
 		// underline
 		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
 		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
+		{args{"azure://bucket/file?sas-token=123"}, "azure://bucket/file?sas-token=xxxxxx"},
+		{args{"azblob://container/file?sas-token=123"}, "azblob://container/file?sas-token=xxxxxx"},
+		{args{"azure://container/file?account-name=test&sas_token=123"}, "azure://container/file?account-name=test&sas_token=xxxxxx"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.args.str, func(t *testing.T) {

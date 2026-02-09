@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
@@ -93,6 +94,7 @@ func RunTestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		// the resolveFlushedLocks goroutine runs in the background to commit or rollback locks.
 		goleak.IgnoreAnyFunction("github.com/tikv/client-go/v2/txnkv/transaction.(*twoPhaseCommitter).resolveFlushedLocks.func1"),
+		goleak.Cleanup(testutil.CheckIngestLeakageForTest),
 	}
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
@@ -122,7 +124,6 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
-		storeBak := config.GetGlobalConfig().Store
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 			conf.KeyspaceName = *KeyspaceName
@@ -133,10 +134,6 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
-		// TestGetTSFailDirtyState depends on the dirty state to work, i.e. some
-		// special branch on uni-store, else it causes DATA RACE, so we need to switch
-		// back to make sure it works, see https://github.com/pingcap/tidb/issues/57221
-		config.GetGlobalConfig().Store = storeBak
 		sm := testkit.MockSessionManager{}
 		dom.InfoSyncer().SetSessionManager(&sm)
 		tk := testkit.NewTestKit(t, store)

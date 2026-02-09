@@ -202,7 +202,7 @@
         "Err": false
       },
       {
-        "Best": "Join{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual}->Sort->Projection",
+        "Best": "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual->Projection}->Sort->Projection",
         "Err": false
       }
     ]
@@ -1140,7 +1140,7 @@
             "handle cols: test.t3._tidb_rowid:0"
           ]
         ],
-        "InsidePlan": "TableReader(Table(t3)->Sel([eq(test.t3.b, 1)]))->Projection"
+        "InsidePlan": "TableReader(Table(t3)->Sel([eq(test.t3.b, 1)])->Projection)"
       },
       {
         "SQL": "",

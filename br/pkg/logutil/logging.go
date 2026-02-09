@@ -3,6 +3,7 @@
 package logutil
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,7 +16,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -220,6 +223,44 @@ func (m zapSSTMetasMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 	return nil
 }
 
+// Describes the overall range of the SST metas and their size.
+func BriefSSTMetas(key string, sstMetas []*import_sstpb.SSTMeta) zap.Field {
+	var (
+		startKey, endKey []byte
+		total            int
+		totalSize        uint64
+		totalKv          uint64
+		totalKvSize      uint64
+	)
+
+	for _, meta := range sstMetas {
+		if total == 0 {
+			startKey = meta.GetRange().GetStart()
+			endKey = meta.GetRange().GetEnd()
+		}
+		if bytes.Compare(meta.GetRange().GetStart(), startKey) < 0 {
+			startKey = meta.GetRange().GetStart()
+		}
+		// NOTE: SST meta shouldn't has an empty end key?
+		if bytes.Compare(meta.GetRange().GetEnd(), endKey) > 0 {
+			endKey = meta.GetRange().GetEnd()
+		}
+		totalSize += meta.GetLength()
+		totalKv += meta.GetTotalKvs()
+		totalKvSize += meta.GetTotalBytes()
+		total++
+	}
+	return zap.Object(key, zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+		enc.AddInt("total", total)
+		enc.AddString("startKey", redact.Key(startKey))
+		enc.AddString("endKey", redact.Key(endKey))
+		enc.AddUint64("totalSize", totalSize)
+		enc.AddUint64("totalKvs", totalKv)
+		enc.AddUint64("totalKvSize", totalKvSize)
+		return nil
+	}))
+}
+
 // SSTMetas make the zap fields for SST metas.
 func SSTMetas(sstMetas []*import_sstpb.SSTMeta) zap.Field {
 	return zap.Array("sstMetas", zapSSTMetasMarshaler(sstMetas))
@@ -355,4 +396,26 @@ func (b HexBytes) String() string {
 // MarshalJSON implements json.Marshaler.
 func (b HexBytes) MarshalJSON() ([]byte, error) {
 	return json.Marshal(hex.EncodeToString(b))
+}
+
+func MarshalHistogram(m prometheus.Histogram) zapcore.ObjectMarshaler {
+	return zapcore.ObjectMarshalerFunc(func(mal zapcore.ObjectEncoder) error {
+		if m == nil {
+			return nil
+		}
+
+		met := metric.ReadHistogram(m)
+		if met == nil || met.Histogram == nil {
+			return nil
+		}
+
+		hist := met.Histogram
+		for _, b := range hist.GetBucket() {
+			key := fmt.Sprintf("lt_%f", b.GetUpperBound())
+			mal.AddUint64(key, b.GetCumulativeCount())
+		}
+		mal.AddUint64("count", hist.GetSampleCount())
+		mal.AddFloat64("total", hist.GetSampleSum())
+		return nil
+	})
 }

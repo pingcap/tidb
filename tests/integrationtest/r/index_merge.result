@@ -453,8 +453,8 @@ c1	c2	c3
 ///// MEMORY Table
 explain select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 id	estRows	task	access object	operator info
-StreamAgg_9	1.00	root		funcs:count(Column#107)->Column#108
-└─StreamAgg_11	1.00	root		funcs:count(1)->Column#107
+StreamAgg_9	1.00	root		funcs:count(Column#109)->Column#110
+└─StreamAgg_11	1.00	root		funcs:count(1)->Column#109
   └─MemTableScan_15	10000.00	root	table:STATEMENTS_SUMMARY	
 show warnings;
 Level	Code	Message
@@ -598,8 +598,8 @@ explain select /*+ use_index_merge(t1) */ * from t1 where ((c1 < 10 and c4 < 10)
 id	estRows	task	access object	operator info
 Sort_5	2250.55	root		index_merge.t1.c1
 └─IndexMerge_12	1247.30	root		type: union
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
   └─Selection_11(Probe)	1247.30	cop[tikv]		or(and(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c4, 10)), lt(index_merge.t1.c2, 10)), or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c5, 10))
     └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where ((c1 < 10 and c4 < 10) or c2 < 10) and (c3 < 10 or c4 < 10) order by 1;
@@ -784,7 +784,7 @@ Sort_5	4433.77	root		index_merge.t1.c1
 └─IndexMerge_12	4433.77	root		type: union
   ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
   ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	4433.77	cop[tikv]		eq(length(substring(cast(sqrt(cast(index_merge.t1.c3, double BINARY)), var_string(5)), 1, 1)), char_length(cast(if(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3), var_string(20))))
+  └─Selection_11(Probe)	4433.77	cop[tikv]		eq(length(substring(cast(sqrt(cast(index_merge.t1.c3, double BINARY)), var_string(370)), 1, 1)), char_length(cast(if(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3), var_string(20))))
     └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and length(substring(sqrt(c3), @a, 1)) = char_length(if(c1, c2, c3)) order by 1;
 c1	c2	c3	c4	c5

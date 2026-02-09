@@ -305,6 +305,77 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
 }
 
+func TestParseExecArgsForDecimal(t *testing.T) {
+	// "1" -> 1
+	dt := expression.Args2Expressions4Test(1)
+	err := decodeAndParse(types.DefaultStmtNoWarningContext,
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{0xf6, 0},
+		[]byte{0x1, '1'},
+		nil)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDecFromStringForTest("1"), dt[0].(*expression.Constant).Value.GetValue())
+
+	// Maximum supported range of decimal, 81 digitsInt
+	err = decodeAndParse(types.DefaultStmtNoWarningContext,
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{0xf6, 0},
+		[]byte{81, '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9'},
+		nil)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDecFromStringForTest("123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"), dt[0].(*expression.Constant).Value.GetValue())
+
+	// Maximum supported range of decimal, 9 digitsInt and 72 digitsFrac
+	err = decodeAndParse(types.DefaultStmtNoWarningContext,
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{0xf6, 0},
+		[]byte{82, '1', '2', '3', '4', '5', '6', '7', '8', '9', '.',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9'},
+		nil)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDecFromStringForTest("123456789."+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"), dt[0].(*expression.Constant).Value.GetValue())
+
+	// Truncate 81-digit decimal string to 72-digit length
+	err = decodeAndParse(types.DefaultStmtNoWarningContext,
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{0xf6, 0},
+		[]byte{83, '0', '.', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9'},
+		nil)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDecFromStringForTest("0.123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789"), dt[0].(*expression.Constant).Value.GetValue())
+}
+
 func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, minute uint8, sec uint8, msec uint32) []byte {
 	endian := binary.LittleEndian
 

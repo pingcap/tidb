@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -100,7 +101,7 @@ func testConcurrentlyInitStats(t *testing.T) {
 			require.False(t, col.IsAllEvicted())
 		}
 	}
-	require.Equal(t, int64(126), handle.GetMaxTidRecordForTest())
+	require.Equal(t, int64(128), handle.GetMaxTidRecordForTest())
 }
 
 func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {
@@ -138,4 +139,47 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	require.NoError(t, h.InitStats(context.Background(), is))
+}
+
+func TestNonLiteInitStatsAndCheckTheLastTableStats(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer store.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "create table t1( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table t2( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table t3( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into t3 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "analyze table t1, t2, t3 all columns with 1 topn, 10 buckets;")
+	is := dom.InfoSchema()
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl3, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	require.NoError(t, err)
+
+	dom.Close()
+
+	session.SetStatsLease(-1)
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	is = dom.InfoSchema()
+	h := dom.StatsHandle()
+	_, ok := h.Get(tbl1.Meta().ID)
+	require.False(t, ok)
+	require.NoError(t, h.InitStats(context.Background(), is))
+	stats1, ok := h.Get(tbl1.Meta().ID)
+	require.True(t, ok)
+	require.True(t, stats1.GetIdx(1).IsFullLoad())
+	stats2, ok := h.Get(tbl2.Meta().ID)
+	require.True(t, ok)
+	require.True(t, stats2.GetIdx(1).IsFullLoad())
+	stats3, ok := h.Get(tbl3.Meta().ID)
+	require.True(t, ok)
+	require.True(t, stats3.GetIdx(1).IsFullLoad())
+
+	dom.Close()
 }

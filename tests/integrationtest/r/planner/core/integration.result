@@ -3404,7 +3404,7 @@ create table t30094(a varchar(10));
 explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);
 id	estRows	task	access object	operator info
 TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		cast(planner__core__integration.t30094.a, float BINARY), cast(planner__core__integration.t30094.a, var_string(5))
+└─Selection	8000.00	cop[tikv]		cast(planner__core__integration.t30094.a, float BINARY), cast(planner__core__integration.t30094.a, var_string(10))
   └─TableFullScan	10000.00	cop[tikv]	table:t30094	keep order:false, stats:pseudo
 explain format = 'brief' select * from t30094 where  concat(a,'1') = _binary 0xe59388e59388e59388 collate binary and concat(a,'1') = _binary 0xe598bfe598bfe598bf collate binary;
 id	estRows	task	access object	operator info
@@ -3597,9 +3597,9 @@ Projection_16	10000.00	root		planner__core__integration.t1.a
           └─TableFullScan_24	20000000.00	cop[tikv]	table:two	keep order:false, stats:pseudo
 explain select rank() over (partition by table_name) from information_schema.tables;
 id	estRows	task	access object	operator info
-Projection_7	10000.00	root		Column#27->Column#28
+Projection_7	10000.00	root		Column#29->Column#30
 └─Shuffle_11	10000.00	root		execution info: concurrency:5, data sources:[MemTableScan_9]
-  └─Window_8	10000.00	root		rank()->Column#27 over(partition by Column#3)
+  └─Window_8	10000.00	root		rank()->Column#29 over(partition by Column#3)
     └─Sort_10	10000.00	root		Column#3
       └─ShuffleReceiver_12	10000.00	root		
         └─MemTableScan_9	10000.00	root	table:TABLES	
@@ -3821,7 +3821,7 @@ set @@tidb_opt_range_max_size = 111;
 explain format='brief' select * from planner__core__integration.sbtest1 a where pad in ('1','1','1','1','1') and id in (1,1,1,1,1);
 id	estRows	task	access object	operator info
 TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		in(planner__core__integration.sbtest1.id, 1, 1, 1, 1, 1), in(planner__core__integration.sbtest1.pad, "1", "1", "1", "1", "1")
+└─Selection	8000.00	cop[tikv]		in(planner__core__integration.sbtest1.id, 1), in(planner__core__integration.sbtest1.pad, "1")
   └─TableFullScan	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	Memory capacity of 111 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
@@ -4297,3 +4297,12 @@ case when (
 t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
 ) then 1 else 2 end;
 1
+drop table if exists t;
+create table t (col timestamp);
+explain format='brief' select cast(col as char) from t group by cast(col as char);
+id	estRows	task	access object	operator info
+Projection	8000.00	root		cast(planner__core__integration.t.col, var_string(19))->Column#3
+└─HashAgg	8000.00	root		group by:Column#5, funcs:firstrow(Column#6)->planner__core__integration.t.col
+  └─TableReader	8000.00	root		data:HashAgg
+    └─HashAgg	8000.00	cop[tikv]		group by:cast(planner__core__integration.t.col, var_string(19)), funcs:firstrow(planner__core__integration.t.col)->Column#6
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

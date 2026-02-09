@@ -849,6 +849,13 @@ func (a *RenameTablesArgs) decodeV1(job *Job) error {
 		return errors.Trace(err)
 	}
 
+	// If the job is run on older TiDB versions(<=8.1), it will incorrectly remove
+	// the last arg oldTableNames.
+	// See https://github.com/pingcap/tidb/blob/293331cd9211c214f3431ff789210374378e9697/pkg/ddl/ddl_worker.go#L1442-L1447
+	if len(oldTableNames) == 0 && len(oldSchemaIDs) != 0 {
+		oldTableNames = make([]pmodel.CIStr, len(oldSchemaIDs))
+	}
+
 	a.RenameTableInfos = GetRenameTablesArgsFromV1(
 		oldSchemaIDs, oldSchemaNames, oldTableNames,
 		newSchemaIDs, newTableNames, tableIDs,
@@ -1075,6 +1082,26 @@ func (a *LockTablesArgs) decodeV1(job *Job) error {
 // GetLockTablesArgs get the LockTablesArgs argument.
 func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
 	return getOrDecodeArgs[*LockTablesArgs](&LockTablesArgs{}, job)
+}
+
+// AlterTableModeArgs is the argument for AlterTableMode.
+type AlterTableModeArgs struct {
+	TableMode TableMode `json:"table_mode,omitempty"`
+	SchemaID  int64     `json:"schema_id,omitempty"`
+	TableID   int64     `json:"table_id,omitempty"`
+}
+
+func (a *AlterTableModeArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *AlterTableModeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetAlterTableModeArgs get the AlterTableModeArgs argument.
+func GetAlterTableModeArgs(job *Job) (*AlterTableModeArgs, error) {
+	return getOrDecodeArgs[*AlterTableModeArgs](&AlterTableModeArgs{}, job)
 }
 
 // RepairTableArgs is the argument for repair table
@@ -1659,6 +1686,7 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 // ModifyColumnArgs is the argument for modify column.
 type ModifyColumnArgs struct {
 	Column           *ColumnInfo         `json:"column,omitempty"`
+	OldColumnID      int64               `json:"old_column_id,omitempty"`
 	OldColumnName    pmodel.CIStr        `json:"old_column_name,omitempty"`
 	Position         *ast.ColumnPosition `json:"position,omitempty"`
 	ModifyColumnType byte                `json:"modify_column_type,omitempty"`
@@ -1674,6 +1702,7 @@ type ModifyColumnArgs struct {
 	// Finished args
 	// IndexIDs stores index ids to be added to gc table.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	NewIndexIDs  []int64 `json:"new_index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
@@ -1686,19 +1715,19 @@ func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
 	}
 	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
-		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs,
+		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs, a.OldColumnID,
 	}
 }
 
 func (a *ModifyColumnArgs) decodeV1(job *Job) error {
 	return job.decodeArgs(
 		&a.Column, &a.OldColumnName, &a.Position, &a.ModifyColumnType,
-		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs,
+		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs, &a.OldColumnID,
 	)
 }
 
 func (a *ModifyColumnArgs) getFinishedArgsV1(*Job) []any {
-	return []any{a.IndexIDs, a.PartitionIDs}
+	return []any{a.IndexIDs, a.PartitionIDs, a.NewIndexIDs}
 }
 
 // GetModifyColumnArgs get the modify column argument from job.
@@ -1712,14 +1741,57 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 		var (
 			indexIDs     []int64
 			partitionIDs []int64
+			newIndexIDs  []int64
 		)
-		if err := job.decodeArgs(&indexIDs, &partitionIDs); err != nil {
+		if err := job.decodeArgs(&indexIDs, &partitionIDs, &newIndexIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &ModifyColumnArgs{
 			IndexIDs:     indexIDs,
 			PartitionIDs: partitionIDs,
+			NewIndexIDs:  newIndexIDs,
 		}, nil
 	}
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
+}
+
+// RefreshMetaArgs is the argument for RefreshMeta.
+// InvolvedDB/InvolvedTable used for setting InvolvingSchemaInfo to
+// indicates the schema info involved in the DDL job.
+type RefreshMetaArgs struct {
+	SchemaID      int64  `json:"schema_id,omitempty"`
+	TableID       int64  `json:"table_id,omitempty"`
+	InvolvedDB    string `json:"involved_db,omitempty"`
+	InvolvedTable string `json:"involved_table,omitempty"`
+}
+
+func (a *RefreshMetaArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *RefreshMetaArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetRefreshMetaArgs get the refresh meta argument.
+func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
+	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
+}
+
+// AlterTableAffinityArgs is the argument for AlterTableAffinity
+type AlterTableAffinityArgs struct {
+	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
+}
+
+func (a *AlterTableAffinityArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *AlterTableAffinityArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetAlterTableAffinityArgs get the alter table affinity argument.
+func GetAlterTableAffinityArgs(job *Job) (*AlterTableAffinityArgs, error) {
+	return getOrDecodeArgs[*AlterTableAffinityArgs](&AlterTableAffinityArgs{}, job)
 }

@@ -663,9 +663,14 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 			if err != nil {
 				return err
 			}
-			handle, err = kv.NewCommonHandle(b)
+			newHandle, err := kv.NewCommonHandle(b)
 			if err != nil {
 				return err
+			}
+			if ph, ok := handle.(kv.PartitionHandle); ok {
+				handle = kv.NewPartitionHandle(ph.PartitionID, newHandle)
+			} else {
+				handle = newHandle
 			}
 		}
 		// filter key/value by partitition id
@@ -952,7 +957,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 			return iter.datumRow, nil
 		}
 
-		err = iter.cd.DecodeToChunk(value, handle, iter.chk)
+		err = iter.cd.DecodeToChunk(value, 0, handle, iter.chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

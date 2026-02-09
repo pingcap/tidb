@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -113,6 +114,18 @@ var (
 	_ builtinFunc = &builtinCastVectorFloat32AsVectorFloat32Sig{}
 	_ builtinFunc = &builtinCastUnsupportedAsVectorFloat32Sig{}
 	_ builtinFunc = &builtinCastVectorFloat32AsUnsupportedSig{}
+)
+
+const (
+	maxTinyBlobSize   = 255
+	maxBlobSize       = 65535
+	maxMediumBlobSize = 16777215
+	maxLongBlobSize   = 4294967295
+	// These two are magic numbers to be compatible with MySQL.
+	// They are `MaxBlobSize * 4` and `MaxMediumBlobSize * 4`, but multiply by 4 (mblen) is not necessary here. However
+	// a bigger number is always safer to avoid truncation, so they are kept as is.
+	castBlobFlen       = maxBlobSize * 4
+	castMediumBlobFlen = maxMediumBlobSize * 4
 )
 
 type castAsIntFunctionClass struct {
@@ -315,26 +328,11 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 		tp.AddFlag(mysql.BinaryFlag)
 		args[0] = BuildCastFunction(ctx, args[0], tp)
 	}
-	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
-	switch argTp {
+	argFt := args[0].GetType(ctx.GetEvalCtx())
+	adjustRetFtForCastString(bf.tp, argFt)
+
+	switch argFt.EvalType() {
 	case types.ETInt:
-		if bf.tp.GetFlen() == types.UnspecifiedLength {
-			// check https://github.com/pingcap/tidb/issues/44786
-			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
-			switch args[0].GetType(ctx.GetEvalCtx()).GetType() {
-			case mysql.TypeTiny:
-				bf.tp.SetFlen(4)
-			case mysql.TypeShort:
-				bf.tp.SetFlen(6)
-			case mysql.TypeInt24:
-				bf.tp.SetFlen(9)
-			case mysql.TypeLong:
-				// set it to 11 as mysql
-				bf.tp.SetFlen(11)
-			default:
-				bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
-			}
-		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
 	case types.ETReal:
@@ -362,9 +360,154 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
-		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "String")
+		return nil, errors.Errorf("cannot cast from %s to %s", argFt.EvalType(), "String")
 	}
 	return sig, nil
+}
+
+func adjustRetFtForCastString(retFt, argFt *types.FieldType) {
+	originalFlen := retFt.GetFlen()
+
+	// Only estimate the length for variable length string types, because different length for fixed
+	// length string types will have different behaviors and may cause compatibility issues.
+	if retFt.GetType() == mysql.TypeString {
+		return
+	}
+
+	if argFt.GetType() == mysql.TypeNull {
+		return
+	}
+
+	argTp := argFt.EvalType()
+	switch argTp {
+	case types.ETInt:
+		if originalFlen == types.UnspecifiedLength {
+			// check https://github.com/pingcap/tidb/issues/44786
+			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
+			switch argFt.GetType() {
+			case mysql.TypeTiny:
+				if mysql.HasUnsignedFlag(argFt.GetFlag()) {
+					retFt.SetFlen(3)
+				} else {
+					retFt.SetFlen(4)
+				}
+			case mysql.TypeShort:
+				if mysql.HasUnsignedFlag(argFt.GetFlag()) {
+					retFt.SetFlen(5)
+				} else {
+					retFt.SetFlen(6)
+				}
+			case mysql.TypeInt24:
+				if mysql.HasUnsignedFlag(argFt.GetFlag()) {
+					retFt.SetFlen(8)
+				} else {
+					retFt.SetFlen(9)
+				}
+			case mysql.TypeLong:
+				if mysql.HasUnsignedFlag(argFt.GetFlag()) {
+					retFt.SetFlen(10)
+				} else {
+					retFt.SetFlen(11)
+				}
+			case mysql.TypeLonglong:
+				// the length of BIGINT is always 20 without considering the unsigned flag, because the
+				// bigint range from -9223372036854775808 to 9223372036854775807, and unsigned bigint range
+				// from 0 to 18446744073709551615, they are all 20 characters long.
+				retFt.SetFlen(20)
+			case mysql.TypeYear:
+				retFt.SetFlen(4)
+			case mysql.TypeBit:
+				retFt.SetFlen(argFt.GetFlen())
+			case mysql.TypeEnum:
+				intest.Assert(false, "cast Enum to String should not set mysql.EnumSetAsIntFlag")
+				return
+			case mysql.TypeSet:
+				intest.Assert(false, "cast Set to String should not set mysql.EnumSetAsIntFlag")
+				return
+			default:
+				intest.Assert(false, "unknown type %d for INT", argFt.GetType())
+				return
+			}
+		}
+	case types.ETReal:
+		// MySQL used 12/22 for float/double, it's because MySQL turns float/double into scientific notation
+		// in some situations. TiDB choose to use 'f' format for all the cases, so TiDB needs much longer length
+		// for float/double.
+		//
+		// The largest float/double value is around `3.40e38`/`1.79e308`, and the smallest positive float/double value
+		// is around `1.40e-45`/`4.94e-324`. Therefore, we need at least `1 (sign) + 1 (integer) + 1 (dot) + (45 + 39) (decimal) = 87`
+		// for float and `1 (sign) + 1 (integer) + 1 (dot) + (324 + 43) (decimal) = 370` for double.
+		//
+		// Actually, the golang will usually generate a much smaller string. It used ryu algorithm to generate the shortest
+		// decimal representation. It's not necessary to keep all decimals. Ref:
+		// - https://github.com/ulfjack/ryu
+		// - https://dl.acm.org/doi/10.1145/93548.93559
+		// So maybe 48/327 is enough for float/double, but we still set 87/370 for safety.
+		if originalFlen == types.UnspecifiedLength {
+			if argFt.GetType() == mysql.TypeFloat {
+				retFt.SetFlen(87)
+			} else if argFt.GetType() == mysql.TypeDouble {
+				retFt.SetFlen(370)
+			}
+		}
+	case types.ETDecimal:
+		if originalFlen == types.UnspecifiedLength {
+			retFt.SetFlen(decimalPrecisionToLength(argFt))
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		if originalFlen == types.UnspecifiedLength {
+			if argFt.GetType() == mysql.TypeDate {
+				retFt.SetFlen(mysql.MaxDateWidth)
+			} else {
+				retFt.SetFlen(mysql.MaxDatetimeWidthNoFsp)
+			}
+
+			// Theoretically, the decimal of `DATE` will never be greater than 0.
+			decimal := argFt.GetDecimal()
+			if decimal > 0 {
+				// If the type is datetime or timestamp with fractional seconds, we need to set the length to
+				// accommodate the fractional seconds part.
+				retFt.SetFlen(retFt.GetFlen() + 1 + decimal)
+			}
+		}
+	case types.ETDuration:
+		if originalFlen == types.UnspecifiedLength {
+			retFt.SetFlen(mysql.MaxDurationWidthNoFsp)
+			decimal := argFt.GetDecimal()
+			if decimal > 0 {
+				// If the type is time with fractional seconds, we need to set the length to
+				// accommodate the fractional seconds part.
+				retFt.SetFlen(retFt.GetFlen() + 1 + decimal)
+			}
+		}
+	case types.ETJson:
+		if originalFlen == types.UnspecifiedLength {
+			retFt.SetFlen(mysql.MaxLongBlobWidth)
+			retFt.SetType(mysql.TypeLongBlob)
+		}
+	case types.ETVectorFloat32:
+
+	case types.ETString:
+		if originalFlen == types.UnspecifiedLength {
+			switch argFt.GetType() {
+			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+				if argFt.GetFlen() > 0 {
+					retFt.SetFlen(argFt.GetFlen())
+				}
+			case mysql.TypeTinyBlob:
+				retFt.SetFlen(maxTinyBlobSize)
+			case mysql.TypeBlob:
+				retFt.SetFlen(castBlobFlen)
+			case mysql.TypeMediumBlob:
+				retFt.SetFlen(castMediumBlobFlen)
+			case mysql.TypeLongBlob:
+				retFt.SetFlen(maxLongBlobSize)
+			default:
+				intest.Assert(false, "unknown type %d for String", argFt.GetType())
+				return
+			}
+		}
+	}
 }
 
 type castAsTimeFunctionClass struct {
@@ -1248,6 +1391,7 @@ func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
 		bits = 32
 	}
+
 	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
@@ -2364,7 +2508,7 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
 	if tp.EvalType() != types.ETJson && err == nil {
-		res = FoldConstant(ctx, res)
+		return FoldConstant(ctx, res), nil
 	}
 	return res, err
 }
@@ -2668,4 +2812,28 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 		return expr
 	}
 	return expr
+}
+
+func decimalPrecisionToLength(ft *types.FieldType) int {
+	precision := ft.GetFlen()
+	scale := ft.GetDecimal()
+	unsigned := mysql.HasUnsignedFlag(ft.GetFlag())
+
+	if precision == types.UnspecifiedLength || scale == types.UnspecifiedLength {
+		return types.UnspecifiedLength
+	}
+
+	ret := precision
+	if scale > 0 {
+		ret++
+	}
+
+	if !unsigned && precision > 0 {
+		ret++ // for negative sign
+	}
+
+	if ret == 0 {
+		return 1
+	}
+	return ret
 }

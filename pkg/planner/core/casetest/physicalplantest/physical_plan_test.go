@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
 
@@ -247,18 +248,15 @@ func TestIssue37520(t *testing.T) {
 }
 
 func TestMPPHints(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
-	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("create definer='root'@'localhost' view v as select a, sum(b) from t group by a, c;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select t1.a from t t1, t t2 where t1.a=t2.a;")
-	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
 	var input []string
 	var output []struct {
@@ -1533,4 +1531,38 @@ func TestExplainExpand(t *testing.T) {
 func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 	// PhysicalApply is expected not to implement PhysicalJoin.
 	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(core.PhysicalApply))
+}
+
+func TestDisableReuseChunk(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
+	tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
+	core.MaxMemoryLimitForOverlongType = 0
+	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
+	core.MaxMemoryLimitForOverlongType = 500 * size.GB
+	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
+}
+
+func TestSemiJoinRewriter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_enable_semi_join_rewrite=on;`)
+	tk.MustExec(`create table t1(a int);`)
+	tk.MustExec(`create table t2(a varchar(10));`)
+	tk.MustExec(`create table t3(a int);`)
+	tk.MustQuery(`explain format = 'brief' select * from t1 where exists(select 1 from t2 where t1.a=t2.a);`).Check(testkit.Rows(
+		`HashJoin 10000.00 root  inner join, equal:[eq(Column#6, Column#7)]`,
+		`├─HashAgg(Build) 8000.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#7`,
+		`│ └─Projection 10000.00 root  cast(test.t2.a, double BINARY)->Column#7`,
+		`│   └─TableReader 10000.00 root  data:TableFullScan`,
+		`│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+		`└─Projection(Probe) 10000.00 root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
+		`  └─TableReader 10000.00 root  data:TableFullScan`,
+		`    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 }

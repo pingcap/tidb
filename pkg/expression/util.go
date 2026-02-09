@@ -16,10 +16,12 @@ package expression
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -124,6 +126,37 @@ func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 	result := make([]*Column, 0, 8)
 	return extractColumns(result, expr, nil)
+}
+
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr, filter)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
+}
+
+func extractColumnsSlices(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		if filter == nil || filter(v) {
+			result = append(result, v)
+		}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsSlices(result, arg, filter)
+		}
+	}
+	return result
 }
 
 // ExtractCorColumns extracts correlated column from given expression.
@@ -460,6 +493,13 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
+					// If the newArg is a ScalarFunction(cast), BuildCastFunctionWithCheck will modify the newArg.RetType,
+					// So we need to deep copy RetType.
+					// TODO: Expression interface needs a deep copy method.
+					if newArgFunc, ok := newArg.(*ScalarFunction); ok {
+						newArgFunc.RetType = newArgFunc.RetType.DeepCopy()
+						newArg = newArgFunc
+					}
 					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
 					terror.Log(err)
 				} else {
@@ -500,7 +540,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		oldCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.RetType.EvalType(), v.GetArgs()...)
 		if err != nil {
-			logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+			logutil.BgLogger().Warn("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"), zap.Error(err))
 			return false, false, v
 		}
 		var tmpArgForCollCheck []Expression
@@ -520,7 +560,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				tmpArgForCollCheck[idx] = newFuncExpr
 				newCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.RetType.EvalType(), tmpArgForCollCheck...)
 				if err != nil {
-					logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+					logutil.BgLogger().Warn("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"), zap.Error(err))
 					return false, failed, v
 				}
 				if oldCollEt.Collation == newCollEt.Collation {
@@ -1019,17 +1059,12 @@ func containOuterNot(expr Expression, not bool) bool {
 
 // Contains tests if `exprs` contains `e`.
 func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
-	for _, expr := range exprs {
-		// Check string equivalence if one of the expressions is a clone.
-		sameString := false
-		if e != nil && expr != nil {
-			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
+	return slices.ContainsFunc(exprs, func(expr Expression) bool {
+		if expr == nil {
+			return e == nil
 		}
-		if e == expr || sameString {
-			return true
-		}
-	}
-	return false
+		return e == expr || expr.Equal(ectx, e)
+	})
 }
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
@@ -1409,6 +1444,9 @@ func IsImmutableFunc(expr Expression) bool {
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(exprs []Expression) []Expression {
+	if len(exprs) <= 1 {
+		return exprs
+	}
 	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
 	for _, expr := range exprs {
@@ -1562,6 +1600,12 @@ func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 	return containMutableConst(ctx.GetEvalCtx(), exprs)
 }
 
+// MaybeOverOptimized4PlanCacheForMultiExpression is the same as MaybeOverOptimized4PlanCache,
+// but it accepts multiple expressions as input.
+func MaybeOverOptimized4PlanCacheForMultiExpression(ctx BuildContext, exprs ...Expression) bool {
+	return MaybeOverOptimized4PlanCache(ctx, exprs)
+}
+
 // containMutableConst checks if the expressions contain a lazy constant.
 func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 	for _, expr := range exprs {
@@ -1595,7 +1639,10 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 			}
 			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
-			return RemoveMutableConst(ctx, v.GetArgs())
+			err := RemoveMutableConst(ctx, v.GetArgs())
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -2062,8 +2109,7 @@ func ExecBinaryParam(typectx types.Context, binaryParams []param.BinaryParam) (p
 				args[i] = types.NewDecimalDatum(nil)
 			} else {
 				var dec types.MyDecimal
-				err = typectx.HandleTruncate(dec.FromString(binaryParams[i].Val))
-				if err != nil {
+				if err := typectx.HandleTruncate(dec.FromString(binaryParams[i].Val)); err != nil && err != types.ErrTruncated {
 					return nil, err
 				}
 				args[i] = types.NewDecimalDatum(&dec)

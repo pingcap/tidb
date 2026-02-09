@@ -1711,9 +1711,9 @@
           "IndexJoin 9990.00 root  inner join, inner:HashAgg, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─HashAgg(Probe) 79920000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-          "  └─IndexReader 79920000.00 root  index:HashAgg",
-          "    └─HashAgg 79920000.00 cop[tikv]  group by:test.t2.a, ",
+          "└─HashAgg(Probe) 9990.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "  └─IndexReader 9990.00 root  index:HashAgg",
+          "    └─HashAgg 9990.00 cop[tikv]  group by:test.t2.a, ",
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
           "        └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:ia(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
@@ -2281,7 +2281,7 @@
       },
       {
         "SQL": "select max(a), min(a) from t where a > 10",
-        "Best": "RightHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(d), min(d) from t where c = 1 and d > 10",
@@ -2309,7 +2309,7 @@
       },
       {
         "SQL": "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
-        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit->StreamAgg"
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit->StreamAgg"
       }
     ]
   },
@@ -3179,7 +3179,7 @@
           "TableReader 10000.00 root  data:TableFullScan",
           "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."
+        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause."
       },
       {
         "SQL": "select * from t where a > (select /*+ SEMI_JOIN_REWRITE() */ min(b) from t t1 where t1.c = t.c)",
@@ -3195,7 +3195,7 @@
           "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.c))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."
+        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause."
       },
       {
         "SQL": "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a=t.a)",

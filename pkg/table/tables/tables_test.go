@@ -488,7 +488,7 @@ func TestHiddenColumn(t *testing.T) {
 	tk.MustGetErrMsg("select d, b from t;", "[planner:1054]Unknown column 'd' in 'field list'")
 	tk.MustGetErrMsg("select * from t where b > 1;", "[planner:1054]Unknown column 'b' in 'where clause'")
 	tk.MustGetErrMsg("select * from t order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
-	tk.MustGetErrMsg("select * from t group by b;", "[planner:1054]Unknown column 'b' in 'group statement'")
+	tk.MustGetErrMsg("select sum(a) from t group by b;", "[planner:1054]Unknown column 'b' in 'group statement'")
 
 	// Can't use hidden columns in `INSERT` statement
 	// 1. insert into ... values ...
@@ -529,7 +529,7 @@ func TestHiddenColumn(t *testing.T) {
 	tk.MustGetErrMsg("insert into t1 select d, b from t;", "[planner:1054]Unknown column 'd' in 'field list'")
 	tk.MustGetErrMsg("insert into t1 select a from t where b > 1;", "[planner:1054]Unknown column 'b' in 'where clause'")
 	tk.MustGetErrMsg("insert into t1 select a from t order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
-	tk.MustGetErrMsg("insert into t1 select a from t group by b;", "[planner:1054]Unknown column 'b' in 'group statement'")
+	tk.MustGetErrMsg("insert into t1 select sum(a) from t group by b;", "[planner:1054]Unknown column 'b' in 'group statement'")
 	tk.MustExec("drop table t1")
 
 	// `UPDATE` statement
@@ -983,7 +983,7 @@ func TestSkipWriteUntouchedIndices(t *testing.T) {
 			key, distinct, err := tbl.Indices()[idx].GenIndexKey(ec, time.UTC, []types.Datum{val}, h, nil)
 			require.NoError(t, err)
 			require.False(t, distinct)
-			indexVal, err := memBuffer.Get(context.TODO(), key)
+			indexVal, err := kv.GetValue(context.TODO(), memBuffer, key)
 			if !exists {
 				require.True(t, kv.ErrNotExist.Equal(err))
 				return

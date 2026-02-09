@@ -131,6 +131,10 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 		}
 		if bindings != nil {
 			for _, binding := range bindings {
+				if !binding.IsBindingEnabled() {
+					// because of cross-db bindings, there might be multiple bindings for the same SQL, skip disabled ones.
+					continue
+				}
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
 				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
 					continue // fuzzy binding is disabled, skip this binding
@@ -200,7 +204,16 @@ func (fbc *fuzzyBindingCache) SetBinding(sqlDigest string, bindings Bindings) (e
 	}
 
 	for i, binding := range bindings {
-		fbc.fuzzy2SQLDigests[fuzzyDigests[i]] = append(fbc.fuzzy2SQLDigests[fuzzyDigests[i]], binding.SQLDigest)
+		exist := false
+		for _, d := range fbc.fuzzy2SQLDigests[fuzzyDigests[i]] {
+			if d == sqlDigest {
+				exist = true
+				break
+			}
+		}
+		if !exist { // avoid adding duplicated binding digests
+			fbc.fuzzy2SQLDigests[fuzzyDigests[i]] = append(fbc.fuzzy2SQLDigests[fuzzyDigests[i]], binding.SQLDigest)
+		}
 		fbc.sql2FuzzyDigest[binding.SQLDigest] = fuzzyDigests[i]
 	}
 	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with fuzzy2SQLDigests and
@@ -278,7 +291,7 @@ type BindingCache interface {
 // The key of the LRU cache is original sql, the value is a slice of Bindings.
 // Note: The bindingCache should be accessed with lock.
 type bindingCache struct {
-	lock        sync.Mutex
+	lock        sync.RWMutex
 	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.
@@ -366,8 +379,8 @@ func (c *bindingCache) delete(key bindingCacheKey) bool {
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
 func (c *bindingCache) GetBinding(sqlDigest string) Bindings {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	return c.get(bindingCacheKey(sqlDigest))
 }
 
@@ -375,8 +388,8 @@ func (c *bindingCache) GetBinding(sqlDigest string) Bindings {
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
 func (c *bindingCache) GetAllBindings() Bindings {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	values := c.cache.Values()
 	bindings := make(Bindings, 0, len(values))
 	for _, vals := range values {
@@ -415,16 +428,16 @@ func (c *bindingCache) SetMemCapacity(capacity int64) {
 // GetMemUsage get the memory Usage for the cache.
 // The function is thread-safe.
 func (c *bindingCache) GetMemUsage() int64 {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	return c.memTracker.BytesConsumed()
 }
 
 // GetMemCapacity get the memory capacity for the cache.
 // The function is thread-safe.
 func (c *bindingCache) GetMemCapacity() int64 {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	return c.memCapacity
 }
 
@@ -450,7 +463,7 @@ func (c *bindingCache) CopyBindingCache() (BindingCache, error) {
 }
 
 func (c *bindingCache) Size() int {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	return c.cache.Size()
 }

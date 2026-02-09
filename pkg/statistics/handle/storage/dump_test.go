@@ -107,7 +107,7 @@ func TestConversion(t *testing.T) {
 	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
 	require.NoError(t, err)
 
-	tbl := h.GetTableStats(tableInfo.Meta())
+	tbl := h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
 	requireTableEqual(t, loadTbl, tbl)
 	cleanStats(tk, dom)
 	var wg util.WaitGroupWrapper
@@ -117,7 +117,7 @@ func TestConversion(t *testing.T) {
 	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
 	wg.Wait()
 	require.NoError(t, err)
-	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
+	loadTblInStorage := h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
 	requireTableEqual(t, loadTblInStorage, tbl)
 }
 
@@ -196,6 +196,33 @@ func TestLoadGlobalStats(t *testing.T) {
 	require.Equal(t, 3, len(loadedStats.Partitions)) // p0, p1, global
 }
 
+func TestLastStatsHistUpdateVersionAfterLoadStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExec("analyze table t")
+
+	statsHandle := dom.StatsHandle()
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	statsTbl := statsHandle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.Greater(t, statsTbl.LastStatsHistVersion, uint64(0))
+	origLastStatsHistVersion := statsTbl.LastStatsHistVersion
+
+	jsonTbl := getStatsJSON(t, dom, "test", "t")
+	dom.StatsHandle().Clear()
+	require.Nil(t, statsHandle.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
+	require.NoError(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
+	statsTbl = statsHandle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.Greater(t, statsTbl.LastStatsHistVersion, origLastStatsHistVersion)
+}
+
 func TestLoadPartitionStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -219,9 +246,9 @@ func TestLoadPartitionStats(t *testing.T) {
 	pi := tableInfo.GetPartitionInfo()
 	originPartStats := make([]*statistics.Table, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
-		originPartStats = append(originPartStats, dom.StatsHandle().GetPartitionStats(tableInfo, def.ID))
+		originPartStats = append(originPartStats, dom.StatsHandle().GetPhysicalTableStats(def.ID, tableInfo))
 	}
-	originGlobalStats := dom.StatsHandle().GetTableStats(tableInfo)
+	originGlobalStats := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
 	// remove all statistics
 	tk.MustExec("delete from mysql.stats_meta")
@@ -236,10 +263,10 @@ func TestLoadPartitionStats(t *testing.T) {
 
 	// compare
 	for i, def := range pi.Definitions {
-		newPartStats := dom.StatsHandle().GetPartitionStats(tableInfo, def.ID)
+		newPartStats := dom.StatsHandle().GetPhysicalTableStats(def.ID, tableInfo)
 		requireTableEqual(t, originPartStats[i], newPartStats)
 	}
-	requireTableEqual(t, originGlobalStats, dom.StatsHandle().GetTableStats(tableInfo))
+	requireTableEqual(t, originGlobalStats, dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo))
 }
 
 func TestLoadPredicateColumns(t *testing.T) {
@@ -255,7 +282,7 @@ func TestLoadPredicateColumns(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
 	require.NoError(t, h.DumpColStatsUsageToKV())
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t predicate columns")
 
 	table, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
@@ -350,7 +377,7 @@ PARTITION BY RANGE ( a ) (
 	pi := tableInfo.GetPartitionInfo()
 	originTables := make([]*statistics.Table, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
-		originTables = append(originTables, h.GetPartitionStats(tableInfo, def.ID))
+		originTables = append(originTables, h.GetPhysicalTableStats(def.ID, tableInfo))
 	}
 
 	tk.MustExec("delete from mysql.stats_meta")
@@ -361,7 +388,7 @@ PARTITION BY RANGE ( a ) (
 	err = h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0)
 	require.NoError(t, err)
 	for i, def := range pi.Definitions {
-		tt := h.GetPartitionStats(tableInfo, def.ID)
+		tt := h.GetPhysicalTableStats(def.ID, tableInfo)
 		requireTableEqual(t, originTables[i], tt)
 	}
 }
@@ -408,12 +435,12 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	}
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
-	stat := h.GetTableStats(tableInfo)
+	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	err = h.SaveColOrIdxStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.GetCol(tableInfo.Columns[0].ID).Histogram, cms, nil, statistics.Version1, 1, false, handleutil.StatsMetaHistorySourceLoadStats)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 
-	stat = h.GetTableStats(tableInfo)
+	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	cmsFromStore := stat.GetCol(tableInfo.Columns[0].ID).CMSketch
 	require.NotNil(t, cmsFromStore)
 	require.True(t, cms.Equal(cmsFromStore))
@@ -422,7 +449,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	require.NoError(t, err)
 	err = h.LoadStatsFromJSON(context.Background(), is, jsonTable, 0)
 	require.NoError(t, err)
-	stat = h.GetTableStats(tableInfo)
+	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	cmsFromJSON := stat.GetCol(tableInfo.Columns[0].ID).CMSketch.Copy()
 	require.True(t, cms.Equal(cmsFromJSON))
 }
@@ -460,7 +487,7 @@ func TestDumpExtendedStats(t *testing.T) {
 	is := dom.InfoSchema()
 	tableInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
-	tbl := h.GetTableStats(tableInfo.Meta())
+	tbl := h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
 	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
@@ -475,7 +502,7 @@ func TestDumpExtendedStats(t *testing.T) {
 	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
 	wg.Wait()
 	require.NoError(t, err)
-	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
+	loadTblInStorage := h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
 	requireTableEqual(t, loadTblInStorage, tbl)
 }
 
@@ -518,13 +545,13 @@ func TestDumpVer2Stats(t *testing.T) {
 	requireTableEqual(t, loadTbl, storageTbl)
 
 	// assert that this statistics.Table is the same as the one in stats cache
-	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
+	statsCacheTbl := h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
 	requireTableEqual(t, loadTbl, statsCacheTbl)
 
 	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
-	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
+	statsCacheTbl = h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
 	// assert that after the JSONTable above loaded into storage then updated into the stats cache,
 	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
 	requireTableEqual(t, statsCacheTbl, loadTbl)
@@ -570,13 +597,13 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	requireTableEqual(t, loadTbl, storageTbl)
 
 	// assert that this statistics.Table is the same as the one in stats cache
-	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
+	statsCacheTbl := h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
 	requireTableEqual(t, loadTbl, statsCacheTbl)
 
 	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
-	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
+	statsCacheTbl = h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
 	// assert that after the JSONTable above loaded into storage then updated into the stats cache,
 	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
 	requireTableEqual(t, statsCacheTbl, loadTbl)
@@ -683,7 +710,7 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	require.NoError(t, h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0))
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(tbl.Meta())
+	statsTbl := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	statsTbl.ForEachColumnImmutable(func(i int64, col *statistics.Column) bool {
 		require.False(t, col.IsStatsInitialized())
 		return false

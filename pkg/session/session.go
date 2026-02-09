@@ -103,6 +103,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -120,6 +121,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -181,6 +183,8 @@ type session struct {
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
 	currentPlan base.Plan
 
+	// dom is *domain.Domain, use `any` to avoid import cycle.
+	dom   any
 	store kv.Storage
 
 	sessionPlanCache sessionctx.SessionPlanCache
@@ -205,6 +209,13 @@ type session struct {
 
 	// indexUsageCollector collects index usage information.
 	idxUsageCollector *indexusage.SessionIndexUsageCollector
+
+	functionUsageMu struct {
+		syncutil.RWMutex
+		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	}
+	// allowed when tikv disk full happened.
+	diskFullOpt kvrpcpb.DiskFullOpt
 
 	// StmtStats is used to count various indicators of each SQL in this session
 	// at each point in time. These data will be periodically taken away by the
@@ -926,6 +937,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 
 	// record the TTLInsertRows in the metric
 	metrics.TTLInsertRowsCount.Add(float64(s.sessionVars.TxnCtx.InsertTTLRowsCount))
+	metrics.DDLCommitTempIndexWrite(s.sessionVars.ConnectionID)
 
 	failpoint.Inject("keepHistory", func(val failpoint.Value) {
 		if val.(bool) {
@@ -952,6 +964,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	s.sessionVars.SetInTxn(false)
 	sessiontxn.GetTxnManager(s).OnTxnEnd()
+	metrics.DDLRollbackTempIndexWrite(s.sessionVars.ConnectionID)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -1840,6 +1853,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeSnapshot != nil {
 		s.sessionVars.EnableAnalyzeSnapshot = *execOption.AnalyzeSnapshot
 	}
+	s.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
 	if len(execOption.PartitionPruneMode) > 0 {
 		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
@@ -1904,7 +1918,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if len(execOption.PartitionPruneMode) > 0 {
 		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
 	}
-
+	se.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
@@ -2085,11 +2099,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
 		if err == nil && prepareStmt.PreparedAst != nil {
-			stmtLabel = ast.GetStmtLabel(prepareStmt.PreparedAst.Stmt)
+			stmtLabel = stmtctx.GetStmtLabel(ctx, prepareStmt.PreparedAst.Stmt)
 		}
 	}
 	if stmtLabel == "" {
-		stmtLabel = ast.GetStmtLabel(stmtNode)
+		stmtLabel = stmtctx.GetStmtLabel(ctx, stmtNode)
 	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
@@ -2165,6 +2179,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.String("session", s.String()))
 		}
 		return recordSet, err
+	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
 	}
 	return recordSet, nil
 }
@@ -2299,6 +2323,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}
 	}
 
+	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
@@ -2490,6 +2515,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 	execStmt := &ast.ExecuteStmt{
 		BinaryArgs: params,
 		PrepStmt:   stmt,
+		PrepStmtId: stmtID,
 	}
 	return s.ExecuteStmt(ctx, execStmt)
 }
@@ -2555,6 +2581,7 @@ func (s *session) Close() {
 	if s.idxUsageCollector != nil {
 		s.idxUsageCollector.Flush()
 	}
+	telemetry.GlobalBuiltinFunctionsUsage.Collect(s.GetBuiltinFunctionUsage())
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
 	if bindValue != nil {
 		bindValue.(bindinfo.SessionBindingHandle).Close()
@@ -2570,6 +2597,15 @@ func (s *session) Close() {
 	s.sessionVars.ClearDiskFullOpt()
 	if s.sessionPlanCache != nil {
 		s.sessionPlanCache.Close()
+	}
+	// Detach session trackers during session cleanup.
+	// ANALYZE attaches session MemTracker to GlobalAnalyzeMemoryTracker; without
+	// detachment, closed sessions cannot be garbage collected.
+	if s.sessionVars.MemTracker != nil {
+		s.sessionVars.MemTracker.Detach()
+	}
+	if s.sessionVars.DiskTracker != nil {
+		s.sessionVars.DiskTracker.Detach()
 	}
 }
 
@@ -2598,7 +2634,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := s.GetSessionVars()
 	sc := vars.StmtCtx
 
-	return sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -2651,6 +2687,16 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ExecDetails: &sc.SyncExecDetails,
 		}
 	})
+
+	// Check if the runaway checker is updated. This is to avoid that evaluating a non-correlated subquery
+	// during the optimization phase will cause the `*distsqlctx.DistSQLContext` to be created before the
+	// runaway checker is set later at the execution phase.
+	// Ref: https://github.com/pingcap/tidb/issues/61899
+	if dctx.RunawayChecker != sc.RunawayChecker {
+		dctx.RunawayChecker = sc.RunawayChecker
+	}
+
+	return dctx
 }
 
 // GetRangerCtx returns the context used in `ranger` related functions
@@ -3472,8 +3518,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	)
 	taskexecutor.RegisterTaskType(
 		proto.ImportInto,
-		func(ctx context.Context, id string, task *proto.Task, table taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			return importinto.NewImportExecutor(ctx, id, task, table, store)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return importinto.NewImportExecutor(ctx, task, param, store)
 		},
 	)
 
@@ -3516,14 +3562,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ctx, ses[0])
 
-	// We should make the load bind-info loop before other loops which has internal SQL.
-	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
-	// LoadBindInfoLoop inits global bind-info handler.
-	err = dom.LoadBindInfoLoop(ses[1], ses[2])
-	if err != nil {
-		return nil, err
-	}
-
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
@@ -3533,6 +3571,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
+	if err != nil {
+		return nil, err
+	}
+
+	// We should make the load bind-info loop before some other internal SQLs.
+	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
+	// LoadBindInfoLoop inits global bind-info handler.
+	err = dom.LoadBindInfoLoop(ses[1], ses[2])
 	if err != nil {
 		return nil, err
 	}
@@ -3563,6 +3609,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	err = executor.LoadOptRuleBlacklist(ctx, ses[5])
 	if err != nil {
 		return nil, err
+	}
+
+	if config.GetGlobalConfig().EnableTelemetry {
+		// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
+		// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
+		go func() {
+			dom.TelemetryLoop(ses[5])
+		}()
 	}
 
 	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
@@ -3723,13 +3777,20 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
-	if startMode == ddl.Bootstrap {
+	switch startMode {
+	case ddl.Bootstrap:
 		bootstrap(s)
-	} else if startMode == ddl.Upgrade {
+	case ddl.Upgrade:
 		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
 		upgrade(s)
+	case ddl.Normal:
+		// We need to init MDL variable before start the domain to prevent potential stuck issue
+		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
+		if err := InitMDLVariable(store); err != nil {
+			logutil.BgLogger().Fatal("init metadata lock failed during normal startup", zap.Error(err))
+		}
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
@@ -3783,6 +3844,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		return nil, err
 	}
 	s := &session{
+		dom:                   dom,
 		store:                 store,
 		ddlOwnerManager:       dom.DDL().OwnerManager(),
 		client:                store.GetClient(),
@@ -3795,6 +3857,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tblsession.NewMutateContext(s)
 
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
 	}
@@ -3802,7 +3865,6 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	s.advisoryLocks = make(map[string]*advisoryLock)
 
-	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.txn.init()
@@ -3846,6 +3908,7 @@ func detachStatsCollector(s *session) *session {
 // a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
+		dom:                   dom,
 		store:                 store,
 		sessionVars:           variable.NewSessionVars(nil),
 		client:                store.GetClient(),
@@ -3853,12 +3916,12 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	s.exprctx = sessionexpr.NewExprContext(s)
 	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tblsession.NewMutateContext(s)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
-	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.txn.init()
@@ -4309,6 +4372,114 @@ func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is), nil
 }
 
+func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
+	if es.Ti == nil {
+		return
+	}
+	if s.isInternal() {
+		return
+	}
+
+	ti := es.Ti
+	if ti.UseRecursive {
+		session_metrics.TelemetryCTEUsageRecurCTE.Inc()
+	} else if ti.UseNonRecursive {
+		session_metrics.TelemetryCTEUsageNonRecurCTE.Inc()
+	} else {
+		session_metrics.TelemetryCTEUsageNotCTE.Inc()
+	}
+
+	if ti.UseIndexMerge {
+		session_metrics.TelemetryIndexMerge.Inc()
+	}
+
+	if ti.UseMultiSchemaChange {
+		session_metrics.TelemetryMultiSchemaChangeUsage.Inc()
+	}
+
+	if ti.UseFlashbackToCluster {
+		session_metrics.TelemetryFlashbackClusterUsage.Inc()
+	}
+
+	if ti.UseExchangePartition {
+		session_metrics.TelemetryExchangePartitionUsage.Inc()
+	}
+
+	if ti.PartitionTelemetry != nil {
+		if ti.PartitionTelemetry.UseTablePartition {
+			session_metrics.TelemetryTablePartitionUsage.Inc()
+			session_metrics.TelemetryTablePartitionMaxPartitionsUsage.Add(float64(ti.PartitionTelemetry.TablePartitionMaxPartitionsNum))
+		}
+		if ti.PartitionTelemetry.UseTablePartitionList {
+			session_metrics.TelemetryTablePartitionListUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRange {
+			session_metrics.TelemetryTablePartitionRangeUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionHash {
+			session_metrics.TelemetryTablePartitionHashUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
+			session_metrics.TelemetryTablePartitionRangeColumnsUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt1 {
+			session_metrics.TelemetryTablePartitionRangeColumnsGt1Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt2 {
+			session_metrics.TelemetryTablePartitionRangeColumnsGt2Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt3 {
+			session_metrics.TelemetryTablePartitionRangeColumnsGt3Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionListColumns {
+			session_metrics.TelemetryTablePartitionListColumnsUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseCreateIntervalPartition {
+			session_metrics.TelemetryTablePartitionCreateIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseAddIntervalPartition {
+			session_metrics.TelemetryTablePartitionAddIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseDropIntervalPartition {
+			session_metrics.TelemetryTablePartitionDropIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseCompactTablePartition {
+			session_metrics.TelemetryTableCompactPartitionUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseReorganizePartition {
+			session_metrics.TelemetryReorganizePartitionUsage.Inc()
+		}
+	}
+
+	if ti.AccountLockTelemetry != nil {
+		session_metrics.TelemetryLockUserUsage.Add(float64(ti.AccountLockTelemetry.LockUser))
+		session_metrics.TelemetryUnlockUserUsage.Add(float64(ti.AccountLockTelemetry.UnlockUser))
+		session_metrics.TelemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
+	}
+
+	if ti.UseTableLookUp.Load() && s.sessionVars.StoreBatchSize > 0 {
+		session_metrics.TelemetryStoreBatchedUsage.Inc()
+	}
+}
+
+// GetBuiltinFunctionUsage returns the replica of counting of builtin function usage
+func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
+	replica := make(map[string]uint32)
+	s.functionUsageMu.RLock()
+	defer s.functionUsageMu.RUnlock()
+	for key, value := range s.functionUsageMu.builtinFunctionUsage {
+		replica[key] = value
+	}
+	return replica
+}
+
+// BuiltinFunctionUsageInc increase the counting of the builtin function usage
+func (s *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+	s.functionUsageMu.Lock()
+	defer s.functionUsageMu.Unlock()
+	s.functionUsageMu.builtinFunctionUsage.Inc(scalarFuncSigName)
+}
+
 func (s *session) GetStmtStats() *stmtstats.StatementStats {
 	return s.stmtStats
 }
@@ -4663,4 +4834,9 @@ func (s *session) GetCursorTracker() cursor.Tracker {
 // GetCommitWaitGroup returns the internal `sync.WaitGroup` for async commit and secondary key lock cleanup
 func (s *session) GetCommitWaitGroup() *sync.WaitGroup {
 	return &s.commitWaitGroup
+}
+
+// GetDomain get domain from session.
+func (s *session) GetDomain() any {
+	return s.dom
 }

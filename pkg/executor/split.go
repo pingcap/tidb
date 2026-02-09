@@ -493,7 +493,7 @@ func (e *SplitTableRegionExec) getSplitTableKeysFromValueList() ([][]byte, error
 func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromValueList(physicalID int64, keys [][]byte) ([][]byte, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 	for _, v := range e.valueLists {
-		handle, err := e.handleCols.BuildHandleByDatums(v)
+		handle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, v)
 		if err != nil {
 			return nil, err
 		}
@@ -593,11 +593,11 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 		}
 		return keys, nil
 	}
-	lowerHandle, err := e.handleCols.BuildHandleByDatums(e.lower)
+	lowerHandle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, e.lower)
 	if err != nil {
 		return nil, err
 	}
-	upperHandle, err := e.handleCols.BuildHandleByDatums(e.upper)
+	upperHandle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, e.upper)
 	if err != nil {
 		return nil, err
 	}

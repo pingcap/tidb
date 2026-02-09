@@ -258,7 +258,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			for tblID, cols := range e.tblID2Handle {
 				for _, col := range cols {
-					handle, err := col.BuildHandle(row)
+					handle, err := col.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
 					if err != nil {
 						return err
 					}
@@ -288,6 +288,10 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 
+	if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
+		return err
+	}
+
 	for id := range e.tblID2Handle {
 		e.UpdateDeltaForTableID(id)
 	}
@@ -296,6 +300,40 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	return doLockKeys(ctx, e.Ctx(), lockCtx, e.keys...)
+}
+
+// checkMaxExecutionTimeExceeded validates whether the current statement already hit the
+// max_execution_time limit. Centralized here so different executors share the same behaviour.
+func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
+	if sctx == nil {
+		return nil
+	}
+
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil {
+		return nil
+	}
+
+	if !sessVars.StmtCtx.InSelectStmt {
+		return nil
+	}
+
+	maxExecTimeMS := sessVars.GetMaxExecutionTime()
+	if maxExecTimeMS == 0 {
+		return nil
+	}
+
+	processInfo := sctx.ShowProcess()
+	if processInfo == nil || processInfo.Time.IsZero() {
+		return nil
+	}
+
+	elapsed := time.Since(processInfo.Time)
+	if elapsed >= time.Duration(maxExecTimeMS)*time.Millisecond {
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+	}
+
+	return nil
 }
 
 func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
@@ -310,6 +348,15 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
 	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+
+	// Set max_execution_time deadline for SELECT statements
+	if seVars.StmtCtx.InSelectStmt && seVars.GetMaxExecutionTime() > 0 {
+		if processInfo := sctx.ShowProcess(); processInfo != nil {
+			maxExecTimeMs := time.Duration(seVars.GetMaxExecutionTime()) * time.Millisecond
+			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
+		}
+	}
+
 	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
 		if req == nil {
 			return nil
@@ -567,7 +614,7 @@ func init() {
 			return nil, err
 		}
 
-		e := newExecutorBuilder(sctx, is)
+		e := newExecutorBuilder(sctx, is, nil)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -915,10 +962,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.TableStats)
 	}
-	if sc.MDLRelatedTableIDs == nil {
-		sc.MDLRelatedTableIDs = make(map[int64]struct{})
+	if sc.RelatedTableIDs == nil {
+		sc.RelatedTableIDs = make(map[int64]struct{})
 	} else {
-		clear(sc.MDLRelatedTableIDs)
+		clear(sc.RelatedTableIDs)
 	}
 	if sc.TblInfo2UnionScan == nil {
 		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
@@ -1049,6 +1096,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	errLevels := sc.ErrLevels()
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	inImportInto := false
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
@@ -1077,12 +1125,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			!strictSQLMode || stmt.IgnoreErr,
 		)
 		sc.Priority = stmt.Priority
-		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
-			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
-			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() ||
-				!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode || stmt.IgnoreErr ||
-				vars.SQLMode.HasAllowInvalidDatesMode()))
+		sc.SetTypeFlags(util.GetTypeFlagsForInsert(sc.TypeFlags(), vars.SQLMode, stmt.IgnoreErr))
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.SetTypeFlags(sc.TypeFlags().
@@ -1096,6 +1139,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+	case *ast.ImportIntoStmt:
+		inImportInto = true
+		sc.SetTypeFlags(util.GetTypeFlagsForImportInto(sc.TypeFlags(), vars.SQLMode))
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
@@ -1153,7 +1199,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// WithAllowNegativeToUnsigned with false value indicates values less than 0 should be clipped to 0 for unsigned integer types.
 		// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 		// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !inImportInto && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
 	)
 
 	vars.PlanCacheParams.Reset()

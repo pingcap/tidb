@@ -1079,6 +1079,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMemoryExceedForInstance:          mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]", nil),
 	ErrDeleteNotFoundColumn:             mysql.Message("Delete can not find column %s for table %s", nil),
 	ErrKeyTooLarge:                      mysql.Message("key is too large, the size of given key is %d", nil),
+	ErrProtectedTableMode:               mysql.Message("Table %s is in mode %s", nil),
+	ErrInvalidTableModeSet:              mysql.Message("Invalid mode set from (or by default) %s to %s for table %s", nil),
 
 	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 
@@ -1179,4 +1181,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrGlobalIndexNotExplicitlySet: mysql.Message("Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption", nil),
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
+	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
+	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
 }

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -40,6 +41,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	rcmgrutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -119,6 +123,11 @@ type regionJob struct {
 
 	// injected is used in test to set the behaviour
 	injected []injectedBehaviour
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (*regionJob) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "regionJob", "regionJob", nil
 }
 
 type tikvWriteResult struct {
@@ -315,7 +324,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	return err
 }
 
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) (err error) {
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -332,8 +341,32 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	})
 
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
+	// set a timeout for the write operation, if it takes too long, we will return with common.ErrWriteTooSlow and let caller retry the whole job instead of being stuck forever.
+	timeout := 15 * time.Minute
+	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
 	defer cancel()
+
+	// A defer function to handle all DeadlineExceeded errors that may occur
+	// during the write operation using this context with 15 minutes timeout.
+	// When the error is "context deadline exceeded", we will check if the cause
+	// is common.ErrWriteTooSlow and return the common.ErrWriteTooSlow instead so
+	// our caller would be able to retry this doWrite operation. By doing this
+	// defer we are hoping to handle all DeadlineExceeded error during this
+	// write, either from gRPC stream or write limiter WaitN operation.
+	wctx := ctx
+	defer func() {
+		if err == nil {
+			return
+		}
+		if errors.Cause(err) == context.DeadlineExceeded {
+			if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+				log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv",
+					zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
+					zap.Int("limit-size", local.writeLimiter.Limit()))
+				err = errors.Trace(cause) // return the common.ErrWriteTooSlow instead to let caller retry it
+			}
+		}
+	}()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
@@ -464,6 +497,19 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
 
+	// preparation work for the write timeout fault injection, only enabled if the following failpoint is enabled
+	wcancel := func() {}
+	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
+		var innerTimeout time.Duration
+		// GO_FAILPOINTS action supplies the duration in
+		ms, _ := val.(int)
+		innerTimeout = time.Duration(ms) * time.Millisecond
+		log.FromContext(ctx).Info("Injecting a timeout to write context.")
+		wctx, wcancel = context.WithTimeoutCause(
+			ctx, innerTimeout, common.ErrWriteTooSlow)
+	})
+	defer wcancel()
+
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 		preparedMsg := &grpc.PreparedMsg{}
@@ -474,7 +520,25 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		}
 
 		for i := range clients {
-			if err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size)); err != nil {
+			// original ctx would be used when failpoint is not enabled
+			// that new context would be used when failpoint is enabled
+			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))
+			if err != nil {
+				// We expect to encounter two types of errors here:
+				// 1. context.DeadlineExceeded — occurs when the calculated delay is
+				//    less than the remaining time in the context, but the context
+				//    expires while sleeping.
+				// 2. "rate: Wait(n=%d) would exceed context deadline" — a fast-fail
+				//    path triggered when the delay already exceeds the remaining
+				//    time for context before sleeping.
+				//
+				// Unfortunately, we cannot precisely control when the context will
+				// expire, so both scenarios are valid and expected.
+				// Fortunately, the "rate: Wait" error is already treated as
+				// retryable, so we only need to explicitly handle
+				// context.DeadlineExceeded here.
+				// We rely on the defer function at the top of doWrite to handle it
+				// for us in general.
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
@@ -705,7 +769,15 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 	clientFactory := local.importClientFactory
 	supportMultiIngest := local.supportMultiIngest
 	shouldCheckWriteStall := local.ShouldCheckWriteStall
-	if shouldCheckWriteStall {
+
+	var limiter *ingestLimiter
+	if x := local.ingestLimiter.Load(); x != nil {
+		limiter = x
+	} else {
+		limiter = &ingestLimiter{}
+	}
+
+	if shouldCheckWriteStall && limiter.NoLimit() {
 		writeStall, resp, err := local.checkWriteStall(ctx, j.region)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -718,12 +790,14 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 	batch := 1
 	if supportMultiIngest {
 		batch = len(j.writeResult.sstMeta)
+		batch = min(batch, limiter.Burst())
 	}
 
 	var resp *sst.IngestResponse
 	for start := 0; start < len(j.writeResult.sstMeta); start += batch {
 		end := min(start+batch, len(j.writeResult.sstMeta))
 		ingestMetas := j.writeResult.sstMeta[start:end]
+		weight := uint(len(ingestMetas))
 
 		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 
@@ -773,6 +847,10 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
+		err = limiter.Acquire(leader.StoreId, weight)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if supportMultiIngest {
 			req := &sst.MultiIngestRequest{
 				Context: reqCtx,
@@ -786,6 +864,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			}
 			resp, err = cli.Ingest(ctx, req)
 		}
+		limiter.Release(leader.StoreId, weight)
 		if resp.GetError() != nil || err != nil {
 			// remove finished sstMetas
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
@@ -1179,6 +1258,9 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 			select {
 			case <-workerCtx.Done():
 				j.done(b.jobWg)
+				if j.region != nil && j.region.Region != nil {
+					b.releaseStoreLoad(j.region.Region.Peers)
+				}
 				return
 			case b.innerJobToWorkerCh <- j:
 			}
@@ -1267,4 +1349,133 @@ func (b *storeBalancer) releaseStoreLoad(peers []*metapb.Peer) {
 			goto retry
 		}
 	}
+}
+
+type regionJobWorker struct {
+	ctx             context.Context
+	jobInCh         chan *regionJob
+	jobOutCh        chan *regionJob
+	afterExecuteJob func([]*metapb.Peer)
+	jobWg           *sync.WaitGroup
+	local           *Backend
+}
+
+// HandleTask process a single job that reads from the job channel.
+// If the worker fails to process the job, it will set the error to the context.
+// Besides, the worker must call jobWg.done() if it does not put the job into jobOutCh.
+func (w *regionJobWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err error) {
+	// As we need to call job.done() after panic, we recover here rather than in worker pool.
+	defer util2.Recover("region job worker", "handleTableScanTaskWithRecover", func() {
+		err = errors.Errorf("region job worker panic")
+		job.done(w.jobWg)
+	}, false)
+
+	failpoint.Inject("injectPanicForRegionJob", nil)
+
+	defer func() {
+		failpoint.Inject("mockJobWgDone", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				w.jobWg.Add(-v)
+			}
+		})
+	}()
+
+	var peers []*metapb.Peer
+	// in unit test, we may not have the real peers
+	if job.region != nil && job.region.Region != nil {
+		peers = job.region.Region.GetPeers()
+	}
+	failpoint.InjectCall("beforeExecuteRegionJob", w.ctx)
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
+	err = w.local.executeJob(w.ctx, job)
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
+
+	if w.afterExecuteJob != nil {
+		w.afterExecuteJob(peers)
+	}
+	switch job.stage {
+	case regionScanned, wrote, ingested:
+		select {
+		case <-w.ctx.Done():
+			job.done(w.jobWg)
+			return nil
+		case w.jobOutCh <- job:
+		}
+	case needRescan:
+		jobs, err2 := w.local.generateJobForRange(
+			w.ctx,
+			job.ingestData,
+			[]common.Range{job.keyRange},
+			job.regionSplitSize,
+			job.regionSplitKeys,
+		)
+		if err2 != nil {
+			// Don't need to put the job back to retry, because generateJobForRange
+			// has done the retry internally. Here just done for the "needRescan"
+			// job and exit directly.
+			job.done(w.jobWg)
+			return err2
+		}
+		// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
+		newJobCnt := len(jobs) - 1
+		for newJobCnt > 0 {
+			job.ref(w.jobWg)
+			newJobCnt--
+		}
+		for _, j := range jobs {
+			j.lastRetryableErr = job.lastRetryableErr
+			select {
+			case <-w.ctx.Done():
+				j.done(w.jobWg)
+				// don't exit here, we mark done for each job and exit in the outer loop
+			case w.jobOutCh <- j:
+			}
+		}
+	}
+
+	return err
+}
+
+func (*regionJobWorker) Close() error {
+	return nil
+}
+
+func getRegionJobWorkerPool(
+	workerCtx context.Context,
+	jobWg *sync.WaitGroup,
+	local *Backend,
+	balancer *storeBalancer,
+	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
+) *workerpool.WorkerPool[*regionJob, *regionJob] {
+	var (
+		sourceChannel   = jobToWorkerCh
+		afterExecuteJob func([]*metapb.Peer)
+	)
+
+	if balancer != nil {
+		afterExecuteJob = balancer.releaseStoreLoad
+		sourceChannel = balancer.innerJobToWorkerCh
+	}
+
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
+
+	pool := workerpool.NewWorkerPool(
+		"regionJobWorkerPool",
+		rcmgrutil.DistTask,
+		local.GetWorkerConcurrency(),
+		func() workerpool.Worker[*regionJob, *regionJob] {
+			return &regionJobWorker{
+				ctx:             workerCtx,
+				local:           local,
+				jobInCh:         jobToWorkerCh,
+				jobOutCh:        jobFromWorkerCh,
+				afterExecuteJob: afterExecuteJob,
+				jobWg:           jobWg,
+			}
+		},
+	)
+
+	pool.SetResultSender(jobFromWorkerCh)
+	pool.SetTaskReceiver(sourceChannel)
+	return pool
 }

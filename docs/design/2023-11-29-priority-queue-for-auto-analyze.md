@@ -1,6 +1,6 @@
 # Priority Queue for Auto Analyze
 
-- Author(s): [Rustin Liu](http://github.com/hi-rustin)
+- Author(s): [Poe Liu](http://github.com/0xPoe)
 - Discussion PR: <https://github.com/pingcap/tidb/pull/49018/>
 - Tracking Issue: <https://github.com/pingcap/tidb/issues/50132>
 
@@ -68,16 +68,16 @@ Before we design the priority queue, we need to know the current auto analyze pr
       > We use `modify_count/count` to calculate the ratio. [autoanalyze.go?L301:40]
    5. **If the indexes have no statistics, we need to analyze them anyway.** [autoanalyze.go?L262:15]
 
-[session.go?L3470:15]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/session/session.go?L3470:15
-[domain.go?L2457:19]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/domain/domain.go?L2457:19&popover=pinned
-[domain.go?L2469:17]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/domain/domain.go?L2469:17&popover=pinned
-[autoanalyze.go?L149:15]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L149:15&popover=pinned
-[autoanalyze.go?L155:5]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L155:5&popover=pinned
-[autoanalyze.go?L243:6]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L243:6&popover=pinned
-[autoanalyze.go?L247:5]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L247:5&popover=pinned
-[autoanalyze.go?L287:6]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L287:6&popover=pinned
-[autoanalyze.go?L301:40]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L301:40&popover=pinned
-[autoanalyze.go?L262:15]: https://sourcegraph.com/github.com/hi-rustin/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L262:15&popover=pinned
+[session.go?L3470:15]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/session/session.go?L3470:15
+[domain.go?L2457:19]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/domain/domain.go?L2457:19&popover=pinned
+[domain.go?L2469:17]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/domain/domain.go?L2469:17&popover=pinned
+[autoanalyze.go?L149:15]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L149:15&popover=pinned
+[autoanalyze.go?L155:5]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L155:5&popover=pinned
+[autoanalyze.go?L243:6]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L243:6&popover=pinned
+[autoanalyze.go?L247:5]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L247:5&popover=pinned
+[autoanalyze.go?L287:6]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L287:6&popover=pinned
+[autoanalyze.go?L301:40]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L301:40&popover=pinned
+[autoanalyze.go?L262:15]: https://sourcegraph.com/github.com/pingcap/tidb@d4618d4a5f91ee3703336fd1ba328c2e477652e5/-/blob/pkg/statistics/handle/autoanalyze/autoanalyze.go?L262:15&popover=pinned
 
 The above process is the current auto analyze process. We can see that the current auto analyze process is a random selection algorithm. We need to design a priority queue to solve the above problems.
 

@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -129,7 +130,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	prepared := &ast.Prepared{
 		Stmt:     paramStmt,
-		StmtType: ast.GetStmtLabel(paramStmt),
+		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
@@ -185,10 +186,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	// Collect information for metadata lock.
-	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
-	for id := range vars.StmtCtx.MDLRelatedTableIDs {
+	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
+	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
+	for id := range vars.StmtCtx.RelatedTableIDs {
 		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))

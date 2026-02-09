@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	goerrors "errors"
 	"io"
 
 	"github.com/docker/go-units"
@@ -27,23 +28,30 @@ import (
 )
 
 var (
-	// default read buf size of kvReader, this buf is split into 3 parts, 2 for prefetch
-	// from storage, 1 for read by user.
-	defaultReadBufferSize = 64 * units.KiB
+	// DefaultReadBufferSize is the default read buf size of KVReader, this buf
+	// is split into 3 parts, 2 for prefetch from storage, 1 for read by user.
+	DefaultReadBufferSize = 64 * units.KiB
 )
 
-type kvReader struct {
+// KVReader reads a file in sorted KV format.
+// the format is as follows:
+//   - <kv-pair-block><kv-pair-block>....
+//   - each <kv-pair-block> is <key-len><value-len><key><value>
+//   - <key-len> and <value-len> are uint64 in big-endian
+type KVReader struct {
 	byteReader *byteReader
 }
 
-func newKVReader(
+// NewKVReader creates a new KVReader.
+func NewKVReader(
 	ctx context.Context,
 	name string,
 	store storage.ExternalStorage,
 	initFileOffset uint64,
 	bufSize int,
-) (*kvReader, error) {
-	oneThird := bufSize / 3
+) (*KVReader, error) {
+	// some test use very random buf size, might < 3
+	oneThird := max(bufSize/3, 1)
 	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, oneThird*2)
 	if err != nil {
 		return nil, err
@@ -52,12 +60,13 @@ func newKVReader(
 	if err != nil {
 		return nil, err
 	}
-	return &kvReader{
+	return &KVReader{
 		byteReader: br,
 	}, nil
 }
 
-func (r *kvReader) nextKV() (key, val []byte, err error) {
+// NextKV reads the next key-value pair from the file.
+func (r *KVReader) NextKV() (key, val []byte, err error) {
 	lenBytes, err := r.byteReader.readNBytes(8)
 	if err != nil {
 		return nil, nil, err
@@ -77,14 +86,15 @@ func (r *kvReader) nextKV() (key, val []byte, err error) {
 
 // noEOF converts the EOF error to io.ErrUnexpectedEOF.
 func noEOF(err error) error {
-	if err == io.EOF {
+	if goerrors.Is(err, io.EOF) {
 		logutil.BgLogger().Warn("unexpected EOF", zap.Error(errors.Trace(err)))
 		return io.ErrUnexpectedEOF
 	}
 	return err
 }
 
-func (r *kvReader) Close() error {
+// Close closes the reader.
+func (r *KVReader) Close() error {
 	if p := r.byteReader.concurrentReader.largeBufferPool; p != nil {
 		p.Destroy()
 	}

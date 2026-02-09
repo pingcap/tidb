@@ -118,7 +118,7 @@ func createPlannerSuite() (s *plannerSuite) {
 	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
-	domain.BindDomain(ctx, do)
+	ctx.BindDomain(do)
 	ctx.SetInfoSchema(s.is)
 	s.ctx = ctx
 	s.sctx = ctx
@@ -2028,11 +2028,11 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 or g = 5",
-			result: "PRIMARY_KEY,[g,b_global]",
+			result: "PRIMARY_KEY,[b_global,g]",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "b_c_global", // will prune `b_c`
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c`
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",

@@ -561,3 +561,65 @@ insert into t values (1, 10);
 insert into t values (2, 20);
 insert into t values (3, 30);
 select _tidb_rowid from t where id in (1, 2, 3);
+
+# TestIssue59427
+drop table if exists t;
+create table t(a int, b int, c int, primary key(a,b), key ib(b));
+explain format = brief select * from t use index (ib) where a = 1 and b = 1;
+explain format = brief select /*+ use_index(t, ib) */ * from t where a = 1 and b = 1;
+explain format = brief select * from t as tt use index (ib) where a = 1 and b = 1;
+explain format = brief select /*+ use_index(tt, ib) */ * from t as tt where a = 1 and b = 1;
+explain format = brief update t use index (ib) set c = 1 where a = 1 and b = 1;
+explain format = brief update /*+ use_index(t, ib) */ t set c = 1 where a = 1 and b = 1;
+explain format = brief delete from t use index (ib) where a = 1 and b = 1;
+explain format = brief delete /*+ use_index(t, ib) */ from t where a = 1 and b = 1;
+create database if not exists test_59427;
+create table test_59427.t(a int, b int, c int, primary key(a,b), key ib(b));
+explain format = brief select * from test_59427.t use index (ib) where a = 1 and b = 1;
+explain format = brief select /*+ use_index(test_59427.t, ib) */ * from test_59427.t where a = 1 and b = 1;
+explain format = brief select * from test_59427.t as tt use index (ib) where a = 1 and b = 1;
+explain format = brief select /*+ use_index(test_59427.tt, ib) */ * from test_59427.t as tt where a = 1 and b = 1;
+drop database if exists test_59427;
+
+# TestIssue60692
+drop table if exists t1,t2,t3,t4,t5;
+create table t1(a int, b int, c int, d int, e int);
+create table t2(a int, b int, c int, d int, e int);
+create table t3(a int, b int, c int, d int, e int);
+create table t4(a int, b int, c int, d int, e int);
+create table t5(a int, b int, c int, d int, e int);
+explain format = brief select tmp4.b
+  from t1 join t2 on t1.a = t2.b
+  join t3 on t1.b = t3.b
+  left join
+    (select a, b, c, (row_number() over (partition by b order by e asc)) from t4) tmp4 on tmp4.b = t2.c and tmp4.c = t3.c
+  join t5 on t5.a = t1.e;
+
+# TestIssue56270
+drop table if exists t0, v0;
+drop view if exists v0;
+CREATE  TABLE  t0(c0 INTEGER);
+CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
+SELECT t0.c0 FROM v0, t0 WHERE RAND();
+
+# TestIssue63353
+drop table if exists t1,t2,t3,t4;
+create table t1(a int, b int);
+create table t2 like t1;
+create table t3 like t1;
+create table t4 like t1;
+
+# enable reorder by dp
+set @@tidb_opt_join_reorder_threshold=5;
+
+explain format='brief' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
+set @@tidb_opt_join_reorder_threshold=default;
+
+# Issue64697
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int) partition by hash(a) partitions 2;
+insert into t1 value(1,1);
+insert into t2 value(1,1);
+delete t1, t2 from t1, t2 where t1.a = t2.a;
+drop table t1, t2;

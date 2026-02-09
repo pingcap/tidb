@@ -8,10 +8,15 @@ go_library(
     deps = [
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
-        "//pkg/metrics",
         "//pkg/util/backoff",
+        "//pkg/util/cgroup",
+        "//pkg/util/cpu",
         "//pkg/util/logutil",
+        "//pkg/util/memory",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )

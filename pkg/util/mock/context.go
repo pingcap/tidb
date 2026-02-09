@@ -66,7 +66,8 @@ var (
 type Context struct {
 	planctx.EmptyPlanContextExtended
 	*sessionexpr.ExprContext
-	txn           wrapTxn    // mock global variable
+	txn           wrapTxn // mock global variable
+	dom           any
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
@@ -362,6 +363,9 @@ func (*Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
 
+// BuiltinFunctionUsageInc implements sessionctx.Context.
+func (*Context) BuiltinFunctionUsageInc(_ string) {}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (*Context) GetGlobalSysVar(_ sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
@@ -425,11 +429,11 @@ func (*fakeTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
 
 func (*fakeTxn) SetOption(_ int, _ any) {}
 
-func (*fakeTxn) Get(ctx context.Context, _ kv.Key) ([]byte, error) {
+func (*fakeTxn) Get(ctx context.Context, _ kv.Key, _ ...kv.GetOption) (kv.ValueEntry, error) {
 	// Check your implementation if you meet this error. It's dangerous if some calculation relies on the data but the
 	// read result is faked.
 	logutil.Logger(ctx).Warn("mock.Context: No store is specified but trying to access data from a transaction.")
-	return nil, nil
+	return kv.ValueEntry{}, nil
 }
 
 func (*fakeTxn) Valid() bool { return true }
@@ -639,6 +643,16 @@ func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
 	return nil
 }
 
+// BindDomain bind domain into ctx.
+func (c *Context) BindDomain(dom any) {
+	c.dom = dom
+}
+
+// GetDomain get domain from ctx.
+func (c *Context) GetDomain() any {
+	return c.dom
+}
+
 // NewContextDeprecated creates a new mocked sessionctx.Context.
 // Deprecated: This method is only used for some legacy code.
 // DO NOT use mock.Context in new production code, and use the real Context instead.
@@ -670,7 +684,6 @@ func newContext() *Context {
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	vars.EnablePaging = variable.DefTiDBEnablePaging
 	vars.MinPagingSize = variable.DefMinPagingSize
-	vars.CostModelVersion = variable.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
 	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {

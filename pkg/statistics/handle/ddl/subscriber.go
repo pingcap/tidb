@@ -111,7 +111,11 @@ func (h subscriber) handle(
 			}
 		}
 	case model.ActionModifyColumn:
-		newTableInfo, modifiedColumnInfo := change.GetModifyColumnInfo()
+		newTableInfo, modifiedColumnInfo, analyzed := change.GetModifyColumnInfo()
+		// since tidb_stats_update_during_ddl will do analyze in ddl, skip col init here.
+		if analyzed {
+			return nil
+		}
 		ids, err := getPhysicalIDs(sctx, newTableInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -315,7 +319,7 @@ func (h subscriber) delayedDeleteStats4PhysicalID(
 	sctx sessionctx.Context,
 	id int64,
 ) error {
-	startTS, err2 := storage.UpdateStatsMetaVersion(ctx, sctx, id)
+	startTS, err2 := storage.UpdateStatsMetaVerAndLastHistUpdateVer(ctx, sctx, id)
 	if err2 != nil {
 		return errors.Trace(err2)
 	}

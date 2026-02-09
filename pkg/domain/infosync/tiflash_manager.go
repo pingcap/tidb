@@ -120,7 +120,7 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspac
 func calculateTiFlashProgress(keyspaceID tikv.KeyspaceID, tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (float64, error) {
 	var regionCount int
 	if err := GetTiFlashRegionCountFromPD(context.Background(), tableID, &regionCount); err != nil {
-		logutil.BgLogger().Error("Fail to get regionCount from PD.",
+		logutil.BgLogger().Warn("Fail to get regionCount from PD.",
 			zap.Int64("tableID", tableID))
 		return 0, errors.Trace(err)
 	}

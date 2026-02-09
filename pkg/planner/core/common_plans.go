@@ -697,6 +697,17 @@ type PlanReplayer struct {
 	PlanDigest string
 }
 
+// DistributeTable represents a distribute table plan.
+type DistributeTable struct {
+	baseSchemaProducer
+
+	TableInfo      *model.TableInfo
+	PartitionNames []pmodel.CIStr
+	Engine         string
+	Rule           string
+	Timeout        string
+}
+
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
@@ -954,16 +965,6 @@ func (e *Explain) RenderResult() error {
 			}
 		} else {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
-		}
-	}
-
-	if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
-		if pp, ok := e.TargetPlan.(base.PhysicalPlan); ok {
-			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
-			if _, err := getPlanCost(pp, property.RootTaskType,
-				optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate|costusage.CostFlagTrace)); err != nil {
-				return err
-			}
 		}
 	}
 

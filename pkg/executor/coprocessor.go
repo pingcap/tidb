@@ -200,7 +200,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is)
+	b := newExecutorBuilder(h.sctx, is, nil)
 	return b.build(plan), nil
 }
 

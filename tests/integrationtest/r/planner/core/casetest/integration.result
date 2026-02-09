@@ -450,8 +450,8 @@ IndexReader	0.67	root		index:IndexRangeScan
 explain format = 'brief' select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d;
 id	estRows	task	access object	operator info
 IndexReader	0.00	root		index:Selection
-└─Selection	0.00	cop[tikv]		eq(planner__core__casetest__integration.t2.c, 3), or(and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), lt(planner__core__casetest__integration.t2.d, 3))), and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), gt(planner__core__casetest__integration.t2.d, 6))))
-  └─IndexRangeScan	10.00	cop[tikv]	table:t2, index:idx_a_b_c_d(a, b, c, d)	range:[1,1], keep order:true, stats:pseudo
+└─Selection	0.00	cop[tikv]		or(and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), lt(planner__core__casetest__integration.t2.d, 3))), and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), gt(planner__core__casetest__integration.t2.d, 6))))
+  └─IndexRangeScan	0.00	cop[tikv]	table:t2, index:idx_a_b_c_d(a, b, c, d)	range:[1 1 3,1 1 3], keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int not null, b int not null);
 explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
@@ -1154,15 +1154,15 @@ TableReader_7	3.00	130.42	root		data:Selection_6
   └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_11	1.00	98.74	root		offset:0, count:1
-└─TableReader_24	1.00	98.74	root		data:Limit_23
+Limit_11	1.00	105.07	root		offset:0, count:1
+└─TableReader_24	1.00	105.07	root		data:Limit_23
   └─Limit_23	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_22	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_21	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_8	1.00	98.74	root		offset:0, count:1
-└─TableReader_13	1.00	98.74	root		data:Limit_12
+Limit_8	1.00	105.07	root		offset:0, count:1
+└─TableReader_13	1.00	105.07	root		data:Limit_12
   └─Limit_12	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_11	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false
@@ -1174,15 +1174,15 @@ TableReader_7	3.00	130.42	root		data:Selection_6
   └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_11	1.00	98.74	root		offset:0, count:1
-└─TableReader_24	1.00	98.74	root		data:Limit_23
+Limit_11	1.00	105.07	root		offset:0, count:1
+└─TableReader_24	1.00	105.07	root		data:Limit_23
   └─Limit_23	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_22	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_21	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_8	1.00	98.74	root		offset:0, count:1
-└─TableReader_13	1.00	98.74	root		data:Limit_12
+Limit_8	1.00	105.07	root		offset:0, count:1
+└─TableReader_13	1.00	105.07	root		data:Limit_12
   └─Limit_12	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_11	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false

@@ -1043,6 +1043,8 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
@@ -1759,17 +1761,19 @@ func TestMPP47766(t *testing.T) {
 		"  └─TableReader_20 10000.00 root  MppVersion: 2, data:ExchangeSender_19",
 		"    └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"      └─TableFullScan_18 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
-	tk.MustQuery("explain select /*+ read_from_storage(tiflash[traces]) */ date(test_time) as test_date, count(1) from `traces` group by 1").Check(testkit.Rows(
-		"TableReader_31 8000.00 root  MppVersion: 2, data:ExchangeSender_30",
-		"└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4",
-		"    └─Projection_26 8000.00 mpp[tiflash]  Column#4, test.traces.test_time",
-		"      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#4, funcs:firstrow(Column#15)->test.traces.test_time",
-		"        └─ExchangeReceiver_29 8000.00 mpp[tiflash]  ",
-		"          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
-		"            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#14, funcs:firstrow(Column#16)->Column#15",
-		"              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#16, date(test.traces.test_time)->Column#17",
-		"                └─TableFullScan_15 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select /*+ read_from_storage(tiflash[traces]) */ date(test_time) as test_date, count(1) from `traces` group by 1").
+		Check(testkit.Rows(
+			"TableReader_31 8000.00 root  MppVersion: 2, data:ExchangeSender_30",
+			"└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4",
+			"    └─Projection_26 8000.00 mpp[tiflash]  Column#4, test.traces.test_time",
+			"      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#4, funcs:firstrow(Column#15)->test.traces.test_time",
+			"        └─ExchangeReceiver_29 8000.00 mpp[tiflash]  ",
+			"          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
+			"            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#14, funcs:firstrow(Column#16)->Column#15",
+			"              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#16, date(test.traces.test_time)->Column#17",
+			"                └─TableFullScan_15 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo",
+		))
 }
 
 func TestUnionScan(t *testing.T) {
@@ -2204,4 +2208,44 @@ func TestIssue59877(t *testing.T) {
 			"                  └─Projection 9990.00 mpp[tiflash]  test.t2.id, cast(test.t2.id, decimal(20,0) UNSIGNED)->Column#14",
 			"                    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.id))",
 			"                      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"))
+}
+
+func TestNoAliveTiFlashRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t,
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			//nolint:forcetypeassert
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			store := c.AllocID()
+			peer := c.AllocID()
+			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+			mockCluster.AddPeer(region1, store, peer)
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	dml := "insert into t values"
+	for i := range 50 {
+		dml += fmt.Sprintf("(%v, 0)", i)
+		if i != 49 {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash"))
+	}()
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
 }

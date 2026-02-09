@@ -89,8 +89,8 @@ func (c *CheckpointAdvancer) HasTask() bool {
 	return c.task != nil
 }
 
-// HasSubscriber returns whether the advancer is associated with a subscriber.
-func (c *CheckpointAdvancer) HasSubscribion() bool {
+// HasSubscriptions returns whether the advancer is associated with a subscriber.
+func (c *CheckpointAdvancer) HasSubscriptions() bool {
 	c.subscriberMu.Lock()
 	defer c.subscriberMu.Unlock()
 
@@ -116,7 +116,7 @@ func newCheckpointWithTS(ts uint64) *checkpoint {
 	}
 }
 
-func NewCheckpointWithSpan(s spans.Valued) *checkpoint {
+func newCheckpointWithSpan(s spans.Valued) *checkpoint {
 	return &checkpoint{
 		StartKey:        s.Key.StartKey,
 		EndKey:          s.Key.EndKey,
@@ -126,6 +126,9 @@ func NewCheckpointWithSpan(s spans.Valued) *checkpoint {
 }
 
 func (c *checkpoint) safeTS() uint64 {
+	if c.TS == 0 {
+		return 0
+	}
 	return c.TS - 1
 }
 
@@ -144,11 +147,19 @@ func (c *checkpoint) needResolveLocks() bool {
 	return time.Since(c.resolveLockTime) > 3*time.Minute
 }
 
-// NewCheckpointAdvancer creates a checkpoint advancer with the env.
-func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
+// NewTiDBCheckpointAdvancer creates a checkpoint advancer with the env in the TiDB node.
+func NewTiDBCheckpointAdvancer(env Env) *CheckpointAdvancer {
 	return &CheckpointAdvancer{
 		env: env,
-		cfg: config.Default(),
+		cfg: config.DefaultTiDBConfig(),
+	}
+}
+
+// NewCommandCheckpointAdvancer creates a checkpoint advancer with the env in the br process.
+func NewCommandCheckpointAdvancer(env Env) *CheckpointAdvancer {
+	return &CheckpointAdvancer{
+		env: env,
+		cfg: config.DefaultCommandConfig(),
 	}
 }
 
@@ -158,13 +169,6 @@ func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 // (Maybe by applying changes at begin of ticking, and add locks.)
 func (c *CheckpointAdvancer) UpdateConfig(newConf config.Config) {
 	c.cfg = newConf
-}
-
-// UpdateConfigWith updates the config by modifying the current config.
-func (c *CheckpointAdvancer) UpdateConfigWith(f func(*config.Config)) {
-	cfg := c.cfg
-	f(&cfg)
-	c.UpdateConfig(cfg)
 }
 
 // UpdateLastCheckpoint modify the checkpoint in ticking.
@@ -269,11 +273,6 @@ func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
 	f(c.checkpoints)
 }
 
-// only used for test
-func (c *CheckpointAdvancer) NewCheckpoints(cps *spans.ValueSortedFull) {
-	c.checkpoints = cps
-}
-
 func (c *CheckpointAdvancer) fetchRegionHint(ctx context.Context, startKey []byte) string {
 	region, err := locateKeyOfRegion(ctx, c.env, startKey)
 	if err != nil {
@@ -337,7 +336,7 @@ func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskE
 			log.Info("meet task event", zap.Stringer("event", &e))
 			if err := c.onTaskEvent(ctx, e); err != nil {
 				if errors.Cause(e.Err) != context.Canceled {
-					log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
+					log.Warn("listen task meet error, would reopen.", logutil.ShortError(err))
 					return err
 				}
 				return nil
@@ -379,7 +378,7 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 			break
 		}
 		log.Warn("failed to begin listening, retrying...", logutil.ShortError(err))
-		time.Sleep(c.cfg.BackoffTime)
+		time.Sleep(c.cfg.GetBackoffTime())
 	}
 
 	go func() {
@@ -396,8 +395,8 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 				log.Info("Meet task event", zap.String("category", "log backup advancer"), zap.Stringer("event", &e))
 				if err := c.onTaskEvent(ctx, e); err != nil {
 					if errors.Cause(e.Err) != context.Canceled {
-						log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
-						time.AfterFunc(c.cfg.BackoffTime, func() { c.StartTaskListener(ctx) })
+						log.Warn("listen task meet error, would reopen.", logutil.ShortError(err))
+						time.AfterFunc(c.cfg.GetBackoffTime(), func() { c.StartTaskListener(ctx) })
 					}
 					log.Info("Task watcher exits due to some error.", zap.String("category", "log backup advancer"),
 						logutil.ShortError(err))
@@ -433,7 +432,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		}
 		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
 		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
-		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs-1)
+		p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
 		if err != nil {
 			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
 		}
@@ -472,7 +471,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 }
 
 func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
-	cp := NewCheckpointWithSpan(s)
+	cp := newCheckpointWithSpan(s)
 	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
 			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
@@ -484,7 +483,6 @@ func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
 		return false
 	}
 	c.UpdateLastCheckpoint(cp)
-	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint.TS))
 	return true
 }
 
@@ -510,8 +508,10 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
 func (c *CheckpointAdvancer) stopSubscriber() {
 	c.subscriberMu.Lock()
 	defer c.subscriberMu.Unlock()
-	c.subscriber.Drop()
-	c.subscriber = nil
+	if c.subscriber != nil {
+		c.subscriber.Drop()
+		c.subscriber = nil
+	}
 }
 
 func (c *CheckpointAdvancer) SpawnSubscriptionHandler(ctx context.Context) {
@@ -564,7 +564,8 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 }
 
 func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, error) {
-	if c.cfg.CheckPointLagLimit <= 0 {
+	checkPointLagLimit := c.cfg.GetCheckPointLagLimit()
+	if checkPointLagLimit <= 0 {
 		return false, nil
 	}
 	globalTs, err := c.env.GetGlobalCheckpointForTask(ctx, c.task.Name)
@@ -582,7 +583,7 @@ func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, erro
 	}
 
 	lagDuration := oracle.GetTimeFromTS(now).Sub(oracle.GetTimeFromTS(globalTs))
-	if lagDuration > c.cfg.CheckPointLagLimit {
+	if lagDuration > checkPointLagLimit {
 		log.Warn("checkpoint lag is too large", zap.String("category", "log backup advancer"),
 			zap.Stringer("lag", lagDuration))
 		return true, nil
@@ -603,7 +604,12 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 		log.Warn("failed to check timestamp", logutil.ShortError(err))
 	}
 	if isLagged {
-		err := c.env.PauseTask(ctx, c.task.Name)
+		cp := oracle.GetTimeFromTS(c.lastCheckpoint.TS)
+		now := time.Now()
+		msg := fmt.Sprintf("The checkpoint is at %s, now it is %s, "+
+			"the lag is too huge (%s) hence pause the task to avoid impaction to the cluster",
+			cp.Format(time.RFC3339), now.Format(time.RFC3339), now.Sub(cp))
+		err := c.env.PauseTask(ctx, c.task.Name, PauseWithMessage(msg), PauseWithErrorSeverity)
 		if err != nil {
 			return errors.Annotate(err, "failed to pause task")
 		}

@@ -55,7 +55,7 @@ func (s *staticRecordSet) Next(ctx context.Context, req *chunk.Chunk) (err error
 			return
 		}
 		err = util.GetRecoverError(r)
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", s.sqlText), zap.Stack("stack"))
+		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", s.sqlText), zap.Stack("stack"))
 	}()
 
 	return exec.Next(ctx, s.executor, req)

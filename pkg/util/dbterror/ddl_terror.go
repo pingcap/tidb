@@ -503,6 +503,15 @@ var (
 	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
 	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
 	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
+
+	// ErrCannotSetAffinityOnTable is returned when set an invalid affinity on a table
+	ErrCannotSetAffinityOnTable = ClassDDL.NewStdErr(
+		mysql.ErrInvalidAffinityOption,
+		parser_mysql.Message("Can not set %s on a %s.", nil),
+	)
+
+	// ErrInvalidTableAffinity is returned when set an invalid affinity value on a table
+	ErrInvalidTableAffinity = ClassDDL.NewStd(mysql.ErrInvalidAffinityOption)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
@@ -524,6 +533,7 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrWriteConflictInTiDB:       {},
 	mysql.ErrTxnRetryable:              {},
 	mysql.ErrNotOwner:                  {},
+	mysql.ErrInvalidSplitRegionRanges:  {}, // PD client returns regions with no leader.
 
 	// Temporary network partitioning may cause pk commit failure.
 	uint16(terror.CodeResultUndetermined): {},

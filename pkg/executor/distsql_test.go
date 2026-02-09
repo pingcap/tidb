@@ -23,10 +23,13 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -43,6 +46,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // checkGoroutineExists
@@ -591,4 +595,53 @@ func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
 	})
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("1", "2", "3"))
+}
+
+func TestIndexLookUpPushDownCopTask(t *testing.T) {
+	// ensure cop-cache is enabled by default
+	defer config.RestoreFunc()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.CoprCache.CapacityMB = 100
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, a int, b int, index a(a))")
+	tk.MustExec("insert into t values(1,10,100),(2,20,200),(3,30,300)")
+	tk.MustExec("set @@tidb_session_alias='test_index_lookup_push_down_cop'")
+	// ensure paging is enabled by default
+	tk.MustExec("set @@tidb_enable_paging=1")
+
+	mustQueryWithCheck := func(sql string) *testkit.Result {
+		var mu sync.Mutex
+		reqParams := make([][]any, 0, 1)
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(req *tikvrpc.Request) {
+			copReq := req.Req.(*coprocessor.Request)
+			if copReq.ConnectionAlias != "test_index_lookup_push_down_cop" {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			reqParams = append(reqParams, []any{
+				copReq.PagingSize,
+				copReq.IsCacheEnabled,
+			})
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"))
+		}()
+		result := tk.MustQuery(sql)
+		mu.Lock()
+		defer mu.Unlock()
+		// For index lookup push down rows, paging and cop-cache should be disabled
+		require.Equal(t, [][]any{{uint64(0), false}}, reqParams)
+		return result
+	}
+
+	sql := "select /*+ index_lookup_pushdown(t, a) */ * from t order by id"
+	mustQueryWithCheck(sql).Check(testkit.Rows("1 10 100", "2 20 200", "3 30 300"))
+	r := mustQueryWithCheck("explain analyze " + sql)
+	localIndexLookUpRow := r.Rows()[2]
+	require.Contains(t, localIndexLookUpRow[0], "LocalIndexLookUp", r.String())
+	require.Equal(t, "3", localIndexLookUpRow[2], r.String())
 }

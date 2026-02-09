@@ -172,6 +172,13 @@ func TestBufferMemLimit(t *testing.T) {
 	require.Nil(t, got)
 }
 
+func TestGetAlignedSizeGetBlockCnt(t *testing.T) {
+	require.EqualValues(t, 1, getBlockCnt(10, 16))
+	require.EqualValues(t, 2, getBlockCnt(17, 16))
+	require.EqualValues(t, 16, GetAlignedSize(10, 16))
+	require.EqualValues(t, 32, GetAlignedSize(17, 16))
+}
+
 const dataNum = 100 * 1024 * 1024
 
 func BenchmarkStoreSlice(b *testing.B) {
@@ -249,7 +256,7 @@ func BenchmarkSortLocation(b *testing.B) {
 				rnd.Read(buf)
 			}
 			slices.SortFunc(data, func(a, b SliceLocation) int {
-				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
+				return bytes.Compare(bytesBuf.GetSlice(&a), bytesBuf.GetSlice(&b))
 			})
 		}()
 	}
@@ -298,7 +305,7 @@ func BenchmarkSortLocationWithGC(b *testing.B) {
 			}
 			runtime.GC()
 			slices.SortFunc(data, func(a, b SliceLocation) int {
-				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
+				return bytes.Compare(bytesBuf.GetSlice(&a), bytesBuf.GetSlice(&b))
 			})
 		}()
 	}

@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -373,7 +372,7 @@ func NewImportControllerWithPauser(
 			pdhttp.WithTLSConfig(tls.TLSConfig()),
 		).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 
-		if isLocalBackend(cfg) && cfg.Conflict.Strategy != config.NoneOnDup {
+		if cfg.Conflict.Strategy != config.NoneOnDup {
 			if err := tikv.CheckTiKVVersion(ctx, pdHTTPCli, minTiKVVersionForConflictStrategy, maxTiKVVersionForConflictStrategy); err != nil {
 				if !berrors.Is(err, berrors.ErrVersionMismatch) {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
@@ -593,7 +592,9 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	// we can handle the duplicated created with createIfNotExist statement
 	// and we will check the schema in TiDB is valid with the datafile in DataCheck later.
 	logger := log.FromContext(ctx)
-	concurrency := min(rc.cfg.App.RegionConcurrency, 8)
+	// the minimum 4 comes the fact that when connect to non-owner TiDB, the max
+	// QPS is 2 per connection due to polling every 500ms.
+	concurrency := max(2*rc.cfg.App.RegionConcurrency, 4)
 	// sql.DB is a connection pool, we set it to concurrency + 1(for job generator)
 	// to reuse connections, as we might call db.Conn/conn.Close many times.
 	// there's no API to get sql.DB.MaxIdleConns, so we revert to its default which is 2
@@ -1150,18 +1151,6 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 				f(do)
 			}
 		}
-}
-
-func (rc *Controller) buildTablesRanges() []tidbkv.KeyRange {
-	var keyRanges []tidbkv.KeyRange
-	for _, dbInfo := range rc.dbInfos {
-		for _, tableInfo := range dbInfo.Tables {
-			if ranges, err := distsql.BuildTableRanges(tableInfo.Core); err == nil {
-				keyRanges = append(keyRanges, ranges...)
-			}
-		}
-	}
-	return keyRanges
 }
 
 type checksumManagerKeyType struct{}

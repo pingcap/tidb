@@ -17,19 +17,20 @@ package external
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
-	"path"
+	"math/rand"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/pebble"
+	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"golang.org/x/exp/rand"
 )
 
 // only used in testing for now.
@@ -65,7 +65,7 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, 1)
 	if err != nil {
 		return err
 	}
@@ -101,14 +101,16 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 
 func TestWriter(t *testing.T) {
 	seed := time.Now().Unix()
-	rand.Seed(uint64(seed))
+	rand.Seed(seed)
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 
+	var kvAndStat [2]string
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
+		SetOnCloseFunc(func(s *WriterSummary) { kvAndStat = s.MultipleFilesStats[0].Filenames[0] }).
 		Build(memStore, "/test", "0")
 
 	writer := NewEngineWriter(w)
@@ -135,25 +137,25 @@ func TestWriter(t *testing.T) {
 	})
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, kvAndStat[0], memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	_, _, err = kvReader.NextKV()
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
-	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
+	statReader, err := newStatsReader(ctx, memStore, kvAndStat[1], bufSize)
 	require.NoError(t, err)
 
 	var keyCnt uint64 = 0
 	for {
 		p, err := statReader.nextProp()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
@@ -165,7 +167,7 @@ func TestWriter(t *testing.T) {
 
 func TestWriterFlushMultiFileNames(t *testing.T) {
 	seed := time.Now().Unix()
-	rand.Seed(uint64(seed))
+	rand.Seed(seed)
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
@@ -195,18 +197,13 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	err := writer.Close(ctx)
 	require.NoError(t, err)
 
-	var dataFiles, statFiles []string
-	err = memStore.WalkDir(ctx, &storage.WalkOption{SubDir: "/test"}, func(path string, size int64) error {
-		if strings.Contains(path, "_stat") {
-			statFiles = append(statFiles, path)
-		} else {
-			dataFiles = append(dataFiles, path)
-		}
-		return nil
-	})
+	dataFiles, statFiles, err := getKVAndStatFilesByScan(ctx, memStore, "test")
+	require.NoError(t, err)
 	require.NoError(t, err)
 	require.Len(t, dataFiles, 4)
 	require.Len(t, statFiles, 4)
+	dataFiles = removePartitionPrefix(t, dataFiles)
+	statFiles = removePartitionPrefix(t, statFiles)
 	for i := 0; i < 4; i++ {
 		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/0/%d", i))
 		require.Equal(t, statFiles[i], fmt.Sprintf("/test/0_stat/%d", i))
@@ -220,7 +217,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
-		SetKeyDuplicationEncoding(true).
+		SetOnDup(common.OnDuplicateKeyError).
 		Build(memStore, "/test", "0")
 	kvCount := 20
 	for i := 0; i < kvCount; i++ {
@@ -233,67 +230,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		require.NoError(t, err)
 	}
 	err := writer.Close(ctx)
-	require.NoError(t, err)
-
-	// test MergeOverlappingFiles will not change duplicate detection functionality.
-	err = mergeOverlappingFilesImpl(
-		ctx,
-		[]string{"/test/0/0"},
-		memStore,
-		100,
-		"/test2",
-		"mergeID",
-		1000,
-		1000,
-		8*1024,
-		1*size.MB,
-		2,
-		nil,
-		false,
-	)
-	require.NoError(t, err)
-
-	keys := make([][]byte, 0, kvCount)
-	values := make([][]byte, 0, kvCount)
-
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
-	require.NoError(t, err)
-	for i := 0; i < kvCount; i++ {
-		key, value, err := kvReader.nextKV()
-		require.NoError(t, err)
-		clonedKey := make([]byte, len(key))
-		copy(clonedKey, key)
-		clonedVal := make([]byte, len(value))
-		copy(clonedVal, value)
-		keys = append(keys, clonedKey)
-		values = append(values, clonedVal)
-	}
-	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
-	require.NoError(t, kvReader.Close())
-
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
-	data := &MemoryIngestData{
-		keyAdapter:         keyAdapter,
-		duplicateDetection: true,
-		duplicateDB:        db,
-		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		keys:               keys,
-		values:             values,
-		ts:                 123,
-	}
-	pool := membuf.NewPool()
-	defer pool.Destroy()
-	iter := data.NewIter(ctx, nil, nil, pool)
-
-	for iter.First(); iter.Valid(); iter.Next() {
-	}
-	err = iter.Error()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "found duplicate key")
+	require.ErrorContains(t, err, "found duplicate key")
 }
 
 func TestMultiFileStat(t *testing.T) {
@@ -323,6 +260,15 @@ func TestMultiFileStatOverlap(t *testing.T) {
 
 	s3.MinKey = dbkv.Key{0}
 	require.EqualValues(t, 260, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+}
+
+func removePartitionFromMultipleFilesStat(t *testing.T, in MultipleFilesStat) MultipleFilesStat {
+	out := in
+	for i := range out.Filenames {
+		namesWithoutPartition := removePartitionPrefix(t, []string{out.Filenames[i][0], out.Filenames[i][1]})
+		out.Filenames[i] = [2]string{namesWithoutPartition[0], namesWithoutPartition[1]}
+	}
+	return out
 }
 
 func TestWriterMultiFileStat(t *testing.T) {
@@ -410,7 +356,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 1,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[0])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[0]))
 	expected = MultipleFilesStat{
 		MinKey: []byte("key11"),
 		MaxKey: []byte("key16"),
@@ -421,7 +367,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 2,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[1])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[1]))
 	expected = MultipleFilesStat{
 		MinKey: []byte("key20"),
 		MaxKey: []byte("key24"),
@@ -432,14 +378,12 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 3,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[2])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[2]))
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
 
-	allDataFiles := make([]string, 9)
-	for i := range allDataFiles {
-		allDataFiles[i] = fmt.Sprintf("/test/0/%d", i)
-	}
+	allDataFiles, _, err := getKVAndStatFilesByScan(ctx, memStore, "test")
+	require.NoError(t, err)
 
 	err = mergeOverlappingFilesImpl(
 		ctx,
@@ -468,7 +412,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 1,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[0])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[0]))
 	expected = MultipleFilesStat{
 		MinKey: []byte("key11"),
 		MaxKey: []byte("key16"),
@@ -479,7 +423,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 1,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[1])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[1]))
 	expected = MultipleFilesStat{
 		MinKey: []byte("key20"),
 		MaxKey: []byte("key24"),
@@ -490,7 +434,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 1,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[2])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[2]))
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
 }
@@ -569,10 +513,12 @@ func TestFlushKVsRetry(t *testing.T) {
 	ctx := context.Background()
 	store := &writerFirstCloseFailStorage{ExternalStorage: storage.NewMemStorage(), shouldFail: true}
 
+	var kvAndStat [2]string
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(4).
 		SetMemorySizeLimit(100).
 		SetBlockSize(100). // 2 KV pair will trigger flush
+		SetOnCloseFunc(func(s *WriterSummary) { kvAndStat = s.MultipleFilesStats[0].Filenames[0] }).
 		Build(store, "/test", "0")
 	err := writer.WriteRow(ctx, []byte("key1"), []byte("val1"), nil)
 	require.NoError(t, err)
@@ -580,20 +526,71 @@ func TestFlushKVsRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRow(ctx, []byte("key2"), []byte("val2"), nil)
 	require.NoError(t, err)
-	// manually test flushKVs
-	err = writer.flushKVs(ctx, false)
-	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
 
 	require.False(t, store.shouldFail)
 
-	r, err := newStatsReader(ctx, store, "/test/0_stat/0", 100)
+	r, err := newStatsReader(ctx, store, kvAndStat[1], 100)
 	require.NoError(t, err)
 	p, err := r.nextProp()
 	lastKey := []byte{}
-	for err != io.EOF {
+	for !goerrors.Is(err, io.EOF) {
 		require.NoError(t, err)
 		require.True(t, bytes.Compare(lastKey, p.firstKey) < 0)
 		lastKey = append(lastKey[:0], p.firstKey...)
 		p, err = r.nextProp()
 	}
+}
+
+func TestGetAdjustedIndexBlockSize(t *testing.T) {
+	// our block size is calculated based on MaxTxnEntrySizeLimit, if you want to
+	// change it, contact with us please.
+	require.EqualValues(t, 120*units.MiB, tidbconfig.MaxTxnEntrySizeLimit)
+	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB, DefaultBlockSize))
+}
+
+func TestGetAdjustedMergeSortOverlapThresholdAndMergeSortFileCountStep(t *testing.T) {
+	tests := []struct {
+		concurrency int
+		want        int64
+	}{
+		{1, 250},
+		{2, 500},
+		{4, 1000},
+		{6, 1500},
+		{8, 2000},
+		{16, 4000},
+		{17, 4000},
+		{32, 4000},
+	}
+	for _, tt := range tests {
+		if got := GetAdjustedMergeSortOverlapThreshold(tt.concurrency); got != tt.want {
+			t.Errorf("GetAdjustedMergeSortOverlapThreshold() = %v, want %v", got, tt.want)
+		}
+		if got := GetAdjustedMergeSortFileCountStep(tt.concurrency); got != int(tt.want) {
+			t.Errorf("GetAdjustedMergeSortFileCountStep() = %v, want %v", got, tt.want)
+		}
+	}
+}
+
+func TestRandPartitionedPrefix(t *testing.T) {
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	prefix := "write-prefix"
+	partitioned := randPartitionedPrefix(prefix, rnd)
+	require.Equal(t, partitionHeaderChar, partitioned[0])
+	require.Equal(t, partitioned[10:], prefix)
+	require.True(t, isValidPartition([]byte(partitioned[:9])))
+
+	require.False(t, isValidPartition([]byte("aa")))
+	require.False(t, isValidPartition([]byte("aaa")))
+	require.False(t, isValidPartition([]byte("paz")))
+	require.False(t, isValidPartition([]byte("pza")))
+	require.False(t, isValidPartition([]byte("p000000000")))
+	require.False(t, isValidPartition([]byte("p0000000")))
+	require.False(t, isValidPartition([]byte("p0000000a")))
+	require.False(t, isValidPartition([]byte("p00000002")))
 }

@@ -18,12 +18,15 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"io"
+	"sort"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -128,12 +131,11 @@ func openAndGetFirstElem[
 	for i, f := range openers {
 		wg.Go(func() error {
 			rd, err := f()
-			switch err {
-			case nil:
-			case io.EOF:
-				// will leave a nil reader in `mayNilReaders`
-				return nil
-			default:
+			if err != nil {
+				if goerrors.Is(err, io.EOF) {
+					// will leave a nil reader in `mayNilReaders`
+					return nil
+				}
 				return err
 			}
 			mayNilReaders[i] = rd
@@ -152,7 +154,7 @@ func openAndGetFirstElem[
 		}
 		rd := *rp
 		e, err := rd.next()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			_ = rd.close()
 			mayNilReaders[j] = nil
 			continue
@@ -297,13 +299,13 @@ func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 		rd := *i.readers[i.lastReaderIdx]
 		e, err := rd.next()
 
-		switch err {
-		case nil:
+		switch {
+		case err == nil:
 			if i.checkHotspot && i.lastReaderIdx == i.lastHotspotIdx {
 				i.elemFromHotspot = &e
 			}
 			heap.Push(&i.h, mergeHeapElem[T]{elem: e, readerIdx: i.lastReaderIdx})
-		case io.EOF:
+		case goerrors.Is(err, io.EOF):
 			closeErr := rd.close()
 			if closeErr != nil {
 				i.logger.Warn("failed to close reader",
@@ -448,39 +450,44 @@ func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 
 // begin instantiations of mergeIter
 
-type kvPair struct {
-	key   []byte
-	value []byte
+// KVPair is a key-value pair.
+type KVPair struct {
+	Key   []byte
+	Value []byte
 }
 
-func (p *kvPair) sortKey() []byte {
-	return p.key
+func (p *KVPair) sortKey() []byte {
+	return p.Key
 }
 
-func (p *kvPair) cloneInnerFields() {
-	p.key = append([]byte{}, p.key...)
-	p.value = append([]byte{}, p.value...)
+func (p *KVPair) cloneInnerFields() {
+	p.Key = append([]byte{}, p.Key...)
+	p.Value = append([]byte{}, p.Value...)
 }
 
-func (p *kvPair) len() int {
-	return len(p.key) + len(p.value)
+func (p *KVPair) len() int {
+	return len(p.Key) + len(p.Value)
+}
+
+func getPairKey(p *KVPair) []byte {
+	return p.Key
 }
 
 type kvReaderProxy struct {
 	p string
-	r *kvReader
+	r *KVReader
 }
 
 func (p kvReaderProxy) path() string {
 	return p.p
 }
 
-func (p kvReaderProxy) next() (*kvPair, error) {
-	k, v, err := p.r.nextKV()
+func (p kvReaderProxy) next() (*KVPair, error) {
+	k, v, err := p.r.NextKV()
 	if err != nil {
 		return nil, err
 	}
-	return &kvPair{key: k, value: v}, nil
+	return &KVPair{Key: k, Value: v}, nil
 }
 
 func (p kvReaderProxy) switchConcurrentMode(useConcurrent bool) error {
@@ -493,7 +500,7 @@ func (p kvReaderProxy) close() error {
 
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
 type MergeKVIter struct {
-	iter    *mergeIter[*kvPair, kvReaderProxy]
+	iter    *mergeIter[*KVPair, kvReaderProxy]
 	memPool *membuf.Pool
 }
 
@@ -509,9 +516,9 @@ func NewMergeKVIter(
 	checkHotspot bool,
 	outerConcurrency int,
 ) (*MergeKVIter, error) {
-	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
+	readerOpeners := make([]readerOpenerFn[*KVPair, kvReaderProxy], 0, len(paths))
 	if outerConcurrency <= 0 {
-		outerConcurrency = 1
+		return nil, errors.New("outerConcurrency must be positive, caller must ensure that the correct value is passed in")
 	}
 	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
 	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
@@ -524,10 +531,12 @@ func NewMergeKVIter(
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
-			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
+			rd, err := NewKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
 			if err != nil {
 				return nil, err
 			}
+			rd.byteReader.readDurHist = metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
+			rd.byteReader.readRateHist = metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],
@@ -539,7 +548,7 @@ func NewMergeKVIter(
 		})
 	}
 
-	it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, readerOpeners, checkHotspot)
+	it, err := newMergeIter[*KVPair, kvReaderProxy](ctx, readerOpeners, checkHotspot)
 	return &MergeKVIter{iter: it, memPool: memPool}, err
 }
 
@@ -556,12 +565,12 @@ func (i *MergeKVIter) Next() bool {
 
 // Key returns the current key.
 func (i *MergeKVIter) Key() []byte {
-	return i.iter.curr.key
+	return i.iter.curr.Key
 }
 
 // Value returns the current value.
 func (i *MergeKVIter) Value() []byte {
-	return i.iter.curr.value
+	return i.iter.curr.Value
 }
 
 // Close closes the iterator.
@@ -650,7 +659,7 @@ func newMergePropBaseIter(
 	limit = min(limit, int64(len(multiStat.Filenames)))
 
 	// we are rely on the caller have reduced the overall overlapping to less than
-	// MergeSortOverlapThreshold for []MultipleFilesStat. And we are going to open
+	// maxMergeSortOverlapThreshold for []MultipleFilesStat. And we are going to open
 	// about 8000 connection to read files.
 	preOpenLimit := limit * 2
 	preOpenLimit = min(preOpenLimit, int64(len(multiStat.Filenames)))
@@ -784,7 +793,7 @@ type MergePropIter struct {
 //
 // Input MultipleFilesStat should be processed by functions like
 // MergeOverlappingFiles to reduce overlapping to less than
-// MergeSortOverlapThreshold. MergePropIter will only open needed
+// maxMergeSortOverlapThreshold. MergePropIter will only open needed
 // MultipleFilesStat and its Filenames when iterates, and input MultipleFilesStat
 // must guarantee its order and its Filename order can be process from left to
 // right.
@@ -793,6 +802,12 @@ func NewMergePropIter(
 	multiStat []MultipleFilesStat,
 	exStorage storage.ExternalStorage,
 ) (*MergePropIter, error) {
+	// sort the multiStat by minKey
+	// otherwise, if the number of readers is less than the weight, the kv may not in order
+	sort.Slice(multiStat, func(i, j int) bool {
+		return bytes.Compare(multiStat[i].MinKey, multiStat[j].MinKey) < 0
+	})
+
 	closeReaderFlag := false
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))
 	for _, m := range multiStat {
@@ -811,7 +826,7 @@ func NewMergePropIter(
 	}
 
 	// see the comment of newMergePropBaseIter why we need to raise the limit
-	limit := MergeSortOverlapThreshold * 2
+	limit := maxMergeSortOverlapThreshold * 2
 
 	it, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
 	return &MergePropIter{

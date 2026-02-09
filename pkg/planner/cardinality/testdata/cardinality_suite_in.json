@@ -281,6 +281,8 @@
       "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 0 and b <= 100 or c >= 0 and c <= 100 order by c limit 1",
       "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+      "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
       "set @@tidb_opt_ordering_index_selectivity_threshold = 0.1",
       "explain format = 'brief' select * from t where b >= 9950 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 9950 order by c desc limit 1",
@@ -293,7 +295,12 @@
       "explain format = 'brief' select * from t where b >= 0 and b <= 50 or c >= 0 and c <= 50 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 9950 and c >= 9950 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 9950 and c >= 9900 order by c limit 1",
-      "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1"
+      "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+      "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_threshold = 1",
+      "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where d < 9950 order by c limit 1"
     ]
   },
   {

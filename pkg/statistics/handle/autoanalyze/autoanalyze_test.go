@@ -211,7 +211,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl1 := h.GetTableStats(tbl.Meta())
+	statsTbl1 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	// Check that all the version of t's stats are 1.
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
@@ -229,7 +229,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	// Auto analyze t whose version is 1 after setting global ver to 2.
 	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tbl.Meta())
+	statsTbl1 = h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
 	// All of its statistics should still be version 1.
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -253,7 +253,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl2 := h.GetTableStats(tbl2.Meta())
+	statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
 	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
@@ -281,12 +281,12 @@ func TestTableAnalyzed(t *testing.T) {
 	h := dom.StatsHandle()
 
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.LastAnalyzeVersion > 0)
 
 	testKit.MustExec("analyze table t")
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 
 	h.Clear()
@@ -297,7 +297,7 @@ func TestTableAnalyzed(t *testing.T) {
 		h.SetLease(oriLease)
 	}()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 }
 
@@ -459,14 +459,18 @@ func makeFailpointRes(t *testing.T, v any) string {
 func getMockedServerInfo() map[string]*infosync.ServerInfo {
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s1": {
-			ID:   "s1",
-			IP:   "127.0.0.1",
-			Port: 4000,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   "s1",
+				IP:   "127.0.0.1",
+				Port: 4000,
+			},
 		},
 		"s2": {
-			ID:   "s2",
-			IP:   "127.0.0.2",
-			Port: 4000,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   "s2",
+				IP:   "127.0.0.2",
+				Port: 4000,
+			},
 		},
 	}
 	return mockedAllServerInfos
@@ -668,7 +672,7 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("alter table t add index idx(a)")
@@ -679,4 +683,46 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
 	// Vector Index can not trigger auto analyze.
 	require.False(t, h.HandleAutoAnalyze())
+}
+
+func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	// Trigger the sync load by query.
+	// set lease > 0 to trigger on-demand stats load.
+	h.SetLease(time.Millisecond)
+	// Set analyze version to 1.
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx(a));")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustExec("analyze table t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.NotZero(t, statsTbl.LastAnalyzeVersion)
+	// FIXME: https://github.com/pingcap/tidb/issues/64400
+	require.Equal(t, statistics.Version0, statsTbl.StatsVer)
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	tk.MustQuery("select * from t force index(idx) where a = 1;").Check(testkit.Rows("1 2"))
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
+	// Set analyze version to 2.
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	// Trigger auto analyze.
+	// Set the auto analyze min count to 0 to skip the threshold check.
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+	// Insert more rows to meet the auto analyze threshold.
+	tk.MustExec("insert into t values (3, 4), (5,6), (7,8);")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.True(t, h.HandleAutoAnalyze())
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
 }

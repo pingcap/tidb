@@ -7,18 +7,29 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/vbauerster/mpb/v7"
 	"github.com/vbauerster/mpb/v7/decor"
+	"go.uber.org/zap"
 	"golang.org/x/term"
 )
 
 const OnlyOneTask int = -1
 
-var spinnerText []string = []string{".", "..", "..."}
+func coloredSpinner(s []string) []string {
+	c := color.New(color.Bold, color.FgGreen)
+	for i := range s {
+		s[i] = c.Sprint(s[i])
+	}
+	return s
+}
+
+var spinnerText []string = coloredSpinner([]string{"/", "-", "\\", "|"})
 
 type pbProgress struct {
 	bar      *mpb.Bar
@@ -44,6 +55,13 @@ func (p pbProgress) GetCurrent() int64 {
 // Close marks the progress as 100% complete and that Inc() can no longer be
 // called.
 func (p pbProgress) Close() {
+	// This wait shouldn't block.
+	// We are just waiting the progress bar refresh to the finished state.
+	defer func() {
+		p.bar.Wait()
+		p.progress.Wait()
+	}()
+
 	if p.bar.Completed() || p.bar.Aborted() {
 		return
 	}
@@ -111,8 +129,7 @@ func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFiel
 	return ops.startProgressBarOverTTY(title, total, extraFields...)
 }
 
-func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int,
-	extraFields ...ExtraField) ProgressWaiter {
+func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int, _ ...ExtraField) ProgressWaiter {
 	return noOPWaiter{utils.StartProgress(context.TODO(), title, int64(total), true, nil)}
 }
 
@@ -162,7 +179,7 @@ func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...
 }
 
 var (
-	spinnerDoneText = fmt.Sprintf("... %s", color.GreenString("DONE"))
+	spinnerDoneText = fmt.Sprintf(":: %s", color.GreenString("DONE"))
 )
 
 func buildOneTaskBar(pb *mpb.Progress, title string, total int) *mpb.Bar {
@@ -172,4 +189,81 @@ func buildOneTaskBar(pb *mpb.Progress, title string, total int) *mpb.Bar {
 		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText),
 			color.RedString("ABORTED"))),
 	)
+}
+
+type ProgressBar interface {
+	Increment()
+	Done()
+}
+
+type MultiProgress interface {
+	AddTextBar(string, int64) ProgressBar
+	Wait()
+}
+
+func (ops ConsoleOperations) StartMultiProgress() MultiProgress {
+	if !ops.OutputIsTTY() {
+		return &NopMultiProgress{}
+	}
+	pb := mpb.New(mpb.WithOutput(ops.Out()), mpb.WithRefreshRate(400*time.Millisecond))
+	return &TerminalMultiProgress{
+		progress: pb,
+	}
+}
+
+type NopMultiProgress struct{}
+
+type LogBar struct {
+	name  string
+	total int64
+}
+
+func (nmp *NopMultiProgress) AddTextBar(name string, total int64) ProgressBar {
+	log.Info("progress start", zap.String("name", name))
+	return &LogBar{
+		name:  name,
+		total: total,
+	}
+}
+
+func (nmp *NopMultiProgress) Wait() {}
+
+func (lb *LogBar) Increment() {
+	if atomic.AddInt64(&lb.total, -1) <= 0 {
+		log.Info("progress done", zap.String("name", lb.name))
+	}
+}
+
+func (lb *LogBar) Done() {}
+
+type TerminalBar struct {
+	bar *mpb.Bar
+}
+
+func (tb *TerminalBar) Increment() {
+	tb.bar.Increment()
+}
+
+func (tb *TerminalBar) Done() {
+	tb.bar.Abort(false)
+	tb.bar.Wait()
+}
+
+type TerminalMultiProgress struct {
+	progress *mpb.Progress
+}
+
+func (tmp *TerminalMultiProgress) AddTextBar(name string, total int64) ProgressBar {
+	bar := tmp.progress.New(total,
+		mpb.NopStyle(),
+		mpb.PrependDecorators(decor.Name(name)),
+		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText),
+			color.RedString("ABORTED"),
+		)),
+	)
+	return &TerminalBar{bar: bar}
+}
+
+func (tmp *TerminalMultiProgress) Wait() {
+	tmp.progress.Wait()
 }

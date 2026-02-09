@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -111,7 +110,7 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 	require.False(t, changed)
 }
 
-func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *types.FieldType {
+func colDefStrToColInfo(t *testing.T, str string, ctx *metabuild.Context) *model.ColumnInfo {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
@@ -119,7 +118,7 @@ func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *typ
 	chs, coll := charset.GetDefaultCharsetAndCollate()
 	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
 	require.NoError(t, err)
-	return &col.FieldType
+	return col.ToInfo()
 }
 
 func TestModifyColumn(t *testing.T) {
@@ -152,9 +151,9 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
 	}
 	for _, tt := range tests {
-		ftA := colDefStrToFieldType(t, tt.origin, ctx)
-		ftB := colDefStrToFieldType(t, tt.to, ctx)
-		err := checkModifyTypes(ftA, ftB, false)
+		colA := colDefStrToColInfo(t, tt.origin, ctx)
+		colB := colDefStrToColInfo(t, tt.to, ctx)
+		err := checkModifyTypes(colA, colB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {
@@ -484,7 +483,9 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		serverInfos := make(map[string]*infosync.ServerInfo, len(versions))
 		for i, v := range versions {
 			serverInfos[fmt.Sprintf("node%d", i)] = &infosync.ServerInfo{
-				ServerVersionInfo: infosync.ServerVersionInfo{Version: v}}
+				StaticServerInfo: infosync.StaticServerInfo{
+					ServerVersionInfo: infosync.ServerVersionInfo{Version: v},
+				}}
 		}
 		bytes, err := json.Marshal(serverInfos)
 		require.NoError(t, err)

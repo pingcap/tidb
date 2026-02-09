@@ -2,8 +2,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "addindextest2_test",
-    timeout = "long",
+    timeout = "moderate",
     srcs = [
+        "alter_job_test.go",
         "global_sort_test.go",
         "main_test.go",
     ],
@@ -11,10 +12,16 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
-        "//pkg/disttask/framework/scheduler",
+        "//pkg/ddl",
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/taskexecutor",
+        "//pkg/disttask/framework/testutil",
+        "//pkg/disttask/operator",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
+        "//pkg/lightning/backend/local",
         "//pkg/meta/model",
+        "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/store/helper",
         "//pkg/tablecodec",
@@ -22,10 +29,12 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//tests/realtikvtest",
+        "//tests/realtikvtest/testutils",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_phayes_freeport//:freeport",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_pd_client//:client",
     ],
 )

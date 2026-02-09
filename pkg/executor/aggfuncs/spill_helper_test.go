@@ -22,11 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
 
-var testLongStr1 string = getLongString("平p凯k星x辰c")
-var testLongStr2 string = getLongString("123aa啊啊aa")
+var testLongStr1 string = getLongString("平352p凯额6辰c")
+var testLongStr2 string = getLongString("123a啊f24f去rsgvsfg")
 
 func getChunk() *chunk.Chunk {
 	fieldTypes := make([]*types.FieldType, 1)
@@ -746,13 +747,15 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 
 func TestBasePartialResult4GroupConcat(t *testing.T) {
 	var serializeHelper = NewSerializeHelper()
+	serializeHelper.buf = make([]byte, 0)
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []basePartialResult4GroupConcat{
+		{valsBuf: bytes.NewBufferString("123"), buffer: nil},
 		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString("")},
-		{valsBuf: bytes.NewBufferString("xzxx"), buffer: bytes.NewBufferString(testLongStr2)},
-		{valsBuf: bytes.NewBufferString(testLongStr1), buffer: bytes.NewBufferString(testLongStr2)},
+		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString(testLongStr1)},
+		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString(testLongStr2)},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -787,8 +790,11 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
-		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).valsBuf.String(), deserializedPartialResults[i].valsBuf.String())
-		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer.String(), deserializedPartialResults[i].buffer.String())
+		if (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer != nil {
+			require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer.String(), deserializedPartialResults[i].buffer.String())
+		} else {
+			require.Equal(t, (*bytes.Buffer)(nil), deserializedPartialResults[i].buffer)
+		}
 	}
 }
 
@@ -884,11 +890,16 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
+	wrapMemAwareMap := func(m map[string]any) (res hack.MemAwareMap[string, any]) {
+		res.Init(m)
+		return res
+	}
+
 	// Initialize test data
 	expectData := []partialResult4JsonObjectAgg{
-		{entries: map[string]any{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"}, bInMap: 0},
-		{entries: map[string]any{"啊": testLongStr1, "我": float64(1.1), "反": int64(456)}, bInMap: 0},
-		{entries: map[string]any{"fe": testLongStr1, " ": int64(36798), "888": false, "": testLongStr2}, bInMap: 0},
+		{entries: wrapMemAwareMap(map[string]any{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"})},
+		{entries: wrapMemAwareMap(map[string]any{"啊": testLongStr1, "我": float64(1.1), "反": int64(456)})},
+		{entries: wrapMemAwareMap(map[string]any{"fe": testLongStr1, " ": int64(36798), "888": false, "": testLongStr2})},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)

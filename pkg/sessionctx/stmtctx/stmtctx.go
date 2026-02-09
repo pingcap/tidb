@@ -16,6 +16,7 @@ package stmtctx
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"slices"
@@ -25,11 +26,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -131,6 +134,77 @@ func (r *ReservedRowIDAlloc) Exhausted() bool {
 	return r.base >= r.max
 }
 
+type stmtCtxMu struct {
+	sync.Mutex
+
+	affectedRows uint64
+	foundRows    uint64
+
+	/*
+		These variables serve a similar purpose to those in MySQL's `COPY_INFO`,
+		they are used to count rows for INSERT/REPLACE/UPDATE queries:
+		  If a row is inserted then the copied variable is incremented.
+		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
+		     new data differs from the old one then the copied and the updated
+		     variables are incremented.
+		  The touched variable is incremented if a row was touched by the update part
+		     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
+		     was actually changed or not.
+
+		see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
+	*/
+	records uint64
+	deleted uint64
+	updated uint64
+	copied  uint64
+	touched uint64
+
+	message string
+}
+
+func (mu *stmtCtxMu) reset() *stmtCtxMu {
+	if mu == nil {
+		return &stmtCtxMu{}
+	}
+	mu.affectedRows = 0
+	mu.copied = 0
+	mu.deleted = 0
+	mu.foundRows = 0
+	mu.message = ""
+	mu.records = 0
+	mu.touched = 0
+	mu.updated = 0
+	return mu
+}
+
+type staleTSOProvider struct {
+	sync.Mutex
+	value *uint64
+	eval  func() (uint64, error)
+}
+
+func (s *staleTSOProvider) reset() *staleTSOProvider {
+	if s == nil {
+		return &staleTSOProvider{}
+	}
+	s.value = nil
+	s.eval = nil
+	return s
+}
+
+type stmtCache struct {
+	mu   sync.Mutex
+	data map[StmtCacheKey]any
+}
+
+func (s *stmtCache) reset() *stmtCache {
+	if s == nil {
+		return &stmtCache{}
+	}
+	s.data = nil
+	return s
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -202,33 +276,8 @@ type StatementContext struct {
 	InRestrictedSQL bool
 	ViewDepth       int32
 	// mu struct holds variables that change during execution.
-	mu struct {
-		sync.Mutex
+	mu *stmtCtxMu
 
-		affectedRows uint64
-		foundRows    uint64
-
-		/*
-			following variables are ported from 'COPY_INFO' struct of MySQL server source,
-			they are used to count rows for INSERT/REPLACE/UPDATE queries:
-			  If a row is inserted then the copied variable is incremented.
-			  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
-			     new data differs from the old one then the copied and the updated
-			     variables are incremented.
-			  The touched variable is incremented if a row was touched by the update part
-			     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
-			     was actually changed or not.
-
-			see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
-		*/
-		records uint64
-		deleted uint64
-		updated uint64
-		copied  uint64
-		touched uint64
-
-		message string
-	}
 	WarnHandler contextutil.WarnHandlerExt
 	// ExtraWarnHandler record the extra warnings and are only used by the slow log only now.
 	// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
@@ -260,6 +309,7 @@ type StatementContext struct {
 	// hint /* +ResourceGroup(name) */ can change the statement group name
 	ResourceGroupName   string
 	RunawayChecker      resourcegroup.RunawayChecker
+	IsTiKV              atomic2.Bool
 	IsTiFlash           atomic2.Bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
@@ -309,10 +359,7 @@ type StatementContext struct {
 	// stmtCache is used to store some statement-related values.
 	// add mutex to protect stmtCache concurrent access
 	// https://github.com/pingcap/tidb/issues/36159
-	stmtCache struct {
-		mu   sync.Mutex
-		data map[StmtCacheKey]any
-	}
+	stmtCache *stmtCache
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
@@ -421,14 +468,10 @@ type StatementContext struct {
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
-	StaleTSOProvider struct {
-		sync.Mutex
-		value *uint64
-		eval  func() (uint64, error)
-	}
+	StaleTSOProvider *staleTSOProvider
 
-	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
-	MDLRelatedTableIDs map[int64]struct{}
+	// RelatedTableIDs stores the IDs of tables used in statement.
+	RelatedTableIDs map[int64]struct{}
 
 	// ForShareLockEnabledByNoop indicates whether the current statement contains `for share` clause
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
@@ -451,7 +494,10 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{
-		ctxID: contextutil.GenContextID(),
+		ctxID:            contextutil.GenContextID(),
+		mu:               &stmtCtxMu{},
+		stmtCache:        &stmtCache{},
+		StaleTSOProvider: &staleTSOProvider{},
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
@@ -459,22 +505,48 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
 	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	sc.RelatedTableIDs = make(map[int64]struct{})
 	return sc
 }
 
 // Reset resets a statement context
-func (sc *StatementContext) Reset() {
+func (sc *StatementContext) Reset() bool {
+	// make sure no other goroutines still get locks.
+	if sc.mu != nil {
+		if !sc.mu.TryLock() {
+			return false
+		}
+		defer sc.mu.Unlock()
+	}
+	if sc.stmtCache != nil {
+		if !sc.stmtCache.mu.TryLock() {
+			return false
+		}
+		defer sc.stmtCache.mu.Unlock()
+	}
+	if sc.StaleTSOProvider != nil {
+		if !sc.StaleTSOProvider.TryLock() {
+			return false
+		}
+		defer sc.StaleTSOProvider.Unlock()
+	}
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
 		LockTableIDs:        sc.LockTableIDs,
 		TableStats:          sc.TableStats,
-		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		RelatedTableIDs:     sc.RelatedTableIDs,
 		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
 		WarnHandler:         sc.WarnHandler,
 		ExtraWarnHandler:    sc.ExtraWarnHandler,
 		IndexUsageCollector: sc.IndexUsageCollector,
+		mu:                  sc.mu,
+		stmtCache:           sc.stmtCache,
+		StaleTSOProvider:    sc.StaleTSOProvider,
 	}
+	sc.mu = sc.mu.reset()
+	sc.stmtCache = sc.stmtCache.reset()
+	sc.StaleTSOProvider = sc.StaleTSOProvider.reset()
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
@@ -489,6 +561,7 @@ func (sc *StatementContext) Reset() {
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
+	return true
 }
 
 // CtxID returns the context id of the statement
@@ -812,6 +885,7 @@ func (sc *StatementContext) SetAffectedRows(rows uint64) {
 func (sc *StatementContext) AffectedRows() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	failpoint.InjectCall("afterAffectedRowsLocked", sc)
 	return sc.mu.affectedRows
 }
 
@@ -1116,10 +1190,13 @@ func (sc *StatementContext) DetachMemDiskTracker() {
 	}
 }
 
-// SetStaleTSOProvider sets the stale TSO provider.
-func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
+// SetStaleTSOProviderIfNotExist sets the stale TSO provider.
+func (sc *StatementContext) SetStaleTSOProviderIfNotExist(eval func() (uint64, error)) {
 	sc.StaleTSOProvider.Lock()
 	defer sc.StaleTSOProvider.Unlock()
+	if sc.StaleTSOProvider.eval != nil {
+		return
+	}
 	sc.StaleTSOProvider.value = nil
 	sc.StaleTSOProvider.eval = eval
 }
@@ -1147,7 +1224,10 @@ func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
 	if sc.SetVarHintRestore == nil {
 		sc.SetVarHintRestore = make(map[string]string)
 	}
-	sc.SetVarHintRestore[name] = val
+
+	if _, found := sc.SetVarHintRestore[name]; !found {
+		sc.SetVarHintRestore[name] = val
+	}
 }
 
 // GetUsedStatsInfo returns the map for recording the used stats during query.
@@ -1412,4 +1492,22 @@ func (r StatsLoadResult) ErrorMsg() string {
 	b.WriteString(", err:")
 	b.WriteString(r.Error.Error())
 	return b.String()
+}
+
+type stmtLabelKeyType struct{}
+
+var stmtLabelKey stmtLabelKeyType
+
+// WithStmtLabel sets the label for the statement node.
+func WithStmtLabel(ctx context.Context, label string) context.Context {
+	return context.WithValue(ctx, stmtLabelKey, label)
+}
+
+// GetStmtLabel returns the label for the statement node.
+// context with stmtLabelKey will return the label if it exists.
+func GetStmtLabel(ctx context.Context, node ast.StmtNode) string {
+	if val := ctx.Value(stmtLabelKey); val != nil {
+		return val.(string)
+	}
+	return ast.GetStmtLabel(node)
 }

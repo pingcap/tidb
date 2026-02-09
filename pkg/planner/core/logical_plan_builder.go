@@ -561,7 +561,6 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// Add join reorder flag regardless of inner join or outer join.
 	b.optFlag = b.optFlag | rule.FlagJoinReOrder
 	b.optFlag |= rule.FlagPredicateSimplification
-	b.optFlag |= rule.FlagConvertOuterToInnerJoin
 
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left, false)
 	if err != nil {
@@ -1734,7 +1733,6 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	if err != nil {
 		return nil, err
 	}
-	b.optFlag |= rule.FlagConvertOuterToInnerJoin
 
 	joinPlan := logicalop.LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
 	joinPlan.SetChildren(leftPlan, rightPlan)
@@ -1987,7 +1985,7 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 	// Check if referenced columns of expressions in ORDER BY whole match some fields in DISTINCT,
 	// both original expression and alias can be referenced.
 	// e.g.
-	// select distinct a from t order by sin(a);                            ✔
+	// select distinct sin(a) from t order by a;                            ✔
 	// select distinct a, b from t order by a+b;                            ✔
 	// select distinct count(a), sum(a) from t group by b order by sum(a);  ✔
 	cols := expression.ExtractColumns(expr)
@@ -2541,6 +2539,10 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 			corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 			cols = append(cols, expression.ExtractColumns(expr)...)
 		}
+		// If decorrelation is disabled, don't extract correlated aggregates
+		if b.noDecorrelate && len(corCols) > 0 {
+			continue
+		}
 		if len(corCols) > 0 && len(cols) == 0 {
 			outer = append(outer, agg)
 		}
@@ -2605,6 +2607,9 @@ type correlatedAggregateResolver struct {
 
 	// correlatedAggFuncs stores aggregate functions which belong to outer query
 	correlatedAggFuncs []*ast.AggregateFuncExpr
+
+	// noDecorrelate indicates whether decorrelation should be disabled for this resolver
+	noDecorrelate bool
 }
 
 // Enter implements Visitor interface.
@@ -2779,9 +2784,10 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 // in the outer query from all the sub-queries inside SELECT fields.
 func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.SelectStmt, p base.LogicalPlan) (map[*ast.AggregateFuncExpr]int, error) {
 	resolver := &correlatedAggregateResolver{
-		ctx:       ctx,
-		b:         b,
-		outerPlan: p,
+		ctx:           ctx,
+		b:             b,
+		outerPlan:     p,
+		noDecorrelate: b.noDecorrelate,
 	}
 	correlatedAggList := make([]*ast.AggregateFuncExpr, 0)
 	for _, field := range sel.Fields.Fields {
@@ -3226,12 +3232,26 @@ func extractSingeValueColNamesFromWhere(p base.LogicalPlan, where ast.ExprNode, 
 			continue
 		}
 		if colExpr, ok := binOpExpr.L.(*ast.ColumnNameExpr); ok {
+			// a = value
 			if _, ok := binOpExpr.R.(ast.ValueExpr); ok {
 				addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
 			}
+			// a = - value
+			if u, ok := binOpExpr.R.(*ast.UnaryOperationExpr); ok {
+				if _, ok := u.V.(ast.ValueExpr); ok {
+					addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
+				}
+			}
 		} else if colExpr, ok := binOpExpr.R.(*ast.ColumnNameExpr); ok {
+			// value = a
 			if _, ok := binOpExpr.L.(ast.ValueExpr); ok {
 				addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
+			}
+			// - value = a
+			if u, ok := binOpExpr.L.(*ast.UnaryOperationExpr); ok {
+				if _, ok := u.V.(ast.ValueExpr); ok {
+					addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
+				}
 			}
 		}
 	}
@@ -3471,9 +3491,13 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 	n.Accept(extractor)
 }
 
-func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (base.LogicalPlan, []expression.Expression, bool, error) {
+// resolveGbyExprs resolves group by expressions from the group by clause of a select statement.
+// The returned `[]ast.Node` may differ from the original `gby.Items` in the group by clause for params. For params, the
+// `gby.Items[].Expr` will not be overwritten. However, the resolved expression is still needed for further processing, so
+// it's returned out.
+func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) ([]ast.ExprNode, error) {
 	b.curClause = groupByClause
-	exprs := make([]expression.Expression, 0, len(gby.Items))
+	exprs := make([]ast.ExprNode, 0, len(gby.Items))
 	resolver := &gbyResolver{
 		ctx:        b.ctx,
 		fields:     fields,
@@ -3487,14 +3511,22 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, g
 		resolver.isParam = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
-			return nil, nil, false, errors.Trace(resolver.err)
+			return exprs, errors.Trace(resolver.err)
 		}
 		if !resolver.isParam {
 			item.Expr = retExpr.(ast.ExprNode)
 		}
 
-		itemExpr := retExpr.(ast.ExprNode)
-		expr, np, err := b.rewrite(ctx, itemExpr, p, nil, true)
+		exprs = append(exprs, retExpr.(ast.ExprNode))
+	}
+	return exprs, nil
+}
+
+func (b *PlanBuilder) rewriteGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, items []ast.ExprNode) (base.LogicalPlan, []expression.Expression, bool, error) {
+	exprs := make([]expression.Expression, 0, len(gby.Items))
+
+	for _, item := range items {
+		expr, np, err := b.rewrite(ctx, item, p, nil, true)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -3642,10 +3674,12 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
-	currentDB := b.ctx.GetSessionVars().CurrentDB
-	warnHandler := b.ctx.GetSessionVars().StmtCtx
+	sessionVars := b.ctx.GetSessionVars()
+	currentDB := sessionVars.CurrentDB
+	warnHandler := sessionVars.StmtCtx
 	planHints, subQueryHintFlags, err := h.ParsePlanHints(hints, currentLevel, currentDB,
-		b.hintProcessor, b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder,
+		b.hintProcessor, sessionVars.StmtCtx.StraightJoinOrder,
+		b.subQueryCtx == handlingInSubquery,
 		b.subQueryCtx == handlingExistsSubquery, b.subQueryCtx == notHandlingSubquery, warnHandler)
 	if err != nil {
 		return
@@ -3771,15 +3805,25 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		originalFields = sel.Fields.Fields
 	}
 
+	var gbyExprs []ast.ExprNode
 	if sel.GroupBy != nil {
-		p, gbyCols, rollup, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
+		gbyExprs, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	// `checkOnlyFullGroupBy` should be executed before rewrite gbyExprs, because the field type of the fields
+	// may change. For example, the length of a string field may change in `adjustRetFtForCastString`
 	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
 		err = b.checkOnlyFullGroupBy(p, sel)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if sel.GroupBy != nil {
+		p, gbyCols, rollup, err = b.rewriteGbyExprs(ctx, p, sel.GroupBy, gbyExprs)
 		if err != nil {
 			return nil, err
 		}
@@ -4084,10 +4128,10 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo)
+		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
 		usePartitionStats = true
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+		statsTbl = statsHandle.GetPhysicalTableStats(pid, tblInfo)
 	}
 	intest.Assert(statsTbl.ColAndIdxExistenceMap != nil, "The existence checking map must not be nil.")
 
@@ -4153,9 +4197,9 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 	var statsTbl *statistics.Table
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo)
+		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+		statsTbl = statsHandle.GetPhysicalTableStats(pid, tblInfo)
 	}
 
 	// 2. Table row count from statistics is zero. Pseudo stats table.
@@ -4419,7 +4463,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 			} else {
 				h := domain.GetDomain(b.ctx).StatsHandle()
-				tblStats := h.GetTableStats(tableInfo)
+				tblStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				globalStatsReady := tblStats.IsAnalyzed()
 				skipMissingPartition := b.ctx.GetSessionVars().SkipMissingPartitionStats
@@ -4643,7 +4687,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if handleCols == nil {
 		if tableInfo.IsCommonHandle {
 			primaryIdx := tables.FindPrimaryIndex(tableInfo)
-			handleCols = util.NewCommonHandleCols(b.ctx.GetSessionVars().StmtCtx, tableInfo, primaryIdx, ds.TblCols)
+			handleCols = util.NewCommonHandleCols(tableInfo, primaryIdx, ds.TblCols)
 		} else {
 			extraCol := ds.NewExtraHandleSchemaCol()
 			handleCols = util.NewIntHandleCols(extraCol)
@@ -5085,7 +5129,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName pmodel.CIStr, 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPlan, tp logicalop.JoinType, markNoDecorrelate bool) base.LogicalPlan {
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConvertOuterToInnerJoin
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
 	ap := logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len()))
@@ -5149,7 +5193,6 @@ func (b *PlanBuilder) buildMaxOneRow(p base.LogicalPlan) base.LogicalPlan {
 }
 
 func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCondition []expression.Expression, asScalar, not, forceRewrite bool) (*logicalop.LogicalJoin, error) {
-	b.optFlag |= rule.FlagConvertOuterToInnerJoin
 	joinPlan := logicalop.LogicalJoin{}.Init(b.ctx, b.getSelectOffset())
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
@@ -5181,7 +5224,8 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	joinPlan.SetPreferredJoinTypeAndOrder(b.TableHints())
-	if forceRewrite {
+	// Make the session variable behave like the hint by setting the same prefer bit.
+	if forceRewrite || b.ctx.GetSessionVars().EnableSemiJoinRewrite {
 		joinPlan.PreferJoinType |= h.PreferRewriteSemiJoin
 		b.optFlag |= rule.FlagSemiJoinRewrite
 	}
@@ -5328,7 +5372,7 @@ func pruneAndBuildColPositionInfoForDelete(
 		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
 		// nonPrunedSet will be nil if it's a point get or has foreign keys.
 		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
-			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
+			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -5359,12 +5403,13 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 
 // buildSingleTableColPosInfoForDelete builds columns mapping for delete without pruning any columns.
 // It's temp code path for partition table, foreign key and point get plan.
-func buildSingleTableColPosInfoForDelete(
-	tbl table.Table,
-	colPosInfo *TblColPosInfo,
-) error {
+func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *TblColPosInfo, prePrunedCount int) error {
 	tblLen := len(tbl.DeletableCols())
+	colPosInfo.Start -= prePrunedCount
 	colPosInfo.End = colPosInfo.Start + tblLen
+	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
+		colPosInfo.HandleCols.GetCol(i).Index -= prePrunedCount
+	}
 	return nil
 }
 

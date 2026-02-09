@@ -459,7 +459,7 @@
   {
     "Name": "TestAnalyze",
     "Cases": [
-      "Analyze{Table(_tidb_rowid, a, _tidb_rowid)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
       "IndexReader(Index(t.b)[[-inf,2)])",
       "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
@@ -516,6 +516,47 @@
           "    ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:idx_b(b) keep order:true",
           "    └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.a, 999900)",
           "      └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue61792",
+    "Cases": [
+      {
+        "SQL": "explain select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';",
+        "Plan": [
+          "IndexLookUp_10 53778.89 root  ",
+          "├─IndexRangeScan_8(Build) 53778.89 cop[tikv] table:s, index:tbl_cardcore_statement_ix7(latest_stmt_print_date) range:[2024-10-16,2024-10-16], keep order:false",
+          "└─TableRowIDScan_9(Probe) 53778.89 cop[tikv] table:s keep order:false"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue62438",
+    "Cases": [
+      {
+        "SQL": "explain format = 'cost_trace' \nSELECT\n  /*+ QB_NAME(`listObjectsWithPrefix_FilterByCreated_Since_Securable`) */\n  path,\n  updated_ms,\n  size,\n  etag,\n  seq,\n  last_seen_ms\nFROM\n  objects FORCE INDEX(idx_metastore_securable_seq)\nWHERE\n  metastore_uuid = 0x3CBCC26CA7E740A48DD164D74757DEE2\n  AND securable_id = 2238365063123291\n  AND (\n    seq > 17299834\n    AND TRUE\n  )\nORDER BY\n  seq\nLIMIT\n  5001;",
+        "Plan": [
+          "Projection_7 5001.00 9913298.19 ((((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00)) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00)) + ((cpu(5001*filters(0.060000000000000005)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms",
+          "└─Projection_25 5001.00 9906310.79 ((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms, test.objects.metastore_uuid, test.objects.securable_id",
+          "  └─IndexLookUp_24 5001.00 9902317.99 (((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00 root  limit embedded(offset:0, count:5001)",
+          "    ├─Limit_23(Build) 5001.00 1253699.35 ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00) cop[tikv]  offset:0, count:5001",
+          "    │ └─IndexRangeScan_21 5001.00 1253699.35 (scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects, index:idx_metastore_securable_seq(metastore_uuid, securable_id, seq) range:(\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 17299834,\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 +inf], keep order:true",
+          "    └─TableRowIDScan_22(Probe) 5001.00 1688011.54 (scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'cost_trace' \nSELECT\n  /*+ limit_to_cop(), QB_NAME(`listObjectsWithPrefix_FilterByCreated_Since_Securable`) */\n  path,\n  updated_ms,\n  size,\n  etag,\n  seq,\n  last_seen_ms\nFROM\n  objects FORCE INDEX(idx_metastore_securable_seq)\nWHERE\n  metastore_uuid = 0x3CBCC26CA7E740A48DD164D74757DEE2\n  AND securable_id = 2238365063123291\n  AND (\n    seq > 17299834\n    AND TRUE\n  )\nORDER BY\n  seq\nLIMIT\n  5001;",
+        "Plan": [
+          "Projection_7 5001.00 9913298.19 ((((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00)) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00)) + ((cpu(5001*filters(0.060000000000000005)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms",
+          "└─Projection_21 5001.00 9906310.79 ((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms, test.objects.metastore_uuid, test.objects.securable_id",
+          "  └─IndexLookUp_20 5001.00 9902317.99 (((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00 root  limit embedded(offset:0, count:5001)",
+          "    ├─Limit_19(Build) 5001.00 1253699.35 ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00) cop[tikv]  offset:0, count:5001",
+          "    │ └─IndexRangeScan_17 5001.00 1253699.35 (scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects, index:idx_metastore_securable_seq(metastore_uuid, securable_id, seq) range:(\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 17299834,\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 +inf], keep order:true",
+          "    └─TableRowIDScan_18(Probe) 5001.00 1688011.54 (scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects keep order:false"
         ]
       }
     ]

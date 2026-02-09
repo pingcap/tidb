@@ -7,6 +7,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
         "//pkg/planner/core/base",
     ],
 )

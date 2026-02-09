@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -465,7 +464,7 @@ func getGroupNDVs(ds *logicalop.DataSource, colGroups [][]*expression.Column) []
 					break
 				}
 			}
-			if match {
+			if match && idx.IsEssentialStatsLoaded() {
 				ndv := property.GroupNDV{
 					Cols: idxCols,
 					NDV:  float64(idx.NDV),
@@ -540,16 +539,6 @@ func initStats(ds *logicalop.DataSource, colGroups [][]*expression.Column) {
 	for _, col := range ds.TableInfo.Columns {
 		if col.State != model.StatePublic {
 			continue
-		}
-		// If we enable lite stats init or we just found out the meta info of the column is missed, we need to register columns for async load.
-		_, isLoadNeeded, _ := ds.StatisticTable.ColumnIsLoadNeeded(col.ID, false)
-		if isLoadNeeded {
-			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
-				TableID:          ds.TableInfo.ID,
-				ID:               col.ID,
-				IsIndex:          false,
-				IsSyncLoadFailed: ds.SCtx().GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-			}, false)
 		}
 	}
 }

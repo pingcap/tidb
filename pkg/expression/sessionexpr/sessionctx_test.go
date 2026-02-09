@@ -122,7 +122,7 @@ func TestSessionEvalContextCurrentTime(t *testing.T) {
 	impl := sessionexpr.NewEvalContext(ctx)
 
 	var now atomic.Pointer[time.Time]
-	sc.SetStaleTSOProvider(func() (uint64, error) {
+	sc.SetStaleTSOProviderIfNotExist(func() (uint64, error) {
 		v := time.UnixMilli(123456789)
 		// should only be called once
 		require.True(t, now.CompareAndSwap(nil, &v))
@@ -142,7 +142,7 @@ func TestSessionEvalContextCurrentTime(t *testing.T) {
 	require.Equal(t, v.UnixNano(), tm.UnixNano())
 
 	// now should return the system variable if "timestamp" is set
-	sc.SetStaleTSOProvider(nil)
+	sc.SetStaleTSOProviderIfNotExist(nil)
 	sc.Reset()
 	require.NoError(t, vars.SetSystemVar("timestamp", "7654321.875"))
 	tm, err = impl.CurrentTime()

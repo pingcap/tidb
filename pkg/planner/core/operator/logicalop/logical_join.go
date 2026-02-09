@@ -22,13 +22,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -176,17 +180,17 @@ func (p *LogicalJoin) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, equalExpr := range p.EqualConditions {
-		ruleutil.ResolveExprAndReplace(equalExpr, replace)
+	for i, equalExpr := range p.EqualConditions {
+		p.EqualConditions[i] = ruleutil.ResolveExprAndReplace(equalExpr, replace).(*expression.ScalarFunction)
 	}
-	for _, leftExpr := range p.LeftConditions {
-		ruleutil.ResolveExprAndReplace(leftExpr, replace)
+	for i, leftExpr := range p.LeftConditions {
+		p.LeftConditions[i] = ruleutil.ResolveExprAndReplace(leftExpr, replace)
 	}
-	for _, rightExpr := range p.RightConditions {
-		ruleutil.ResolveExprAndReplace(rightExpr, replace)
+	for i, rightExpr := range p.RightConditions {
+		p.RightConditions[i] = ruleutil.ResolveExprAndReplace(rightExpr, replace)
 	}
-	for _, otherExpr := range p.OtherConditions {
-		ruleutil.ResolveExprAndReplace(otherExpr, replace)
+	for i, otherExpr := range p.OtherConditions {
+		p.OtherConditions[i] = ruleutil.ResolveExprAndReplace(otherExpr, replace)
 	}
 }
 
@@ -198,6 +202,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -282,13 +287,131 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	}
 	leftCond = expression.RemoveDupExprs(leftCond)
 	rightCond = expression.RemoveDupExprs(rightCond)
-	leftRet, lCh := p.Children()[0].PredicatePushDown(leftCond, opt)
-	rightRet, rCh := p.Children()[1].PredicatePushDown(rightCond, opt)
-	addSelection(p, lCh, leftRet, 0, opt)
-	addSelection(p, rCh, rightRet, 1, opt)
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	children := p.Children()
+	rightChild := children[1]
+	leftChild := children[0]
+	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
+	leftCond = constraint.DeleteTrueExprsBySchema(evalCtx, leftChild.Schema(), leftCond)
+	leftRet, lCh := leftChild.PredicatePushDown(leftCond, opt)
+	rightRet, rCh := rightChild.PredicatePushDown(rightCond, opt)
+	AddSelection(p, lCh, leftRet, 0, opt)
+	AddSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
-	return ret, p.Self()
+	newnChild, err := p.SemiJoinRewrite()
+	if err != nil {
+		return ret, p
+	}
+	return ret, newnChild
+}
+
+// simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
+func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
+	if p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != InnerJoin {
+		return
+	}
+
+	innerTable := p.children[0]
+	outerTable := p.children[1]
+	if p.JoinType == LeftOuterJoin {
+		innerTable, outerTable = outerTable, innerTable
+	}
+
+	if p.JoinType == InnerJoin {
+		return
+	}
+	// then simplify embedding outer join.
+	canBeSimplified := false
+	for _, expr := range predicates {
+		// avoid the case where the expr only refers to the schema of outerTable
+		if expression.ExprFromSchema(expr, outerTable.Schema()) {
+			continue
+		}
+		isOk := isNullRejected(p.SCtx(), innerTable.Schema(), expr)
+		if isOk {
+			canBeSimplified = true
+			break
+		}
+	}
+	if canBeSimplified {
+		p.JoinType = InnerJoin
+	}
+}
+
+// isNullRejected check whether a condition is null-rejected
+// A condition would be null-rejected in one of following cases:
+// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
+// If it is a conjunction containing a null-rejected condition as a conjunct.
+// If it is a disjunction of null-rejected conditions.
+func isNullRejected(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+	exprCtx := exprctx.WithNullRejectCheck(ctx.GetExprCtx())
+	expr = expression.PushDownNot(exprCtx, expr)
+	if expression.ContainOuterNot(expr) {
+		return false
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, cond := range expression.SplitCNFItems(expr) {
+		if isNullRejectedSpecially(ctx, schema, expr) {
+			return true
+		}
+
+		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond)
+		if err != nil {
+			return false
+		}
+		x, ok := result.(*expression.Constant)
+		if !ok {
+			continue
+		}
+		if x.Value.IsNull() {
+			return true
+		} else if isTrue, err := x.Value.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// isNullRejectedSpecially handles some null-rejected cases specially, since the current in
+// EvaluateExprWithNull is too strict for some cases, e.g. #49616.
+func isNullRejectedSpecially(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+	return specialNullRejectedCase1(ctx, schema, expr) // only 1 case now
+}
+
+// specialNullRejectedCase1 is mainly for #49616.
+// Case1 specially handles `null-rejected OR (null-rejected AND {others})`, then no matter what the result
+// of `{others}` is (True, False or Null), the result of this predicate is null, so this predicate is null-rejected.
+func specialNullRejectedCase1(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+	isFunc := func(e expression.Expression, lowerFuncName string) *expression.ScalarFunction {
+		f, ok := e.(*expression.ScalarFunction)
+		if !ok {
+			return nil
+		}
+		if f.FuncName.L == lowerFuncName {
+			return f
+		}
+		return nil
+	}
+	orFunc := isFunc(expr, ast.LogicOr)
+	if orFunc == nil {
+		return false
+	}
+	for i := range 2 {
+		andFunc := isFunc(orFunc.GetArgs()[i], ast.LogicAnd)
+		if andFunc == nil {
+			continue
+		}
+		if !isNullRejected(ctx, schema, orFunc.GetArgs()[1-i]) {
+			continue // the other side should be null-rejected: null-rejected OR (... AND ...)
+		}
+		for _, andItem := range expression.SplitCNFItems(andFunc) {
+			if isNullRejected(ctx, schema, andItem) {
+				return true // hit the case in the comment: null-rejected OR (null-rejected AND ...)
+			}
+		}
+	}
+	return false
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
@@ -748,7 +871,9 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Express
 
 // ExtractFDForInnerJoin extracts FD for inner join.
 func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
-	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
+	children := p.Children()
+	rightFD := children[1].ExtractFD()
+	leftFD := children[0].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
 
@@ -1060,23 +1185,22 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	rChild := p.Children()[1]
 	lSchema := lChild.Schema()
 	rSchema := rChild.Schema()
+	var lFullSchema, rFullSchema *expression.Schema
 	// parentused col = t2.a
 	// leftChild schema = t1.a(t2.a) + and others
 	// rightChild schema = t3 related + and others
 	if join, ok := lChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			lSchema = join.FullSchema
-		}
+		lFullSchema = join.FullSchema
 	}
 	if join, ok := rChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			rSchema = join.FullSchema
-		}
+		rFullSchema = join.FullSchema
 	}
 	for _, col := range parentUsedCols {
-		if lSchema != nil && lSchema.Contains(col) {
+		if (lSchema != nil && lSchema.Contains(col)) ||
+			(lFullSchema != nil && lFullSchema.Contains(col)) {
 			leftCols = append(leftCols, col)
-		} else if rSchema != nil && rSchema.Contains(col) {
+		} else if (rSchema != nil && rSchema.Contains(col)) ||
+			(rFullSchema != nil && rFullSchema.Contains(col)) {
 			rightCols = append(rightCols, col)
 		}
 	}
@@ -1645,7 +1769,10 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.RightConditions = nil
 	p.OtherConditions = nil
 	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin
-	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx().GetExprCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
+	exprCtx := p.SCtx().GetExprCtx()
+	outerTableSchema := outerTable.Schema()
+	innerTableSchema := innerTable.Schema()
+	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
 }
@@ -1661,6 +1788,97 @@ func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression)
 	combinedCond = append(combinedCond, p.OtherConditions...)
 	combinedCond = append(combinedCond, predicates...)
 	return combinedCond
+}
+
+// SemiJoinRewrite rewrites semi join to inner join with aggregation.
+// Note: This rewriter is only used for exists subquery.
+// And it also requires the hint `SEMI_JOIN_REWRITE` or variable tidb_opt_enable_sem_join_rewrite
+// to be set.
+// For example:
+//
+//	select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ * from s where s.a = t.a);
+//
+// will be rewriten to:
+//
+//	select * from t join (select a from s group by a) s on t.a = s.a;
+func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
+	// If it's not a join, or not a (outer) semi join. We just return it since no optimization is needed.
+	// Actually the check of the preferRewriteSemiJoin is a superset of checking the join type. We remain them for a better understanding.
+	if !(p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin) {
+		return p.Self(), nil
+	}
+	if _, ok := p.Self().(*LogicalApply); ok {
+		return p.Self(), nil
+	}
+	// Get by hint or session variable.
+	if (p.PreferJoinType&utilhint.PreferRewriteSemiJoin) == 0 && !p.SCtx().GetSessionVars().EnableSemiJoinRewrite {
+		return p.Self(), nil
+	}
+	// The preferRewriteSemiJoin flag only be used here. We should reset it in order to not affect other parts.
+	p.PreferJoinType &= ^utilhint.PreferRewriteSemiJoin
+
+	if p.JoinType == LeftOuterSemiJoin {
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin.")
+		return p.Self(), nil
+	}
+
+	// If we have jumped the above if condition. We can make sure that the current join is a non-correlated one.
+
+	// If there's left condition or other condition, we cannot rewrite
+	if len(p.LeftConditions) > 0 || len(p.OtherConditions) > 0 {
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions.")
+		return p.Self(), nil
+	}
+
+	innerChild := p.Children()[1]
+
+	// If there's right conditions:
+	//   - If it's semi join, then right condition should be pushed.
+	//   - If it's outer semi join, then it still should be pushed since the outer join should not remain any cond of the inner side.
+	// But the aggregation we added may block the predicate push down since we've not maintained the functional dependency to pass the equiv class to guide the push down.
+	// So we create a selection before we build the aggregation.
+	if len(p.RightConditions) > 0 {
+		sel := LogicalSelection{Conditions: make([]expression.Expression, len(p.RightConditions))}.Init(p.SCtx(), innerChild.QueryBlockOffset())
+		copy(sel.Conditions, p.RightConditions)
+		sel.SetChildren(innerChild)
+		innerChild = sel
+	}
+
+	subAgg := LogicalAggregation{
+		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(p.EqualConditions)),
+		GroupByItems: make([]expression.Expression, 0, len(p.EqualConditions)),
+	}.Init(p.SCtx(), p.Children()[1].QueryBlockOffset())
+
+	aggOutputCols := make([]*expression.Column, 0, len(p.EqualConditions))
+	for i := range p.EqualConditions {
+		innerCol := p.EqualConditions[i].GetArgs()[1].(*expression.Column)
+		firstRow, err := aggregation.NewAggFuncDesc(p.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
+		if err != nil {
+			return nil, err
+		}
+		subAgg.AggFuncs = append(subAgg.AggFuncs, firstRow)
+		subAgg.GroupByItems = append(subAgg.GroupByItems, innerCol)
+		aggOutputCols = append(aggOutputCols, innerCol)
+	}
+	subAgg.SetChildren(innerChild)
+	subAgg.SetSchema(expression.NewSchema(aggOutputCols...))
+	subAgg.BuildSelfKeyInfo(subAgg.Schema())
+	innerJoin := LogicalJoin{
+		JoinType:        InnerJoin,
+		HintInfo:        p.HintInfo,
+		PreferJoinType:  p.PreferJoinType,
+		PreferJoinOrder: p.PreferJoinOrder,
+		EqualConditions: make([]*expression.ScalarFunction, 0, len(p.EqualConditions)),
+	}.Init(p.SCtx(), p.QueryBlockOffset())
+	innerJoin.SetChildren(p.Children()[0], subAgg)
+	innerJoin.SetSchema(expression.MergeSchema(p.Children()[0].Schema().Clone(), subAgg.Schema().Clone()))
+	innerJoin.AttachOnConds(expression.ScalarFuncs2Exprs(p.EqualConditions))
+	proj := LogicalProjection{
+		Exprs: expression.Column2Exprs(p.Children()[0].Schema().Columns),
+	}.Init(p.SCtx(), p.QueryBlockOffset())
+	proj.SetChildren(innerJoin)
+	proj.SetSchema(p.Children()[0].Schema().Clone())
+	return proj, nil
 }
 
 func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) {

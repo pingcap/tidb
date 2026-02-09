@@ -152,7 +152,7 @@ func TestBRIEBuilderOptions(t *testing.T) {
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	ResetGlobalBRIEQueueForTest()
-	builder := NewMockExecutorBuilderForTest(sctx, is)
+	builder := NewMockExecutorBuilderForTest(sctx, is, nil)
 	ctx := context.Background()
 	p := parser.New()
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})

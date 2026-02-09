@@ -21,7 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -421,4 +424,103 @@ func TestNonTransactionalDMLWorkWithForeignKey(t *testing.T) {
 	tk.MustContainErrMsg("BATCH ON b LIMIT 10 DELETE FROM t1", "Cannot delete or update a parent row: a foreign key constraint fails")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("49"))
 	cleanFn()
+}
+
+func TestNonTransactionalMetrics(t *testing.T) {
+	readCounter := func(counter prometheus.Counter) float64 {
+		var metric dto.Metric
+		require.Nil(t, counter.Write(&metric))
+		return metric.Counter.GetValue()
+	}
+	type checkMetric struct {
+		metric prometheus.Counter
+		diff   int
+	}
+	readCounters := func(checkMetrics []checkMetric) []float64 {
+		counters := make([]float64, len(checkMetrics))
+		for i, cm := range checkMetrics {
+			counters[i] = readCounter(cm.metric)
+		}
+		return counters
+	}
+
+	runAndCheck := func(tp string, fn func()) {
+		var (
+			affectedRowsCounter prometheus.Counter
+			stmtNodeCounter     prometheus.Counter
+		)
+		switch tp {
+		case "insert":
+			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLInsert
+			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Insert", "", "default")
+		case "replace":
+			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLReplace
+			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Replace", "", "default")
+		case "delete":
+			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLDelete
+			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Delete", "", "default")
+		case "update":
+			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLUpdate
+			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Update", "", "default")
+		default:
+			require.Fail(t, "Unknown type of DML", tp)
+		}
+		checkMetrics := []checkMetric{
+			{affectedRowsCounter, 100},
+			{stmtNodeCounter, 11}, // 1 Select + 10 split DMLs
+			{metrics.AffectedRowsCounterInsert, 0},
+			{metrics.AffectedRowsCounterReplace, 0},
+			{metrics.AffectedRowsCounterDelete, 0},
+			{metrics.AffectedRowsCounterUpdate, 0},
+			{metrics.StmtNodeCounter.WithLabelValues("Insert", "", "default"), 0},
+			{metrics.StmtNodeCounter.WithLabelValues("Replace", "", "default"), 0},
+			{metrics.StmtNodeCounter.WithLabelValues("Delete", "", "default"), 0},
+			{metrics.StmtNodeCounter.WithLabelValues("Update", "", "default"), 0},
+		}
+
+		before := readCounters(checkMetrics)
+		fn()
+		after := readCounters(checkMetrics)
+		for i, cm := range checkMetrics {
+			require.Equal(t, cm.diff, int(after[i]-before[i]+0.001), "metric %s should increase by %d", cm.metric.Desc().String(), cm.diff)
+		}
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
+	}
+	runAndCheck("insert", func() {
+		tk.MustExec("BATCH LIMIT 10 INSERT INTO t2 SELECT * FROM t1")
+	})
+	runAndCheck("update", func() {
+		tk.MustExec("BATCH LIMIT 10 UPDATE t2 SET a = a + 1")
+	})
+	runAndCheck("delete", func() {
+		tk.MustExec("BATCH LIMIT 10 DELETE FROM t2")
+	})
+	runAndCheck("replace", func() {
+		tk.MustExec("BATCH LIMIT 10 REPLACE INTO t2 SELECT * FROM t1")
+	})
+}
+
+func TestNonTransactionalDmlIgnoreMaxExecutionTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=10")
+	tk.MustExec("set @@max_execution_time=1000")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	for i := range 100 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/CheckMaxExecutionTime", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/CheckMaxExecutionTime")
+	tk.MustExec("batch on a limit 10 update t set b = b + 1 where b > 0")
 }

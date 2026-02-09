@@ -4,6 +4,7 @@ go_library(
     name = "metrics",
     srcs = [
         "bindinfo.go",
+        "br.go",
         "ddl.go",
         "distsql.go",
         "disttask.go",
@@ -23,6 +24,7 @@ go_library(
         "session.go",
         "sli.go",
         "stats.go",
+        "telemetry.go",
         "topsql.go",
         "ttl.go",
         "wrapper.go",
@@ -30,7 +32,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/metrics",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/disttask/framework/proto",
         "//pkg/lightning/metric",
         "//pkg/parser/terror",
         "//pkg/timer/metrics",
@@ -39,6 +40,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/collectors",
+        "@com_github_prometheus_client_model//go",
         "@com_github_tikv_client_go_v2//metrics",
         "@org_uber_go_zap//:zap",
     ],

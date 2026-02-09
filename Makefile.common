@@ -26,6 +26,7 @@ FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
 CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
+export GOTOOLCHAIN := go1.25.5
 
 GO              := GO111MODULE=on go
 BUILD_FLAG	:= -tags codes
@@ -132,5 +133,6 @@ ifneq ("$(CI)", "")
 	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
 endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
-
+TIDB_SERVER_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server
+IMPORTER_PATH := ./bazel-bin/cmd/importer/importer_/importer
 NOGO_FLAG=true

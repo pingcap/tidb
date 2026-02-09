@@ -318,6 +318,12 @@ const (
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
+	// TiDBOptEnableSemiJoinRewrite is the variable equivalent of SEMI_JOIN_REWRITE hint.
+	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
+
+	// TiDBOptEnableNoDecorrelateInSelect is the variable equivalent of NO_DECORRELATE hint.
+	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
+
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -347,6 +353,27 @@ const (
 	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// TiDBOptConcurrencyFactor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
+
+	// The following optimizer cost factors represent a multiplier for each optimizer physical operator.
+	// These factors are used to adjust the cost of each operator to influence the optimizer's plan selection.
+	TiDBOptIndexScanCostFactor        = "tidb_opt_index_scan_cost_factor"
+	TiDBOptIndexReaderCostFactor      = "tidb_opt_index_reader_cost_factor"
+	TiDBOptTableReaderCostFactor      = "tidb_opt_table_reader_cost_factor"
+	TiDBOptTableFullScanCostFactor    = "tidb_opt_table_full_scan_cost_factor"
+	TiDBOptTableRangeScanCostFactor   = "tidb_opt_table_range_scan_cost_factor"
+	TiDBOptTableRowIDScanCostFactor   = "tidb_opt_table_rowid_scan_cost_factor"
+	TiDBOptTableTiFlashScanCostFactor = "tidb_opt_table_tiflash_scan_cost_factor"
+	TiDBOptIndexLookupCostFactor      = "tidb_opt_index_lookup_cost_factor"
+	TiDBOptIndexMergeCostFactor       = "tidb_opt_index_merge_cost_factor"
+	TiDBOptSortCostFactor             = "tidb_opt_sort_cost_factor"
+	TiDBOptTopNCostFactor             = "tidb_opt_topn_cost_factor"
+	TiDBOptLimitCostFactor            = "tidb_opt_limit_cost_factor"
+	TiDBOptStreamAggCostFactor        = "tidb_opt_stream_agg_cost_factor"
+	TiDBOptHashAggCostFactor          = "tidb_opt_hash_agg_cost_factor"
+	TiDBOptMergeJoinCostFactor        = "tidb_opt_merge_join_cost_factor"
+	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
+	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
+
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 
@@ -575,6 +602,10 @@ const (
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
+	// TiDBOptJoinReorderThroughSel indicates whether join reorder considers
+	// joins through selection, allowing more flexible join ordering.
+	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
+
 	// TiDBSlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
@@ -673,8 +704,7 @@ const (
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
-	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
-	// Deprecated: it is 'off' always since Telemetry has been removed from TiDB.
+	// TiDBEnableTelemetry indicates that whether usage data print to log is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
@@ -834,6 +864,9 @@ const (
 	// When set to (0, 1], Selectivity() will use the value of this variable as the default selectivity of those
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
+
+	// TiDBEnableStatsUpdateDuringDDL indicate the embedded analyze behavior inside ddl.
+	TiDBEnableStatsUpdateDuringDDL = "tidb_stats_update_during_ddl"
 
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
@@ -1218,6 +1251,16 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
+	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
+	// The log backup task will be paused if the checkpoint lag is larger than it.
+	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+
+	// TiDBIndexLookUpPushDownPolicy controls the push down policy of index lookup.
+	TiDBIndexLookUpPushDownPolicy = "tidb_index_lookup_pushdown_policy"
+
+	// TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio variable is used to set ratio of errors to trip the circuit breaker for get region calls to PD
+	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
+	TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio = "tidb_cb_pd_metadata_error_rate_threshold_ratio"
 )
 
 // TiDB intentional limits
@@ -1261,6 +1304,8 @@ const (
 	DefOptMPPOuterJoinFixedBuildSide        = false
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
+	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableSemiJoinRewrite             = false
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
@@ -1274,6 +1319,23 @@ const (
 	DefOptMemoryFactor                      = 0.001
 	DefOptDiskFactor                        = 1.5
 	DefOptConcurrencyFactor                 = 3.0
+	DefOptIndexScanCostFactor               = 1.0
+	DefOptIndexReaderCostFactor             = 1.0
+	DefOptTableReaderCostFactor             = 1.0
+	DefOptTableFullScanCostFactor           = 1.0
+	DefOptTableRangeScanCostFactor          = 1.0
+	DefOptTableRowIDScanCostFactor          = 1.0
+	DefOptTableTiFlashScanCostFactor        = 1.0
+	DefOptIndexLookupCostFactor             = 1.0
+	DefOptIndexMergeCostFactor              = 1.0
+	DefOptSortCostFactor                    = 1.0
+	DefOptTopNCostFactor                    = 1.0
+	DefOptLimitCostFactor                   = 1.0
+	DefOptStreamAggCostFactor               = 1.0
+	DefOptHashAggCostFactor                 = 1.0
+	DefOptMergeJoinCostFactor               = 1.0
+	DefOptHashJoinCostFactor                = 1.0
+	DefOptIndexJoinCostFactor               = 1.0
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
@@ -1319,7 +1381,7 @@ const (
 	DefTiFlashMemQuotaQueryPerNode          = 0
 	DefTiFlashQuerySpillRatio               = 0.7
 	DefTiDBEnableTiFlashPipelineMode        = true
-	DefTiDBMPPStoreFailTTL                  = "60s"
+	DefTiDBMPPStoreFailTTL                  = "0s"
 	DefTiDBTxnMode                          = PessimisticTxnMode
 	DefTiDBRowFormatV1                      = 1
 	DefTiDBRowFormatV2                      = 2
@@ -1342,6 +1404,7 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
 	DefTiDBSkipIsolationLevelCheck          = false
@@ -1371,7 +1434,7 @@ const (
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
 	DefTiDBShardAllocateStep                = math.MaxInt64
-	DefTiDBEnableTelemetry                  = false
+	DefTiDBEnableTelemetry                  = true
 	DefTiDBEnableParallelApply              = false
 	DefTiDBPartitionPruneMode               = "dynamic"
 	DefTiDBEnableRateLimitAction            = false
@@ -1435,7 +1498,7 @@ const (
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
-	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
+	DefTiDBAnalyzeColumnOptions                       = "ALL"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 1
@@ -1456,6 +1519,7 @@ const (
 	DefTiDBGenerateBinaryPlan                         = true
 	DefEnableTiDBGCAwareMemoryTrack                   = false
 	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBEnableStatsUpdateDuringDDL                 = false
 	DefTiDBEnableTmpStorageOnOOM                      = true
 	DefTiDBEnableMDL                                  = true
 	DefTiFlashFastScan                                = false
@@ -1568,6 +1632,10 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBLoadBindingTimeout                         = 200
+	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
+	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
+	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 )
 
 // Process global variables.
@@ -1690,6 +1758,9 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+
+	AdvancerCheckPointLagLimit                      = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
+	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
 )
 
 var (
@@ -1725,6 +1796,8 @@ var (
 	EnableStatsOwner func() error = nil
 	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
 	DisableStatsOwner func() error = nil
+	// ChangePDMetadataCircuitBreakerErrorRateThresholdRatio changes the error rate threshold of the PD metadata circuit breaker.
+	ChangePDMetadataCircuitBreakerErrorRateThresholdRatio func(uint32) = nil
 )
 
 // Hooks functions for Cluster Resource Control.

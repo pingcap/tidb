@@ -45,12 +45,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
 const (
-	receiveReportTimeout = 3 * time.Second
+	receiveReportTimeout = 100 * time.Millisecond
 )
 
 // mppResponse wraps mpp data packet.
@@ -389,7 +390,7 @@ func (c *localMppCoordinator) sendError(err error) {
 func (c *localMppCoordinator) sendToRespCh(resp *mppResponse) (exit bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("localMppCoordinator panic", zap.Stack("stack"), zap.Any("recover", r))
+			logutil.BgLogger().Warn("localMppCoordinator panic", zap.Stack("stack"), zap.Any("recover", r))
 			c.sendError(util2.GetRecoverError(r))
 		}
 	}()
@@ -435,7 +436,7 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 	}
 
 	if err != nil {
-		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+		logutil.BgLogger().Warn("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
 		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
@@ -446,7 +447,7 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 	}
 
 	if rpcResp.Error != nil {
-		logutil.BgLogger().Error("mpp dispatch response meet error", zap.String("error", rpcResp.Error.Msg), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("task-mpp-version", req.MppVersion.ToInt64()), zap.Int64("error-mpp-version", rpcResp.Error.GetMppVersion()))
+		logutil.BgLogger().Warn("mpp dispatch response meet error", zap.String("error", rpcResp.Error.Msg), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("task-mpp-version", req.MppVersion.ToInt64()), zap.Int64("error-mpp-version", rpcResp.Error.GetMppVersion()))
 		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		c.sendError(errors.New(rpcResp.Error.Msg))
 		return
@@ -497,7 +498,17 @@ func (c *localMppCoordinator) cancelMppTasks() {
 }
 
 func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta, bo *backoff.Backoffer) {
-	stream, err := c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta})
+	var stream *tikvrpc.MPPStreamResponse
+	var err error
+	var retry bool
+	for {
+		stream, retry, err = c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta, Bo: bo.TiKVBackoffer()})
+		if retry {
+			logutil.BgLogger().Warn("establish mpp connection meet error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+			continue
+		}
+		break
+	}
 	if err != nil {
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
@@ -593,7 +604,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 					if detail != nil && detail.TimeProcessedNs != nil &&
 						detail.NumProducedRows != nil && detail.NumIterations != nil {
 						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
+							RecordOneCopTask(-1, kv.TiFlash, detail)] = 0
 					}
 				}
 				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
@@ -602,10 +613,10 @@ func (c *localMppCoordinator) handleAllReports() error {
 					}
 				}
 			}
-			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
+			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, kv.TiFlash, c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
-			logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
+			logutil.BgLogger().Info(fmt.Sprintf("Mpp coordinator not received all reports within %d ms", int(receiveReportTimeout.Milliseconds())),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("gatherID", c.gatherID),
 				zap.Int("expectCount", len(c.mppReqs)),

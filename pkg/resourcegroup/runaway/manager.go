@@ -17,7 +17,6 @@ package runaway
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
@@ -47,15 +46,15 @@ const (
 	runawayRecordGCInterval      = time.Hour * 24
 	runawayRecordExpiredDuration = time.Hour * 24 * 7
 
-	runawayRecordGCBatchSize         = 100
-	runawayRecordGCSelectBatchSize   = runawayRecordGCBatchSize * 5
-	runawayLoopLogErrorIntervalCount = 1800
+	runawayRecordGCBatchSize       = 100
+	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
 )
+
+var sampleLogger = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "runaway"))
 
 // Manager is used to detect and record runaway queries.
 type Manager struct {
-	logOnce sync.Once
-	exit    chan struct{}
+	exit chan struct{}
 	// queryLock is used to avoid repeated additions. Since we will add new items to the system table,
 	// in order to avoid repeated additions, we need a lock to ensure that
 	// action "judging whether there is this record in the current watch list and adding records" have atomicity.
@@ -80,8 +79,6 @@ type Manager struct {
 	evictionCancel        func()
 	insertionCancel       func()
 
-	syncerInitialized atomic.Bool
-
 	// domain related fields
 	infoCache *infoschema.InfoCache
 	ddl       ddl.DDL
@@ -102,7 +99,6 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 	go watchList.Start()
 	staleQuarantineChan := make(chan *QuarantineRecord, maxWatchRecordChannelSize)
 	m := &Manager{
-		syncerInitialized:     atomic.Bool{},
 		ResourceGroupCtl:      resourceGroupCtl,
 		watchList:             watchList,
 		serverID:              serverAddr,
@@ -141,14 +137,13 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 
 	// this times used to batch flushing records, with 1s duration,
 	// we can guarantee a watch record can be seen by the user within 1s.
-	runawayRecordFlushTimer := time.NewTimer(runawayRecordFlushInterval)
-	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
+	flushInteval, gcInteval := runawayRecordFlushInterval, runawayRecordGCInterval
 	failpoint.Inject("FastRunawayGC", func() {
-		runawayRecordFlushTimer.Stop()
-		runawayRecordGCTicker.Stop()
-		runawayRecordFlushTimer = time.NewTimer(time.Millisecond * 50)
-		runawayRecordGCTicker = time.NewTicker(time.Millisecond * 200)
+		flushInteval = time.Millisecond * 50
+		gcInteval = time.Millisecond * 200
 	})
+	runawayRecordFlushTimer := time.NewTimer(flushInteval)
+	runawayRecordGCTicker := time.NewTicker(gcInteval)
 
 	fired := false
 	recordCh := rm.runawayRecordChan()
@@ -173,6 +168,7 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 	for {
 		select {
 		case <-rm.exit:
+			logutil.BgLogger().Info("runaway record flush loop exit")
 			return
 		case <-runawayRecordFlushTimer.C:
 			flushRunawayRecords()
@@ -227,18 +223,15 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 func (rm *Manager) RunawayWatchSyncLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayWatchSyncLoop", nil, false)
 	runawayWatchSyncTicker := time.NewTicker(watchSyncInterval)
-	count := 0
 	for {
 		select {
 		case <-rm.exit:
+			logutil.BgLogger().Info("runaway watch sync loop exit")
 			return
 		case <-runawayWatchSyncTicker.C:
 			err := rm.UpdateNewAndDoneWatch()
 			if err != nil {
-				if count %= runawayLoopLogErrorIntervalCount; count == 0 {
-					logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
-				}
-				count++
+				sampleLogger().Warn("get runaway watch record failed", zap.Error(err))
 			}
 		}
 	}
@@ -266,12 +259,6 @@ func (rm *Manager) markQuarantine(
 	}
 	// Add record without ID into watch list in this TiDB right now.
 	rm.addWatchList(record, ttl, false)
-	if !rm.syncerInitialized.Load() {
-		rm.logOnce.Do(func() {
-			logutil.BgLogger().Warn("runaway syncer is not initialized, so can't records about runaway")
-		})
-		return
-	}
 	select {
 	case rm.quarantineChan <- record:
 	default:
@@ -336,12 +323,6 @@ func (rm *Manager) getWatchFromWatchList(key string) *QuarantineRecord {
 
 func (rm *Manager) markRunaway(checker *Checker, action, matchType string, now *time.Time, exceedCause string) {
 	source := rm.serverID
-	if !rm.syncerInitialized.Load() {
-		rm.logOnce.Do(func() {
-			logutil.BgLogger().Warn("runaway syncer is not initialized, so can't records about runaway")
-		})
-		return
-	}
 	select {
 	case rm.runawayQueriesChan <- &Record{
 		ResourceGroupName: checker.resourceGroupName,
@@ -399,12 +380,21 @@ func (rm *Manager) Stop() {
 func (rm *Manager) UpdateNewAndDoneWatch() error {
 	rm.runawaySyncer.mu.Lock()
 	defer rm.runawaySyncer.mu.Unlock()
+	// DDL may be not finished during the startup, so we need to check the table exist.
+	exist, err := rm.runawaySyncer.checkWatchTableExist()
+	if err != nil || !exist {
+		return err
+	}
 	records, err := rm.runawaySyncer.getNewWatchRecords()
 	if err != nil {
 		return err
 	}
 	for _, r := range records {
 		rm.AddWatch(r)
+	}
+	exist, err = rm.runawaySyncer.checkWatchDoneTableExist()
+	if err != nil || !exist {
+		return err
 	}
 	doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
 	if err != nil {
@@ -449,14 +439,4 @@ func (rm *Manager) removeWatch(record *QuarantineRecord) {
 // FlushThreshold specifies the threshold for the number of records in trigger flush
 func flushThreshold() int {
 	return maxWatchRecordChannelSize / 2
-}
-
-// MarkSyncerInitialized is used to mark the syncer is initialized.
-func (rm *Manager) MarkSyncerInitialized() {
-	rm.syncerInitialized.Store(true)
-}
-
-// IsSyncerInitialized is only used for test.
-func (rm *Manager) IsSyncerInitialized() bool {
-	return rm.syncerInitialized.Load()
 }

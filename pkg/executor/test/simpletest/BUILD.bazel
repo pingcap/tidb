@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 11,
+    shard_count = 12,
     deps = [
         "//pkg/config",
         "//pkg/parser/auth",
@@ -19,6 +19,7 @@ go_test(
         "//pkg/server",
         "//pkg/session",
         "//pkg/sessionctx",
+        "//pkg/statistics",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/util/dbterror/exeerrors",

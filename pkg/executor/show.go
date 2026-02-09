@@ -65,9 +65,11 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -76,11 +78,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/tikv/pd/client/errs"
+	pdHttp "github.com/tikv/pd/client/http"
+	"go.uber.org/zap"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -113,7 +119,8 @@ type ShowExec struct {
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
 
-	ImportJobID *int64
+	ImportJobID       *int64
+	DistributionJobID *int64
 }
 
 type showTableRegionRowItem struct {
@@ -261,6 +268,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
 		return e.fetchShowTableRegions(ctx)
+	case ast.ShowDistributions:
+		return e.fetchShowDistributions(ctx)
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
 	case ast.ShowBackups:
@@ -281,6 +290,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
+	case ast.ShowDistributionJobs:
+		return e.fetchShowDistributionJobs(ctx)
+	case ast.ShowAffinity:
+		return e.fetchShowAffinity(ctx)
 	}
 	return nil
 }
@@ -775,7 +788,7 @@ func (e *ShowExec) fetchShowIndex() error {
 		return errors.Trace(err)
 	}
 
-	statsTbl := h.GetTableStats(tb.Meta())
+	statsTbl := h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
 
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
@@ -1064,7 +1077,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col.Hidden {
+		if col == nil || col.Hidden {
 			continue
 		}
 		if needAddComma {
@@ -1386,9 +1399,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
-	// add partition info here.
-	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
-
 	if tableInfo.TTLInfo != nil {
 		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
 		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
@@ -1440,6 +1450,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			return err
 		}
 	}
+
+	if tableInfo.Affinity != nil {
+		fmt.Fprintf(buf, " /*T![%s] AFFINITY='%s' */", tidb.FeatureIDAffinity, tableInfo.Affinity.Level)
+	}
+
+	// add partition info here.
+	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -2060,6 +2077,51 @@ func (e *ShowExec) appendRow(row []any) {
 	}
 }
 
+func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	physicalIDs := []int64{}
+	partitionNames := make([]string, 0)
+	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
+		for _, name := range e.Table.PartitionNames {
+			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
+			if err != nil {
+				return err
+			}
+			physicalIDs = append(physicalIDs, pid)
+			partitionNames = append(partitionNames, name.L)
+		}
+		if len(physicalIDs) == 0 {
+			for _, p := range pi.Definitions {
+				physicalIDs = append(physicalIDs, p.ID)
+				partitionNames = append(partitionNames, p.Name.L)
+			}
+		}
+	} else {
+		if len(e.Table.PartitionNames) != 0 {
+			return plannererrors.ErrPartitionClauseOnNonpartitioned
+		}
+		physicalIDs = append(physicalIDs, tb.Meta().ID)
+		partitionNames = append(partitionNames, tb.Meta().Name.L)
+	}
+	distributions := make([]*pdHttp.RegionDistribution, 0)
+	var resp *pdHttp.RegionDistributions
+	for idx, pid := range physicalIDs {
+		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+		// todo： support engine type
+		resp, err = infosync.GetRegionDistributionByKeyRange(ctx, startKey, endKey, "")
+		if err != nil {
+			return err
+		}
+		e.fillDistributionsToChunk(partitionNames[idx], resp.RegionDistributions)
+		distributions = append(distributions, resp.RegionDistributions...)
+	}
+	return nil
+}
+
 func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	store := e.Ctx().GetStore()
 	tikvStore, ok := store.(helper.Storage)
@@ -2217,6 +2279,25 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
+func (e *ShowExec) fillDistributionsToChunk(partitionName string, distributions []*pdHttp.RegionDistribution) {
+	for _, dis := range distributions {
+		e.result.AppendString(0, partitionName)
+		e.result.AppendUint64(1, dis.StoreID)
+		e.result.AppendString(2, dis.EngineType)
+		e.result.AppendInt64(3, int64(dis.RegionLeaderCount))
+		e.result.AppendInt64(4, int64(dis.RegionPeerCount))
+		e.result.AppendUint64(5, dis.RegionWriteBytes)
+		e.result.AppendUint64(6, dis.RegionWriteKeys)
+		e.result.AppendUint64(7, dis.RegionWriteQuery)
+		e.result.AppendUint64(8, dis.RegionLeaderReadBytes)
+		e.result.AppendUint64(9, dis.RegionLeaderReadKeys)
+		e.result.AppendUint64(10, dis.RegionLeaderReadQuery)
+		e.result.AppendUint64(11, dis.RegionPeerReadBytes)
+		e.result.AppendUint64(12, dis.RegionPeerReadKeys)
+		e.result.AppendUint64(13, dis.RegionPeerReadQuery)
+	}
+}
+
 func (e *ShowExec) fillRegionsToChunk(regions []showTableRegionRowItem) {
 	for i := range regions {
 		e.result.AppendUint64(0, regions[i].region.Id)
@@ -2308,7 +2389,15 @@ func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	} else {
 		result.AppendNull(7)
 	}
-	result.AppendString(8, info.ErrorMessage)
+	if info.IsSuccess() {
+		var msg string
+		if info.Summary.ConflictedRows > 0 {
+			msg = fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictedRows)
+		}
+		result.AppendString(8, msg)
+	} else {
+		result.AppendString(8, info.ErrorMessage)
+	}
 	result.AppendTime(9, info.CreateTime)
 	if info.StartTime.IsZero() {
 		result.AppendNull(10)
@@ -2334,6 +2423,101 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		importedRowCount = int64(rows)
 	}
 	FillOneImportJobInfo(info, result, importedRowCount)
+	return nil
+}
+
+const balanceRangeScheduler = "balance-range-scheduler"
+
+func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
+	config, err := infosync.GetSchedulerConfig(ctx, balanceRangeScheduler)
+	if err != nil {
+		return err
+	}
+	configs, ok := config.([]any)
+	if !ok {
+		// it means that no any jobs
+		return nil
+	}
+	jobs := make([]map[string]any, 0, len(configs))
+	for _, cfg := range configs {
+		job, ok := cfg.(map[string]any)
+		if !ok {
+			return errs.ErrClientProtoUnmarshal.FastGenByArgs(cfg)
+		}
+		jobs = append(jobs, job)
+	}
+	if e.DistributionJobID != nil {
+		for _, job := range jobs {
+			jobID, ok := job["job-id"].(float64)
+			if ok && *e.DistributionJobID == int64(jobID) {
+				if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	} else {
+		for _, job := range jobs {
+			if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// fillDistributionJobToChunk fills the distribution job to the chunk
+func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) error {
+	// alias is {db_name}.{table_name}.{partition_name}
+	alias := strings.Split(job["alias"].(string), ".")
+	logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("alias", job["alias"].(string)))
+	if len(alias) != 3 {
+		return errs.ErrClientProtoUnmarshal.FastGenByArgs(fmt.Sprintf("alias:%s is invalid", job["alias"].(string)))
+	}
+	result.AppendUint64(0, uint64(job["job-id"].(float64)))
+	result.AppendString(1, alias[0])
+	result.AppendString(2, alias[1])
+	// partition name maybe empty when the table is not partitioned
+	if alias[2] == "" {
+		result.AppendNull(3)
+	} else {
+		result.AppendString(3, alias[2])
+	}
+	result.AppendString(4, job["engine"].(string))
+	result.AppendString(5, job["rule"].(string))
+	result.AppendString(6, job["status"].(string))
+	timeout := uint64(job["timeout"].(float64))
+	result.AppendString(7, time.Duration(timeout).String())
+	if create, ok := job["create"]; ok {
+		createTime := &time.Time{}
+		err := createTime.UnmarshalText([]byte(create.(string)))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(8, types.NewTime(types.FromGoTime(*createTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(8)
+	}
+	if start, ok := job["start"]; ok {
+		startTime := &time.Time{}
+		err := startTime.UnmarshalText([]byte(start.(string)))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(9, types.NewTime(types.FromGoTime(*startTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(9)
+	}
+	if finish, ok := job["finish"]; ok {
+		finishedTime := &time.Time{}
+		err := finishedTime.UnmarshalText([]byte(finish.(string)))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(10, types.NewTime(types.FromGoTime(*finishedTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(10)
+	}
 	return nil
 }
 

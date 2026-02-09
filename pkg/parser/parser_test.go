@@ -1067,6 +1067,28 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show table t1 partition (p0,p1) index idx1 regions where a=2", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) INDEX `idx1` REGIONS WHERE `a`=2"},
 		{"show table t1 partition index idx1", false, ""},
 
+		// for distribute table
+		{"distribute table t1", false, ""},
+		{"distribute table t1 partition(p0)", false, ""},
+		{"distribute table t1 partition(p0,p1)", false, ""},
+		{"distribute table t1 partition(p0,p1) engine = tikv", false, ""},
+		{"distribute table t1 rule = 'leader-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 rule = \"leader-scatter\" engine = \"tikv\"", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0,p1) rule = 'learner-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = 'learner-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash' timeout = '30m'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash' TIMEOUT = '30m'"},
+
+		// for show distribution job(s)
+		{"show distribution jobs 1", false, ""},
+		{"show distribution jobs", true, "SHOW DISTRIBUTION JOBS"},
+		{"show distribution jobs where id > 0", true, "SHOW DISTRIBUTION JOBS WHERE `id`>0"},
+		{"show distribution job 1 where id > 0", false, ""},
+		{"show distribution job 1", true, "SHOW DISTRIBUTION JOB 1"},
+
+		// for cancel distribution job JOBID
+		{"cancel distribution job", false, ""},
+		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
@@ -4300,6 +4322,25 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t2", hints[0].Indexes[0].L)
 
 	require.Equal(t, "no_order_index", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 1)
+	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
+	require.Len(t, hints[1].Indexes, 1)
+	require.Equal(t, "t4", hints[1].Indexes[0].L)
+
+	// Test INDEX_LOOKUP_PUSHDOWN
+	stmt, _, err = p.Parse("select /*+ INDEX_LOOKUP_PUSHDOWN(T1,T2), index_lookup_pushdown(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_lookup_pushdown", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	require.Len(t, hints[0].Indexes, 1)
+	require.Equal(t, "t2", hints[0].Indexes[0].L)
+
+	require.Equal(t, "index_lookup_pushdown", hints[1].HintName.L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Len(t, hints[1].Indexes, 1)
@@ -7650,6 +7691,32 @@ func TestVector(t *testing.T) {
 		{"CREATE TABLE t (a VECTOR<DOUBLE>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<ABC>)", false, ""},
 		{"CREATE TABLE t (a VECTOR(5)<FLOAT>)", false, ""},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestTableAffinityOption(t *testing.T) {
+	table := []testCase{
+		// create table with affinity option
+		{"create table t (a int) AFFINITY = 'table'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) affinity 'TABLE'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'TABLE'"},
+		{"create table t (a int) affinity 'partition'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'partition'"},
+		{"create table t (a int) AFFINITY = ''", true, "CREATE TABLE `t` (`a` INT) AFFINITY = ''"},
+		{"create table t (a int) AFFINITY 'none'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'none'"},
+		{"create table t (a int) AFFINITY 'PARTITION' partition by hash ( a ) PARTITIONS 1", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'PARTITION' PARTITION BY HASH (`a`) PARTITIONS 1"},
+		{"create table t (a int) /*T![affinity] AFFINITY = 'table'*/", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) AFFINITY 'abcd'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'abcd'"},
+
+		// alter table with affinity option
+		{"alter table t AFFINITY = 'table'", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+		{"alter table t affinity 'TABLE'", true, "ALTER TABLE `t` AFFINITY = 'TABLE'"},
+		{"alter table t /*T![affinity] affinity 'table'*/", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+
+		// invalid option
+		{"create table t (a int) AFFINITY 1", false, ""},
+		{"create table t (a int) AFFINITY = 1", false, ""},
+		{"create table t (a int) AFFINITY", false, ""},
 	}
 
 	RunTest(t, table, false)

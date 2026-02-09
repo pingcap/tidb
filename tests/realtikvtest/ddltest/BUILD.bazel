@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "ddltest_test",
+    timeout = "short",
+    srcs = [
+        "ddl_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "//tests/realtikvtest",
+        "@com_github_stretchr_testify//require",
+    ],
+)

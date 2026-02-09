@@ -89,10 +89,20 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 	e.changed = e.changed[:0]
 	e.matches = e.matches[:0]
 	for _, content := range e.tblColPosInfos {
+		// Partitioned tables can have duplicate _tidb_rowid between different partitions
+		// due to EXCHANGE PARTITION, if so, do not optimize skipping rows with multiple changes
+		skipMultipleChangesOnSameRow := true
+		tbl := e.tblID2table[content.TblID]
+		if _, ok := tbl.(table.PartitionedTable); ok {
+			if !tbl.Meta().HasClusteredIndex() {
+				skipMultipleChangesOnSameRow = false
+			}
+		}
+
 		if e.updatedRowKeys[content.Start] == nil {
 			e.updatedRowKeys[content.Start] = kv.NewMemAwareHandleMap[bool]()
 		}
-		handle, err := content.HandleCols.BuildHandleByDatums(row)
+		handle, err := content.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, row)
 		if err != nil {
 			return err
 		}
@@ -113,7 +123,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 
 		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
 		if ok {
-			e.changed = append(e.changed, changed)
+			e.changed = append(e.changed, changed && skipMultipleChangesOnSameRow)
 			e.matches = append(e.matches, false)
 		} else {
 			e.changed = append(e.changed, false)

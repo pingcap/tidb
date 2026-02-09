@@ -42,8 +42,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
+
+// IsChildCloseCalledForTest is used for test
+var IsChildCloseCalledForTest atomic.Bool
 
 var (
 	_ exec.Executor = &HashJoinV1Exec{}
@@ -138,7 +143,14 @@ func (e *HashJoinV1Exec) Close() error {
 			channel.Clear(e.ProbeWorkers[i].joinChkResourceCh)
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
-		terror.Call(e.RowContainer.Close)
+		util.WithRecovery(func() {
+			err := e.RowContainer.Close()
+			if err != nil {
+				logutil.BgLogger().Warn("RowContainer encounters error",
+					zap.Error(err),
+					zap.Stack("stack trace"))
+			}
+		}, nil)
 		e.HashJoinCtxV1.SessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
@@ -159,8 +171,9 @@ func (e *HashJoinV1Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	err := e.BaseExecutor.Close()
-	return err
+
+	IsChildCloseCalledForTest.Store(true)
+	return e.BaseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.

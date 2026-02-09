@@ -436,11 +436,10 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	}(minRegionStepValue)
 	minRegionStepValue = 3
 	ctx := mock.NewContext()
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	e := &SplitTableRegionExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
-		handleCols:   buildHandleColsForSplit(sc, tbInfo),
+		handleCols:   buildHandleColsForSplit(tbInfo),
 		lower:        types.MakeDatums(1, 0),
 		upper:        types.MakeDatums(1, 100),
 		num:          10,
@@ -474,8 +473,9 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	}
 
 	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, ca := range cases {
-		h, err := e.handleCols.BuildHandleByDatums(ca.value)
+		h, err := e.handleCols.BuildHandleByDatums(sc, ca.value)
 		require.NoError(t, err)
 		key := tablecodec.EncodeRecordKey(recordPrefix, h)
 		require.NoError(t, err)

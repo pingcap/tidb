@@ -44,14 +44,14 @@ func TestDDLAfterLoad(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	recordCount := 1000
 	for i := 0; i < recordCount; i++ {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	// add column
 	testKit.MustExec("alter table t add column c10 int")
@@ -80,7 +80,7 @@ func TestDDLTable(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1))")
@@ -91,7 +91,7 @@ func TestDDLTable(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	// For FK table's CreateTable Event
@@ -104,7 +104,7 @@ func TestDDLTable(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("create table t_child (id int primary key, pid int, foreign key (pid) references t_parent(id) on delete cascade on update cascade);")
@@ -115,7 +115,7 @@ func TestDDLTable(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 }
 
@@ -171,7 +171,7 @@ func TestTruncateTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	err = h.Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	// Get stats update version.
@@ -239,7 +239,7 @@ func TestTruncateAPartitionedTable(t *testing.T) {
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -299,16 +299,28 @@ func TestDDLHistogram(t *testing.T) {
 	<-h.DDLEventCh()
 	testKit.MustExec("insert into t values(1,2),(3,4)")
 	testKit.MustExec("analyze table t")
-
-	testKit.MustExec("alter table t add column c_null int")
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
 	is := do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	lastHistUpdateVersion1 := statsTbl.LastStatsHistVersion
+
+	testKit.MustExec("alter table t add column c_null int")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+
+	// Check that the last_stats_histograms_version has been updated.
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	require.Nil(t, h.Update(context.Background(), is))
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	lastHistUpdateVersion2 := statsTbl.LastStatsHistVersion
+	require.Greater(t, lastHistUpdateVersion2, lastHistUpdateVersion1)
+
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(2, false))
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[2].ID).IsStatsInitialized())
@@ -323,7 +335,7 @@ func TestDDLHistogram(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(3, false))
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[3].ID).IsStatsInitialized())
@@ -343,7 +355,7 @@ func TestDDLHistogram(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// If we don't use original default value, we will get a pseudo table.
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(4, false))
@@ -356,7 +368,7 @@ func TestDDLHistogram(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(5, false))
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[5].ID).IsStatsInitialized())
@@ -370,20 +382,20 @@ func TestDDLHistogram(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("create index i on t(c2, c1)")
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(2, true))
 	testKit.MustExec("analyze table t")
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(1, true))
 	rs := testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and hist_id = 1 and is_index =1", tableInfo.ID)
 	rs.Check(testkit.Rows("1"))
@@ -423,7 +435,7 @@ PARTITION BY RANGE ( a ) (
 		require.Nil(t, h.Update(context.Background(), is))
 		pi := tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 			require.False(t, statsTbl.Pseudo, "for %v", pruneMode)
 		}
 
@@ -439,7 +451,7 @@ PARTITION BY RANGE ( a ) (
 		tableInfo = tbl.Meta()
 		pi = tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 			require.False(t, statsTbl.Pseudo)
 			require.Equal(t, 3.0, cardinality.AvgColSize(statsTbl.GetCol(tableInfo.Columns[2].ID), statsTbl.RealtimeCount, false))
 		}
@@ -455,7 +467,7 @@ PARTITION BY RANGE ( a ) (
 		require.Nil(t, h.Update(context.Background(), is))
 		pi = tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 			require.False(t, statsTbl.Pseudo)
 		}
 	}
@@ -491,7 +503,7 @@ func TestReorgPartitions(t *testing.T) {
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -548,7 +560,7 @@ func TestIncreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -617,7 +629,7 @@ func TestDecreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	pi := tableInfo.GetPartitionInfo()
 	require.Len(t, pi.Definitions, 4)
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -705,7 +717,7 @@ func TestTruncateAPartition(t *testing.T) {
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -768,7 +780,7 @@ func TestTruncateAHashPartition(t *testing.T) {
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -835,7 +847,7 @@ func TestTruncatePartitions(t *testing.T) {
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -906,7 +918,7 @@ func TestDropAPartition(t *testing.T) {
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -973,7 +985,7 @@ func TestDropPartitions(t *testing.T) {
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	err = h.Update(context.Background(), is)
@@ -1051,7 +1063,7 @@ func TestExchangeAPartition(t *testing.T) {
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 	// Create a normal table to exchange partition.
@@ -1069,7 +1081,7 @@ func TestExchangeAPartition(t *testing.T) {
 	)
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	statsTbl1 := h.GetTableStats(tableInfo1)
+	statsTbl1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 
 	// Check the global stats meta before exchange partition.
@@ -1105,7 +1117,7 @@ func TestExchangeAPartition(t *testing.T) {
 	)
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
-	statsTbl2 := h.GetTableStats(tableInfo2)
+	statsTbl2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	err = h.Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
@@ -1149,7 +1161,7 @@ func TestExchangeAPartition(t *testing.T) {
 	)
 	require.NoError(t, err)
 	tableInfo3 := tbl3.Meta()
-	statsTbl3 := h.GetTableStats(tableInfo3)
+	statsTbl3 := h.GetPhysicalTableStats(tableInfo3.ID, tableInfo3)
 	require.False(t, statsTbl3.Pseudo)
 	err = h.Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
@@ -1203,7 +1215,7 @@ func TestRemovePartitioning(t *testing.T) {
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
 
@@ -1409,13 +1421,14 @@ func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	// Insert some data.
 	testKit.MustExec("insert into t values (1, 2), (2, 3), (3, 4)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t predicate columns")
 	// Add column.
 	testKit.MustExec("alter table t add column c10 int")
 	// Insert some data.
 	testKit.MustExec("insert into t values (4, 5, 6)")
 	// Analyze table to force create the histogram meta record.
-	testKit.MustExec("analyze table t")
+	// FIXME: When analyzing all columns, it will error out due to a duplicate key.
+	testKit.MustExec("analyze table t predicate columns")
 	// Find the add column event.
 	event := findEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
 	err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)

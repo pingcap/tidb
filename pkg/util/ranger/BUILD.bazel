@@ -31,6 +31,7 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/hack",
+        "//pkg/util/intest",
         "//pkg/util/ranger/context",
         "@com_github_pingcap_errors//:errors",
     ],

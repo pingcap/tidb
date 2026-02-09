@@ -16,15 +16,16 @@ package external
 
 import (
 	"context"
-	"fmt"
-	"path"
+	"slices"
 	"testing"
+	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
+	"golang.org/x/sync/errgroup"
 )
 
 func testGetFirstAndLastKey(
@@ -43,65 +44,32 @@ func testNewIter(
 	t *testing.T,
 	data common.IngestData,
 	lowerBound, upperBound []byte,
-	expectedKeys, expectedValues [][]byte,
+	expectedKVs []KVPair,
 	bufPool *membuf.Pool,
 ) {
 	ctx := context.Background()
 	iter := data.NewIter(ctx, lowerBound, upperBound, bufPool)
-	var (
-		keys, values [][]byte
-	)
+	var kvs []KVPair
 	for iter.First(); iter.Valid(); iter.Next() {
 		require.NoError(t, iter.Error())
-		keys = append(keys, iter.Key())
-		values = append(values, iter.Value())
+		kvs = append(kvs, KVPair{Key: iter.Key(), Value: iter.Value()})
 	}
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
-	require.Equal(t, expectedKeys, keys)
-	require.Equal(t, expectedValues, values)
-}
-
-func checkDupDB(t *testing.T, db *pebble.DB, expectedKeys, expectedValues [][]byte) {
-	iter, _ := db.NewIter(nil)
-	var (
-		gotKeys, gotValues [][]byte
-	)
-	for iter.First(); iter.Valid(); iter.Next() {
-		key := make([]byte, len(iter.Key()))
-		copy(key, iter.Key())
-		gotKeys = append(gotKeys, key)
-		value := make([]byte, len(iter.Value()))
-		copy(value, iter.Value())
-		gotValues = append(gotValues, value)
-	}
-	require.NoError(t, iter.Close())
-	require.Equal(t, expectedKeys, gotKeys)
-	require.Equal(t, expectedValues, gotValues)
-	err := db.DeleteRange([]byte{0}, []byte{255}, nil)
-	require.NoError(t, err)
+	require.Equal(t, expectedKVs, kvs)
 }
 
 func TestMemoryIngestData(t *testing.T) {
-	keys := [][]byte{
-		[]byte("key1"),
-		[]byte("key2"),
-		[]byte("key3"),
-		[]byte("key4"),
-		[]byte("key5"),
-	}
-	values := [][]byte{
-		[]byte("value1"),
-		[]byte("value2"),
-		[]byte("value3"),
-		[]byte("value4"),
-		[]byte("value5"),
+	kvs := []KVPair{
+		{Key: []byte("key1"), Value: []byte("value1")},
+		{Key: []byte("key2"), Value: []byte("value2")},
+		{Key: []byte("key3"), Value: []byte("value3")},
+		{Key: []byte("key4"), Value: []byte("value4")},
+		{Key: []byte("key5"), Value: []byte("value5")},
 	}
 	data := &MemoryIngestData{
-		keyAdapter: common.NoopKeyAdapter{},
-		keys:       keys,
-		values:     values,
-		ts:         123,
+		kvs: kvs,
+		ts:  123,
 	}
 
 	require.EqualValues(t, 123, data.GetTS())
@@ -114,54 +82,38 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 
 	// MemoryIngestData without duplicate detection feature does not need pool
-	testNewIter(t, data, nil, nil, keys, values, nil)
-	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values, nil)
-	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4], nil)
-	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3], nil)
-	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil, nil)
-	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil, nil)
-	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil, nil)
+	testNewIter(t, data, nil, nil, kvs, nil)
+	testNewIter(t, data, []byte("key1"), []byte("key6"), kvs, nil)
+	testNewIter(t, data, []byte("key2"), []byte("key5"), kvs[1:4], nil)
+	testNewIter(t, data, []byte("key25"), []byte("key35"), kvs[2:3], nil)
+	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil)
+	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil)
+	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil)
 
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
 	data = &MemoryIngestData{
-		keyAdapter:         keyAdapter,
-		duplicateDetection: true,
-		duplicateDB:        db,
-		ts:                 234,
+		ts: 234,
 	}
-	encodedKeys := make([][]byte, 0, len(keys)*2)
-	encodedValues := make([][]byte, 0, len(values)*2)
-	encodedZero := codec.EncodeInt(nil, 0)
-	encodedOne := codec.EncodeInt(nil, 1)
-	duplicatedKeys := make([][]byte, 0, len(keys)*2)
-	duplicatedValues := make([][]byte, 0, len(values)*2)
+	encodedKVs := make([]KVPair, 0, len(kvs)*2)
+	duplicatedKVs := make([]KVPair, 0, len(kvs)*2)
 
-	for i := range keys {
-		encodedKey := keyAdapter.Encode(nil, keys[i], encodedZero)
-		encodedKeys = append(encodedKeys, encodedKey)
-		encodedValues = append(encodedValues, values[i])
+	for i := range kvs {
+		encodedKey := slices.Clone(kvs[i].Key)
+		encodedKVs = append(encodedKVs, KVPair{Key: encodedKey, Value: kvs[i].Value})
 		if i%2 == 0 {
 			continue
 		}
 
 		// duplicatedKeys will be like key2_0, key2_1, key4_0, key4_1
-		duplicatedKeys = append(duplicatedKeys, encodedKey)
-		duplicatedValues = append(duplicatedValues, values[i])
+		duplicatedKVs = append(duplicatedKVs, KVPair{Key: encodedKey, Value: kvs[i].Value})
 
-		encodedKey = keyAdapter.Encode(nil, keys[i], encodedOne)
-		encodedKeys = append(encodedKeys, encodedKey)
-		newValues := make([]byte, len(values[i])+1)
-		copy(newValues, values[i])
-		newValues[len(values[i])] = 1
-		encodedValues = append(encodedValues, newValues)
-		duplicatedKeys = append(duplicatedKeys, encodedKey)
-		duplicatedValues = append(duplicatedValues, newValues)
+		encodedKey = slices.Clone(kvs[i].Key)
+		newValues := make([]byte, len(kvs[i].Value)+1)
+		copy(newValues, kvs[i].Value)
+		newValues[len(kvs[i].Value)] = 1
+		encodedKVs = append(encodedKVs, KVPair{Key: encodedKey, Value: newValues})
+		duplicatedKVs = append(duplicatedKVs, KVPair{Key: encodedKey, Value: newValues})
 	}
-	data.keys = encodedKeys
-	data.values = encodedValues
+	data.kvs = encodedKVs
 
 	require.EqualValues(t, 234, data.GetTS())
 	testGetFirstAndLastKey(t, data, nil, nil, []byte("key1"), []byte("key5"))
@@ -171,93 +123,87 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key26"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
-
-	pool := membuf.NewPool()
-	defer pool.Destroy()
-	testNewIter(t, data, nil, nil, keys, values, pool)
-	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
-	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values, pool)
-	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
-	testNewIter(t, data, []byte("key1"), []byte("key3"), keys[:2], values[:2], pool)
-	checkDupDB(t, db, duplicatedKeys[:2], duplicatedValues[:2])
-	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4], pool)
-	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
-	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3], pool)
-	checkDupDB(t, db, nil, nil)
-	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil, pool)
-	checkDupDB(t, db, nil, nil)
-	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil, pool)
-	checkDupDB(t, db, nil, nil)
-	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil, pool)
-	checkDupDB(t, db, nil, nil)
 }
 
-func TestSplit(t *testing.T) {
-	cases := []struct {
-		input    []int
-		conc     int
-		expected [][]int
-	}{
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     1,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     2,
-			expected: [][]int{{1, 2, 3}, {4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     0,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     5,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-		{
-			input:    []int{},
-			conc:     5,
-			expected: nil,
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     100,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-	}
+type dummyWorker struct{}
 
-	for _, c := range cases {
-		got := split(c.input, c.conc)
-		require.Equal(t, c.expected, got)
-	}
+func (w *dummyWorker) Tune(int32, bool) {
 }
 
-func TestGetAdjustedConcurrency(t *testing.T) {
-	genFiles := func(n int) []string {
-		files := make([]string, 0, n)
-		for i := 0; i < n; i++ {
-			files = append(files, fmt.Sprintf("file%d", i))
+func TestChangeEngineConcurrency(t *testing.T) {
+	var (
+		outCh     chan common.DataAndRanges
+		eg        errgroup.Group
+		e         *Engine
+		finished  atomic.Int32
+		updatedCh chan struct{}
+	)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	resetFn := func() {
+		outCh = make(chan common.DataAndRanges, 4)
+		updatedCh = make(chan struct{})
+		eg = errgroup.Group{}
+		finished.Store(0)
+		e = &Engine{
+			jobKeys:           make([][]byte, 64),
+			workerConcurrency: *atomic.NewInt32(4),
+			readyCh:           make(chan struct{}),
 		}
-		return files
-	}
-	e := &Engine{
-		checkHotspot:      true,
-		workerConcurrency: 32,
-		dataFiles:         genFiles(100),
-	}
-	require.Equal(t, 8, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(8000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
+		e.SetWorkerPool(&dummyWorker{})
 
-	e.checkHotspot = false
-	e.dataFiles = genFiles(10)
-	require.Equal(t, 32, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(100)
-	require.Equal(t, 10, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(10000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
+		// Load and consume the data
+		eg.Go(func() error {
+			defer close(outCh)
+			return e.LoadIngestData(context.Background(), outCh)
+		})
+		eg.Go(func() error {
+			<-updatedCh
+			for data := range outCh {
+				data.Data.DecRef()
+				finished.Add(1)
+			}
+			return nil
+		})
+	}
+
+	t.Run("reduce concurrency", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+			updatedCh <- struct{}{}
+		})
+
+		resetFn()
+		// Make sure update concurrency is triggered.
+		require.Eventually(t, func() bool {
+			return len(outCh) >= 4
+		}, 5*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 1, 1024))
+		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("increase concurrency", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+			updatedCh <- struct{}{}
+		})
+
+		resetFn()
+		// Make sure update concurrency is triggered.
+		require.Eventually(t, func() bool {
+			return len(outCh) >= 4
+		}, 5*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 8, 1024))
+		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("increase concurrency after loading all data", func(t *testing.T) {
+		resetFn()
+		close(updatedCh)
+		// Wait all the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() >= 16
+		}, 3*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 8, 1024))
+		require.NoError(t, eg.Wait())
+	})
 }

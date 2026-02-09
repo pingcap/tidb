@@ -78,6 +78,7 @@ func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *
 		segs := tablecodec.SplitIndexValue(it.Value())
 		require.NotNil(t, segs.PartitionID)
 		_, pi, err := codec.DecodeInt(segs.PartitionID)
+		logutil.DDLLogger().Info("checkGlobalIndexCleanUpDone jobs", zap.String("key", it.Key().String()), zap.Int64("PartID", pi))
 		require.NoError(t, err)
 		require.NotEqual(t, pid, pi)
 		cnt++
@@ -1485,14 +1486,14 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	idxInfo := tt.Meta().FindIndexByName("idx_b")
 	require.NotNil(t, idxInfo)
 	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
-	require.Equal(t, 3, cnt)
+	require.Equal(t, 4, cnt)
 
 	idxInfo = tt.Meta().FindIndexByName("idx_c")
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
-	require.Equal(t, 3, cnt)
-	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
-	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+	require.Equal(t, 4, cnt)
+	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows("15"))
+	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows("15"))
 	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
 	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 }
@@ -3216,31 +3217,31 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk2.MustExec(`insert into t values (null, 26)`)
 	tk3.MustExec(`COMMIT`)
 	tk2.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"21 20 5",
+		"23 22 6",
+		"25 24 7",
 		"27 26 8",
-		"30012 12 12",
-		"30013 18 4",
-		"30014 24 7",
-		"30015 16 18",
-		"30016 22 6",
-		"30017 28 9",
-		"30018 11 11",
-		"30019 2 2",
-		"30020 20 5",
+		"29 28 9",
 		"31 30 10",
 		"35 34 22",
 		"39 38 24",
 		"43 42 26"))
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"21 20 5",
+		"23 22 6",
+		"25 24 7",
 		"27 26 8",
-		"30012 12 12",
-		"30013 18 4",
-		"30014 24 7",
-		"30015 16 18",
-		"30016 22 6",
-		"30017 28 9",
-		"30018 11 11",
-		"30019 2 2",
-		"30020 20 5",
+		"29 28 9",
 		"31 30 10",
 		"33 32 21",
 		"35 34 22",
@@ -3250,16 +3251,16 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	waitFor(4, "t", "public")
 	tk2.MustExec(`commit`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"21 20 5",
+		"23 22 6",
+		"25 24 7",
 		"27 26 8",
-		"30012 12 12",
-		"30013 18 4",
-		"30014 24 7",
-		"30015 16 18",
-		"30016 22 6",
-		"30017 28 9",
-		"30018 11 11",
-		"30019 2 2",
-		"30020 20 5",
+		"29 28 9",
 		"31 30 10",
 		"33 32 21",
 		"35 34 22",

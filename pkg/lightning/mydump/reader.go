@@ -132,6 +132,16 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage,
 		}
 	}
 
+	// require trailing semicolon for any remaining non-comment statement
+	if len(buffer) > 0 {
+		stmtTrimB := bytes.TrimSpace(buffer)
+		// Skip pure block comment like "/* ... */" without semicolon.
+		if len(stmtTrimB) > 0 && !(bytes.HasPrefix(stmtTrimB, []byte("/*")) && bytes.HasSuffix(stmtTrimB, []byte("*/"))) {
+			return nil, errors.Annotatef(errors.New("last SQL statement missing trailing semicolon"), "file: %s", sqlFile.FileMeta.Path)
+		}
+		buffer = buffer[:0]
+	}
+
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
 		log.FromContext(ctx).Error("cannot decode input file, please convert to target encoding manually",
@@ -189,7 +199,8 @@ func (pr PooledReader) Read(p []byte) (n int, err error) {
 
 // Seek implements io.Seeker
 func (pr PooledReader) Seek(offset int64, whence int) (int64, error) {
-	if pr.ioWorkers != nil {
+	// Seek(0, io.SeekCurrent) is used to get the current offset, which will not cause any Disk I/O.
+	if pr.ioWorkers != nil && !(offset == 0 && whence == io.SeekCurrent) {
 		w := pr.ioWorkers.Apply()
 		defer pr.ioWorkers.Recycle(w)
 	}

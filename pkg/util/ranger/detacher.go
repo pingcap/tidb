@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
@@ -138,6 +139,12 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(evalCtx, chunk.Row{})
+				intest.AssertFunc(func() bool {
+					if sctx.ExprCtx.ConnectionID() == 0 {
+						return sctx.RegardNULLAsPoint
+					}
+					return true
+				})
 				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
@@ -332,13 +339,12 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 		}
 		// take the union of the two columnValues
 		columnValues = unionColumnValues(columnValues, res.ColumnValues)
-		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
+		if len(res.AccessConds) == 0 {
 			continue
 		}
 		curRes := getCNFItemRangeResult(sctx, res, i)
 		bestRes = mergeTwoCNFRanges(sctx, cond, bestRes, curRes)
 	}
-
 	if bestRes != nil && bestRes.rangeResult != nil {
 		bestRes.rangeResult.IsDNFCond = false
 	}

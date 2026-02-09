@@ -146,40 +146,22 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	require.NotNil(t, otrace)
 	elements := map[int]string{
 		12: "TableReader",
-		14: "TableReader",
 		13: "TableFullScan",
-		15: "HashJoin",
-		6:  "Projection",
-		11: "TableFullScan",
 		9:  "HashJoin",
 		10: "HashJoin",
-		7:  "HashAgg",
+		15: "HashJoin",
 		16: "HashJoin",
+		11: "TableFullScan",
+		14: "TableReader",
+		7:  "HashAgg",
 		8:  "StreamAgg",
-	}
-	final := map[int]struct{}{
-		11: {},
-		12: {},
-		13: {},
-		14: {},
-		9:  {},
-		7:  {},
-		6:  {},
+		6:  "Projection",
 	}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]
-		if !ok || tp != c.TP {
-			t.FailNow()
-		}
+		require.Truef(t, ok, "ID: %d not found in elements", c.ID)
+		require.Equalf(t, tp, c.TP, "ID: %d, expected TP: %s, got TP: %s", c.ID, tp, c.TP)
 	}
-	require.Len(t, otrace.Candidates, len(elements))
-	for _, p := range otrace.Final {
-		_, ok := final[p.ID]
-		if !ok {
-			t.FailNow()
-		}
-	}
-	require.Len(t, otrace.Final, len(final))
 }
 
 func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {

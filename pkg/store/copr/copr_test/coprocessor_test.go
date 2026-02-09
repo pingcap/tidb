@@ -19,15 +19,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
@@ -286,4 +289,36 @@ func TestBuildCopIteratorWithRunawayChecker(t *testing.T) {
 	concurrency, smallTaskConcurrency := it.GetConcurrency()
 	require.Equal(t, concurrency, 1)
 	require.Equal(t, smallTaskConcurrency, 0)
+}
+
+func TestQueryWithConcurrentSmallCop(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, c int, index idx_b(b)) partition by hash(id) partitions 10;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v, %v)", i, i, i))
+	}
+	tk.MustExec("create table t2 (id bigint unsigned key, b int, index idx_b (b));")
+	tk.MustExec("insert into t2 values (1,1), (18446744073709551615,2)")
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=15")
+	tk.MustExec("set @@tidb_executor_concurrency=15")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(100)`))
+	// Test for https://github.com/pingcap/tidb/pull/57522#discussion_r1875515863
+	start := time.Now()
+	tk.MustQuery("select sum(c) from t1 use index (idx_b) where b < 10;")
+	require.Less(t, time.Since(start), time.Millisecond*250)
+	// Test for index reader with partition table
+	start = time.Now()
+	tk.MustQuery("select id, b from t1 use index (idx_b) where b < 10;")
+	require.Less(t, time.Since(start), time.Millisecond*150)
+	// Test for table reader with partition table.
+	start = time.Now()
+	tk.MustQuery("select * from t1 where c < 10;")
+	require.Less(t, time.Since(start), time.Millisecond*150)
+	// 	// Test for table reader with 2 parts ranges.
+	start = time.Now()
+	tk.MustQuery("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;")
+	require.Less(t, time.Since(start), time.Millisecond*150)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
 }

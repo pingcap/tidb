@@ -29,11 +29,11 @@ import (
 )
 
 func TestQueryWatch(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	if variable.SchemaCacheSize.Load() != 0 {
 		t.Skip("skip this test because the schema cache is enabled")
@@ -45,10 +45,6 @@ func TestQueryWatch(t *testing.T) {
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustExec("create table t3(a int)")
 	tk.MustExec("insert into t3 values(1)")
-
-	require.Eventually(t, func() bool {
-		return dom.RunawayManager().IsSyncerInitialized()
-	}, 20*time.Second, 300*time.Millisecond)
 
 	err := tk.QueryToErr("query watch add sql text exact to 'select * from test.t1'")
 	require.ErrorContains(t, err, "must set runaway config for resource group `default`")
@@ -170,16 +166,13 @@ func TestQueryWatch(t *testing.T) {
 }
 
 func TestQueryWatchIssue56897(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.Eventually(t, func() bool {
-		return dom.RunawayManager().IsSyncerInitialized()
-	}, 20*time.Second, 300*time.Millisecond)
 	tk.MustQuery("QUERY WATCH ADD ACTION KILL SQL TEXT SIMILAR TO 'use test';").Check((testkit.Rows("1")))
 	time.Sleep(1 * time.Second)
 	_, err := tk.Exec("use test")

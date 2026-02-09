@@ -4,16 +4,16 @@ insert into t values (1);
 analyze table t all columns;
 explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-TopN_8	1.00	20.71	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1
-└─TableReader_16	1.00	19.11	root		data:TopN_15
-  └─TopN_15	1.00	255.00	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1
+TopN_8	1.00	24.53	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1
+└─TableReader_16	1.00	21.33	root		data:TopN_15
+  └─TopN_15	1.00	256.60	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1
     └─Selection_14	1.00	253.40	cop[tikv]		eq(planner__core__plan_cost_ver2.t.a, 1)
       └─TableFullScan_13	1.00	203.50	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1000000000;
 id	estRows	estCost	task	access object	operator info
-TopN_8	1.00	20.71	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1000000000
-└─TableReader_16	1.00	19.11	root		data:TopN_15
-  └─TopN_15	1.00	255.00	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1000000000
+TopN_8	1.00	24.53	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1000000000
+└─TableReader_16	1.00	21.33	root		data:TopN_15
+  └─TopN_15	1.00	256.60	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1000000000
     └─Selection_14	1.00	253.40	cop[tikv]		eq(planner__core__plan_cost_ver2.t.a, 1)
       └─TableFullScan_13	1.00	203.50	cop[tikv]	table:t	keep order:false
 drop table if exists t;
@@ -254,7 +254,7 @@ explain format='true_card_cost' select * from t;
 Error 1105 (HY000): 'explain format=true_card_cost' cannot work without 'analyze', please use 'explain analyze format=true_card_cost'
 explain analyze format='true_card_cost' select * from t where a<3;
 id	estRows	estCost	costFormula	actRows	task	access object	execution info	operator info	memory	disk
-TableReader_7	3323.33	13580.23	(((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + ((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
-└─Selection_6	3323.33	203703.50	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + ((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
-  └─TableFullScan_5	10000.00	203703.50	(scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7)))	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
+TableReader_7	3323.33	13580.23	((((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00)) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
+└─Selection_6	3323.33	203703.50	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00)	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
+  └─TableFullScan_5	10000.00	203703.50	((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
 set @@tidb_cost_model_version=DEFAULT;

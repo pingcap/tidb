@@ -1,0 +1,235 @@
+--enable_warnings
+set @@time_zone = '+00:00';
+# Supported in v9.x, not backported to release-8.5
+# So when backporting #61533, but not #57845, we add/replace the errors 1525 with 1292
+-- error 1292
+select timestamp '2024-01-01 14:00:00+01:00';
+-- error 1292
+select timestamp '2024-01-01 14:00:00+01:59';
+# TODO: Fix the error difference between TiDB and MySQL:
+# TiDB:
+# Error 1292 (22007): Incorrect datetime value: '2024-01-01 14:00:00+01:60'
+# MySQL:
+# Error 1525 (HY000): Incorrect DATETIME value: '2024-01-01 14:00:00+01:60'
+-- error 1292
+select timestamp '2024-01-01 14:00:00+01:60';
+-- error 1292
+select timestamp '2024-01-01 14:00:00-01:00';
+-- error 1292
+select timestamp '2024-01-01 14:00:00-01:59';
+-- error 1292
+select timestamp '2024-01-01 14:00:00-01:60';
+-- error 1292
+select timestamp '2024-01-01 14:00:00+14:00';
+-- error 1292
+select timestamp '2024-01-01 14:00:00-14:00';
+-- error 1292
+select timestamp '2024-01-01 14:00:00+14:01';
+-- error 1292
+select timestamp '2024-01-01 14:00:00-14:01';
+-- error 1292
+select timestamp '2024-01-01 14:00:00+14:59';
+-- error 1292
+select timestamp '2024-01-01 14:00:00-14:59';
+-- error 1292
+select timestamp '2024-01-01 14:00:00+15:00';
+-- error 1292
+select timestamp '2024-01-01 14:00:00-15:00';
+
+# TODO: verify how MySQL checks the TIMSTAMP literal as DATETIME pattern
+-- error 1292
+select timestamp '2024';
+-- error 1292
+select timestamp '2024-01';
+-- error 1292
+select timestamp '2024-1';
+-- error 1292
+select timestamp '2024-01-01';
+-- error 1292
+select timestamp '2024-1-1';
+-- error 1292
+select timestamp '2024-01-1';
+-- error 1292
+select timestamp '2024-1-01';
+
+-- error 1292
+select timestamp '2024-01-01 14.999999999999';
+-- error 1292
+select timestamp '2024-01-01 14.888888888888';
+-- error 1292
+select timestamp '2024-01-01 14.66';
+-- error 1292
+select timestamp '2024-01-01 14.555555555555';
+-- error 1292
+select timestamp '2024-01-01 14.0000111';
+# TODO: Fix the minor difference TiDB:
+# 2024-01-01 14:11:00.000000
+# and MySQL:
+# 2024-01-01 14:11:00
+-- error 1292
+select timestamp '2024-01-01 14.000011';
+-- error 1292
+select timestamp '2024-01-01 14.55';
+-- error 1292
+select timestamp '2024-01-01 14.9';
+-- error 1292
+select timestamp '2024-01-01 14.0000000000001';
+select timestamp '2024-01-01 14:00.0000000000001';
+-- error 1292
+select timestamp '2024-01-01 14.';
+# MySQL allows this! But gives a warning that '.' as delimiter is deprecated
+-- error 1292
+select timestamp '2024-01-01 14:00...';
+# MySQL give warning, but accepts it
+-- error 1292
+select timestamp '2024-01-01 14:00::';
+# MySQL give warning, but accepts it
+-- error 1292
+select timestamp '2024-01-01 14:00:';
+select timestamp '2024-01-01 14:00:00.0000000000001';
+select timestamp '2024-01-01 14:00:00.999999999999';
+
+# MySQL will set year '0000', while and TiDB '2000'!!!
+-- error 1292
+select timestamp '0-02-03 17';
+# 1-3 digit year is OK!
+# MySQL will set year '0004', while TiDB '2004'!!!
+-- error 1292
+select timestamp '4-01-01 14';
+-- error 1292
+select timestamp '24-01-01 14';
+-- error 1292
+select timestamp '024-01-01 14';
+-- error 1292
+select timestamp '124-01-01 14';
+# any amount of 0 prefixes is OK
+-- error 1292
+select timestamp '02024-01-01 14';
+-- error 1292
+select timestamp '000002024-00001-00001 00014';
+select timestamp '000002024-00001-00001 00014:000001:000001';
+
+# No extra prefix zeros in time zone offset!
+-- error 1292
+select timestamp '000002024-00001-00001 00014:000001:000001+001:001';
+-- error 1292
+select timestamp '000002024-00001-00001 00014:000001:000001+01:001';
+-- error 1292
+select timestamp '000002024-00001-00001 00014:000001:000001+001:01';
+-- error 1292
+select timestamp '2024-01-01 14:01:01+1:1';
+-- error 1292
+select timestamp '2024-01-01 14:01:01+01:1';
+-- error 1292
+select timestamp '2024-01-01 14:01:01+1:01';
+-- error 1292
+select timestamp '2024-01-01 14:01:01+01;01';
+-- error 1292
+select timestamp '2024-01-01 14:01:01+01-01';
+-- error 1292
+select timestamp '2024-01-01 14:01:01+0101';
+
+-- error 1292
+select timestamp '2024-1-1 0';
+-- error 1292
+select timestamp '2024-1-1 1';
+-- error 1292
+select timestamp '2024-1-1 1:1';
+select timestamp '2024-1-1 1:1:1.11';
+-- error 1292
+select timestamp '2024-01-01 0';
+-- error 1292
+select timestamp '2024-01-01 1';
+-- error 1292
+select timestamp '2024-01-01 0';
+-- error 1292
+select timestamp '2024-01-01 14';
+-- error 1292
+select timestamp '2024-01-01 14:00';
+select timestamp '2024-01-01 14:00:00';
+select timestamp '2024-01-01 14:00:00.010';
+select timestamp '2024-01-01 14:00:00.123456789';
+-- error 1292
+select timestamp '2024-01-01 14:00:00.123456789+02:00';
+select timestamp '2024-01-01 14+01:00';
+
+# Should we really support this MySQL 'internal' format?
+# mysql result; 2010-10-01 05:00:00
+-- error 1292
+select timestamp'10101.5';
+
+# ODBC style escape MySQL extensions
+-- error 1292
+SELECT { ts '2024-01-01 14:00:00+00:00' };
+-- error 1292
+SELECT { ts '2024-01-01 14:00:00-14:00' };
+-- error 1292
+SELECT { ts '2024-01-01 14:00:00+14:00' };
+-- error 1292
+SELECT { ts '2024-01-01 14:00:00-14:01' };
+-- error 1292
+SELECT { ts '2024-01-01 14:00:00+14:01' };
+-- error 1292
+# Not allowed!
+SELECT { ts '2024-01-01 14:00:00-00:00' };
+
+SELECT { d '2024-01-01' };
+-- error 1292
+SELECT { d '2024-01-01 01:12:31' };
+
+SELECT { t '14:00:00' };
+-- error 1292
+SELECT { d '2024-01-01 01:12:31' };
+
+# TODO: Also test if there are difference between explicitly give the timestamp/datetime as literal/string or having it from a varchar in a table
+
+SET time_zone = 'UTC';
+CREATE TABLE t (id int primary key, ts TIMESTAMP);
+INSERT INTO t VALUES (1, '2025-03-30 00:59:59');
+INSERT INTO t VALUES (2, '2025-03-30 01:00:00');
+SET time_zone = 'Europe/Paris';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t;
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
+# All these probably converts to DATETIME (including tz conversions) before comparing
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval 20 minute) = '2025-03-30 02:19:59';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval -20 minute) = '2025-03-30 02:40:00';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:40:00', interval 20 minute);
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:19:59', interval -20 minute);
+
+ALTER TABLE t ADD INDEX idx_ts (ts);
+# Note: MySQL would return 03:00:00 on '=', different from not being indexed!
+# reference: https://bugs.mysql.com/bug.php?id=38455
+# TiDB is better, by being consistent regardless if indexed or not!
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
+# All these probably converts to DATETIME (including tz conversions) before comparing
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval 20 minute) = '2025-03-30 02:19:59';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval -20 minute) = '2025-03-30 02:40:00';
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:40:00', interval 20 minute);
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:19:59', interval -20 minute);
+
+SELECT DATE_ADD(ts, INTERVAL 1 HOUR) FROM t;
+SELECT DATE_SUB(ts, INTERVAL 1 HOUR) FROM t;
+# If not error, his returns NULL, but MySQL returns 02:59:59.
+# TODO: issue#61567, also understand when it returns NULL and when it gives error!
+--error 8179
+SELECT TIMESTAMPADD(HOUR, 1, ts) FROM t;
+SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', ts) FROM t;
+SELECT UNIX_TIMESTAMP(ts) FROM t;
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP(ts)) FROM t;
+
+SELECT DATE_ADD('2025-03-30 02:30:00', INTERVAL 1 HOUR);
+SELECT DATE_SUB('2025-03-30 02:30:00', INTERVAL 1 HOUR);
+SELECT TIMESTAMPADD(HOUR, 1, '2025-03-30 02:30:00');
+SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', '2025-03-30 02:30:00');
+SELECT UNIX_TIMESTAMP('2025-03-30 02:30:00');
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2025-03-30 02:30:00'));

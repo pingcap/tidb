@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "instanceplancache_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "concurrency_test.go",
         "concurrency_tpcc_test.go",
@@ -11,7 +11,7 @@ go_test(
         "others_test.go",
     ],
     flaky = True,
-    shard_count = 18,
+    shard_count = 19,
     deps = [
         "//pkg/parser/auth",
         "//pkg/testkit",

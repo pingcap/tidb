@@ -16,6 +16,7 @@ package priorityqueue_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -61,11 +63,23 @@ func findEventWithTimeout(eventCh <-chan *notifier.SchemaChangeEvent, eventType 
 	}
 }
 
+// enableAutoAnalyze enables auto-analyze for the test and restores it on cleanup.
+// In tests, auto-analyze is disabled by default, so tests that need it enabled
+// should call this helper at the beginning.
+func enableAutoAnalyze(t *testing.T, tk *testkit.TestKit) {
+	bakRunAutoAnalyze := variable.RunAutoAnalyze.Load()
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze = %t", bakRunAutoAnalyze))
+	})
+}
+
 func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	enableAutoAnalyze(t, tk)
 	tk.MustExec("create table t1 (a int)")
 	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
@@ -91,7 +105,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	runningJobs := pq.GetRunningJobs()
 	require.Len(t, runningJobs, 0)
 	// Check no jobs are in the queue.
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
@@ -139,7 +153,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	}, statsutil.FlagWrapTxn))
 
 	// Check the queue is empty.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
@@ -147,7 +161,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	pq.RequeueMustRetryJobs()
 
 	// Still no jobs in the queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
@@ -169,6 +183,7 @@ func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -190,10 +205,10 @@ func TestTruncateTable(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 
@@ -212,7 +227,7 @@ func TestTruncateTable(t *testing.T) {
 	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, truncateTableEvent))
 
 	// The table is truncated, the job should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -237,6 +252,7 @@ func testTruncatePartitionedTable(
 	testKit *testkit.TestKit,
 ) {
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	h := do.StatsHandle()
 	testKit.MustExec("analyze table t")
@@ -255,7 +271,7 @@ func testTruncatePartitionedTable(
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
 
@@ -274,7 +290,7 @@ func testTruncatePartitionedTable(
 	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, truncateTableEvent))
 
 	// The table is truncated, the job should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -283,6 +299,7 @@ func TestDropTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -304,10 +321,10 @@ func TestDropTable(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 
@@ -326,7 +343,7 @@ func TestDropTable(t *testing.T) {
 	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, dropTableEvent))
 
 	// The table is dropped, the job should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -351,6 +368,7 @@ func testDropPartitionedTable(
 	testKit *testkit.TestKit,
 ) {
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	h := do.StatsHandle()
 	testKit.MustExec("analyze table t")
@@ -369,7 +387,7 @@ func testDropPartitionedTable(
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
 
@@ -388,7 +406,7 @@ func testDropPartitionedTable(
 	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, dropTableEvent))
 
 	// The table is dropped, the job should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -397,6 +415,7 @@ func TestTruncateTablePartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -420,10 +439,10 @@ func TestTruncateTablePartition(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 
@@ -447,7 +466,7 @@ func TestTruncateTablePartition(t *testing.T) {
 	)
 
 	// The table partition is truncated, the job should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -456,6 +475,7 @@ func TestDropTablePartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -479,10 +499,10 @@ func TestDropTablePartition(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 
@@ -506,7 +526,7 @@ func TestDropTablePartition(t *testing.T) {
 	)
 
 	// The table partition is dropped, the job should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -515,6 +535,7 @@ func TestExchangeTablePartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	testKit.MustExec("create table t2 (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
@@ -544,10 +565,10 @@ func TestExchangeTablePartition(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo2.ID, job.GetTableID())
 
@@ -571,10 +592,10 @@ func TestExchangeTablePartition(t *testing.T) {
 	)
 
 	// They are exchanged, the job should be updated to the exchanged table.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo1.ID, job.GetTableID(), "The job should be updated to the exchanged table")
 }
@@ -583,6 +604,7 @@ func TestReorganizeTablePartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -606,10 +628,10 @@ func TestReorganizeTablePartition(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 
@@ -633,7 +655,7 @@ func TestReorganizeTablePartition(t *testing.T) {
 	)
 
 	// The table partition is reorganized, the job should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -642,6 +664,7 @@ func TestAlterTablePartitioning(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -665,10 +688,10 @@ func TestAlterTablePartitioning(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 
@@ -692,7 +715,7 @@ func TestAlterTablePartitioning(t *testing.T) {
 	)
 
 	// The table partitioning is altered, the job should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -701,6 +724,7 @@ func TestRemovePartitioning(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -724,10 +748,10 @@ func TestRemovePartitioning(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 
@@ -751,7 +775,7 @@ func TestRemovePartitioning(t *testing.T) {
 	)
 
 	// The table partitioning is removed, the job should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -760,6 +784,7 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -791,10 +816,10 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 	l, err := pq.Len()
@@ -821,7 +846,7 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	)
 
 	// The table should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -831,6 +856,7 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	h := do.StatsHandle()
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	statstestutil.HandleNextDDLEventWithTxn(h)
 	testKit.MustExec("set global tidb_partition_prune_mode='static'")
@@ -848,7 +874,7 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
 	l, err := pq.Len()
@@ -875,7 +901,7 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	)
 
 	// The table should be removed from the priority queue.
-	isEmpty, err = pq.IsEmpty()
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 }
@@ -911,7 +937,7 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(context.Background()))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
@@ -927,6 +953,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@global.tidb_analyze_version=1;")
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -952,10 +979,10 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(context.Background()))
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 	valid, _ := job.ValidateAndPrepare(testKit.Session())
@@ -963,8 +990,248 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
 
 	// Check the stats of the indexes.
-	tableStats := h.GetTableStats(tableInfo)
+	tableStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
+}
+
+func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	// Enable the static partition mode.
+	testKit.MustExec("set @@global.tidb_partition_prune_mode='static'")
+	testKit.MustExec("set @@global.tidb_analyze_version=1;")
+	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	p0ID := tableInfo.GetPartitionInfo().Definitions[0].ID
+	p1ID := tableInfo.GetPartitionInfo().Definitions[1].ID
+	h := do.StatsHandle()
+	// Analyze table.
+	testKit.MustExec("analyze table t")
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize(context.Background()))
+	isEmpty, err := pq.IsEmptyForTest()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// Add two indexes.
+	testKit.MustExec("alter table t add index idx1(c1)")
+	testKit.MustExec("alter table t add index idx2(c2)")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+	addIndexEvent1 := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent1)
+	require.NoError(t, statsutil.CallWithSCtx(
+		h.SPool(),
+		func(sctx sessionctx.Context) error {
+			require.NoError(t, pq.HandleDDLEvent(context.Background(), sctx, addIndexEvent1))
+			return nil
+		}, statsutil.FlagWrapTxn),
+	)
+	addIndexEvent2 := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent2)
+	require.NoError(t, statsutil.CallWithSCtx(
+		h.SPool(),
+		func(sctx sessionctx.Context) error {
+			require.NoError(t, pq.HandleDDLEvent(context.Background(), sctx, addIndexEvent2))
+			return nil
+		}, statsutil.FlagWrapTxn),
+	)
+	job, err := pq.Pop()
+	require.NoError(t, err)
+	valid, _ := job.ValidateAndPrepare(testKit.Session())
+	require.True(t, valid)
+	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+	job, err = pq.Pop()
+	require.NoError(t, err)
+	valid, _ = job.ValidateAndPrepare(testKit.Session())
+	require.True(t, valid)
+	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+
+	// Check the stats of the indexes for each partition.
+	tableStats := h.GetPhysicalTableStats(p0ID, tableInfo)
+	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
+	tableStats = h.GetPhysicalTableStats(p1ID, tableInfo)
+	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
+}
+
+func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	statstestutil.HandleNextDDLEventWithTxn(h)
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
+	isEmpty, err := pq.IsEmptyForTest()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// enable ddl analyze.
+	testKit.MustExec("set @@tidb_stats_update_during_ddl = 1")
+	// create index.
+	testKit.MustExec("alter table t add index idx(c1, c2)")
+
+	// Find the create index event.
+	addIndexEvent := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	tblInfo, idxInfo, analyzed := addIndexEvent.GetAddIndexInfo()
+	require.Equal(t, tableInfo.ID, tblInfo.ID)
+	require.Equal(t, analyzed, true)
+	require.Equal(t, idxInfo[0].Name.L, "idx")
+
+	// Handle the add index event.
+	err = statstestutil.HandleDDLEventWithTxn(h, addIndexEvent)
+	require.NoError(t, err)
+
+	sctx := testKit.Session().(sessionctx.Context)
+	// Handle the add index event in priority queue.
+	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, addIndexEvent))
+
+	// The table is truncated, the job should be removed from the priority queue.
+	isEmpty, err = pq.IsEmptyForTest()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// modify column.
+	testKit.MustExec("alter table t modify c1 varchar(10)")
+
+	// Find the modify column event.
+	modifyColumnEvent := findEvent(h.DDLEventCh(), model.ActionModifyColumn)
+	tblInfo, columnInfo, analyzed := modifyColumnEvent.GetModifyColumnInfo()
+	require.Equal(t, tableInfo.ID, tblInfo.ID)
+	require.Equal(t, analyzed, true)
+	require.Equal(t, columnInfo[0].Name.L, "c1")
+}
+
+func TestTurnOffAutoAnalyzeAfterQueueInit(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	statstestutil.HandleNextDDLEventWithTxn(h)
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
+	isEmpty, err := pq.IsEmptyForTest()
+	require.NoError(t, err)
+	require.False(t, isEmpty)
+	job, err := pq.PeekForTest()
+	require.NoError(t, err)
+	require.Equal(t, tableInfo.ID, job.GetTableID())
+
+	// Add a new index on column c1.
+	testKit.MustExec("alter table t add index idx1(c1)")
+
+	// Find the add index event.
+	addIndexEvent := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent)
+
+	// Disable the auto analyze.
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze = 0;")
+
+	// Handle the add index event.
+	err = statstestutil.HandleDDLEventWithTxn(h, addIndexEvent)
+	require.NoError(t, err)
+
+	// Handle the add index event in priority queue.
+	require.NoError(t, statsutil.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+		return pq.HandleDDLEvent(ctx, sctx, addIndexEvent)
+	}, statsutil.FlagWrapTxn))
+
+	isEmpty, err = pq.IsEmptyForTest()
+	require.NoError(t, err)
+	require.False(t, isEmpty)
+}
+
+func TestTurnOffAutoAnalyzeBeforeQueueInit(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
+	h := do.StatsHandle()
+	statstestutil.HandleNextDDLEventWithTxn(h)
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	// Disable the auto analyze.
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze = 0;")
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	ctx := context.Background()
+
+	// Add a new index on column c1.
+	testKit.MustExec("alter table t add index idx1(c1)")
+
+	// Find the add index event.
+	addIndexEvent := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent)
+
+	// Handle the add index event.
+	err := statstestutil.HandleDDLEventWithTxn(h, addIndexEvent)
+	require.NoError(t, err)
+
+	// Handle the add index event in priority queue.
+	require.NoError(t, statsutil.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+		return pq.HandleDDLEvent(ctx, sctx, addIndexEvent)
+	}, statsutil.FlagWrapTxn))
+
+	_, err = pq.IsEmptyForTest()
+	require.ErrorContains(t, err, "priority queue not initialized")
 }

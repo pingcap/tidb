@@ -96,6 +96,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	util3 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -378,6 +379,7 @@ func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
+	metrics.DDLClearTempIndexWrite(cc.connectionID)
 	return closeConn(cc)
 }
 
@@ -537,13 +539,13 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	var pos int
 
 	if len(data) < 2 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Warn("got malformed handshake response", zap.ByteString("packetData", data))
 		return mysql.ErrMalformPacket
 	}
 
 	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
 	if capability&mysql.ClientProtocol41 <= 0 {
-		logutil.Logger(ctx).Error("ClientProtocol41 flag is not set, please upgrade client")
+		logutil.Logger(ctx).Warn("ClientProtocol41 flag is not set, please upgrade client")
 		return servererr.ErrNotSupportedAuthMode
 	}
 	pos, err = parse.HandshakeResponseHeader(ctx, &resp, data)
@@ -703,18 +705,18 @@ func (cc *clientConn) authSha(ctx context.Context, resp handshake.Response41) ([
 	// This triggers the client to send the full response.
 	err := cc.writePacket([]byte{0, 0, 0, 0, shaCommand, fastAuthFail})
 	if err != nil {
-		logutil.Logger(ctx).Error("authSha packet write failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("authSha packet write failed", zap.Error(err))
 		return nil, err
 	}
 	err = cc.flush(ctx)
 	if err != nil {
-		logutil.Logger(ctx).Error("authSha packet flush failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("authSha packet flush failed", zap.Error(err))
 		return nil, err
 	}
 
 	data, err := cc.readPacket()
 	if err != nil {
-		logutil.Logger(ctx).Error("authSha packet read failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("authSha packet read failed", zap.Error(err))
 		return nil, err
 	}
 	return bytes.Trim(data, "\x00"), nil
@@ -1047,10 +1049,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if cc.getStatus() != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
-		}
+		util3.WithRecovery(
+			func() {
+				if cc.getStatus() != connStatusShutdown {
+					err := cc.Close()
+					terror.Log(err)
+				}
+			}, nil)
 
 		close(cc.quit)
 	}()
@@ -1148,13 +1153,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
 		if err != nil {
-			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
+			cc.audit(context.Background(), plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				server_metrics.DisconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
-				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
+				logutil.Logger(ctx).Warn("result undetermined, close this connection", zap.Error(err))
 				server_metrics.DisconnectErrorUndetermined.Inc()
 				return
 			} else if terror.ErrCritical.Equal(err) {
@@ -1683,12 +1688,12 @@ func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.Pl
 	return e.DumpSQLsFromFile(ctx, data)
 }
 
-func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
+func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&cc.ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
+			ctx := context.WithValue(ctx, plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
 			audit.OnGeneralEvent(ctx, cc.ctx.GetSessionVars(), eventType, cmd)
 		}
 		return nil
@@ -1852,7 +1857,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			v.PrunePartitions(sctx)
+			isTableDual, err0 := v.PrunePartitions(sctx)
+			if err0 != nil || isTableDual {
+				return err0
+			}
 			tableID = executor.GetPhysID(v.TblInfo, v.PartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
@@ -1866,7 +1874,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			_, isTableDual := v.PrunePartitionsAndValues(sctx)
+			_, isTableDual, err1 := v.PrunePartitionsAndValues(sctx)
+			if err1 != nil {
+				return err1
+			}
 			if isTableDual {
 				return nil
 			}
@@ -1957,7 +1968,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal)
+		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal.Value)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -2009,7 +2020,7 @@ func (cc *clientConn) handleStmt(
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
-	cc.audit(plugin.Starting)
+	cc.audit(context.Background(), plugin.Starting)
 
 	// if stmt is load data stmt, store the channel that reads from the conn
 	// into the ctx for executor to use

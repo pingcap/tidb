@@ -384,29 +384,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						return
 					}
 				}
-				var builder distsql.RequestBuilder
-				builder.SetDAGRequest(e.dagPBs[workID]).
-					SetStartTS(e.startTS).
-					SetDesc(e.descs[workID]).
-					SetKeepOrder(e.keepOrder).
-					SetTxnScope(e.txnScope).
-					SetReadReplicaScope(e.readReplicaScope).
-					SetIsStaleness(e.isStaleness).
-					SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
-					SetMemTracker(e.memTracker).
-					SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.partialNetDataSizes[workID])).
-					SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
-
 				worker.batchSize = CalculateBatchSize(int(is.StatsCount()), e.MaxChunkSize(), worker.maxBatchSize)
-				if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-					// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-					// initial batchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/54066
-					builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-					if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-						builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-					}
-				}
 				tps := worker.getRetTpsForIndexScan(e.handleCols)
 				results := make([]distsql.SelectResult, 0, len(keyRanges))
 				defer func() {
@@ -427,6 +405,28 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					default:
 					}
 
+					var builder distsql.RequestBuilder
+					builder.SetDAGRequest(e.dagPBs[workID]).
+						SetStartTS(e.startTS).
+						SetDesc(e.descs[workID]).
+						SetKeepOrder(e.keepOrder).
+						SetTxnScope(e.txnScope).
+						SetReadReplicaScope(e.readReplicaScope).
+						SetIsStaleness(e.isStaleness).
+						SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
+						SetMemTracker(e.memTracker).
+						SetFromInfoSchema(e.Ctx().GetInfoSchema()).
+						SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.partialNetDataSizes[workID])).
+						SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
+
+					if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+						// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+						// initial batchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/54066
+						builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+						if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+							builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+						}
+					}
 					// init kvReq and worker for this partition
 					// The key ranges should be ordered.
 					slices.SortFunc(keyRange, func(i, j kv.KeyRange) int {
@@ -727,9 +727,9 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err1
 			}
 			if ok {
-				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(chunkRowOffset))
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(w.sc.GetSessionVars().StmtCtx, chk.GetRow(chunkRowOffset))
 			} else {
-				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(chunkRowOffset))
+				handle, err = handleCols.BuildHandleFromIndexRow(w.sc.GetSessionVars().StmtCtx, chk.GetRow(chunkRowOffset))
 			}
 			if err != nil {
 				return nil, nil, err
@@ -780,7 +780,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
-			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
+			defer trace.StartRegion(ctx, tableScanWorkerType).End()
 			var task *indexMergeTableTask
 			util.WithRecovery(
 				// Note we use the address of `task` as the argument of both `pickAndExecTask` and `handleTableScanWorkerPanic`
@@ -899,7 +899,7 @@ func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{},
 		}
 
 		err4Panic := util.GetRecoverError(r)
-		logutil.Logger(ctx).Error(err4Panic.Error())
+		logutil.Logger(ctx).Warn(err4Panic.Error())
 		doneCh := make(chan error, 1)
 		doneCh <- err4Panic
 		task := &indexMergeTableTask{
@@ -1825,9 +1825,9 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				return nil, nil, err1
 			}
 			if ok {
-				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(chunkRowOffset))
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(w.sc.GetSessionVars().StmtCtx, chk.GetRow(chunkRowOffset))
 			} else {
-				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(chunkRowOffset))
+				handle, err = handleCols.BuildHandleFromIndexRow(w.sc.GetSessionVars().StmtCtx, chk.GetRow(chunkRowOffset))
 			}
 			if err != nil {
 				return nil, nil, err
@@ -1918,7 +1918,7 @@ func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context
 		}
 
 		err4Panic := errors.Errorf("%s: %v", worker, r)
-		logutil.Logger(ctx).Error(err4Panic.Error())
+		logutil.Logger(ctx).Warn(err4Panic.Error())
 		if *task != nil {
 			select {
 			case <-ctx.Done():
@@ -1953,7 +1953,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		chk := exec.TryNewCacheChunk(tableReader)
 		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
-			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			logutil.Logger(ctx).Warn("table reader fetch next chunk failed", zap.Error(err))
 			return err
 		}
 		if chk.NumRows() == 0 {
@@ -1981,7 +1981,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		}
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for _, row := range task.rows {
-			handle, err := w.indexMergeExec.handleCols.BuildHandle(row)
+			handle, err := w.indexMergeExec.handleCols.BuildHandle(w.indexMergeExec.Ctx().GetSessionVars().StmtCtx, row)
 			if err != nil {
 				return err
 			}

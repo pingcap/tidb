@@ -94,9 +94,8 @@ new_collations_enabled_on_first_bootstrap = true
 # *If you want to start a TiDB service, NEVER enable this.*
 skip-register-to-dashboard = false
 
-# When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
-# If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
-# See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
+# When enabled, usage data (for example, instance versions) will be reported to log periodically for user experience analytics.
+# If this config is set to `false`, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
 enable-telemetry = false
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with

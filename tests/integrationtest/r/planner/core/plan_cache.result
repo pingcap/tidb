@@ -1630,8 +1630,8 @@ select @@last_plan_from_cache;
 0
 explain format = 'cost_trace' select * from t;
 id	estRows	estCost	costFormula	task	access object	operator info
-IndexReader_7	10000.00	150773.33	((scan(10000*logrowsize(16)*tikv_scan_factor(40.7))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	root		index:IndexFullScan_6
-└─IndexFullScan_6	10000.00	1628000.00	scan(10000*logrowsize(16)*tikv_scan_factor(40.7))	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+IndexReader_7	10000.00	150773.33	((((scan(10000*logrowsize(16)*tikv_scan_factor(40.7)))*1.00) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	root		index:IndexFullScan_6
+└─IndexFullScan_6	10000.00	1628000.00	(scan(10000*logrowsize(16)*tikv_scan_factor(40.7)))*1.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -1704,16 +1704,16 @@ TiDB_JSON
 
 explain format = 'verbose' select * from t limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_7	1.00	12.97	root		offset:0, count:1
-└─IndexReader_12	1.00	12.97	root		index:Limit_11
+Limit_7	1.00	15.08	root		offset:0, count:1
+└─IndexReader_12	1.00	15.08	root		index:Limit_11
   └─Limit_11	1.00	162.80	cop[tikv]		offset:0, count:1
     └─IndexFullScan_10	1.00	162.80	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
 explain format = 'cost_trace' select * from t limit 1;
 id	estRows	estCost	costFormula	task	access object	operator info
-Limit_7	1.00	12.97	((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))) + (net(1*rowsize(8)*tidb_kv_net_factor(3.96))))/15.00)	root		offset:0, count:1
-└─IndexReader_12	1.00	12.97	(((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))) + (net(1*rowsize(8)*tidb_kv_net_factor(3.96))))/15.00	root		index:Limit_11
-  └─Limit_11	1.00	162.80	(scan(1*logrowsize(16)*tikv_scan_factor(40.7)))	cop[tikv]		offset:0, count:1
-    └─IndexFullScan_10	1.00	162.80	scan(1*logrowsize(16)*tikv_scan_factor(40.7))	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+Limit_7	1.00	15.08	((((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)) + (net(1*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00)	root		offset:0, count:1
+└─IndexReader_12	1.00	15.08	(((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)) + (net(1*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	root		index:Limit_11
+  └─Limit_11	1.00	162.80	((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)	cop[tikv]		offset:0, count:1
+    └─IndexFullScan_10	1.00	162.80	(scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 drop table if exists t, t1, t2;
 CREATE TABLE `t1` (`c_int` int(11) NOT NULL,  `c_str` varchar(40) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,  `c_datetime` datetime DEFAULT NULL,  `c_timestamp` timestamp NULL DEFAULT NULL,  `c_double` double DEFAULT NULL,  `c_decimal` decimal(12,6) DEFAULT NULL,  `c_enum` enum('blue','green','red','yellow','white','orange','purple') NOT NULL,  PRIMARY KEY (`c_int`,`c_enum`) /*T![clustered_index] CLUSTERED */,  KEY `c_decimal` (`c_decimal`),  UNIQUE KEY `c_datetime` (`c_datetime`),  UNIQUE KEY `c_timestamp` (`c_timestamp`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

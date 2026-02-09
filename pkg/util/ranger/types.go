@@ -17,6 +17,7 @@ package ranger
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -171,19 +172,21 @@ func (ran *Range) IsFullRange(unsignedIntHandle bool) bool {
 		if len(ran.LowVal) != 1 || len(ran.HighVal) != 1 {
 			return false
 		}
-		lowValRawString := formatDatum(ran.LowVal[0], true)
-		highValRawString := formatDatum(ran.HighVal[0], false)
-		return lowValRawString == "0" && highValRawString == "+inf"
+		return isBoundaryValue(ran.LowVal[0], true, true) &&
+			isBoundaryValue(ran.HighVal[0], true, false)
 	}
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
 	for i := range ran.LowVal {
-		lowValRawString := formatDatum(ran.LowVal[i], true)
-		highValRawString := formatDatum(ran.HighVal[i], false)
-		if ("-inf" != lowValRawString && "NULL" != lowValRawString) ||
-			("+inf" != highValRawString && "NULL" != highValRawString) ||
-			("NULL" == lowValRawString && "NULL" == highValRawString) {
+		leftIsBoundary := isBoundaryValue(ran.LowVal[i], false, true)
+		leftIsNull := ran.LowVal[i].IsNull()
+		rightIsBoundary := isBoundaryValue(ran.HighVal[i], false, false)
+		rightIsNull := ran.HighVal[i].IsNull()
+		// treat [NULL, +inf), (-inf, NULL] as full range
+		if (!leftIsBoundary && !leftIsNull) ||
+			(!rightIsBoundary && !rightIsNull) ||
+			(leftIsNull && rightIsNull) {
 			return false
 		}
 	}
@@ -298,6 +301,26 @@ func (ran *Range) MemUsage() (sum int64) {
 	return sum
 }
 
+func isBoundaryValue(d types.Datum, unsignedIntHandle, isLeftSide bool) bool {
+	isRightSide := !isLeftSide
+	switch d.Kind() {
+	case types.KindMinNotNull:
+		return isLeftSide // -inf
+	case types.KindMaxValue:
+		return isRightSide // +inf
+	case types.KindInt64:
+		v := d.GetInt64()
+		return (v == math.MinInt64 && isLeftSide) || // -inf
+			(v == math.MaxInt64 && isRightSide) // +inf
+	case types.KindUint64:
+		v := d.GetUint64()
+		return (v == 0 && unsignedIntHandle && isLeftSide) || // 0
+			(v == math.MaxUint64 && isRightSide) // +inf
+	default: // for other types, no concept of boundary value
+		return false
+	}
+}
+
 func formatDatum(d types.Datum, isLeftSide bool) string {
 	switch d.Kind() {
 	case types.KindNull:
@@ -307,7 +330,8 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 	case types.KindMaxValue:
 		return "+inf"
 	case types.KindInt64:
-		switch d.GetInt64() {
+		v := d.GetInt64()
+		switch v {
 		case math.MinInt64:
 			if isLeftSide {
 				return "-inf"
@@ -317,10 +341,13 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 				return "+inf"
 			}
 		}
+		return strconv.FormatInt(v, 10)
 	case types.KindUint64:
-		if d.GetUint64() == math.MaxUint64 && !isLeftSide {
+		v := d.GetUint64()
+		if v == math.MaxUint64 && !isLeftSide {
 			return "+inf"
 		}
+		return strconv.FormatUint(v, 10)
 	case types.KindBytes:
 		return fmt.Sprintf("%q", d.GetValue())
 	case types.KindString:
@@ -332,6 +359,43 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 	return fmt.Sprintf("%v", d.GetValue())
 }
 
+// extendBound extends a partial bound slice by appending "infinite" sentinel values.
+// It's used when constructing multi-column index scan ranges.
+//
+// The logic depends on whether the bound is a lower or upper bound,
+// and whether it's open (exclusive) or closed (inclusive):
+//   - Lower Bound (`low == true`):
+//   - Open   -> append +∞ (represented by MaxInt64): exclude current value, start just above
+//   - Closed -> append –∞ (represented by MinInt64): include all lower values
+//   - Upper Bound (`low == false`):
+//   - Open   -> append –∞ (represented by MinInt64): exclude current value, stop just below
+//   - Closed -> append +∞ (represented by MaxInt64): include all higher values
+//
+// This padding is essential in multi-column indexes when only a prefix of the columns
+// is constrained. The remaining columns are filled with ±∞ to form complete range bounds.
+func extendBound(bound []types.Datum, lowIndex int, highIndex int, low bool, open bool) []types.Datum {
+	for i := lowIndex; i < highIndex; i++ {
+		if low {
+			if open {
+				// Open lower bound → +∞ (exclude the current value)
+				bound = append(bound, types.MaxValueDatum())
+			} else {
+				// Closed lower bound → –∞ (include all lower values)
+				bound = append(bound, types.MinNotNullDatum())
+			}
+		} else {
+			if open {
+				// Open upper bound → –∞ (exclude the current value)
+				bound = append(bound, types.MinNotNullDatum())
+			} else {
+				// Closed upper bound → +∞ (include all higher values)
+				bound = append(bound, types.MaxValueDatum())
+			}
+		}
+	}
+	return bound
+}
+
 // compareLexicographically compares two bounds from two ranges and returns 0, 1, -1
 // for equal, greater than or less than respectively. It gets the two bounds,
 // collations and if each bound is open (open1, open2) or closed. In addition,
@@ -341,10 +405,24 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 	open1, open2, low1, low2 bool) (int, error) {
 	n1 := len(bound1)
 	n2 := len(bound2)
-	n := min(n1, n2)
+	localBound1 := bound1
+	localBound2 := bound2
 
+	if n1 < n2 {
+		// Copy bound1 before extending
+		localBound1 = make([]types.Datum, n1)
+		copy(localBound1, bound1)
+		localBound1 = extendBound(localBound1, n1, n2, low1, open1)
+	} else if n2 < n1 {
+		// Copy bound2 before extending
+		localBound2 = make([]types.Datum, n2)
+		copy(localBound2, bound2)
+		localBound2 = extendBound(localBound2, n2, n1, low2, open2)
+	}
+
+	n := max(n1, n2)
 	for i := range n {
-		cmp, err := bound1[i].Compare(tc, &bound2[i], collators[i])
+		cmp, err := localBound1[i].Compare(tc, &localBound2[i], collators[i])
 		if err != nil {
 			return 0, err
 		}
@@ -353,48 +431,28 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 		}
 	}
 
-	// Handle interval types
-	if n1 == n2 {
-		switch {
-		case !open1 && !open2:
+	switch {
+	case !open1 && !open2:
+		return 0, nil
+	case open1 == open2:
+		if low1 == low2 {
 			return 0, nil
-		case open1 == open2:
-			if low1 == low2 {
-				return 0, nil
-			} else if low1 {
-				return 1, nil
-			} else {
-				return -1, nil
-			}
-		case open1:
-			if low1 {
-				return 1, nil
-			}
-			return -1, nil
-		case open2:
-			if low2 {
-				return -1, nil
-			}
+		} else if low1 {
 			return 1, nil
 		}
-	}
-
-	// Unequal length ranges. We use -infinity for lower bounds and +infinity for upper bounds.
-	if n1 < n2 {
+		return -1, nil
+	case open1:
 		if low1 {
-			// -infinity is less than anything
+			return 1, nil
+		}
+		return -1, nil
+	default:
+		// Same as case open2:
+		if low2 {
 			return -1, nil
 		}
-		// +infinity is higher than anything
 		return 1, nil
 	}
-	// n1 > n2
-	if low2 {
-		// anything is larger than -infinity.
-		return 1, nil
-	}
-	// anything is less than +infinity
-	return -1, nil
 }
 
 // Check if a list of Datum is a prefix of another list of Datum. This is useful for checking if
@@ -493,13 +551,15 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 		Collators: make([]collate.Collator, 0, intersectLength),
 	}
 
+	otherRangeMoreGranual := false
 	if len(ran.LowVal) > len(otherRange.LowVal) {
 		result.Collators = ran.Collators
 	} else {
 		result.Collators = otherRange.Collators
+		otherRangeMoreGranual = true
 	}
 
-	lowVsHigh, err := compareLexicographically(tc, ran.LowVal, otherRange.HighVal, ran.Collators,
+	lowVsHigh, err := compareLexicographically(tc, ran.LowVal, otherRange.HighVal, result.Collators,
 		ran.LowExclude, otherRange.HighExclude, true, false)
 	if err != nil {
 		return &Range{}, err
@@ -508,7 +568,7 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 		return nil, nil
 	}
 
-	lowVsHigh, err = compareLexicographically(tc, otherRange.LowVal, ran.HighVal, ran.Collators,
+	lowVsHigh, err = compareLexicographically(tc, otherRange.LowVal, ran.HighVal, result.Collators,
 		otherRange.LowExclude, ran.HighExclude, true, false)
 	if err != nil {
 		return &Range{}, err
@@ -518,11 +578,11 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 	}
 
 	lowVsLow, err := compareLexicographically(tc, ran.LowVal, otherRange.LowVal,
-		ran.Collators, ran.LowExclude, otherRange.LowExclude, true, true)
+		result.Collators, ran.LowExclude, otherRange.LowExclude, true, true)
 	if err != nil {
 		return &Range{}, err
 	}
-	if lowVsLow == -1 {
+	if lowVsLow == -1 || (lowVsLow == 0 && otherRangeMoreGranual) {
 		result.LowVal = otherRange.LowVal
 		result.LowExclude = otherRange.LowExclude
 	} else {
@@ -531,11 +591,11 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 	}
 
 	highVsHigh, err := compareLexicographically(tc, ran.HighVal, otherRange.HighVal,
-		ran.Collators, ran.HighExclude, otherRange.HighExclude, false, false)
+		result.Collators, ran.HighExclude, otherRange.HighExclude, false, false)
 	if err != nil {
 		return &Range{}, err
 	}
-	if highVsHigh == 1 {
+	if highVsHigh == 1 || (highVsHigh == 0 && otherRangeMoreGranual) {
 		result.HighVal = otherRange.HighVal
 		result.HighExclude = otherRange.HighExclude
 	} else {

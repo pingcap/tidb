@@ -16,90 +16,96 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	goerrors "errors"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 type cloudImportExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	job           *model.Job
+	store         kv.Storage
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
-	bc            ingest.BackendCtx
 	cloudStoreURI string
+	metric        *lightningmetric.Common
+	backendCtx    ingest.BackendCtx
+	backend       *local.Backend
+
+	taskConcurrency int
+	engine          atomic.Pointer[external.Engine]
 }
 
 func newCloudImportExecutor(
 	job *model.Job,
+	store kv.Storage,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bcGetter func() (ingest.BackendCtx, error),
 	cloudStoreURI string,
+	taskConcurrency int,
 ) (*cloudImportExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
 	return &cloudImportExecutor{
-		job:           job,
-		indexes:       indexes,
-		ptbl:          ptbl,
-		bc:            bc,
-		cloudStoreURI: cloudStoreURI,
+		job:             job,
+		store:           store,
+		indexes:         indexes,
+		ptbl:            ptbl,
+		cloudStoreURI:   cloudStoreURI,
+		taskConcurrency: taskConcurrency,
+		metric:          metrics.RegisterLightningCommonMetricsForDDL(job.ID),
 	}, nil
 }
 
-func (*cloudImportExecutor) Init(ctx context.Context) error {
+func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
+	ctx = lightningmetric.WithCommonMetric(ctx, m.metric)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, hasUniqueIndex(m.indexes), false, m.taskConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build(cfg, bd)
+	if err != nil {
+		bd.Close()
+		return err
+	}
+	m.backend = bd
+	m.backendCtx = bCtx
 	return nil
 }
 
 func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
 
-	local := m.bc.GetLocalBackend()
+	local := m.backendCtx.GetLocalBackend()
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
 
-	var (
-		currentIdx *model.IndexInfo
-		idxID      int64
-	)
-	switch len(sm.EleIDs) {
-	case 1:
-		for _, idx := range m.indexes {
-			if idx.ID == sm.EleIDs[0] {
-				currentIdx = idx
-				idxID = idx.ID
-				break
-			}
-		}
-	case 0:
-		// maybe this subtask is generated from an old version TiDB
-		if len(m.indexes) == 1 {
-			currentIdx = m.indexes[0]
-		}
-		idxID = m.indexes[0].ID
-	default:
-		return errors.Errorf("unexpected EleIDs count %v", sm.EleIDs)
+	currentIdx, idxID, err := getIndexInfoAndID(sm.EleIDs, m.indexes)
+	if err != nil {
+		return err
 	}
 
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, idxID)
@@ -126,14 +132,25 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
+			MemCapacity:   m.GetResource().Mem.Capacity(),
+			OnDup:         common.OnDuplicateKeyError,
 		},
 		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err
 	}
-	local.WorkerConcurrency = subtask.Concurrency * 2
+	eng := local.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	m.engine.Store(eng)
+	defer m.engine.Store(nil)
+
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
+		err = context.DeadlineExceeded
+	})
 	if err == nil {
 		return nil
 	}
@@ -154,13 +171,73 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 }
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
+	failpoint.InjectCall("cloudImportExecutorCleanup", m.backend)
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
-	// cleanup backend context
-	ingest.LitBackCtxMgr.Unregister(m.job.ID)
+	if m.backendCtx != nil {
+		m.backendCtx.Close()
+	}
+	m.backend.Close()
 	return nil
 }
 
-func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("cloud import executor finish subtask")
+func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {
+	switch len(eleIDs) {
+	case 1:
+		for _, idx := range indexes {
+			if idx.ID == eleIDs[0] {
+				currentIdx = idx
+				idxID = idx.ID
+				break
+			}
+		}
+	case 0:
+		// maybe this subtask is generated from an old version TiDB
+		if len(indexes) == 1 {
+			currentIdx = indexes[0]
+		}
+		idxID = indexes[0].ID
+	default:
+		return nil, 0, errors.Errorf("unexpected EleIDs count %v", eleIDs)
+	}
+	return
+}
+
+// TaskMetaModified changes the max write speed for ingest
+func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	logutil.Logger(ctx).Info("cloud import executor update task meta")
+	newTaskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+
+	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+	if newMaxWriteSpeed != m.job.ReorgMeta.GetMaxWriteSpeedOrDefault() {
+		m.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+		if m.backend != nil {
+			m.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+		}
+	}
+	return nil
+}
+
+// ResourceModified change the concurrency for ingest
+func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	logutil.Logger(ctx).Info("cloud import executor update resource")
+	newConcurrency := int(newResource.CPU.Capacity())
+	if newConcurrency == m.backend.GetWorkerConcurrency() {
+		return nil
+	}
+
+	eng := m.engine.Load()
+	if eng == nil {
+		// let framework retry
+		return goerrors.New("engine not started")
+	}
+
+	if err := eng.UpdateResource(ctx, newConcurrency, newResource.Mem.Capacity()); err != nil {
+		return err
+	}
+
+	m.backend.SetWorkerConcurrency(newConcurrency)
 	return nil
 }

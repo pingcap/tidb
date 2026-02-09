@@ -56,6 +56,22 @@ func TestSyncLoadSkipUnAnalyzedItems(t *testing.T) {
 	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems")
 }
 
+func TestSyncLoadSkipAnalyzSkipColumnItems(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(`id` bigint(20) NOT NULL AUTO_INCREMENT,content text,PRIMARY KEY (`id`))")
+	h := dom.StatsHandle()
+	h.SetLease(1)
+
+	tk.MustExec("analyze table t")
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json, text, blob'") // text is not default.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/handleOneItemTaskPanic", `panic`))
+	tk.MustQuery("trace plan select * from t where content ='ab'")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/handleOneItemTaskPanic"))
+}
+
 func TestConcurrentLoadHist(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -78,7 +94,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
-	stat := h.GetTableStats(tableInfo)
+	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col := stat.GetCol(tableInfo.Columns[0].ID)
 	require.True(t, col == nil || col.Histogram.Len()+col.TopN.Num() == 0)
 	col = stat.GetCol(tableInfo.Columns[2].ID)
@@ -92,7 +108,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Nil(t, rs)
-	stat = h.GetTableStats(tableInfo)
+	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	hg := stat.GetCol(tableInfo.Columns[2].ID).Histogram
 	topn := stat.GetCol(tableInfo.Columns[2].ID).TopN
 	require.Greater(t, hg.Len()+topn.Num(), 0)
@@ -121,7 +137,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
-	stat := h.GetTableStats(tableInfo)
+	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// TODO: They may need to be empty. Depending on how we operate newly analyzed tables.
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[0].ID))
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[2].ID))
@@ -139,7 +155,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	h.SendLoadRequests(stmtCtx, neededColumns, 0) // set timeout to 0 so task will go to timeout channel
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Error(t, rs)
-	stat = h.GetTableStats(tableInfo)
+	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[2].ID))
 	require.NotNil(t, stat.GetCol(tableInfo.Columns[2].ID))
 	require.Equal(t, 0, hg.Len()+topn.Num())
@@ -198,7 +214,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 		// no stats at beginning
-		stat := h.GetTableStats(tableInfo)
+		stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		c := stat.GetCol(tableInfo.Columns[2].ID)
 		require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
 
@@ -253,7 +269,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 			require.Equal(t, neededColumns[0].TableItemID, rs1.Val.(stmtctx.StatsLoadResult).Item)
 		}
 
-		stat = h.GetTableStats(tableInfo)
+		stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 		hg := stat.GetCol(tableInfo.Columns[2].ID).Histogram
 		topn := stat.GetCol(tableInfo.Columns[2].ID).TopN
 		require.Greater(t, hg.Len()+topn.Num(), 0)
@@ -299,7 +315,7 @@ func TestRetry(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 	// no stats at beginning
-	stat := h.GetTableStats(tableInfo)
+	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	c := stat.GetCol(tableInfo.Columns[2].ID)
 	require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
 
@@ -434,8 +450,11 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 
 	// Try sync load.
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	statsTbl, ok = h.Get(tblInfo.ID)
-	require.True(t, ok)
+	require.Eventually(t, func() bool {
+		statsTbl, ok = h.Get(tblInfo.ID)
+		require.True(t, ok)
+		return statsTbl.ColNum() == 3
+	}, 5*time.Second, 100*time.Millisecond)
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[3].ID).IsFullLoad())
@@ -449,8 +468,11 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	tk.MustExec("analyze table t columns a, b, c")
 	require.NoError(t, h.InitStatsLite(context.TODO()))
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	statsTbl, ok = h.Get(tblInfo.ID)
-	require.True(t, ok)
+	require.Eventually(t, func() bool {
+		statsTbl, ok = h.Get(tblInfo.ID)
+		require.True(t, ok)
+		return statsTbl.ColNum() == 4
+	}, 5*time.Second, 100*time.Millisecond)
 	// a, b, d's status is not changed.
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())

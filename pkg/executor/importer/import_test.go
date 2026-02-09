@@ -26,14 +26,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -189,11 +185,17 @@ func TestAdjustOptions(t *testing.T) {
 	plan.adjustOptions(16)
 	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+	require.False(t, plan.DisableTiKVImportMode)
 
 	plan.ThreadCnt = 100000000
 	plan.DataSourceType = DataSourceTypeQuery
 	plan.adjustOptions(16)
 	require.Equal(t, 32, plan.ThreadCnt)
+	require.False(t, plan.DisableTiKVImportMode)
+
+	plan.CloudStorageURI = "s3://bucket/path"
+	plan.adjustOptions(16)
+	require.True(t, plan.DisableTiKVImportMode)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -208,15 +210,6 @@ func TestAdjustDiskQuota(t *testing.T) {
 	require.Equal(t, int64(1638), adjustDiskQuota(2000, d, logutil.BgLogger()))
 }
 
-func TestGetMsgFromBRError(t *testing.T) {
-	var berr error = berrors.ErrStorageInvalidConfig
-	require.Equal(t, "[BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "invalid external storage config", GetMsgFromBRError(berr))
-	berr = errors.Annotatef(berr, "some message about error reason")
-	require.Equal(t, "some message about error reason: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "some message about error reason", GetMsgFromBRError(berr))
-}
-
 func TestASTArgsFromStmt(t *testing.T) {
 	stmt := "IMPORT INTO tb (a, é) FROM 'gs://test-load/test.tsv';"
 	stmtNode, err := parser.New().ParseOneStmt(stmt, "latin1", "latin1_bin")
@@ -228,22 +221,6 @@ func TestASTArgsFromStmt(t *testing.T) {
 	importIntoStmt := stmtNode.(*ast.ImportIntoStmt)
 	require.Equal(t, astArgs.ColumnAssignments, importIntoStmt.ColumnAssignments)
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
-}
-
-func TestGetFileRealSize(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
-	require.NoError(t, err)
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
-	}()
-	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
-	c := &LoadDataController{logger: log.L()}
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
-	fileMeta.Compression = mydump.CompressionGZ
-	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
-	require.NoError(t, err)
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 }
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -311,19 +288,6 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
-}
-
-func TestGetBackendWorkerConcurrency(t *testing.T) {
-	c := &LoadDataController{
-		Plan: &Plan{
-			ThreadCnt: 3,
-		},
-	}
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.CloudStorageURI = "xxx"
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.ThreadCnt = 123
-	require.Equal(t, 246, c.getBackendWorkerConcurrency())
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {

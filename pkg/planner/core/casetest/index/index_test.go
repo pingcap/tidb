@@ -196,6 +196,8 @@ func TestRangeIntersection(t *testing.T) {
 	tk.MustExec("INSERT INTO tkey_string VALUES('zhenjiang','zhenjiang','zhenjiang','zhenjiang','zhenjiang','zhenjiang','medium','c','linpin');")
 	tk.MustExec("INSERT INTO tkey_string VALUES('suzhou','suzhou','suzhou','suzhou','suzhou','suzhou','large','d','linpin');")
 	tk.MustExec("INSERT INTO tkey_string VALUES('wuxi','wuxi','wuxi','wuxi','wuxi','wuxi','x-large','a','linpin');")
+	tk.MustExec("create table t_issue_60556(a int, b int, ac char(3), bc char(3), key ab(a,b), key acbc(ac,bc));")
+	tk.MustExec("insert into t_issue_60556 values (100, 500, '100', '500');")
 
 	var input []string
 	var output []struct {
@@ -302,19 +304,17 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Warning 1105 analyzing vector index is not supported, skip idx",
 		"Warning 1105 analyzing vector index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/1) as the sample-rate=1\"",
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Warning 1105 analyzing vector index is not supported, skip idx",
 		"Warning 1105 analyzing vector index is not supported, skip idx2"))
 
 	statsHandle := dom.StatsHandle()
-	statsTbl := statsHandle.GetTableStats(tblInfo)
+	statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 	// int col
 	col := statsTbl.GetCol(1)

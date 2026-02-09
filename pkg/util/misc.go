@@ -46,7 +46,9 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
@@ -63,7 +65,7 @@ const (
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
 // backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
-// Function f should have two return value. The first one is an bool which indicate if the err if retryable.
+// Function f should have two return value. The first one is an bool which indicate if the err is retryable.
 // The second is if the f meet any error.
 func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
 	for i := 1; i <= retryCnt; i++ {
@@ -118,6 +120,11 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+	if intest.InTest {
+		if strings.Contains(fmt.Sprintf("%v", r), "assert failed") {
+			panic(r)
+		}
+	}
 
 	if recoverFn != nil {
 		recoverFn()
@@ -582,11 +589,14 @@ func initInternalClient() {
 	}
 	if tlsCfg == nil {
 		internalHTTPSchema = "http"
-		internalHTTPClient = http.DefaultClient
+		internalHTTPClient = &http.Client{
+			Timeout: 5 * time.Minute,
+		}
 		return
 	}
 	internalHTTPSchema = "https"
 	internalHTTPClient = &http.Client{
+		Timeout:   5 * time.Minute,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 }
@@ -692,4 +702,21 @@ func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyA
 func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
 	// use RSA and unspecified signature algorithm
 	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
+}
+
+// GetTypeFlagsForInsert gets the type flags for insert statement.
+func GetTypeFlagsForInsert(baseFlags types.Flags, sqlMode mysql.SQLMode, ignoreErr bool) types.Flags {
+	strictSQLMode := sqlMode.HasStrictMode()
+	return baseFlags.
+		WithTruncateAsWarning(!strictSQLMode || ignoreErr).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasNoZeroInDateMode() ||
+			!sqlMode.HasNoZeroDateMode() || !strictSQLMode || ignoreErr ||
+			sqlMode.HasAllowInvalidDatesMode())
+}
+
+// GetTypeFlagsForImportInto gets the type flags for import into statement which
+// has the same flags as normal `INSERT INTO xxx`.
+func GetTypeFlagsForImportInto(baseFlags types.Flags, sqlMode mysql.SQLMode) types.Flags {
+	return GetTypeFlagsForInsert(baseFlags, sqlMode, false)
 }

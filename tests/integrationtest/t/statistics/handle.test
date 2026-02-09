@@ -82,3 +82,16 @@ alter table t add stats_extended s1 correlation(a,b);
 ## no error
 analyze table t;
 set session tidb_enable_extended_stats = default;
+
+# TestHandleDDLEventForTimestampDefaultValue
+drop table if exists t;
+set time_zone = '+08:00';
+create table t(a int);
+alter table t add column ts timestamp DEFAULT '1970-01-01 08:00:01';
+drop table if exists t;
+set time_zone = '+09:00';
+create table t(a int);
+-- error 1067
+alter table t add column ts timestamp DEFAULT '1970-01-01 08:00:01';
+drop table if exists t;
+set time_zone = default;

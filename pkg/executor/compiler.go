@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -108,9 +109,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, preparedObj.ResolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(ctx, preparedObj.PreparedAst.Stmt, preparedObj.ResolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	} else {
-		CountStmtNode(stmtNode, nodeW.GetResolveContext(), sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(ctx, stmtNode, nodeW.GetResolveContext(), sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
@@ -126,6 +127,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
 	}
 	// Use cached plan if possible.
 	if preparedObj != nil && plannercore.IsSafeToReusePointGetExecutor(c.Ctx, is, preparedObj) {
@@ -187,12 +189,12 @@ func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 }
 
 // CountStmtNode records the number of statements with the same type.
-func CountStmtNode(stmtNode ast.StmtNode, resolveCtx *resolve.Context, inRestrictedSQL bool, resourceGroup string) {
+func CountStmtNode(ctx context.Context, stmtNode ast.StmtNode, resolveCtx *resolve.Context, inRestrictedSQL bool, resourceGroup string) {
 	if inRestrictedSQL {
 		return
 	}
 
-	typeLabel := ast.GetStmtLabel(stmtNode)
+	typeLabel := stmtctx.GetStmtLabel(ctx, stmtNode)
 
 	if config.GetGlobalConfig().Status.RecordQPSbyDB || config.GetGlobalConfig().Status.RecordDBLabel {
 		dbLabels := getStmtDbLabel(stmtNode, resolveCtx)
@@ -336,6 +338,11 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.SplitRegionStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.DistributeTableStmt:
 		if x.Table != nil {
 			dbLabel := x.Table.Schema.O
 			dbLabelSet[dbLabel] = struct{}{}

@@ -320,3 +320,82 @@ drop table if exists t;
 create table t (c text);
 alter table t add index idx_t (c(16));
 select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
+
+# Query should return nothing when WHERE clauses are always false.
+# https://github.com/pingcap/tidb/issues/57345
+select table_name from information_schema.columns where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.columns where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.tables where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.tables where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.partitions where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.partitions where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.statistics where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.statistics where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.referential_constraints where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';
+
+drop database if exists test1;
+create database test1;
+use test1;
+create table t10(id int);
+create table t11 like t10;
+create table t12 like t10;
+create table t13 like t10;
+create table t14 like t10;
+create table t15 like t10;
+create table t16 like t10;
+create table t17 like t10;
+create table t18 like t10;
+create table t19 like t10;
+
+drop database if exists test2;
+create database test2;
+use test2;
+create table t20(id int);
+create table t21 like t20;
+create table t22 like t20;
+create table t23 like t20;
+create table t24 like t20;
+create table t25 like t20;
+create table t26 like t20;
+create table t27 like t20;
+create table t28 like t20;
+create table t29 like t20;
+
+SELECT table_schema, table_name,data_length FROM information_schema.TABLES
+WHERE (TABLE_NAME IN ('t10','t11','t12','t13','t14','t15','t16','t17','t18','t19','t20','t21','t22','t23','t24','t25','t26','t27','t28','t29'));
+drop database test1;
+drop database test2;
+
+# https://github.com/pingcap/tidb/issues/62020
+drop database if exists executor__infoschema_reader_2;
+create database executor__infoschema_reader_2;
+use executor__infoschema_reader_2;
+create table t1 (a int);
+create table t2 (a int);
+create table t3 (a int);
+insert into t1 values (1);
+insert into t2 values (1), (2);
+insert into t3 values (1), (2), (3);
+analyze table t1;
+analyze table t2;
+analyze table t3;
+select TABLE_NAME, TABLE_ROWS from information_schema.tables where table_schema = 'executor__infoschema_reader_2';
+drop table t1;
+drop table t2;
+drop table t3;
+
+create table pt1 (a int primary key, b int) partition by hash (a) partitions 4;
+create table pt2 (a int primary key, b int) partition by hash (a) partitions 4;
+create table pt3 (a int primary key, b int) partition by hash (a) partitions 4;
+insert into pt1 values (1, 1);
+insert into pt2 values (1, 1), (2, 2);
+insert into pt3 values (1, 1), (2, 2), (3, 3);
+analyze table pt1;
+analyze table pt2;
+analyze table pt3;
+select TABLE_NAME, TABLE_ROWS from information_schema.partitions where table_schema = 'executor__infoschema_reader_2';
+drop table pt1;
+drop table pt2;
+drop table pt3;
+use executor__infoschema_reader;

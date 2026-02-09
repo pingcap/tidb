@@ -56,6 +56,16 @@ error = '''
 invalid restore range
 '''
 
+["BR:Common:ErrMigrationNotFound"]
+error = '''
+no migration found
+'''
+
+["BR:Common:ErrMigrationVersionNotSupported"]
+error = '''
+the migration version isn't supported
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -186,6 +196,11 @@ error = '''
 PD leader not found
 '''
 
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
 failed to wait region splitted
@@ -219,6 +234,11 @@ task not found
 ["BR:Restore:ErrDatabasesAlreadyExisted"]
 error = '''
 databases already existed in restored cluster
+'''
+
+["BR:Restore:ErrRestoreCheckpointMismatch"]
+error = '''
+restore checkpoint mismatch
 '''
 
 ["BR:Restore:ErrRestoreChecksumMismatch"]
@@ -304,6 +324,11 @@ the system table isn't supported for restoring yet
 ["BR:Stream:ErrStreamLogTaskExist"]
 error = '''
 stream task already exists
+'''
+
+["BR:Stream:ErrStreamLogTaskHasNoStorage"]
+error = '''
+stream task has no storage
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
@@ -1571,6 +1596,11 @@ error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
 '''
 
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s
@@ -1954,6 +1984,11 @@ Your query has been cancelled due to exceeding the allowed memory limit for the 
 ["executor:8177"]
 error = '''
 Delete can not find column %s for table %s
+'''
+
+["executor:8179"]
+error = '''
+Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
 '''
 
 ["executor:8212"]
@@ -2914,6 +2949,16 @@ Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_contr
 ["schema:8257"]
 error = '''
 Cannot set resource group for a role
+'''
+
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
 '''
 
 ["server:1040"]

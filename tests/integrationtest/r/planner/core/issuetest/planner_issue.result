@@ -113,12 +113,12 @@ explain select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( 
 id	estRows	task	access object	operator info
 Projection_8	382.00	root		planner__core__issuetest__planner_issue.tbl_39.col_239
 └─Limit_15	382.00	root		offset:0, count:382
-  └─UnionScan_23	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
+  └─UnionScan_23	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
     └─IndexMerge_29	382.00	root		type: union
-      ├─Selection_25(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))
+      ├─Selection_25(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010))
       │ └─IndexRangeScan_24	0.14	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
       ├─Selection_27(Build)	458.26	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
-      │ └─IndexRangeScan_26	477.36	cop[tikv]	table:tbl_39, index:idx_223(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
+      │ └─IndexRangeScan_26	477.36	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
       └─TableRowIDScan_28(Probe)	382.00	cop[tikv]	table:tbl_39	keep order:false, stats:pseudo
 select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 col_239
@@ -825,3 +825,159 @@ _tidb_rowid
 1
 2
 3
+drop table if exists t;
+create table t(a int, b int, c int, primary key(a,b), key ib(b));
+explain format = brief select * from t use index (ib) where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select /*+ use_index(t, ib) */ * from t where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select * from t as tt use index (ib) where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = brief select /*+ use_index(tt, ib) */ * from t as tt where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = brief update t use index (ib) set c = 1 where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief update /*+ use_index(t, ib) */ t set c = 1 where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief delete from t use index (ib) where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief delete /*+ use_index(t, ib) */ from t where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create database if not exists test_59427;
+create table test_59427.t(a int, b int, c int, primary key(a,b), key ib(b));
+explain format = brief select * from test_59427.t use index (ib) where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select /*+ use_index(test_59427.t, ib) */ * from test_59427.t where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select * from test_59427.t as tt use index (ib) where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = brief select /*+ use_index(test_59427.tt, ib) */ * from test_59427.t as tt where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+drop database if exists test_59427;
+drop table if exists t1,t2,t3,t4,t5;
+create table t1(a int, b int, c int, d int, e int);
+create table t2(a int, b int, c int, d int, e int);
+create table t3(a int, b int, c int, d int, e int);
+create table t4(a int, b int, c int, d int, e int);
+create table t5(a int, b int, c int, d int, e int);
+explain format = brief select tmp4.b
+from t1 join t2 on t1.a = t2.b
+join t3 on t1.b = t3.b
+left join
+(select a, b, c, (row_number() over (partition by b order by e asc)) from t4) tmp4 on tmp4.b = t2.c and tmp4.c = t3.c
+join t5 on t5.a = t1.e;
+id	estRows	task	access object	operator info
+HashJoin	19472.71	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(test.t5.a))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t5	keep order:false, stats:pseudo
+└─HashJoin(Probe)	15578.17	root		left outer join, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
+  ├─Selection(Build)	7992.00	root		not(isnull(test.t4.c))
+  │ └─Shuffle	9990.00	root		execution info: concurrency:100, data sources:[TableReader]
+  │   └─Window	9990.00	root		row_number()->Column#26 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
+  │     └─Sort	9990.00	root		test.t4.b, test.t4.e
+  │       └─ShuffleReceiver	9990.00	root		
+  │         └─TableReader	9990.00	root		data:Selection
+  │           └─Selection	9990.00	cop[tikv]		not(isnull(test.t4.b))
+  │             └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	15578.17	root		inner join, equal:[eq(test.t1.b, test.t3.b)]
+    ├─HashJoin(Build)	12462.54	root		inner join, equal:[eq(test.t1.a, test.t2.b)]
+    │ ├─TableReader(Build)	9990.00	root		data:Selection
+    │ │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t2.b))
+    │ │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    │ └─TableReader(Probe)	9970.03	root		data:Selection
+    │   └─Selection	9970.03	cop[tikv]		not(isnull(test.t1.a)), not(isnull(test.t1.b)), not(isnull(test.t1.e))
+    │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t3.b))
+        └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+drop table if exists t0, v0;
+drop view if exists v0;
+CREATE  TABLE  t0(c0 INTEGER);
+CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
+SELECT t0.c0 FROM v0, t0 WHERE RAND();
+c0
+drop table if exists t1,t2,t3,t4;
+create table t1(a int, b int);
+create table t2 like t1;
+create table t3 like t1;
+create table t4 like t1;
+set @@tidb_opt_join_reorder_threshold=5;
+explain format='brief' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
+id	estRows	task	access object	operator info
+Projection	155937656.25	root		1->Column#13
+└─HashJoin	155937656.25	root		CARTESIAN inner join
+  ├─HashJoin(Build)	12487.50	root		inner join, equal:[eq(test.t3.b, test.t4.b)]
+  │ ├─TableReader(Build)	9990.00	root		data:Selection
+  │ │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t4.b))
+  │ │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	9990.00	root		data:Selection
+  │   └─Selection	9990.00	cop[tikv]		not(isnull(test.t3.b))
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(test.t1.a, test.t2.a)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t2.a))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t1.a))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_opt_join_reorder_threshold=default;
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int) partition by hash(a) partitions 2;
+insert into t1 value(1,1);
+insert into t2 value(1,1);
+delete t1, t2 from t1, t2 where t1.a = t2.a;
+drop table t1, t2;

@@ -2178,3 +2178,224 @@ id	col1
 4	
 5	
 6	
+SET @old_time_zone = @@time_zone;
+SET @@time_zone = 'Europe/Amsterdam';
+SET @old_sql_mode = @@sql_mode;
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (id int primary key, ts timestamp, mode varchar(255));
+SET SQL_MODE = '';
+INSERT INTO t VALUES (1, '0000-00-00 00:00:00', '');
+INSERT INTO t VALUES (2, '2025-00-30 00:00:00', '');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-00-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (3, '2025-02-30 00:00:00', '');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-02-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (4, '2025-03-30 01:59:59', '');
+INSERT INTO t VALUES (5, '2025-03-30 02:00:00', '');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (6, '2025-03-30 02:30:00', '');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1
+INSERT INTO t VALUES (7, '2025-03-30 03:00:00', '');
+SET SQL_MODE = 'ALLOW_INVALID_DATES';
+INSERT INTO t VALUES (8, '0000-00-00 00:00:00', 'ALLOW_INVALID_DATES');
+INSERT INTO t VALUES (9, '2025-00-30 00:00:00', 'ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-00-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (10, '2025-02-30 00:00:00', 'ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-02-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (11, '2025-03-30 01:59:59', 'ALLOW_INVALID_DATES');
+INSERT INTO t VALUES (12, '2025-03-30 02:00:00', 'ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (13, '2025-03-30 02:30:00', 'ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1
+INSERT INTO t VALUES (14, '2025-03-30 03:00:00', 'ALLOW_INVALID_DATES');
+SET SQL_MODE = 'NO_ZERO_IN_DATE';
+INSERT INTO t VALUES (15, '0000-00-00 00:00:00', 'NO_ZERO_IN_DATE');
+INSERT INTO t VALUES (16, '2025-00-30 00:00:00', 'NO_ZERO_IN_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-00-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (17, '2025-02-30 00:00:00', 'NO_ZERO_IN_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-02-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (18, '2025-03-30 01:59:59', 'NO_ZERO_IN_DATE');
+INSERT INTO t VALUES (19, '2025-03-30 02:00:00', 'NO_ZERO_IN_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (20, '2025-03-30 02:30:00', 'NO_ZERO_IN_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1
+INSERT INTO t VALUES (21, '2025-03-30 03:00:00', 'NO_ZERO_IN_DATE');
+SET SQL_MODE = 'NO_ZERO_IN_DATE,ALLOW_INVALID_DATES';
+INSERT INTO t VALUES (22, '0000-00-00 00:00:00', 'NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+INSERT INTO t VALUES (23, '2025-00-30 00:00:00', 'NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-00-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (24, '2025-02-30 00:00:00', 'NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-02-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (25, '2025-03-30 01:59:59', 'NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+INSERT INTO t VALUES (26, '2025-03-30 02:00:00', 'NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (27, '2025-03-30 02:30:00', 'NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1
+INSERT INTO t VALUES (28, '2025-03-30 03:00:00', 'NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+SET SQL_MODE = 'NO_ZERO_DATE';
+INSERT INTO t VALUES (29, '0000-00-00 00:00:00', 'NO_ZERO_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (30, '2025-00-30 00:00:00', 'NO_ZERO_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-00-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (31, '2025-02-30 00:00:00', 'NO_ZERO_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-02-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (32, '2025-03-30 01:59:59', 'NO_ZERO_DATE');
+INSERT INTO t VALUES (33, '2025-03-30 02:00:00', 'NO_ZERO_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (34, '2025-03-30 02:30:00', 'NO_ZERO_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1
+INSERT INTO t VALUES (35, '2025-03-30 03:00:00', 'NO_ZERO_DATE');
+SET SQL_MODE = 'NO_ZERO_DATE,ALLOW_INVALID_DATES';
+INSERT INTO t VALUES (36, '0000-00-00 00:00:00', 'NO_ZERO_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (37, '2025-00-30 00:00:00', 'NO_ZERO_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-00-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (38, '2025-02-30 00:00:00', 'NO_ZERO_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-02-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (39, '2025-03-30 01:59:59', 'NO_ZERO_DATE,ALLOW_INVALID_DATES');
+INSERT INTO t VALUES (40, '2025-03-30 02:00:00', 'NO_ZERO_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (41, '2025-03-30 02:30:00', 'NO_ZERO_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1
+INSERT INTO t VALUES (42, '2025-03-30 03:00:00', 'NO_ZERO_DATE,ALLOW_INVALID_DATES');
+SET SQL_MODE = 'NO_ZERO_DATE,NO_ZERO_IN_DATE';
+INSERT INTO t VALUES (43, '0000-00-00 00:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (44, '2025-00-30 00:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-00-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (45, '2025-02-30 00:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-02-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (46, '2025-03-30 01:59:59', 'NO_ZERO_DATE,NO_ZERO_IN_DATE');
+INSERT INTO t VALUES (47, '2025-03-30 02:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (48, '2025-03-30 02:30:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1
+INSERT INTO t VALUES (49, '2025-03-30 03:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE');
+SET SQL_MODE = 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES';
+INSERT INTO t VALUES (50, '0000-00-00 00:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (51, '2025-00-30 00:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-00-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (52, '2025-02-30 00:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-02-30 00:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (53, '2025-03-30 01:59:59', 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+INSERT INTO t VALUES (54, '2025-03-30 02:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+INSERT INTO t VALUES (55, '2025-03-30 02:30:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1
+INSERT INTO t VALUES (56, '2025-03-30 03:00:00', 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES');
+SELECT * FROM t ORDER BY id;
+id	ts	mode
+1	0000-00-00 00:00:00	
+2	0000-00-00 00:00:00	
+3	0000-00-00 00:00:00	
+4	2025-03-30 01:59:59	
+5	2025-03-30 03:00:00	
+6	2025-03-30 03:00:00	
+7	2025-03-30 03:00:00	
+8	0000-00-00 00:00:00	ALLOW_INVALID_DATES
+9	0000-00-00 00:00:00	ALLOW_INVALID_DATES
+10	0000-00-00 00:00:00	ALLOW_INVALID_DATES
+11	2025-03-30 01:59:59	ALLOW_INVALID_DATES
+12	2025-03-30 03:00:00	ALLOW_INVALID_DATES
+13	2025-03-30 03:00:00	ALLOW_INVALID_DATES
+14	2025-03-30 03:00:00	ALLOW_INVALID_DATES
+15	0000-00-00 00:00:00	NO_ZERO_IN_DATE
+16	0000-00-00 00:00:00	NO_ZERO_IN_DATE
+17	0000-00-00 00:00:00	NO_ZERO_IN_DATE
+18	2025-03-30 01:59:59	NO_ZERO_IN_DATE
+19	2025-03-30 03:00:00	NO_ZERO_IN_DATE
+20	2025-03-30 03:00:00	NO_ZERO_IN_DATE
+21	2025-03-30 03:00:00	NO_ZERO_IN_DATE
+22	0000-00-00 00:00:00	NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+23	0000-00-00 00:00:00	NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+24	0000-00-00 00:00:00	NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+25	2025-03-30 01:59:59	NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+26	2025-03-30 03:00:00	NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+27	2025-03-30 03:00:00	NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+28	2025-03-30 03:00:00	NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+29	0000-00-00 00:00:00	NO_ZERO_DATE
+30	0000-00-00 00:00:00	NO_ZERO_DATE
+31	0000-00-00 00:00:00	NO_ZERO_DATE
+32	2025-03-30 01:59:59	NO_ZERO_DATE
+33	2025-03-30 03:00:00	NO_ZERO_DATE
+34	2025-03-30 03:00:00	NO_ZERO_DATE
+35	2025-03-30 03:00:00	NO_ZERO_DATE
+36	0000-00-00 00:00:00	NO_ZERO_DATE,ALLOW_INVALID_DATES
+37	0000-00-00 00:00:00	NO_ZERO_DATE,ALLOW_INVALID_DATES
+38	0000-00-00 00:00:00	NO_ZERO_DATE,ALLOW_INVALID_DATES
+39	2025-03-30 01:59:59	NO_ZERO_DATE,ALLOW_INVALID_DATES
+40	2025-03-30 03:00:00	NO_ZERO_DATE,ALLOW_INVALID_DATES
+41	2025-03-30 03:00:00	NO_ZERO_DATE,ALLOW_INVALID_DATES
+42	2025-03-30 03:00:00	NO_ZERO_DATE,ALLOW_INVALID_DATES
+43	0000-00-00 00:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE
+44	0000-00-00 00:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE
+45	0000-00-00 00:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE
+46	2025-03-30 01:59:59	NO_ZERO_DATE,NO_ZERO_IN_DATE
+47	2025-03-30 03:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE
+48	2025-03-30 03:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE
+49	2025-03-30 03:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE
+50	0000-00-00 00:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+51	0000-00-00 00:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+52	0000-00-00 00:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+53	2025-03-30 01:59:59	NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+54	2025-03-30 03:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+55	2025-03-30 03:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+56	2025-03-30 03:00:00	NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES
+DROP TABLE t;
+SET @@time_zone = @old_time_zone;
+SET @@sql_mode = @old_sql_mode;
+SET @old_time_zone = @@time_zone;
+SET @@time_zone = 'Europe/Amsterdam';
+SET @old_sql_mode = @@sql_mode;
+create table t (ts timestamp);
+set time_zone = 'Europe/Amsterdam';
+set sql_mode = 'strict_trans_tables,no_zero_date,no_zero_in_date,error_for_division_by_zero';
+insert into t values ('2025-03-30 02:00:00');
+Error 1292 (22007): Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+select * from t;
+ts
+insert ignore into t values ('2025-03-30 02:00:00');
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:00:00' for column 'ts' at row 1
+select * from t;
+ts
+2025-03-30 03:00:00
+DROP TABLE t;
+SET @@time_zone = @old_time_zone;
+SET @@sql_mode = @old_sql_mode;

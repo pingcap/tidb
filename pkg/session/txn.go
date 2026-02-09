@@ -442,6 +442,8 @@ func (txn *LazyTxn) Rollback() error {
 	txn.mu.Unlock()
 	// mockSlowRollback is used to mock a rollback which takes a long time
 	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
+	// When rolling back a txn, swap with a dummy hook to avoid operations on an invalid memory tracker.
+	txn.SetMemoryFootprintChangeHook(func(uint64) {})
 	return txn.Transaction.Rollback()
 }
 
@@ -595,7 +597,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		if err := txn.changePendingToValid(ctx, sctx); err != nil {
-			logutil.BgLogger().Error("active transaction fail",
+			logutil.BgLogger().Warn("active transaction fail",
 				zap.Error(err))
 			txn.cleanup()
 			sctx.GetSessionVars().TxnCtx.StartTS = 0
@@ -647,7 +649,19 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		return current.Handle != nil || tablecodec.IndexKVIsUnique(current.Value)
 	}
 
-	return tablecodec.IndexKVIsUnique(v)
+	if !tablecodec.IndexKVIsUnique(v) {
+		// In most times, if an index is not unique, its primary record is assumed to be locked if mutated.
+		// So we don't need to lock the index key for performance purposes.
+		// However, the above assumption is not always true, for example, when adding the index, the DDL background task
+		// may not lock the primary record.
+		// So, the SQL layer can use the flag `flagNeedLocked` to indicate whether the index key should be force locked.
+		// - If `flagNeedLocked` is true, we should lock the index key by force to guarantee the correctness.
+		// - If `flagNeedLocked` is false, it indicates we can skip locking the index key.
+		return flags.HasNeedLocked()
+	}
+
+	// Force to lock the unique index key to ensure the correctness.
+	return true
 }
 
 type txnFailFuture struct{}

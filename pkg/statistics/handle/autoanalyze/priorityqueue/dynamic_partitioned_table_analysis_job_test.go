@@ -49,7 +49,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
 	job.Analyze(handle, dom.SysProcTracker())
@@ -58,7 +58,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.Equal(t, int64(1), tblStats.RealtimeCount)
 }
@@ -91,7 +91,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 	require.NotNil(t, tblStats.GetIdx(1))
 	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
@@ -104,7 +104,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.NotNil(t, tblStats.GetIdx(1))
 	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
@@ -112,7 +112,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	require.True(t, tblStats.GetIdx(2).IsAnalyzed())
 	// partition p1
 	pid = tbl.Meta().GetPartitionInfo().Definitions[1].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.NotNil(t, tblStats.GetIdx(1))
 	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
@@ -137,8 +137,8 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 		SchemaName:    "example_schema",
 		GlobalTableID: tableInfo.Meta().ID,
 		PartitionIDs: map[int64]struct{}{
-			113: {},
-			114: {},
+			115: {},
+			116: {},
 		},
 		Weight: 2,
 	}

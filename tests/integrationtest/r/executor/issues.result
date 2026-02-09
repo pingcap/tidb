@@ -917,18 +917,18 @@ Limit_7	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
     └─TableFullScan_9	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false	<memory>	<disk>
 explain analyze select * from t where c = 'abc' limit 100; # expected distsql concurrency 15
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Limit_8	0.26	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
-└─TableReader_13	0.26	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
-  └─Limit_12	0.26	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
-    └─Selection_11	0.26	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abc")	<memory>	<disk>
-      └─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false, stats:partial[c:unInitialized]	<memory>	<disk>
+Limit_8	64.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
+└─TableReader_13	64.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_12	64.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
+    └─Selection_11	64.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abc")	<memory>	<disk>
+      └─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false	<memory>	<disk>
 explain analyze select * from t where c = 'abc' limit 100000;  # expected distsql concurrency 15
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Limit_8	0.26	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
-└─TableReader_13	0.26	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
-  └─Limit_12	0.26	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
-    └─Selection_11	0.26	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abc")	<memory>	<disk>
-      └─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false, stats:partial[c:unInitialized]	<memory>	<disk>
+Limit_8	64.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+└─TableReader_13	64.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_12	64.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+    └─Selection_11	64.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abc")	<memory>	<disk>
+      └─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false	<memory>	<disk>
 explain analyze select * from t order by id limit 100;  # expected distsql concurrency 1
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_10	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
@@ -938,16 +938,16 @@ Limit_10	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
 explain analyze select * from t order by id limit 100000;  # expected distsql concurrency 15
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_11	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
-└─TableReader_21	256.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
-  └─Limit_20	256.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
-    └─TableFullScan_19	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
+└─TableReader_20	256.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_19	256.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+    └─TableFullScan_18	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
 explain analyze select * from t where c = 'abd' order by id limit 100;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Limit_11	0.26	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
-└─TableReader_20	0.26	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
-  └─Limit_19	0.26	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
-    └─Selection_18	0.26	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abd")	<memory>	<disk>
-      └─TableFullScan_17	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true, stats:partial[c:unInitialized]	<memory>	<disk>
+Limit_11	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
+└─TableReader_20	1.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_19	1.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
+    └─Selection_18	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abd")	<memory>	<disk>
+      └─TableFullScan_17	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
 select @@tidb_partition_prune_mode;
 @@tidb_partition_prune_mode
 dynamic
@@ -990,9 +990,9 @@ Limit_10	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
 explain analyze select * from pt order by id limit 100000;      # expected distsql concurrency 15
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_11	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
-└─TableReader_21	256.00	<actRows>	root	partition:all	max_distsql_concurrency: 15	NULL	<memory>	<disk>
-  └─Limit_20	256.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
-    └─TableFullScan_19	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
+└─TableReader_20	256.00	<actRows>	root	partition:all	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+  └─Limit_19	256.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
+    └─TableFullScan_18	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
 explain analyze select * from pt where val = 126 order by id limit 100;  # expected distsql concurrency 15
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_11	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
@@ -1000,6 +1000,14 @@ Limit_11	1.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
   └─Limit_19	1.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
     └─Selection_18	1.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.pt.val, 126)	<memory>	<disk>
       └─TableFullScan_17	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
+explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=5)*/ * from t order by id;  # expected distsql concurrency 5
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+TableReader_11	256.00	<actRows>	root	NULL	max_distsql_concurrency: 5	NULL	<memory>	<disk>
+└─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
+explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=15)*/ * from t order by id;  # expected distsql concurrency 2
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+TableReader_11	256.00	<actRows>	root	NULL	max_distsql_concurrency: 2	NULL	<memory>	<disk>
+└─TableFullScan_10	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
 CREATE TABLE test_55837 (col1 int(4) NOT NULL, col2 bigint(4) NOT NULL, KEY col2_index (col2));
 insert into test_55837 values(0,1725292800),(0,1725292800);
 select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s') as result from test_55837;
@@ -1009,3 +1017,6 @@ result
 select ((exists (select 1)) * -5) as c1;
 c1
 -5
+CREATE TABLE test_62458 (c1 INT, c2 VARCHAR(255)) PARTITION BY LIST (c1) (PARTITION p1 VALUES IN (1, 2, 3), PARTITION p2 VALUES IN (4, 5, 6));
+CREATE UNIQUE INDEX i ON test_62458 (c1);
+DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;

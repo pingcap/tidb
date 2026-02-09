@@ -164,6 +164,8 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 
 	// unsupported ddl operations
 	{
@@ -224,8 +226,8 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization {
-			rs, _ := tk.Exec("select b from t")
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "2")
+			rs, _ := tk2.Exec("select b from t")
+			assert.Equal(t, tk2.ResultSetToResult(rs, "").Rows()[0][0], "2")
 		}
 	})
 	tk.MustExec("alter table t add column c int default 3, rename column b to d;")
@@ -541,9 +543,13 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterIndex(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test;")
 
 	// unsupported ddl operations
 	{
@@ -583,7 +589,7 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 		// "modify column a tinyint" in write-reorg.
 		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
 			checked = true
-			rs, err := tk.Exec("select * from t use index(i1);")
+			rs, err := tk2.Exec("select * from t use index(i1);")
 			assert.NoError(t, err)
 			assert.NoError(t, rs.Close())
 		}
@@ -776,6 +782,54 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	require.NoError(t, checkErr)
 }
 
+func TestMultiSchemaChangeModifyColumnOrderByStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("alter table t modify column b smallint, add column d int;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("alter table t modify column a smallint, add column c int, modify column b smallint;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int, c char(10));")
+	tk.MustExec("insert into t values (1, 1, '1');")
+	tk.MustExec("alter table t modify column c int after a, add column d int, add column e int, modify column b smallint;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t modify column c2 int after id, modify column id int after c2;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t1(id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t1 modify column c2 int, drop column id;")
+}
+
+func TestMultiSchemaChangeDMLUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, d int)")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("insert into t(a, c) values (1, 2), (2, 3), (3, 4), (4, 5)")
+		tk.MustExec("update t set c = 5 where a = 1")
+		tk.MustExec("delete from t")
+	})
+	tk.MustExec("alter table t change column b e int unsigned, change column d f int unsigned")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+
+	tk.MustExec("drop table t")
+}
+
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -795,6 +849,28 @@ func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
 	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
+}
+
+func TestMultiSchemaChangePollJobCount(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+	runOneJobCounter := 0
+	pollJobCounter := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
+		runOneJobCounter++
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePollDDLJob", func() {
+		pollJobCounter++
+	})
+	// Should not test reorg DDL because the result can be unstable.
+	tk.MustExec("alter table t add column b int,  modify column a bigint, add column c char(10);")
+	require.Equal(t, 20, runOneJobCounter)
+	require.Equal(t, 10, pollJobCounter)
 }
 
 type cancelOnceHook struct {

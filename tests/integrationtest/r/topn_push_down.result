@@ -222,19 +222,19 @@ explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
 └─IndexJoin	5.00	root		inner join, inner:IndexReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
-  ├─TableReader(Build)	4.00	root		data:TableFullScan
-  │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	5.00	root		index:IndexRangeScan
-    └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
+  ├─TableReader(Build)	2504.00	root		data:TableFullScan
+  │ └─TableFullScan	2504.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	3130.00	root		index:IndexRangeScan
+    └─IndexRangeScan	3130.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
 └─Selection	5.00	root		isnull(topn_push_down.t.a)
   └─IndexJoin	5.00	root		left outer join, inner:IndexReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
-    ├─TableReader(Build)	4.00	root		data:TableFullScan
-    │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─IndexReader(Probe)	5.00	root		index:IndexRangeScan
-      └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
+    ├─TableReader(Build)	2504.00	root		data:TableFullScan
+    │ └─TableFullScan	2504.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─IndexReader(Probe)	3130.00	root		index:IndexRangeScan
+      └─IndexRangeScan	3130.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
 explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5

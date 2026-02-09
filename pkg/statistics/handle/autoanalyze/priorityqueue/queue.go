@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -80,6 +81,308 @@ type pqHeap interface {
 // Memory usage for one million tables is approximately 300 to 500 MiB, which is acceptable.
 // Typically, not many tables need to be analyzed simultaneously.
 //
+// ┌─────────────────────────────────────────────────────────────────────────────────────┐
+// │                         LIFECYCLE & THREAD SAFETY GUIDE                             │
+// └─────────────────────────────────────────────────────────────────────────────────────┘
+//
+// GOROUTINE ARCHITECTURE:
+// ═══════════════════════════════════════════════════════════════════════════════════════
+//
+// This priority queue system involves the following goroutines:
+//
+// 1. [Auto-Analyze Worker] - The main ticker loop in domain.autoAnalyzeWorker()
+//   - Runs every stats lease interval (~3 seconds)
+//   - Calls Initialize() or Close() based on ownership and configuration
+//   - Calls Pop() to retrieve analysis jobs and submits them for execution
+//
+// 2. [Queue Worker] - The background goroutine started by Initialize() (run() function)
+//   - Periodically processes DML changes (every 2 minutes)
+//   - Refreshes last analysis duration (every 10 minutes)
+//   - Requeues must-retry jobs (every 5 minutes)
+//   - Exits when context is canceled by Close()
+//
+// 3. [Job Executor] - The goroutine(s) that execute actual ANALYZE jobs
+//   - Started when a job is submitted for execution (after Pop())
+//   - Calls job hooks (success/failure) when analysis completes
+//   - May run concurrently with queue operations
+//
+// 4. [DDL Handler] - Goroutine(s) that handle DDL events
+//   - Calls HandleDDLEvent() when schema changes occur
+//   - May run concurrently with other goroutines
+//
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// SCENARIO 1: Normal Lifecycle (Ticker-Based Ownership Management)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+//
+// The priority queue is managed by a ticker-based loop in domain.autoAnalyzeWorker().
+// Every stats lease interval (default: 3 seconds), the loop checks:
+//
+//   - If auto-analyze is enabled AND instance is owner → call HandleAutoAnalyze()
+//
+//   - If auto-analyze is disabled OR instance is not owner → call ClosePriorityQueue()
+//
+//     Auto-Analyze Worker              Priority Queue                 Queue Worker
+//     ───────────────────              ──────────────                 ────────────
+//     <ticker fires>
+//     │
+//     ├──check: RunAutoAnalyze.Load() && IsOwner()?
+//     │        │
+//     │        └──> YES
+//     │
+//     AnalyzeHighestPriorityTables()
+//     │
+//     ├──IsInitialized()?
+//     │        │
+//     │        └──> false
+//     │
+//     ├──Initialize(ctx) ──────────────────────────────────────> run() starts
+//     │        │                                                       │
+//     │        ├──fetchAllTablesAndBuildAnalysisJobs()                 │
+//     │        ├──set initialized=true                                 │
+//     │        └──spawn run() goroutine                                │
+//     │                                                                │
+//     ├──Pop() ──────────────────┐                                     ├──ProcessDMLChanges()
+//     │        │                 │                                     │  (every 2 min)
+//     │        ├──get job        │                                     │
+//     │        ├──mark as running│                                     ├──RefreshLastAnalysisDuration()
+//     │        └──register hooks │                                     │  (every 10 min)
+//     │                          │                                     │
+//     ├──SubmitJob(job) ─────────┘                                     ├──RequeueMustRetryJobs()
+//     │                                                                │  (every 5 min)
+//     │                                                                │
+//     ...                                                             ...
+//     │                                                                │
+//     <ticker fires>                                                   │
+//     │                                                                │
+//     ├──check: !RunAutoAnalyze.Load() || !IsOwner()?                  │
+//     │        │                                                       │
+//     │        └──> YES (ownership lost or auto-analyze disabled)      │
+//     │                                                                │
+//     ├──ClosePriorityQueue() ──────────────────────────────────────> ctx.Done()
+//     │        │                                                       │
+//     │        ├──cancel context                                       ├──exit loop
+//     │        ├──unlock                                               │
+//     │        ├──Wait() ◄─────────────────────────────────────────────┤
+//     │        │         (waits for Queue Worker to exit)              │
+//     │        │                                                resetSyncFields()
+//     │        │                                                       │
+//     │        │                                                       ├──set initialized=false
+//     │        │                                                       ├──nil out maps
+//     │        │ ◄─────────────────────────────────────────────────────┘
+//     │        │         (Queue Worker exits)
+//     │        └──Done
+//     │
+//
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// SCENARIO 2: Concurrent Close During Active Processing (Deadlock Prevention)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+//
+// The Close() function is specifically designed to avoid deadlock. Here's why:
+//
+//	Auto-Analyze Worker (Close)      syncFields.mu              Queue Worker
+//	───────────────────────────      ─────────────              ────────────
+//	Close()
+//	  │
+//	  ├──Lock() ──────────────────> [LOCKED] ◄───────────────── ProcessDMLChanges()
+//	  │                                  │                              │
+//	  ├──check initialized               │                              │(waiting for lock)
+//	  ├──cancel context ─────────────────┼──────────────────────> (will see ctx.Done())
+//	  │                                  │                              │
+//	  ├──Unlock() ────────────────> [UNLOCKED]                          │
+//	  │                                  │                              │
+//	  │                                  │ ◄────────────────────────────┤
+//	  │                                  │                         (acquires lock)
+//	  │                                  │                              │
+//	  │                                  │                         (finishes DML processing)
+//	  │                                  │                              │
+//	  │                                  │                         (checks ctx.Done())
+//	  │                                  │                              │
+//	  │                                  │                         (exits loop)
+//	  │                                  │                              │
+//	  ├──Wait() ◄───────────────────────────────────────────────────────┤
+//	  │         (waits OUTSIDE lock)                            (Queue Worker exits)
+//	  │                                                                 │
+//	  └──Done                                                           │
+//
+// CRITICAL: If Close() waited while holding the lock, it would deadlock:
+//
+//	Auto-Analyze Worker: holds lock → waits for Queue Worker to exit
+//	Queue Worker: tries to acquire lock → blocked forever
+//	Result: DEADLOCK ❌
+//
+// Current design (unlock before wait):
+//
+//	Auto-Analyze Worker: releases lock → waits for Queue Worker
+//	Queue Worker: acquires lock → processes → checks context → exits
+//	Result: Clean shutdown
+//
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// SCENARIO 3: DDL Events During Running Jobs (Must Retry Pattern)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+//
+//	Auto-Analyze Worker           Priority Queue              DDL Handler          Job Executor
+//	───────────────────           ──────────────              ───────────          ────────────
+//	Pop() for table T1
+//	  │
+//	  ├──get job
+//	  ├──add T1 to runningJobs
+//	  └──register hooks
+//	       │
+//	SubmitJob(T1) ──────────────────────────────────────────────────────────────> [Start analyzing T1]
+//	       │                                                                              │
+//	       │                                              ALTER TABLE T1 ADD INDEX        │
+//	       │                                                      │                       │
+//	       │                                              HandleDDLEvent(T1)              │
+//	       │                                                      │                       │
+//	       │                                                      ├──check if T1 in runningJobs
+//	       │                                                      │        │              │
+//	       │                                                      │        └──> YES (still running)
+//	       │                                                      │                       │
+//	       │                                                      ├──add T1 to mustRetryJobs
+//	       │                                                      │  (don't queue now)    │
+//	       │                                                      │                       │
+//	       │                                                      └──return               │
+//	       │                                                                              │
+//	       │                                                                      [Analysis completes]
+//	       │                                                                              │
+//	       │                                                                              └──Done
+//
+//	...time passes (5 minutes)...
+//
+//	                          RequeueMustRetryJobs()
+//	                                   │
+//	                                   ├──get T1 from mustRetryJobs
+//	                                   ├──delete T1 from mustRetryJobs
+//	                                   ├──recreateAndPushJobForTable(T1)
+//	                                   │        │
+//	                                   │        ├──fetch new table info (with new index)
+//	                                   │        ├──create new job
+//	                                   │        └──push to queue
+//	                                   │
+//	                                   └──Done
+//
+//	Pop() for table T1 (2nd time)
+//	  │
+//	  └──[Analyze T1 again with new index]
+//
+// WHY THIS PATTERN?
+// - If we queued T1 immediately while it's running, we'd analyze the same table twice concurrently
+// - By marking as mustRetry, we defer the re-queue until the current analysis finishes
+// - This ensures no DML changes are missed while avoiding duplicate work
+//
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// SCENARIO 4: Job Hooks After Queue Closed (Graceful Shutdown)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+//
+//	Auto-Analyze Worker           Priority Queue              Job Executor
+//	───────────────────           ──────────────              ────────────
+//	Pop() for table T1
+//	  │
+//	  ├──mark T1 as running
+//	  └──return job ──────────────────────────────────────> [Start analyzing T1]
+//	                                                                │
+//	<ticker fires>                                                  │
+//	  │                                                             │
+//	  ├──check: !RunAutoAnalyze || !IsOwner                         │
+//	  │        │                                                    │
+//	  │        └──> YES (ownership lost)                            │
+//	  │                                                             │
+//	  ├──ClosePriorityQueue()                                       │
+//	  │     │                                                       │
+//	  │     ├──cancel context                                       │
+//	  │     ├──unlock                                               │
+//	  │     ├──Wait() (waits for Queue Worker to exit)              │
+//	  │     │                                                       │
+//	  │     │      resetSyncFields()                                │
+//	  │     │           │                                           │
+//	  │     │           ├──set initialized=false                    │
+//	  │     │           ├──runningJobs = nil ◄──────────────────────┼──────┐
+//	  │     │           ├──mustRetryJobs = nil                      │      │
+//	  │     │           └──Done                                     │      │
+//	  │     │                                                       │      │
+//	  │     └──Done                                                 │      │
+//	  │                                                             │      │
+//	[New owner takes over]                                          │      │
+//	                                                                │      │
+//	                                                        [Analysis completes]
+//	                                                                │      │
+//	                                                         SuccessHook() │
+//	                                                                │      │
+//	                                                                ├──Lock()
+//	                                                                ├──check if runningJobs == nil
+//	                                                                │        │
+//	                                                                │        └──> YES (queue closed)
+//	                                                                ├──return (no-op)
+//	                                                                └──Unlock()
+//
+// SAFETY GUARANTEES:
+// - Running jobs are allowed to complete even after ClosePriorityQueue()
+// - Hooks check for nil maps before accessing them
+// - No crashes, no panics, graceful degradation
+//
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// SCENARIO 5: Ownership Lost During Initialization (Delayed Cleanup)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+//
+// The Auto-Analyze Worker is single-threaded, so ClosePriorityQueue() CANNOT be called
+// while Initialize() is running. However, ownership can change DURING initialization,
+// leading to a queue that's fully initialized even though we're no longer the owner.
+//
+// IMPORTANT: This is a known race condition but is acceptable because:
+// 1. The queue will be closed on the NEXT ticker (within ~3 seconds)
+// 2. The new owner will have its own queue
+// 3. At worst, we waste resources for a few seconds
+//
+//	Auto-Analyze Worker              Ownership Changes         Priority Queue State
+//	───────────────────              ─────────────────         ────────────────────
+//	<ticker fires at T=0s>
+//	     │
+//	     ├──check: IsOwner() → YES
+//	     │
+//	AnalyzeHighestPriorityTables()
+//	     │
+//	     ├──Initialize(ctx)
+//	     │     │
+//	     │     ├──rebuildWithoutLock()
+//	     │     │  ┌──────────────┐
+//	     │     │  │ ~1 min for   │       [T=30s: Ownership transferred
+//	     │     │  │ 1M tables    │        to another instance]
+//	     │     │  │              │              │
+//	     │     │  │ (still       │              ├──Other instance
+//	     │     │  │  building... │              │  becomes owner
+//	     │     │  │  unaware of  │              │
+//	     │     │  │  ownership   │              └──This instance is
+//	     │     │  │  loss)       │                  no longer owner!
+//	     │     │  └──────────────┘
+//	     │     │
+//	     │     ├──set initialized=true
+//	     │     ├──spawn run() ──────────────────────────────> Queue Worker running
+//	     │     │                                               (but shouldn't be!)
+//	     │     └──return
+//	     │
+//	     └──return from HandleAutoAnalyze()
+//	         (Auto-Analyze Worker now unblocked)
+//
+//	<ticker fires at T=63s>
+//	     │
+//	     ├──check: IsOwner() → NO
+//	     │
+//	     ├──ClosePriorityQueue() ──────────────────────────> Queue closed
+//	     │                                                    (cleans up state)
+//	     └──Done
+//
+// WHY THIS IS ACCEPTABLE:
+// - The queue runs for at most one ticker interval (~3 seconds) after ownership loss
+// - No correctness issues: the old owner's queue and new owner's queue are independent
+// - Resource waste is minimal and temporary
+// - Alternative (checking ownership during Initialize and Close) would add complexity for little gain
+// - It is possible to analyze the same table twice in this short window (Close does not wait for running jobs to finish), but this is acceptable
+//
+// SAFETY GUARANTEES:
+// - No data races: mutex protects all state transitions
+// - No concurrent Initialize/Close: Auto-Analyze Worker is single-threaded
+// - Graceful degradation: Queue can be re-initialized after Close()
+//
 //nolint:fieldalignment
 type AnalysisPriorityQueue struct {
 	ctx         context.Context
@@ -131,22 +434,39 @@ func (pq *AnalysisPriorityQueue) IsInitialized() bool {
 }
 
 // Initialize initializes the priority queue.
-// Note: This function is thread-safe.
-func (pq *AnalysisPriorityQueue) Initialize(ctx context.Context) error {
+// NOTE: This function is thread-safe.
+func (pq *AnalysisPriorityQueue) Initialize(ctx context.Context) (err error) {
 	pq.syncFields.mu.Lock()
 	if pq.syncFields.initialized {
 		statslogutil.StatsLogger().Warn("Priority queue already initialized")
 		pq.syncFields.mu.Unlock()
 		return nil
 	}
-	pq.syncFields.mu.Unlock()
 
 	start := time.Now()
 	defer func() {
+		if err != nil {
+			statslogutil.StatsLogger().Error("Failed to initialize priority queue", zap.Error(err), zap.Duration("duration", time.Since(start)))
+			return
+		}
 		statslogutil.StatsLogger().Info("Priority queue initialized", zap.Duration("duration", time.Since(start)))
 	}()
 
-	pq.syncFields.mu.Lock()
+	// Before doing any heavy work, check if the context is already canceled.
+	// NOTE: This can happen if the instance starts exiting.
+	// This helps us avoid initializing the queue during shutdown.
+	// For example, if the auto-analyze ticker fires just before shutdown
+	// and the thread is delayed before it calls Initialize,
+	// Close may be called before initialization really starts.
+	// In this case, we should not proceed with initialization. Technically,
+	// rebuildWithoutLock will handle this since it also checks the context.
+	// However, it is better to check here to make it more explicit and avoid unnecessary work.
+	if ctx.Err() != nil {
+		pq.syncFields.mu.Unlock()
+		pq.Close()
+		return errors.Trace(ctx.Err())
+	}
+
 	if err := pq.rebuildWithoutLock(ctx); err != nil {
 		pq.syncFields.mu.Unlock()
 		pq.Close()
@@ -158,15 +478,17 @@ func (pq *AnalysisPriorityQueue) Initialize(ctx context.Context) error {
 	pq.syncFields.runningJobs = make(map[int64]struct{})
 	pq.syncFields.mustRetryJobs = make(map[int64]struct{})
 	pq.syncFields.initialized = true
+	// Start a goroutine to maintain the priority queue.
+	// Put it here to avoid data race when calling Initialize and Close concurrently.
+	// Otherwise, it may cause a data race issue.
+	pq.wg.RunWithRecover(pq.run, nil)
 	pq.syncFields.mu.Unlock()
 
-	// Start a goroutine to maintain the priority queue.
-	pq.wg.Run(pq.run)
 	return nil
 }
 
 // Rebuild rebuilds the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Rebuild() error {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -179,7 +501,7 @@ func (pq *AnalysisPriorityQueue) Rebuild() error {
 }
 
 // rebuildWithoutLock rebuilds the priority queue without holding the lock.
-// Note: Please hold the lock before calling this function.
+// NOTE: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) rebuildWithoutLock(ctx context.Context) error {
 	pq.syncFields.inner = newHeap()
 
@@ -200,7 +522,7 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock(ctx context.Context) error {
 }
 
 // fetchAllTablesAndBuildAnalysisJobs builds analysis jobs for all eligible tables and partitions.
-// Note: Please hold the lock before calling this function.
+// NOTE: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.Context) error {
 	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
@@ -277,9 +599,14 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
+				stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				if !found {
+					continue
+				}
+
 				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
+					stats,
 				)
 				err := pq.pushWithoutLock(job)
 				if err != nil {
@@ -295,7 +622,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 					partitionDefs = append(partitionDefs, def)
 				}
 			}
-			partitionStats := GetPartitionStats(pq.statsHandle, tblInfo, partitionDefs)
+			partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
 			// If the prune mode is static, we need to analyze every partition as a separate table.
 			if pruneMode == variable.Static {
 				for pIDAndName, stats := range partitionStats {
@@ -310,9 +637,13 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 					}
 				}
 			} else {
+				globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				if !found {
+					continue
+				}
 				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
+					globalStats,
 					partitionStats,
 				)
 				err := pq.pushWithoutLock(job)
@@ -328,11 +659,8 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 
 // run maintains the priority queue.
 func (pq *AnalysisPriorityQueue) run() {
-	defer func() {
-		if r := recover(); r != nil {
-			statslogutil.StatsLogger().Error("Priority queue panicked", zap.Any("recover", r), zap.Stack("stack"))
-		}
-	}()
+	// Make sure to reset the fields when exiting the goroutine.
+	defer pq.resetSyncFields()
 
 	dmlChangesFetchInterval := time.NewTicker(dmlChangesFetchInterval)
 	defer dmlChangesFetchInterval.Stop()
@@ -341,7 +669,45 @@ func (pq *AnalysisPriorityQueue) run() {
 	mustRetryJobRequeueInterval := time.NewTicker(mustRetryJobRequeueInterval)
 	defer mustRetryJobRequeueInterval.Stop()
 
+	// HACK: Inject a failpoint to speed up DML changes processing for testing.
+	// This simulates a scenario where DML changes are processed very frequently to verify
+	// that the priority queue can be closed gracefully without deadlock.
+	// The known deadlock occurs in the following scenario:
+	// 1. The priority queue is closing: it holds the lock and waits for the `run` goroutine to exit.
+	// 2. The `run` goroutine tries to acquire the lock to process DML changes.
+	// 3. The lock is unavailable, so the `run` goroutine blocks.
+	// 4. The Close() function waits for the `run` goroutine to exit, but the `run` goroutine
+	//    is waiting for the lock held by Close(). This causes a deadlock.
+	// So in this failpoint, we use a separate ticker to ensure that DML changes are processed frequently.
+	// And it does not check for context cancellation in every iteration to maximize the chance of deadlock.
+	failpoint.Inject("tryBlockCloseAnalysisPriorityQueue", func() {
+		rapidTicker := time.NewTicker(time.Millisecond * 10)
+		defer rapidTicker.Stop()
+		waitFor := time.After(time.Second * 5)
+		for {
+			select {
+			// Should exit after 5 seconds to avoid blocking forever.
+			case <-waitFor:
+				return
+			case <-rapidTicker.C:
+				pq.ProcessDMLChanges()
+			}
+		}
+	})
+
+	// Inject a panic point for testing.
+	failpoint.Inject("panicInAnalysisPriorityQueueRun", func() {
+		panic("panic injected in AnalysisPriorityQueue.run")
+	})
+
 	for {
+		// NOTE: We check the context error here to handle the case where the context has been canceled,
+		// allowing us to exit the goroutine as soon as possible.
+		if ctxErr := pq.ctx.Err(); ctxErr != nil {
+			statslogutil.StatsLogger().Info("Priority queue stopped", zap.Error(ctxErr))
+			return
+		}
+
 		select {
 		case <-pq.ctx.Done():
 			statslogutil.StatsLogger().Info("Priority queue stopped")
@@ -360,8 +726,9 @@ func (pq *AnalysisPriorityQueue) run() {
 }
 
 // ProcessDMLChanges processes DML changes.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 // Performance: To scan all table stats and process the DML changes, it takes about less than 100ms for 1m tables.
+// Exported for testing.
 func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -393,7 +760,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 			if value.Version > lastFetchTimestamp {
 				err := pq.processTableStats(sctx, value, parameters, lockedTables)
 				if err != nil {
-					statslogutil.StatsLogger().Error(
+					statslogutil.StatsErrVerboseSampleLogger().Error(
 						"Failed to process table stats",
 						zap.Error(err),
 						zap.Int64("tableID", value.PhysicalID),
@@ -409,11 +776,11 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to process DML changes", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to process DML changes", zap.Error(err))
 	}
 }
 
-// Note: Please hold the lock before calling this function.
+// NOTE: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) processTableStats(
 	sctx sessionctx.Context,
 	stats *statistics.Table,
@@ -453,7 +820,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 			// Clean up the job if the table is locked.
 			err := pq.syncFields.inner.delete(job)
 			if err != nil {
-				statslogutil.StatsLogger().Error(
+				statslogutil.StatsErrVerboseSampleLogger().Error(
 					"Failed to delete job from priority queue",
 					zap.Error(err),
 					zap.String("job", job.String()),
@@ -465,6 +832,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 	}
 	return pq.pushWithoutLock(job)
 }
+
 func (pq *AnalysisPriorityQueue) tryCreateJob(
 	is infoschema.InfoSchema,
 	stats *statistics.Table,
@@ -525,7 +893,7 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			)
 		} else {
 			// If the table is locked, we do not analyze it.
-			// Note: the table meta is the parent table meta.
+			// NOTE: the table meta is the parent table meta.
 			if _, ok := lockedTables[tableMeta.ID]; ok {
 				return nil
 			}
@@ -549,17 +917,23 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 					filteredPartitionDefs = append(filteredPartitionDefs, def)
 				}
 			}
-			partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, filteredPartitionDefs)
+
+			// Get global stats for dynamic partitioned table.
+			globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableMeta.ID)
+			if !found {
+				return nil
+			}
+			partitionStats := GetPartitionStats(pq.statsHandle, filteredPartitionDefs)
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 				tableMeta,
-				// Get global stats for dynamic partitioned table.
-				pq.statsHandle.GetTableStatsForAutoAnalyze(tableMeta),
+				globalStats,
 				partitionStats,
 			)
 		}
 	}
 	return job
 }
+
 func (pq *AnalysisPriorityQueue) tryUpdateJob(
 	is infoschema.InfoSchema,
 	stats *statistics.Table,
@@ -587,7 +961,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		tableMeta := tableInfo.Meta()
 		partitionedTable := tableMeta.GetPartitionInfo()
 		partitionDefs := partitionedTable.Definitions
-		partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, partitionDefs)
+		partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
 		return jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 			tableMeta,
 			stats,
@@ -601,17 +975,8 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 	return oldJob
 }
 
-// GetLastFetchTimestamp returns the last fetch timestamp of DML updates.
-// Note: This function is thread-safe.
-// Exported for testing.
-func (pq *AnalysisPriorityQueue) GetLastFetchTimestamp() uint64 {
-	pq.syncFields.mu.RLock()
-	defer pq.syncFields.mu.RUnlock()
-
-	return pq.syncFields.lastDMLUpdateFetchTimestamp
-}
-
 // RequeueMustRetryJobs requeues the must retry jobs.
+// Exported for testing.
 func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -627,7 +992,7 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		for tableID := range pq.syncFields.mustRetryJobs {
-			// Note: Delete the job first to ensure it can be added back to the queue
+			// NOTE: Delete the job first to ensure it can be added back to the queue
 			delete(pq.syncFields.mustRetryJobs, tableID)
 			tblInfo, ok := pq.statsHandle.TableInfoByID(is, tableID)
 			if !ok {
@@ -636,18 +1001,19 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 			}
 			err := pq.recreateAndPushJobForTable(sctx, tblInfo.Meta())
 			if err != nil {
-				statslogutil.StatsLogger().Error("Failed to recreate and push job for table", zap.Error(err), zap.Int64("tableID", tableID))
+				statslogutil.StatsErrVerboseSampleLogger().Error("Failed to recreate and push job for table", zap.Error(err), zap.Int64("tableID", tableID))
 				continue
 			}
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to requeue must retry jobs", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to requeue must retry jobs", zap.Error(err))
 	}
 }
 
 // RefreshLastAnalysisDuration refreshes the last analysis duration of all jobs in the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
+// Exported for testing
 func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -679,7 +1045,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 				// DDL events should have already cleaned up jobs for dropped tables.
 				err := pq.syncFields.inner.delete(job)
 				if err != nil {
-					statslogutil.StatsLogger().Error("Failed to delete job from priority queue",
+					statslogutil.StatsErrVerboseSampleLogger().Error("Failed to delete job from priority queue",
 						zap.Error(err),
 						zap.String("job", job.String()),
 					)
@@ -690,7 +1056,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 			job.SetIndicators(indicators)
 			job.SetWeight(pq.calculator.CalculateWeight(job))
 			if err := pq.syncFields.inner.update(job); err != nil {
-				statslogutil.StatsLogger().Error("Failed to add job to priority queue",
+				statslogutil.StatsErrVerboseSampleLogger().Error("Failed to add job to priority queue",
 					zap.Error(err),
 					zap.String("job", job.String()),
 				)
@@ -698,12 +1064,12 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to refresh last analysis duration", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to refresh last analysis duration", zap.Error(err))
 	}
 }
 
 // GetRunningJobs returns the running jobs.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 // Exported for testing.
 func (pq *AnalysisPriorityQueue) GetRunningJobs() map[int64]struct{} {
 	pq.syncFields.mu.RLock()
@@ -716,17 +1082,6 @@ func (pq *AnalysisPriorityQueue) GetRunningJobs() map[int64]struct{} {
 	return runningJobs
 }
 
-// Push pushes a job into the priority queue.
-// Note: This function is thread-safe.
-func (pq *AnalysisPriorityQueue) Push(job AnalysisJob) error {
-	pq.syncFields.mu.Lock()
-	defer pq.syncFields.mu.Unlock()
-	if !pq.syncFields.initialized {
-		return errors.New(notInitializedErrMsg)
-	}
-
-	return pq.pushWithoutLock(job)
-}
 func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 	if job == nil {
 		return nil
@@ -757,7 +1112,7 @@ func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 	// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
 	weight := pq.calculator.CalculateWeight(job)
 	if weight <= 0 {
-		statslogutil.SingletonStatsSamplerLogger().Warn(
+		statslogutil.StatsSampleLogger().Warn(
 			"Table gets a negative weight",
 			zap.Float64("weight", weight),
 			zap.Stringer("job", job),
@@ -768,7 +1123,7 @@ func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 }
 
 // Pop pops a job from the priority queue and marks it as running.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -812,8 +1167,9 @@ func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 	return job, nil
 }
 
-// Peek peeks the top job from the priority queue.
-func (pq *AnalysisPriorityQueue) Peek() (AnalysisJob, error) {
+// PeekForTest peeks the top job from the priority queue.
+// Exported for testing.
+func (pq *AnalysisPriorityQueue) PeekForTest() (AnalysisJob, error) {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	if !pq.syncFields.initialized {
@@ -823,9 +1179,10 @@ func (pq *AnalysisPriorityQueue) Peek() (AnalysisJob, error) {
 	return pq.syncFields.inner.peek()
 }
 
-// IsEmpty checks whether the priority queue is empty.
-// Note: This function is thread-safe.
-func (pq *AnalysisPriorityQueue) IsEmpty() (bool, error) {
+// IsEmptyForTest checks whether the priority queue is empty.
+// NOTE: This function is thread-safe.
+// Exported for testing.
+func (pq *AnalysisPriorityQueue) IsEmptyForTest() (bool, error) {
 	pq.syncFields.mu.RLock()
 	defer pq.syncFields.mu.RUnlock()
 	if !pq.syncFields.initialized {
@@ -836,7 +1193,7 @@ func (pq *AnalysisPriorityQueue) IsEmpty() (bool, error) {
 }
 
 // Len returns the number of jobs in the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Len() (int, error) {
 	pq.syncFields.mu.RLock()
 	defer pq.syncFields.mu.RUnlock()
@@ -880,20 +1237,29 @@ func (pq *AnalysisPriorityQueue) Snapshot() (
 }
 
 // Close closes the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
+// WARNING: Please make sure to avoid calling Close concurrently with Initialize to prevent potential concurrency issues.
 func (pq *AnalysisPriorityQueue) Close() {
 	pq.syncFields.mu.Lock()
-	defer pq.syncFields.mu.Unlock()
 	if !pq.syncFields.initialized {
+		pq.syncFields.mu.Unlock()
 		return
 	}
 
-	// It is possible that the priority queue is not initialized.
+	// Check if the cancel function was set during initialization.
 	if pq.syncFields.cancel != nil {
 		pq.syncFields.cancel()
 	}
-	pq.wg.Wait()
+	pq.syncFields.mu.Unlock()
 
+	// NOTE: We should wait outside the lock to avoid deadlock.
+	pq.wg.Wait()
+}
+
+// resetSyncFields resets the synchronized fields of the priority queue.
+func (pq *AnalysisPriorityQueue) resetSyncFields() {
+	pq.syncFields.mu.Lock()
+	defer pq.syncFields.mu.Unlock()
 	// Reset the initialized flag to allow the priority queue to be closed and re-initialized.
 	pq.syncFields.initialized = false
 	// The rest fields will be reset when the priority queue is initialized.

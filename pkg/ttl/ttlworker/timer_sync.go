@@ -174,7 +174,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		newKey2Timers := make(map[string]*timerapi.TimerRecord, len(g.key2Timers))
 		timers, err := g.cli.GetTimers(ctx, timerapi.WithKeyPrefix(timerKeyPrefix))
 		if err != nil {
-			logutil.BgLogger().Error("failed to pull timers", zap.Error(err))
+			logutil.BgLogger().Warn("failed to pull timers", zap.Error(err))
 			return
 		}
 

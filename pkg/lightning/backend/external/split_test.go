@@ -22,6 +22,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -112,19 +113,54 @@ notExhausted:
 	require.NoError(t, splitter.Close())
 }
 
+func writeKVs(t *testing.T, writer *Writer, keys [][]byte, values [][]byte) {
+	ctx := context.Background()
+	for i := range keys {
+		err := writer.WriteRow(ctx, keys[i], values[i], nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close(ctx))
+}
+
+func getKVAndStatFiles(sum *WriterSummary) (dataFiles []string, statsFiles []string) {
+	for _, ms := range sum.MultipleFilesStats {
+		for _, f := range ms.Filenames {
+			dataFiles = append(dataFiles, f[0])
+			statsFiles = append(statsFiles, f[1])
+		}
+	}
+	return
+}
+
+func removePartitionPrefix(t *testing.T, in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		bs := []byte(s)
+		idx := bytes.IndexByte(bs, '/')
+		require.GreaterOrEqual(t, idx, 0)
+		require.True(t, isValidPartition(bs[:idx]))
+		// we include / after partition prefix in the out, as all tests have it.
+		out = append(out, s[idx:])
+	}
+	sort.Strings(out)
+	return out
+}
+
 func TestOnlyOneGroup(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	subDir := "/mock-test"
 
+	var summary *WriterSummary
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
+		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
 		Build(memStore, subDir, "5")
 
-	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, [][]byte{{1}, {2}}, [][]byte{{1}, {2}})
-	require.NoError(t, err)
+	writeKVs(t, writer, [][]byte{{1}, {2}}, [][]byte{{1}, {2}})
+	dataFiles, statFiles := getKVAndStatFiles(summary)
 	require.Len(t, dataFiles, 1)
 	require.Len(t, statFiles, 1)
 
@@ -199,11 +235,13 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	memStore := storage.NewMemStorage()
 	subDir := "/mock-test"
 
+	var summary *WriterSummary
 	writer1 := NewWriterBuilder().
 		SetMemorySizeLimit(2*(lengthBytes*2+10)).
 		SetBlockSize(2*(lengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
+		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
 		Build(memStore, subDir, "1")
 	keys1 := [][]byte{
 		[]byte("key01"), []byte("key11"), []byte("key21"),
@@ -211,8 +249,9 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	values1 := [][]byte{
 		[]byte("val01"), []byte("val11"), []byte("val21"),
 	}
-	dataFiles1, statFiles1, err := MockExternalEngineWithWriter(memStore, writer1, subDir, keys1, values1)
-	require.NoError(t, err)
+
+	writeKVs(t, writer1, keys1, values1)
+	dataFiles1, statFiles1 := getKVAndStatFiles(summary)
 	require.Len(t, dataFiles1, 2)
 	require.Len(t, statFiles1, 2)
 
@@ -221,6 +260,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 		SetBlockSize(2*(lengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
+		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
 		Build(memStore, subDir, "2")
 	keys2 := [][]byte{
 		[]byte("key02"), []byte("key12"), []byte("key22"),
@@ -228,16 +268,17 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	values2 := [][]byte{
 		[]byte("val02"), []byte("val12"), []byte("val22"),
 	}
-	dataFiles12, statFiles12, err := MockExternalEngineWithWriter(memStore, writer2, subDir, keys2, values2)
-	require.NoError(t, err)
-	require.Len(t, dataFiles12, 4)
-	require.Len(t, statFiles12, 4)
+	writeKVs(t, writer2, keys2, values2)
+	dataFiles2, statFiles2 := getKVAndStatFiles(summary)
+	require.Len(t, dataFiles2, 2)
+	require.Len(t, statFiles2, 2)
 
 	writer3 := NewWriterBuilder().
 		SetMemorySizeLimit(2*(lengthBytes*2+10)).
 		SetBlockSize(2*(lengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
+		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
 		Build(memStore, subDir, "3")
 	keys3 := [][]byte{
 		[]byte("key03"), []byte("key13"), []byte("key23"),
@@ -245,34 +286,42 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	values3 := [][]byte{
 		[]byte("val03"), []byte("val13"), []byte("val23"),
 	}
-	dataFiles123, statFiles123, err := MockExternalEngineWithWriter(memStore, writer3, subDir, keys3, values3)
-	require.NoError(t, err)
-	require.Len(t, dataFiles123, 6)
-	require.Len(t, statFiles123, 6)
+	writeKVs(t, writer3, keys3, values3)
+	dataFiles3, statFiles3 := getKVAndStatFiles(summary)
+	require.Len(t, dataFiles3, 2)
+	require.Len(t, statFiles3, 2)
 
 	// "/mock-test/X/0" contains "key0X" and "key1X"
 	// "/mock-test/X/1" contains "key2X"
 	require.Equal(t, []string{
-		"/mock-test/1/0", "/mock-test/1/1",
-		"/mock-test/2/0", "/mock-test/2/1",
 		"/mock-test/3/0", "/mock-test/3/1",
-	}, dataFiles123)
+	}, removePartitionPrefix(t, dataFiles3))
 
-	multi := mockOneMultiFileStat(dataFiles123[:4], statFiles123[:4])
-	multi2 := mockOneMultiFileStat(dataFiles123[4:], statFiles123[4:])
-	multiFileStat := []MultipleFilesStat{multi[0], multi2[0]}
+	dataFiles12 := append(append([]string{}, dataFiles1...), dataFiles2...)
+	statFiles12 := append(append([]string{}, statFiles1...), statFiles2...)
+	multi := mockOneMultiFileStat(dataFiles12, statFiles12)
+	multi[0].MinKey = []byte("key01")
+	multi[0].MaxKey = []byte("key21")
+	multi2 := mockOneMultiFileStat(dataFiles3, statFiles3)
+	multi2[0].MinKey = []byte("key02")
+	multi2[0].MaxKey = []byte("key22")
+	multiFileStat := []MultipleFilesStat{multi2[0], multi[0]}
 	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
 		ctx, multiFileStat, memStore, 1000, 2, 1000, 1, 1000, 1,
 	)
 	require.NoError(t, err)
 
+	// verify the multiFileStat is sorted
+	require.Equal(t, multi[0], multiFileStat[0])
+	require.Equal(t, multi2[0], multiFileStat[1])
+
 	// [key01, key03), split at key02
 	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key03"), endKey)
-	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0"}, dataFiles)
-	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0"}, statFiles)
+	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0"}, removePartitionPrefix(t, dataFiles))
+	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0"}, removePartitionPrefix(t, statFiles))
 	require.Equal(t, [][]byte{[]byte("key02")}, rangeJobKeys)
 	require.Equal(t, [][]byte{[]byte("key02")}, regionSplitKeys)
 
@@ -280,8 +329,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key12"), endKey)
-	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0", "/mock-test/3/0"}, dataFiles)
-	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0", "/mock-test/3_stat/0"}, statFiles)
+	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0", "/mock-test/3/0"}, removePartitionPrefix(t, dataFiles))
+	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0", "/mock-test/3_stat/0"}, removePartitionPrefix(t, statFiles))
 	require.Equal(t, [][]byte{[]byte("key11")}, rangeJobKeys)
 	require.Equal(t, [][]byte{[]byte("key11")}, regionSplitKeys)
 
@@ -290,8 +339,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key21"), endKey)
-	require.Equal(t, []string{"/mock-test/2/0", "/mock-test/3/0"}, dataFiles)
-	require.Equal(t, []string{"/mock-test/2_stat/0", "/mock-test/3_stat/0"}, statFiles)
+	require.Equal(t, []string{"/mock-test/2/0", "/mock-test/3/0"}, removePartitionPrefix(t, dataFiles))
+	require.Equal(t, []string{"/mock-test/2_stat/0", "/mock-test/3_stat/0"}, removePartitionPrefix(t, statFiles))
 	require.Equal(t, [][]byte{[]byte("key13")}, rangeJobKeys)
 	require.Equal(t, [][]byte{[]byte("key13")}, regionSplitKeys)
 
@@ -301,8 +350,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key23"), endKey)
-	require.Equal(t, []string{"/mock-test/1/1", "/mock-test/2/1"}, dataFiles)
-	require.Equal(t, []string{"/mock-test/1_stat/1", "/mock-test/2_stat/1"}, statFiles)
+	require.Equal(t, []string{"/mock-test/1/1", "/mock-test/2/1"}, removePartitionPrefix(t, dataFiles))
+	require.Equal(t, []string{"/mock-test/1_stat/1", "/mock-test/2_stat/1"}, removePartitionPrefix(t, statFiles))
 	require.Equal(t, [][]byte{[]byte("key22")}, rangeJobKeys)
 	require.Equal(t, [][]byte{[]byte("key22")}, regionSplitKeys)
 
@@ -310,8 +359,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
-	require.Equal(t, []string{"/mock-test/3/1"}, dataFiles)
-	require.Equal(t, []string{"/mock-test/3_stat/1"}, statFiles)
+	require.Equal(t, []string{"/mock-test/3/1"}, removePartitionPrefix(t, dataFiles))
+	require.Equal(t, []string{"/mock-test/3_stat/1"}, removePartitionPrefix(t, statFiles))
 	require.Len(t, rangeJobKeys, 0)
 	require.Len(t, regionSplitKeys, 0)
 
@@ -340,14 +389,16 @@ func TestExactlyKeyNum(t *testing.T) {
 
 	subDir := "/mock-test"
 
+	var summary *WriterSummary
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(15).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
+		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
 		Build(memStore, subDir, "5")
 
-	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, keys, values)
-	require.NoError(t, err)
+	writeKVs(t, writer, keys, values)
+	dataFiles, statFiles := getKVAndStatFiles(summary)
 	multiFileStat := mockOneMultiFileStat(dataFiles, statFiles)
 
 	// maxRangeKeys = 3
@@ -428,7 +479,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 
 				if memSize >= DefaultMemSizeLimit {
 					memSize = 0
-					w.kvStore.Close()
+					w.kvStore.finish()
 					encodedStat := w.rc.encode()
 					_, err := w.statWriter.Write(ctx, encodedStat)
 					if err != nil {
@@ -517,4 +568,51 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	}
 	err = splitter.Close()
 	require.NoError(t, err)
+}
+
+func TestCalRangeSize(t *testing.T) {
+	var17 := 1.7
+	var35 := 3.5
+	commonUsedRegionSizeSettings := [][2]int64{
+		{96 * units.MiB, 960_000},
+		{256 * units.MiB, 2_560_000},
+		{512 * units.MiB, 5_120_000},
+		{units.GiB, 10_240_000},
+	}
+	cases := []struct {
+		memPerCore int64
+		rangeInfos [][3]int64 // [range-size, range-keys, sst-file-num]
+	}{
+		{memPerCore: int64(var17 * float64(units.GiB)), rangeInfos: [][3]int64{
+			{2 * 96 * units.MiB, 2 * 960_000, 1},
+			{256 * units.MiB, 2_560_000, 1},
+			{256*units.MiB + 1, 2_560_000, 2},
+			{256*units.MiB + 1, 2_560_000, 4},
+		}},
+		{memPerCore: int64(var35 * float64(units.GiB)), rangeInfos: [][3]int64{
+			{5 * 96 * units.MiB, 5 * 960_000, 1},
+			{512 * units.MiB, 5_120_000, 1},
+			{512 * units.MiB, 5_120_000, 1},
+			{512*units.MiB + 1, 5_120_000, 2},
+		}},
+	}
+
+	for i, c := range cases {
+		for j, rs := range commonUsedRegionSizeSettings {
+			t.Run(fmt.Sprintf("%d-%d", i, j), func(t *testing.T) {
+				regionSplitSize, regionSplitKeys := rs[0], rs[1]
+				rangeSize, rangeKeys := CalRangeSize(c.memPerCore, regionSplitSize, regionSplitKeys)
+				expectedRangeSize, expectedRangeKey, expectedFileNum := c.rangeInfos[j][0], c.rangeInfos[j][1], c.rangeInfos[j][2]
+				require.EqualValues(t, expectedRangeSize, rangeSize)
+				require.EqualValues(t, expectedRangeKey, rangeKeys)
+				fmt.Println(rangeSize, rangeKeys)
+				if expectedRangeSize >= regionSplitSize {
+					require.EqualValues(t, 1, expectedFileNum)
+					require.Zero(t, rangeSize%regionSplitSize)
+				} else {
+					require.EqualValues(t, expectedFileNum, int(math.Ceil(float64(regionSplitSize)/float64(rangeSize))))
+				}
+			})
+		}
+	}
 }

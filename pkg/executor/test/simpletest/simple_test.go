@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -526,40 +527,48 @@ partition by range (a) (
 	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
 	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 
-	checkPartitionStats := func(names ...string) {
-		rs := tk.MustQuery("show stats_meta").Rows()
-		require.Equal(t, len(names), len(rs))
-		for i := range names {
-			require.Equal(t, names[i], rs[i][2].(string))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test_drop_gstats"), model.NewCIStr("test_drop_gstats"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	globalID := tblInfo.ID
+	p0ID := tblInfo.Partition.Definitions[0].ID
+	p1ID := tblInfo.Partition.Definitions[1].ID
+	globalpID := tblInfo.Partition.Definitions[2].ID
+
+	checkPartitionStats := func(existingOnes ...int64) {
+		strs := make([]string, 0, len(existingOnes))
+		for _, id := range existingOnes {
+			strs = append(strs, strconv.FormatInt(id, 10))
 		}
+		tk.MustQuery("select table_id from mysql.stats_histograms where stats_ver > 0 group by table_id order by table_id").Check(testkit.Rows(strs...))
 	}
 
 	tk.MustExec("analyze table test_drop_gstats")
-	checkPartitionStats("global", "p0", "p1", "global")
+	checkPartitionStats(globalID, p0ID, p1ID, globalpID)
 
 	tk.MustExec("drop stats test_drop_gstats partition p0")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1681|'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release."))
-	checkPartitionStats("global", "p1", "global")
+	checkPartitionStats(globalID, p1ID, globalpID)
 
-	err := tk.ExecToErr("drop stats test_drop_gstats partition abcde")
+	err = tk.ExecToErr("drop stats test_drop_gstats partition abcde")
 	require.Error(t, err)
 	require.Equal(t, "can not found the specified partition name abcde in the table definition", err.Error())
 
 	tk.MustExec("drop stats test_drop_gstats partition global")
-	checkPartitionStats("global", "p1")
+	checkPartitionStats(globalID, p1ID)
 
 	tk.MustExec("drop stats test_drop_gstats global")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1287|'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead"))
-	checkPartitionStats("p1")
+	checkPartitionStats(p1ID)
 
 	tk.MustExec("analyze table test_drop_gstats")
-	checkPartitionStats("global", "p0", "p1", "global")
+	checkPartitionStats(globalID, p0ID, p1ID, globalpID)
 
 	tk.MustExec("drop stats test_drop_gstats partition p0, p1, global")
-	checkPartitionStats("global")
+	checkPartitionStats(globalID)
 
 	tk.MustExec("analyze table test_drop_gstats")
-	checkPartitionStats("global", "p0", "p1", "global")
+	checkPartitionStats(globalID, p0ID, p1ID, globalpID)
 
 	tk.MustExec("drop stats test_drop_gstats")
 	checkPartitionStats()
@@ -577,23 +586,46 @@ func TestDropStats(t *testing.T) {
 	h := dom.StatsHandle()
 	h.Clear()
 	testKit.MustExec("analyze table t")
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, statsTbl.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+		require.Equal(t, int(idx.StatsVer), statistics.Version0)
+		require.False(t, idx.IsStatsInitialized())
+		return false
+	})
 
 	testKit.MustExec("analyze table t")
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+		require.Equal(t, int(idx.StatsVer), statistics.Version0)
+		require.False(t, idx.IsStatsInitialized())
+		return false
+	})
 	h.SetLease(0)
 }
 
@@ -616,31 +648,59 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	h := dom.StatsHandle()
 	h.Clear()
 	testKit.MustExec("analyze table t1, t2")
-	statsTbl1 := h.GetTableStats(tableInfo1)
+	statsTbl1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
-	statsTbl2 := h.GetTableStats(tableInfo2)
+	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
+	statsTbl2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
+	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t1, t2")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tableInfo1)
-	require.True(t, statsTbl1.Pseudo)
-	statsTbl2 = h.GetTableStats(tableInfo2)
-	require.True(t, statsTbl2.Pseudo)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
+	require.False(t, statsTbl1.Pseudo)
+	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
+	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
+	require.False(t, statsTbl2.Pseudo)
+	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
+	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
 
 	testKit.MustExec("analyze table t1, t2")
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
+	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t1, t2")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tableInfo1)
-	require.True(t, statsTbl1.Pseudo)
-	statsTbl2 = h.GetTableStats(tableInfo2)
-	require.True(t, statsTbl2.Pseudo)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
+	require.False(t, statsTbl1.Pseudo)
+	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
+	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
+	require.False(t, statsTbl2.Pseudo)
+	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
+	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
 	h.SetLease(0)
 }
 
@@ -696,4 +756,45 @@ func TestKillStmt(t *testing.T) {
 
 	tk.MustExecToErr("kill rand()", "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 	// remote kill is tested in `tests/globalkilltest`
+}
+
+func TestSelectWhereInvalidDSTTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, ts timestamp)")
+	tk.MustExec(`set time_zone = "UTC"`)
+	tk.MustExec("insert into t values (1, '1970-01-01 00:00:01')")
+	tk.MustExec("insert into t values (2, '2025-03-30 00:59:59')")
+	tk.MustExec("insert into t values (3, '2025-03-30 01:00:00')")
+	tk.MustExec(`set time_zone = "Europe/Amsterdam"`)
+	tk.MustExec(`set sql_mode = ''`)
+	// This will be adjusted to '2025-03-30 03:00:00+02:00'
+	tk.MustExec("insert into t values (4, '2025-03-30 02:30:00')")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1"))
+	tk.MustExec(`set sql_mode = DEFAULT`)
+	tk.MustQuery(`select *, unix_timestamp(ts) from t`).Sort().Check(testkit.Rows(""+
+		"1 1970-01-01 01:00:01 1",
+		"2 2025-03-30 01:59:59 1743296399",
+		"3 2025-03-30 03:00:00 1743296400",
+		"4 2025-03-30 03:00:00 1743296400"))
+
+	// Compares as DATETIME; every row is read and converted to DATETIME by current TIME_ZONE,
+	// and compared with the range which is in DATETIME
+	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400", "4 2025-03-30 03:00:00 1743296400"))
+	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows("Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'"))
+	explain := tk.MustQuery(`explain select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`)
+	explain.MultiCheckContain([]string{"TableFullScan", "ge(test.t.ts, 2025-03-30 02:30:00.000000)", "le(test.t.ts, 2025-03-30 03:00:00.000000)"})
+
+	// Compares as TIMESTAMP; the range is converted to TIMESTAMP by current TIME_ZONE,
+	// and then compared with the row which is TIMESTAMP.
+	tk.MustExec("alter table t add index idx_ts(ts)")
+	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400", "4 2025-03-30 03:00:00 1743296400"))
+	explain = tk.MustQuery(`explain select * from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`)
+	explain.MultiCheckContain([]string{"IndexLookUp", "range:[2025-03-30 03:00:00,2025-03-30 03:00:00]"})
+	explain.CheckNotContain("02:30:00")
+	// Why 3 warnings?!?
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
+		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
+		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'"))
 }

@@ -25,6 +25,7 @@ import (
 
 var (
 	_ DMLNode = &DeleteStmt{}
+	_ DMLNode = &DistributeTableStmt{}
 	_ DMLNode = &InsertStmt{}
 	_ DMLNode = &SetOprStmt{}
 	_ DMLNode = &UpdateStmt{}
@@ -2242,6 +2243,19 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 func (n *ImportIntoStmt) SecureText() string {
 	redactedStmt := *n
 	redactedStmt.Path = RedactURL(n.Path)
+	redactedStmt.Options = make([]*LoadDataOpt, 0, len(n.Options))
+	for _, opt := range n.Options {
+		outOpt := opt
+		ln := strings.ToLower(opt.Name)
+		if ln == CloudStorageURI {
+			redactedStr := RedactURL(opt.Value.(ValueExpr).GetString())
+			outOpt = &LoadDataOpt{
+				Name:  opt.Name,
+				Value: NewValueExpr(redactedStr, "", ""),
+			}
+		}
+		redactedStmt.Options = append(redactedStmt.Options, outOpt)
+	}
 	var sb strings.Builder
 	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 	return sb.String()
@@ -3051,6 +3065,9 @@ const (
 	ShowCreateProcedure
 	ShowBinlogStatus
 	ShowReplicaStatus
+	ShowDistributionJobs
+	ShowDistributions
+	ShowAffinity
 )
 
 const (
@@ -3100,6 +3117,8 @@ type ShowStmt struct {
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+
+	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3318,6 +3337,14 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IMPORT JOBS")
 			restoreShowLikeOrWhereOpt()
 		}
+	case ShowDistributionJobs:
+		if n.DistributionJobID != nil {
+			ctx.WriteKeyWord("DISTRIBUTION JOB ")
+			ctx.WritePlainf("%d", *n.DistributionJobID)
+		} else {
+			ctx.WriteKeyWord("DISTRIBUTION JOBS")
+			restoreShowLikeOrWhereOpt()
+		}
 	// ShowTargetFilterable
 	default:
 		switch n.Tp {
@@ -3395,6 +3422,16 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("BINDING_CACHE STATUS")
 		case ShowAnalyzeStatus:
 			ctx.WriteKeyWord("ANALYZE STATUS")
+		case ShowDistributions:
+			ctx.WriteKeyWord("TABLE ")
+			if err := n.Table.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+			}
+			ctx.WriteKeyWord(" DISTRIBUTIONS")
+			if err := restoreShowLikeOrWhereOpt(); err != nil {
+				return err
+			}
+			return nil
 		case ShowRegions:
 			ctx.WriteKeyWord("TABLE ")
 			if err := n.Table.Restore(ctx); err != nil {
@@ -3430,6 +3467,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SESSION_STATES")
 		case ShowReplicaStatus:
 			ctx.WriteKeyWord("REPLICA STATUS")
+		case ShowDistributionJobs:
+			ctx.WriteKeyWord("DISTRIBUTION JOBS")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}
@@ -3824,6 +3863,68 @@ func (n *FrameBound) Accept(v Visitor) (Node, bool) {
 		}
 		n.Expr = node.(ExprNode)
 	}
+	return v.Leave(n)
+}
+
+type DistributeTableStmt struct {
+	dmlNode
+	Table          *TableName
+	PartitionNames []model.CIStr
+	Rule           string
+	Engine         string
+	Timeout        string
+}
+
+// Restore implements Node interface.
+func (n *DistributeTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DISTRIBUTE ")
+	ctx.WriteKeyWord("TABLE ")
+
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore SplitIndexRegionStmt.Table")
+	}
+	if len(n.PartitionNames) > 0 {
+		ctx.WriteKeyWord(" PARTITION")
+		ctx.WritePlain("(")
+		for i, v := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(v.String())
+		}
+		ctx.WritePlain(")")
+	}
+
+	if len(n.Rule) > 0 {
+		ctx.WriteKeyWord(" RULE = ")
+		ctx.WriteString(n.Rule)
+	}
+
+	if len(n.Engine) > 0 {
+		ctx.WriteKeyWord(" ENGINE = ")
+		ctx.WriteString(n.Engine)
+	}
+
+	if len(n.Timeout) > 0 {
+		ctx.WriteKeyWord(" TIMEOUT = ")
+		ctx.WriteString(n.Timeout)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DistributeTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*DistributeTableStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 

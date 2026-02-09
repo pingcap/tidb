@@ -15,6 +15,9 @@
 package model
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -35,7 +38,27 @@ const (
 	// reminding what's the desired naming convension (UPPER_UNDER_SCORE) if this
 	// is going to be implemented.
 	DistanceMetricInnerProduct DistanceMetric = "INNER_PRODUCT"
+
+	// changingIndexPrefix the prefix is used to initialize new index name created in modify column.
+	// The new name will be like "_Idx$_<old_index_name>_n".
+	changingIndexPrefix = "_Idx$_"
 )
+
+// GenUniqueChangingIndexName generates a unique index name for the changing index.
+func GenUniqueChangingIndexName(tblInfo *TableInfo, idxInfo *IndexInfo) string {
+	// Check whether the new index name is used.
+	indexNameMap := make(map[string]bool, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		indexNameMap[idx.Name.L] = true
+	}
+	suffix := 0
+	newIndexName := fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
+	for indexNameMap[strings.ToLower(newIndexName)] {
+		suffix++
+		newIndexName = fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
+	}
+	return newIndexName
+}
 
 // IndexableFnNameToDistanceMetric maps a distance function name to the distance metric.
 // Only indexable distance functions should be listed here!
@@ -89,6 +112,32 @@ func (index *IndexInfo) Clone() *IndexInfo {
 		ni.Columns[i] = index.Columns[i].Clone()
 	}
 	return &ni
+}
+
+// IsChanging checks if the index is a new index added in modify column.
+func (index *IndexInfo) IsChanging() bool {
+	return strings.HasPrefix(index.Name.O, changingIndexPrefix)
+}
+
+// IsRemoving checks if the index is a index to be removed in modify column.
+func (index *IndexInfo) IsRemoving() bool {
+	return strings.HasPrefix(index.Name.O, removingObjPrefix)
+}
+
+// GetRemovingOriginName gets the origin name of the removing index.
+func (index *IndexInfo) GetRemovingOriginName() string {
+	return strings.TrimPrefix(index.Name.O, removingObjPrefix)
+}
+
+// GetChangingOriginName gets the origin index name from the changing index.
+func (index *IndexInfo) GetChangingOriginName() string {
+	idxName := strings.TrimPrefix(index.Name.O, changingIndexPrefix)
+	// Since the unique idxName may contain the suffix number (indexName_num), better trim the suffix.
+	var pos int
+	if pos = strings.LastIndex(idxName, "_"); pos == -1 {
+		return idxName
+	}
+	return idxName[:pos]
 }
 
 // HasPrefixIndex returns whether any columns of this index uses prefix length.
@@ -174,6 +223,8 @@ type IndexColumn struct {
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing
 	Length int `json:"length"`
+	// Whether this index column use changing type
+	UseChangingType bool `json:"using_changing_type,omitempty"`
 }
 
 // Clone clones IndexColumn.
@@ -190,4 +241,14 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 		}
 	}
 	return -1, nil
+}
+
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
 }
