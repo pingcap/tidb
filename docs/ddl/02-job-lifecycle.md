@@ -36,7 +36,7 @@ The submitter-side wait loop assumes this simplified sequence (see the comment i
 
 ## Owner election and failover (why “job-based” matters)
 
-- Only the **DDL owner** runs scheduler + workers (`pkg/ddl/job_scheduler.go:ownerListener.OnBecomeOwner`).
+- Only the **DDL owner** runs scheduler + workers (`pkg/ddl/job_scheduler.go:OnBecomeOwner`).
 - Non-owners can still accept DDL statements: they create jobs and submit them.
 - If the owner changes mid-job:
   - the new owner reloads runnable jobs from system tables,

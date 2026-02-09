@@ -1,4 +1,4 @@
-# DDL Notes (Read First)
+# DDL Execution: Read-First Index
 
 TiDB DDL is **job-based** and **owner-driven**: a SQL DDL statement is converted into a persistent DDL *job*, then the **DDL owner** schedules and runs the job on workers, gradually changing schema states and waiting for schema version synchronization across TiDB nodes.
 
@@ -9,12 +9,51 @@ The most common mistake is to implement “DDL behavior” directly in `pkg/exec
 - Schema version + diff update, and cluster-wide schema sync.
 - MDL / lease based safety mechanisms.
 
-This note set is meant to be **the first thing to read** before touching DDL-related code.
+This doc set is meant to be **the first thing to read** before touching DDL-related code.
 
 ## Caveat (debugging and drift)
 
-- Debugging: You may use these notes as a starting point, but you **MUST** validate conclusions against code/tests. Treat unverified statements as hypotheses (avoid hallucination/outdated assumptions).
-- Drift: If implementation and `docs/note/ddl/*` diverge during design/development, you **MUST** update the notes to match reality and call it out in the PR/issue.
+- Debugging: You may use these docs as a starting point, but you **MUST** validate conclusions against code/tests. Treat unverified statements as hypotheses (avoid hallucination/outdated assumptions).
+- Drift: If implementation and `docs/ddl/*` diverge during design/development, you **MUST** update the docs to match reality and call it out in the PR/issue.
+
+## Agent preflight (questions)
+
+Before touching `pkg/ddl/`, answer these explicitly (write them down in the PR/issue if possible):
+
+1. Is it **job-based** (persist/resume/failover) or a **metadata-only fast path**?
+2. Does it require **schema state transitions** (and which ones), or can it stay `public` throughout?
+3. Does it require a **reorg/backfill scan** (read/write workload), and what is the checkpoint/persistence point?
+4. What are the **cancel/rollback** semantics? Which step(s) are reversible, and which need delete-range GC?
+5. How does it affect **schema version + schema diff** and follower schema sync?
+6. What are the **system tables** / durable metadata involved (`mysql.tidb_ddl_job`, `mysql.tidb_ddl_reorg`, ...)? Which fields must be backward compatible?
+7. What is the **expected online behavior** (MDL / blocking, write conflicts, phase boundaries)?
+8. What is the **minimal regression test** (unit/integration), and which failpoints can make it deterministic?
+
+## Index (by task)
+
+- Understand end-to-end call chain: `docs/ddl/01-execution-flow.md`
+- Job state machine / schema state machine / schema sync: `docs/ddl/02-job-lifecycle.md`
+- Any reorg/backfill (ingest, checkpoint, distributed backfill): `docs/ddl/03-reorg-backfill.md`
+- Add-index behavior (fast reorg, ingest, backfill-merge): `docs/ddl/06-add-index.md`
+- Modify-column behavior (reorg types, null/not-null, type change): `docs/ddl/07-modify-column.md`
+- Partition DDL (add/drop/truncate/reorganize/exchange): `docs/ddl/08-partition-ddl.md`
+- Where-to-change + test patterns: `docs/ddl/04-dev-checklist.md`
+- “Where is this implemented?” file map: `docs/ddl/05-file-map.md`
+
+## Operation index (jump table)
+
+### Column DDL
+
+- Modify column / change column: `model.ActionModifyColumn` → `docs/ddl/07-modify-column.md`
+
+### Index DDL
+
+- Add index / add primary key: `model.ActionAddIndex`, `model.ActionAddPrimaryKey` → `docs/ddl/06-add-index.md`
+
+### Partition DDL
+
+- Add/drop/truncate partition: `model.ActionAddTablePartition`, `model.ActionDropTablePartition`, `model.ActionTruncateTablePartition` → `docs/ddl/08-partition-ddl.md`
+- Reorganize / exchange partition: `model.ActionReorganizePartition`, `model.ActionExchangeTablePartition` → `docs/ddl/08-partition-ddl.md`
 
 ## Mental model (60 seconds)
 
@@ -73,12 +112,14 @@ sequenceDiagram
 
 ## Reading order
 
-1. `docs/note/ddl/01-execution-flow.md` — end-to-end call chain and responsibilities.
-2. `docs/note/ddl/02-job-lifecycle.md` — job/version/state machines, schema sync, owner/failover.
-3. `docs/note/ddl/03-reorg-backfill.md` — reorg/backfill and distributed backfill overview.
-4. `docs/note/ddl/06-add-index.md` — add-index deep dive (fast reorg, ingest, backfill-merge).
-5. `docs/note/ddl/04-dev-checklist.md` — where-to-change, testing, and common pitfalls.
-6. `docs/note/ddl/05-file-map.md` — quick “where is this implemented?” map inside `pkg/ddl/`.
+1. `docs/ddl/01-execution-flow.md` — end-to-end call chain and responsibilities.
+2. `docs/ddl/02-job-lifecycle.md` — job/version/state machines, schema sync, owner/failover.
+3. `docs/ddl/03-reorg-backfill.md` — reorg/backfill and distributed backfill overview.
+4. `docs/ddl/06-add-index.md` — add-index deep dive (fast reorg, ingest, backfill-merge).
+5. `docs/ddl/07-modify-column.md` — modify-column deep dive (reorg types, state machine).
+6. `docs/ddl/08-partition-ddl.md` — partition DDL deep dive (state machine, reorg, GC).
+7. `docs/ddl/04-dev-checklist.md` — where-to-change, testing, and common pitfalls.
+8. `docs/ddl/05-file-map.md` — quick “where is this implemented?” map inside `pkg/ddl/`.
 
 ## Related design docs (deep dives)
 

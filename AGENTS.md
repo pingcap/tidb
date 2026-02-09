@@ -51,12 +51,12 @@ This file provides guidance to agents when working with code in this repository.
 
 ### Notes
 
-- Notes directory: `docs/note/<component>/` is the canonical location for component notes. If missing, create it and add an entry here.
+- Notes directory: `docs/note/` is the canonical location for component notes (for example `docs/note/planner/`). If missing, create it and add an entry here.
 - Notes rules: update existing sections when topics overlap; append new sections only for new topics. Purpose: capture decisions, pitfalls, and test patterns.
-- DDL module-only rules (applies to changes under `pkg/ddl/` and `docs/note/ddl/`):
-  - **REQUIRED**: Before making/reviewing any DDL changes in the DDL module, read `docs/note/ddl/README.md` first and use it as the default map of the execution framework.
-  - Debugging: You may reference `docs/note/ddl/*`, but you **MUST NOT** treat it as authoritative. Treat it as hypotheses until verified in code/tests (avoid hallucination/outdated assumptions).
-  - Doc drift: If implementation and `docs/note/ddl/*` differ, you **MUST** update the notes to match reality and call it out in the PR/issue. Do not defer.
+- DDL module-only rules (applies to changes under `pkg/ddl/` and `docs/ddl/`):
+  - **REQUIRED**: Before making/reviewing any DDL changes in the DDL module, read `docs/ddl/README.md` first and use it as the default map of the execution framework.
+  - Debugging: You may reference `docs/ddl/*`, but you **MUST NOT** treat it as authoritative. Treat it as hypotheses until verified in code/tests (avoid hallucination/outdated assumptions).
+  - Doc drift: If implementation and `docs/ddl/*` differ, you **MUST** update the docs to match reality and call it out in the PR/issue. Do not defer.
 - Planner rule notes: `docs/note/planner/rule/rule_ai_notes.md`.
 - If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
 - Predicate pushdown testdata (`pkg/planner/core/casetest/rule/testdata/predicate_pushdown_suite_in.json`) should contain SQL-only cases; put DDL in the test setup to avoid `EXPLAIN` parsing DDL during record runs.

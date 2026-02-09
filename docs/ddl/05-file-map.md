@@ -44,4 +44,6 @@ This is a pragmatic map from common DDL areas to `pkg/ddl/` files. It’s intent
 
 ## Deep dives
 
-- Add index: `docs/note/ddl/06-add-index.md`
+- Add index: `docs/ddl/06-add-index.md`
+- Modify column: `docs/ddl/07-modify-column.md`
+- Partition DDL: `docs/ddl/08-partition-ddl.md`

@@ -12,7 +12,9 @@ Typical examples:
 
 Deep dive:
 
-- Add index: `docs/note/ddl/06-add-index.md`
+- Add index: `docs/ddl/06-add-index.md`
+- Modify column: `docs/ddl/07-modify-column.md`
+- Partition DDL (reorg-heavy operations): `docs/ddl/08-partition-ddl.md`
 
 These jobs usually enter the schema state `reorg`, where:
 
@@ -72,4 +74,4 @@ When you change reorg/backfill code, always verify:
 - Cancellation/pause/resume semantics are respected (don’t ignore job state transitions).
 - Schema version sync is still correct at state boundaries.
 
-If the change is large or introduces a new reorg mode, prefer adding a short design doc under `docs/design/` and link it from `docs/note/ddl/README.md`.
+If the change is large or introduces a new reorg mode, prefer adding a short design doc under `docs/design/` and link it from `docs/ddl/README.md`.

@@ -1,6 +1,6 @@
 # Add Index Deep Dive (online DDL + reorg/backfill)
 
-This note focuses on **`ActionAddIndex`** (and closely related `ActionAddPrimaryKey`). Add index is special because it’s a **reorg/backfill** DDL: it needs a schema state machine + background data backfill while DML continues.
+This doc focuses on **`ActionAddIndex`** (and closely related `ActionAddPrimaryKey`). Add index is special because it’s a **reorg/backfill** DDL: it needs a schema state machine + background data backfill while DML continues.
 
 ## Entry points (start here)
 

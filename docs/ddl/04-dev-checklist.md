@@ -12,7 +12,7 @@ Use this decision table:
 | Planner builds DDL plan nodes | `pkg/planner/*` |
 | Transaction boundary / generic AST dispatch | `pkg/executor/ddl.go` |
 | Convert statement → job args / job submission / waiting | `pkg/ddl/executor.go` |
-| Persistent step execution, schema state transitions, meta writes | `pkg/ddl/job_worker.go` + `pkg/ddl/{table,schema,index,partition,...}.go` |
+| Persistent step execution, schema state transitions, meta writes | `pkg/ddl/job_worker.go` + the per-action handlers (e.g. `pkg/ddl/table.go`, `pkg/ddl/schema.go`, `pkg/ddl/index.go`, `pkg/ddl/modify_column.go`, `pkg/ddl/partition.go`) |
 | Job args encoding/decoding, job version compat | `pkg/meta/model/*` |
 | Schema sync / versioning mechanisms | `pkg/ddl/schemaver/*`, `pkg/ddl/schema_version.go` |
 
