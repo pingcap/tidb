@@ -102,15 +102,18 @@ var (
 	// ============================================================================
 
 	// Control side (batch_recordset.go) detailed metrics
+
 	// RemotePlanChannelWaitDuration records time waiting for data from remote channel.
 	RemotePlanChannelWaitDuration prometheus.Histogram
 	// RemotePlanChunkDecodeDuration records time decoding chunks from remote.
 	RemotePlanChunkDecodeDuration prometheus.Histogram
 	// RemotePlanRowCopyDuration records time copying rows to output chunk.
-	RemotePlanRowCopyDuration         prometheus.Histogram
+	RemotePlanRowCopyDuration prometheus.Histogram
+	// RemotePlanFirstResultWaitDuration records time waiting for the first result from remote.
 	RemotePlanFirstResultWaitDuration prometheus.Histogram
 
 	// Remote side (service.go) detailed metrics
+
 	// RemotePlanChunkEncodeDuration records time encoding chunks on remote side.
 	RemotePlanChunkEncodeDuration prometheus.Histogram
 	// RemotePlanStreamSendDuration records time sending chunks via gRPC stream.

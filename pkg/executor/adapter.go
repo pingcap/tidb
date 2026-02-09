@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -2303,7 +2302,7 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 		// Drop them does not cause notable accuracy issue in TopSQL.
 		return ctx
 	}
-	if (ctx.Value(core.InRemoteExec{}) != nil) {
+	if (ctx.Value(plannercore.InRemoteExec{}) != nil) {
 		return ctx
 	}
 
