@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
@@ -137,6 +138,16 @@ func getTestPointRange(tableID int64, handle int64) kv.KeyRange {
 	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
 	endKey := make([]byte, len(startKey))
 	copy(endKey, startKey)
+	convertToPrefixNext(endKey)
+	return kv.KeyRange{
+		StartKey: startKey,
+		EndKey:   endKey,
+	}
+}
+
+func getTestPointRangeForKey(key []byte) kv.KeyRange {
+	startKey := slices.Clone(key)
+	endKey := slices.Clone(key)
 	convertToPrefixNext(endKey)
 	return kv.KeyRange{
 		StartKey: startKey,
@@ -261,6 +272,19 @@ func (dagBuilder *dagBuilder) addTableScan(colInfos []*tipb.ColumnInfo, tableID 
 	return dagBuilder
 }
 
+func (dagBuilder *dagBuilder) addIndexScan(colInfos []*tipb.ColumnInfo, tableID, indexID int64, unique bool) *dagBuilder {
+	dagBuilder.executors = append(dagBuilder.executors, &tipb.Executor{
+		Tp: tipb.ExecType_TypeIndexScan,
+		IdxScan: &tipb.IndexScan{
+			Columns: colInfos,
+			TableId: tableID,
+			IndexId: indexID,
+			Unique:  &unique,
+		},
+	})
+	return dagBuilder
+}
+
 func (dagBuilder *dagBuilder) addSelection(expr *tipb.Expr) *dagBuilder {
 	dagBuilder.executors = append(dagBuilder.executors, &tipb.Executor{
 		Tp: tipb.ExecType_TypeSelection,
@@ -358,6 +382,84 @@ func TestPointGet(t *testing.T) {
 	eq, err = returnedRow[1].Compare(types.DefaultStmtNoWarningContext, &expectedRow[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
+}
+
+func TestIndexScanWithExtraPhysTblIDAndCommitTs(t *testing.T) {
+	store, clean, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
+	require.NoError(t, err)
+	defer func() {
+		err := clean()
+		require.NoError(t, err)
+	}()
+
+	const (
+		indexTableID int64 = 1
+		indexID      int64 = 1
+		indexColID   int64 = 1
+		handle             = 7
+		indexVal           = 42
+	)
+
+	encodedIdxVal, err := codec.EncodeKey(timeutil.SystemLocation(), nil, types.NewIntDatum(indexVal))
+	require.NoError(t, err)
+	indexKey := tablecodec.EncodeIndexSeekKey(indexTableID, indexID, encodedIdxVal)
+	indexValue := tablecodec.EncodeHandleInUniqueIndexValue(kv.IntHandle(handle), false)
+
+	errs := initTestData(store, []*encodedTestKVData{{encodedRowKey: indexKey, encodedRowValue: indexValue}})
+	require.Nil(t, errs)
+
+	colInfos := []*tipb.ColumnInfo{
+		{ColumnId: indexColID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+		{ColumnId: model.ExtraHandleID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+		{ColumnId: model.ExtraPhysTblID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+		{ColumnId: model.ExtraCommitTsID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+	}
+
+	dagRequest := newDagBuilder().
+		setStartTs(dagRequestStartTs).
+		addIndexScan(colInfos, indexTableID, indexID, true).
+		setOutputOffsets([]uint32{0, 1, 2, 3}).
+		build()
+	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRangeForKey(indexKey)}, dagRequest, dagRequestStartTs)
+
+	chunks, rowCount, err := buildExecutorsAndExecute(dagCtx, dagRequest)
+	require.NoError(t, err)
+	require.Equal(t, 1, rowCount)
+	require.Len(t, chunks, 1)
+
+	returnedRow, err := codec.Decode(chunks[0].RowsData, 4)
+	require.NoError(t, err)
+	require.Len(t, returnedRow, 4)
+	require.Equal(t, int64(indexVal), returnedRow[0].GetInt64())
+	require.Equal(t, int64(handle), returnedRow[1].GetInt64())
+	require.Equal(t, indexTableID, returnedRow[2].GetInt64())
+	require.True(t, returnedRow[3].IsNull())
+}
+
+func TestIndexScanSpecialColumnsMustBeTrailing(t *testing.T) {
+	store, clean, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
+	require.NoError(t, err)
+	defer func() {
+		err := clean()
+		require.NoError(t, err)
+	}()
+
+	colInfos := []*tipb.ColumnInfo{
+		{ColumnId: 1, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+		{ColumnId: model.ExtraCommitTsID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+		{ColumnId: model.ExtraHandleID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+	}
+
+	dagRequest := newDagBuilder().
+		setStartTs(dagRequestStartTs).
+		addIndexScan(colInfos, 1, 1, true).
+		setOutputOffsets([]uint32{0, 1, 2}).
+		build()
+	dagCtx := newDagContext(t, store, []kv.KeyRange{}, dagRequest, dagRequestStartTs)
+
+	_, _, err = buildExecutorsAndExecute(dagCtx, dagRequest)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must be last")
 }
 
 func TestClosureExecutor(t *testing.T) {
