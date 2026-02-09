@@ -1755,11 +1755,6 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 		}
 	}
 
-	if err := ensureHybridIndexReorgMeta(job); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
@@ -1812,6 +1807,13 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 
 		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
+			skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
+			if !skipReorg {
+				if err := ensureHybridIndexReorgMeta(job); err != nil {
+					job.State = model.JobStateCancelled
+					return ver, errors.Trace(err)
+				}
+			}
 			// TiCI add-index ingest needs the add-index scan snapshot TS
 			// wired into its WriteHeader (not ingestData.GetTS()),
 			// so job.SnapshotVer will be captured and propagated
@@ -1882,9 +1884,6 @@ func ensureHybridIndexReorgMeta(job *model.Job) error {
 	// Hybrid index requires DXF + fast reorg ingest only; reject other modes early.
 	if !job.ReorgMeta.IsDistReorg || !job.ReorgMeta.IsFastReorg {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires distributed fast reorg ingest")
-	}
-	if !job.ReorgMeta.UseCloudStorage {
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires global sort")
 	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
