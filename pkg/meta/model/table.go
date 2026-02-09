@@ -43,6 +43,9 @@ const ExtraPhysTblID = -3
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
 const ExtraRowChecksumID = -4
 
+// ExtraCommitTSID is the column ID of column which holds the commit timestamp.
+const ExtraCommitTSID = -5
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -85,6 +88,40 @@ var ExtraHandleName = model.NewCIStr("_tidb_rowid")
 
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
+
+// ExtraCommitTSName is the name of ExtraCommitTSID Column.
+var ExtraCommitTSName = model.NewCIStr("_tidb_commit_ts")
+
+// ExtraOriginTSName is the name of ExtraOriginTSID Column.
+var ExtraOriginTSName = model.NewCIStr("_tidb_origin_ts")
+
+// ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
+var ExtraSoftDeleteTimeName = model.NewCIStr("_tidb_softdelete_time")
+
+// IsInternalColumn will check if a column name is reserved.
+func IsInternalColumn(x model.CIStr) bool {
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x) || x.L == ExtraHandleName.L || x.L == ExtraCommitTSName.L
+}
+
+// IsSoftDeleteOrActiveActiveColumn will check if a column name is reserved.
+func IsSoftDeleteOrActiveActiveColumn(x model.CIStr) bool {
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x)
+}
+
+// IsActiveActiveColumn will check if a column name is reserved.
+func IsActiveActiveColumn(x model.CIStr) bool {
+	return x.L == ExtraOriginTSName.L
+}
+
+// IsSoftDeleteColumn will check if a column name is reserved.
+func IsSoftDeleteColumn(x model.CIStr) bool {
+	return x.L == ExtraSoftDeleteTimeName.L
+}
+
+// VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
+// When read column by vector index, sometimes there is no need to read vector column just need distance,
+// so a distance column will be added to table_scan. this field is used in the action.
+const VirtualColVecSearchDistanceID int64 = -2000
 
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
@@ -164,10 +201,6 @@ type TableInfo struct {
 
 	View *ViewInfo `json:"view"`
 
-	MaterializedViewBase *MaterializedViewBaseInfo `json:"materialized_view_base,omitempty"`
-	MaterializedView     *MaterializedViewInfo     `json:"materialized_view,omitempty"`
-	MaterializedViewLog  *MaterializedViewLogInfo  `json:"materialized_view_log,omitempty"`
-
 	Sequence *SequenceInfo `json:"sequence"`
 
 	// Lock represent the table lock info.
@@ -242,16 +275,6 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
-	}
-
-	if t.MaterializedViewBase != nil {
-		nt.MaterializedViewBase = t.MaterializedViewBase.Clone()
-	}
-	if t.MaterializedView != nil {
-		nt.MaterializedView = t.MaterializedView.Clone()
-	}
-	if t.MaterializedViewLog != nil {
-		nt.MaterializedViewLog = t.MaterializedViewLog.Clone()
 	}
 
 	return &nt
@@ -691,94 +714,6 @@ type ViewInfo struct {
 	SelectStmt  string                `json:"view_select"`
 	CheckOption model.ViewCheckOption `json:"view_checkoption"`
 	Cols        []model.CIStr         `json:"view_cols"`
-}
-
-// MaterializedViewBaseInfo is stored in TableInfo for a base table that has materialized view(s) and/or
-// a materialized view log.
-type MaterializedViewBaseInfo struct {
-	// MLogID is the table ID of the materialized view log for this base table. One base table can have
-	// at most one materialized view log.
-	MLogID int64 `json:"mlog_id"`
-
-	// MViewIDs is the list of materialized view table IDs that depend on this base table.
-	MViewIDs []int64 `json:"mview_ids"`
-}
-
-// Clone clones MaterializedViewBaseInfo.
-func (i *MaterializedViewBaseInfo) Clone() *MaterializedViewBaseInfo {
-	if i == nil {
-		return nil
-	}
-	ni := *i
-	ni.MViewIDs = append([]int64(nil), i.MViewIDs...)
-	return &ni
-}
-
-// MaterializedViewInfo is stored in TableInfo for a materialized view table.
-type MaterializedViewInfo struct {
-	// BaseTableIDs is the table IDs of the base tables referenced by this MV.
-	// For Stage-1, it contains exactly one element.
-	BaseTableIDs []int64 `json:"base_table_ids"`
-
-	// SQLContent is the SELECT statement in CREATE MATERIALIZED VIEW.
-	SQLContent string `json:"sql_content"`
-
-	// RefreshMethod is the refresh method specified in CREATE MATERIALIZED VIEW, for example, FAST.
-	RefreshMethod string `json:"refresh_method,omitempty"`
-
-	// RefreshStartWith is the expression string after "START WITH", stored in canonical SQL format.
-	RefreshStartWith string `json:"refresh_start_with,omitempty"`
-
-	// RefreshNext is the expression string after "NEXT", stored in canonical SQL format.
-	RefreshNext string `json:"refresh_next,omitempty"`
-}
-
-// Clone clones MaterializedViewInfo.
-func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
-	if i == nil {
-		return nil
-	}
-	ni := *i
-	ni.BaseTableIDs = append([]int64(nil), i.BaseTableIDs...)
-	return &ni
-}
-
-// MaterializedViewLogInfo is stored in TableInfo for a materialized view log table.
-type MaterializedViewLogInfo struct {
-	// BaseTableID is the table ID of the base table.
-	BaseTableID int64 `json:"base_table_id"`
-
-	// Columns is the base table column list recorded in the log (user-specified columns).
-	Columns []model.CIStr `json:"columns"`
-
-	// PurgeMethod is the purge method specified in CREATE MATERIALIZED VIEW LOG, for example, IMMEDIATE.
-	PurgeMethod string `json:"purge_method,omitempty"`
-
-	// PurgeStartWith is the expression string after "START WITH", stored in canonical SQL format.
-	PurgeStartWith string `json:"purge_start_with,omitempty"`
-
-	// PurgeNext is the expression string after "NEXT", stored in canonical SQL format.
-	PurgeNext string `json:"purge_next,omitempty"`
-}
-
-const (
-	// MaterializedViewLogDMLTypeColumnName is the auto-added internal column on a materialized view log table,
-	// recording row operation type (I/U/D).
-	MaterializedViewLogDMLTypeColumnName = "_MLOG$_DML_TYPE"
-
-	// MaterializedViewLogOldNewColumnName is the auto-added internal column on a materialized view log table,
-	// recording row image kind (NEW=1, OLD=-1).
-	MaterializedViewLogOldNewColumnName = "_MLOG$_OLD_NEW"
-)
-
-// Clone clones MaterializedViewLogInfo.
-func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
-	if i == nil {
-		return nil
-	}
-	ni := *i
-	ni.Columns = append([]model.CIStr(nil), i.Columns...)
-	return &ni
 }
 
 // Some constants for sequence.
