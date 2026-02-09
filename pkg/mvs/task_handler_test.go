@@ -238,7 +238,7 @@ func TestCalcNextPurgeTime(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.expect, calcNextPurgeTime(start, tc.interval, tc.now))
+			require.Equal(t, tc.expect, calcNextExecTime(start, tc.interval, tc.now))
 		})
 	}
 }
@@ -246,14 +246,14 @@ func TestCalcNextPurgeTime(t *testing.T) {
 func TestCalcNextRefreshTime(t *testing.T) {
 	start := time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local)
 	now := time.Date(2026, 1, 2, 3, 4, 22, 0, time.Local)
-	require.Equal(t, time.Date(2026, 1, 2, 3, 4, 25, 0, time.Local), calcNextRefreshTime(start, 10, now))
+	require.Equal(t, time.Date(2026, 1, 2, 3, 4, 25, 0, time.Local), calcNextExecTime(start, 10, now))
 }
 
 func TestCalcNextScheduleTimeZeroInterval(t *testing.T) {
 	start := time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local)
 	now := time.Date(2026, 1, 2, 3, 4, 22, 0, time.Local)
-	require.Equal(t, now, calcNextScheduleTime(start, 0, now))
-	require.Equal(t, now, calcNextScheduleTime(start, -1, now))
+	require.Equal(t, now, calcNextExecTime(start, 0, now))
+	require.Equal(t, now, calcNextExecTime(start, -1, now))
 }
 
 func TestWithRCRestrictedTxnCommit(t *testing.T) {

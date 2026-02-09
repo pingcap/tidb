@@ -87,9 +87,12 @@ func (m *serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverI
 }
 
 /*
-TODO: implement the refresh logic, the pseudo code is as follows:
+手动实现 mv 增量刷新逻辑，伪代码如下：
 
-BEGIN;
+
+执行 sql：REFRESH MATERIALIZED VIEW ? WITH SYNC MODE FAST;
+
+开始 txn（以下执行结果记录到 mysql.tidb_mview_refresh_hist（表结构定义在 pkg/session/bootstrap.go））
 
 SELECT * FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = ? FOR UPDATE;
 
@@ -125,7 +128,7 @@ func (*serverHelper) RefreshMV(_ context.Context, _ basic.SessionPool, _ string)
 }
 
 /*
-TODO: 实现 purge 逻辑，伪代码如下：
+实现 purge 逻辑，伪代码如下：
 
 开始 txn
 
@@ -227,7 +230,7 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 		if runErr = recordMLogPurgeHist(txnCtx, sctx, mvLogID, mlogName, purgeMethod, purgeTime, purgeEndTime, affectedRows, "SUCCESS"); runErr != nil {
 			return runErr
 		}
-		nextPurge = calcNextPurgeTime(purgeStart, purgeIntervalSec, purgeEndTime)
+		nextPurge = calcNextExecTime(purgeStart, purgeIntervalSec, purgeEndTime)
 		return nil
 	})
 	if err != nil {
@@ -236,15 +239,7 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 	return nextPurge, failedErr
 }
 
-func calcNextPurgeTime(purgeStart time.Time, purgeIntervalSec int64, last time.Time) time.Time {
-	return calcNextScheduleTime(purgeStart, purgeIntervalSec, last)
-}
-
-func calcNextRefreshTime(refreshStart time.Time, refreshIntervalSec int64, last time.Time) time.Time {
-	return calcNextScheduleTime(refreshStart, refreshIntervalSec, last)
-}
-
-func calcNextScheduleTime(start time.Time, intervalSec int64, last time.Time) time.Time {
+func calcNextExecTime(start time.Time, intervalSec int64, last time.Time) time.Time {
 	if intervalSec <= 0 {
 		return last
 	}
@@ -289,7 +284,7 @@ func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool b
 				calcBase = gt
 			}
 		}
-		l.nextPurge = calcNextPurgeTime(purgeStart, intervalSec, calcBase)
+		l.nextPurge = calcNextExecTime(purgeStart, intervalSec, calcBase)
 		l.orderTs = l.nextPurge.UnixMilli()
 		newPending[l.ID] = l
 	}
@@ -326,7 +321,7 @@ func (*serverHelper) fetchAllTiDBMViews(ctx context.Context, sysSessionPool basi
 				calcBase = gt
 			}
 		}
-		m.nextRefresh = calcNextRefreshTime(refreshStart, intervalSec, calcBase)
+		m.nextRefresh = calcNextExecTime(refreshStart, intervalSec, calcBase)
 		m.orderTs = m.nextRefresh.UnixMilli()
 		newPending[m.ID] = m
 	}
