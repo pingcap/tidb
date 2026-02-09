@@ -277,16 +277,16 @@ func TestSharedLockLockView(t *testing.T) {
 		return
 	}
 
-	lock_waits := testTk.MustQuery("select `key`, count(*) as `count` from INFORMATION_SCHEMA.DATA_LOCK_WAITS group by `key` order by `count` desc;").Rows()
-	require.Len(t, lock_waits, 1)
-	key := lock_waits[0][0].(string)
-	count := lock_waits[0][1].(string)
+	lockWaits := testTk.MustQuery("select `key`, count(*) as `count` from INFORMATION_SCHEMA.DATA_LOCK_WAITS group by `key` order by `count` desc;").Rows()
+	require.Len(t, lockWaits, 1)
+	key := lockWaits[0][0].(string)
+	count := lockWaits[0][1].(string)
 	require.Equal(t, count, "1")
 
-	txn_waits := testTk.MustQuery(fmt.Sprintf("select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.key = \"%s\"", key)).Rows()
-	require.Len(t, txn_waits, 1)
-	waitingTxnID := txn_waits[0][0].(string)
-	sessionID := txn_waits[0][1].(string)
+	txnWaits := testTk.MustQuery(fmt.Sprintf("select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.key = \"%s\"", key)).Rows()
+	require.Len(t, txnWaits, 1)
+	waitingTxnID := txnWaits[0][0].(string)
+	sessionID := txnWaits[0][1].(string)
 	require.Equal(t, waitingTxnID, fmt.Sprintf("%d", conn2TxnID))
 	require.Equal(t, sessionID, conn2)
 
@@ -316,16 +316,16 @@ func TestSharedLockLockView(t *testing.T) {
 		return
 	}
 
-	lock_waits = testTk.MustQuery("select `key`, count(*) as `count` from INFORMATION_SCHEMA.DATA_LOCK_WAITS group by `key` order by `count` desc;").Rows()
-	require.Len(t, lock_waits, 1)
-	key = lock_waits[0][0].(string)
-	count = lock_waits[0][1].(string)
+	lockWaits = testTk.MustQuery("select `key`, count(*) as `count` from INFORMATION_SCHEMA.DATA_LOCK_WAITS group by `key` order by `count` desc;").Rows()
+	require.Len(t, lockWaits, 1)
+	key = lockWaits[0][0].(string)
+	count = lockWaits[0][1].(string)
 	require.Equal(t, count, "1")
 
-	txn_waits = testTk.MustQuery(fmt.Sprintf("select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.key = \"%s\"", key)).Rows()
-	require.Len(t, txn_waits, 1)
-	waitingTxnID = txn_waits[0][0].(string)
-	sessionID = txn_waits[0][1].(string)
+	txnWaits = testTk.MustQuery(fmt.Sprintf("select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.key = \"%s\"", key)).Rows()
+	require.Len(t, txnWaits, 1)
+	waitingTxnID = txnWaits[0][0].(string)
+	sessionID = txnWaits[0][1].(string)
 	require.Equal(t, waitingTxnID, fmt.Sprintf("%d", conn2TxnID))
 	require.Equal(t, sessionID, conn2)
 
