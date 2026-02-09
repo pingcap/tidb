@@ -182,16 +182,7 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
-	var extraInfos []schemaIDAndTableInfo
-	extra, err := updateMaterializedViewBaseInfoOnCreate(jobCtx, job, tbInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	if extra != nil {
-		extraInfos = append(extraInfos, *extra)
-	}
-
-	ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
+	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -394,7 +385,10 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 				return ver, nil
 			}
 			if errors.Cause(err) == context.Canceled {
-				return ver, nil
+				// IMPORT FROM SELECT has no resumable checkpoint in this path.
+				// Fail fast and rollback the whole CREATE MATERIALIZED VIEW job to avoid duplicate build attempts.
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(err)
 			}
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
@@ -554,7 +548,10 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 
 	failpoint.Inject("pauseCreateMaterializedViewBuild", func() {})
 
-	failpoint.Inject("mockCreateMaterializedViewBuildErr", func() {
+	failpoint.Inject("mockCreateMaterializedViewBuildErr", func(val failpoint.Value) {
+		if msg, ok := val.(string); ok && msg == "context-canceled" {
+			failpoint.Return(context.Canceled)
+		}
 		failpoint.Return(errors.New("mock create materialized view build error"))
 	})
 
@@ -1675,6 +1672,11 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
+	// CREATE TABLE ... LIKE must always produce a normal table definition.
+	// Do not carry MV/MV LOG/base reverse metadata from the source table.
+	tblInfo.MaterializedViewBase = nil
+	tblInfo.MaterializedView = nil
+	tblInfo.MaterializedViewLog = nil
 	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil
 }

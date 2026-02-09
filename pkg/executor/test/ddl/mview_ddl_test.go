@@ -156,6 +156,33 @@ func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
 
+func TestCreateMaterializedViewBuildContextCanceledRollback(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr", `return("context-canceled")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"))
+	}()
+
+	err := tk.ExecToErr("create materialized view mv_ctx_cancel (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	require.Error(t, err)
+
+	tk.MustQuery("show tables like 'mv_ctx_cancel'").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
+	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
+}
+
 func TestCreateMaterializedViewRejectNonBaseObject(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -228,4 +255,44 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
 	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
+}
+
+func TestCreateTableLikeShouldNotCarryMaterializedViewMetadata(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view mv_src (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+
+	tk.MustExec("create table t_like like t")
+	tk.MustExec("create table mv_like like mv_src")
+	tk.MustExec("create table mlog_like like `$mlog$t`")
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	mvSrc, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_src"))
+	require.NoError(t, err)
+	mvLike, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_like"))
+	require.NoError(t, err)
+	mlogSrc, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t"))
+	require.NoError(t, err)
+	mlogLike, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mlog_like"))
+	require.NoError(t, err)
+
+	require.NotNil(t, mvSrc.Meta().MaterializedView)
+	require.NotNil(t, mlogSrc.Meta().MaterializedViewLog)
+
+	require.Nil(t, mvLike.Meta().MaterializedView)
+	require.Nil(t, mvLike.Meta().MaterializedViewLog)
+	require.Nil(t, mvLike.Meta().MaterializedViewBase)
+	require.Nil(t, mlogLike.Meta().MaterializedView)
+	require.Nil(t, mlogLike.Meta().MaterializedViewLog)
+	require.Nil(t, mlogLike.Meta().MaterializedViewBase)
+
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.Equal(t, mlogSrc.Meta().ID, baseTable.Meta().MaterializedViewBase.MLogID)
+	require.Equal(t, []int64{mvSrc.Meta().ID}, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
