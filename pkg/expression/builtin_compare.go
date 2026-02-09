@@ -1716,56 +1716,6 @@ func (c *compareFunctionClass) handleDurationTypeComparisonForNullEq(ctx BuildCo
 	return nil, nil
 }
 
-// Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
-// needs to decide to whether to skip the refining or skip plan-cache for safety.
-// For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
-// can be broken if the parameter changes to 1 after.
-func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowRefining bool) {
-	if !MaybeOverOptimized4PlanCache(ctx, args...) {
-		return true // plan-cache disabled or no parameter in these args
-	}
-
-	// For these 3 cases below, we apply the refining:
-	// 1. year-expr <cmp> const
-	// 2. int-expr <cmp> string/float/double/decimal-const
-	// 3. datetime/timestamp column <cmp> int/float/double/decimal-const
-	for conIdx := range 2 {
-		if _, isCon := args[conIdx].(*Constant); !isCon {
-			continue // not a constant
-		}
-
-		// case 1: year-expr <cmp> const
-		// refine `year < 12` to `year < 2012` to guarantee the correctness.
-		// see https://github.com/pingcap/tidb/issues/41626 for more details.
-		exprType := args[1-conIdx].GetType(ctx.GetEvalCtx())
-		exprEvalType := exprType.EvalType()
-		if exprType.GetType() == mysql.TypeYear {
-			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", args[conIdx].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
-			return true
-		}
-
-		// case 2: int-expr <cmp> string/float/double/decimal-const
-		// refine `int_key < 1.1` to `int_key < 2` to generate RangeScan instead of FullScan.
-		conEvalType := args[conIdx].GetType(ctx.GetEvalCtx()).EvalType()
-		if exprEvalType == types.ETInt &&
-			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
-			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", args[conIdx].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
-			return true
-		}
-
-		// case 3: datetime/timestamp column <cmp> int/float/double/decimal-const
-		// try refine numeric-const to timestamp const
-		// see https://github.com/pingcap/tidb/issues/38361 for more details
-		_, exprIsCon := args[1-conIdx].(*Constant)
-		if !exprIsCon && matchRefineRule3Pattern(conEvalType, exprType) {
-			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to datetime", args[conIdx].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
-			return true
-		}
-	}
-
-	return false
-}
-
 // refineArgs will rewrite the arguments if the compare expression is
 //  1. `int column <cmp> non-int constant` or `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
 //  2. It also handles comparing year type with int constant if the int constant falls into a sensible year representation.
@@ -1785,9 +1735,10 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
 
-	if !allowCmpArgsRefining4PlanCache(ctx, args) {
+	if MaybeOverOptimized4PlanCache(ctx, args...) {
 		return args, nil
 	}
+
 	// We should remove the mutable constant for correctness, because its value may be changed.
 	if err := RemoveMutableConst(ctx, args...); err != nil {
 		return nil, err
