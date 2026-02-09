@@ -450,11 +450,8 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 
 	// Try sync load.
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	require.Eventually(t, func() bool {
-		statsTbl, ok = h.Get(tblInfo.ID)
-		require.True(t, ok)
-		return statsTbl.ColNum() == 3
-	}, 5*time.Second, 100*time.Millisecond)
+	statsTbl, ok = h.Get(tblInfo.ID)
+	require.True(t, ok)
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[3].ID).IsFullLoad())
@@ -468,11 +465,8 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	tk.MustExec("analyze table t columns a, b, c")
 	require.NoError(t, h.InitStatsLite(context.TODO()))
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	require.Eventually(t, func() bool {
-		statsTbl, ok = h.Get(tblInfo.ID)
-		require.True(t, ok)
-		return statsTbl.ColNum() == 4
-	}, 5*time.Second, 100*time.Millisecond)
+	statsTbl, ok = h.Get(tblInfo.ID)
+	require.True(t, ok)
 	// a, b, d's status is not changed.
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())

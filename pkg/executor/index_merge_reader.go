@@ -780,7 +780,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
-			defer trace.StartRegion(ctx, tableScanWorkerType).End()
+			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
 			var task *indexMergeTableTask
 			util.WithRecovery(
 				// Note we use the address of `task` as the argument of both `pickAndExecTask` and `handleTableScanWorkerPanic`

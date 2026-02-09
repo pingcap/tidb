@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -97,6 +98,7 @@ type HashAggExec struct {
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggfuncs.AggPartialResultMapper
+	bInMap           int64 // indicate there are 2^bInMap buckets in partialResultMap
 	groupSet         set.StringSetWithMemoryUsage
 	groupKeys        []string
 	cursor4GroupKey  int
@@ -105,7 +107,7 @@ type HashAggExec struct {
 
 	finishCh         chan struct{}
 	finalOutputCh    chan *AfFinalResult
-	partialOutputChs []chan aggfuncs.AggPartialResultMapper
+	partialOutputChs []chan *aggfuncs.AggPartialResultMapper
 	inputCh          chan *HashAggInput
 	partialInputChs  []chan *chunk.Chunk
 	partialWorkers   []HashAggPartialWorker
@@ -270,9 +272,10 @@ func (e *HashAggExec) OpenSelf() error {
 func (e *HashAggExec) initForUnparallelExec() {
 	var setSize int64
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
-	e.partialResultMap = aggfuncs.NewAggPartialResultMapper()
+	e.partialResultMap = make(aggfuncs.AggPartialResultMapper)
+	e.bInMap = 0
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	e.memTracker.Consume(int64(e.partialResultMap.Bytes) + setSize)
+	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.memTracker.Consume(e.childResult.MemoryUsage())
@@ -300,11 +303,8 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 
 	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
-		sz := int64(0)
-		for i := range finalConcurrency {
-			r := aggfuncs.NewAggPartialResultMapper()
-			partialResultsMap[i] = r
-			sz += int64(r.Bytes)
+		for i := 0; i < finalConcurrency; i++ {
+			partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
 		}
 
 		partialResultsBuffer, groupKeyBuf := getBuffer()
@@ -315,6 +315,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			inputCh:               e.partialInputChs[i],
 			outputChs:             e.partialOutputChs,
 			giveBackCh:            e.inputCh,
+			BInMaps:               make([]int, finalConcurrency),
 			partialResultsBuffer:  *partialResultsBuffer,
 			globalOutputCh:        e.finalOutputCh,
 			partialResultsMap:     partialResultsMap,
@@ -329,10 +330,15 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		}
 
 		memUsage += e.partialWorkers[i].chk.MemoryUsage()
+
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
+		for j := 0; j < finalConcurrency; j++ {
+			e.partialWorkers[i].BInMaps[j] = 0
+		}
+
 		// There is a bucket in the empty partialResultsMap.
 		failpoint.Inject("ConsumeRandomPanic", nil)
-		e.memTracker.Consume(sz)
+		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.partialWorkers[i].BInMap))
 		if e.stats != nil {
 			e.partialWorkers[i].stats = &AggWorkerStat{}
 			e.stats.PartialStats = append(e.stats.PartialStats, e.partialWorkers[i].stats)
@@ -352,7 +358,8 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
 			baseHashAggWorker:          newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
-			partialResultMap:           aggfuncs.NewAggPartialResultMapper(),
+			partialResultMap:           make(aggfuncs.AggPartialResultMapper),
+			BInMap:                     0,
 			inputCh:                    e.partialOutputChs[i],
 			outputCh:                   e.finalOutputCh,
 			finalResultHolderCh:        make(chan *chunk.Chunk, 1),
@@ -360,7 +367,7 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			restoredAggResultMapperMem: 0,
 		}
 		// There is a bucket in the empty partialResultsMap.
-		e.memTracker.Consume(int64(e.finalWorkers[i].partialResultMap.Bytes))
+		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.finalWorkers[i].BInMap))
 		if e.stats != nil {
 			e.finalWorkers[i].stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, e.finalWorkers[i].stats)
@@ -387,9 +394,9 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	for i := range e.partialInputChs {
 		e.partialInputChs[i] = make(chan *chunk.Chunk, 1)
 	}
-	e.partialOutputChs = make([]chan aggfuncs.AggPartialResultMapper, finalConcurrency)
+	e.partialOutputChs = make([]chan *aggfuncs.AggPartialResultMapper, finalConcurrency)
 	for i := range e.partialOutputChs {
-		e.partialOutputChs[i] = make(chan aggfuncs.AggPartialResultMapper, partialConcurrency)
+		e.partialOutputChs[i] = make(chan *aggfuncs.AggPartialResultMapper, partialConcurrency)
 	}
 
 	e.inflightChunkSync = &sync.WaitGroup{}
@@ -702,7 +709,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 		if err := e.execute(ctx); err != nil {
 			return err
 		}
-		if len(e.groupSet.M) == 0 && len(e.GroupByItems) == 0 {
+		if (len(e.groupSet.StringSet) == 0) && len(e.GroupByItems) == 0 {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
@@ -718,7 +725,8 @@ func (e *HashAggExec) resetSpillMode() {
 	e.cursor4GroupKey, e.groupKeys = 0, e.groupKeys[:0]
 	var setSize int64
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
-	e.partialResultMap = aggfuncs.NewAggPartialResultMapper()
+	e.partialResultMap = make(aggfuncs.AggPartialResultMapper)
+	e.bInMap = 0
 	e.prepared.Store(false)
 	e.executed.Store(e.numOfSpilledChks == e.dataInDisk.NumChunks()) // No data is spilling again, all data have been processed.
 	e.numOfSpilledChks = e.dataInDisk.NumChunks()
@@ -766,8 +774,8 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		var tmpBuf [1]chunk.Row
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
-			if _, ok := e.groupSet.M[groupKey]; !ok {
-				if atomic.LoadUint32(&e.inSpillMode) == 1 && len(e.groupSet.M) > 0 {
+			if !e.groupSet.Exist(groupKey) {
+				if atomic.LoadUint32(&e.inSpillMode) == 1 && e.groupSet.Count() > 0 {
 					sel = append(sel, j)
 					continue
 				}
@@ -838,7 +846,7 @@ func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 }
 
 func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {
-	partialResults, ok := e.partialResultMap.M[groupKey]
+	partialResults, ok := e.partialResultMap[groupKey]
 	allMemDelta := int64(0)
 	if !ok {
 		partialResults = make([]aggfuncs.PartialResult, 0, len(e.PartialAggFuncs))
@@ -847,11 +855,13 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			partialResults = append(partialResults, partialResult)
 			allMemDelta += memDelta
 		}
-		deltaBytes := e.partialResultMap.Set(groupKey, partialResults)
-		allMemDelta += int64(len(groupKey))
-		if deltaBytes > 0 {
-			e.memTracker.Consume(deltaBytes)
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
+		if len(e.partialResultMap)+1 > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+			e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.bInMap))
+			e.bInMap++
 		}
+		e.partialResultMap[groupKey] = partialResults
+		allMemDelta += int64(len(groupKey))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)

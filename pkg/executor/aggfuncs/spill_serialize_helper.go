@@ -161,7 +161,7 @@ func (s *SerializeHelper) serializePartialResult4JsonArrayagg(value partialResul
 
 func (s *SerializeHelper) serializePartialResult4JsonObjectAgg(value partialResult4JsonObjectAgg) []byte {
 	s.buf = s.buf[:0]
-	for key, value := range value.entries.M {
+	for key, value := range value.entries {
 		s.buf = util.SerializeString(key, s.buf)
 		s.buf = util.SerializeInterface(value, s.buf)
 	}

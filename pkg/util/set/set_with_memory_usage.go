@@ -21,7 +21,8 @@ import (
 
 // StringSetWithMemoryUsage is a string set with memory usage.
 type StringSetWithMemoryUsage struct {
-	hack.MemAwareMap[string, struct{}]
+	StringSet
+	bInMap int64
 
 	// For tracking large memory usage in time.
 	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
@@ -31,21 +32,29 @@ type StringSetWithMemoryUsage struct {
 // NewStringSetWithMemoryUsage builds a string set.
 func NewStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage StringSetWithMemoryUsage, memDelta int64) {
 	set := make(StringSet, len(ss))
-	setWithMemoryUsage.Init(set)
-	for _, s := range ss {
-		setWithMemoryUsage.Insert(s)
+	setWithMemoryUsage = StringSetWithMemoryUsage{
+		StringSet: set,
+		bInMap:    0,
 	}
-	return setWithMemoryUsage, int64(setWithMemoryUsage.Bytes)
+	memDelta = hack.DefBucketMemoryUsageForSetString * (1 << setWithMemoryUsage.bInMap)
+	for _, s := range ss {
+		memDelta += setWithMemoryUsage.Insert(s)
+	}
+	return setWithMemoryUsage, memDelta
 }
 
 // Insert inserts `val` into `s` and return memDelta.
-func (s *StringSetWithMemoryUsage) Insert(val string) int64 {
-	delta := s.Set(val, struct{}{})
-	if delta != 0 && s.tracker != nil {
-		s.tracker.Consume(delta)
-		delta = 0
+func (s *StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
+	s.StringSet.Insert(val)
+	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		memDelta = hack.DefBucketMemoryUsageForSetString * (1 << s.bInMap)
+		s.bInMap++
+		if s.tracker != nil {
+			s.tracker.Consume(memDelta)
+			memDelta = 0
+		}
 	}
-	return delta
+	return memDelta
 }
 
 // SetTracker sets memory tracker for StringSetWithMemoryUsage
@@ -55,40 +64,60 @@ func (s *StringSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
 
 // Float64SetWithMemoryUsage is a float64 set with memory usage.
 type Float64SetWithMemoryUsage struct {
-	hack.MemAwareMap[float64, struct{}]
+	Float64Set
+	bInMap int64
 }
 
 // NewFloat64SetWithMemoryUsage builds a float64 set.
 func NewFloat64SetWithMemoryUsage(ss ...float64) (setWithMemoryUsage Float64SetWithMemoryUsage, memDelta int64) {
 	set := make(Float64Set, len(ss))
-	setWithMemoryUsage.Init(set)
-	for _, s := range ss {
-		setWithMemoryUsage.Insert(s)
+	setWithMemoryUsage = Float64SetWithMemoryUsage{
+		Float64Set: set,
+		bInMap:     0,
 	}
-	return setWithMemoryUsage, int64(setWithMemoryUsage.Bytes)
+	memDelta = hack.DefBucketMemoryUsageForSetFloat64 * (1 << setWithMemoryUsage.bInMap)
+	for _, s := range ss {
+		memDelta += setWithMemoryUsage.Insert(s)
+	}
+	return setWithMemoryUsage, memDelta
 }
 
 // Insert inserts `val` into `s` and return memDelta.
-func (s *Float64SetWithMemoryUsage) Insert(val float64) int64 {
-	return s.Set(val, struct{}{})
+func (s *Float64SetWithMemoryUsage) Insert(val float64) (memDelta int64) {
+	s.Float64Set.Insert(val)
+	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		memDelta = hack.DefBucketMemoryUsageForSetFloat64 * (1 << s.bInMap)
+		s.bInMap++
+	}
+	return memDelta
 }
 
 // Int64SetWithMemoryUsage is a int set with memory usage.
 type Int64SetWithMemoryUsage struct {
-	hack.MemAwareMap[int64, struct{}]
+	Int64Set
+	bInMap int64
 }
 
 // NewInt64SetWithMemoryUsage builds an int64 set.
 func NewInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage Int64SetWithMemoryUsage, memDelta int64) {
 	set := make(Int64Set, len(ss))
-	setWithMemoryUsage.Init(set)
-	for _, s := range ss {
-		setWithMemoryUsage.Insert(s)
+	setWithMemoryUsage = Int64SetWithMemoryUsage{
+		Int64Set: set,
+		bInMap:   0,
 	}
-	return setWithMemoryUsage, int64(setWithMemoryUsage.Bytes)
+	memDelta = hack.DefBucketMemoryUsageForSetInt64 * (1 << setWithMemoryUsage.bInMap)
+	for _, s := range ss {
+		memDelta += setWithMemoryUsage.Insert(s)
+	}
+	return setWithMemoryUsage, memDelta
 }
 
 // Insert inserts `val` into `s` and return memDelta.
 func (s *Int64SetWithMemoryUsage) Insert(val int64) (memDelta int64) {
-	return s.Set(val, struct{}{})
+	s.Int64Set.Insert(val)
+	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		memDelta = hack.DefBucketMemoryUsageForSetInt64 * (1 << s.bInMap)
+		s.bInMap++
+	}
+	return memDelta
 }

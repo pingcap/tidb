@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
 
@@ -890,16 +889,11 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
-	wrapMemAwareMap := func(m map[string]any) (res hack.MemAwareMap[string, any]) {
-		res.Init(m)
-		return res
-	}
-
 	// Initialize test data
 	expectData := []partialResult4JsonObjectAgg{
-		{entries: wrapMemAwareMap(map[string]any{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"})},
-		{entries: wrapMemAwareMap(map[string]any{"啊": testLongStr1, "我": float64(1.1), "反": int64(456)})},
-		{entries: wrapMemAwareMap(map[string]any{"fe": testLongStr1, " ": int64(36798), "888": false, "": testLongStr2})},
+		{entries: map[string]any{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"}, bInMap: 0},
+		{entries: map[string]any{"啊": testLongStr1, "我": float64(1.1), "反": int64(456)}, bInMap: 0},
+		{entries: map[string]any{"fe": testLongStr1, " ": int64(36798), "888": false, "": testLongStr2}, bInMap: 0},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)

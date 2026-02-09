@@ -18,12 +18,13 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"sync"
 	"testing"
-	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -166,23 +167,16 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 
 func TestConcurrentMapHashTableMemoryUsage(t *testing.T) {
 	m := NewConcurrentMapHashTable()
-	require.Equal(t, int64(77904), m.memDelta)
+	var iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen // 6656
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
 	// Note: Now concurrentMapHashTable doesn't support inserting in parallel.
-	for i := range 6656 {
+	for i := 0; i < iterations; i++ {
 		// Add entry to map.
 		m.Put(uint64(i*ShardCount), chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)})
 	}
-	{
-		realSize := int64(unsafe.Sizeof(concurrentMapHashTable{})) + int64(len(m.hashMap))*int64(unsafe.Sizeof(uintptr(0))+(unsafe.Sizeof(concurrentMapShared{})))
-		for _, m := range m.hashMap {
-			realSize += int64(m.items.RealBytes())
-		}
-		realSize += int64(unsafe.Sizeof(entryStore{}))
-		for _, s := range m.entryStore.slices {
-			realSize += int64(unsafe.Sizeof(entry{})) * int64(cap(s))
-		}
-		require.Equal(t, int64(348936), realSize)
-	}
-	require.Equal(t, int64(377203), m.GetAndCleanMemoryDelta())
+	mapMemoryExpected := int64(1024) * hack.DefBucketMemoryUsageForMapIntToPtr
+	entryMemoryExpected := 16 * int64(64+128+256+512+1024+2048+4096)
+	require.Equal(t, mapMemoryExpected+entryMemoryExpected, m.GetAndCleanMemoryDelta())
 	require.Equal(t, int64(0), m.GetAndCleanMemoryDelta())
 }

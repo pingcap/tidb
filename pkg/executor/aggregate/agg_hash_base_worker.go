@@ -26,7 +26,9 @@ type baseHashAggWorker struct {
 	aggFuncs     []aggfuncs.AggFunc
 	maxChunkSize int
 	stats        *AggWorkerStat
-	memTracker   *memory.Tracker
+
+	memTracker *memory.Tracker
+	BInMap     int // indicate there are 2^BInMap buckets in Golang Map.
 }
 
 func newBaseHashAggWorker(finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
@@ -35,6 +37,7 @@ func newBaseHashAggWorker(finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
 		aggFuncs:     aggFuncs,
 		maxChunkSize: maxChunkSize,
 		memTracker:   memTrack,
+		BInMap:       0,
 	}
 	return baseWorker
 }

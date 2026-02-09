@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -220,8 +221,10 @@ func (p *parallelHashAggSpillHelper) setError() {
 }
 
 func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context) (aggfuncs.AggPartialResultMapper, int64, error) {
-	restoredData := aggfuncs.NewAggPartialResultMapper()
+	restoredData := make(aggfuncs.AggPartialResultMapper)
+	bInMap := 0
 	restoredMem := int64(0)
+
 	restoredPartitionIdx, isSuccess := p.getNextPartition()
 	if !isSuccess {
 		return nil, restoredMem, nil
@@ -229,7 +232,7 @@ func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context)
 
 	spilledFilesIO := p.getListInDisks(restoredPartitionIdx)
 	for _, spilledFile := range spilledFilesIO {
-		memDelta, expandMem, err := p.restoreFromOneSpillFile(ctx, restoredData, spilledFile)
+		memDelta, expandMem, err := p.restoreFromOneSpillFile(ctx, &restoredData, spilledFile, &bInMap)
 		if err != nil {
 			return nil, restoredMem, err
 		}
@@ -246,11 +249,12 @@ type processRowContext struct {
 	rowPos                 int
 	keyColPos              int
 	aggFuncNum             int
-	restoreadData          aggfuncs.AggPartialResultMapper
+	restoreadData          *aggfuncs.AggPartialResultMapper
 	partialResultsRestored [][]aggfuncs.PartialResult
+	bInMap                 *int
 }
 
-func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks) (totalMemDelta int64, totalExpandMem int64, err error) {
+func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (totalMemDelta int64, totalExpandMem int64, err error) {
 	chunkNum := diskIO.NumChunks()
 	aggFuncNum := len(p.aggFuncsForRestoring)
 	processRowContext := &processRowContext{
@@ -261,6 +265,7 @@ func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Cont
 		aggFuncNum:             aggFuncNum,
 		restoreadData:          restoreadData,
 		partialResultsRestored: make([][]aggfuncs.PartialResult, aggFuncNum),
+		bInMap:                 bInMap,
 	}
 	for i := 0; i < chunkNum; i++ {
 		chunk, err := diskIO.GetChunk(i)
@@ -293,7 +298,7 @@ func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Cont
 
 func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (totalMemDelta int64, expandMem int64, err error) {
 	key := context.chunk.GetRow(context.rowPos).GetString(context.keyColPos)
-	prs, ok := context.restoreadData.M[key]
+	prs, ok := (*context.restoreadData)[key]
 	if ok {
 		exprCtx := context.ctx.GetExprCtx()
 		// The key has appeared before, merge results.
@@ -306,12 +311,17 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 		}
 	} else {
 		totalMemDelta += int64(len(key))
-		results := make([]aggfuncs.PartialResult, context.aggFuncNum)
-		delta := context.restoreadData.Set(key, results)
-		if delta > 0 {
-			p.memTracker.Consume(delta)
+
+		if len(*context.restoreadData)+1 > (1<<*context.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+			expandMem = hack.DefBucketMemoryUsageForMapStrToSlice * (1 << *context.bInMap)
+			p.memTracker.Consume(expandMem)
+			(*context.bInMap)++
 		}
-		for aggPos := range context.aggFuncNum {
+
+		results := make([]aggfuncs.PartialResult, context.aggFuncNum)
+		(*context.restoreadData)[key] = results
+
+		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
 			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]
 		}
 	}

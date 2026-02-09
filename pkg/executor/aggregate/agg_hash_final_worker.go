@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -41,7 +42,8 @@ type HashAggFinalWorker struct {
 	baseHashAggWorker
 
 	partialResultMap    aggfuncs.AggPartialResultMapper
-	inputCh             chan aggfuncs.AggPartialResultMapper
+	BInMap              int
+	inputCh             chan *aggfuncs.AggPartialResultMapper
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 
@@ -56,7 +58,7 @@ func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggf
 	return ret, restoredMem, err
 }
 
-func (w *HashAggFinalWorker) getPartialInput() (input aggfuncs.AggPartialResultMapper, ok bool) {
+func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
 	waitStart := time.Now()
 	defer updateWaitTime(w.stats, waitStart)
 	select {
@@ -70,23 +72,30 @@ func (w *HashAggFinalWorker) getPartialInput() (input aggfuncs.AggPartialResultM
 	return
 }
 
-func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, input aggfuncs.AggPartialResultMapper) error {
+func (w *HashAggFinalWorker) initBInMap() {
+	w.BInMap = 0
+	mapLen := len(w.partialResultMap)
+	for mapLen > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		w.BInMap++
+	}
+}
+
+func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, input *aggfuncs.AggPartialResultMapper) error {
 	// As the w.partialResultMap is empty when we get the first input.
 	// So it's better to directly assign the input to w.partialResultMap
-	if len(w.partialResultMap.M) == 0 {
-		w.partialResultMap = input
+	if len(w.partialResultMap) == 0 {
+		w.partialResultMap = *input
+		w.initBInMap()
 		return nil
 	}
 
 	execStart := time.Now()
 	allMemDelta := int64(0)
 	exprCtx := sctx.GetExprCtx()
-	for key, value := range input.M {
-		dstVal, ok := w.partialResultMap.M[key]
+	for key, value := range *input {
+		dstVal, ok := w.partialResultMap[key]
 		if !ok {
-			if deltaBytes := w.partialResultMap.Set(key, value); deltaBytes > 0 {
-				w.memTracker.Consume(deltaBytes)
-			}
+			w.handleNewGroupKey(key, value)
 			continue
 		}
 
@@ -101,6 +110,14 @@ func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, in
 	w.memTracker.Consume(allMemDelta)
 	updateExecTime(w.stats, execStart)
 	return nil
+}
+
+func (w *HashAggFinalWorker) handleNewGroupKey(key string, value []aggfuncs.PartialResult) {
+	if len(w.partialResultMap)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+		w.BInMap++
+	}
+	w.partialResultMap[key] = value
 }
 
 func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
@@ -121,7 +138,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) {
 	var finished bool
 	exprCtx := sctx.GetExprCtx()
-	for _, results := range w.partialResultMap.M {
+	for _, results := range w.partialResultMap {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), results[j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))

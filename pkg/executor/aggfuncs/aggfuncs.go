@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 // All the AggFunc implementations are listed here for navigation.
@@ -145,17 +144,7 @@ const (
 type PartialResult unsafe.Pointer
 
 // AggPartialResultMapper contains aggregate function results
-type AggPartialResultMapper = *hack.MemAwareMap[string, []PartialResult]
-
-// NewAggPartialResultMapper creates a new AggPartialResultMapper
-func NewAggPartialResultMapper() AggPartialResultMapper {
-	return NewAggPartialResultMapperWithCap(0)
-}
-
-// NewAggPartialResultMapperWithCap creates a new AggPartialResultMapper with specified capacity
-func NewAggPartialResultMapperWithCap(capacity int) AggPartialResultMapper {
-	return hack.NewMemAwareMap[string, []PartialResult](capacity)
-}
+type AggPartialResultMapper map[string][]PartialResult
 
 type serializer interface {
 	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
