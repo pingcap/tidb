@@ -1171,7 +1171,7 @@ func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
 	if indexOptions == nil {
 		return nil
 	}
-	if indexOptions.ParserName.L != "" {
+	if indexOptions.ParserName.L != "" && indexOptions.Tp == ast.IndexTypeFulltext {
 		if err := validateFullTextParserName(indexOptions.ParserName); err != nil {
 			return err
 		}
