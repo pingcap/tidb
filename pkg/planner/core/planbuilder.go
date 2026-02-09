@@ -4061,10 +4061,10 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		dbName := tnW.DBInfo.Name
 		tp := types.NewFieldType(mysql.TypeLonglong)
 		commitTSCol := &expression.Column{
-			RetType:     tp,
-			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
-			ID:          model.ExtraCommitTSID,
-			OrigName:    fmt.Sprintf("%v.%v.%v", dbName.L, tableInfo.Name, model.ExtraCommitTSName),
+			RetType:  tp,
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraCommitTSID,
+			OrigName: fmt.Sprintf("%v.%v.%v", dbName.L, tableInfo.Name, model.ExtraCommitTSName),
 			IsHidden: true,
 		}
 		schema.Append(commitTSCol)

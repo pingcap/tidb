@@ -64,10 +64,11 @@ go_test(
     ],
     embed = [":cophandler"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 6,
     deps = [
         "//pkg/expression",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
         "//pkg/store/mockstore/unistore/lockstore",

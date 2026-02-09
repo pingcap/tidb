@@ -1039,9 +1039,9 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 		return b.buildReplace(ivs)
 	}
 	insert := &InsertExec{
-		InsertValues:          ivs,
-		OnDuplicate:           append(v.OnDuplicate, v.GenCols.OnDuplicates...),
-		needExtraCommitTS:     v.NeedExtraCommitTS,
+		InsertValues:      ivs,
+		OnDuplicate:       append(v.OnDuplicate, v.GenCols.OnDuplicates...),
+		needExtraCommitTS: v.NeedExtraCommitTS,
 	}
 	return insert
 }

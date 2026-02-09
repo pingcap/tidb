@@ -17,9 +17,9 @@ package executor
 import (
 	"context"
 	"fmt"
-	"time"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
