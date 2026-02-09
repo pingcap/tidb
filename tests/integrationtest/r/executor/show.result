@@ -669,6 +669,7 @@ found_rows
 from_base64
 from_days
 from_unixtime
+fts_match_phrase
 fts_match_prefix
 fts_match_word
 ge

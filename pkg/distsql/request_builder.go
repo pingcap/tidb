@@ -929,7 +929,8 @@ type TiCIShardType int8
 // Different TiCI index shard types.
 // The three types are corresponding to three kinds of encoding formats.
 const (
-	TiCIShardIntHandle TiCIShardType = iota
+	NotTiCIIndex TiCIShardType = iota
+	TiCIShardIntHandle
 	TiCIShardCommonHandle
 	TiCIShardExtraShardingKey
 )

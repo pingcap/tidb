@@ -7011,6 +7011,7 @@ func TestFTS(t *testing.T) {
 	cases := []testCase{
 		{"select * from t where fts_match_word('abc', col1)", true, "SELECT * FROM `t` WHERE FTS_MATCH_WORD(_UTF8MB4'abc', `col1`)"},
 		{"select * From t where fts_match_prefix('abbb', col1)", true, "SELECT * FROM `t` WHERE FTS_MATCH_PREFIX(_UTF8MB4'abbb', `col1`)"},
+		{"select * From t where fts_match_phrase('abbb', col1)", true, "SELECT * FROM `t` WHERE FTS_MATCH_PHRASE(_UTF8MB4'abbb', `col1`)"},
 	}
 	RunTest(t, cases, false)
 }

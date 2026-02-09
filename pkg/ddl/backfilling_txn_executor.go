@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -338,33 +339,26 @@ func (b *txnBackfillExecutor) close(force bool) {
 	close(b.resultCh)
 }
 
-func expectedIngestWorkerCnt(concurrency, _ int) (readerCnt, writerCnt int) {
-	// This is a temporary verification to fix OOM issue, we will optimize the logic later.
-	readerCnt = max(concurrency, 1)
-	writerCnt = max(concurrency, 1)
+func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt int) {
+	workerCnt := concurrency
+	if avgRowSize == 0 {
+		// Statistic data not exist, use default concurrency.
+		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
+		readerCnt = max(readerCnt, 1)
+		writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+		return readerCnt, writerCnt
+	}
+
+	readerRatio := []float64{0.5, 1, 2, 4, 8}
+	rowSize := []uint64{200, 500, 1000, 3000, math.MaxUint64}
+	for i, s := range rowSize {
+		if uint64(avgRowSize) <= s {
+			readerCnt = max(int(float64(workerCnt)*readerRatio[i]), 1)
+			writerCnt = max(workerCnt, 1)
+			break
+		}
+	}
 	return readerCnt, writerCnt
-	// workerCnt := concurrency
-	//
-	//	if avgRowSize == 0 {
-	//		// Statistic data not exist, use default concurrency.
-	//		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
-	//		readerCnt = max(readerCnt, 1)
-	//		writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
-	//		return readerCnt, writerCnt
-	//	}
-	//
-	// readerRatio := []float64{0.5, 1, 2, 4, 8}
-	// rowSize := []uint64{200, 500, 1000, 3000, math.MaxUint64}
-	//
-	//	for i, s := range rowSize {
-	//		if uint64(avgRowSize) <= s {
-	//			readerCnt = max(int(float64(workerCnt)*readerRatio[i]), 1)
-	//			writerCnt = max(workerCnt, 1)
-	//			break
-	//		}
-	//	}
-	//
-	// return readerCnt, writerCnt
 }
 
 type taskIDAllocator struct {

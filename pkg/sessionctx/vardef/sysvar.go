@@ -234,6 +234,16 @@ const (
 	InnodbAdaptiveHashIndex = "innodb_adaptive_hash_index"
 	// InnodbFtEnableStopword is the name for 'innodb_ft_enable_stopword' system variable.
 	InnodbFtEnableStopword = "innodb_ft_enable_stopword" // #nosec G101
+	// InnodbFtMaxTokenSize is the name for 'innodb_ft_max_token_size' system variable.
+	InnodbFtMaxTokenSize = "innodb_ft_max_token_size" // #nosec G101
+	// InnodbFtMinTokenSize is the name for 'innodb_ft_min_token_size' system variable.
+	InnodbFtMinTokenSize = "innodb_ft_min_token_size" // #nosec G101
+	// NgramTokenSize is the name for 'ngram_token_size' system variable.
+	NgramTokenSize = "ngram_token_size" // #nosec G101
+	// InnodbFtServerStopwordTable is the name for 'innodb_ft_server_stopword_table' system variable.
+	InnodbFtServerStopwordTable = "innodb_ft_server_stopword_table" // #nosec G101
+	// InnodbFtUserStopwordTable is the name for 'innodb_ft_user_stopword_table' system variable.
+	InnodbFtUserStopwordTable = "innodb_ft_user_stopword_table" // #nosec G101
 	// InnodbOptimizeFullTextOnly is the name for 'innodb_optimize_fulltext_only' system variable.
 	InnodbOptimizeFullTextOnly = "innodb_optimize_fulltext_only"
 	// InnodbStatusOutputLocks is the name for 'innodb_status_output_locks' system variable.
