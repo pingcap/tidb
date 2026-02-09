@@ -128,9 +128,13 @@ var (
 	// RemotePlanRespBatchSize records number of responses batched in one gRPC Send.
 	RemotePlanRespBatchSize prometheus.Histogram
 
+	// RemotePlanGrpcRecvDuration records actual gRPC stream.Recv() time on the control side.
 	RemotePlanGrpcRecvDuration      prometheus.Histogram
-	RemotePlanRSNextDuration        prometheus.Histogram
-	RemotePlanRSFirstNextDuration   prometheus.Histogram
+	// RemotePlanRSNextDuration records time spent in recordSet.Next() on the control side.
+	RemotePlanRSNextDuration prometheus.Histogram
+	// RemotePlanRSFirstNextDuration records time spent in the first recordSet.Next() call.
+	RemotePlanRSFirstNextDuration prometheus.Histogram
+	// RemotePlanRespBatchWaitDuration records time waiting for a batch of responses.
 	RemotePlanRespBatchWaitDuration prometheus.Histogram
 	// RemotePlanRSNextCopCount records number of Cop requests per rs.Next() call.
 	RemotePlanRSNextCopCount prometheus.Histogram
