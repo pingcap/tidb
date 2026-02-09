@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -364,8 +363,8 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 
 	case model.StateWriteReorganization:
 		// Phase-2: run initial build and persist refresh result in mysql.tidb_mview_refresh.
-		// The build snapshot tso is fixed once when reorg really starts, and reused by reorg retries.
-		// This avoids capturing an overly old tso in StateNone when the job waits in reorg queue.
+		// Initialize build tso when reorg starts to avoid capturing an overly old value in StateNone.
+		// It will be replaced by the actual build statement start_ts after build success.
 		if job.SnapshotVer == 0 {
 			job.SnapshotVer = jobCtx.metaMut.StartTS
 		}
@@ -470,38 +469,33 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 	return ver, nil
 }
 
-func buildCreateMaterializedViewSelectSQLWithSnapshot(selectSQL string, snapshotTS uint64) (string, error) {
-	if snapshotTS == 0 {
-		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid snapshot tso")
-	}
-	stmt, err := parser.New().ParseOneStmt(selectSQL, "", "")
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	sel, ok := stmt.(*ast.SelectStmt)
-	if !ok {
+func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo) (string, error) {
+	if mvTblInfo.MaterializedView == nil || len(mvTblInfo.MaterializedView.SQLContent) == 0 {
 		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid select sql")
 	}
-	tblName, err := extractSingleTableNameFromSelect(sel)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	tblName.AsOf = &ast.AsOfClause{TsExpr: &ast.FuncCallExpr{
-		FnName: pmodel.NewCIStr(ast.TiDBParseTso),
-		Args:   []ast.ExprNode{ast.NewValueExpr(snapshotTS, "", "")},
-	}}
-	return restoreNodeToCanonicalSQL(sel)
-}
-
-func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo, snapshotTS uint64) (string, error) {
-	// IMPORT FROM SELECT doesn't support setting session tidb_snapshot for historical read.
-	// Keep the source query at snapshotTS via AS OF TIMESTAMP in SELECT instead.
-	selectSQL, err := buildCreateMaterializedViewSelectSQLWithSnapshot(mvTblInfo.MaterializedView.SQLContent, snapshotTS)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
+	// IMPORT FROM SELECT doesn't support session tidb_snapshot historical read.
+	// Build uses current visible data of the source query directly.
+	selectSQL := mvTblInfo.MaterializedView.SQLContent
 	prefix := sqlescape.MustEscapeSQL("IMPORT INTO %n.%n FROM ", schemaName, mvTblInfo.Name.O)
 	return prefix + "(" + selectSQL + ") WITH disable_precheck", nil
+}
+
+func getCreateMaterializedViewBuildReadTS(ctx context.Context, ddlSess *sess.Session) (uint64, error) {
+	rows, err := ddlSess.Execute(ctx,
+		"SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@@tidb_last_query_info, '$.start_ts')) AS UNSIGNED), 0)",
+		"create-materialized-view-build-read-ts",
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return 0, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: cannot fetch build read tso")
+	}
+	readTS := rows[0].GetUint64(0)
+	if readTS == 0 {
+		return 0, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
+	}
+	return readTS, nil
 }
 
 func buildCreateMaterializedViewInsertSQL(schemaName string, mvTblInfo *model.TableInfo) (string, error) {
@@ -520,12 +514,20 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	defer w.sessPool.Put(sessCtx)
 
 	ddlSess := sess.NewSession(sessCtx)
-	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo, job.SnapshotVer)
+	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	_, err = ddlSess.Execute(ctx, buildSQL, "create-materialized-view-build-import")
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	readTS, err := getCreateMaterializedViewBuildReadTS(ctx, ddlSess)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.SnapshotVer = readTS
+	return nil
 }
 
 func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {
@@ -541,7 +543,15 @@ func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, jo
 	}
 	ddlSess := sess.NewSession(sessCtx)
 	_, err = ddlSess.Execute(ctx, buildSQL, "create-materialized-view-build-insert")
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	readTS, err := getCreateMaterializedViewBuildReadTS(ctx, ddlSess)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.SnapshotVer = readTS
+	return nil
 }
 
 func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName string, job *model.Job, mvTblInfo *model.TableInfo) error {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -577,4 +578,18 @@ func TestCheckHistoryJobStmtType(t *testing.T) {
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateTables, createTableStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateTables, createMLogStmt))
+}
+
+func TestBuildCreateMaterializedViewImportSQLNoAsOfTimestamp(t *testing.T) {
+	mvTblInfo := &model.TableInfo{
+		Name: pmodel.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo)
+	require.NoError(t, err)
+	require.Contains(t, sql, "IMPORT INTO `test`.`mv` FROM (")
+	require.Contains(t, sql, "WITH disable_precheck")
+	require.NotContains(t, strings.ToUpper(sql), "AS OF TIMESTAMP")
 }
