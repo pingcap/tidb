@@ -28,3 +28,20 @@ Additional notes:
 - `pushNotAcrossExpr` already eliminates `not(not(expr))` when `expr` is a logical operator, because `wrapWithIsTrue` returns logical ops unchanged.
 - An explicit double-NOT special case is optional for logical expressions; non-logical expressions should continue to use `IsTruthWithNull` semantics.
 - Plan regression (CARTESIAN + other cond) is easier to trigger than result differences on small datasets.
+
+## 2026-02-04 - OR-constant in outer join other conditions (issue #65994)
+
+Background:
+- A rewrite introduced `LEFT JOIN ... ON (a = b OR 0)` and the OR constant prevented join key extraction, leading to a cartesian-like join behavior and wrong results.
+
+Key takeaways:
+- Outer join `OtherConditions` are not simplified by predicate pushdown, so trivial OR/AND constants must be normalized before `updateEQCond`.
+- Applying `ApplyPredicateSimplificationForJoin` on `OtherConditions` is sufficient to remove `OR 0` and keep equality keys.
+
+Implementation choice:
+- In `LogicalJoin.normalizeJoinConditionsForOuterJoin`, call `ApplyPredicateSimplificationForJoin` with `propagateConstant=false` on `OtherConditions`.
+
+Test and verification:
+- Add SQL-only case to `predicate_pushdown_suite_in.json`; keep DDL in the test setup, otherwise `explain` will try to run `DROP/CREATE`.
+- Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation --tags=intest -record`.
+- Add integration test to `tests/integrationtest/t/select.test` and record via `./run-tests.sh -r select` (integration tests use `-r`, not `-record`).
