@@ -18,24 +18,29 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -43,44 +48,34 @@ import (
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
-	LogicalSchemaProducer `hash64-equals:"true"`
+	LogicalSchemaProducer
 
 	AstIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
 	Table         table.Table
-	TableInfo     *model.TableInfo `hash64-equals:"true"`
+	TableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
-	DBName        ast.CIStr
+	DBName        pmodel.CIStr
 
-	TableAsName *ast.CIStr `hash64-equals:"true"`
+	TableAsName *pmodel.CIStr
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
-	PushedDownConds []expression.Expression `hash64-equals:"true"`
+	PushedDownConds []expression.Expression
 	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
-	AllConds []expression.Expression `hash64-equals:"true"`
+	AllConds []expression.Expression
 
-	// The following property is used to cache the original statistic information of the table.
-	// It will be initialized by the function initStats(ds *logicalop.DataSource) in stats.go and never modified after that.
-	// The TableStats.RowCount is the original row count of the table, which is equal to the StatisticTable.RealtimeCount.
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
 
-	// AllPossibleAccessPaths stores all the possible access path from build datasource phase.
-	AllPossibleAccessPaths []*util.AccessPath
-	// PossibleAccessPaths stores all the possible access path for one specific logical alternative.
-	// because different logical alternative may have different filter condition, so the possible access path may be different.
-	// like:
-	// * special rule XForm will gen additional selection which will be push down to a ds alternative.
-	// * correlate rule XForm will gen additional correlated condition which will be push down to a ds alternative.
-	// No matter whether the newly generated ds is always good or not, we should both derive the stats from the conditions we so far.
+	// PossibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	PossibleAccessPaths []*util.AccessPath
 
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
-	PhysicalTableID int64 `hash64-equals:"true"`
-	PartitionNames  []ast.CIStr
+	PhysicalTableID int64
+	PartitionNames  []pmodel.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
@@ -89,8 +84,7 @@ type DataSource struct {
 	UnMutableHandleCols util.HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
-	TblCols     []*expression.Column
-	TblColsByID map[int64]*expression.Column
+	TblCols []*expression.Column
 	// CommonHandleCols and CommonHandleLens save the info of primary key which is the clustered index.
 	CommonHandleCols []*expression.Column
 	CommonHandleLens []int
@@ -98,15 +92,15 @@ type DataSource struct {
 	// it is converted from StatisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
 	// PreferStoreType means the DataSource is enforced to which storage.
-	PreferStoreType int `hash64-equals:"true"`
+	PreferStoreType int
 	// PreferPartitions store the map, the key represents store type, the value represents the partition name list.
-	PreferPartitions map[int][]ast.CIStr
+	PreferPartitions map[int][]pmodel.CIStr
 	SampleInfo       *tablesampler.TableSampleInfo
 	IS               infoschema.InfoSchema
 	// IsForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	IsForUpdateRead bool `hash64-equals:"true"`
+	IsForUpdateRead bool
 
 	// contain unique index and the first field is tidb_shard(),
 	// such as (tidb_shard(a), a ...), the fields are more than 2
@@ -120,15 +114,80 @@ type DataSource struct {
 	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
-
-	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
-	AskedColumnGroup [][]*expression.Column
 }
 
 // Init initializes DataSource.
 func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	ds.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)
 	return &ds
+}
+
+// ************************ start implementation of HashEquals interface ************************
+
+// Hash64 implements base.HashEquals interface.
+func (ds *DataSource) Hash64(h base2.Hasher) {
+	// hash the key elements to identify this datasource.
+	h.HashString(plancodec.TypeDataSource)
+	// table related.
+	if ds.TableInfo == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt64(ds.TableInfo.ID)
+	}
+	// table alias related.
+	if ds.TableAsName == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(ds.TableAsName.L))
+		h.HashString(ds.TableAsName.L)
+	}
+	// visible columns related.
+	h.HashInt(len(ds.Columns))
+	for _, oneCol := range ds.Columns {
+		h.HashInt64(oneCol.ID)
+	}
+	// conditions related.
+	h.HashInt(len(ds.PushedDownConds))
+	for _, oneCond := range ds.PushedDownConds {
+		oneCond.Hash64(h)
+	}
+	h.HashInt(len(ds.AllConds))
+	for _, oneCond := range ds.AllConds {
+		oneCond.Hash64(h)
+	}
+	// hint and update misc.
+	h.HashInt(ds.PreferStoreType)
+	h.HashBool(ds.IsForUpdateRead)
+}
+
+// Equals implements base.HashEquals interface.
+func (ds *DataSource) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var ds2 *DataSource
+	switch x := other.(type) {
+	case *DataSource:
+		ds2 = x
+	case DataSource:
+		ds2 = &x
+	default:
+		return false
+	}
+	ok := ds.TableInfo.ID == ds2.TableInfo.ID && ds.TableAsName.L == ds2.TableAsName.L && len(ds.PushedDownConds) == len(ds2.PushedDownConds) &&
+		len(ds.AllConds) == len(ds2.AllConds) && ds.PreferStoreType == ds2.PreferStoreType && ds.IsForUpdateRead == ds2.IsForUpdateRead
+	if !ok {
+		return false
+	}
+	for i, oneCond := range ds.PushedDownConds {
+		oneCond.Equals(ds2.PushedDownConds[i])
+	}
+	for i, oneCond := range ds.AllConds {
+		oneCond.Equals(ds2.AllConds[i])
+	}
+	return true
 }
 
 // *************************** start implementation of Plan interface ***************************
@@ -156,26 +215,25 @@ func (ds *DataSource) ExplainInfo() string {
 // HashCode inherits BaseLogicalPlan.<0th> interface.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
-	predicates = ruleutil.ApplyPredicateSimplification(ds.SCtx(), predicates, true, nil)
+func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
+	predicates = constraint.DeleteTrueExprs(ds, predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), predicates)
 	ds.AllConds = predicates
-	dual := Conds2TableDual(ds, ds.AllConds)
-	if dual != nil {
-		return nil, dual, nil
-	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
-	return predicates, ds, nil
+	appendDataSourcePredicatePushDownTraceStep(ds, opt)
+	return predicates, ds
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
+func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	used := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, ds.Schema())
 
-	exprCols := expression.ExtractColumnsFromExpressions(ds.AllConds, nil)
+	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.AllConds, nil)
 	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.Schema())
+	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
@@ -195,11 +253,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
 				continue
 			}
-			// TODO: investigate why we cannot use slices.Delete for these two:
+			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
 	}
+	logicaltrace.AppendColumnPruneTraceStep(ds, prunedColumns, opt)
 	addOneHandle := false
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
@@ -235,9 +294,16 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	return ds, nil
 }
 
+// FindBestTask implements the base.LogicalPlan.<3rd> interface.
+// It will enumerate all the available indices and choose a plan with least cost.
+func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
+	return utilfuncp.FindBestTask4LogicalDataSource(ds, prop, planCounter, opt)
+}
+
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
-	selfSchema.PKOrUK = nil
+	selfSchema.Keys = nil
 	var latestIndexes map[int64]*model.IndexInfo
 	var changed bool
 	var err error
@@ -260,15 +326,15 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 			continue
 		}
 		if uniqueKey, newKey := ruleutil.CheckIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
-			selfSchema.PKOrUK = append(selfSchema.PKOrUK, newKey)
+			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		} else if uniqueKey != nil {
-			selfSchema.NullableUK = append(selfSchema.NullableUK, uniqueKey)
+			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
 	if ds.TableInfo.PKIsHandle {
 		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				selfSchema.PKOrUK = append(selfSchema.PKOrUK, []*expression.Column{selfSchema.Columns[i]})
+				selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{selfSchema.Columns[i]})
 				break
 			}
 		}
@@ -280,10 +346,10 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // DeriveTopN inherits BaseLogicalPlan.LogicalPlan.<6th> implementation.
 
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
-func (ds *DataSource) PredicateSimplification() base.LogicalPlan {
+func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	p.PushedDownConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true, nil)
-	p.AllConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true, nil)
+	p.PushedDownConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds)
+	p.AllConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds)
 	return p
 }
 
@@ -294,16 +360,17 @@ func (ds *DataSource) PredicateSimplification() base.LogicalPlan {
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ []bool) (*property.StatsInfo, bool, error) {
-	return utilfuncp.DeriveStats4DataSource(ds)
+func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	return utilfuncp.DeriveStats4DataSource(ds, colGroups)
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
-	for _, path := range ds.AllPossibleAccessPaths {
+	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
+
+	for _, path := range ds.PossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()
 			if col != nil {
@@ -520,7 +587,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 			// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
-			if ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens) {
+			if utilfuncp.IsSingleScan(ds, path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
 			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
@@ -575,6 +642,28 @@ func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
 	}
 }
 
+func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) {
+	if len(ds.PushedDownConds) < 1 {
+		return
+	}
+	ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	reason := func() string {
+		return ""
+	}
+	action := func() string {
+		buffer := bytes.NewBufferString("The conditions[")
+		for i, cond := range ds.PushedDownConds {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(cond.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
+		return buffer.String()
+	}
+	opt.AppendStepToCurrent(ds.ID(), ds.TP(), reason, action)
+}
+
 func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,
 	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
 	var resultColumnInfo *model.ColumnInfo
@@ -598,117 +687,4 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
-}
-
-// IsSingleScan checks whether all the needed columns and conditions can be covered by the index.
-func (ds *DataSource) IsSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
-	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
-		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
-		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
-		return ds.IsIndexCoveringColumns(ds.Schema().Columns, indexColumns, idxColLens)
-	}
-	if !ds.IsIndexCoveringColumns(ds.ColsRequiringFullLen, indexColumns, idxColLens) {
-		return false
-	}
-	for _, cond := range ds.AllConds {
-		if !ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens) {
-			return false
-		}
-	}
-	return true
-}
-
-// IsIndexCoveringColumns checks whether all the needed columns can be covered by the index.
-func (ds *DataSource) IsIndexCoveringColumns(columns, indexColumns []*expression.Column, idxColLens []int) bool {
-	for _, col := range columns {
-		if !ds.indexCoveringColumn(col, indexColumns, idxColLens, false) {
-			return false
-		}
-	}
-	return true
-}
-
-// IsIndexCoveringCondition checks whether all the needed columns in the condition can be covered by the index.
-func (ds *DataSource) IsIndexCoveringCondition(condition expression.Expression, indexColumns []*expression.Column, idxColLens []int) bool {
-	switch v := condition.(type) {
-	case *expression.Column:
-		return ds.indexCoveringColumn(v, indexColumns, idxColLens, false)
-	case *expression.ScalarFunction:
-		// Even if the index only contains prefix `col`, the index can cover `col is null`.
-		if v.FuncName.L == ast.IsNull {
-			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
-				return ds.indexCoveringColumn(col, indexColumns, idxColLens, true)
-			}
-		}
-		for _, arg := range v.GetArgs() {
-			if !ds.IsIndexCoveringCondition(arg, indexColumns, idxColLens) {
-				return false
-			}
-		}
-		return true
-	}
-	return true
-}
-
-type handleCoverState uint8
-
-const (
-	stateNotCoveredByHandle handleCoverState = iota
-	stateCoveredByIntHandle
-	stateCoveredByCommonHandle
-)
-
-func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	handleCoveringState := ds.handleCoveringColumn(column, ignoreLen)
-	// Original int pk can always cover the column.
-	if handleCoveringState == stateCoveredByIntHandle {
-		return true
-	}
-	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
-	if !coveredByPlainIndex && handleCoveringState != stateCoveredByCommonHandle {
-		return false
-	}
-	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
-		column.GetType(evalCtx).EvalType() == types.ETString &&
-		!mysql.HasBinaryFlag(column.GetType(evalCtx).GetFlag())
-	if !coveredByPlainIndex && handleCoveringState == stateCoveredByCommonHandle && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
-		return false
-	}
-	return true
-}
-
-// handleCoveringColumn checks if the column is covered by the primary key or extra handle columns.
-func (ds *DataSource) handleCoveringColumn(column *expression.Column, ignoreLen bool) handleCoverState {
-	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
-		return stateCoveredByIntHandle
-	}
-	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
-		return stateCoveredByIntHandle
-	}
-	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
-	if coveredByClusteredIndex {
-		return stateCoveredByCommonHandle
-	}
-	return stateNotCoveredByHandle
-}
-
-func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	for i, indexCol := range indexCols {
-		if indexCol == nil || !col.EqualByExprAndID(sctx, indexCol) {
-			continue
-		}
-		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
-			return true
-		}
-	}
-	return false
-}
-
-// AppendTableCol appends a column to the original columns of the table before pruning,
-// accessed through ds.TblCols and ds.TblColsByID.
-func (ds *DataSource) AppendTableCol(col *expression.Column) {
-	ds.TblCols = append(ds.TblCols, col)
-	ds.TblColsByID[col.ID] = col
 }
