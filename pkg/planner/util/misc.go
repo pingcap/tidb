@@ -302,6 +302,16 @@ func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.Push
 		bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
 }
 
+// ShouldCheckTiFlashPushDown returns true when TiFlash pushdown checks are meaningful.
+// It requires both TiFlash replica availability in plan and TiFlash enabled in isolation read engines.
+func ShouldCheckTiFlashPushDown(pctx base.PlanContext, hasTiFlash bool) bool {
+	if !hasTiFlash {
+		return false
+	}
+	_, ok := pctx.GetSessionVars().GetIsolationReadEngines()[kv.TiFlash]
+	return ok
+}
+
 // FilterPathByIsolationRead filter out AccessPath by isolation read engine requirement.
 func FilterPathByIsolationRead(ctx base.PlanContext, paths []*AccessPath, tblName ast.CIStr,
 	dbName ast.CIStr) ([]*AccessPath, error) {

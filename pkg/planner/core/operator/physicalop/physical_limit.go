@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -57,7 +58,7 @@ func ExhaustPhysicalPlans4LogicalLimit(p *logicalop.LogicalLimit, prop *property
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	sessionVars := p.SCtx().GetSessionVars()
 	// lift the recursive check of canPushToCop(tiFlash)
-	if p.GetHasTiFlash() && sessionVars.IsMPPAllowed() {
+	if util.ShouldCheckTiFlashPushDown(p.SCtx(), p.GetHasTiFlash()) && sessionVars.IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
