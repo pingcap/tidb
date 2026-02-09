@@ -111,6 +111,48 @@ func TestExplainExploreBasic(t *testing.T) {
 	tk.MustExecToErr("explain explore SELECT A FROM", "")
 }
 
+func TestExplainExploreIndexHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b))`)
+
+	rows := tk.MustQuery(`explain explore select * from t where a=1 and b=1`).Rows()
+	hasIndexA, hasIndexB := false, false
+	for _, row := range rows {
+		plan := row[2].(string)
+		if strings.Contains(plan, "index:a") {
+			hasIndexA = true
+		}
+		if strings.Contains(plan, "index:b") {
+			hasIndexB = true
+		}
+	}
+	require.True(t, hasIndexA, "expected index a plan in explain explore output")
+	require.True(t, hasIndexB, "expected index b plan in explain explore output")
+}
+
+func TestExplainExploreIndexHintWithAlias(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, x varchar(10), key(a), key(b))`)
+
+	rows := tk.MustQuery(`explain explore select 1 from t t_alias where a=1 and b=1 and x like "%xx%"`).Rows()
+	hasIndexA, hasIndexB := false, false
+	for _, row := range rows {
+		plan := row[2].(string)
+		if strings.Contains(plan, "index:a") {
+			hasIndexA = true
+		}
+		if strings.Contains(plan, "index:b") {
+			hasIndexB = true
+		}
+	}
+	require.True(t, hasIndexA, "expected index a plan in explain explore output")
+	require.True(t, hasIndexB, "expected index b plan in explain explore output")
+}
+
 func TestIsSimplePointPlan(t *testing.T) {
 	require.True(t, bindinfo.IsSimplePointPlan(`       id  task    estRows operator info  actRows execution info  memory          disk
         Projection_4    root    1       plus(test.t.a, 1)->Column#3     0       time:173µs, open:24.9µs, close:8.92µs, loops:1, Concurrency:OFF                         380 Bytes       N/A
@@ -169,17 +211,6 @@ func TestRelevantOptVarsAndFixes(t *testing.T) {
 	}
 }
 
-func TestExplainExploreInStmtStats(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int, key(a))`)
-	tk.MustQuery(`explain explore select count(1) from t where a=1`)
-	rs := tk.MustQuery("select digest_text, sample_user from information_schema.tidb_statements_stats where digest_text = 'select count ( ? ) from `t` where `a` = ?'").Rows()
-	require.Greater(t, len(rs), 0)
-	require.NotEmpty(t, rs[0][1].(string)) // user name is not empty
-}
-
 func TestExplainExploreAnalyze(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -226,16 +257,16 @@ func TestExplainExploreVerifyAndBind(t *testing.T) {
 	require.Equal(t, 0, len(tk.MustQuery(`show global bindings`).Rows())) // no binding
 
 	rs := tk.MustQuery(`explain explore select * from t`).Rows()
-	runStmt := rs[0][12].(string)     // explain analyze <plan_digest>
-	bindingStmt := rs[0][13].(string) // create global binding from history using plan digest <plan_digest>
+	runStmt := rs[0][12].(string)    // "EXPLAIN ANALYZE <bind_sql>"
+	bindingSQL := rs[0][13].(string) // "CREATE GLOBAL BINDING USING <bind_sql>"
 
 	require.True(t, strings.HasPrefix(runStmt, "EXPLAIN ANALYZE"))
-	require.True(t, strings.HasPrefix(bindingStmt, "CREATE GLOBAL BINDING"))
+	require.True(t, strings.HasPrefix(bindingSQL, "CREATE GLOBAL BINDING USING"))
 
 	rs = tk.MustQuery(runStmt).Rows()
 	require.True(t, strings.Contains(rs[0][0].(string), "TableReader")) // table scan and no error
 
-	tk.MustExec(bindingStmt)
+	tk.MustExec(bindingSQL)
 	tk.MustQuery(`select * from t`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 	require.Equal(t, 1, len(tk.MustQuery(`show global bindings`).Rows()))

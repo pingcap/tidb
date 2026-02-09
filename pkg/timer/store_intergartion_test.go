@@ -25,7 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/timer/api"
@@ -67,7 +67,7 @@ func TestMemTimerStore(t *testing.T) {
 
 // createTimerTableSQL returns a SQL to create timer table
 func createTimerTableSQL(dbName, tableName string) string {
-	return strings.Replace(session.CreateTiDBTimersTable, "mysql.tidb_timers", fmt.Sprintf("`%s`.`%s`", dbName, tableName), 1)
+	return strings.Replace(metadef.CreateTiDBTimersTable, "mysql.tidb_timers", fmt.Sprintf("`%s`.`%s`", dbName, tableName), 1)
 }
 
 func TestTableTimerStore(t *testing.T) {

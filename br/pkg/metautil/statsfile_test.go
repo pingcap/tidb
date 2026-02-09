@@ -21,7 +21,7 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -113,7 +113,7 @@ func TestStatsWriter(t *testing.T) {
 	rerewriteIDs := map[int64]int64{10: 1, 20: 2}
 
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	for _, v := range testCases {
 		cipher := backuppb.CipherInfo{

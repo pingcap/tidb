@@ -252,7 +252,6 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.HasMoreResults = hasMoreResults
 	items.PlanFromCache = sessVars.FoundInPlanCache
 	items.PlanFromBinding = sessVars.FoundInBinding
-	items.RewriteInfo = sessVars.RewritePhaseInfo
 	items.ResultRows = stmtCtx.GetResultRowsCount()
 	items.IsExplicitTxn = sessVars.TxnCtx.IsExplicit
 	items.IsWriteCacheTable = stmtCtx.WaitLockLeaseTime > 0
@@ -264,6 +263,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	items.StorageKV = stmtCtx.IsTiKV.Load()
 	items.StorageMPP = stmtCtx.IsTiFlash.Load()
+	items.MemArbitration = stmtCtx.MemTracker.MemArbitration().Seconds()
 
 	if a.retryCount > 0 {
 		items.ExecRetryTime = items.TimeTotal - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)

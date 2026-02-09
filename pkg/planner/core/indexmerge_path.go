@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -46,10 +45,6 @@ import (
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func generateIndexMergePath(ds *logicalop.DataSource) error {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 	var warningMsg string
 	stmtCtx := ds.SCtx().GetSessionVars().StmtCtx
 	defer func() {
@@ -140,6 +135,10 @@ func generateNormalIndexPartialPath(
 	item expression.Expression,
 	candidatePath *util.AccessPath,
 ) (paths *util.AccessPath, needSelection bool) {
+	// Reject partial index first.
+	if candidatePath.Index != nil && candidatePath.Index.HasCondition() {
+		return nil, false
+	}
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	cnfItems := expression.SplitCNFItems(item)
 	pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
@@ -224,6 +223,7 @@ func accessPathsForConds(
 		if ds.TableInfo.IsCommonHandle {
 			newPath.IsCommonHandlePath = true
 			newPath.Index = path.Index
+			newPath.NoncacheableReason = path.NoncacheableReason
 		} else {
 			newPath.IsIntHandlePath = true
 		}
@@ -244,6 +244,7 @@ func accessPathsForConds(
 		}
 	} else {
 		newPath.Index = path.Index
+		newPath.NoncacheableReason = path.NoncacheableReason
 		if !isInIndexMergeHints(ds, newPath.Index.Name.L) {
 			return nil
 		}
@@ -390,7 +391,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	}
 
 	// 3. Estimate the row count after partial paths.
-	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, partialFilters, nil)
+	sel, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, partialFilters, nil)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		sel = cost.SelectionFactor
@@ -463,7 +464,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 			// derive each mutation access filters
 			accessFilters[mvColOffset] = mvFilterMu
 
-			partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), accessFilters, idxCols, possibleMVIndexPaths[idx].Index, ds.TableStats.HistColl)
+			partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndexWithPath(ds.SCtx(), accessFilters, idxCols, possibleMVIndexPaths[idx], ds.TableStats.HistColl)
 			if err != nil {
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, err
@@ -756,7 +757,7 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 			continue
 		}
 
-		partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), accessFilters, idxCols, ds.PossibleAccessPaths[idx].Index, ds.TableStats.HistColl)
+		partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndexWithPath(ds.SCtx(), accessFilters, idxCols, ds.PossibleAccessPaths[idx], ds.TableStats.HistColl)
 		if err != nil {
 			return err
 		}
@@ -808,9 +809,32 @@ func buildPartialPathUp4MVIndex(
 	return indexMergePath
 }
 
-// buildPartialPaths4MVIndex builds partial paths by using these accessFilters upon this MVIndex.
+// buildPartialPaths4MVIndexWithPath builds partial paths by using these accessFilters upon this MVIndex.
 // The accessFilters must be corresponding to these idxCols.
 // OK indicates whether it builds successfully. These partial paths should be ignored if ok==false.
+func buildPartialPaths4MVIndexWithPath(
+	sctx planctx.PlanContext,
+	accessFilters []expression.Expression,
+	idxCols []*expression.Column,
+	path *util.AccessPath,
+	histColl *statistics.HistColl,
+) (
+	partialPaths []*util.AccessPath,
+	isIntersection bool,
+	ok bool,
+	err error,
+) {
+	partialPaths, isIntersection, ok, err = buildPartialPaths4MVIndex(sctx, accessFilters, idxCols, path.Index, histColl)
+	if ok && err == nil {
+		if path.NoncacheableReason != "" {
+			for _, p := range partialPaths {
+				p.NoncacheableReason = path.NoncacheableReason
+			}
+		}
+	}
+	return
+}
+
 func buildPartialPaths4MVIndex(
 	sctx planctx.PlanContext,
 	accessFilters []expression.Expression,

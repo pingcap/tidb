@@ -42,30 +42,30 @@ func TestSnapshotWithoutInterceptor(t *testing.T) {
 	// Test for Get
 	val, err := snap.Get(ctx, kv.Key("k1"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), val)
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
 
 	val, err = snap.Get(ctx, kv.Key("k2"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("v2"), val)
+	require.Equal(t, kv.NewValueEntry([]byte("v2"), 0), val)
 
 	val, err = snap.Get(ctx, kv.Key("kn"))
 	require.True(t, kv.ErrNotExist.Equal(err))
-	require.Nil(t, val)
+	require.Equal(t, kv.NewValueEntry(nil, 0), val)
 
 	// Test for BatchGet
-	result, err := snap.BatchGet(ctx, []kv.Key{kv.Key("k1"), kv.Key("k3")})
+	result, err := kv.BatchGetValue(ctx, snap, []kv.Key{kv.Key("k1"), kv.Key("k3")})
 	require.NoError(t, err)
 	require.Equal(t, map[string][]byte{"k1": []byte("v1"), "k3": []byte("v3")}, result)
 
-	result, err = snap.BatchGet(ctx, []kv.Key{kv.Key("k3"), kv.Key("kn")})
+	result, err = kv.BatchGetValue(ctx, snap, []kv.Key{kv.Key("k3"), kv.Key("kn")})
 	require.NoError(t, err)
 	require.Equal(t, map[string][]byte{"k3": []byte("v3")}, result)
 
-	result, err = snap.BatchGet(ctx, []kv.Key{kv.Key("kn"), kv.Key("kn2")})
+	result, err = kv.BatchGetValue(ctx, snap, []kv.Key{kv.Key("kn"), kv.Key("kn2")})
 	require.NoError(t, err)
 	require.Equal(t, map[string][]byte{}, result)
 
-	result, err = snap.BatchGet(ctx, []kv.Key{})
+	result, err = kv.BatchGetValue(ctx, snap, []kv.Key{})
 	require.NoError(t, err)
 	require.Equal(t, map[string][]byte{}, result)
 
@@ -116,20 +116,24 @@ type mockSnapshotInterceptor struct {
 	spy []any
 }
 
-func (m *mockSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k kv.Key) ([]byte, error) {
-	m.spy = []any{"OnGet", ctx, k}
+func (m *mockSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+	var opt kv.GetOptions
+	opt.Apply(options)
+	m.spy = []any{"OnGet", ctx, k, opt.ReturnCommitTS()}
 	if len(k) == 0 {
-		return nil, fmt.Errorf("MockErr%s", m.spy[0])
+		return kv.ValueEntry{}, fmt.Errorf("MockErr%s", m.spy[0])
 	}
-	return snap.Get(ctx, k)
+	return snap.Get(ctx, k, options...)
 }
 
-func (m *mockSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key) (map[string][]byte, error) {
-	m.spy = []any{"OnBatchGet", ctx, keys}
+func (m *mockSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+	var opt kv.BatchGetOptions
+	opt.Apply(options)
+	m.spy = []any{"OnBatchGet", ctx, keys, opt.ReturnCommitTS()}
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("MockErr%s", m.spy[0])
 	}
-	return snap.BatchGet(ctx, keys)
+	return snap.BatchGet(ctx, keys, options...)
 }
 
 func (m *mockSnapshotInterceptor) OnIter(snap kv.Snapshot, k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
@@ -168,27 +172,49 @@ func TestSnapshotWitInterceptor(t *testing.T) {
 
 	// Test for Get
 	k := kv.Key("k1")
-	v, err := snap.Get(ctx, k)
+	entry, err := snap.Get(ctx, k)
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), v)
-	require.Equal(t, []any{"OnGet", ctx, k}, mockInterceptor.spy)
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), entry)
+	require.Equal(t, []any{"OnGet", ctx, k, false}, mockInterceptor.spy)
 
-	v, err = snap.Get(ctx, kv.Key{})
+	// Test for Get with option
+	entry, err = snap.Get(ctx, k, kv.WithReturnCommitTS())
+	require.NoError(t, err)
+	validCommitTS(t, entry.CommitTS)
+	commitTS := entry.CommitTS
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), commitTS), entry)
+	require.Equal(t, []any{"OnGet", ctx, k, true}, mockInterceptor.spy)
+
+	// Test for Get error
+	entry, err = snap.Get(ctx, kv.Key{})
 	require.Equal(t, "MockErrOnGet", err.Error())
-	require.Nil(t, v)
-	require.Equal(t, []any{"OnGet", ctx, kv.Key{}}, mockInterceptor.spy)
+	require.Equal(t, kv.ValueEntry{}, entry)
+	require.Equal(t, []any{"OnGet", ctx, kv.Key{}, false}, mockInterceptor.spy)
 
 	// Test for BatchGet
 	keys := []kv.Key{kv.Key("k2"), kv.Key("k3")}
 	result, err := snap.BatchGet(ctx, keys)
 	require.NoError(t, err)
-	require.Equal(t, map[string][]byte{"k2": []byte("v2"), "k3": []byte("v3")}, result)
-	require.Equal(t, []any{"OnBatchGet", ctx, keys}, mockInterceptor.spy)
+	require.Equal(t, map[string]kv.ValueEntry{
+		"k2": kv.NewValueEntry([]byte("v2"), 0),
+		"k3": kv.NewValueEntry([]byte("v3"), 0),
+	}, result)
+	require.Equal(t, []any{"OnBatchGet", ctx, keys, false}, mockInterceptor.spy)
 
+	// Test for BatchGet with option
+	result, err = snap.BatchGet(ctx, keys, kv.WithReturnCommitTS())
+	require.NoError(t, err)
+	require.Equal(t, map[string]kv.ValueEntry{
+		"k2": kv.NewValueEntry([]byte("v2"), commitTS),
+		"k3": kv.NewValueEntry([]byte("v3"), commitTS),
+	}, result)
+	require.Equal(t, []any{"OnBatchGet", ctx, keys, true}, mockInterceptor.spy)
+
+	// Test for BatchGet error
 	result, err = snap.BatchGet(ctx, []kv.Key{})
 	require.Equal(t, "MockErrOnBatchGet", err.Error())
 	require.Nil(t, result)
-	require.Equal(t, []any{"OnBatchGet", ctx, []kv.Key{}}, mockInterceptor.spy)
+	require.Equal(t, []any{"OnBatchGet", ctx, []kv.Key{}, false}, mockInterceptor.spy)
 
 	// Test for Iter
 	k1 := kv.Key("k1")

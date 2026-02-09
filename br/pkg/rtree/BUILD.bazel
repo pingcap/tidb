@@ -40,8 +40,8 @@ go_test(
     deps = [
         ":rtree",
         "//br/pkg/metautil",
-        "//br/pkg/storage",
         "//pkg/kv",
+        "//pkg/objstore",
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_kvproto//pkg/brpb",

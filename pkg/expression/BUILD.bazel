@@ -83,7 +83,11 @@ go_library(
         "//pkg/errno",
         "//pkg/expression/exprctx",
         "//pkg/expression/expropt",
+<<<<<<< HEAD
         "//pkg/expression/matchagainst",
+=======
+        "//pkg/expression/sessionexpr",
+>>>>>>> origin/master
         "//pkg/extension",
         "//pkg/infoschema/context",
         "//pkg/kv",

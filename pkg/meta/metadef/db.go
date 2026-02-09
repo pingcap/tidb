@@ -15,6 +15,8 @@
 package metadef
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
@@ -28,6 +30,10 @@ var (
 	MetricSchemaName = ast.NewCIStr("METRICS_SCHEMA")
 	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
 	ClusterTableInstanceColumnName = "INSTANCE"
+)
+
+const (
+	temporaryDBNamePrefix = "__TiDB_BR_Temporary_"
 )
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
@@ -54,4 +60,9 @@ func IsSystemRelatedDB(dbLowerName string) bool {
 // IsSystemDB checks whether dbLowerName is the system database.
 func IsSystemDB(dbLowerName string) bool {
 	return dbLowerName == mysql.SystemDB
+}
+
+// IsBRRelatedDB checks whether dbOriginName is a temporary database created by BR.
+func IsBRRelatedDB(dbOriginName string) bool {
+	return strings.HasPrefix(dbOriginName, temporaryDBNamePrefix)
 }

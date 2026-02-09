@@ -103,6 +103,8 @@ func mapCategory(category trace.Category) TraceCategory {
 		return tracing.TxnLockResolve
 	case trace.CategoryKVRequest:
 		return tracing.KvRequest
+	case trace.CategoryRegionCache:
+		return tracing.RegionCache
 	default:
 		return tracing.UnknownClient
 	}

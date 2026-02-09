@@ -18,7 +18,6 @@ import (
 	"bytes"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	util "github.com/pingcap/tidb/pkg/util/serialization"
 )
 
@@ -265,22 +264,16 @@ func (s *deserializeHelper) deserializePartialResult4JsonArrayagg(dst *partialRe
 
 func (s *deserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialResult4JsonObjectAgg) (bool, int64) {
 	memDelta := int64(0)
-	dst.bInMap = 0
-	dst.entries = make(map[string]any)
+	dst.entries.Init(make(map[string]any))
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		byteNum := int64(len(s.pab.Buf))
 		for s.pab.Pos < byteNum {
 			key := util.DeserializeString(s.pab)
 			realVal := util.DeserializeInterface(s.pab)
-			if _, ok := dst.entries[key]; !ok {
-				memDelta += int64(len(key)) + getValMemDelta(realVal)
-				if len(dst.entries)+1 > (1<<dst.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-					memDelta += (1 << dst.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
-					dst.bInMap++
-				}
+			if delta, insert := dst.entries.SetExt(key, realVal); insert {
+				memDelta += int64(len(key)) + getValMemDelta(realVal) + delta
 			}
-			dst.entries[key] = realVal
 		}
 		s.readRowIndex++
 		return true, memDelta

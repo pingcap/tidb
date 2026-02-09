@@ -8,9 +8,6 @@ go_library(
     deps = [
         "//lightning/pkg/importer",
         "//lightning/pkg/server",
-        "//pkg/lightning/backend",
-        "//pkg/lightning/backend/local",
-        "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/tikv",

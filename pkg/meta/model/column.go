@@ -15,6 +15,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"unsafe"
 
@@ -39,6 +40,41 @@ const (
 	// CurrLatestColumnInfoVersion means the latest column info in the current TiDB.
 	CurrLatestColumnInfoVersion = ColumnInfoVersion2
 )
+
+const (
+	// changingColumnPrefix the prefix is used to initialize new column name created in modify column.
+	// The new name will be like "_Col$_<old_column_name>_n".
+	// TODO(joechenrh): using name to distinguish different stage of the column seems not to be a good
+	// idea, we can add new flag in FieldType to make it more clear later.
+	changingColumnPrefix = "_Col$_"
+
+	// removingObjPrefix the prefix is used to initialize the removing column/index name created in modify column.
+	removingObjPrefix = "_Tombstone$_"
+)
+
+// GenUniqueChangingColumnName generates a unique changing column name for modifying column.
+func GenUniqueChangingColumnName(tblInfo *TableInfo, oldCol *ColumnInfo) string {
+	// Check whether the new column name is used.
+	columnNameMap := make(map[string]bool, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		columnNameMap[col.Name.L] = true
+	}
+	suffix := 0
+	newColumnName := fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
+	for columnNameMap[strings.ToLower(newColumnName)] {
+		suffix++
+		newColumnName = fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
+	}
+	return newColumnName
+}
+
+// GenRemovingObjName gets the removing object name with the prefix.
+func GenRemovingObjName(name string) string {
+	if strings.HasPrefix(name, removingObjPrefix) {
+		return name
+	}
+	return fmt.Sprintf("%s%s", removingObjPrefix, name)
+}
 
 // ChangeStateInfo is used for recording the information of schema changing.
 type ChangeStateInfo struct {
@@ -185,6 +221,31 @@ func (c *ColumnInfo) IsVirtualGenerated() bool {
 	return c.IsGenerated() && !c.GeneratedStored
 }
 
+// IsChanging checks if the column is a new column added in modify column.
+func (c *ColumnInfo) IsChanging() bool {
+	return strings.HasPrefix(c.Name.O, changingColumnPrefix)
+}
+
+// IsRemoving checks if the column is a column to be removed used in modify column.
+func (c *ColumnInfo) IsRemoving() bool {
+	return strings.HasPrefix(c.Name.O, removingObjPrefix)
+}
+
+// GetRemovingOriginName gets the origin name of the removing column.
+func (c *ColumnInfo) GetRemovingOriginName() string {
+	return strings.TrimPrefix(c.Name.O, removingObjPrefix)
+}
+
+// GetChangingOriginName gets the origin name of the changing column.
+func (c *ColumnInfo) GetChangingOriginName() string {
+	columnName := strings.TrimPrefix(c.Name.O, changingColumnPrefix)
+	var pos int
+	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
+		return columnName
+	}
+	return columnName[:pos]
+}
+
 // SetOriginDefaultValue sets the origin default value.
 // For mysql.TypeBit type, the default value storage format must be a string.
 // Other value such as int must convert to string format first.
@@ -306,6 +367,21 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	}
 	colInfo.SetType(mysql.TypeLonglong)
 	colInfo.SetFlag(mysql.NotNullFlag)
+	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.SetFlen(flen)
+	colInfo.SetDecimal(decimal)
+	colInfo.SetCharset(charset.CharsetBin)
+	colInfo.SetCollate(charset.CollationBin)
+	return colInfo
+}
+
+// NewExtraCommitTSColInfo mocks a column info for extra commit ts column.
+func NewExtraCommitTSColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraCommitTSID,
+		Name: ExtraCommitTSName,
+	}
+	colInfo.SetType(mysql.TypeLonglong)
 	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)

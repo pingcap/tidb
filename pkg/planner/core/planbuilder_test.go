@@ -333,7 +333,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 		ExtraHandleCol: col,
 		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}
-	indexLookup = indexLookup.Init(ctx, 0, false)
+	indexLookup = indexLookup.Init(ctx, 0, util.IndexLookUpPushDownNone)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
@@ -757,8 +757,8 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 			Name:   ast.NewCIStr("t1"),
 		},
 		{
-			Schema: ast.NewCIStr("test"),
-			Name:   ast.NewCIStr("t2"),
+			Schema: ast.NewCIStr("Test"),
+			Name:   ast.NewCIStr("T2"),
 		},
 	}
 
@@ -768,6 +768,8 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, "t1", pb.visitInfo[0].table)
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
+	require.Equal(t, "test", pb.visitInfo[2].db)
+	require.Equal(t, "t2", pb.visitInfo[2].table)
 }
 
 func TestBuildRefreshStatsPrivileges(t *testing.T) {
@@ -1110,16 +1112,27 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestProcessNextGenS3Path(t *testing.T) {
-	u, err := url.Parse("S3://bucket?External-id=abc")
-	require.NoError(t, err)
-	err = checkNextGenS3PathWithSem(u)
-	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
+	for _, str := range []string{
+		"S3://bucket?External-id=abc",
+		"oss://bucket?External-id=abc",
+		"oSS://bucket?External-id=abc",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+		require.ErrorContains(t, err, "IMPORT INTO with explicit external ID")
+	}
 
-	u, err = url.Parse("s3://bucket")
-	require.NoError(t, err)
-	err = checkNextGenS3PathWithSem(u)
-	require.NoError(t, err)
+	for _, str := range []string{
+		"s3://bucket",
+		"oss://bucket",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.NoError(t, err)
+	}
 }
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
@@ -1198,7 +1211,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		TablePlan: tablePlan,
 		IndexPlan: indexPlan,
 		KeepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
 	check(reader)
 	cloned, err := reader.Clone(ctx)
 	require.NoError(t, err)
@@ -1266,7 +1279,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		TablePlan: projectionPlan,
 		IndexPlan: limitPlan,
 		KeepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
 	check(reader)
 	cloned, err = reader.Clone(ctx)
 	require.NoError(t, err)

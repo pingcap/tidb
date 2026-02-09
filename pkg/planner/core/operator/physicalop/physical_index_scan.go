@@ -234,7 +234,7 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}
@@ -783,9 +783,15 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		StoreType:        path.StoreType,
 		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+<<<<<<< HEAD
 	if is.FtsQueryInfo != nil {
 		is.StoreType = kv.TiCI
 	}
+=======
+
+	is.SetNoncacheableReason(path.NoncacheableReason)
+
+>>>>>>> origin/master
 	rowCount := path.CountAfterAccess
 	if is.FtsQueryInfo != nil {
 		is.InitSchemaForTiCIIndex(ds.CommonHandleCols, path.FullIdxCols)
@@ -819,8 +825,9 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
-	if isMatchProp {
-		is.Desc = prop.SortItems[0].Desc
+	// Index scan should maintain order (true for both normal sorting via SortItems and partial order via PartialOrderInfo)
+	if prop.NeedKeepOrder() {
+		is.Desc = prop.GetSortDescForKeepOrder()
 		is.KeepOrder = true
 	}
 	return is

@@ -83,51 +83,51 @@ id	task	access object	operator info
 MemTableScan	root	table:TABLE_STORAGE_STATS	schema:["information_schema"], table:["schemata"]
 explain format='plan_tree' select * from information_schema.inspection_summary where rule='ddl';
 id	task	access object	operator info
-Selection	root		eq(Column#1, "ddl")
+Selection	root		eq(Column, "ddl")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl"]
 explain format='plan_tree' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config';
 id	task	access object	operator info
-Selection	root		or(eq("ddl", Column#1), eq(Column#1, "config"))
+Selection	root		or(eq("ddl", Column), eq(Column, "config"))
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config","ddl"]
 explain format='plan_tree' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query';
 id	task	access object	operator info
-Selection	root		or(eq("ddl", Column#1), or(eq(Column#1, "config"), eq(Column#1, "slow_query")))
+Selection	root		or(eq("ddl", Column), or(eq(Column, "config"), eq(Column, "slow_query")))
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config","ddl","slow_query"]
 explain format='plan_tree' select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1');
 id	task	access object	operator info
-Selection	root		or(eq(Column#1, "config"), eq(Column#1, "slow_query")), or(eq(Column#3, "metric_name3"), eq(Column#3, "metric_name1"))
+Selection	root		or(eq(Column, "config"), eq(Column, "slow_query")), or(eq(Column, "metric_name3"), eq(Column, "metric_name1"))
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config","slow_query"], metric_names:["metric_name1","metric_name3"]
 explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query');
 id	task	access object	operator info
-Selection	root		in(Column#1, "ddl", "slow_query")
+Selection	root		in(Column, "ddl", "slow_query")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"]
 explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1';
 id	task	access object	operator info
-Selection	root		eq(Column#3, "metric_name1"), in(Column#1, "ddl", "slow_query")
+Selection	root		eq(Column, "metric_name1"), in(Column, "ddl", "slow_query")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"], metric_names:["metric_name1"]
 explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2');
 id	task	access object	operator info
-Selection	root		in(Column#1, "ddl", "slow_query"), in(Column#3, "metric_name1", "metric_name2")
+Selection	root		in(Column, "ddl", "slow_query"), in(Column, "metric_name1", "metric_name2")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"], metric_names:["metric_name1","metric_name2"]
 explain format='plan_tree' select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2');
 id	task	access object	operator info
-Selection	root		eq(Column#1, "ddl"), in(Column#3, "metric_name1", "metric_name2")
+Selection	root		eq(Column, "ddl"), in(Column, "metric_name1", "metric_name2")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl"], metric_names:["metric_name1","metric_name2"]
 explain format='plan_tree' select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3';
 id	task	access object	operator info
-Selection	root		eq(Column#1, "ddl"), eq(Column#3, "metric_NAME3")
+Selection	root		eq(Column, "ddl"), eq(Column, "metric_NAME3")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl"], metric_names:["metric_name3"]
 explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config');
 id	task	access object	operator info
-Selection	root		in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config")
+Selection	root		in(Column, "ddl", "config"), in(Column, "slow_query", "config")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config"]
 explain format='plan_tree' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90);
 id	task	access object	operator info
-Selection	root		in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name4")
+Selection	root		in(Column, "ddl", "config"), in(Column, "metric_name1", "metric_name4"), in(Column, "metric_name5", "metric_name4"), in(Column, "slow_query", "config")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config"], metric_names:["metric_name4"], quantiles:[0.800000,0.900000]
 explain format='plan_tree' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3');
 id	task	access object	operator info
-Selection	root		in(Column#3, "metric_name1", "metric_name3"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name1"), in(Column#3, "metric_name5", "metric_name4")
+Selection	root		in(Column, "metric_name1", "metric_name3"), in(Column, "metric_name1", "metric_name4"), in(Column, "metric_name5", "metric_name1"), in(Column, "metric_name5", "metric_name4")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	skip_inspection: true
 explain format='plan_tree' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930';
 id	task	access object	operator info
@@ -881,16 +881,16 @@ id	task	access object	operator info
 MemTableScan	root	table:STATISTICS	table_schema:["s1","test"]
 explain format='plan_tree' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
 id	task	access object	operator info
-Projection	root		Column#8->Column#19
-└─Sort	root		Column#7
+Projection	root		Column
+└─Sort	root		Column
   └─MemTableScan	root	table:STATISTICS	index_name:["idx1"], table_name:["t"], table_schema:["plan_cache"]
 explain format='plan_tree' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
 id	task	access object	operator info
 MemTableScan	root	table:TABLES	table_name:["t"], table_schema:["plan_cache"]
 explain format='plan_tree' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';
 id	task	access object	operator info
-Projection	root		Column#2, Column#3, Column#1, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9, Column#10, Column#11, Column#12, Column#15, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23
-└─HashJoin	root		inner join, equal:[eq(Column#3, Column#14) eq(Column#2, Column#13)]
-  ├─Selection(Build)	root		ne(Column#23, "t")
+Projection	root		Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column
+└─HashJoin	root		inner join, equal:[eq(Column, Column) eq(Column, Column)]
+  ├─Selection(Build)	root		ne(Column, "t")
   │ └─MemTableScan	root	table:KEY_COLUMN_USAGE	constraint_schema:["plan_cache"], table_name:["t"], table_schema:["plan_cache"]
   └─MemTableScan(Probe)	root	table:REFERENTIAL_CONSTRAINTS	constraint_schema:["plan_cache"], table_name:["t"]
