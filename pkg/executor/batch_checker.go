@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -265,6 +267,17 @@ func dataToStrings(data []types.Datum) ([]string, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if datum.Kind() == types.KindBytes || datum.Kind() == types.KindMysqlBit || datum.Kind() == types.KindBinaryLiteral {
+			// Same as MySQL, remove all 0x00 on the tail,
+			// but keep one 0x00 at least.
+			if datum.Kind() == types.KindBytes {
+				str = strings.TrimRight(str, string(rune(0x00)))
+				if len(str) == 0 {
+					str = string(rune(0x00))
+				}
+			}
+			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
+		}
 		strs = append(strs, str)
 	}
 	return strs, nil
@@ -272,17 +285,28 @@ func dataToStrings(data []types.Datum) ([]string, error) {
 
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
-func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
-	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
+func getOldRow(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	txn kv.Transaction,
+	t table.Table,
+	handle kv.Handle,
+	genExprs []expression.Expression,
+	needExtraCommitTS bool,
+) ([]types.Datum, uint64, error) {
+	var options []kv.GetOption
+	if needExtraCommitTS {
+		options = append(options, kv.WithReturnCommitTS())
+	}
+	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle), options...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	cols := t.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue)
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue.Value)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
 	gIdx := 0
@@ -293,7 +317,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 			if !found {
 				oldRow[col.Offset], err = table.GetColOriginDefaultValue(exprCtx, col.ToInfo())
 				if err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 			}
 		}
@@ -303,15 +327,15 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 			if !col.GeneratedStored {
 				val, err := genExprs[gIdx].Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(oldRow).ToRow())
 				if err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 				oldRow[col.Offset], err = table.CastValue(sctx, val, col.ToInfo(), false, false)
 				if err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 			}
 			gIdx++
 		}
 	}
-	return oldRow, nil
+	return oldRow, oldValue.CommitTS, nil
 }
