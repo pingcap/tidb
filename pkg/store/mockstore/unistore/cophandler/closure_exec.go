@@ -301,7 +301,13 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
 
-	// Here it is required that ExtraPhysTblID is last
+	// Trim trailing special columns which are not encoded in the index key/value.
+	// See `tablecodec.DecodeIndexKV` / coprocessor returned special columns.
+	if lastColumn.GetColumnId() == model.ExtraCommitTsID {
+		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
+	}
+	// Here it is required that ExtraPhysTblID is trailing.
 	if lastColumn.GetColumnId() == model.ExtraPhysTblID {
 		e.idxScanCtx.columnLen--
 		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
@@ -847,11 +853,16 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte, commitTS uint6
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Add ExtraPhysTblID if requested
-	// Assumes it is always last!
-	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+	for i := range e.columnInfos {
+		if e.columnInfos[i].ColumnId != model.ExtraPhysTblID {
+			continue
+		}
 		tblID := tablecodec.DecodeTableID(key)
-		e.scanCtx.chk.AppendInt64(len(e.columnInfos)-1, tblID)
+		rowIdx := e.scanCtx.chk.NumRows() - 1
+		col := e.scanCtx.chk.Column(i)
+		col.SetNull(rowIdx, false)
+		col.Int64s()[rowIdx] = tblID
+		break
 	}
 	incRow = true
 	return nil
@@ -937,13 +948,27 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 			}
 		}
 	}
-	// Add ExtraPhysTblID if requested
-	// Assumes it is always last!
-	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
-	// The following if statement is to fill in the tid when we needed it.
-	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID && len(e.columnInfos) >= len(values) {
+	filledLen := len(values)
+
+	idxCommitTs := -1
+	idxPhysTblID := -1
+	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraCommitTsID {
+		idxCommitTs = len(e.columnInfos) - 1
+	}
+	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+		idxPhysTblID = len(e.columnInfos) - 1
+	} else if idxCommitTs >= 0 && len(e.columnInfos) > 1 && e.columnInfos[len(e.columnInfos)-2].ColumnId == model.ExtraPhysTblID {
+		idxPhysTblID = len(e.columnInfos) - 2
+	}
+
+	// If we need pid, it is filled by the loop above because `DecodeIndexKV` can return the pid in `values`.
+	// When it's not present, fill `_tidb_tid` (physical table id) from the key.
+	if idxPhysTblID >= 0 && idxPhysTblID >= filledLen {
 		tblID := tablecodec.DecodeTableID(decodedKey)
-		chk.AppendInt64(len(e.columnInfos)-1, tblID)
+		chk.AppendInt64(idxPhysTblID, tblID)
+	}
+	if idxCommitTs >= 0 && idxCommitTs >= filledLen {
+		chk.AppendNull(idxCommitTs)
 	}
 	gotRow = true
 	return nil
