@@ -1524,7 +1524,7 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 	}
 	pAst := at.Specs[0].Partition
 	_, err = buildPartitionDefinitionsInfo(
-		exprctx.CtxWithHandleTruncateErrLevel(sctx.GetExprCtx(), errctx.LevelError),
+		exprctx.WithBuildCtxHandleTruncateErrLevel(sctx.GetExprCtx(), errctx.LevelError),
 		pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)),
 	)
 	if err != nil {

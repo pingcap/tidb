@@ -24,8 +24,8 @@ import (
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
-// cteOverrideExprSessionCtx scopes an ExprCtx override to a subtree without mutating the original session.
-type cteOverrideExprSessionCtx struct {
+// sessionCtxExprOverrideWrapper scopes an ExprCtx override to a subtree without mutating the original session.
+type sessionCtxExprOverrideWrapper struct {
 	sessionctx.Context
 	exprCtx exprctx.ExprContext
 
@@ -33,42 +33,42 @@ type cteOverrideExprSessionCtx struct {
 	planCtx     planctx.PlanContext
 }
 
-func (c *cteOverrideExprSessionCtx) GetExprCtx() exprctx.ExprContext {
+func (c *sessionCtxExprOverrideWrapper) GetExprCtx() exprctx.ExprContext {
 	return c.exprCtx
 }
 
-func (c *cteOverrideExprSessionCtx) GetPlanCtx() planctx.PlanContext {
+func (c *sessionCtxExprOverrideWrapper) GetPlanCtx() planctx.PlanContext {
 	c.planCtxOnce.Do(func() {
 		c.planCtx = planctx.WithExprCtx(c.Context.GetPlanCtx(), c.exprCtx)
 	})
 	return c.planCtx
 }
 
-func (c *cteOverrideExprSessionCtx) GetRangerCtx() *rangerctx.RangerContext {
+func (c *sessionCtxExprOverrideWrapper) GetRangerCtx() *rangerctx.RangerContext {
 	return c.GetPlanCtx().GetRangerCtx()
 }
 
-func (c *cteOverrideExprSessionCtx) GetBuildPBCtx() *planctx.BuildPBContext {
+func (c *sessionCtxExprOverrideWrapper) GetBuildPBCtx() *planctx.BuildPBContext {
 	return c.GetPlanCtx().GetBuildPBCtx()
 }
 
-// makeOverrideExprSessionCtx wraps the session context and overrides only the ExprCtx (and derived plan/ranger contexts),
+// wrapSessionCtxWithExprCtx wraps the session context and overrides only the ExprCtx (and derived plan/ranger contexts),
 // so the behavior change is scoped to the returned context.
-func makeOverrideExprSessionCtx(sctx sessionctx.Context, overrideExprCtx exprctx.ExprContext) sessionctx.Context {
+func wrapSessionCtxWithExprCtx(sctx sessionctx.Context, overrideExprCtx exprctx.ExprContext) sessionctx.Context {
 	if overrideExprCtx == nil || overrideExprCtx == sctx.GetExprCtx() {
 		return sctx
 	}
-	return &cteOverrideExprSessionCtx{
+	return &sessionCtxExprOverrideWrapper{
 		Context: sctx,
 		exprCtx: overrideExprCtx,
 	}
 }
 
-// makeCTEStrictTruncateErrSessionCtx wraps the session context and overrides only the ExprCtx,
+// wrapSessionCtxForCTEStrictTruncateErr wraps the session context and overrides only the ExprCtx,
 // so recursive CTE worktable writes treat truncation like INSERT in strict SQL mode.
-func makeCTEStrictTruncateErrSessionCtx(sctx sessionctx.Context) sessionctx.Context {
+func wrapSessionCtxForCTEStrictTruncateErr(sctx sessionctx.Context) sessionctx.Context {
 	origExprCtx := sctx.GetExprCtx()
 	// Recursive CTE in MySQL behaves like writing into an internal worktable, so truncation is handled like INSERT.
 	overrideExprCtx := exprctx.WithHandleTruncateErrLevel(origExprCtx, errctx.LevelError)
-	return makeOverrideExprSessionCtx(sctx, overrideExprCtx)
+	return wrapSessionCtxWithExprCtx(sctx, overrideExprCtx)
 }
