@@ -31,6 +31,8 @@ import (
 const (
 	// watchSyncInterval is the interval to sync the watch record.
 	watchSyncInterval = time.Second
+	// watchSyncBatchLimit is the max number of rows fetched per sync query.
+	watchSyncBatchLimit = 256
 	// watchTableName is the name of system table which save runaway watch items.
 	runawayWatchTableName = "tidb_runaway_watch"
 	// watchDoneTableName is the name of system table which save done runaway watch items.
@@ -61,12 +63,12 @@ func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache)
 		infoCache:      infoCache,
 		newWatchReader: &systemTableReader{
 			getRunawayWatchTableName(),
-			"start_time",
-			NullTime},
+			"id",
+			0},
 		deletionWatchReader: &systemTableReader{
 			getRunawayWatchDoneTableName(),
-			"done_time",
-			NullTime},
+			"id",
+			0},
 	}
 }
 
@@ -129,7 +131,6 @@ func getRunawayWatchRecord(sysSessionPool util.SessionPool, reader *systemTableR
 		return nil, err
 	}
 	ret := make([]*QuarantineRecord, 0, len(rs))
-	now := time.Now().UTC()
 	for _, r := range rs {
 		startTime, err := r.GetTime(2).GoTime(time.UTC)
 		if err != nil {
@@ -154,12 +155,10 @@ func getRunawayWatchRecord(sysSessionPool util.SessionPool, reader *systemTableR
 			SwitchGroupName:   r.GetString(8),
 			ExceedCause:       r.GetString(9),
 		}
-		// If a TiDB write record slow, it will occur that the record which has earlier start time is inserted later than others.
-		// So we start the scan a little earlier.
-		if push {
-			reader.CheckPoint = now.Add(-3 * watchSyncInterval)
-		}
 		ret = append(ret, qr)
+	}
+	if push && len(rs) > 0 {
+		reader.CheckPoint = rs[len(rs)-1].GetInt64(0)
 	}
 	return ret, nil
 }
@@ -170,9 +169,7 @@ func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTa
 	if err != nil {
 		return nil, err
 	}
-	length := len(rs)
-	ret := make([]*QuarantineRecord, 0, length)
-	now := time.Now().UTC()
+	ret := make([]*QuarantineRecord, 0, len(rs))
 	for _, r := range rs {
 		startTime, err := r.GetTime(3).GoTime(time.UTC)
 		if err != nil {
@@ -197,11 +194,10 @@ func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTa
 			SwitchGroupName:   r.GetString(9),
 			ExceedCause:       r.GetString(10),
 		}
-		// Ditto as getRunawayWatchRecord.
-		if push {
-			reader.CheckPoint = now.Add(-3 * watchSyncInterval)
-		}
 		ret = append(ret, qr)
+	}
+	if push && len(rs) > 0 {
+		reader.CheckPoint = rs[len(rs)-1].GetInt64(0)
 	}
 	return ret, nil
 }
@@ -210,7 +206,7 @@ func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTa
 type systemTableReader struct {
 	TableName  string
 	KeyCol     string
-	CheckPoint time.Time
+	CheckPoint int64
 }
 
 func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
@@ -239,14 +235,15 @@ func (r *systemTableReader) genSelectByGroupStmt(groupName string) func() (strin
 
 func (r *systemTableReader) genSelectStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]any, 0, 1)
+	params := make([]any, 0, 2)
 	builder.WriteString("select * from ")
 	builder.WriteString(r.TableName)
 	builder.WriteString(" where ")
 	builder.WriteString(r.KeyCol)
 	builder.WriteString(" > %? order by ")
 	builder.WriteString(r.KeyCol)
-	params = append(params, r.CheckPoint)
+	builder.WriteString(" limit %?")
+	params = append(params, r.CheckPoint, watchSyncBatchLimit)
 	return builder.String(), params
 }
 
