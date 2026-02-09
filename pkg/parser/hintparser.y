@@ -128,6 +128,7 @@ import (
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 	hintNoDecorrelate         "NO_DECORRELATE"
+	hintTiDBXRemotePlanForce  "TIDBX_REMOTE_PLAN_FORCE"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -703,6 +704,7 @@ NullaryHintName:
 |	"STRAIGHT_JOIN"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"TIDBX_REMOTE_PLAN_FORCE"
 
 HintQueryType:
 	"OLAP"
@@ -787,6 +789,7 @@ Identifier:
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"TIDBX_REMOTE_PLAN_FORCE"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

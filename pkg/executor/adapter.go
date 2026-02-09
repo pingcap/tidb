@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -532,7 +533,15 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
 	nodeW := resolve.NewNodeW(a.StmtNode)
-	if err := plannercore.Preprocess(ctx, a.Ctx, nodeW, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	opts := []plannercore.PreprocessOpt{
+		plannercore.InTxnRetry,
+		plannercore.InitTxnContextProvider,
+		plannercore.WithPreprocessorReturn(ret),
+	}
+	if a.isPreparedStmt || a.PsStmt != nil {
+		opts = append(opts, plannercore.InPrepare)
+	}
+	if err := plannercore.Preprocess(ctx, a.Ctx, nodeW, opts...); err != nil {
 		return 0, err
 	}
 
@@ -2292,6 +2301,9 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	if !topsqlstate.TopSQLEnabled() && IsFastPlan(a.Plan) {
 		// To reduce the performance impact on fast plan.
 		// Drop them does not cause notable accuracy issue in TopSQL.
+		return ctx
+	}
+	if (ctx.Value(core.InRemoteExec{}) != nil) {
 		return ctx
 	}
 

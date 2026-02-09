@@ -49,7 +49,7 @@ go_test(
     timeout = "short",
     srcs = ["remote_test.go"],
     flaky = True,
-    shard_count = 19,
+    shard_count = 20,
     deps = [
         ":pkdb_remote",
         "//pkg/testkit",

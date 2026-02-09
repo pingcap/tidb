@@ -1834,7 +1834,7 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 
 func TestEnableRemotePlanForwardingSysVar(t *testing.T) {
 	vars := NewSessionVars(nil)
-	sv := GetSysVar(TiDBEnableRemotePlan)
+	sv := GetSysVar(TiDBXRemotePlanEnable)
 	require.NotNil(t, sv)
 
 	require.False(t, vars.EnableRemotePlan)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/pkdb_remote/pb"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -95,6 +96,45 @@ func (pr *pendingRequest) closeDone() {
 	}
 }
 
+// Increased from 100 to 200 to reduce blocking when remote server sends responses faster
+const defaultRespChSize = 200
+
+var respChPool = sync.Pool{
+	New: func() any { return make(chan *pb.StreamResponse, defaultRespChSize) },
+}
+
+func acquireRespCh() chan *pb.StreamResponse {
+	ch, _ := respChPool.Get().(chan *pb.StreamResponse)
+	if ch == nil {
+		return make(chan *pb.StreamResponse, defaultRespChSize)
+	}
+	drainRespCh(ch)
+	return ch
+}
+
+func releaseRespCh(ch chan *pb.StreamResponse) {
+	if ch == nil {
+		return
+	}
+	if closed := drainRespCh(ch); closed {
+		return
+	}
+	respChPool.Put(ch)
+}
+
+func drainRespCh(ch chan *pb.StreamResponse) bool {
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return true
+			}
+		default:
+			return false
+		}
+	}
+}
+
 type sendRequest struct {
 	requestID uint64
 	req       *pb.RemoteRequest
@@ -122,6 +162,48 @@ func NewBatchClientWithConfig(config *BatchConfig) *BatchClient {
 var DefaultBatchClient *BatchClient
 
 func init() { DefaultBatchClient = NewBatchClient() }
+
+var unknownWarning = contextutil.SQLWarn{
+	Level: contextutil.WarnLevelWarning,
+	Err: &terror.TiDBError{
+		MYSQLERRNO:  int64(mysql.ErrUnknown),
+		MESSAGETEXT: "",
+	},
+}
+
+var errChPool = sync.Pool{
+	New: func() any { return make(chan error, 1) },
+}
+
+func acquireErrCh() chan error {
+	ch, _ := errChPool.Get().(chan error)
+	if ch == nil {
+		return make(chan error, 1)
+	}
+	drainErrCh(ch)
+	return ch
+}
+
+func releaseErrCh(ch chan error) {
+	if ch == nil {
+		return
+	}
+	drainErrCh(ch)
+	errChPool.Put(ch)
+}
+
+func drainErrCh(ch chan error) {
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+		default:
+			return
+		}
+	}
+}
 
 // Execute executes a remote request using bidirectional streaming with batching
 func (c *BatchClient) Execute(ctx context.Context, req *pb.RemoteRequest, sctx sessionctx.Context) (sqlexec.RecordSet, error) {
@@ -213,6 +295,12 @@ func (sw *streamWrapper) removePending(requestID uint64, pr *pendingRequest) {
 	pr.closeDone()
 }
 
+// removePendingWithMetric removes a pending request and decrements the pending requests metric.
+func (sw *streamWrapper) removePendingWithMetric(requestID uint64, pr *pendingRequest) {
+	sw.removePending(requestID, pr)
+	metrics.RemotePlanBatchClientPendingRequests.Dec()
+}
+
 // executeOnce executes a single request attempt
 func (c *BatchClient) executeOnce(ctx context.Context, req *pb.RemoteRequest, sctx sessionctx.Context) (sqlexec.RecordSet, error) {
 	sw, err := c.getOrCreateStream(ctx, req.Target)
@@ -226,47 +314,73 @@ func (c *BatchClient) executeOnce(ctx context.Context, req *pb.RemoteRequest, sc
 	}
 
 	requestID := atomic.AddUint64(&c.nextRequestID, 1)
-	respCh := make(chan *pb.StreamResponse, 100)
-	errCh := make(chan error, 1)
+	respCh := acquireRespCh()
+	errCh := acquireErrCh()
 	pr := &pendingRequest{requestID: requestID, respCh: respCh, done: make(chan struct{})}
 
 	sw.pendingMu.Lock()
 	sw.pending[requestID] = pr
 	sw.pendingMu.Unlock()
+	metrics.RemotePlanBatchClientPendingRequests.Inc()
 
+	// Record time when request is submitted to sendCh for first_resp_duration
+	firstRespStart := time.Now()
+
+	// Try non-blocking send first, then blocking send if channel is full
 	select {
 	case sw.sendCh <- &sendRequest{requestID: requestID, req: req, errCh: errCh}:
-	case <-ctx.Done():
-		sw.removePending(requestID, pr)
-		return nil, ctx.Err()
-	case <-sw.closedCh:
-		sw.removePending(requestID, pr)
-		return nil, errors.New("stream closed")
+		// Fast path: sent immediately
+	default:
+		// Slow path: channel is full, record metric and wait
+		metrics.RemotePlanBatchClientSendChFull.Inc()
+		select {
+		case sw.sendCh <- &sendRequest{requestID: requestID, req: req, errCh: errCh}:
+		case <-ctx.Done():
+			sw.removePendingWithMetric(requestID, pr)
+			releaseErrCh(errCh)
+			return nil, ctx.Err()
+		case <-sw.closedCh:
+			sw.removePendingWithMetric(requestID, pr)
+			releaseErrCh(errCh)
+			return nil, errors.New("stream closed")
+		}
 	}
 
 	select {
 	case err := <-errCh:
-		sw.removePending(requestID, pr)
+		sw.removePendingWithMetric(requestID, pr)
+		releaseErrCh(errCh)
+		metrics.RemotePlanFirstRespErrDuration.Observe(time.Since(firstRespStart).Seconds())
 		return nil, err
 	case resp, ok := <-respCh:
+		releaseErrCh(errCh)
 		if !ok {
 			// Channel was closed, stream died before first response
+			metrics.RemotePlanFirstRespErrDuration.Observe(time.Since(firstRespStart).Seconds())
 			return nil, errors.New("stream closed before receiving response")
+		}
+		// Record first response duration (excludes client data consumption time)
+		if resp.Err != "" {
+			metrics.RemotePlanFirstRespErrDuration.Observe(time.Since(firstRespStart).Seconds())
+		} else {
+			metrics.RemotePlanFirstRespOKDuration.Observe(time.Since(firstRespStart).Seconds())
 		}
 		return c.handleFirstResponse(resp, requestID, respCh, pr, sw, sctx)
 	case <-ctx.Done():
-		sw.removePending(requestID, pr)
+		sw.removePendingWithMetric(requestID, pr)
+		metrics.RemotePlanFirstRespErrDuration.Observe(time.Since(firstRespStart).Seconds())
 		return nil, ctx.Err()
 	case <-sw.closedCh:
 		// Stream was closed while waiting for response
-		sw.removePending(requestID, pr)
+		sw.removePendingWithMetric(requestID, pr)
+		metrics.RemotePlanFirstRespErrDuration.Observe(time.Since(firstRespStart).Seconds())
 		return nil, errors.New("stream closed")
 	}
 }
 
 func (c *BatchClient) handleFirstResponse(resp *pb.StreamResponse, requestID uint64, respCh chan *pb.StreamResponse, pr *pendingRequest, sw *streamWrapper, sctx sessionctx.Context) (sqlexec.RecordSet, error) {
 	if resp.Err != "" {
-		sw.removePending(requestID, pr)
+		sw.removePendingWithMetric(requestID, pr)
 		return nil, errors.New(resp.Err)
 	}
 	// The local stmt context shouldn't keep holding on to the memory/disk tracker
@@ -276,50 +390,54 @@ func (c *BatchClient) handleFirstResponse(resp *pb.StreamResponse, requestID uin
 		sctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
 	}
 	if len(resp.ColumnInfos) == 0 {
-		sw.removePending(requestID, pr)
+		sw.removePendingWithMetric(requestID, pr)
+		if !resp.HasMore {
+			releaseRespCh(respCh)
+		}
 		if resp.DmlResult != nil {
 			info := resp.DmlResult.Info
 			var warns []contextutil.SQLWarn
 			if len(resp.DmlResult.Warnings) > 0 {
-				warns = make([]contextutil.SQLWarn, 0, len(resp.DmlResult.Warnings))
+				warns = make([]contextutil.SQLWarn, len(resp.DmlResult.Warnings))
+				warnIdx := 0
 				for _, w := range resp.DmlResult.Warnings {
 					if w == nil {
 						continue
 					}
-					warns = append(warns, contextutil.SQLWarn{
+					warns[warnIdx] = contextutil.SQLWarn{
 						Level: w.Level,
 						Err: &terror.TiDBError{
 							MYSQLERRNO:  int64(w.Code),
 							MESSAGETEXT: w.Message,
 						},
-					})
+					}
+					warnIdx++
 				}
+				warns = warns[:warnIdx]
 			} else if resp.DmlResult.WarningCount > 0 {
 				// Backward compatibility: preserve warning count even if warning details are not sent.
-				warns = make([]contextutil.SQLWarn, 0, int(resp.DmlResult.WarningCount))
-				for i := uint32(0); i < resp.DmlResult.WarningCount; i++ {
-					warns = append(warns, contextutil.SQLWarn{
-						Level: contextutil.WarnLevelWarning,
-						Err: &terror.TiDBError{
-							MYSQLERRNO:  int64(mysql.ErrUnknown),
-							MESSAGETEXT: "",
-						},
-					})
+				warns = make([]contextutil.SQLWarn, int(resp.DmlResult.WarningCount))
+				for i := range warns {
+					warns[i] = unknownWarning
 				}
 			}
-			return &DMLRecordSet{
-				sctx:         sctx,
-				affectedRows: resp.DmlResult.AffectedRows,
-				lastInsertID: resp.DmlResult.LastInsertId,
-				statusFlags:  resp.DmlResult.StatusFlags,
-				warningCount: resp.DmlResult.WarningCount,
-				info:         info,
-				warnings:     warns,
-			}, nil
+			dmlRS := acquireDMLRecordSet()
+			dmlRS.sctx = sctx
+			dmlRS.affectedRows = resp.DmlResult.AffectedRows
+			dmlRS.lastInsertID = resp.DmlResult.LastInsertId
+			dmlRS.statusFlags = resp.DmlResult.StatusFlags
+			dmlRS.warningCount = resp.DmlResult.WarningCount
+			dmlRS.info = info
+			dmlRS.warnings = warns
+			return dmlRS, nil
 		}
-		return &DMLRecordSet{sctx: sctx}, nil
+		dmlRS := acquireDMLRecordSet()
+		dmlRS.sctx = sctx
+		return dmlRS, nil
 	}
-	return newBatchStreamingRecordSet(requestID, resp.ColumnInfos, respCh, pr, sw, sctx), nil
+	rs := newBatchStreamingRecordSet(requestID, resp.ColumnInfos, respCh, pr, sw, sctx)
+	rs.firstRespTime = time.Now() // Record when first response was received for client_consume_duration
+	return rs, nil
 }
 
 func (c *BatchClient) getOrCreateStream(ctx context.Context, target string) (*streamWrapper, error) {
@@ -396,6 +514,8 @@ func (c *BatchClient) createStream(ctx context.Context, target string) (*streamW
 	go sw.batchSendLoop()
 	go sw.recvLoop()
 
+	metrics.RemotePlanBatchClientActiveStreams.Inc()
+
 	logutil.BgLogger().Info("created new batch stream",
 		zap.String("target", target),
 	)
@@ -458,6 +578,8 @@ func (sw *streamWrapper) batchSendLoop() {
 		}
 
 		// Send the batch immediately
+		batchSize := len(reqs)
+		metrics.RemotePlanBatchClientBatchSize.Observe(float64(batchSize))
 		batchReq := &pb.BatchRemoteRequest{Requests: reqs, RequestIds: ids}
 		if err := sw.stream.Send(batchReq); err != nil {
 			for _, errCh := range errChs {
@@ -485,7 +607,9 @@ func (sw *streamWrapper) recvLoop() {
 			return
 		default:
 		}
+		recvStart := time.Now()
 		resp, err := sw.stream.Recv()
+		metrics.RemotePlanGrpcRecvDuration.Observe(time.Since(recvStart).Seconds())
 		if err != nil {
 			if err != io.EOF {
 				logutil.BgLogger().Warn("batch stream recv error", zap.String("target", sw.target), zap.Error(err))
@@ -517,15 +641,23 @@ func (sw *streamWrapper) recvLoop() {
 			}
 			// Send response to the request's channel
 			// We must not drop responses as that would corrupt results or leave pending entries stuck
+			// Try non-blocking send first to detect channel full condition
 			select {
 			case pr.respCh <- streamResp:
-				// Successfully sent
-			case <-pr.done:
-				// Request was closed, skip remaining responses for this request
-				continue
-			case <-sw.closedCh:
-				// Stream is closing, stop processing
-				return
+				// Successfully sent (fast path)
+			default:
+				// Channel is full, record metric and do blocking send
+				metrics.RemotePlanBatchClientRespChFull.Inc()
+				select {
+				case pr.respCh <- streamResp:
+					// Successfully sent after waiting
+				case <-pr.done:
+					// Request was closed, skip remaining responses for this request
+					continue
+				case <-sw.closedCh:
+					// Stream is closing, stop processing
+					return
+				}
 			}
 			if !streamResp.HasMore {
 				sw.pendingMu.Lock()
@@ -535,6 +667,8 @@ func (sw *streamWrapper) recvLoop() {
 					sw.pendingMu.Unlock()
 					// Only close done if we were the one to remove it
 					pr.closeDone()
+					// Decrement pending requests counter
+					metrics.RemotePlanBatchClientPendingRequests.Dec()
 				} else {
 					sw.pendingMu.Unlock()
 				}
@@ -569,6 +703,7 @@ func (sw *streamWrapper) doClose() {
 		sw.conn.Close()
 	}
 	sw.pendingMu.Lock()
+	pendingCount := len(sw.pending)
 	for _, pr := range sw.pending {
 		// Close respCh to unblock any readers
 		// The consumer (batchStreamingRecordSet) will check sw.GetCloseError() when respCh is closed
@@ -580,6 +715,12 @@ func (sw *streamWrapper) doClose() {
 	}
 	sw.pending = make(map[uint64]*pendingRequest)
 	sw.pendingMu.Unlock()
+
+	// Update metrics after releasing lock
+	metrics.RemotePlanBatchClientActiveStreams.Dec()
+	if pendingCount > 0 {
+		metrics.RemotePlanBatchClientPendingRequests.Sub(float64(pendingCount))
+	}
 }
 
 // GetCloseError returns the error that caused the stream to close

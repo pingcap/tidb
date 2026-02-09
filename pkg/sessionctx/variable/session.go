@@ -864,6 +864,9 @@ type SessionVars struct {
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
 
+	// ForwardedForRemoteExec indicates the session is executing forwarded SQL from another TiDB node.
+	ForwardedForRemoteExec bool
+
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 
@@ -2062,6 +2065,14 @@ func (p *PlanCacheParamList) SetForNonPrepCache(flag bool) {
 	p.forNonPrepCache = flag
 }
 
+// IsForNonPrepCache returns whether the params are for non-prepared plan cache.
+func (p *PlanCacheParamList) IsForNonPrepCache() bool {
+	if p == nil {
+		return false
+	}
+	return p.forNonPrepCache
+}
+
 // GetParamValue returns the value of the parameter at the specified index.
 func (p *PlanCacheParamList) GetParamValue(idx int) types.Datum {
 	return p.paramValues[idx]
@@ -2275,12 +2286,12 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:                      resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:             mysql.DefaultCollationName,
 		GroupConcatMaxLen:                      DefGroupConcatMaxLen,
-		EnableRemotePlan:                       DefTiDBEnableRemotePlan,
-		EnableRemotePlanInTxnRead:              DefTiDBEnableRemotePlanInTxnRead,
-		RemotePlanFeedbackDisableAfter:         DefTiDBRemotePlanFeedbackDisableAfter,
-		RemotePlanFeedbackCooldown:             DefTiDBRemotePlanFeedbackCooldown,
-		RemotePlanFeedbackNoShrinkRatio:        DefTiDBRemotePlanFeedbackNoShrinkRatio,
-		RemotePlanFeedbackMinLocalCallRequests: DefTiDBRemotePlanFeedbackMinLocalCallRequests,
+		EnableRemotePlan:                       DefTiDBXRemotePlanEnable,
+		EnableRemotePlanInTxnRead:              DefTiDBXRemotePlanEnableInTxnRead,
+		RemotePlanFeedbackDisableAfter:         DefTiDBXRemotePlanFeedbackDisableAfter,
+		RemotePlanFeedbackCooldown:             DefTiDBXRemotePlanFeedbackCooldown,
+		RemotePlanFeedbackNoShrinkRatio:        DefTiDBXRemotePlanFeedbackNoShrinkRatio,
+		RemotePlanFeedbackMinLocalCallRequests: DefTiDBXRemotePlanFeedbackMinLocalCallRequests,
 		EnableRedactLog:                        DefTiDBRedactLog,
 		EnableWindowFunction:                   DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:                 DefTiDBOptOrderingIdxSelRatio,

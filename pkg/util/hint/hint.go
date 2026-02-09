@@ -123,6 +123,8 @@ const (
 	HintSemiJoinRewrite = "semi_join_rewrite"
 	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
 	HintNoDecorrelate = "no_decorrelate"
+	// HintTiDBXRemotePlanForce is a hint to force remote plan forwarding.
+	HintTiDBXRemotePlanForce = "tidbx_remote_plan_force"
 
 	// HintMemoryQuota sets the memory limit for a query
 	HintMemoryQuota = "memory_quota"
@@ -218,6 +220,7 @@ type StmtHints struct {
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
 	StraightJoinOrder       bool
+	ForceRemotePlan         bool
 	// EnableCascadesPlanner is use cascades planner for a single query only.
 	EnableCascadesPlanner bool
 	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
@@ -269,6 +272,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
 		NoIndexMergeHint:               sh.NoIndexMergeHint,
 		StraightJoinOrder:              sh.StraightJoinOrder,
+		ForceRemotePlan:                sh.ForceRemotePlan,
 		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
@@ -307,7 +311,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt, forceRemotePlanHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -339,6 +343,9 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 		case "straight_join":
 			hintOffs[hint.HintName.L] = i
 			straightJoinHintCnt++
+		case HintTiDBXRemotePlanForce:
+			hintOffs[hint.HintName.L] = i
+			forceRemotePlanHintCnt++
 		case "hypo_index":
 			// to make it simpler, use Tables[0] as table, Tables[1] as index name, and Tables[2:] as column name.
 			if len(hint.Tables) < 3 {
@@ -461,6 +468,14 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 		}
 		stmtHints.StraightJoinOrder = true
 	}
+	// Handle TIDBX_REMOTE_PLAN_FORCE
+	if forceRemotePlanHintCnt != 0 {
+		if forceRemotePlanHintCnt > 1 {
+			warn := errors.NewNoStackError("TIDBX_REMOTE_PLAN_FORCE() is defined more than once, only the last definition takes effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.ForceRemotePlan = true
+	}
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {
 		if readReplicaHintCnt > 1 {
@@ -517,7 +532,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 // isStmtHint checks whether this hint is a statement-level hint.
 func isStmtHint(h *ast.TableOptimizerHint) bool {
 	switch h.HintName.L {
-	case "max_execution_time", "memory_quota", "resource_group":
+	case "max_execution_time", "memory_quota", "resource_group", HintTiDBXRemotePlanForce:
 		return true
 	default:
 		return false

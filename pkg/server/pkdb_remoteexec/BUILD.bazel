@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "pkdb_remoteexec",
-    srcs = ["service.go"],
+    srcs = [
+        "remote_worker_pool.go",
+        "service.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/server/pkdb_remoteexec",
     visibility = ["//visibility:public"],
     deps = [
@@ -15,8 +18,6 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/planner/core/resolve",
-        "//pkg/resourcemanager/pool/workerpool",
-        "//pkg/resourcemanager/util",
         "//pkg/server/internal/column",
         "//pkg/session",
         "//pkg/session/types",

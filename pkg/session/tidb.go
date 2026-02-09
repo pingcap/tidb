@@ -246,7 +246,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(se).Add(sql, sessVars.StmtCtx)
+			GetHistory(se).Add(sql, sessVars.StmtCtx, sessVars.PlanCacheParams)
 		}
 
 		// Handle the stmt commit/rollback.

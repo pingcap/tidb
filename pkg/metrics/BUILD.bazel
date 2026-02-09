@@ -17,6 +17,7 @@ go_library(
         "meta.go",
         "metrics.go",
         "owner.go",
+        "remote_plan.go",
         "resource_group.go",
         "resourcemanager.go",
         "server.go",

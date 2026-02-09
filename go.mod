@@ -94,7 +94,6 @@ require (
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20241022082558-0607513e7fa4
-	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10
 	github.com/prometheus/client_golang v1.20.5
 	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/common v0.57.0
@@ -336,6 +335,6 @@ replace (
 replace (
 	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20251217084855-cadfecf1aef6
 	github.com/pingcap/tipb => git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334
-	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20251219064713-3a66d7f848ac
+	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260209073842-ce9015532dea
 	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20251217153224-c982d611f7c8
 )

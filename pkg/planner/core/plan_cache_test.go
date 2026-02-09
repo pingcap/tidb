@@ -1654,7 +1654,7 @@ func TestPlanCacheDirtyTables(t *testing.T) {
 }
 
 func TestInstancePlanCacheAcrossSession(t *testing.T) {
-	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyEnableRemoteInstancePlanCache{}, true)
+	ctx := context.WithValue(context.Background(), plannercore.InRemoteExec{}, true)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec(`use test`)

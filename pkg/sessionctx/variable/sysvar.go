@@ -3598,28 +3598,28 @@ var defaultSysVars = []*SysVar{
 		s.EnableLazyCursorFetch = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableRemotePlan, Value: BoolToOnOff(DefTiDBEnableRemotePlan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXRemotePlanEnable, Value: BoolToOnOff(DefTiDBXRemotePlanEnable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableRemotePlan = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableRemotePlanInTxnRead, Value: BoolToOnOff(DefTiDBEnableRemotePlanInTxnRead), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXRemotePlanEnableInTxnRead, Value: BoolToOnOff(DefTiDBXRemotePlanEnableInTxnRead), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableRemotePlanInTxnRead = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRemotePlanFeedbackDisableAfter, Value: strconv.FormatUint(DefTiDBRemotePlanFeedbackDisableAfter, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.RemotePlanFeedbackDisableAfter = TidbOptUint64(val, DefTiDBRemotePlanFeedbackDisableAfter)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXRemotePlanFeedbackDisableAfter, Value: strconv.FormatUint(DefTiDBXRemotePlanFeedbackDisableAfter, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.RemotePlanFeedbackDisableAfter = TidbOptUint64(val, DefTiDBXRemotePlanFeedbackDisableAfter)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRemotePlanFeedbackCooldown, Value: strconv.FormatUint(DefTiDBRemotePlanFeedbackCooldown, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.RemotePlanFeedbackCooldown = TidbOptUint64(val, DefTiDBRemotePlanFeedbackCooldown)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXRemotePlanFeedbackCooldown, Value: strconv.FormatUint(DefTiDBXRemotePlanFeedbackCooldown, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.RemotePlanFeedbackCooldown = TidbOptUint64(val, DefTiDBXRemotePlanFeedbackCooldown)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRemotePlanFeedbackNoShrinkRatio, Value: strconv.FormatUint(DefTiDBRemotePlanFeedbackNoShrinkRatio, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100, SetSession: func(s *SessionVars, val string) error {
-		s.RemotePlanFeedbackNoShrinkRatio = TidbOptUint64(val, DefTiDBRemotePlanFeedbackNoShrinkRatio)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXRemotePlanFeedbackNoShrinkRatio, Value: strconv.FormatUint(DefTiDBXRemotePlanFeedbackNoShrinkRatio, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100, SetSession: func(s *SessionVars, val string) error {
+		s.RemotePlanFeedbackNoShrinkRatio = TidbOptUint64(val, DefTiDBXRemotePlanFeedbackNoShrinkRatio)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRemotePlanFeedbackMinLocalCallRequests, Value: strconv.FormatUint(DefTiDBRemotePlanFeedbackMinLocalCallRequests, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.RemotePlanFeedbackMinLocalCallRequests = TidbOptUint64(val, DefTiDBRemotePlanFeedbackMinLocalCallRequests)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXRemotePlanFeedbackMinLocalCallRequests, Value: strconv.FormatUint(DefTiDBXRemotePlanFeedbackMinLocalCallRequests, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.RemotePlanFeedbackMinLocalCallRequests = TidbOptUint64(val, DefTiDBXRemotePlanFeedbackMinLocalCallRequests)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableSharedLockPromotion, Value: BoolToOnOff(DefTiDBEnableSharedLockPromotion), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {

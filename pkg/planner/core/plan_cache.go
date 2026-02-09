@@ -59,8 +59,8 @@ type PlanCacheKeyTestClone struct{}
 // PlanCacheKeyEnableInstancePlanCache is only for test.
 type PlanCacheKeyEnableInstancePlanCache struct{}
 
-// PlanCacheKeyEnableRemoteInstancePlanCache is only for remote plan exec.
-type PlanCacheKeyEnableRemoteInstancePlanCache struct{}
+// InRemoteExec is only for remote plan exec.
+type InRemoteExec struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -293,7 +293,7 @@ func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
 }
 
 func instancePlanCacheEnabled(ctx context.Context) bool {
-	if ctx.Value(PlanCacheKeyEnableRemoteInstancePlanCache{}) != nil || (intest.InTest && ctx.Value(PlanCacheKeyEnableInstancePlanCache{}) != nil) {
+	if ctx.Value(InRemoteExec{}) != nil || (intest.InTest && ctx.Value(PlanCacheKeyEnableInstancePlanCache{}) != nil) {
 		return true
 	}
 	enableInstancePlanCache := variable.EnableInstancePlanCache.Load()
@@ -346,6 +346,9 @@ func AdjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	} else {
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
+	if ctx.Value(InRemoteExec{}) != nil {
+		metrics.RemotePlanCacheHitCounter.Inc()
+	}
 	if stmt != nil {
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	}
@@ -362,6 +365,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	stmtCtx := sessVars.StmtCtx
 
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
+	if ctx.Value(InRemoteExec{}) != nil {
+		metrics.RemotePlanCacheMissCounter.Inc()
+	}
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
 	p, names, err := OptimizeAstNode(ctx, sctx, nodeW, is)

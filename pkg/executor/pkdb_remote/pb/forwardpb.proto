@@ -91,6 +91,18 @@ message SessionSnapshot {
   bool enable_async_commit = 22;              // tidb_enable_async_commit
   bool enable_1pc = 23;                       // tidb_enable_1pc
   uint32 row_format_version = 24;             // tidb_row_format_version
+
+  // Plan cache behavior flags.
+  bool enable_plan_cache_for_param_limit = 25; // tidb_enable_plan_cache_for_param_limit
+
+  // Additional sysvars synced for remote execution.
+  uint64 instance_plan_cache_max_size = 26;       // tidb_instance_plan_cache_max_size
+  uint32 max_chunk_size = 27;                     // tidb_max_chunk_size
+  bool tidbx_enable_index_lookup_push_down = 28;  // tidbx_enable_index_lookup_push_down
+  bool tidbx_enable_single_store_txn_1pc = 29;    // tidbx_enable_single_store_txn_1pc
+  bool tidbx_store_batch_get = 30;                // tidbx_store_batch_get
+  bool tidbx_fast_path = 31;                      // tidbx_fast_path
+  bool skip_missing_partition_stats = 32;         // tidb_skip_missing_partition_stats
 }
 
 // TableVersion represents a table's ID and its schema revision
@@ -114,6 +126,9 @@ message PlanCacheInfo {
   
   // Whether the SQL contains subquery
   bool has_subquery = 4;
+
+  // Whether the SQL contains LIMIT clause
+  bool has_limit = 9;
   
   // Limit values (count, offset) for LIMIT clause
   repeated uint64 limit_values = 5;
@@ -125,8 +140,16 @@ message PlanCacheInfo {
   // This is used to restore the plan cache enabled flag on the remote side
   bool plan_cache_enabled = 7;
 
-  // Whether the statement is read-only (optional). If unset, remote side may re-parse to decide.
-  optional bool is_read_only = 8;
+  // Whether the statement is read-only.
+  //
+  // Tri-state semantics:
+  // - unset: unknown (remote side may re-parse to decide)
+  // - set: explicit true/false
+  //
+  // NOTE: Do NOT use `optional` in proto3 here because `protoc-gen-gofast` doesn't support it yet.
+  oneof is_read_only_opt {
+    bool is_read_only = 8;
+  }
 }
 
 message RemoteRequest {
@@ -141,6 +164,8 @@ message RemoteRequest {
   // If provided, the remote side can directly look up the plan cache
   // without parsing the SQL to extract table information
   PlanCacheInfo plan_cache_info = 7;
+  // SQL digest from the control side to avoid re-normalization on the remote side.
+  string sql_digest = 8;
 }
 
 // ColumnInfo mirrors pkg/server/internal/column.Info for MySQL protocol compatibility.

@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/executor/pkdb_remote"
+	pkdbremote "github.com/pingcap/tidb/pkg/executor/pkdb_remote"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -150,6 +150,7 @@ var _ types.Session = (*session)(nil)
 type stmtRecord struct {
 	st      sqlexec.Statement
 	stmtCtx *stmtctx.StatementContext
+	params  variable.PlanCacheParamList
 }
 
 // StmtHistory holds all histories of statements in a txn.
@@ -158,10 +159,15 @@ type StmtHistory struct {
 }
 
 // Add appends a stmt to history list.
-func (h *StmtHistory) Add(st sqlexec.Statement, stmtCtx *stmtctx.StatementContext) {
+func (h *StmtHistory) Add(st sqlexec.Statement, stmtCtx *stmtctx.StatementContext, params *variable.PlanCacheParamList) {
 	s := &stmtRecord{
 		st:      st,
 		stmtCtx: stmtCtx,
+	}
+	if params != nil {
+		s.params.Reset()
+		s.params.SetForNonPrepCache(params.IsForNonPrepCache())
+		s.params.Append(params.AllParamValues()...)
 	}
 	h.history = append(h.history, s)
 }
@@ -1091,6 +1097,13 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.sessionVars.StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PlanCacheParams.Reset()
+			params := &sr.params
+			if params.IsForNonPrepCache() {
+				s.sessionVars.PlanCacheParams.SetForNonPrepCache(true)
+			}
+			if vals := params.AllParamValues(); len(vals) > 0 {
+				s.sessionVars.PlanCacheParams.Append(vals...)
+			}
 			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
@@ -2641,6 +2654,7 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 			LatestSchemaVersion: versionInfo.LatestSchemaVersion,
 			IsReadOnly:          versionInfo.IsReadOnly,
 			HasSubquery:         versionInfo.HasSubquery,
+			HasLimit:            versionInfo.HasLimit,
 			LimitValues:         versionInfo.LimitValues,
 			StatsVerHash:        versionInfo.StatsVerHash,
 		}
@@ -2652,12 +2666,13 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 
 		// Try to look up plan cache directly using parameterized SQL with version info
 		// This avoids parsing SQL AST on the remote side
-		cachedVal, _, hit := plannercore.LookupPlanCacheBySQLWithParams(ctx, s, lookupParams)
+		cachedVal, key2, hit := plannercore.LookupPlanCacheBySQLWithParams(ctx, s, lookupParams)
 		if hit && cachedVal != nil && cachedVal.Stmt != nil {
 			pstmt := cachedVal.Stmt
 			if err := executor.ResetContextOfStmt(s, pstmt.PreparedAst.Stmt); err != nil {
 				return nil, err
 			}
+			s.restoreForwardedSQLDigest()
 
 			if versionInfo.PlanCacheEnabled {
 				s.GetSessionVars().StmtCtx.EnablePlanCache()
@@ -2674,9 +2689,12 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 				return nil, errors.Annotate(err, "failed to adjust cached plan")
 			}
 			if ok {
-				logutil.Logger(ctx).Debug("Hit remote PlanCache")
+				logutil.Logger(ctx).Debug("fast plan cache lookup hit", zap.String("key", key2))
 				return s.executeWithCachedPlan(ctx, plan, cachedVal.OutputColumns, cachedVal.Stmt, is)
 			}
+			logutil.Logger(ctx).Debug("fast plan cache lookup miss2", zap.String("key", key2))
+		} else {
+			logutil.Logger(ctx).Debug("fast plan cache lookup miss1", zap.String("key", key2))
 		}
 	}
 
@@ -2692,6 +2710,7 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 	if err := executor.ResetContextOfStmt(s, paramStmt); err != nil {
 		return nil, errors.Annotate(err, "failed to reset context of statement")
 	}
+	s.restoreForwardedSQLDigest()
 
 	// Set parameter values into session context before generating PlanCacheStmt
 	if err := plannercore.SetParameterValuesIntoSCtx(s.GetPlanCtx(), true, nil, params); err != nil {
@@ -2717,6 +2736,38 @@ func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL strin
 
 	// Build and execute the statement using the cached plan
 	return s.executeWithCachedPlan(ctx, plan, names, stmt, is)
+}
+
+func (s *session) restoreForwardedSQLDigest() {
+	v := s.Value(sessionctx.ForwardedSQLDigestKey{})
+	if v == nil {
+		return
+	}
+	s.ClearValue(sessionctx.ForwardedSQLDigestKey{})
+
+	digestInfo, ok := v.(sessionctx.ForwardedSQLDigest)
+	if !ok {
+		if ptr, ok := v.(*sessionctx.ForwardedSQLDigest); ok && ptr != nil {
+			digestInfo = *ptr
+		} else {
+			return
+		}
+	}
+	if digestInfo.Normalized == "" || s.sessionVars == nil || s.sessionVars.StmtCtx == nil {
+		return
+	}
+
+	var digest *parser.Digest
+	if digestInfo.Digest != "" {
+		if digestBytes, err := hex.DecodeString(digestInfo.Digest); err == nil {
+			digest = parser.NewDigest(digestBytes)
+		}
+	}
+	if digest == nil {
+		digest = parser.DigestNormalized(digestInfo.Normalized)
+	}
+
+	s.sessionVars.StmtCtx.InitSQLDigest(digestInfo.Normalized, digest)
 }
 
 // executeWithCachedPlan executes a physical plan obtained from the plan cache

@@ -26,8 +26,10 @@ func TestCachedPlanLocationInfo_DetermineLocationWithParams_PointGetReadOnlyLoca
 
 	info := &CachedPlanLocationInfo{
 		TableLocations: []*TableLocationInfo{{TableID: 1, IsPartitioned: false, IsPointGet: true}},
-		HasPointGet:    true,
-		IsDML:          false,
+		StatementTraits: StatementTraits{
+			HasPointGet: true,
+			IsDML:       false,
+		},
 	}
 	loc := info.DetermineLocationWithParams(nil, nil, nil)
 	require.NotNil(t, loc)
@@ -45,9 +47,58 @@ func TestCachedPlanLocationInfo_DetermineLocationWithParams_PointGetDMLCanForwar
 
 	info := &CachedPlanLocationInfo{
 		TableLocations: []*TableLocationInfo{{TableID: 1, IsPartitioned: false, IsPointGet: true}},
-		HasPointGet:    true,
-		IsDML:          true,
-		DMLType:        DMLTypeUpdate,
+		StatementTraits: StatementTraits{
+			HasPointGet: true,
+			IsDML:       true,
+			DMLType:     DMLTypeUpdate,
+		},
+	}
+	loc := info.DetermineLocationWithParams(nil, nil, nil)
+	require.NotNil(t, loc)
+	require.Equal(t, PhyPlanRemote, loc.PlanType)
+	require.Equal(t, "remote", loc.TargetStore)
+}
+
+func TestCachedPlanLocationInfo_DetermineLocationWithParams_IndexLookupReadOnlyLocal(t *testing.T) {
+	prev := GetLocationResolver()
+	t.Cleanup(func() { SetLocationResolver(prev) })
+
+	SetLocationResolver(&mockLocationResolver{
+		local:          "local",
+		tableLocations: map[int64]string{1: "remote"},
+	})
+
+	info := &CachedPlanLocationInfo{
+		TableLocations: []*TableLocationInfo{{TableID: 1, IsPartitioned: false, IsIndexLookupPushDown: true}},
+		StatementTraits: StatementTraits{
+			HasIndexLookup: true,
+			IsDML:          false,
+		},
+	}
+	loc := info.DetermineLocationWithParams(nil, nil, nil)
+	require.NotNil(t, loc)
+	require.Equal(t, PhyPlanLocal, loc.PlanType)
+}
+
+func TestCachedPlanLocationInfo_DetermineLocationWithParams_PartitionedReadOnlyCanForward(t *testing.T) {
+	prev := GetLocationResolver()
+	t.Cleanup(func() { SetLocationResolver(prev) })
+
+	SetLocationResolver(&mockPartitionLocationResolver{
+		local:              "local",
+		partitionLocations: map[int64]string{101: "remote"},
+	})
+
+	info := &CachedPlanLocationInfo{
+		TableLocations: []*TableLocationInfo{{
+			TableID:       1,
+			IsPartitioned: true,
+			PartitionIDs:  []int64{101},
+		}},
+		HasPartitionTable: true,
+		StatementTraits: StatementTraits{
+			IsDML: false,
+		},
 	}
 	loc := info.DetermineLocationWithParams(nil, nil, nil)
 	require.NotNil(t, loc)
@@ -211,9 +262,11 @@ func TestCachedPlanLocationInfo_DetermineLocationWithParams_PartitionedPointGetH
 			},
 		}},
 		HasPartitionTable: true,
-		HasPointGet:       true,
-		IsDML:             true,
-		DMLType:           DMLTypeUpdate,
+		StatementTraits: StatementTraits{
+			HasPointGet: true,
+			IsDML:       true,
+			DMLType:     DMLTypeUpdate,
+		},
 	}
 
 	params := []expression.Expression{
@@ -284,9 +337,11 @@ func TestCachedPlanLocationInfo_DetermineLocationWithParams_PartitionedBatchPoin
 			},
 		}},
 		HasPartitionTable: true,
-		HasPointGet:       true,
-		IsDML:             true,
-		DMLType:           DMLTypeUpdate,
+		StatementTraits: StatementTraits{
+			HasPointGet: true,
+			IsDML:       true,
+			DMLType:     DMLTypeUpdate,
+		},
 	}
 
 	params := []expression.Expression{
@@ -361,8 +416,10 @@ func TestBuildLocFromInsert_PartitionedValuesPruningSinglePartition(t *testing.T
 	locInfo := &CachedPlanLocationInfo{
 		TableLocations:    []*TableLocationInfo{loc},
 		HasPartitionTable: true,
-		IsDML:             true,
-		DMLType:           DMLTypeInsert,
+		StatementTraits: StatementTraits{
+			IsDML:   true,
+			DMLType: DMLTypeInsert,
+		},
 	}
 	planLoc := locInfo.DetermineLocationWithParams(sctx, is, params)
 	require.NotNil(t, planLoc)
@@ -439,8 +496,10 @@ func TestBuildLocFromInsert_PartitionedValuesPruningMultiPartitionDistributed(t 
 	locInfo := &CachedPlanLocationInfo{
 		TableLocations:    []*TableLocationInfo{loc},
 		HasPartitionTable: true,
-		IsDML:             true,
-		DMLType:           DMLTypeInsert,
+		StatementTraits: StatementTraits{
+			IsDML:   true,
+			DMLType: DMLTypeInsert,
+		},
 	}
 	planLoc := locInfo.DetermineLocationWithParams(sctx, is, params)
 	require.NotNil(t, planLoc)

@@ -26,8 +26,8 @@ func TestRemoteForwardingDisabled(t *testing.T) {
 	pkdb_remote.GlobalForwardingStats.Reset()
 
 	// Ensure remote forwarding is disabled (default)
-	tk.MustExec("set tidb_enable_remote_plan = OFF")
-	tk.MustQuery("select @@tidb_enable_remote_plan").Check(testkit.Rows("0"))
+	tk.MustExec("set tidbx_remote_plan_enable = OFF")
+	tk.MustQuery("select @@tidbx_remote_plan_enable").Check(testkit.Rows("0"))
 
 	// Prepare and execute - should not forward
 	tk.MustExec("prepare stmt from 'select * from t where a = ?'")
@@ -56,8 +56,8 @@ func TestRemoteForwardingEnabled(t *testing.T) {
 	pkdb_remote.GlobalForwardingStats.Reset()
 
 	// Enable remote forwarding
-	tk.MustExec("set tidb_enable_remote_plan = ON")
-	tk.MustQuery("select @@tidb_enable_remote_plan").Check(testkit.Rows("1"))
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
+	tk.MustQuery("select @@tidbx_remote_plan_enable").Check(testkit.Rows("1"))
 
 	// Prepare and execute
 	tk.MustExec("prepare stmt from 'select * from t where a = ?'")
@@ -85,7 +85,7 @@ func TestRemoteForwardingWithHashPartition(t *testing.T) {
 	// Reset forwarding stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec(`prepare stmt_hash from 'select * from t_hash where a = ?'`)
 	tk.MustExec(`set @a = 1`)
@@ -119,7 +119,7 @@ func TestRemoteForwardingWithRangePartition(t *testing.T) {
 	// Reset forwarding stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec(`prepare stmt_range from 'select * from t_range where a = ?'`)
 
@@ -151,7 +151,7 @@ func TestRemoteForwardingPointGetNotForwarded(t *testing.T) {
 	// Reset forwarding stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec("prepare stmt from 'select * from t where a = ?'")
 	tk.MustExec("set @a = 1")
@@ -183,7 +183,7 @@ func TestRemoteForwardingInTransaction(t *testing.T) {
 	// Reset forwarding stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec("begin")
 	tk.MustExec("prepare stmt from 'select * from t where a = ?'")
@@ -205,20 +205,20 @@ func TestRemoteForwardingVariableScope(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t (a int primary key, b varchar(255))")
 	tk1.MustExec("insert into t values (1, 'a')")
-	tk1.MustExec("set tidb_enable_remote_plan = ON")
-	tk1.MustQuery("select @@tidb_enable_remote_plan").Check(testkit.Rows("1"))
+	tk1.MustExec("set tidbx_remote_plan_enable = ON")
+	tk1.MustQuery("select @@tidbx_remote_plan_enable").Check(testkit.Rows("1"))
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	tk2.MustQuery("select @@tidb_enable_remote_plan").Check(testkit.Rows("0"))
+	tk2.MustQuery("select @@tidbx_remote_plan_enable").Check(testkit.Rows("0"))
 
-	tk1.MustExec("set global tidb_enable_remote_plan = ON")
+	tk1.MustExec("set global tidbx_remote_plan_enable = ON")
 
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use test")
-	tk3.MustQuery("select @@tidb_enable_remote_plan").Check(testkit.Rows("1"))
+	tk3.MustQuery("select @@tidbx_remote_plan_enable").Check(testkit.Rows("1"))
 
-	tk1.MustExec("set global tidb_enable_remote_plan = OFF")
+	tk1.MustExec("set global tidbx_remote_plan_enable = OFF")
 }
 
 // TestLocationInfoExtraction tests that LocationInfo is correctly extracted from plans
@@ -240,7 +240,7 @@ func TestLocationInfoExtraction(t *testing.T) {
 	tk.MustExec("insert into t_range values (50, 'p0'), (150, 'p1')")
 	tk.MustExec("analyze table t_normal, t_hash, t_range")
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec("prepare stmt_normal from 'select * from t_normal where a = ?'")
 	tk.MustExec("set @a = 1")
@@ -270,7 +270,7 @@ func TestPartitionPruningWithParams(t *testing.T) {
 	tk.MustExec(`insert into t_range values (50,'p0',1),(150,'p1',2),(250,'p2',3)`)
 	tk.MustExec(`analyze table t_range`)
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec(`prepare stmt1 from 'select * from t_range where a = ?'`)
 
@@ -309,7 +309,7 @@ func TestRemoteForwardingWithListPartition(t *testing.T) {
 	// Reset forwarding stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec(`prepare stmt_list from 'select * from t_list where a = ?'`)
 
@@ -346,7 +346,7 @@ func TestRemoteForwardingDMLUpdate(t *testing.T) {
 	// Reset forwarding stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec(`prepare stmt_update from 'update t_update set b = ? where a = ?'`)
 
@@ -380,7 +380,7 @@ func TestRemoteForwardingDMLDelete(t *testing.T) {
 	// Reset forwarding stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec(`prepare stmt_delete from 'delete from t_delete where a = ?'`)
 
@@ -408,7 +408,7 @@ func TestRemoteForwardingDMLInsert(t *testing.T) {
 
 	// Test 1: Non-partitioned table INSERT
 	tk.MustExec(`create table t_insert_simple (a int primary key, b varchar(255))`)
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec(`prepare stmt_insert from 'insert into t_insert_simple values (?, ?)'`)
 
@@ -459,7 +459,7 @@ func TestRemoteForwardingWithIndex(t *testing.T) {
 	// Reset forwarding stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	tk.MustExec(`prepare stmt_idx from 'select * from t_idx where b = ?'`)
 
@@ -483,7 +483,7 @@ func TestRemoteForwardingBatchPointGet(t *testing.T) {
 	tk.MustExec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
 	tk.MustExec("analyze table t")
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	// Reset stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()
@@ -514,7 +514,7 @@ func TestRemoteForwardingAutocommitOff(t *testing.T) {
 	tk.MustExec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
 	tk.MustExec("analyze table t")
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
 
 	// Reset stats before test
 	pkdb_remote.GlobalForwardingStats.Reset()

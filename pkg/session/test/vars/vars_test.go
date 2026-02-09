@@ -385,6 +385,12 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 				require.Equal(t, "rg1", stmtHint.ResourceGroup)
 			},
 		},
+		{
+			hint: "TIDBX_REMOTE_PLAN_FORCE()",
+			check: func(stmtHint *hint.StmtHints) {
+				require.True(t, stmtHint.ForceRemotePlan)
+			},
+		},
 	}
 
 	for i, check := range hintChecks {

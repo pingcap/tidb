@@ -1245,25 +1245,25 @@ const (
 	// TiDBEnableLazyCursorFetch defines whether to enable the lazy cursor fetch. If it's `OFF`, all results of
 	// of a cursor will be stored in the tidb node in `EXECUTE` command.
 	TiDBEnableLazyCursorFetch = "tidb_enable_lazy_cursor_fetch"
-	// TiDBEnableRemotePlan enables routing prepared plans to a remote TiDB node for execution.
-	TiDBEnableRemotePlan = "tidb_enable_remote_plan"
-	// TiDBEnableRemotePlanInTxnRead enables routing read-only prepared plans to a remote TiDB node for execution
+	// TiDBXRemotePlanEnable enables routing prepared plans to a remote TiDB node for execution.
+	TiDBXRemotePlanEnable = "tidbx_remote_plan_enable"
+	// TiDBXRemotePlanEnableInTxnRead enables routing read-only prepared plans to a remote TiDB node for execution
 	// inside a transaction, when the referenced tables are not dirty (no read-your-writes needed).
-	TiDBEnableRemotePlanInTxnRead = "tidb_enable_remote_plan_in_txn_read"
-	// TiDBRemotePlanFeedbackDisableAfter is the number of consecutive "large result" forwards required to disable forwarding.
-	TiDBRemotePlanFeedbackDisableAfter = "tidb_remote_plan_feedback_disable_after"
-	// TiDBRemotePlanFeedbackCooldown is the cooldown period (in seconds) for disabling forwarding after feedback triggers.
-	TiDBRemotePlanFeedbackCooldown = "tidb_remote_plan_feedback_cooldown"
-	// TiDBRemotePlanFeedbackNoShrinkRatio is the ratio threshold (in percent) to treat a forwarded execution as "no shrink".
-	// When result_bytes * 100 >= tikv_processed_keys_size * tidb_remote_plan_feedback_no_shrink_ratio, and
-	// TiKV local-call/FFI requests are fewer than tidb_remote_plan_feedback_min_local_call_requests, forwarding contributes
+	TiDBXRemotePlanEnableInTxnRead = "tidbx_remote_plan_enable_in_txn_read"
+	// TiDBXRemotePlanFeedbackDisableAfter is the number of consecutive "large result" forwards required to disable forwarding.
+	TiDBXRemotePlanFeedbackDisableAfter = "tidbx_remote_plan_feedback_disable_after"
+	// TiDBXRemotePlanFeedbackCooldown is the cooldown period (in seconds) for disabling forwarding after feedback triggers.
+	TiDBXRemotePlanFeedbackCooldown = "tidbx_remote_plan_feedback_cooldown"
+	// TiDBXRemotePlanFeedbackNoShrinkRatio is the ratio threshold (in percent) to treat a forwarded execution as "no shrink".
+	// When result_bytes * 100 >= tikv_processed_keys_size * tidbx_remote_plan_feedback_no_shrink_ratio, and
+	// TiKV local-call/FFI requests are fewer than tidbx_remote_plan_feedback_min_local_call_requests, forwarding contributes
 	// to the feedback disable counter.
 	// This allows large result sets to continue being forwarded when they are still significantly smaller than the storage
 	// scan output (e.g. after aggregation/projection).
-	TiDBRemotePlanFeedbackNoShrinkRatio = "tidb_remote_plan_feedback_no_shrink_ratio"
-	// TiDBRemotePlanFeedbackMinLocalCallRequests is the minimum number of TiKV local-call/FFI requests observed on the
+	TiDBXRemotePlanFeedbackNoShrinkRatio = "tidbx_remote_plan_feedback_no_shrink_ratio"
+	// TiDBXRemotePlanFeedbackMinLocalCallRequests is the minimum number of TiKV local-call/FFI requests observed on the
 	// remote side to treat forwarding as worthwhile even when the result set is large and not shrinking.
-	TiDBRemotePlanFeedbackMinLocalCallRequests = "tidb_remote_plan_feedback_min_local_call_requests"
+	TiDBXRemotePlanFeedbackMinLocalCallRequests = "tidbx_remote_plan_feedback_min_local_call_requests"
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
@@ -1648,12 +1648,12 @@ const (
 	DefDefaultWeekFormat                                  = "0"
 	DefTiFlashPreAggMode                                  = ForcePreAggStr
 	DefTiDBEnableLazyCursorFetch                          = false
-	DefTiDBEnableRemotePlan                               = false
-	DefTiDBEnableRemotePlanInTxnRead                      = true
-	DefTiDBRemotePlanFeedbackDisableAfter                 = uint64(2)
-	DefTiDBRemotePlanFeedbackCooldown                     = uint64(300) // seconds
-	DefTiDBRemotePlanFeedbackNoShrinkRatio                = uint64(90)  // percent
-	DefTiDBRemotePlanFeedbackMinLocalCallRequests         = uint64(2)
+	DefTiDBXRemotePlanEnable                               = false
+	DefTiDBXRemotePlanEnableInTxnRead                      = true
+	DefTiDBXRemotePlanFeedbackDisableAfter                 = uint64(2)
+	DefTiDBXRemotePlanFeedbackCooldown                     = uint64(300) // seconds
+	DefTiDBXRemotePlanFeedbackNoShrinkRatio                = uint64(90)  // percent
+	DefTiDBXRemotePlanFeedbackMinLocalCallRequests         = uint64(2)
 	DefOptEnableProjectionPushDown                        = true
 	DefTiDBEnableSharedLockPromotion                      = false
 	DefTiDBTSOClientRPCMode                               = TSOClientRPCModeDefault

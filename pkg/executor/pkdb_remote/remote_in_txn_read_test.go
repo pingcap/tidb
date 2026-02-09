@@ -22,6 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/topsql"
+	topsqlmock "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
 )
 
@@ -116,8 +119,8 @@ func TestRemotePlanInTxnReadSwitchOff(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 	tk.MustExec("analyze table t")
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
-	tk.MustExec("set tidb_enable_remote_plan_in_txn_read = OFF")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
+	tk.MustExec("set tidbx_remote_plan_enable_in_txn_read = OFF")
 
 	tk.MustExec("begin")
 	tk.MustExec("prepare stmt from 'select sum(a) from t where b = ?'")
@@ -148,8 +151,8 @@ func TestRemotePlanInTxnReadCleanTables(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 	tk.MustExec("analyze table t")
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
-	tk.MustExec("set tidb_enable_remote_plan_in_txn_read = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
+	tk.MustExec("set tidbx_remote_plan_enable_in_txn_read = ON")
 
 	tk.MustExec("begin")
 	tk.MustExec("prepare stmt from 'select sum(a) from t where b = ?'")
@@ -165,6 +168,39 @@ func TestRemotePlanInTxnReadCleanTables(t *testing.T) {
 	require.Equal(t, 1, calls)
 	require.True(t, inTxn)
 	require.Greater(t, startTS, uint64(0))
+}
+
+func TestRemotePlanForwardedWithTopSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().SetCommandValue(mysql.ComQuery)
+
+	prevResolver := plannercore.GetLocationResolver()
+	plannercore.SetLocationResolver(&mockLocationResolver{local: "local", remote: "remote"})
+	t.Cleanup(func() { plannercore.SetLocationResolver(prevResolver) })
+
+	mock := &mockClient{}
+	t.Cleanup(pkdb_remote.SetDefaultClientForTest(mock))
+
+	topsqlstate.EnableTopSQL()
+	collector := topsqlmock.NewTopSQLCollector()
+	topsql.SetupTopSQLForTest(collector)
+	t.Cleanup(topsqlstate.DisableTopSQL)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("analyze table t")
+
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
+	tk.MustExec("prepare stmt from 'select sum(a) from t where b = ?'")
+	tk.MustExec("set @b = 1")
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("1"))
+
+	mock.mu.Lock()
+	calls := mock.calls
+	mock.mu.Unlock()
+	require.Equal(t, 1, calls)
 }
 
 func TestRemotePlanInTxnReadDirtyTable(t *testing.T) {
@@ -184,8 +220,8 @@ func TestRemotePlanInTxnReadDirtyTable(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 	tk.MustExec("analyze table t")
 
-	tk.MustExec("set tidb_enable_remote_plan = ON")
-	tk.MustExec("set tidb_enable_remote_plan_in_txn_read = ON")
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
+	tk.MustExec("set tidbx_remote_plan_enable_in_txn_read = ON")
 
 	tk.MustExec("begin")
 	tk.MustExec("prepare stmt from 'select sum(a) from t where b = ?'")
@@ -193,6 +229,36 @@ func TestRemotePlanInTxnReadDirtyTable(t *testing.T) {
 	tk.MustExec("set @b = 1")
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("11"))
 	tk.MustExec("rollback")
+
+	mock.mu.Lock()
+	calls := mock.calls
+	mock.mu.Unlock()
+	require.Equal(t, 0, calls)
+}
+
+func TestRemotePlanSelectForUpdateNotForwarded(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().SetCommandValue(mysql.ComQuery)
+
+	prevResolver := plannercore.GetLocationResolver()
+	plannercore.SetLocationResolver(&mockLocationResolver{local: "local", remote: "remote"})
+	t.Cleanup(func() { plannercore.SetLocationResolver(prevResolver) })
+
+	mock := &mockClient{}
+	t.Cleanup(pkdb_remote.SetDefaultClientForTest(mock))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("analyze table t")
+
+	tk.MustExec("set tidbx_remote_plan_enable = ON")
+	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+
+	tk.MustExec("prepare stmt from 'select a from t where b = ? for update'")
+	tk.MustExec("set @b = 1")
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("1"))
 
 	mock.mu.Lock()
 	calls := mock.calls

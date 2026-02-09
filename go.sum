@@ -822,8 +822,8 @@ dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
 gioui.org v0.0.0-20210308172011-57750fc8a0a6/go.mod h1:RSH6KIUZ0p2xy5zHDxgAM4zumjgTw83q2ge/PI+yyw8=
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20251219064713-3a66d7f848ac h1:BAuoUuO9yn2T+uqAAS71J0T0GMsjh4d9egBqfrTRFM8=
-git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20251219064713-3a66d7f848ac/go.mod h1:WsezOCzglgY2OOgWHJInhCkrk8pgszuhoc4Qp67Dz5A=
+git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260209073842-ce9015532dea h1:xlyJTaVJ3MENTzKpviOJBAOOGkzZ7uC1FAX0xS4pf+k=
+git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260209073842-ce9015532dea/go.mod h1:WsezOCzglgY2OOgWHJInhCkrk8pgszuhoc4Qp67Dz5A=
 git.pingcap.net/pingkai/kvproto v0.0.0-20251217084855-cadfecf1aef6 h1:lhalMZC65biJinQE7GK7CwRQWqekDGLidaqcdo4jM9Q=
 git.pingcap.net/pingkai/kvproto v0.0.0-20251217084855-cadfecf1aef6/go.mod h1:ICbWU4o0oOr07fGDhcZP1zDg5IXgzfiXwHSQlZO428k=
 git.pingcap.net/pingkai/pd/client v0.0.0-20251217153224-c982d611f7c8 h1:RIYBKAfTIuaZ4yKcEy9CUgNxvxaQ2JjO7ycAFlJJto8=
@@ -1560,8 +1560,6 @@ github.com/pkg/sftp v1.10.1/go.mod h1:lYOWFsE0bwd1+KfKJaKeuokY15vzFx25BLbzYYoAxZ
 github.com/pkg/sftp v1.13.1/go.mod h1:3HaPG6Dq1ILlpPZRO0HVMrsydcdLt6HRDccSgb87qRg=
 github.com/pkg/xattr v0.4.9 h1:5883YPCtkSd8LFbs13nXplj9g9tlrwoJRjgpgMu1/fE=
 github.com/pkg/xattr v0.4.9/go.mod h1:di8WF84zAKk8jzR1UBTEWh9AUlIZZ7M/JNt8e9B6ktU=
-github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 h1:GFCKgmp0tecUJ0sJuv4pzYCqS9+RGSn52M3FUwPs+uo=
-github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10/go.mod h1:t/avpk3KcrXxUnYOhZhMXJlSEyie6gQbtLq5NM3loB8=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=

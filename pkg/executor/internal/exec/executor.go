@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -222,7 +221,11 @@ type executorStats struct {
 }
 
 // newExecutorStats creates a new `executorStats`
-func newExecutorStats(stmtCtx *stmtctx.StatementContext, id int) executorStats {
+func newExecutorStats(vars *variable.SessionVars, id int) executorStats {
+	if vars.ForwardedForRemoteExec {
+		return executorStats{}
+	}
+	stmtCtx := vars.StmtCtx
 	normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
 	normalizedPlan, planDigest := stmtCtx.GetPlanDigest()
 	e := executorStats{
@@ -250,7 +253,10 @@ func (e *executorStats) RuntimeStats() *execdetails.BasicRuntimeStats {
 
 // RegisterSQLAndPlanInExecForTopSQL registers the current SQL and Plan on top sql
 func (e *executorStats) RegisterSQLAndPlanInExecForTopSQL() {
-	if topsqlstate.TopSQLEnabled() && e.isSQLAndPlanRegistered.CompareAndSwap(false, true) {
+	if !topsqlstate.TopSQLEnabled() || e.isSQLAndPlanRegistered == nil {
+		return
+	}
+	if e.isSQLAndPlanRegistered.CompareAndSwap(false, true) {
 		topsql.RegisterSQL(e.normalizedSQL, e.sqlDigest, e.inRestrictedSQL)
 		if len(e.normalizedPlan) > 0 {
 			topsql.RegisterPlan(e.normalizedPlan, e.planDigest)
@@ -290,7 +296,7 @@ func NewBaseExecutorV2(vars *variable.SessionVars, schema *expression.Schema, id
 	executorMeta := newExecutorMeta(schema, id, children...)
 	e := BaseExecutorV2{
 		executorMeta:           executorMeta,
-		executorStats:          newExecutorStats(vars.StmtCtx, id),
+		executorStats:          newExecutorStats(vars, id),
 		executorChunkAllocator: newExecutorChunkAllocator(vars, executorMeta.RetFieldTypes()),
 		executorKillerHandler:  newExecutorKillerHandler(&vars.SQLKiller),
 	}

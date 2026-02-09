@@ -385,6 +385,7 @@ go_test(
         "split_test.go",
         "stale_txn_test.go",
         "stmtsummary_test.go",
+        "store_batch_get_in_txn_test.go",
         "table_readers_required_rows_test.go",
         "temporary_table_test.go",
         "tikv_regions_peers_table_test.go",
