@@ -1419,7 +1419,7 @@ func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop 
 
 func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
 	for _, col := range ds.Columns {
-		if col.Name.L == model.ExtraHandleName.L {
+		if col.Name.L == model.ExtraHandleName.L || col.Name.L == model.ExtraCommitTSName.L {
 			continue
 		}
 
@@ -1549,6 +1549,14 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 	}()
 
+	// TiFlash doesn't support ExtraCommitTS column now.
+	accessCommitTSCol := false
+	for _, col := range ds.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			accessCommitTSCol = true
+			break
+		}
+	}
 	cntPlan = 0
 	for _, candidate := range candidates {
 		path := candidate.path
@@ -1695,11 +1703,15 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 		if path.IsTablePath() {
 			// prefer tiflash, while current table path is tikv, skip it.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+			// Besides, if we are accessing the ExtraCommitTS column, we allow to choose TiKV path even if TiFlash path
+			// is explicitly preferred.
+			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV && !accessCommitTSCol {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
-			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
+			// Besides, if we are accessing the ExtraCommitTS column, we avoid choosing TiFlash path as if TiKV path
+			// is preferred.
+			if (ds.PreferStoreType&h.PreferTiKV != 0 || accessCommitTSCol) && path.StoreType == kv.TiFlash {
 				continue
 			}
 			var tblTask base.Task
@@ -2849,6 +2861,11 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	if tidbutil.IsMemDB(ds.DBName.L) {
 		return base.InvalidTask
 	}
+	for _, col := range ds.Columns {
+		if col.ID == model.ExtraCommitTSID {
+			return base.InvalidTask
+		}
+	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := PointGetPlan{
@@ -2920,6 +2937,11 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return base.InvalidTask
+	}
+	for _, col := range ds.Columns {
+		if col.ID == model.ExtraCommitTSID {
+			return base.InvalidTask
+		}
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))

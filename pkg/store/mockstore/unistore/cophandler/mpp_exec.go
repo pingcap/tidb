@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
@@ -135,13 +136,13 @@ type tableScanExec struct {
 
 func (e *tableScanExec) SkipValue() bool { return false }
 
-func (e *tableScanExec) Process(key, value []byte) error {
+func (e *tableScanExec) Process(key, value []byte, commitTS uint64) error {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = e.decoder.DecodeToChunk(value, handle, e.chk)
+	err = e.decoder.DecodeToChunk(value, commitTS, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -292,8 +293,20 @@ func (e *indexScanExec) isNewVals(values [][]byte) bool {
 	return false
 }
 
-func (e *indexScanExec) Process(key, value []byte) error {
-	values, err := tablecodec.DecodeIndexKV(key, value, e.numIdxCols, e.hdlStatus, e.colInfos)
+func (e *indexScanExec) Process(key, value []byte, _ uint64) error {
+	decodedKey := key
+	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
+		// If the key is in API V2, then ignore the prefix
+		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		decodedKey = k
+		if !kv.Key(decodedKey).HasPrefix(tablecodec.TablePrefix()) {
+			return errors.Errorf("invalid index key %q after decoded", key)
+		}
+	}
+	values, err := tablecodec.DecodeIndexKV(decodedKey, value, e.numIdxCols, e.hdlStatus, e.colInfos)
 	if err != nil {
 		return err
 	}

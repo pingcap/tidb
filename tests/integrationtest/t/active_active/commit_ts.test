@@ -1,0 +1,109 @@
+drop table if exists t;
+create table t (id int primary key, v int, index i_v(v));
+insert into t values (1, 1), (2, 2), (3, 3);
+insert into t values (4, 4);
+
+# basic point get
+explain format = 'brief' select _tidb_commit_ts, id from t where id = 1;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id = 1;
+
+# basic batch point get
+explain format = 'brief' select _tidb_commit_ts, id from t where id in (1, 2, 3);
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id in (1, 2, 3);
+
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id in (3, 4) order by _tidb_commit_ts desc;
+
+# point get inside txn
+begin;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id = 1;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id in (1, 2, 3);
+
+insert into t values (5, 5);
+insert into t values (6, 6);
+
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id = 1;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id = 5;
+
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id in (1, 2, 3);
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id in (1, 2, 3, 5, 6);
+rollback;
+
+# select for update
+begin;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, v from t where id = 2 for update;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, v from t where id in (1, 2) for update;
+explain select _tidb_commit_ts, v from t where id < 3;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, v from t where id < 3;
+rollback;
+
+begin;
+# point get with for update without _commit_ts first, then check cache should not be used
+select v from t where id = 2 for update;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, v from t where id = 2 for update;
+# again for batch point get
+select v from t where id in (1, 2) for update;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, v from t where id in (1, 2)  for update;
+# not really necessary, but just cover it.
+select v from t where id < 3;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, v from t where id < 3;
+rollback;
+
+
+# temporary table does not support _tidb_commit_ts
+create temporary table tmp1 (id int primary key, v int);
+insert into tmp1 values (1, 1), (2, 2), (3, 3), (4, 4);
+--error 1054
+select _tidb_commit_ts, id from tmp1 where id = 1;
+--error 1054
+select _tidb_commit_ts, id from tmp1 where id in (1, 2, 3);
+--error 1054
+select _tidb_commit_ts, id from tmp1;
+--error 1054
+select * from tmp1 where _tidb_commit_ts > 0;
+create global temporary table tmp2 (id int primary key, v int) on commit delete rows;
+insert into tmp2 values (1, 1), (2, 2), (3, 3), (4, 4);
+--error 1054
+select _tidb_commit_ts, id from tmp2 where id = 1;
+--error 1054
+select _tidb_commit_ts, id from tmp2 where id in (1, 2, 3);
+--error 1054
+select _tidb_commit_ts, id from tmp2;
+--error 1054
+select * from tmp2 where _tidb_commit_ts > 0;
+
+--echo # coprocessor request should also return _tidb_commit_ts
+explain format = 'brief' select _tidb_commit_ts, id from t;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id < 5;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id < 5 order by id desc;
+
+# index lookup should be used, index scan does not support _tidb_commit_ts
+explain format = 'brief' select _tidb_commit_ts, v from t use index (i_v) where v = 2;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, v from t use index (i_v) where v = 2;
+
+drop table if exists t;
+create table t (a bigint primary key, b int, c int) softdelete = 'on' active_active = 'on';
+alter table t drop column _tidb_commit_ts;
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+--replace_regex /^[1-9][0-9]+/TSO/
+select * from t;

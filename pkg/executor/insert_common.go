@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -148,6 +149,9 @@ func (e *InsertValues) initInsertColumns() error {
 	} else {
 		// If e.Columns are empty, use all columns instead.
 		cols = tableCols
+		cols = slices.DeleteFunc(slices.Clone(cols), func(col *table.Column) bool {
+			return col.Name.L == model.ExtraSoftDeleteTimeName.L || col.Name.L == model.ExtraOriginTSName.L
+		})
 	}
 	for _, col := range cols {
 		if !col.IsGenerated() {
@@ -553,7 +557,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 
 	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
 
-	for i := 0; i < e.rowLen; i++ {
+	for i := range e.rowLen {
 		col := e.insertColumns[i].ToInfo()
 		casted, err := table.CastValue(e.Ctx(), vals[i], col, false, false)
 		if newErr := e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); newErr != nil {
@@ -896,7 +900,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				e.lastInsertID = uint64(minv)
 			}
 			// Assign autoIDs to rows.
-			for j := 0; j < cnt; j++ {
+			for j := range cnt {
 				offset := j + start
 				id := int64(uint64(minv) + uint64(j)*uint64(increment))
 				err = setDatumAutoIDAndCast(e.Ctx(), &rows[offset][idx], id, col)
@@ -1343,8 +1347,7 @@ func (e *InsertValues) removeRow(
 	r toBeCheckedRow,
 	inReplace bool,
 ) (bool, error) {
-	newRow := r.row
-	oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+	oldRow, _, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs, false)
 	if err != nil {
 		logutil.BgLogger().Error(
 			"get old row failed when replace",
@@ -1356,7 +1359,20 @@ func (e *InsertValues) removeRow(
 		}
 		return false, err
 	}
+	return e.removeOldRow(txn, handle, oldRow, r, inReplace)
+}
 
+// removeRow removes the duplicate row and cleanup its keys in the key-value map.
+// But if the to-be-removed row equals to the to-be-added row, no remove or add
+// things to do and return (true, nil).
+func (e *InsertValues) removeOldRow(
+	txn kv.Transaction,
+	handle kv.Handle,
+	oldRow []types.Datum,
+	r toBeCheckedRow,
+	inReplace bool,
+) (bool, error) {
+	newRow := r.row
 	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
 	if err != nil {
 		return false, err
@@ -1543,10 +1559,8 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
 		newRs.SnapshotRuntimeStats = snapshotStats
 	}
-	if e.BasicRuntimeStats != nil {
-		basicStats := e.BasicRuntimeStats.Clone()
-		newRs.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-	}
+	// BasicRuntimeStats is unique for all executor instances mapping to the same plan id
+	newRs.BasicRuntimeStats = e.BasicRuntimeStats
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
 	}
@@ -1567,13 +1581,8 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 		}
 	}
-	if tmp.BasicRuntimeStats != nil {
-		if e.BasicRuntimeStats == nil {
-			basicStats := tmp.BasicRuntimeStats.Clone()
-			e.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-		} else {
-			e.BasicRuntimeStats.Merge(tmp.BasicRuntimeStats)
-		}
+	if tmp.BasicRuntimeStats != nil && e.BasicRuntimeStats == nil {
+		e.BasicRuntimeStats = tmp.BasicRuntimeStats
 	}
 	if tmp.AllocatorRuntimeStats != nil {
 		if e.AllocatorRuntimeStats == nil {

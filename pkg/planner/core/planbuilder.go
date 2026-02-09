@@ -4054,13 +4054,36 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, errors.Errorf("Can't get table %s", tableInfo.Name.O)
 	}
 
+	// check table info to see if it's active-active table
+	needExtraCommitTS := tableInfo.FindPublicColumnByName(model.ExtraOriginTSName.L) != nil
+
+	if needExtraCommitTS {
+		dbName := tnW.DBInfo.Name
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		commitTSCol := &expression.Column{
+			RetType:  tp,
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraCommitTSID,
+			OrigName: fmt.Sprintf("%v.%v.%v", dbName.L, tableInfo.Name, model.ExtraCommitTSName),
+			IsHidden: true,
+		}
+		schema.Append(commitTSCol)
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     model.ExtraCommitTSName,
+			OrigColName: model.ExtraCommitTSName,
+		})
+	}
+
 	insertPlan := Insert{
-		Table:         tableInPlan,
-		Columns:       insert.Columns,
-		tableSchema:   schema,
-		tableColNames: names,
-		IsReplace:     insert.IsReplace,
-		IgnoreErr:     insert.IgnoreErr,
+		Table:             tableInPlan,
+		Columns:           insert.Columns,
+		tableSchema:       schema,
+		tableColNames:     names,
+		IsReplace:         insert.IsReplace,
+		IgnoreErr:         insert.IgnoreErr,
+		NeedExtraCommitTS: needExtraCommitTS,
 	}.Init(b.ctx)
 
 	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {

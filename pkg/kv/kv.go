@@ -61,6 +61,77 @@ var (
 	TxnTotalSizeLimit = atomic.NewUint64(config.DefTxnTotalSizeLimit)
 )
 
+// ValueEntry represents a value entry stored in kv store.
+type ValueEntry struct {
+	Value    []byte
+	CommitTS uint64
+}
+
+// NewValueEntry creates a ValueEntry.
+func NewValueEntry(value []byte, commitTS uint64) ValueEntry {
+	return ValueEntry{Value: value, CommitTS: commitTS}
+}
+
+// IsValueEmpty checks whether the value is empty.
+func (v ValueEntry) IsValueEmpty() bool {
+	return len(v.Value) == 0
+}
+
+// GetOption is the option for kv Get operation.
+type GetOption interface{ applyGet(*GetOptions) }
+
+// BatchGetOption is the option for kv BatchGet operation.
+type BatchGetOption interface{ applyBatchGet(*BatchGetOptions) }
+
+// GetOrBatchGetOption is the option for both kv Get and BatchGet operation.
+type GetOrBatchGetOption interface {
+	GetOption
+	BatchGetOption
+}
+
+// GetOptions is the options for kv Get operation.
+type GetOptions struct {
+	WithReturnCommitTS bool
+}
+
+// BatchGetOptions is the options for kv BatchGet operation.
+type BatchGetOptions struct {
+	WithReturnCommitTS bool
+}
+
+type returnCommitTSOption struct{}
+
+func (returnCommitTSOption) applyGet(opts *GetOptions) {
+	if opts != nil {
+		opts.WithReturnCommitTS = true
+	}
+}
+
+func (returnCommitTSOption) applyBatchGet(opts *BatchGetOptions) {
+	if opts != nil {
+		opts.WithReturnCommitTS = true
+	}
+}
+
+// BatchGetToGetOptions converts []BatchGetOption to []GetOption.
+func BatchGetToGetOptions(options []BatchGetOption) []GetOption {
+	if len(options) == 0 {
+		return nil
+	}
+	getOptions := make([]GetOption, 0, len(options))
+	for _, option := range options {
+		if converted, ok := option.(GetOption); ok {
+			getOptions = append(getOptions, converted)
+		}
+	}
+	return getOptions
+}
+
+// WithReturnCommitTS is used to indicate that the returned value should contain commit ts.
+func WithReturnCommitTS() GetOrBatchGetOption {
+	return returnCommitTSOption{}
+}
+
 // Getter is the interface for the Get method.
 type Getter interface {
 	// Get gets the value for key k from kv store.

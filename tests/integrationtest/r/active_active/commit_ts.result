@@ -1,0 +1,157 @@
+drop table if exists t;
+create table t (id int primary key, v int, index i_v(v));
+insert into t values (1, 1), (2, 2), (3, 3);
+insert into t values (4, 4);
+explain format = 'brief' select _tidb_commit_ts, id from t where id = 1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.id
+└─Point_Get	1.00	root	table:t	handle:1
+select _tidb_commit_ts, id from t where id = 1;
+_tidb_commit_ts	id
+TSO	1
+explain format = 'brief' select _tidb_commit_ts, id from t where id in (1, 2, 3);
+id	estRows	task	access object	operator info
+Projection	3.00	root		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.id
+└─Batch_Point_Get	3.00	root	table:t	handle:[1 2 3], keep order:false, desc:false
+select _tidb_commit_ts, id from t where id in (1, 2, 3);
+_tidb_commit_ts	id
+TSO	1
+TSO	2
+TSO	3
+select _tidb_commit_ts, id from t where id in (3, 4) order by _tidb_commit_ts desc;
+_tidb_commit_ts	id
+TSO	4
+TSO	3
+begin;
+select _tidb_commit_ts, id from t where id = 1;
+_tidb_commit_ts	id
+TSO	1
+select _tidb_commit_ts, id from t where id in (1, 2, 3);
+_tidb_commit_ts	id
+TSO	1
+TSO	2
+TSO	3
+insert into t values (5, 5);
+insert into t values (6, 6);
+select _tidb_commit_ts, id from t where id = 1;
+_tidb_commit_ts	id
+TSO	1
+select _tidb_commit_ts, id from t where id = 5;
+_tidb_commit_ts	id
+NULL	5
+select _tidb_commit_ts, id from t where id in (1, 2, 3);
+_tidb_commit_ts	id
+TSO	1
+TSO	2
+TSO	3
+select _tidb_commit_ts, id from t where id in (1, 2, 3, 5, 6);
+_tidb_commit_ts	id
+TSO	1
+TSO	2
+TSO	3
+NULL	5
+NULL	6
+rollback;
+begin;
+select _tidb_commit_ts, v from t where id = 2 for update;
+_tidb_commit_ts	v
+TSO	2
+select _tidb_commit_ts, v from t where id in (1, 2) for update;
+_tidb_commit_ts	v
+TSO	1
+TSO	2
+explain select _tidb_commit_ts, v from t where id < 3;
+id	estRows	task	access object	operator info
+TableReader_10	3.00	root		data:Projection_6
+└─Projection_6	3.00	cop[tikv]		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.v
+  └─TableRangeScan_9	3333.33	cop[tikv]	table:t	range:[-inf,3), keep order:false, stats:pseudo
+select _tidb_commit_ts, v from t where id < 3;
+_tidb_commit_ts	v
+TSO	1
+TSO	2
+rollback;
+begin;
+select v from t where id = 2 for update;
+v
+2
+select _tidb_commit_ts, v from t where id = 2 for update;
+_tidb_commit_ts	v
+TSO	2
+select v from t where id in (1, 2) for update;
+v
+1
+2
+select _tidb_commit_ts, v from t where id in (1, 2)  for update;
+_tidb_commit_ts	v
+TSO	1
+TSO	2
+select v from t where id < 3;
+v
+1
+2
+select _tidb_commit_ts, v from t where id < 3;
+_tidb_commit_ts	v
+TSO	1
+TSO	2
+rollback;
+create temporary table tmp1 (id int primary key, v int);
+insert into tmp1 values (1, 1), (2, 2), (3, 3), (4, 4);
+select _tidb_commit_ts, id from tmp1 where id = 1;
+Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'field list'
+select _tidb_commit_ts, id from tmp1 where id in (1, 2, 3);
+Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'field list'
+select _tidb_commit_ts, id from tmp1;
+Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'field list'
+select * from tmp1 where _tidb_commit_ts > 0;
+Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'where clause'
+create global temporary table tmp2 (id int primary key, v int) on commit delete rows;
+insert into tmp2 values (1, 1), (2, 2), (3, 3), (4, 4);
+select _tidb_commit_ts, id from tmp2 where id = 1;
+Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'field list'
+select _tidb_commit_ts, id from tmp2 where id in (1, 2, 3);
+Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'field list'
+select _tidb_commit_ts, id from tmp2;
+Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'field list'
+select * from tmp2 where _tidb_commit_ts > 0;
+Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'where clause'
+# coprocessor request should also return _tidb_commit_ts
+explain format = 'brief' select _tidb_commit_ts, id from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.id
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select _tidb_commit_ts, id from t;
+_tidb_commit_ts	id
+TSO	1
+TSO	2
+TSO	3
+TSO	4
+select _tidb_commit_ts, id from t where id < 5;
+_tidb_commit_ts	id
+TSO	1
+TSO	2
+TSO	3
+TSO	4
+select _tidb_commit_ts, id from t where id < 5 order by id desc;
+_tidb_commit_ts	id
+TSO	4
+TSO	3
+TSO	2
+TSO	1
+explain format = 'brief' select _tidb_commit_ts, v from t use index (i_v) where v = 2;
+id	estRows	task	access object	operator info
+Projection	10.00	root		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.v
+└─IndexLookUp	10.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_v(v)	range:[2,2], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select _tidb_commit_ts, v from t use index (i_v) where v = 2;
+_tidb_commit_ts	v
+TSO	2
+drop table if exists t;
+create table t (a bigint primary key, b int, c int) softdelete = 'on' active_active = 'on';
+alter table t drop column _tidb_commit_ts;
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+select * from t;
+a	b	c
+TSO	1	1
