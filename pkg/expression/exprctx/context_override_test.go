@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCtxWithHandleTruncateErrLevel(t *testing.T) {
+func TestWithBuildCtxHandleTruncateErrLevel(t *testing.T) {
 	for _, level := range []errctx.Level{errctx.LevelWarn, errctx.LevelIgnore, errctx.LevelError} {
 		originalLevelMap := errctx.LevelMap{errctx.ErrGroupDividedByZero: errctx.LevelError}
 		expectedLevelMap := originalLevelMap
@@ -60,7 +60,7 @@ func TestCtxWithHandleTruncateErrLevel(t *testing.T) {
 		)
 
 		// override should take effect
-		newCtx := exprctx.CtxWithHandleTruncateErrLevel(ctx, level)
+		newCtx := exprctx.WithBuildCtxHandleTruncateErrLevel(ctx, level)
 		newEvalCtx := newCtx.GetEvalCtx()
 		newTypeCtx, newErrCtx := newEvalCtx.TypeCtx(), newEvalCtx.ErrCtx()
 		require.Equal(t, expectedFlags, newTypeCtx.Flags())
@@ -79,7 +79,7 @@ func TestCtxWithHandleTruncateErrLevel(t *testing.T) {
 		require.Equal(t, uint64(1234), ctx.ConnectionID())
 
 		// not create new ctx case
-		newCtx2 := exprctx.CtxWithHandleTruncateErrLevel(newCtx, level)
+		newCtx2 := exprctx.WithBuildCtxHandleTruncateErrLevel(newCtx, level)
 		require.Same(t, newCtx, newCtx2)
 	}
 }
