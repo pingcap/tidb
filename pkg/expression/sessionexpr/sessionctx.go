@@ -198,8 +198,10 @@ func (ctx *EvalContext) UnwrapInternalSctx() any {
 	return ctx.sctx
 }
 
-// UnwrapInternalSctx unwraps an EvalContext (possibly wrapped) into the underlying sessionctx.Context.
-// It returns nil if the EvalContext is not session-backed.
+// UnwrapInternalSctx tries to get sessionctx.Context from EvalContext wrappers.
+//
+// This helper is intentionally try-style: EvalContext can be valid without being bound
+// to a session (for example, static or test contexts). In those cases, returning nil is expected.
 func UnwrapInternalSctx(evalCtx exprctx.EvalContext) sessionctx.Context {
 	if evalCtx == nil {
 		return nil

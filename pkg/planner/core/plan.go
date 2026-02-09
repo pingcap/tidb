@@ -27,9 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-// AsSctx converts PlanContext to sessionctx.Context.
+// AsSctx gets sessionctx.Context from PlanContext.
+//
+// Use this helper when the caller requires a session-backed PlanContext.
+// If conversion fails, it returns an error (and triggers intest.Assert in test builds).
 func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 	if sctx, ok := pctx.(sessionctx.Context); ok {
 		return sctx, nil
@@ -37,12 +41,19 @@ func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 
 	// Some PlanContext implementations are wrappers (e.g. planctx.WithExprCtx). Unwrap them to recover
 	// the underlying session-backed context when needed.
-	if u, ok := pctx.(planctx.InternalSctxUnwrapper); ok {
-		if sctx, ok := u.UnwrapAsInternalSctx().(sessionctx.Context); ok {
-			return sctx, nil
-		}
+	u, ok := pctx.(planctx.InternalSctxUnwrapper)
+	if !ok {
+		intest.Assert(false, "PlanContext %T is not session-backed and does not implement planctx.InternalSctxUnwrapper", pctx)
+		return nil, errors.Errorf("the current PlanContext (%T) cannot be converted to sessionctx.Context: missing planctx.InternalSctxUnwrapper", pctx)
 	}
-	return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
+
+	unwrapped := u.UnwrapAsInternalSctx()
+	if sctx, ok := unwrapped.(sessionctx.Context); ok {
+		return sctx, nil
+	}
+
+	intest.Assert(false, "planctx.InternalSctxUnwrapper returned non-session value %T from %T", unwrapped, pctx)
+	return nil, errors.Errorf("the current PlanContext (%T) cannot be converted to sessionctx.Context: unwrapped value type is %T", pctx, unwrapped)
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
