@@ -222,12 +222,6 @@ func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *proper
 	res := make([]*physicalop.PhysicalHashJoin, 0, 2)
 	if prop.IndexJoinProp != nil {
 		// enumeration for push index join prop to one side.
-		newTwoBaseProps := func() [2]*property.PhysicalProperty {
-			return [2]*property.PhysicalProperty{
-				{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
-				{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
-			}
-		}
 		for childIdx := range []int{0, 1} {
 			chReqProps := newTwoBaseProps()
 			ijp := prop.IndexJoinProp.CloneEssentialFields()
