@@ -226,3 +226,79 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 		require.True(t, checkFileName(file.Name), file.Name)
 	}
 }
+
+// TestPlanReplayerDumpMultiple tests PLAN REPLAYER DUMP EXPLAIN ( "sql1", "sql2", ... ) with 20 statements.
+func TestPlanReplayerDumpMultiple(t *testing.T) {
+	const numStmts = 20
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Create 5 tables for multi-SQL dump
+	for i := 1; i <= 5; i++ {
+		tk.MustExec(fmt.Sprintf("drop table if exists t_dump_multi_%d", i))
+		tk.MustExec(fmt.Sprintf("create table t_dump_multi_%d(a int, b int)", i))
+	}
+
+	// Build 20 SQL statements using the 5 tables with qualified names (test.t_...) so
+	// the plan replayer extractor finds them regardless of current DB / schema sync.
+	stmts := make([]string, numStmts)
+	for i := 0; i < numStmts; i++ {
+		tbl := (i % 5) + 1
+		switch i % 4 {
+		case 0:
+			stmts[i] = fmt.Sprintf("'select * from test.t_dump_multi_%d'", tbl)
+		case 1:
+			stmts[i] = fmt.Sprintf("'select * from test.t_dump_multi_%d where a=1'", tbl)
+		case 2:
+			stmts[i] = fmt.Sprintf("'select * from test.t_dump_multi_%d where b>0'", tbl)
+		default:
+			// join two tables
+			t2 := (tbl % 5) + 1
+			stmts[i] = fmt.Sprintf("'select * from test.t_dump_multi_%d, test.t_dump_multi_%d where test.t_dump_multi_%d.a=test.t_dump_multi_%d.a'", tbl, t2, tbl, t2)
+		}
+	}
+	sqlCmd := "plan replayer dump explain (" + strings.Join(stmts, ", ") + ")"
+	res := tk.MustQuery(sqlCmd)
+	path := testdata.ConvertRowsToStrings(res.Rows())
+	require.Len(t, path, 1)
+
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), path[0])
+	fileReader, err := storage.Open(ctx, filePath, nil)
+	require.NoError(t, err)
+	defer fileReader.Close()
+
+	content, err := io.ReadAll(fileReader)
+	require.NoError(t, err)
+
+	readerAt := bytes.NewReader(content)
+	zr, err := zip.NewReader(readerAt, int64(len(content)))
+	require.NoError(t, err)
+
+	names := make(map[string]struct{})
+	for _, f := range zr.File {
+		names[f.Name] = struct{}{}
+	}
+	for i := 0; i < numStmts; i++ {
+		require.Contains(t, names, fmt.Sprintf("sql/sql%d.sql", i))
+		require.Contains(t, names, fmt.Sprintf("explain/explain%d.txt", i))
+	}
+	require.NotContains(t, names, "explain.txt") // single explain.txt is not used for multi-SQL
+
+	// Check 5 stats files and 5 schema files for the 5 tables
+	const numTables = 5
+	for i := 1; i <= numTables; i++ {
+		tableName := fmt.Sprintf("t_dump_multi_%d", i)
+		require.Contains(t, names, fmt.Sprintf("stats/test.%s.json", tableName))
+		require.Contains(t, names, fmt.Sprintf("schema/test.%s.schema.txt", tableName))
+	}
+}

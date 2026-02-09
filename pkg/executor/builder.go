@@ -1181,7 +1181,21 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 			HistoricalStatsTS: v.HistoricalStatsTS,
 		},
 	}
-	if v.ExecStmt != nil {
+	if len(v.StmtList) > 0 {
+		// Parse multiple SQL strings from StmtList
+		e.DumpInfo.ExecStmts = make([]ast.StmtNode, 0, len(v.StmtList))
+		for _, sqlStr := range v.StmtList {
+			node, err := b.ctx.GetRestrictedSQLExecutor().ParseWithParams(context.Background(), sqlStr)
+			if err != nil {
+				// If parsing fails, add warning and leave ExecStmts empty
+				// The executor's Next() will return an error when ExecStmts is nil/empty
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("plan replayer: failed to parse SQL: %s, error: %v", sqlStr, err))
+				e.DumpInfo.ExecStmts = nil
+				break
+			}
+			e.DumpInfo.ExecStmts = append(e.DumpInfo.ExecStmts, node)
+		}
+	} else if v.ExecStmt != nil {
 		e.DumpInfo.ExecStmts = []ast.StmtNode{v.ExecStmt}
 	} else {
 		e.BaseExecutor = exec.NewBaseExecutor(b.ctx, nil, v.ID())

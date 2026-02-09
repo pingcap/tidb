@@ -7548,6 +7548,9 @@ func TestPlanReplayer(t *testing.T) {
 		{"PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'", true, "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'"},
 		{"PLAN REPLAYER DUMP EXPLAIN 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'"},
 		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'"},
+		{"PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1')", true, "PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1')"},
+		{"PLAN REPLAYER DUMP EXPLAIN ( 'SELECT * FROM t1' , 'SELECT * FROM t2' )", true, "PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1', 'SELECT * FROM t2 WHERE id = 1')", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1', 'SELECT * FROM t2 WHERE id = 1')"},
 		{"PLAN REPLAYER CAPTURE '123' '123'", true, "PLAN REPLAYER CAPTURE '123' '123'"},
 		{"PLAN REPLAYER CAPTURE REMOVE '123' '123'", true, "PLAN REPLAYER CAPTURE REMOVE '123' '123'"},
 	}
@@ -7567,6 +7570,23 @@ func TestPlanReplayer(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "SELECT a FROM t", v.Stmt.Text())
 	require.True(t, v.Analyze)
+
+	// Multiple SQL records: EXPLAIN ( "sql1", "sql2", ... )
+	sms, _, err = p.Parse("PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')", "", "")
+	require.NoError(t, err)
+	v, ok = sms[0].(*ast.PlanReplayerStmt)
+	require.True(t, ok)
+	require.Nil(t, v.Stmt)
+	require.False(t, v.Analyze)
+	require.Equal(t, []string{"SELECT * FROM t1", "SELECT * FROM t2"}, v.StmtList)
+
+	sms, _, err = p.Parse("PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1')", "", "")
+	require.NoError(t, err)
+	v, ok = sms[0].(*ast.PlanReplayerStmt)
+	require.True(t, ok)
+	require.Nil(t, v.Stmt)
+	require.True(t, v.Analyze)
+	require.Equal(t, []string{"SELECT * FROM t1"}, v.StmtList)
 }
 
 func TestTrafficStmt(t *testing.T) {

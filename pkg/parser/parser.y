@@ -1799,17 +1799,17 @@ SplitIndexListOpt:
 	{
 		$$ = nil
 	}
-|   SplitIndexList %prec lowerThanComma
+|	SplitIndexList %prec lowerThanComma
 	{
 		$$ = $1.([]*ast.SplitIndexOption)
 	}
 
 SplitIndexList:
-    SplitIndexOption
+	SplitIndexOption
 	{
 		$$ = []*ast.SplitIndexOption{$1.(*ast.SplitIndexOption)}
 	}
-|   SplitIndexList SplitIndexOption
+|	SplitIndexList SplitIndexOption
 	{
 		$$ = append($1.([]*ast.SplitIndexOption), $2.(*ast.SplitIndexOption))
 	}
@@ -1819,22 +1819,22 @@ SplitIndexOption:
 	{
 		$$ = &ast.SplitIndexOption{
 			PrimaryKey: true,
-			IndexName: ast.NewCIStr(mysql.PrimaryKeyName),
-			SplitOpt: $4.(*ast.SplitOption),
+			IndexName:  ast.NewCIStr(mysql.PrimaryKeyName),
+			SplitOpt:   $4.(*ast.SplitOption),
 		}
 	}
 |	"SPLIT" "INDEX" Identifier SplitOptionBetween
 	{
 		$$ = &ast.SplitIndexOption{
 			IndexName: ast.NewCIStr($3),
-			SplitOpt: $4.(*ast.SplitOption),
+			SplitOpt:  $4.(*ast.SplitOption),
 		}
 	}
 |	"SPLIT" SplitOptionBetween
 	{
 		$$ = &ast.SplitIndexOption{
 			TableLevel: true,
-			SplitOpt: $2.(*ast.SplitOption),
+			SplitOpt:   $2.(*ast.SplitOption),
 		}
 	}
 
@@ -2221,8 +2221,8 @@ AlterTableSpecSingleOpt:
 |	SplitIndexOption
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp:             ast.AlterTableSplitIndex,
-			SplitIndex:		$1.(*ast.SplitIndexOption),
+			Tp:         ast.AlterTableSplitIndex,
+			SplitIndex: $1.(*ast.SplitIndexOption),
 		}
 	}
 |	"SPLIT" "MAXVALUE" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
@@ -16286,6 +16286,34 @@ PlanReplayerStmt:
 			Analyze: true,
 			Load:    false,
 			File:    $7,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" '(' StringList ')'
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:     nil,
+			Analyze:  false,
+			Load:     false,
+			File:     "",
+			StmtList: $7.([]string),
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" "ANALYZE" '(' StringList ')'
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:     nil,
+			Analyze:  true,
+			Load:     false,
+			File:     "",
+			StmtList: $8.([]string),
 		}
 		if $4 != nil {
 			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
