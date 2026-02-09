@@ -1391,7 +1391,7 @@ func (do *Domain) Init(
 	// TODO(lance6716): find a more representative place for subscriber
 	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
 	// Register MVS DDL handler before DDLNotifier may start.
-	do.mvService = mvs.RegisterMVS(do.ctx, do.ddlNotifier, do.sysSessionPool, do.notifyMVSMetadataChange)
+	do.mvService = mvs.RegisterMVS(do.ctx, do.ddlNotifier.RegisterHandler, do.sysSessionPool, do.notifyMVSMetadataChange)
 	d := do.ddl
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(

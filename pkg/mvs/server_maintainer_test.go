@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 type mockServerHelper struct {
@@ -123,7 +124,7 @@ func TestServerConsistentHashFetchAppliesFilter(t *testing.T) {
 	sch := NewServerConsistentHash(context.Background(), 1, helper)
 	sch.chash.hashFunc = mustHash(mapping)
 
-	if err := sch.Refresh(); err != nil {
+	if err := sch.refresh(); err != nil {
 		t.Fatalf("fetch failed: %v", err)
 	}
 	if len(sch.servers) != 1 {
@@ -154,13 +155,13 @@ func TestServerConsistentHashFetchNoChange(t *testing.T) {
 	sch := NewServerConsistentHash(context.Background(), 1, helper)
 	sch.chash.hashFunc = mustHash(mapping)
 
-	if err := sch.Refresh(); err != nil {
+	if err := sch.refresh(); err != nil {
 		t.Fatalf("first fetch failed: %v", err)
 	}
 	beforeNodeCount := sch.chash.NodeCount()
 	beforeRingSize := len(sch.chash.ring)
 
-	if err := sch.Refresh(); err != nil {
+	if err := sch.refresh(); err != nil {
 		t.Fatalf("second fetch failed: %v", err)
 	}
 	if got := sch.chash.NodeCount(); got != beforeNodeCount {
@@ -192,19 +193,44 @@ func TestServerConsistentHashInit(t *testing.T) {
 	sch := NewServerConsistentHash(context.Background(), 1, helper)
 	sch.chash.hashFunc = mustHash(mapping)
 
-	sch.init()
+	if !sch.init() {
+		t.Fatalf("init failed")
+	}
 
 	if sch.ID != "nodeA" {
 		t.Fatalf("expected current ID nodeA, got %s", sch.ID)
 	}
-	if got := sch.chash.NodeCount(); got != 1 {
-		t.Fatalf("expected ring node count 1, got %d", got)
+	if got := sch.chash.NodeCount(); got != 0 {
+		t.Fatalf("expected ring node count 0 before refresh, got %d", got)
 	}
 	if got := helper.getServerInfoCalls; got < 1 {
 		t.Fatalf("expected getServerInfo called at least once, got %d", got)
 	}
-	if got := helper.getAllInfoCalls; got < 1 {
-		t.Fatalf("expected getAllServerInfo called at least once, got %d", got)
+	if got := helper.getAllInfoCalls; got != 0 {
+		t.Fatalf("expected getAllServerInfo not called in init, got %d", got)
+	}
+}
+
+func TestServerConsistentHashInitCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	helper := &mockServerHelper{
+		selfErr: errors.New("boom"),
+		allErr:  errors.New("boom"),
+	}
+	sch := NewServerConsistentHash(ctx, 1, helper)
+
+	start := time.Now()
+	ok := sch.init()
+	if ok {
+		t.Fatalf("expected init failed when context canceled")
+	}
+	if time.Since(start) > 200*time.Millisecond {
+		t.Fatalf("init should return quickly when context is canceled")
+	}
+	if got := helper.getServerInfoCalls; got > 1 {
+		t.Fatalf("expected at most one getServerInfo call when canceled, got %d", got)
 	}
 }
 
@@ -214,7 +240,7 @@ func TestServerConsistentHashFetchError(t *testing.T) {
 	}
 	sch := NewServerConsistentHash(context.Background(), 1, helper)
 
-	err := sch.Refresh()
+	err := sch.refresh()
 	if err == nil {
 		t.Fatalf("expected fetch error, got nil")
 	}

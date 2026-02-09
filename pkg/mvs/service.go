@@ -57,6 +57,8 @@ const (
 	defaultMVTaskRetryBase      = 5 * time.Second
 	defaultMVTaskRetryMax       = 5 * time.Minute
 	maxNextScheduleTs           = 9e18 // corresponds to year 5138
+
+	defaultServerConsistentHashReplicas = 10
 )
 
 // NewMVJobsManager creates a MVJobsManager with a SQL executor.
@@ -66,7 +68,7 @@ func NewMVJobsManager(ctx context.Context, se basic.SessionPool, helper MVServic
 	}
 	mgr := &MVService{
 		sysSessionPool: se,
-		sch:            NewServerConsistentHash(ctx, 10, helper),
+		sch:            NewServerConsistentHash(ctx, defaultServerConsistentHashReplicas, helper),
 		executor:       NewTaskExecutor(ctx, defaultMVTaskMaxConcurrency, defaultMVTaskTimeout),
 
 		notifier: NewNotifier(),
@@ -83,9 +85,6 @@ func (t *MVService) SetTaskExecConfig(maxConcurrency int, timeout time.Duration)
 
 // NotifyDDLChange marks MV metadata as dirty and wakes the service loop.
 func (t *MVService) NotifyDDLChange() {
-	if t == nil {
-		return
-	}
 	t.ddlDirty.Store(true)
 	t.notifier.Wake()
 }
@@ -151,79 +150,13 @@ func resetTimer(timer *time.Timer, delay time.Duration) {
 	timer.Reset(delay)
 }
 
-/*
-// CreateTiDBMViewsTable is a table to store materialized view metadata.
-CreateTiDBMViewsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mviews (
-    TABLE_CATALOG varchar(512) NOT NULL,
-    TABLE_SCHEMA varchar(64) NOT NULL,
-    MVIEW_ID varchar(64) NOT NULL,
-    MVIEW_NAME varchar(64) NOT NULL,
-    MVIEW_DEFINITION longtext NOT NULL,
-    MVIEW_COMMENT varchar(128) DEFAULT NULL,
-    MVIEW_TIFLASH_REPLICAS int DEFAULT 0,
-    MVIEW_MODIFY_TIME datetime NOT NULL,
-    REFRESH_METHOD varchar(32) DEFAULT NULL,
-    REFRESH_MODE varchar(256) DEFAULT NULL,
-    REFRESH_START datetime NOT NULL,
-    REFRESH_INTERVAL bigint NOT NULL,
-	RELATED_MVLOG varchar(256) DEFAULT NULL,
-    PRIMARY KEY(MVIEW_ID),
-    UNIQUE KEY uniq_mview_name(TABLE_SCHEMA, MVIEW_NAME))`
-
-// CreateTiDBMLogsTable is a table to store materialized view log metadata.
-CreateTiDBMLogsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlogs (
-    TABLE_CATALOG varchar(512) NOT NULL,
-    TABLE_SCHEMA varchar(64) NOT NULL,
-    MLOG_ID varchar(64) NOT NULL,
-    MLOG_NAME varchar(64) NOT NULL,
-    MLOG_COLUMNS longtext NOT NULL,
-    BASE_TABLE_CATALOG varchar(512) NOT NULL,
-    BASE_TABLE_SCHEMA varchar(64) NOT NULL,
-    BASE_TABLE_ID varchar(64) NOT NULL,
-    BASE_TABLE_NAME varchar(64) NOT NULL,
-    PURGE_METHOD varchar(32) NOT NULL,
-    PURGE_START datetime NOT NULL,
-    PURGE_INTERVAL bigint NOT NULL,
-	RELATED_MV varchar(256) DEFAULT NULL,
-    PRIMARY KEY(MLOG_ID),
-    UNIQUE KEY uniq_base_table(BASE_TABLE_ID),
-    UNIQUE KEY uniq_mlog_name(TABLE_SCHEMA, MLOG_NAME))`
-
-// CreateTiDBMViewRefreshHistTable is a table to store mview refresh history.
-// Note: REFRESH_JOB_ID is auto-increment BIGINT (internal), while information_schema expects varchar.
-CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
-    MVIEW_ID varchar(64) NOT NULL,
-    MVIEW_NAME varchar(64) NOT NULL,
-    REFRESH_JOB_ID bigint NOT NULL AUTO_INCREMENT,
-    IS_NEWEST_REFRESH varchar(3) NOT NULL,
-    REFRESH_METHOD varchar(32) NOT NULL,
-    REFRESH_TIME datetime DEFAULT NULL,
-    REFRESH_ENDTIME datetime DEFAULT NULL,
-    REFRESH_STATUS varchar(16) DEFAULT NULL,
-    PRIMARY KEY(REFRESH_JOB_ID),
-    KEY idx_mview_newest(MVIEW_ID, IS_NEWEST_REFRESH))`
-
-// CreateTiDBMLogPurgeHistTable is a table to store mlog purge history.
-// Note: PURGE_JOB_ID is auto-increment BIGINT (internal), while information_schema expects varchar.
-CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
-    MLOG_ID varchar(64) NOT NULL,
-    MLOG_NAME varchar(64) NOT NULL,
-    PURGE_JOB_ID bigint NOT NULL AUTO_INCREMENT,
-    IS_NEWEST_PURGE varchar(3) NOT NULL,
-    PURGE_METHOD varchar(32) NOT NULL,
-    PURGE_TIME datetime DEFAULT NULL,
-    PURGE_ENDTIME datetime DEFAULT NULL,
-    PURGE_ROWS bigint NOT NULL,
-    PURGE_STATUS varchar(16) DEFAULT NULL,
-    PRIMARY KEY(PURGE_JOB_ID),
-    KEY idx_mlog_newest(MLOG_ID, IS_NEWEST_PURGE))`
-*/
-
 func (t *MVService) Run() {
-	t.sch.init()
+	if !t.sch.init() {
+		return
+	}
 	t.executor.Run()
-
 	timer := time.NewTimer(0)
+
 	defer func() {
 		timer.Stop()
 		t.executor.Close()
@@ -243,8 +176,8 @@ func (t *MVService) Run() {
 		now := time.Now()
 
 		if forceFetch || t.shouldFetch(now) {
-			t.sch.Refresh()
-			if err := t.FetchAllMVMeta(t.ctx); err != nil {
+			t.sch.refresh()
+			if err := t.FetchAllMVMeta(); err != nil {
 				// avoid tight retries on fetch failures
 				t.lastRefresh.Store(now.UnixMilli())
 			}
@@ -494,8 +427,8 @@ func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
 	return nil
 }
 
-func (t *MVService) fetchAllTiDBMLogPurge(ctx context.Context) error {
-	newPending, err := t.mh.fetchAllTiDBMLogPurge(ctx, t.sysSessionPool)
+func (t *MVService) fetchAllTiDBMLogPurge() error {
+	newPending, err := t.mh.fetchAllTiDBMLogPurge(t.ctx, t.sysSessionPool)
 	if err != nil {
 		return err
 	}
@@ -507,8 +440,8 @@ func (t *MVService) fetchAllTiDBMLogPurge(ctx context.Context) error {
 	return t.buildMLogPurgeTasks(newPending)
 }
 
-func (t *MVService) fetchAllTiDBMViews(ctx context.Context) error {
-	newPending, err := t.mh.fetchAllTiDBMViews(ctx, t.sysSessionPool)
+func (t *MVService) fetchAllTiDBMViews() error {
+	newPending, err := t.mh.fetchAllTiDBMViews(t.ctx, t.sysSessionPool)
 	if err != nil {
 		return err
 	}
@@ -520,11 +453,11 @@ func (t *MVService) fetchAllTiDBMViews(ctx context.Context) error {
 	return t.buildMVRefreshTasks(newPending)
 }
 
-func (t *MVService) FetchAllMVMeta(ctx context.Context) error {
-	if err := t.fetchAllTiDBMLogPurge(ctx); err != nil {
+func (t *MVService) FetchAllMVMeta() error {
+	if err := t.fetchAllTiDBMLogPurge(); err != nil {
 		return err
 	}
-	if err := t.fetchAllTiDBMViews(ctx); err != nil {
+	if err := t.fetchAllTiDBMViews(); err != nil {
 		return err
 	}
 

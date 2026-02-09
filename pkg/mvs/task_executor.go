@@ -112,6 +112,9 @@ func (e *TaskExecutor) Submit(name string, task func() error) {
 	if e == nil || task == nil {
 		return
 	}
+	e.queue.mu.Lock()
+	defer e.queue.mu.Unlock()
+
 	if e.closed.Load() || e.ctx.Err() != nil {
 		e.metrics.rejectedCount.Add(1)
 		return
@@ -119,11 +122,8 @@ func (e *TaskExecutor) Submit(name string, task func() error) {
 	e.metrics.submittedCount.Add(1)
 	e.metrics.waitingCount.Add(1)
 	e.tasksWG.Add(1)
-
-	e.queue.mu.Lock()
 	e.queue.tasks = append(e.queue.tasks, taskRequest{name: name, task: task})
 	e.queue.cond.Signal()
-	e.queue.mu.Unlock()
 }
 
 func (e *TaskExecutor) Close() {

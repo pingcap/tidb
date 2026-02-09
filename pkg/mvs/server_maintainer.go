@@ -32,6 +32,9 @@ func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerHel
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if helper == nil {
+		panic("ServerHelper cannot be nil")
+	}
 	return &ServerConsistentHash{
 		ctx:     ctx,
 		servers: make(map[string]serverInfo),
@@ -40,36 +43,27 @@ func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerHel
 	}
 }
 
-func (sch *ServerConsistentHash) init() {
-	if sch == nil {
-		return
-	}
+func (sch *ServerConsistentHash) init() bool {
 	backoff := time.Second
 	for {
-		info, err := sch.helper.getServerInfo()
+		info, err := sch.helper.getServerInfo() // get local server info, if failed, retry until success, otherwise the server will never be added to the hash ring and won't receive any task
 		if err == nil {
 			sch.mu.Lock()
+
 			sch.ID = info.ID
+
 			sch.mu.Unlock()
-			break
+			return true
 		}
 
-		backoff = min(backoff, time.Second*5)
-		logutil.BgLogger().Warn("get local TiDB server info failed, retrying after backoff", zap.Error(err), zap.Duration("backoff", backoff))
-		time.Sleep(backoff)
-		backoff *= 2
-	}
-
-	for {
-		err := sch.Refresh()
-		// only break when refresh is successful
-		if err == nil {
-			break
+		waitBackoff := min(backoff, time.Second*5)
+		logutil.BgLogger().Warn("get local TiDB server info failed, retrying after backoff", zap.Error(err), zap.Duration("backoff", waitBackoff))
+		select {
+		case <-sch.ctx.Done():
+			return false
+		case <-time.After(waitBackoff):
+			backoff = waitBackoff * 2
 		}
-		logutil.BgLogger().Warn("initial server consistent hash refresh failed", zap.Error(err))
-		backoff = min(backoff, time.Second*5)
-		time.Sleep(backoff)
-		backoff *= 2
 	}
 }
 
@@ -87,7 +81,7 @@ func (sch *ServerConsistentHash) removeServer(srvID string) {
 	sch.chash.RemoveNode(srvID)
 }
 
-func (sch *ServerConsistentHash) Refresh() error {
+func (sch *ServerConsistentHash) refresh() error {
 	newServerInfos, err := sch.helper.getAllServerInfo(sch.ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("get available TiDB nodes failed", zap.Error(err))
