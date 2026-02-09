@@ -2115,7 +2115,7 @@ func TestUniqueTiCIHybridIndexRejected(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(c1 int, c2 text)")
+	tk.MustExec("create table t(c1 int, c2 varchar(255))")
 
 	tk.MustContainErrMsg(`create unique index idx_h on t(c1, c2) using hybrid parameter '{
 		"inverted": {"columns": ["c2"]},
