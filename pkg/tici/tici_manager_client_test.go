@@ -103,21 +103,21 @@ func TestCreateFulltextIndex(t *testing.T) {
 		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
 		Return(&CreateIndexResponse{Status: ErrorCode_SUCCESS, IndexId: "2"}, nil).
 		Once()
-	err := ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
+	err := ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
 	assert.NoError(t, err)
 
 	mockClient.
 		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
 		Return(&CreateIndexResponse{Status: ErrorCode_UNKNOWN_ERROR, IndexId: "2", ErrorMessage: "fail"}, nil).
 		Once()
-	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
+	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
 	require.ErrorContains(t, err, "fail")
 
 	mockClient.
 		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
 		Return(&CreateIndexResponse{}, errors.New("rpc error")).
 		Once()
-	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
+	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
 	require.ErrorContains(t, err, "rpc error")
 }
 

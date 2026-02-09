@@ -1781,6 +1781,23 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbFtMaxTokenSize, Value: "84", Type: vardef.TypeUnsigned, MinValue: 10, MaxValue: 84},
+	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbFtMinTokenSize, Value: "3", Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 16},
+	{Scope: vardef.ScopeGlobal, Name: vardef.NgramTokenSize, Value: "2", Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 10},
+	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbFtServerStopwordTable, Value: "", Type: vardef.TypeStr, Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+		normalizedValue = strings.TrimSpace(normalizedValue)
+		if normalizedValue == "" {
+			return normalizedValue, nil
+		}
+		parts := strings.Split(normalizedValue, "/")
+		if len(parts) != 2 {
+			parts = strings.Split(normalizedValue, ".")
+		}
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.InnodbFtServerStopwordTable, originalValue)
+		}
+		return normalizedValue, nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: vardef.TypeBool,
@@ -2047,6 +2064,21 @@ var defaultSysVars = []*SysVar{
 		lockWaitSec := TidbOptInt64(val, vardef.DefInnodbLockWaitTimeout)
 		s.LockWaitTimeout = lockWaitSec * 1000
 		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InnodbFtEnableStopword, Value: vardef.On, Type: vardef.TypeBool, AutoConvertNegativeBool: true},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InnodbFtUserStopwordTable, Value: "", Type: vardef.TypeStr, Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+		normalizedValue = strings.TrimSpace(normalizedValue)
+		if normalizedValue == "" {
+			return normalizedValue, nil
+		}
+		parts := strings.Split(normalizedValue, "/")
+		if len(parts) != 2 {
+			parts = strings.Split(normalizedValue, ".")
+		}
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.InnodbFtUserStopwordTable, originalValue)
+		}
+		return normalizedValue, nil
 	}},
 	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
