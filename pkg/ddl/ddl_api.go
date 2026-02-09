@@ -78,6 +78,75 @@ import (
 	"go.uber.org/zap"
 )
 
+type indexPresplitOpt struct {
+	Lower      []string
+	Upper      []string
+	Num        int64
+	ValueLists [][]string
+}
+
+func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*indexPresplitOpt, error) {
+	if indexOpt == nil {
+		return nil, nil
+	}
+	opt := indexOpt.SplitOpt
+	if opt == nil {
+		return nil, nil
+	}
+	if len(opt.ValueLists) > 0 {
+		valLists := make([][]string, 0, len(opt.ValueLists))
+		for _, lst := range opt.ValueLists {
+			values := make([]string, 0, len(lst))
+			for _, exp := range lst {
+				var sb strings.Builder
+				rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+				err := exp.Restore(rCtx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				values = append(values, sb.String())
+			}
+			valLists = append(valLists, values)
+		}
+		return &indexPresplitOpt{
+			Num:        opt.Num,
+			ValueLists: valLists,
+		}, nil
+	}
+
+	lowers := make([]string, 0, len(opt.Lower))
+	for _, expL := range opt.Lower {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expL.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		lowers = append(lowers, sb.String())
+	}
+	uppers := make([]string, 0, len(opt.Upper))
+	for _, expU := range opt.Upper {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expU.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		uppers = append(uppers, sb.String())
+	}
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
+	if opt.Num > maxSplitRegionNum {
+		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+	} else if opt.Num < 1 {
+		return nil, errors.Errorf("Split index region num should be greater than 0")
+	}
+	return &indexPresplitOpt{
+		Lower: lowers,
+		Upper: uppers,
+		Num:   opt.Num,
+	}, nil
+}
+
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
@@ -7472,6 +7541,11 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		}
 	}
 
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	job := &model.Job{
@@ -7482,7 +7556,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		Type:           model.ActionAddPrimaryKey,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      nil,
-		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
+		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global, splitOpt},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
@@ -7725,6 +7799,11 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		}
 	}
 
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if indexOption != nil && indexOption.Tp == model.IndexTypeHypo { // for hypo-index
 		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique, global,
 			indexPartSpecifications, indexOption, model.StatePublic)
@@ -7743,7 +7822,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		Type:           model.ActionAddIndex,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      nil,
-		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global, splitOpt},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		Charset:        chs,
 		Collate:        coll,

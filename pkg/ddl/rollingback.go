@@ -115,8 +115,15 @@ func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 	indexName := make([]model.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
 	indexOption := make([]*ast.IndexOption, 1)
+	splitOpt := make([]*indexPresplitOpt, 1)
 
-	err = job.DecodeArgs(&unique[0], &indexName[0], &indexPartSpecifications[0], &indexOption[0])
+	err = job.DecodeArgs(&unique[0], &indexName[0], &indexPartSpecifications[0], &indexOption[0], &splitOpt[0])
+	if err != nil {
+		err = job.DecodeArgs(&unique[0], &indexName[0], &indexPartSpecifications[0], &indexOption[0])
+	}
+	if err != nil {
+		err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption, &splitOpt)
+	}
 	if err != nil {
 		err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption)
 	}

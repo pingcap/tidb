@@ -565,15 +565,25 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	indexNames := make([]model.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
 	indexOption := make([]*ast.IndexOption, 1)
+	splitOpt := make([]*indexPresplitOpt, 1)
 	var sqlMode mysql.SQLMode
 	var warnings []string
 	hiddenCols := make([][]*model.ColumnInfo, 1)
 
 	if isPK {
 		// Notice: sqlMode and warnings is used to support non-strict mode.
-		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
+		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0], &splitOpt[0])
+		if err != nil {
+			err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
+		}
 	} else {
-		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0])
+		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0], &splitOpt[0])
+		if err != nil {
+			err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0])
+		}
+		if err != nil {
+			err = job.DecodeArgs(&unique, &indexNames, &indexPartSpecifications, &indexOption, &hiddenCols, &global, &splitOpt)
+		}
 		if err != nil {
 			err = job.DecodeArgs(&unique, &indexNames, &indexPartSpecifications, &indexOption, &hiddenCols, &global)
 		}
@@ -673,6 +683,13 @@ SwitchIndexState:
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
+		}
+		err = preSplitIndexRegions(w.ctx, w.sess.Context, d.store, tblInfo, allIndexInfos, job.ReorgMeta, indexPartSpecifications, splitOpt)
+		if err != nil {
+			if !errorIsRetryable(err, job) {
+				job.State = model.JobStateCancelled
+			}
+			return ver, err
 		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteOnly
