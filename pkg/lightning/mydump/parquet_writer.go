@@ -32,7 +32,9 @@ type parquetColumnData struct {
 	defLevels []int16
 }
 
-func calcValueRange(defLevels []int16, rowStart, rowEnd int) (int, int, error) {
+func calcValueRange(
+	defLevels []int16, rowStart, rowEnd int,
+) (start, end int, err error) {
 	if defLevels == nil {
 		return rowStart, rowEnd, nil
 	}
