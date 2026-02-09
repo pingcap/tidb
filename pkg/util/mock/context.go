@@ -226,6 +226,11 @@ func (c *Context) GetPlanCtx() planctx.PlanContext {
 	return c
 }
 
+// UnwrapAsInternalSctx returns the underlying internal session context as `any`.
+func (c *Context) UnwrapAsInternalSctx() any {
+	return c
+}
+
 // GetNullRejectCheckExprCtx gets the expression context with null rejected check.
 func (c *Context) GetNullRejectCheckExprCtx() exprctx.ExprContext {
 	return exprctx.WithNullRejectCheck(c)
