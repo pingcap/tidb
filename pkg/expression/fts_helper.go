@@ -165,7 +165,7 @@ func RewriteMySQLMatchAgainst(bctx BuildContext, expr Expression) (Expression, e
 		return expr, nil
 	}
 	var (
-		patternGroup matchagainst.StandardBooleanGroup
+		patternGroup matchagainst.BooleanGroup
 		err          error
 	)
 	if scalarFunc.Function.(*builtinFtsMysqlMatchAgainstSig).modifier == ast.FulltextSearchModifierBooleanMode {
@@ -196,7 +196,7 @@ func RewriteMySQLMatchAgainst(bctx BuildContext, expr Expression) (Expression, e
 	for i := 1; i < len(scalarFunc.GetArgs()); i++ {
 		argsBuffer[i] = scalarFunc.GetArgs()[i]
 	}
-	rewriteFunc := func(item matchagainst.StandardBooleanClause) (Expression, error) {
+	rewriteFunc := func(item matchagainst.BooleanClause) (Expression, error) {
 		patternConst := &Constant{
 			Value:   types.NewStringDatum(item.Expr.Text()),
 			RetType: types.NewFieldType(mysql.TypeString),
@@ -204,12 +204,12 @@ func RewriteMySQLMatchAgainst(bctx BuildContext, expr Expression) (Expression, e
 		argsBuffer[0] = patternConst
 		// Map the original pattern to different internal functions based on the type and wildcard property of the pattern.
 		switch x := item.Expr.(type) {
-		case *matchagainst.StandardBooleanTerm:
+		case *matchagainst.BooleanTerm:
 			if !x.Wildcard {
 				return NewFunctionInternal(bctx, ast.FTSMatchWord, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
 			}
 			return NewFunctionInternal(bctx, ast.FTSMatchPrefix, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
-		case *matchagainst.StandardBooleanPhrase:
+		case *matchagainst.BooleanPhrase:
 			return NewFunctionInternal(bctx, ast.FTSMatchPhrase, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
 		default:
 			return nil, errors.Errorf("unsupported boolean expression: %T", item.Expr)

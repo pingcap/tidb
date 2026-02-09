@@ -46,10 +46,10 @@ type token struct {
 	// (required), so defaultYesno() returns 1 when inQuote is true.
 	yesno int8
 	// weightAdjust counts how many '>' and '<' were seen; only its sign matters
-	// (positive => OpIncrRating, negative => OpDecrRating).
+	// (positive => BooleanModifierBoost, negative => BooleanModifierDeBoost).
 	weightAdjust int8
 	// negateToggle is toggled by '~'. If it's true (odd number of '~') and no
-	// higher-priority modifier exists, it becomes OpNegate.
+	// higher-priority modifier exists, it becomes BooleanModifierNegate.
 	negateToggle bool
 
 	fromQuote bool

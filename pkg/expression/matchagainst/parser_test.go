@@ -22,61 +22,61 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func dumpUnaryOp(op UnaryOp) string {
-	switch op {
-	case OpExist:
+func dumpModifier(mod BooleanModifier) string {
+	switch mod {
+	case BooleanModifierMust:
 		return "+"
-	case OpIgnore:
+	case BooleanModifierMustNot:
 		return "-"
-	case OpNegate:
+	case BooleanModifierNegate:
 		return "~"
-	case OpIncrRating:
+	case BooleanModifierBoost:
 		return ">"
-	case OpDecrRating:
+	case BooleanModifierDeBoost:
 		return "<"
 	default:
 		return ""
 	}
 }
 
-func dumpNode(n Node) string {
-	return dumpUnaryOp(n.Op) + dumpItem(n.Item)
+func dumpClause(c BooleanClause) string {
+	return dumpModifier(c.Modifier) + dumpExpr(c.Expr)
 }
 
-func dumpItem(item Item) string {
-	switch x := item.(type) {
-	case *Word:
+func dumpExpr(expr BooleanExpr) string {
+	switch x := expr.(type) {
+	case *BooleanTerm:
 		var b strings.Builder
-		b.WriteString(x.Text)
-		if x.Trunc {
+		b.WriteString(x.text)
+		if x.Wildcard {
 			b.WriteByte('*')
 		}
 		if x.Ignored {
 			b.WriteString("{ign}")
 		}
 		return b.String()
-	case *Phrase:
-		return fmt.Sprintf("%q", x.Text)
-	case *Group:
+	case *BooleanPhrase:
+		return fmt.Sprintf("%q", x.text)
+	case *BooleanGroup:
 		return "(" + dumpGroup(x) + ")"
 	default:
 		return "<unknown>"
 	}
 }
 
-func dumpNodes(nodes []Node) string {
-	if len(nodes) == 0 {
+func dumpClauses(clauses []BooleanClause) string {
+	if len(clauses) == 0 {
 		return ""
 	}
-	out := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		out = append(out, dumpNode(n))
+	out := make([]string, 0, len(clauses))
+	for _, c := range clauses {
+		out = append(out, dumpClause(c))
 	}
 	return strings.Join(out, " ")
 }
 
-func dumpGroup(g *Group) string {
-	return fmt.Sprintf("M[%s] S[%s] N[%s]", dumpNodes(g.Must), dumpNodes(g.Should), dumpNodes(g.MustNot))
+func dumpGroup(g *BooleanGroup) string {
+	return fmt.Sprintf("M[%s] S[%s] N[%s]", dumpClauses(g.Must), dumpClauses(g.Should), dumpClauses(g.MustNot))
 }
 
 func TestParseBooleanMode(t *testing.T) {

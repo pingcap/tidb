@@ -26,7 +26,7 @@ var (
 	ErrUnmatchedRightParen = errors.New("unmatched ')' in BOOLEAN MODE query")
 )
 
-func pickUnaryOp(yesno int8, weightAdjust int8, negateToggle bool) UnaryOp {
+func pickUnaryOp(yesno int8, weightAdjust int8, negateToggle bool) BooleanModifier {
 	// InnoDB only keeps one unary operator for each element. If multiple modifier
 	// symbols are present, the effective operator is chosen by this priority:
 	//
@@ -34,28 +34,28 @@ func pickUnaryOp(yesno int8, weightAdjust int8, negateToggle bool) UnaryOp {
 	//
 	// where:
 	//   yesno: +1 / 0 / -1 (required / default / prohibited)
-	//   weightAdjust: sign-only, >0 => OpIncrRating, <0 => OpDecrRating
+	//   weightAdjust: sign-only, >0 => Boost, <0 => DeBoost
 	//   negateToggle: true if '~' appears odd times
 	if yesno > 0 {
-		return OpExist
+		return BooleanModifierMust
 	}
 	if yesno < 0 {
-		return OpIgnore
+		return BooleanModifierMustNot
 	}
 	if weightAdjust > 0 {
-		return OpIncrRating
+		return BooleanModifierBoost
 	}
 	if weightAdjust < 0 {
-		return OpDecrRating
+		return BooleanModifierDeBoost
 	}
 	if negateToggle {
-		return OpNegate
+		return BooleanModifierNegate
 	}
-	return OpNone
+	return BooleanModifierNone
 }
 
 type phraseBuilder struct {
-	phrase *Phrase
+	phrase *BooleanPhrase
 	words  []string
 }
 
@@ -64,15 +64,15 @@ type phraseBuilder struct {
 //
 // Notes:
 //   - Quoted phrase is normalized into a space-joined string.
-//   - "@N" produces a Word with Ignored=true (N must be digits). Later stages
+//   - "@N" produces a term with Ignored=true (N must be digits). Later stages
 //     should ignore it.
 //   - Unary operators follow InnoDB priority: + / - > < ~ (only one is kept).
-func ParseBooleanMode(input string) (*Group, error) {
+func ParseBooleanMode(input string) (*BooleanGroup, error) {
 	s := newScanState(input)
 
-	root := &Group{}
+	root := &BooleanGroup{}
 	curGroup := root
-	var groupStack []*Group
+	var groupStack []*BooleanGroup
 
 	var curPhrase *phraseBuilder
 
@@ -100,25 +100,25 @@ func ParseBooleanMode(input string) (*Group, error) {
 				continue
 			}
 			op := pickUnaryOp(tok.yesno, tok.weightAdjust, tok.negateToggle)
-			word := &Word{
-				Text:    tok.text,
-				Trunc:   tok.trunc,
-				Ignored: tok.isDistance,
+			word := &BooleanTerm{
+				text:     tok.text,
+				Wildcard: tok.trunc,
+				Ignored:  tok.isDistance,
 			}
-			curGroup.addNode(Node{Op: op, Item: word})
+			curGroup.addClause(BooleanClause{Modifier: op, Expr: word})
 		case tokLParen:
 			op := pickUnaryOp(tok.yesno, tok.weightAdjust, tok.negateToggle)
 			if tok.fromQuote {
-				phrase := &Phrase{}
-				curGroup.addNode(Node{Op: op, Item: phrase})
+				phrase := &BooleanPhrase{}
+				curGroup.addClause(BooleanClause{Modifier: op, Expr: phrase})
 
 				groupStack = append(groupStack, curGroup)
 				curPhrase = &phraseBuilder{phrase: phrase}
 				continue
 			}
 
-			child := &Group{}
-			curGroup.addNode(Node{Op: op, Item: child})
+			child := &BooleanGroup{Parenthesized: true}
+			curGroup.addClause(BooleanClause{Modifier: op, Expr: child})
 
 			groupStack = append(groupStack, curGroup)
 			curGroup = child
@@ -127,7 +127,7 @@ func ParseBooleanMode(input string) (*Group, error) {
 				if curPhrase == nil {
 					return nil, errors.New("internal error: unexpected quote close")
 				}
-				curPhrase.phrase.Text = strings.Join(curPhrase.words, " ")
+				curPhrase.phrase.text = strings.Join(curPhrase.words, " ")
 				curPhrase = nil
 				s.inQuote = false
 			} else if curPhrase != nil {

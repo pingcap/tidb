@@ -3,12 +3,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "matchagainst",
     srcs = [
+        "boolean_ast.go",
         "parser.go",
-        "standard_ast.go",
         "standard_boolean_parser.go",
         "standard_boolean_tokenizer.go",
         "tokenizer.go",
-        "types.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression/matchagainst",
     visibility = ["//visibility:public"],
@@ -26,6 +25,7 @@ go_test(
     ],
     embed = [":matchagainst"],
     flaky = False,
+    shard_count = 2,
     deps = [
         "@com_github_stretchr_testify//require",
     ],
