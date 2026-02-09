@@ -71,7 +71,12 @@ type baseTxnContextProvider struct {
 	txn             kv.Transaction
 	isTxnPrepared   bool
 	enterNewTxnType sessiontxn.EnterNewTxnType
-	currentStmt     ast.StmtNode
+	// currentStmtMayNotNeedTSO indicates whether the current statement is a pure memory statement that may not need TSO.
+	// This is used to avoid prefetching TSO in warmup for such statements to avoid unnecessary PD TSO requests.
+	// Please notice that this variable is just an approximation, and it's possible that some statements still
+	// call GetStmtReadTS or GetStmtForUpdateTS later to fetch TSO in sync mode,
+	// but it won't cause any correctness issue.
+	currentStmtMayNotNeedTSO bool
 	// constStartTS is only used by point get max ts optimization currently.
 	// When constStartTS != 0, we use constStartTS directly without fetching it from tso.
 	// To save the cpu cycles `PrepareTSFuture` will also not be called when warmup (postpone to activate txn).
@@ -85,7 +90,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 
 	p.ctx = ctx
-	p.currentStmt = nil
+	p.currentStmtMayNotNeedTSO = false
 	sessVars := p.sctx.GetSessionVars()
 	activeNow := true
 	switch tp {
@@ -213,7 +218,18 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	p.ctx = ctx
-	p.currentStmt = node
+	p.currentStmtMayNotNeedTSO = false
+	if node != nil {
+		switch node.(type) {
+		case *ast.UseStmt, *ast.SetStmt:
+			// Some statements like `USE` or simple `SET` typically won't touch KV, and thus don't need TSO.
+			// We skip preparing TSO in warmup for such statements to avoid unnecessary PD TSO requests.
+			// NOTICE: If GetStmtReadTS or GetStmtForUpdateTS is called later, TSO will still be fetched in sync mode.
+			// Skipping `prepareTxn` only means to avoid the unnecessary prefetch optimization.
+			p.currentStmtMayNotNeedTSO = true
+		}
+	}
+
 	return nil
 }
 
@@ -445,7 +461,7 @@ func (p *baseTxnContextProvider) AdviseWarmup() error {
 		// unnecessary PD TSO requests in workloads with lots of such statements.
 		// NOTE: We only skip *preparing* TSO in warmup, but if a statement truly needs TSO later
 		// (e.g. `SET @a=(SELECT ...)`), it will still be fetched when the transaction is activated.
-		p.shouldStmtOptimizePrefetchTSO(p.currentStmt) {
+		!p.currentStmtMayNotNeedTSO {
 		return p.prepareTxn(true)
 	}
 	return nil

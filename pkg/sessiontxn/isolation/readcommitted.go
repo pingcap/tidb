@@ -268,7 +268,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 		return err
 	}
 
-	if !p.isTidbSnapshotEnabled() && p.shouldStmtOptimizePrefetchTSO(p.currentStmt) {
+	if !p.isTidbSnapshotEnabled() && !p.currentStmtMayNotNeedTSO {
 		p.prepareStmtTS(true)
 	}
 
