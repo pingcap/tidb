@@ -16,17 +16,17 @@ package matchagainst
 
 import "unicode"
 
-type tokType uint8
+type ngramTokType uint8
 
 const (
-	tokWord tokType = iota
-	tokLParen
-	tokRParen
-	tokEOF
+	ngramTokWord ngramTokType = iota
+	ngramTokLParen
+	ngramTokRParen
+	ngramTokEOF
 )
 
-type token struct {
-	typ tokType
+type ngramToken struct {
+	typ ngramTokType
 
 	// WORD only.
 	text  string
@@ -35,7 +35,7 @@ type token struct {
 	// modifiers (apply to this token/group)
 	//
 	// NOTE: These three fields are the inputs to InnoDB's unary op selection
-	// priority (see pickUnaryOp):
+	// priority (see pickNgramModifier):
 	//   yesno (+ / -) > weightAdjust (> / <) > negateToggle (~).
 	//
 	// yesno corresponds to '+' / '-' prefix operators:
@@ -60,7 +60,7 @@ type token struct {
 	isDistance bool
 }
 
-type scanState struct {
+type ngramScanState struct {
 	runes []rune
 	i     int
 
@@ -74,14 +74,14 @@ type scanState struct {
 	afterAt bool
 }
 
-func newScanState(input string) *scanState {
-	return &scanState{
+func newNgramScanState(input string) *ngramScanState {
+	return &ngramScanState{
 		runes:    []rune(input),
 		prevChar: ' ',
 	}
 }
 
-func isWordChar(ch rune) bool {
+func isNgramWordChar(ch rune) bool {
 	return unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_'
 }
 
@@ -97,29 +97,29 @@ func isAllDigits(s string) bool {
 	return true
 }
 
-func (s *scanState) defaultYesno() int8 {
+func (s *ngramScanState) defaultYesno() int8 {
 	if s.inQuote {
 		return 1
 	}
 	return 0
 }
 
-func (s *scanState) nextToken() token {
+func (s *ngramScanState) nextToken() ngramToken {
 	yesno := s.defaultYesno()
 	var weightAdjust int8
 	var negateToggle bool
 
 	for s.i < len(s.runes) {
 		ch := s.runes[s.i]
-		if isWordChar(ch) {
+		if isNgramWordChar(ch) {
 			break
 		}
 
 		// In quote: only '"' yields a synthetic ')' (quote).
 		if s.inQuote && ch == '"' {
 			s.i++
-			return token{
-				typ:          tokRParen,
+			return ngramToken{
+				typ:          ngramTokRParen,
 				yesno:        yesno,
 				weightAdjust: weightAdjust,
 				negateToggle: negateToggle,
@@ -128,11 +128,11 @@ func (s *scanState) nextToken() token {
 		}
 
 		if !s.inQuote {
-			// '(' / ')' directly produce paren token (do not change prevChar).
+			// '(' / ')' directly produce parenthesis tokens (do not change prevChar).
 			if ch == '(' {
 				s.i++
-				return token{
-					typ:          tokLParen,
+				return ngramToken{
+					typ:          ngramTokLParen,
 					yesno:        yesno,
 					weightAdjust: weightAdjust,
 					negateToggle: negateToggle,
@@ -140,8 +140,8 @@ func (s *scanState) nextToken() token {
 			}
 			if ch == ')' {
 				s.i++
-				return token{
-					typ:          tokRParen,
+				return ngramToken{
+					typ:          ngramTokRParen,
 					yesno:        yesno,
 					weightAdjust: weightAdjust,
 					negateToggle: negateToggle,
@@ -152,8 +152,8 @@ func (s *scanState) nextToken() token {
 			if ch == '"' {
 				s.i++
 				s.inQuote = true
-				return token{
-					typ:          tokLParen,
+				return ngramToken{
+					typ:          ngramTokLParen,
 					yesno:        yesno,
 					weightAdjust: weightAdjust,
 					negateToggle: negateToggle,
@@ -203,18 +203,18 @@ func (s *scanState) nextToken() token {
 	if s.i >= len(s.runes) {
 		// Unclosed quote: auto-close with a synthetic ')' (quote).
 		if s.inQuote {
-			return token{
-				typ:       tokRParen,
+			return ngramToken{
+				typ:       ngramTokRParen,
 				yesno:     1,
 				fromQuote: true,
 			}
 		}
-		return token{typ: tokEOF}
+		return ngramToken{typ: ngramTokEOF}
 	}
 
 	// WORD.
 	start := s.i
-	for s.i < len(s.runes) && isWordChar(s.runes[s.i]) {
+	for s.i < len(s.runes) && isNgramWordChar(s.runes[s.i]) {
 		s.i++
 	}
 	word := string(s.runes[start:s.i])
@@ -230,8 +230,8 @@ func (s *scanState) nextToken() token {
 	s.afterAt = false
 	isDistance := fromAt && isAllDigits(word)
 
-	return token{
-		typ:          tokWord,
+	return ngramToken{
+		typ:          ngramTokWord,
 		text:         word,
 		trunc:        trunc,
 		yesno:        yesno,

@@ -26,7 +26,7 @@ var (
 	ErrUnmatchedRightParen = errors.New("unmatched ')' in BOOLEAN MODE query")
 )
 
-func pickUnaryOp(yesno int8, weightAdjust int8, negateToggle bool) BooleanModifier {
+func pickNgramModifier(yesno int8, weightAdjust int8, negateToggle bool) BooleanModifier {
 	// InnoDB only keeps one unary operator for each element. If multiple modifier
 	// symbols are present, the effective operator is chosen by this priority:
 	//
@@ -54,32 +54,32 @@ func pickUnaryOp(yesno int8, weightAdjust int8, negateToggle bool) BooleanModifi
 	return BooleanModifierNone
 }
 
-type phraseBuilder struct {
+type ngramPhraseBuilder struct {
 	phrase *BooleanPhrase
 	words  []string
 }
 
-// ParseBooleanMode parses a MySQL MATCH ... AGAINST (... IN BOOLEAN MODE) query
-// string into a simplified, InnoDB-aligned IR.
+// ParseNgramBooleanMode parses a MySQL MATCH ... AGAINST (... IN BOOLEAN MODE)
+// query using the ngram parser behavior into a simplified, InnoDB-aligned IR.
 //
 // Notes:
 //   - Quoted phrase is normalized into a space-joined string.
 //   - "@N" produces a term with Ignored=true (N must be digits). Later stages
 //     should ignore it.
 //   - Unary operators follow InnoDB priority: + / - > < ~ (only one is kept).
-func ParseBooleanMode(input string) (*BooleanGroup, error) {
-	s := newScanState(input)
+func ParseNgramBooleanMode(input string) (*BooleanGroup, error) {
+	s := newNgramScanState(input)
 
 	root := &BooleanGroup{}
 	curGroup := root
 	var groupStack []*BooleanGroup
 
-	var curPhrase *phraseBuilder
+	var curPhrase *ngramPhraseBuilder
 
 	for {
 		tok := s.nextToken()
 		switch tok.typ {
-		case tokEOF:
+		case ngramTokEOF:
 			if curPhrase != nil {
 				return nil, errors.New("internal error: EOF in quote")
 			}
@@ -87,7 +87,7 @@ func ParseBooleanMode(input string) (*BooleanGroup, error) {
 				return nil, ErrUnmatchedLeftParen
 			}
 			return root, nil
-		case tokWord:
+		case ngramTokWord:
 			if curPhrase != nil {
 				if tok.isDistance {
 					continue
@@ -99,21 +99,21 @@ func ParseBooleanMode(input string) (*BooleanGroup, error) {
 				curPhrase.words = append(curPhrase.words, w)
 				continue
 			}
-			op := pickUnaryOp(tok.yesno, tok.weightAdjust, tok.negateToggle)
+			op := pickNgramModifier(tok.yesno, tok.weightAdjust, tok.negateToggle)
 			word := &BooleanTerm{
 				text:     tok.text,
 				Wildcard: tok.trunc,
 				Ignored:  tok.isDistance,
 			}
 			curGroup.addClause(BooleanClause{Modifier: op, Expr: word})
-		case tokLParen:
-			op := pickUnaryOp(tok.yesno, tok.weightAdjust, tok.negateToggle)
+		case ngramTokLParen:
+			op := pickNgramModifier(tok.yesno, tok.weightAdjust, tok.negateToggle)
 			if tok.fromQuote {
 				phrase := &BooleanPhrase{}
 				curGroup.addClause(BooleanClause{Modifier: op, Expr: phrase})
 
 				groupStack = append(groupStack, curGroup)
-				curPhrase = &phraseBuilder{phrase: phrase}
+				curPhrase = &ngramPhraseBuilder{phrase: phrase}
 				continue
 			}
 
@@ -122,7 +122,7 @@ func ParseBooleanMode(input string) (*BooleanGroup, error) {
 
 			groupStack = append(groupStack, curGroup)
 			curGroup = child
-		case tokRParen:
+		case ngramTokRParen:
 			if tok.fromQuote {
 				if curPhrase == nil {
 					return nil, errors.New("internal error: unexpected quote close")

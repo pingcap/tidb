@@ -79,7 +79,7 @@ func dumpGroup(g *BooleanGroup) string {
 	return fmt.Sprintf("M[%s] S[%s] N[%s]", dumpClauses(g.Must), dumpClauses(g.Should), dumpClauses(g.MustNot))
 }
 
-func TestParseBooleanMode(t *testing.T) {
+func TestParseNgramBooleanMode(t *testing.T) {
 	type testCase struct {
 		name    string
 		input   string
@@ -252,7 +252,7 @@ func TestParseBooleanMode(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			root, err := ParseBooleanMode(tc.input)
+			root, err := ParseNgramBooleanMode(tc.input)
 			if tc.wantErr != nil {
 				require.ErrorIs(t, err, tc.wantErr)
 				return
