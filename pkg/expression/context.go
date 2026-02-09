@@ -85,10 +85,7 @@ type assertionEvalContext struct {
 // It allows helpers (e.g. sessionexpr.UnwrapInternalSctx) to reach the original session context even when
 // EvalContext is wrapped for assertions in tests.
 func (ctx *assertionEvalContext) UnwrapInternalSctx() any {
-	type internalSctxUnwrapper interface {
-		UnwrapInternalSctx() any
-	}
-	if u, ok := ctx.EvalContext.(internalSctxUnwrapper); ok {
+	if u, ok := ctx.EvalContext.(exprctx.InternalSctxUnwrapper); ok {
 		return u.UnwrapInternalSctx()
 	}
 	return nil

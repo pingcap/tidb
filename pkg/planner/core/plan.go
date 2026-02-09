@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -30,33 +31,16 @@ import (
 
 // AsSctx converts PlanContext to sessionctx.Context.
 func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
+	if sctx, ok := pctx.(sessionctx.Context); ok {
+		return sctx, nil
+	}
+
 	// Some PlanContext implementations are wrappers (e.g. planctx.WithExprCtx). Unwrap them to recover
 	// the underlying session-backed context when needed.
-	type internalSctxUnwrapper interface {
-		UnwrapAsInternalSctx() any
-	}
-	if u, ok := pctx.(internalSctxUnwrapper); ok {
+	if u, ok := pctx.(planctx.InternalSctxUnwrapper); ok {
 		if sctx, ok := u.UnwrapAsInternalSctx().(sessionctx.Context); ok {
 			return sctx, nil
 		}
-	}
-
-	type planCtxUnwrapper interface {
-		UnwrapPlanContext() base.PlanContext
-	}
-	for {
-		if sctx, ok := pctx.(sessionctx.Context); ok {
-			return sctx, nil
-		}
-		u, ok := pctx.(planCtxUnwrapper)
-		if !ok {
-			break
-		}
-		next := u.UnwrapPlanContext()
-		if next == nil || next == pctx {
-			break
-		}
-		pctx = next
 	}
 	return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
 }

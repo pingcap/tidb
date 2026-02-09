@@ -94,6 +94,14 @@ type EvalContext interface {
 	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
 }
 
+// InternalSctxUnwrapper is an optional capability for EvalContext wrappers to expose
+// their underlying internal session context.
+//
+// Implementers should return the wrapped value as `any` to avoid introducing dependency cycles.
+type InternalSctxUnwrapper interface {
+	UnwrapInternalSctx() any
+}
+
 // BuildContext is used to build an expression
 type BuildContext interface {
 	// GetEvalCtx returns the EvalContext.
@@ -179,21 +187,12 @@ type evalCtxOverrideWrapper struct {
 	errCtx  errctx.Context
 }
 
-// UnwrapEvalContext returns the underlying EvalContext.
-// It is used by callers that need to reach the original concrete implementation (e.g. sessionexpr.EvalContext).
-func (ctx *evalCtxOverrideWrapper) UnwrapEvalContext() EvalContext {
-	return ctx.EvalContext
-}
-
 // UnwrapInternalSctx returns the underlying internal session context as `any` (if any).
 //
 // NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
 // (sessionctx -> planctx -> exprctx).
 func (ctx *evalCtxOverrideWrapper) UnwrapInternalSctx() any {
-	type internalSctxUnwrapper interface {
-		UnwrapInternalSctx() any
-	}
-	if u, ok := ctx.EvalContext.(internalSctxUnwrapper); ok {
+	if u, ok := ctx.EvalContext.(InternalSctxUnwrapper); ok {
 		return u.UnwrapInternalSctx()
 	}
 	return nil
@@ -217,21 +216,12 @@ type staticConvertibleEvalCtxOverrideWrapper struct {
 	errCtx  errctx.Context
 }
 
-// UnwrapEvalContext returns the underlying EvalContext.
-// It is used by callers that need to reach the original concrete implementation (e.g. sessionexpr.EvalContext).
-func (ctx *staticConvertibleEvalCtxOverrideWrapper) UnwrapEvalContext() EvalContext {
-	return ctx.StaticConvertibleEvalContext
-}
-
 // UnwrapInternalSctx returns the underlying internal session context as `any` (if any).
 //
 // NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
 // (sessionctx -> planctx -> exprctx).
 func (ctx *staticConvertibleEvalCtxOverrideWrapper) UnwrapInternalSctx() any {
-	type internalSctxUnwrapper interface {
-		UnwrapInternalSctx() any
-	}
-	if u, ok := ctx.StaticConvertibleEvalContext.(internalSctxUnwrapper); ok {
+	if u, ok := ctx.StaticConvertibleEvalContext.(InternalSctxUnwrapper); ok {
 		return u.UnwrapInternalSctx()
 	}
 	return nil

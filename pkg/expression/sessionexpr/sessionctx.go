@@ -198,12 +198,6 @@ func (ctx *EvalContext) UnwrapInternalSctx() any {
 	return ctx.sctx
 }
 
-// maxUnwrapDepth is the maximum number of wrapper layers to unwrap when searching for the
-// underlying sessionctx.Context. This limit prevents infinite loops in case of circular
-// references between wrappers (e.g., A → B → A). In normal usage, wrapper depth should
-// be much smaller than this value.
-const maxUnwrapDepth = 8
-
 // UnwrapInternalSctx unwraps an EvalContext (possibly wrapped) into the underlying sessionctx.Context.
 // It returns nil if the EvalContext is not session-backed.
 func UnwrapInternalSctx(evalCtx exprctx.EvalContext) sessionctx.Context {
@@ -215,42 +209,11 @@ func UnwrapInternalSctx(evalCtx exprctx.EvalContext) sessionctx.Context {
 		return ctx.sctx
 	}
 
-	type internalSctxUnwrapper interface {
-		UnwrapInternalSctx() any
-	}
-	if u, ok := evalCtx.(internalSctxUnwrapper); ok {
+	if u, ok := evalCtx.(exprctx.InternalSctxUnwrapper); ok {
 		if sctx, ok := u.UnwrapInternalSctx().(sessionctx.Context); ok {
 			return sctx
 		}
 	}
-
-	// Fallback for older wrappers that only expose UnwrapEvalContext.
-	// We limit iterations to maxUnwrapDepth to guard against indirect circular references
-	// (e.g., A → B → C → A) that the simple `next == evalCtx` check cannot detect.
-	type unwrapEvalContext interface {
-		UnwrapEvalContext() exprctx.EvalContext
-	}
-	for range maxUnwrapDepth {
-		u, ok := evalCtx.(unwrapEvalContext)
-		if !ok {
-			break
-		}
-		next := u.UnwrapEvalContext()
-		if next == nil || next == evalCtx {
-			break
-		}
-		evalCtx = next
-
-		if ctx, ok := evalCtx.(*EvalContext); ok {
-			return ctx.sctx
-		}
-		if u, ok := evalCtx.(internalSctxUnwrapper); ok {
-			if sctx, ok := u.UnwrapInternalSctx().(sessionctx.Context); ok {
-				return sctx
-			}
-		}
-	}
-
 	return nil
 }
 
