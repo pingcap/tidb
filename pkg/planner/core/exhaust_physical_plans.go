@@ -506,7 +506,6 @@ func constructIndexJoin(
 	if innerTask.Invalid() {
 		return nil
 	}
-	forceRowMode := p.HasFlag(logicalop.JoinGenFromApplyFlag)
 	if ranges == nil {
 		ranges = ranger.Ranges{} // empty range
 	}
@@ -603,7 +602,7 @@ func constructIndexJoin(
 		CompareFilters:   compareFilters,
 		OuterHashKeys:    outerHashKeys,
 		InnerHashKeys:    innerHashKeys,
-		ForceRowMode:     forceRowMode,
+		// ForceRowMode will be filled when completeIndexJoin when attaching tasks
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
