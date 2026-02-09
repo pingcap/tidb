@@ -42,7 +42,7 @@ func ExhaustPhysicalPlans4LogicalUnionScan(p *logicalop.LogicalUnionScan, prop *
 		return nil, true, nil
 	}
 	childProp := prop.CloneEssentialFields()
-	childProp = admitIndexJoinProp(childProp, prop)
+	childProp = admitIndexJoinProp(childProp, prop, true)
 	if childProp == nil {
 		// even hint can not work with this. index join prop is not satisfied in mpp task type.
 		return nil, false, nil

@@ -3630,6 +3630,9 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 		LastColHelper: v.CompareFilters,
 		Finished:      &atomic.Value{},
 	}
+	if v.ForceRowMode {
+		e.OuterBatchSize = 1
+	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
@@ -3642,15 +3645,19 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
+	innerKeyColUniqueIDs := make([]int64, len(v.InnerJoinKeys))
 	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := range v.InnerJoinKeys {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
+		innerKeyColUniqueIDs[i] = v.InnerJoinKeys[i].UniqueID
 		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
+	readerBuilder.indexJoinKeyUniqueIDs = innerKeyColUniqueIDs
 	e.OuterCtx.KeyCols = outerKeyCols
 	e.InnerCtx.KeyCols = innerKeyCols
 	e.InnerCtx.KeyColIDs = innerKeyColIDs
+	e.InnerCtx.KeyColUniqueIDs = innerKeyColUniqueIDs
 	e.InnerCtx.KeyCollators = keyCollators
 
 	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
@@ -3716,9 +3723,13 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
+	innerKeyColUniqueIDs := make([]int64, len(v.InnerJoinKeys))
 	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := range v.InnerJoinKeys {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
+		innerKeyColUniqueIDs[i] = v.InnerJoinKeys[i].UniqueID
 		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
 	executor_metrics.ExecutorCounterIndexLookUpJoin.Inc()
@@ -3728,6 +3739,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 		b.err = err
 		return nil
 	}
+	readerBuilder.indexJoinKeyUniqueIDs = innerKeyColUniqueIDs
 
 	e := &join.IndexLookUpMergeJoin{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec),
@@ -3744,6 +3756,8 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 			RowTypes:                innerTypes,
 			JoinKeys:                v.InnerJoinKeys,
 			KeyCols:                 innerKeyCols,
+			KeyColIDs:               innerKeyColIDs,
+			KeyColUniqueIDs:         innerKeyColUniqueIDs,
 			KeyCollators:            keyCollators,
 			CompareFuncs:            v.CompareFuncs,
 			ColLens:                 v.IdxColLens,
@@ -3755,6 +3769,9 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 		IndexRanges:   v.Ranges,
 		KeyOff2IdxOff: v.KeyOff2IdxOff,
 		LastColHelper: v.CompareFilters,
+	}
+	if v.ForceRowMode {
+		e.OuterBatchSize = 1
 	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
@@ -4883,7 +4900,9 @@ type dataReaderBuilder struct {
 	*executorBuilder
 
 	selectResultHook // for testing
-	once             struct {
+	// indexJoinKeyUniqueIDs records the inner join key unique IDs for index join inner build.
+	indexJoinKeyUniqueIDs []int64
+	once                  struct {
 		sync.Once
 		condPruneResult []table.PhysicalTable
 		err             error
@@ -4951,15 +4970,129 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildStreamAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
+	case *physicalop.PhysicalLimit:
+		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+		if err != nil {
+			return nil, err
+		}
+		n := int(min(v.Count, uint64(builder.ctx.GetSessionVars().MaxChunkSize)))
+		baseExec := exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec)
+		baseExec.SetInitCap(n)
+		limitExec := &LimitExec{
+			BaseExecutor: baseExec,
+			begin:        v.Offset,
+			end:          v.Offset + v.Count,
+		}
+
+		childSchemaLen := v.Children()[0].Schema().Len()
+		childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
+		limitExec.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
+		limitExec.columnIdxsUsedByChild = append(limitExec.columnIdxsUsedByChild, childUsedSchema...)
+		if len(limitExec.columnIdxsUsedByChild) == childSchemaLen {
+			limitExec.columnIdxsUsedByChild = nil
+		} else {
+			limitExec.columnSwapHelper = chunk.NewColumnSwapHelper(limitExec.columnIdxsUsedByChild)
+		}
+		err = limitExec.open(ctx)
+		return limitExec, err
+	case *physicalop.PhysicalTopN:
+		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+		if err != nil {
+			return nil, err
+		}
+		sortExec := sortexec.SortExec{
+			BaseExecutor: exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
+			ByItems:      v.ByItems,
+			ExecSchema:   v.Schema(),
+		}
+		topNExec := &sortexec.TopNExec{
+			SortExec:    sortExec,
+			Limit:       &physicalop.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+			Concurrency: builder.ctx.GetSessionVars().Concurrency.ExecutorConcurrency,
+		}
+		columnIdxsUsedByChild, columnMissing := retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
+		if columnIdxsUsedByChild != nil && columnMissing {
+			columnIdxsUsedByChild = nil
+		}
+		topNExec.ColumnIdxsUsedByChild = columnIdxsUsedByChild
+		err = topNExec.OpenSelf()
+		return topNExec, err
 	case *physicalop.PhysicalHashJoin:
-		// since merge join is rarely used now, we can only support hash join now.
-		// we separate the child build flow out because we want to pass down the runtime constant --- lookupContents.
-		// todo: support hash join in index join inner side.
-		return nil, errors.New("Wrong plan type for dataReaderBuilder")
+		childIdx, ok := builder.indexJoinLookupChildIdx(v, lookUpContents)
+		if !ok {
+			return nil, errors.New("index join inner hash join cannot locate lookup child")
+		}
+		childExecs := make([]exec.Executor, 2)
+		var err error
+		childExecs[childIdx], err = builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[childIdx], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+		if err != nil {
+			return nil, err
+		}
+		otherIdx := 1 - childIdx
+		childExecs[otherIdx] = builder.executorBuilder.build(v.Children()[otherIdx])
+		if builder.executorBuilder.err != nil {
+			return nil, builder.executorBuilder.err
+		}
+		if err = exec.Open(ctx, childExecs[otherIdx]); err != nil {
+			return nil, err
+		}
+		if builder.ctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
+			joinExec := builder.executorBuilder.buildHashJoinV2FromChildExecs(childExecs[0], childExecs[1], v)
+			if builder.executorBuilder.err != nil {
+				return nil, builder.executorBuilder.err
+			}
+			err = joinExec.OpenSelf()
+			return joinExec, err
+		}
+		joinExec := builder.executorBuilder.buildHashJoinFromChildExecs(childExecs[0], childExecs[1], v)
+		if builder.executorBuilder.err != nil {
+			return nil, builder.executorBuilder.err
+		}
+		err = joinExec.OpenSelf()
+		return joinExec, err
 	case *mockPhysicalIndexReader:
 		return v.e, nil
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
+}
+
+func (builder *dataReaderBuilder) indexJoinLookupChildIdx(p *physicalop.PhysicalHashJoin, lookUpContents []*join.IndexJoinLookUpContent) (int, bool) {
+	var keyUniqueIDs []int64
+	if len(lookUpContents) > 0 {
+		keyUniqueIDs = lookUpContents[0].KeyColUniqueIDs
+	}
+	if len(keyUniqueIDs) == 0 {
+		keyUniqueIDs = builder.indexJoinKeyUniqueIDs
+	}
+	if len(keyUniqueIDs) == 0 {
+		return 0, false
+	}
+	leftSchema, rightSchema := p.Children()[0].Schema(), p.Children()[1].Schema()
+	inLeft := schemaContainsUniqueIDs(leftSchema, keyUniqueIDs)
+	inRight := schemaContainsUniqueIDs(rightSchema, keyUniqueIDs)
+	if inLeft == inRight {
+		return 0, false
+	}
+	if inLeft {
+		return 0, true
+	}
+	return 1, true
+}
+
+func schemaContainsUniqueIDs(schema *expression.Schema, ids []int64) bool {
+	for _, id := range ids {
+		found := false
+		for _, col := range schema.Columns {
+			if col.UniqueID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *physicalop.PhysicalUnionScan,
@@ -4970,6 +5103,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
+	childBuilder.indexJoinKeyUniqueIDs = builder.indexJoinKeyUniqueIDs
 
 	reader, err := childBuilder.BuildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	if err != nil {

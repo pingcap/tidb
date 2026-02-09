@@ -66,6 +66,9 @@ type IndexLookUpJoin struct {
 	OuterCtx OuterCtx
 	InnerCtx InnerCtx
 
+	// OuterBatchSize overrides IndexJoinBatchSize when > 0.
+	OuterBatchSize int
+
 	task       *lookUpJoinTask
 	JoinResult *chunk.Chunk
 	innerIter  *chunk.Iterator4Slice
@@ -107,16 +110,17 @@ type IndexJoinExecutorBuilder interface {
 
 // InnerCtx is the inner side ctx used in index lookup join
 type InnerCtx struct {
-	ReaderBuilder IndexJoinExecutorBuilder
-	RowTypes      []*types.FieldType
-	KeyCols       []int
-	KeyColIDs     []int64 // the original ID in its table, used by dynamic partition pruning
-	KeyCollators  []collate.Collator
-	HashTypes     []*types.FieldType
-	HashCols      []int
-	HashCollators []collate.Collator
-	ColLens       []int
-	HasPrefixCol  bool
+	ReaderBuilder   IndexJoinExecutorBuilder
+	RowTypes        []*types.FieldType
+	KeyCols         []int
+	KeyColIDs       []int64 // the original ID in its table, used by dynamic partition pruning
+	KeyColUniqueIDs []int64
+	KeyCollators    []collate.Collator
+	HashTypes       []*types.FieldType
+	HashCols        []int
+	HashCollators   []collate.Collator
+	ColLens         []int
+	HasPrefixCol    bool
 }
 
 type lookUpJoinTask struct {
@@ -208,6 +212,10 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context, initBatchSize int) {
 
 func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask, initBatchSize int) *outerWorker {
 	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
+	if e.OuterBatchSize > 0 {
+		maxBatchSize = e.OuterBatchSize
+		initBatchSize = maxBatchSize
+	}
 	batchSize := min(initBatchSize, maxBatchSize)
 	ow := &outerWorker{
 		OuterCtx:         e.OuterCtx,
@@ -451,6 +459,22 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 			requiredRows = parentRequired
 		}
 	}
+	// row-mode: force 1 row per task
+	if ow.maxBatchSize == 1 {
+		requiredRows = 1
+	}
+	failpoint.Inject("indexJoinOuterRequiredRows", func(val failpoint.Value) {
+		expected, ok := val.(int)
+		if !ok {
+			if expectedFloat, okFloat := val.(float64); okFloat {
+				expected = int(expectedFloat)
+				ok = true
+			}
+		}
+		if ok && expected != requiredRows {
+			panic("unexpected index join outer requiredRows")
+		}
+	})
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
 	for requiredRows > task.outerResult.Len() {
 		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, requiredRows, maxChunkSize)
@@ -534,10 +558,11 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 
 // IndexJoinLookUpContent is the content used in index lookup join
 type IndexJoinLookUpContent struct {
-	Keys      []types.Datum
-	Row       chunk.Row
-	keyCols   []int
-	KeyColIDs []int64 // the original ID in its table, used by dynamic partition pruning
+	Keys            []types.Datum
+	Row             chunk.Row
+	keyCols         []int
+	KeyColIDs       []int64 // the original ID in its table, used by dynamic partition pruning
+	KeyColUniqueIDs []int64
 }
 
 func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) error {
@@ -621,7 +646,13 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 				// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
 				// So we don't need to do it here.
 			}
-			lookUpContents = append(lookUpContents, &IndexJoinLookUpContent{Keys: dLookUpKey, Row: chk.GetRow(rowIdx), keyCols: iw.KeyCols, KeyColIDs: iw.KeyColIDs})
+			lookUpContents = append(lookUpContents, &IndexJoinLookUpContent{
+				Keys:            dLookUpKey,
+				Row:             chk.GetRow(rowIdx),
+				keyCols:         iw.KeyCols,
+				KeyColIDs:       iw.KeyColIDs,
+				KeyColUniqueIDs: iw.KeyColUniqueIDs,
+			})
 		}
 	}
 

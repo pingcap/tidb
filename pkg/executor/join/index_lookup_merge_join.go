@@ -58,6 +58,9 @@ type IndexLookUpMergeJoin struct {
 	OuterMergeCtx OuterMergeCtx
 	InnerMergeCtx InnerMergeCtx
 
+	// OuterBatchSize overrides IndexJoinBatchSize when > 0.
+	OuterBatchSize int
+
 	Joiners           []Joiner
 	joinChkResourceCh []chan *chunk.Chunk
 	IsOuterJoin       bool
@@ -92,6 +95,8 @@ type InnerMergeCtx struct {
 	RowTypes                []*types.FieldType
 	JoinKeys                []*expression.Column
 	KeyCols                 []int
+	KeyColIDs               []int64
+	KeyColUniqueIDs         []int64
 	KeyCollators            []collate.Collator
 	CompareFuncs            []expression.CompareFunc
 	ColLens                 []int
@@ -199,6 +204,10 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 }
 
 func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMergeJoinTask) *outerMergeWorker {
+	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
+	if e.OuterBatchSize > 0 {
+		maxBatchSize = e.OuterBatchSize
+	}
 	omw := &outerMergeWorker{
 		OuterMergeCtx:         e.OuterMergeCtx,
 		ctx:                   e.Ctx(),
@@ -207,7 +216,7 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 		resultCh:              resultCh,
 		innerCh:               innerCh,
 		batchSize:             32,
-		maxBatchSize:          e.Ctx().GetSessionVars().IndexJoinBatchSize,
+		maxBatchSize:          maxBatchSize,
 		parentMemTracker:      e.memTracker,
 		nextColCompareFilters: e.LastColHelper,
 	}
@@ -692,7 +701,12 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		}
 		dLookupKey = append(dLookupKey, innerValue)
 	}
-	return &IndexJoinLookUpContent{Keys: dLookupKey, Row: task.outerResult.GetRow(idx)}, nil
+	return &IndexJoinLookUpContent{
+		Keys:            dLookupKey,
+		Row:             task.outerResult.GetRow(idx),
+		KeyColIDs:       imw.KeyColIDs,
+		KeyColUniqueIDs: imw.KeyColUniqueIDs,
+	}, nil
 }
 
 func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*IndexJoinLookUpContent) []*IndexJoinLookUpContent {

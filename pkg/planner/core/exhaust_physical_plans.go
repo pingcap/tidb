@@ -119,6 +119,11 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
+	appendHashJoins := func(hjs []*physicalop.PhysicalHashJoin) {
+		for _, join := range hjs {
+			joins = append(joins, join)
+		}
+	}
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case base.SemiJoin, base.AntiSemiJoin:
@@ -126,13 +131,13 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		leftNAJoinKeys, _ := p.GetNAJoinKeys()
 		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && physicalop.CanUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
 			if !forceLeftToBuild {
-				joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+				appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 			}
 			if !forceRightToBuild {
-				joins = append(joins, getHashJoin(ge, p, prop, 1, true))
+				appendHashJoins(getHashJoin(ge, p, prop, 1, true))
 			}
 		} else {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 			if forceLeftToBuild || forceRightToBuild {
 				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
 					"The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s with hash join version 1. "+
@@ -143,7 +148,7 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 			}
 		}
 	case base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
-		joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+		appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
 				"HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s because the build side is fixed. "+
@@ -154,26 +159,26 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		}
 	case base.LeftOuterJoin:
 		if !forceLeftToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 		}
 		if !forceRightToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, true))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, true))
 		}
 	case base.RightOuterJoin:
 		if !forceLeftToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 0, true))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, true))
 		}
 		if !forceRightToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
 		}
 	case base.InnerJoin:
 		if forceLeftToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
 		} else if forceRightToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 		} else {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
-			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
 		}
 	}
 
@@ -189,29 +194,59 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 	return
 }
 
-func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *physicalop.PhysicalHashJoin {
+func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) []*physicalop.PhysicalHashJoin {
 	var stats0, stats1 *property.StatsInfo
 	if ge != nil {
 		stats0, stats1, _, _ = ge.GetJoinChildStatsAndSchema()
 	} else {
 		stats0, stats1, _, _ = p.GetJoinChildStatsAndSchema()
 	}
-	chReqProps := make([]*property.PhysicalProperty, 2)
-	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
 	var outerStats *property.StatsInfo
 	if 1-innerIdx == 0 {
 		outerStats = stats0
 	} else {
 		outerStats = stats1
 	}
-	if prop.ExpectedCnt < p.StatsInfo().RowCount {
-		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
-		chReqProps[1-innerIdx].ExpectedCnt = outerStats.RowCount * expCntScale
+	newTwoBaseProps := func() [2]*property.PhysicalProperty {
+		return [2]*property.PhysicalProperty{
+			{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
+			{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
+		}
 	}
-	hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps...)
-	hashJoin.SetSchema(p.Schema())
-	return hashJoin
+	adjustStats := func(chReqProps [2]*property.PhysicalProperty) {
+		if prop.ExpectedCnt < p.StatsInfo().RowCount {
+			expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
+			chReqProps[1-innerIdx].ExpectedCnt = outerStats.RowCount * expCntScale
+		}
+	}
+	res := make([]*physicalop.PhysicalHashJoin, 0, 2)
+	if prop.IndexJoinProp != nil {
+		// enumeration for push index join prop to one side.
+		newTwoBaseProps := func() [2]*property.PhysicalProperty {
+			return [2]*property.PhysicalProperty{
+				{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
+				{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
+			}
+		}
+		for childIdx := range []int{0, 1} {
+			chReqProps := newTwoBaseProps()
+			ijp := prop.IndexJoinProp.CloneEssentialFields()
+			ijp.IndexJoinBatchMode = false
+			chReqProps[childIdx].IndexJoinProp = ijp
+			adjustStats(chReqProps)
+			hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps[0], chReqProps[1])
+			hashJoin.SetSchema(p.Schema())
+			res = append(res, hashJoin)
+		}
+		return res
+	} else {
+		chReqProps := newTwoBaseProps()
+		adjustStats(chReqProps)
+		hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps[0], chReqProps[1])
+		hashJoin.SetSchema(p.Schema())
+		res = append(res, hashJoin)
+	}
+	return res
 }
 
 // constructIndexHashJoinStatic is used to enumerate current a physical index hash join with undecided inner plan. Via index join prop
@@ -323,6 +358,7 @@ func constructIndexJoinStatic(
 
 	join := physicalop.PhysicalIndexJoin{
 		BasePhysicalJoin: baseJoin,
+		ForceRowMode:     false,
 		// for static enumeration here, we don't need to fill inner plan anymore.
 		// for static enumeration here, the KeyOff2IdxOff, Ranges, CompareFilters, OuterHashKeys, InnerHashKeys are
 		// waiting for attach2Task's complement after see the inner plan's indexJoinInfo returned by underlying ds.
@@ -366,6 +402,10 @@ func constructIndexJoinStatic(
 //     physic.CompareFilters = info.CompareFilters
 func completePhysicalIndexJoin(physic *physicalop.PhysicalIndexJoin, rt *physicalop.RootTask, innerS, outerS *expression.Schema, extractOtherEQ bool) base.PhysicalPlan {
 	info := rt.IndexJoinInfo
+	if info != nil {
+		// indicate whether this index join batch mode or row mode.
+		physic.ForceRowMode = !info.IndexJoinBatchMode
+	}
 	// runtime fill back ranges
 	if info.Ranges == nil {
 		info.Ranges = ranger.Ranges{} // empty range
@@ -466,6 +506,7 @@ func constructIndexJoin(
 	if innerTask.Invalid() {
 		return nil
 	}
+	forceRowMode := p.HasFlag(logicalop.JoinGenFromApplyFlag)
 	if ranges == nil {
 		ranges = ranger.Ranges{} // empty range
 	}
@@ -562,6 +603,7 @@ func constructIndexJoin(
 		CompareFilters:   compareFilters,
 		OuterHashKeys:    outerHashKeys,
 		InnerHashKeys:    innerHashKeys,
+		ForceRowMode:     forceRowMode,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
@@ -738,19 +780,21 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	}
 	// for pk path
 	indexJoinPropTS := &property.IndexJoinRuntimeProp{
-		OtherConditions: p.OtherConditions,
-		InnerJoinKeys:   innerJoinKeys,
-		OuterJoinKeys:   outerJoinKeys,
-		AvgInnerRowCnt:  avgInnerRowCnt,
-		TableRangeScan:  true,
+		OtherConditions:    p.OtherConditions,
+		InnerJoinKeys:      innerJoinKeys,
+		OuterJoinKeys:      outerJoinKeys,
+		AvgInnerRowCnt:     avgInnerRowCnt,
+		TableRangeScan:     true,
+		IndexJoinBatchMode: true,
 	}
 	// for normal index path
 	indexJoinPropIS := &property.IndexJoinRuntimeProp{
-		OtherConditions: p.OtherConditions,
-		InnerJoinKeys:   innerJoinKeys,
-		OuterJoinKeys:   outerJoinKeys,
-		AvgInnerRowCnt:  avgInnerRowCnt,
-		TableRangeScan:  false,
+		OtherConditions:    p.OtherConditions,
+		InnerJoinKeys:      innerJoinKeys,
+		OuterJoinKeys:      outerJoinKeys,
+		AvgInnerRowCnt:     avgInnerRowCnt,
+		TableRangeScan:     false,
+		IndexJoinBatchMode: true,
 	}
 	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropTS, outerStats)
 	indexJoins = append(indexJoins, constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropIS, outerStats)...)
@@ -837,7 +881,8 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan) bool {
 		if x.PreferStoreType&h.PreferTiFlash != 0 {
 			return false
 		}
-	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
+	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation,
+		*logicalop.LogicalLimit, *logicalop.LogicalTopN, *logicalop.LogicalJoin:
 		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return false
 		}
@@ -929,7 +974,7 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
 	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
 	// index join aware of indexColLens and compareFilters).
-	completeIndexJoinFeedBackInfo(innerTask.(*physicalop.CopTask), indexJoinResult, indexJoinResult.chosenRanges, keyOff2IdxOff)
+	completeIndexJoinFeedBackInfo(innerTask.(*physicalop.CopTask), indexJoinResult, indexJoinResult.chosenRanges, keyOff2IdxOff, prop.IndexJoinProp.IndexJoinBatchMode)
 	return innerTask
 }
 
@@ -1001,7 +1046,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
 	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
 	// index join aware of indexColLens and compareFilters).
-	completeIndexJoinFeedBackInfo(innerTask.(*physicalop.CopTask), indexJoinResult, ranges, keyOff2IdxOff)
+	completeIndexJoinFeedBackInfo(innerTask.(*physicalop.CopTask), indexJoinResult, ranges, keyOff2IdxOff, prop.IndexJoinProp.IndexJoinBatchMode)
 	return innerTask
 }
 
@@ -1019,7 +1064,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 // the indexJoinInfo will be filled back to the innerTask, passed upward to RootTask
 // once this copTask is converted to RootTask type, and finally end up usage in the
 // indexJoin's attach2Task with calling completePhysicalIndexJoin.
-func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResult *indexJoinPathResult, ranges ranger.MutableRanges, keyOff2IdxOff []int) {
+func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResult *indexJoinPathResult, ranges ranger.MutableRanges, keyOff2IdxOff []int, indexJoinBatchMode bool) {
 	info := innerTask.IndexJoinInfo
 	if info == nil {
 		info = &physicalop.IndexJoinInfo{}
@@ -1032,6 +1077,7 @@ func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResul
 	}
 	info.Ranges = ranges
 	info.KeyOff2IdxOff = keyOff2IdxOff
+	info.IndexJoinBatchMode = indexJoinBatchMode
 	// fill it back to the bottom-up Task.
 	innerTask.IndexJoinInfo = info
 }
@@ -2687,7 +2733,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+	if p.SCtx().GetSessionVars().IsMPPAllowed() && prop.IndexJoinProp == nil {
 		// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
 		if hasMPPJoinHints(p.PreferJoinType) {
 			// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.
@@ -2721,7 +2767,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		return joins, true, nil
 	}
 
-	if !p.IsNAAJ() {
+	if !p.IsNAAJ() && prop.IndexJoinProp == nil { // gen merge join and index join only when non-naaj and index join prop is nil
 		// naaj refuse merge join and index join.
 		stats0, stats1, _, _ := getJoinChildStatsAndSchema(ge, p)
 		mergeJoins := physicalop.GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), stats0, stats1)
@@ -2796,7 +2842,11 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (preferPu
 
 // GetHashJoin is public for cascades planner.
 func GetHashJoin(ge base.GroupExpression, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *physicalop.PhysicalHashJoin {
-	return getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
+	joins := getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
+	if len(joins) == 0 {
+		return nil
+	}
+	return joins[0]
 }
 
 // exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.

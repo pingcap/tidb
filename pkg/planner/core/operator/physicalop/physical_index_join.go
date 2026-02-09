@@ -46,6 +46,9 @@ type PhysicalIndexJoin struct {
 
 	InnerPlan base.PhysicalPlan
 
+	// ForceRowMode indicates index join should run in row mode (batch size = 1).
+	ForceRowMode bool
+
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges ranger.MutableRanges
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
@@ -99,6 +102,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	cloned.ForceRowMode = p.ForceRowMode
 	return cloned, nil
 }
 
@@ -109,7 +113,7 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.BasePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
-		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
+		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer + size.SizeOfBool
 	if p.InnerPlan != nil {
 		sum += p.InnerPlan.MemoryUsage()
 	}
@@ -190,6 +194,11 @@ func (p *PhysicalIndexJoin) ExplainInfoInternal(normalized bool, isIndexMergeJoi
 	if len(p.OtherConditions) > 0 {
 		buffer.WriteString(", other cond:")
 		buffer.Write(sortedExplainExpressionList(evalCtx, p.OtherConditions))
+	}
+	if p.ForceRowMode {
+		buffer.WriteString(", row-mode:true")
+	} else {
+		buffer.WriteString(", batch-mode:true")
 	}
 	return buffer.String()
 }
@@ -473,4 +482,6 @@ type IndexJoinInfo struct {
 	KeyOff2IdxOff  []int
 	Ranges         ranger.MutableRanges
 	CompareFilters *ColWithCmpFuncManager
+	// IndexJoinBatchMode indicates whether index join can run in batch mode.
+	IndexJoinBatchMode bool
 }

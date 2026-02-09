@@ -291,6 +291,12 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64,
 			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+		if prop.IndexJoinProp != nil {
+			resultProp = admitIndexJoinProp(resultProp, prop, false)
+			if resultProp == nil {
+				continue
+			}
+		}
 		topN := PhysicalTopN{
 			ByItems:     lt.ByItems,
 			PartitionBy: lt.PartitionBy,
@@ -303,7 +309,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 
 	// If we can generate MPP task and there's vector distance function in the order by column.
 	// We will try to generate a property for possible vector indexes.
-	if mppAllowed {
+	if mppAllowed && prop.IndexJoinProp == nil {
 		if len(lt.ByItems) != 1 {
 			return ret
 		}
@@ -424,6 +430,12 @@ func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *proper
 		},
 		CTEProducerStatus: prop.CTEProducerStatus,
 		NoCopPushDown:     prop.NoCopPushDown,
+	}
+	if prop.IndexJoinProp != nil {
+		partialOrderProp = admitIndexJoinProp(partialOrderProp, prop, false)
+		if partialOrderProp == nil {
+			return nil
+		}
 	}
 
 	topN := PhysicalTopN{

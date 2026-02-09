@@ -370,7 +370,7 @@ func NewBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan
 	}
 }
 
-func admitIndexJoinProps(children []*property.PhysicalProperty, prop *property.PhysicalProperty) []*property.PhysicalProperty {
+func admitIndexJoinProps(children []*property.PhysicalProperty, prop *property.PhysicalProperty, supportBatchMode bool) []*property.PhysicalProperty {
 	if prop.TaskTp == property.MppTaskType {
 		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
 		// which is guaranteed by the parent physical plans enumeration.
@@ -378,10 +378,13 @@ func admitIndexJoinProps(children []*property.PhysicalProperty, prop *property.P
 	}
 	// only admit root & cop task type to push down indexJoinProp.
 	if prop.IndexJoinProp != nil {
+		alreadyBatchMode := prop.IndexJoinProp.IndexJoinBatchMode
 		newChildren := children[:0]
 		for _, child := range children {
 			if child.TaskTp != property.MppTaskType {
 				child.IndexJoinProp = prop.IndexJoinProp
+				// when parents ask for batch mode, and current op support batch mode, then we call for batch mode down.
+				child.IndexJoinProp.IndexJoinBatchMode = alreadyBatchMode && supportBatchMode
 				// only admit non-mpp task prop.
 				newChildren = append(newChildren, child)
 			}
@@ -391,7 +394,7 @@ func admitIndexJoinProps(children []*property.PhysicalProperty, prop *property.P
 	return children
 }
 
-func admitIndexJoinProp(child, prop *property.PhysicalProperty) *property.PhysicalProperty {
+func admitIndexJoinProp(child, prop *property.PhysicalProperty, supportBatchMode bool) *property.PhysicalProperty {
 	if prop.TaskTp == property.MppTaskType {
 		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
 		// which is guaranteed by the parent physical plans enumeration.
@@ -399,8 +402,11 @@ func admitIndexJoinProp(child, prop *property.PhysicalProperty) *property.Physic
 	}
 	// only admit root & cop task type to push down indexJoinProp.
 	if prop.IndexJoinProp != nil {
+		alreadyBatchMode := prop.IndexJoinProp.IndexJoinBatchMode
 		if child.TaskTp != property.MppTaskType {
 			child.IndexJoinProp = prop.IndexJoinProp
+			// when parents ask for batch mode, and current op support batch mode, then we call for batch mode down.
+			child.IndexJoinProp.IndexJoinBatchMode = alreadyBatchMode && supportBatchMode
 		} else {
 			// only admit non-mpp task prop.
 			child = nil

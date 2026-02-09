@@ -58,7 +58,7 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		// empty
 		return enforcedAggs
 	}
-	childProp = admitIndexJoinProp(childProp, prop)
+	childProp = admitIndexJoinProp(childProp, prop, true)
 	if childProp == nil {
 		// empty
 		return enforcedAggs
@@ -114,7 +114,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		ExpectedCnt:   math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 		NoCopPushDown: prop.NoCopPushDown,
 	}
-	childProp = admitIndexJoinProp(childProp, prop)
+	childProp = admitIndexJoinProp(childProp, prop, true)
 	if childProp == nil {
 		return nil
 	}
