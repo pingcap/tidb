@@ -25,8 +25,29 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
+<<<<<<< HEAD
 // watchSyncInterval is the interval to sync the watch record.
 const watchSyncInterval = time.Second
+=======
+const (
+	// watchSyncInterval is the interval to sync the watch record.
+	watchSyncInterval = time.Second
+	// watchSyncBatchLimit is the max number of rows fetched per sync query.
+	watchSyncBatchLimit = 256
+	// watchTableName is the name of system table which save runaway watch items.
+	runawayWatchTableName = "tidb_runaway_watch"
+	// watchDoneTableName is the name of system table which save done runaway watch items.
+	runawayWatchDoneTableName = "tidb_runaway_watch_done"
+)
+
+func getRunawayWatchTableName() string {
+	return fmt.Sprintf("mysql.%s", runawayWatchTableName)
+}
+
+func getRunawayWatchDoneTableName() string {
+	return fmt.Sprintf("mysql.%s", runawayWatchDoneTableName)
+}
+>>>>>>> dbf86b016d0 (feat(runaway): paginate watch sync using id checkpoints (#66155))
 
 // Syncer is used to sync the runaway records.
 type syncer struct {
@@ -41,6 +62,7 @@ func newSyncer(sysSessionPool util.SessionPool) *syncer {
 	return &syncer{
 		sysSessionPool: sysSessionPool,
 		newWatchReader: &systemTableReader{
+<<<<<<< HEAD
 			watchTableName,
 			"start_time",
 			NullTime},
@@ -48,6 +70,15 @@ func newSyncer(sysSessionPool util.SessionPool) *syncer {
 			watchDoneTableName,
 			"done_time",
 			NullTime},
+=======
+			getRunawayWatchTableName(),
+			"id",
+			0},
+		deletionWatchReader: &systemTableReader{
+			getRunawayWatchDoneTableName(),
+			"id",
+			0},
+>>>>>>> dbf86b016d0 (feat(runaway): paginate watch sync using id checkpoints (#66155))
 	}
 }
 
@@ -95,7 +126,6 @@ func getRunawayWatchRecord(sysSessionPool util.SessionPool, reader *systemTableR
 		return nil, err
 	}
 	ret := make([]*QuarantineRecord, 0, len(rs))
-	now := time.Now().UTC()
 	for _, r := range rs {
 		startTime, err := r.GetTime(2).GoTime(time.UTC)
 		if err != nil {
@@ -120,12 +150,10 @@ func getRunawayWatchRecord(sysSessionPool util.SessionPool, reader *systemTableR
 			SwitchGroupName:   r.GetString(8),
 			ExceedCause:       r.GetString(9),
 		}
-		// If a TiDB write record slow, it will occur that the record which has earlier start time is inserted later than others.
-		// So we start the scan a little earlier.
-		if push {
-			reader.CheckPoint = now.Add(-3 * watchSyncInterval)
-		}
 		ret = append(ret, qr)
+	}
+	if push && len(rs) > 0 {
+		reader.CheckPoint = rs[len(rs)-1].GetInt64(0)
 	}
 	return ret, nil
 }
@@ -136,9 +164,7 @@ func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTa
 	if err != nil {
 		return nil, err
 	}
-	length := len(rs)
-	ret := make([]*QuarantineRecord, 0, length)
-	now := time.Now().UTC()
+	ret := make([]*QuarantineRecord, 0, len(rs))
 	for _, r := range rs {
 		startTime, err := r.GetTime(3).GoTime(time.UTC)
 		if err != nil {
@@ -163,11 +189,10 @@ func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTa
 			SwitchGroupName:   r.GetString(9),
 			ExceedCause:       r.GetString(10),
 		}
-		// Ditto as getRunawayWatchRecord.
-		if push {
-			reader.CheckPoint = now.Add(-3 * watchSyncInterval)
-		}
 		ret = append(ret, qr)
+	}
+	if push && len(rs) > 0 {
+		reader.CheckPoint = rs[len(rs)-1].GetInt64(0)
 	}
 	return ret, nil
 }
@@ -176,7 +201,7 @@ func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTa
 type systemTableReader struct {
 	TableName  string
 	KeyCol     string
-	CheckPoint time.Time
+	CheckPoint int64
 }
 
 func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
@@ -193,14 +218,15 @@ func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
 
 func (r *systemTableReader) genSelectStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]any, 0, 1)
+	params := make([]any, 0, 2)
 	builder.WriteString("select * from ")
 	builder.WriteString(r.TableName)
 	builder.WriteString(" where ")
 	builder.WriteString(r.KeyCol)
 	builder.WriteString(" > %? order by ")
 	builder.WriteString(r.KeyCol)
-	params = append(params, r.CheckPoint)
+	builder.WriteString(" limit %?")
+	params = append(params, r.CheckPoint, watchSyncBatchLimit)
 	return builder.String(), params
 }
 
