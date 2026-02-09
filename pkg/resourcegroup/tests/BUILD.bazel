@@ -6,7 +6,11 @@ go_test(
     srcs = ["resource_group_test.go"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 9,
+>>>>>>> 4c23f9f57f9 (feat(runaway): refactor record flushing with batch flusher abstraction (#65834))
     deps = [
         "//pkg/ddl/resourcegroup",
         "//pkg/domain",
@@ -14,7 +18,11 @@ go_test(
         "//pkg/errno",
         "//pkg/meta/model",
         "//pkg/parser/auth",
+<<<<<<< HEAD
         "//pkg/parser/model",
+=======
+        "//pkg/resourcegroup/runaway",
+>>>>>>> 4c23f9f57f9 (feat(runaway): refactor record flushing with batch flusher abstraction (#65834))
         "//pkg/server",
         "//pkg/sessionctx",
         "//pkg/testkit",

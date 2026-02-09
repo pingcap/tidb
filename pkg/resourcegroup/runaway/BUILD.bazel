@@ -4,6 +4,7 @@ go_library(
     name = "runaway",
     srcs = [
         "checker.go",
+        "flusher.go",
         "manager.go",
         "record.go",
         "syncer.go",
@@ -46,12 +47,19 @@ go_test(
     timeout = "short",
     srcs = [
         "checker_test.go",
+        "flusher_test.go",
         "record_test.go",
     ],
     embed = [":runaway"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 6,
+>>>>>>> 4c23f9f57f9 (feat(runaway): refactor record flushing with batch flusher abstraction (#65834))
     deps = [
+        "//pkg/metrics",
         "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
     ],
 )
