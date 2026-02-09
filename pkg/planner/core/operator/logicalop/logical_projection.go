@@ -678,7 +678,7 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 func InjectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
 	proj, ok := p.(*LogicalProjection)
 	if !ok {
-		proj = LogicalProjection{Exprs: expression.Cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj = LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
 		proj.SetSchema(p.Schema().Clone())
 		proj.SetChildren(p)
 	}
