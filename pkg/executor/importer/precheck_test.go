@@ -218,10 +218,11 @@ func TestCheckRequirementsWithTiCIIndexLocalSort(t *testing.T) {
 
 	c := &importer.LoadDataController{
 		Plan: &importer.Plan{
-			DBName:         "test",
-			DataSourceType: importer.DataSourceTypeFile,
-			TableInfo:      tableInfo,
-			TotalFileSize:  1,
+			DBName:          "test",
+			DataSourceType:  importer.DataSourceTypeFile,
+			TableInfo:       tableInfo,
+			TotalFileSize:   1,
+			DisablePrecheck: true,
 		},
 		Table: tableObj,
 	}
@@ -230,6 +231,7 @@ func TestCheckRequirementsWithTiCIIndexLocalSort(t *testing.T) {
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "local sort import does not support TiCI indexes")
 
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	c.Plan.CloudStorageURI = "s3://test-bucket/path"
 	err = c.CheckRequirements(ctx, tk.Session())
 	require.ErrorContains(t, err, "check cloud storage uri access")
