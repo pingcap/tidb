@@ -44,30 +44,38 @@ func newAnalyzeSaveStatsWorker(
 }
 
 func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *handle.Handle, analyzeSnapshot bool) {
+	errReported := false
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze save stats worker panicked", zap.Any("recover", r), zap.Stack("stack"))
-			worker.errCh <- getAnalyzePanicErr(r)
+			if !errReported {
+				worker.errCh <- getAnalyzePanicErr(r)
+				errReported = true
+			}
 		}
 	}()
 	for results := range worker.resultsCh {
 		if err := worker.killer.HandleSignal(); err != nil {
 			finishJobWithLog(statsHandle, results.Job, err)
 			results.DestroyAndPutToPool()
-			worker.errCh <- err
+			if !errReported {
+				worker.errCh <- err
+				errReported = true
+			}
 			return
 		}
 		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
 		if err != nil {
 			logutil.Logger(ctx).Warn("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(statsHandle, results.Job, err)
-			worker.errCh <- err
+			if !errReported {
+				worker.errCh <- err
+				errReported = true
+			}
+			// Keep draining results to avoid blocking analyze workers after a save failure.
 		} else {
 			finishJobWithLog(statsHandle, results.Job, nil)
 		}
 		results.DestroyAndPutToPool()
-		if err != nil {
-			return
-		}
 	}
 }
