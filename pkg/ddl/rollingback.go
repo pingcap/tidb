@@ -290,7 +290,7 @@ func rollingbackAddIndex(jobCtx *jobContext, job *model.Job) (ver int64, err err
 	return convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
 }
 
-func rollingbackCreateMaterializedView(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func rollingbackCreateMaterializedView(_ *jobContext, job *model.Job) (ver int64, err error) {
 	if _, err = model.GetCreateMaterializedViewArgs(job); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

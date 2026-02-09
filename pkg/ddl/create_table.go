@@ -335,6 +335,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 
 	switch job.SchemaState {
 	case model.StateNone:
+		// Phase-1: create MV physical table and atomically wire base<->mv metadata.
 		if _, err := onCreateMaterializedViewBaseCheck(jobCtx.metaMut, job.SchemaID, baseTableID, job.SchemaName); err != nil {
 			if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 				job.State = model.JobStateCancelled
@@ -371,6 +372,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 
+		// Build snapshot tso is fixed once and reused by all reorg retries.
 		if job.SnapshotVer == 0 {
 			job.SnapshotVer = jobCtx.metaMut.StartTS
 		}
@@ -379,6 +381,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		return ver, nil
 
 	case model.StateWriteReorganization:
+		// Phase-2: run initial build and persist refresh result in mysql.tidb_mview_refresh.
 		reorg := &reorgInfo{Job: job, jobCtx: jobCtx}
 		storeName := ""
 		if jobCtx.store != nil {
@@ -398,6 +401,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			if errors.Cause(err) == context.Canceled {
 				return ver, nil
 			}
+			// Failure result is written via detached session because current reorg attempt is already in error path.
 			if upsertErr := w.upsertCreateMaterializedViewRefreshInfoDetached(jobCtx.stepCtx, mvTblInfo.ID, job.SnapshotVer, false, err.Error()); upsertErr != nil {
 				return ver, errors.Annotatef(upsertErr, "create materialized view build failed: %v", err)
 			}

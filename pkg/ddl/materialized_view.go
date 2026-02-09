@@ -51,6 +51,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
 
+	// Stage-1 only supports a single-table SELECT as MV definition input.
 	sel, ok := s.Select.(*ast.SelectStmt)
 	if !ok {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports SELECT statement")
@@ -87,6 +88,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		return errors.Errorf("table %s.%s is not a materialized view log for base table %s.%s", baseTableName.Schema.O, mlogName.O, baseTableName.Schema.O, baseTableName.Name.O)
 	}
 
+	// Validate Stage-1 query contract and ensure MV LOG columns cover query references.
 	groupByInfos, err := validateCreateMaterializedViewQuery(
 		ctx,
 		baseTableName,
@@ -103,6 +105,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		return err
 	}
 
+	// Derive MV physical column types from the query output schema.
 	exec := ctx.GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
 	/* #nosec G202: selectSQL is restored from AST (single statement, no user-provided placeholders). */
@@ -123,6 +126,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		})
 	}
 
+	// Build group-key index for one-row-per-group semantics (PK when all keys are NOT NULL, else UNIQUE).
 	keys := make([]*ast.IndexPartSpecification, 0, len(groupByInfos))
 	allGroupByNotNull := true
 	for _, info := range groupByInfos {
@@ -170,6 +174,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		RefreshNext:      refreshNext,
 	}
 
+	// CREATE MATERIALIZED VIEW is submitted as reorg DDL: create table first, then initial build in reorg phase.
 	involvingSchemas := []model.InvolvingSchemaInfo{
 		{Database: schema.Name.L, Table: mvTableInfo.Name.L},
 		{Database: schema.Name.L, Table: baseTable.Meta().Name.L},
@@ -259,6 +264,7 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
 	}
 
+	// MV LOG cannot be dropped while any MV still depends on the base table.
 	depends, err := hasMaterializedViewDependsOnBaseTable(e.ctx, is, schemaName, baseTableID)
 	if err != nil {
 		return err
@@ -326,11 +332,11 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 	return nil
 }
 
-func (e *executor) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterializedViewLogStmt) error {
+func (*executor) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterializedViewLogStmt) error {
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG ... PURGE is not supported")
 }
 
-func (e *executor) RefreshMaterializedView(sessionctx.Context, *ast.RefreshMaterializedViewStmt) error {
+func (*executor) RefreshMaterializedView(sessionctx.Context, *ast.RefreshMaterializedViewStmt) error {
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW is not supported")
 }
 
