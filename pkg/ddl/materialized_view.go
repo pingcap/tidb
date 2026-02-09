@@ -389,7 +389,7 @@ func validateCreateMaterializedViewQuery(
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports SELECT statement")
 	}
 
-	fromTbl, err := extractSingleTableNameFromSelect(sel)
+	fromTbl, fromAlias, err := extractSingleTableNameAndAliasFromSelect(sel)
 	if err != nil {
 		return nil, err
 	}
@@ -402,6 +402,21 @@ func validateCreateMaterializedViewQuery(
 
 	if sel.GroupBy == nil || len(sel.GroupBy.Items) == 0 {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW requires GROUP BY clause")
+	}
+	if sel.GroupBy.Rollup {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support GROUP BY WITH ROLLUP")
+	}
+	if sel.Having != nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support HAVING clause")
+	}
+	if sel.OrderBy != nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support ORDER BY clause")
+	}
+	if sel.Limit != nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support LIMIT clause")
+	}
+	if sel.Distinct {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support SELECT DISTINCT")
 	}
 
 	baseColMap := make(map[string]*model.ColumnInfo, len(baseTableInfo.Columns))
@@ -423,32 +438,32 @@ func validateCreateMaterializedViewQuery(
 		if !ok {
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("GROUP BY expression is not supported in CREATE MATERIALIZED VIEW")
 		}
-		colName := colExpr.Name.Name.L
+		colName, err := resolveMViewColumnName(colExpr.Name, baseTableName, fromAlias, baseColMap)
+		if err != nil {
+			return nil, err
+		}
 		if _, exists := groupBySet[colName]; exists {
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("duplicate GROUP BY column is not supported in CREATE MATERIALIZED VIEW")
 		}
 		baseCol := baseColMap[colName]
-		if baseCol == nil {
-			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(colExpr.Name.Name.O, baseTableName.Name.O)
-		}
 		groupBySet[colName] = struct{}{}
 		groupByNotNull[colName] = mysql.HasNotNullFlag(baseCol.GetFlag())
 		usedCols[colName] = struct{}{}
 	}
 
 	if sel.Where != nil {
-		expr, err := expression.BuildSimpleExpr(
-			sctx.GetExprCtx(),
-			sel.Where,
-			expression.WithTableInfo(baseTableName.Schema.O, baseTableInfo),
-		)
+		expr, err := buildMViewSingleTableExpr(sctx, baseTableName, fromAlias, baseTableInfo, sel.Where)
 		if err != nil {
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW WHERE clause is not supported")
 		}
 		if expression.CheckNonDeterministic(expr) {
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW WHERE clause must be deterministic")
 		}
-		for colName := range collectColumnNamesInExpr(sel.Where) {
+		for _, col := range collectColumnNamesInExpr(sel.Where) {
+			colName, err := resolveMViewColumnName(col, baseTableName, fromAlias, baseColMap)
+			if err != nil {
+				return nil, err
+			}
 			usedCols[colName] = struct{}{}
 		}
 	}
@@ -461,7 +476,10 @@ func validateCreateMaterializedViewQuery(
 		}
 		switch expr := f.Expr.(type) {
 		case *ast.ColumnNameExpr:
-			colName := expr.Name.Name.L
+			colName, err := resolveMViewColumnName(expr.Name, baseTableName, fromAlias, baseColMap)
+			if err != nil {
+				return nil, err
+			}
 			if _, ok := groupBySet[colName]; !ok {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("non-aggregated column must appear in GROUP BY clause")
 			}
@@ -501,7 +519,11 @@ func validateCreateMaterializedViewQuery(
 				if !ok {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("aggregate function only supports column argument in CREATE MATERIALIZED VIEW")
 				}
-				usedCols[argCol.Name.Name.L] = struct{}{}
+				colName, err := resolveMViewColumnName(argCol.Name, baseTableName, fromAlias, baseColMap)
+				if err != nil {
+					return nil, err
+				}
+				usedCols[colName] = struct{}{}
 			default:
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW")
 			}
@@ -516,11 +538,15 @@ func validateCreateMaterializedViewQuery(
 	groupByInfos = make([]mviewGroupByInfo, 0, len(sel.GroupBy.Items))
 	for _, item := range sel.GroupBy.Items {
 		colExpr := item.Expr.(*ast.ColumnNameExpr)
-		idx, ok := selectColIdx[colExpr.Name.Name.L]
+		colName, err := resolveMViewColumnName(colExpr.Name, baseTableName, fromAlias, baseColMap)
+		if err != nil {
+			return nil, err
+		}
+		idx, ok := selectColIdx[colName]
 		if !ok {
 			return nil, errors.Errorf("GROUP BY column %s must appear in SELECT list", colExpr.Name.Name.O)
 		}
-		groupByInfos = append(groupByInfos, mviewGroupByInfo{SelectIdx: idx, NotNull: groupByNotNull[colExpr.Name.Name.L]})
+		groupByInfos = append(groupByInfos, mviewGroupByInfo{SelectIdx: idx, NotNull: groupByNotNull[colName]})
 	}
 
 	for colName := range usedCols {
@@ -533,33 +559,73 @@ func validateCreateMaterializedViewQuery(
 }
 
 func extractSingleTableNameFromSelect(sel *ast.SelectStmt) (*ast.TableName, error) {
+	tbl, _, err := extractSingleTableNameAndAliasFromSelect(sel)
+	return tbl, err
+}
+
+func extractSingleTableNameAndAliasFromSelect(sel *ast.SelectStmt) (*ast.TableName, pmodel.CIStr, error) {
 	if sel.From == nil || sel.From.TableRefs == nil || sel.From.TableRefs.Left == nil || sel.From.TableRefs.Right != nil {
-		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports a single base table")
+		return nil, pmodel.CIStr{}, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports a single base table")
 	}
 	ts, ok := sel.From.TableRefs.Left.(*ast.TableSource)
 	if !ok {
-		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports a single base table")
+		return nil, pmodel.CIStr{}, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports a single base table")
 	}
 	tbl, ok := ts.Source.(*ast.TableName)
 	if !ok {
-		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports a single base table")
+		return nil, pmodel.CIStr{}, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports a single base table")
 	}
-	return tbl, nil
+	return tbl, ts.AsName, nil
 }
 
-func collectColumnNamesInExpr(expr ast.ExprNode) map[string]struct{} {
-	collector := &columnNameCollector{cols: make(map[string]struct{}, 8)}
+func buildMViewSingleTableExpr(sctx sessionctx.Context, baseTableName *ast.TableName, fromAlias pmodel.CIStr, baseTableInfo *model.TableInfo, expr ast.ExprNode) (expression.Expression, error) {
+	resolveTableName := baseTableName.Name
+	if fromAlias.L != "" {
+		resolveTableName = fromAlias
+	}
+	cols, names, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), baseTableName.Schema, resolveTableName, baseTableInfo.Cols(), baseTableInfo)
+	if err != nil {
+		return nil, err
+	}
+	return expression.BuildSimpleExpr(
+		sctx.GetExprCtx(),
+		expr,
+		expression.WithInputSchemaAndNames(expression.NewSchema(cols...), names, baseTableInfo),
+	)
+}
+
+func resolveMViewColumnName(col *ast.ColumnName, baseTableName *ast.TableName, fromAlias pmodel.CIStr, baseColMap map[string]*model.ColumnInfo) (string, error) {
+	if col == nil {
+		return "", dbterror.ErrGeneralUnsupportedDDL.GenWithStack("column reference is nil in CREATE MATERIALIZED VIEW")
+	}
+	if col.Schema.L != "" && col.Schema.L != baseTableName.Schema.L {
+		return "", infoschema.ErrColumnNotExists.GenWithStackByArgs(col.Name.O, baseTableName.Name.O)
+	}
+	if col.Table.L != "" {
+		if col.Table.L != baseTableName.Name.L && (fromAlias.L == "" || col.Table.L != fromAlias.L) {
+			return "", infoschema.ErrColumnNotExists.GenWithStackByArgs(col.Name.O, baseTableName.Name.O)
+		}
+	}
+	colName := col.Name.L
+	if _, ok := baseColMap[colName]; !ok {
+		return "", infoschema.ErrColumnNotExists.GenWithStackByArgs(col.Name.O, baseTableName.Name.O)
+	}
+	return colName, nil
+}
+
+func collectColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
+	collector := &columnNameCollector{cols: make([]*ast.ColumnName, 0, 8)}
 	expr.Accept(collector)
 	return collector.cols
 }
 
 type columnNameCollector struct {
-	cols map[string]struct{}
+	cols []*ast.ColumnName
 }
 
 func (c *columnNameCollector) Enter(n ast.Node) (ast.Node, bool) {
 	if x, ok := n.(*ast.ColumnNameExpr); ok {
-		c.cols[x.Name.Name.L] = struct{}{}
+		c.cols = append(c.cols, x.Name)
 	}
 	return n, false
 }

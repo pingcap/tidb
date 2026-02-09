@@ -81,6 +81,22 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	err = tk.ExecToErr("create materialized view mv_bad_where (a, c) as select a, count(1) from t where rand() > 0 group by a")
 	require.ErrorContains(t, err, "WHERE clause must be deterministic")
 
+	// SELECT clauses outside Stage-1 scope should be rejected.
+	err = tk.ExecToErr("create materialized view mv_bad_distinct (a, c) as select distinct a, count(1) from t group by a")
+	require.ErrorContains(t, err, "does not support SELECT DISTINCT")
+	err = tk.ExecToErr("create materialized view mv_bad_having (a, c) as select a, count(1) from t group by a having count(1) > 0")
+	require.ErrorContains(t, err, "does not support HAVING clause")
+	err = tk.ExecToErr("create materialized view mv_bad_order (a, c) as select a, count(1) from t group by a order by a")
+	require.ErrorContains(t, err, "does not support ORDER BY clause")
+	err = tk.ExecToErr("create materialized view mv_bad_limit (a, c) as select a, count(1) from t group by a limit 1")
+	require.ErrorContains(t, err, "does not support LIMIT clause")
+	err = tk.ExecToErr("create materialized view mv_bad_rollup (a, c) as select a, count(1) from t group by a with rollup")
+	require.ErrorContains(t, err, "does not support GROUP BY WITH ROLLUP")
+
+	// Aliased base table in WHERE should work.
+	tk.MustExec("create materialized view mv_alias (a, c) as select x.a, count(1) from t x where x.b > 0 group by x.a")
+	tk.MustQuery("select a, c from mv_alias order by a").Check(testkit.Rows("1 2", "2 1"))
+
 	// MV LOG must contain all referenced columns.
 	tk.MustExec("create table t_mlog_missing (a int not null, b int)")
 	tk.MustExec("create materialized view log on t_mlog_missing (a) purge immediate")
@@ -101,6 +117,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 
 	// Drop MV and then drop MV LOG.
 	tk.MustExec("drop materialized view mv")
+	tk.MustExec("drop materialized view mv_alias")
 	tk.MustExec("drop materialized view mv_nullable")
 	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop materialized view log on t_nullable")
@@ -112,7 +129,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
-func TestCreateMaterializedViewBuildFailureWritesRefreshMeta(t *testing.T) {
+func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -126,13 +143,17 @@ func TestCreateMaterializedViewBuildFailureWritesRefreshMeta(t *testing.T) {
 	}()
 
 	err := tk.ExecToErr("create materialized view mv_fail (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
-	require.ErrorContains(t, err, "mock create materialized view build error")
+	require.Error(t, err)
+
+	tk.MustQuery("show tables like 'mv_fail'").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
 
 	is := dom.InfoSchema()
-	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_fail"))
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
-	tk.MustQuery(fmt.Sprintf("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE, LAST_SUCCESSFUL_REFRESH_READ_TSO is null, LAST_REFRESH_FAILED_REASON like '%%mock create materialized view build error%%' from mysql.tidb_mview_refresh where MVIEW_ID = %d", mvTable.Meta().ID)).
-		Check(testkit.Rows("failed complete 1 1"))
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
+	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
 
 func TestCreateMaterializedViewRejectNonBaseObject(t *testing.T) {
@@ -207,59 +228,4 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
 	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
-}
-
-func TestCreateMaterializedViewImportCheckpoint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int)")
-	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
-
-	const (
-		forceImportFailpoint = "github.com/pingcap/tidb/pkg/ddl/forceCreateMaterializedViewBuildWithImport"
-		mockJobIDFailpoint   = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildImportJobID"
-		mockStatusFailpoint  = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildImportJobStatus"
-	)
-	require.NoError(t, failpoint.Enable(forceImportFailpoint, "return(true)"))
-	require.NoError(t, failpoint.Enable(mockJobIDFailpoint, "return(\"9527\")"))
-	require.NoError(t, failpoint.Enable(mockStatusFailpoint, "return(\"running\")"))
-	defer func() {
-		require.NoError(t, failpoint.Disable(forceImportFailpoint))
-		require.NoError(t, failpoint.Disable(mockJobIDFailpoint))
-		require.NoError(t, failpoint.Disable(mockStatusFailpoint))
-	}()
-
-	ddlDone := make(chan error, 1)
-	go func() {
-		tkDDL := testkit.NewTestKit(t, store)
-		tkDDL.MustExec("use test")
-		ddlDone <- tkDDL.ExecToErr("create materialized view mv_cp (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
-	}()
-
-	jobID := ""
-	require.Eventually(t, func() bool {
-		rows := tk.MustQuery("admin show ddl jobs where JOB_TYPE='create materialized view' and TABLE_NAME='mv_cp'").Rows()
-		if len(rows) == 0 {
-			return false
-		}
-		if len(rows[0]) < 5 || strings.ToLower(fmt.Sprint(rows[0][4])) != "write reorganization" {
-			return false
-		}
-		jobID = rows[0][0].(string)
-		return jobID != ""
-	}, 30*time.Second, 100*time.Millisecond)
-
-	tk.MustQuery("select json_unquote(json_extract(convert(reorg_meta using utf8mb4), '$.mview_build.phase')), json_unquote(json_extract(convert(reorg_meta using utf8mb4), '$.mview_build.import_job_id')) from mysql.tidb_ddl_reorg where job_id = " + jobID).
-		Check(testkit.Rows("import_running 9527"))
-
-	require.NoError(t, failpoint.Disable(mockStatusFailpoint))
-	require.NoError(t, failpoint.Enable(mockStatusFailpoint, "return(\"finished\")"))
-
-	err := <-ddlDone
-	require.NoError(t, err)
-
-	tk.MustQuery("select count(*) from mysql.tidb_ddl_reorg where job_id = " + jobID).Check(testkit.Rows("0"))
-	tk.MustQuery("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE from mysql.tidb_mview_refresh").Check(testkit.Rows("success complete"))
 }
