@@ -159,16 +159,11 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
-<<<<<<< HEAD
 
 	FtsQueryInfo *tipb.FTSQueryInfo
 
-	// Whether to use the index lookup push down optimization for this access path.
-	IsIndexLookUpPushDown bool
-=======
 	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
 	IndexLookUpPushDownBy IndexLookUpPushDownByType
->>>>>>> origin/master
 
 	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
 	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
@@ -221,6 +216,8 @@ func (path *AccessPath) Clone() *AccessPath {
 		ForcePartialOrder:            path.ForcePartialOrder,
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
+		FtsQueryInfo:                 path.FtsQueryInfo,
+		IndexLookUpPushDownBy:        path.IndexLookUpPushDownBy,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
@@ -506,28 +503,18 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 	return false
 }
 
-<<<<<<< HEAD
-// IsUndetermined checks whether the usability of this path depends on the pushed down predicates.
-=======
 // IsUndetermined checks if the path is undetermined.
 // The undetermined path is the one that may not be always valid.
 // e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.
->>>>>>> origin/master
 func (path *AccessPath) IsUndetermined() bool {
 	if path.IsTablePath() || path.Index == nil {
 		return false
 	}
-<<<<<<< HEAD
-	if path.Index.MVIndex || path.Index.IsTiCIIndex() {
-=======
-	if path.Index.MVIndex || path.Index.ConditionExprString != "" {
->>>>>>> origin/master
+	if path.Index.MVIndex || path.Index.ConditionExprString != "" || path.Index.IsTiCIIndex() {
 		return true
 	}
 	return false
 }
-<<<<<<< HEAD
-=======
 
 // IsIndexJoinUnapplicable checks if the path is unapplicable for index join.
 // If path is mv index path:
@@ -540,4 +527,3 @@ func (path *AccessPath) IsUndetermined() bool {
 func (path *AccessPath) IsIndexJoinUnapplicable() bool {
 	return path.IsUndetermined()
 }
->>>>>>> origin/master

@@ -620,13 +620,10 @@ var tokenMap = map[string]int{
 	"OUTFILE":                        outfile,
 	"PACK_KEYS":                      packKeys,
 	"PAGE":                           pageSym,
-<<<<<<< HEAD
-	"PARAMETER":                      parameter,
-=======
 	"PAGE_CHECKSUM":                  pageChecksum,
 	"PAGE_COMPRESSED":                pageCompressed,
 	"PAGE_COMPRESSION_LEVEL":         pageCompressionLevel,
->>>>>>> origin/master
+	"PARAMETER":                      parameter,
 	"PARSER":                         parser,
 	"PARTIAL":                        partial,
 	"PARTITION":                      partition,

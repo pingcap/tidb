@@ -692,14 +692,13 @@ func (e *writeAndIngestStepExecutor) ResetSummary() {
 	e.summary.Reset()
 }
 
-<<<<<<< HEAD:pkg/disttask/importinto/task_executor.go
 func decideTiCIWriteEnabled(logger *zap.Logger, taskID int64, subtaskID int64, kvGroup string, plan *importer.Plan) bool {
 	baseLogger := logger.With(
 		zap.Int64("task-id", taskID),
 		zap.Int64("subtask-id", subtaskID),
 		zap.String("kv-group", kvGroup),
 	)
-	if kvGroup == dataKVGroup {
+	if kvGroup == external.DataKVGroup {
 		baseLogger.Info("TiCI write disabled for data kv group")
 		return false
 	}
@@ -732,10 +731,7 @@ func decideTiCIWriteEnabled(logger *zap.Logger, taskID int64, subtaskID int64, k
 	return enabled
 }
 
-func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
-=======
 func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, objStore storeapi.Storage) error {
->>>>>>> origin/master:pkg/dxf/importinto/task_executor.go
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)

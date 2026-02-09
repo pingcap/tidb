@@ -520,7 +520,6 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
-<<<<<<< HEAD
 type ticiWriteGroup interface {
 	CreateFileWriter(ctx context.Context) (*tici.FileWriter, error)
 	WriteHeader(ctx context.Context, fileWriter *tici.FileWriter, commitTS uint64) error
@@ -529,7 +528,8 @@ type ticiWriteGroup interface {
 	FinishPartitionUpload(ctx context.Context, fileWriter *tici.FileWriter, lowerBound, upperBound []byte) error
 	FinishIndexUpload(ctx context.Context) error
 	Close() error
-=======
+}
+
 // GetWorkerConcurrency gets the current concurrency of the backend
 func (c *BackendConfig) GetWorkerConcurrency() int {
 	return int(c.WorkerConcurrency.Load())
@@ -538,7 +538,6 @@ func (c *BackendConfig) GetWorkerConcurrency() int {
 // SetWorkerConcurrency sets the current concurrency of the backend
 func (c *BackendConfig) SetWorkerConcurrency(concurrency int) {
 	c.WorkerConcurrency.Store(int32(concurrency))
->>>>>>> origin/master
 }
 
 // Backend is a local backend.
@@ -1472,18 +1471,13 @@ func (local *Backend) ImportEngine(
 	intest.Assert(len(splitKeys) > 0)
 	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-<<<<<<< HEAD
-	if !ticiWriteEnabled && kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
-		// TiCI-only writes do not ingest into TiKV, so skip side effects like forced splits.
-		tidblogutil.Logger(ctx).Info("force table split range",
-=======
 	forceSplitThreshold := ForcePartitionRegionThreshold
 	failpoint.InjectCall("ForcePartitionRegionThreshold", &forceSplitThreshold)
 	// We only force partition range when the table is large enough (>= 100 regions).
 	// This is to avoid unnecessary RPC calls for small tables.
-	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 && len(splitKeys)-1 >= forceSplitThreshold {
+	// TiCI-only writes do not ingest into TiKV, so skip side effects like forced splits.
+	if !ticiWriteEnabled && kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 && len(splitKeys)-1 >= forceSplitThreshold {
 		tidblogutil.Logger(ctx).Info("force partition range",
->>>>>>> origin/master
 			zap.String("startKey", redact.Key(startKey)),
 			zap.String("endKey", redact.Key(endKey)))
 		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())

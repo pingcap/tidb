@@ -16,13 +16,10 @@ package ddl
 
 import (
 	"context"
-<<<<<<< HEAD
-	"strconv"
-=======
 	"encoding/json"
 	goerrors "errors"
+	"strconv"
 	"sync/atomic"
->>>>>>> origin/master
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"

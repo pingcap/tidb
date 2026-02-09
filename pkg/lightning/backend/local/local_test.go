@@ -71,12 +71,9 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
-<<<<<<< HEAD
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
-=======
-	atomic2 "go.uber.org/atomic"
->>>>>>> origin/master
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -1091,7 +1088,6 @@ func TestMultiIngest(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("skip this test on next-gen kernel")
@@ -1099,10 +1095,10 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	bak := Backend{}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)")
 	toCh := make(chan *regionJob, 1)
-	worker := bak.newRegionJobWorker(1, toCh, make(chan *regionJob, 1), nil, nil)
+	worker := bak.newRegionJobWorker(context.Background(), 1, toCh, make(chan *regionJob, 1), nil, nil)
 
 	toCh <- &regionJob{}
-	err := worker.run(context.Background())
+	err := worker.HandleTask(<-toCh, nil)
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, toCh, 0)
@@ -1190,8 +1186,6 @@ func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
 	require.Less(t, bytes.Compare(ticiGroup.lastUpperBound, res.remainingStartKey), 0)
 }
 
-=======
->>>>>>> origin/master
 // mockIngestData must be ordered on the first element of each [2][]byte.
 // there cannot be duplicated items.
 type mockIngestData [][2][]byte
@@ -2653,7 +2647,6 @@ func TestTotalMemoryConsume(t *testing.T) {
 	b.CloseEngineMgr()
 }
 
-<<<<<<< HEAD
 func TestMarkTiCIWriteEngineLogs(t *testing.T) {
 	core, recorded := observer.New(zap.InfoLevel)
 	logger := zap.New(core)
@@ -2672,7 +2665,8 @@ func TestMarkTiCIWriteEngineLogs(t *testing.T) {
 	require.Equal(t, true, fields["tici-write-enabled"])
 	fields = entries[1].ContextMap()
 	require.Equal(t, false, fields["tici-write-enabled"])
-=======
+}
+
 // refCountIngestData is a mock IngestData that tracks reference count.
 type refCountIngestData struct {
 	mockIngestData
@@ -2939,7 +2933,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 
 	// Generate and send jobs
 	// The fix ensures all jobs are ref'd before sending to jobToWorkerCh
-	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), jobToWorkerCh, &jobWg)
+	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, jobToWorkerCh, &jobWg)
 	require.NoError(t, err)
 
 	// Wait for all jobs to be processed
@@ -3016,5 +3010,4 @@ func (m *mockEngineWithData) GetRegionSplitKeys() ([][]byte, error) {
 
 func (m *mockEngineWithData) Close() error {
 	return nil
->>>>>>> origin/master
 }

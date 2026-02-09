@@ -35,13 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/tici"
-=======
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	rcmgrutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/tici"
 	putil "github.com/pingcap/tidb/pkg/util"
->>>>>>> origin/master
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -126,71 +123,6 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 		case <-ctx.Done():
 			job.done(w.jobWg)
 			return nil
-<<<<<<< HEAD
-		case job, ok := <-w.jobInCh:
-			if !ok {
-				return nil
-			}
-
-			var peers []*metapb.Peer
-			// in unit test, we may not have the real peers
-			if job.region != nil && job.region.Region != nil {
-				peers = job.region.Region.GetPeers()
-			}
-			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
-			err := w.runJob(ctx, job)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
-
-			if w.afterRunJobFn != nil {
-				w.afterRunJobFn(peers)
-			}
-			switch job.stage {
-			case regionScanned, wrote, ingested:
-				select {
-				case <-ctx.Done():
-					job.done(w.jobWg)
-					return nil
-				case w.jobOutCh <- job:
-				}
-			case needRescan:
-				newJobs, err2 := w.regenerateJobsFn(
-					ctx,
-					job.ingestData,
-					[]engineapi.Range{job.keyRange},
-					job.regionSplitSize,
-					job.regionSplitKeys,
-					job.ticiWriteEnabled,
-					job.ticiHeaderCommitTS,
-				)
-				if err2 != nil {
-					// Don't need to put the job back to retry, because regenerateJobsFn
-					// has done the retry internally. Here just done for the "needRescan"
-					// job and exit directly.
-					job.done(w.jobWg)
-					return err2
-				}
-				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				newJobCnt := len(newJobs) - 1
-				for newJobCnt > 0 {
-					job.ref(w.jobWg)
-					newJobCnt--
-				}
-				for _, newJob := range newJobs {
-					newJob.lastRetryableErr = job.lastRetryableErr
-					select {
-					case <-ctx.Done():
-						newJob.done(w.jobWg)
-						// don't exit here, we mark done for each job and exit in
-						// the outer loop
-					case w.jobOutCh <- newJob:
-					}
-				}
-			}
-
-			if err != nil {
-				return err
-=======
 		case w.jobOutCh <- job:
 		}
 	case needRescan:
@@ -200,6 +132,8 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 			[]engineapi.Range{job.keyRange},
 			job.regionSplitSize,
 			job.regionSplitKeys,
+			job.ticiWriteEnabled,
+			job.ticiHeaderCommitTS,
 		)
 		if err2 != nil {
 			// Don't need to put the job back to retry, because regenerateJobsFn
@@ -222,7 +156,6 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 				// don't exit here, we mark done for each job and exit in
 				// the outer loop
 			case w.jobOutCh <- newJob:
->>>>>>> origin/master
 			}
 		}
 	}

@@ -537,13 +537,10 @@ import (
 	optional                   "OPTIONAL"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
-<<<<<<< HEAD
-	parameter                  "PARAMETER"
-=======
 	pageChecksum               "PAGE_CHECKSUM"
 	pageCompressed             "PAGE_COMPRESSED"
 	pageCompressionLevel       "PAGE_COMPRESSION_LEVEL"
->>>>>>> origin/master
+	parameter                  "PARAMETER"
 	parser                     "PARSER"
 	partial                    "PARTIAL"
 	partitioning               "PARTITIONING"

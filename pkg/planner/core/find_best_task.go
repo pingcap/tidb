@@ -1550,15 +1550,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
-<<<<<<< HEAD
-			currentCandidate = getTableCandidate(ds, path, prop)
-		} else {
-			if !(len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || path.FtsQueryInfo != nil) {
-=======
 			if prop.PartialOrderInfo != nil {
 				// skyline pruning table path with partial order property is not supported yet.
 				// TODO: support it in the future after we support prefix column as partial order.
->>>>>>> origin/master
 				continue
 			}
 			currentCandidate = getTableCandidate(ds, path, prop)
@@ -1586,7 +1580,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
-			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || path.FtsQueryInfo != nil
 			if !keepIndex {
 				// If none of the above conditions are met, this index will be directly pruned here.
 				continue

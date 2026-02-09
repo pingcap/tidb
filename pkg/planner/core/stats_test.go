@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -86,7 +87,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	// InterestingColumns might not be populated, extract from PushedDownConds
 	interestingColumns := dsBaseline.InterestingColumns
 	if len(interestingColumns) == 0 && len(dsBaseline.PushedDownConds) > 0 {
-		interestingColumns = expression.ExtractColumnsFromExpressions(dsBaseline.PushedDownConds, nil)
+		interestingColumns = expression.ExtractColumnsFromExpressions(dsBaseline.PushedDownConds, nil, false)
 	}
 
 	t.Logf("Interesting columns: %d (from PushedDownConds: %d), paths: %d", len(interestingColumns), len(dsBaseline.PushedDownConds), len(dsBaseline.AllPossibleAccessPaths))
@@ -303,8 +304,8 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessionapi.Sess
 	optFlag := builder.GetOptFlag()
 	// Manually add the flags that adjustOptimizationFlags would add
 	if !se.GetSessionVars().InRestrictedSQL || se.GetSessionVars().InternalSQLScanUserTable {
-		optFlag |= (1 << 15) // FlagCollectPredicateColumnsPoint
-		optFlag |= (1 << 19) // FlagSyncWaitStatsLoadPoint
+		optFlag |= rule.FlagCollectPredicateColumnsPoint // FlagCollectPredicateColumnsPoint
+		optFlag |= rule.FlagSyncWaitStatsLoadPoint       // FlagSyncWaitStatsLoadPoint
 	}
 
 	// Run logical optimization which includes index pruning via CollectPredicateColumnsPoint

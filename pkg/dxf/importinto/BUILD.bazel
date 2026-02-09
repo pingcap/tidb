@@ -110,11 +110,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-<<<<<<< HEAD:pkg/disttask/importinto/BUILD.bazel
-    shard_count = 21,
-=======
-    shard_count = 24,
->>>>>>> origin/master:pkg/dxf/importinto/BUILD.bazel
+    shard_count = 25,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

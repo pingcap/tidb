@@ -1215,9 +1215,6 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	return true
 }
 
-<<<<<<< HEAD
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, bool, error) {
-=======
 func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
 	policy := ctx.GetSessionVars().IndexLookUpPushDownPolicy
 	switch policy {
@@ -1233,8 +1230,7 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
->>>>>>> origin/master
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, bool, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1496,12 +1492,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-<<<<<<< HEAD
-	// If all available paths are Multi-Valued Index, TiCI Index or other special indexes, it's possible that the only special index is inapplicable,
-=======
-	// If all available paths are Multi-Valued Index, Partial index or other index that need to check its usability in later phase,
+	// If all available paths are Multi-Valued Index, TiCI index, partial index, or other index
+	// that need to check its usability in later phase,
 	// it's possible that all these path are inapplicable,
->>>>>>> origin/master
 	// so that the table paths are still added here to avoid failing to find any physical plan.
 	allUndeterminedPath := true
 	for _, availablePath := range available {

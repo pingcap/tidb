@@ -783,15 +783,11 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		StoreType:        path.StoreType,
 		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-<<<<<<< HEAD
 	if is.FtsQueryInfo != nil {
 		is.StoreType = kv.TiCI
 	}
-=======
 
 	is.SetNoncacheableReason(path.NoncacheableReason)
-
->>>>>>> origin/master
 	rowCount := path.CountAfterAccess
 	if is.FtsQueryInfo != nil {
 		is.InitSchemaForTiCIIndex(ds.CommonHandleCols, path.FullIdxCols)

@@ -36,31 +36,6 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-<<<<<<< HEAD
-func TestRegionJobBaseWorker(t *testing.T) {
-	newWorker := func() *regionJobBaseWorker {
-		return &regionJobBaseWorker{
-			jobInCh:  make(chan *regionJob, 10),
-			jobOutCh: make(chan *regionJob, 10),
-			jobWg:    &sync.WaitGroup{},
-			preRunJobFn: func(ctx context.Context, job *regionJob) error {
-				return nil
-			},
-			writeFn: func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
-				return &tikvWriteResult{}, nil
-			},
-			ingestFn: func(ctx context.Context, job *regionJob) error {
-				return nil
-			},
-			regenerateJobsFn: func(
-				ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
-				regionSplitSize, regionSplitKeys int64, ticiWriteEnabled bool, ticiHeaderCommitTS uint64,
-			) ([]*regionJob, error) {
-				return []*regionJob{
-					{}, {}, {},
-				}, nil
-			},
-=======
 func newRegionJobWorkerPoolForTest(
 	workerCtx context.Context,
 	preRunJobFn func(ctx context.Context, job *regionJob) error,
@@ -80,7 +55,6 @@ func newRegionJobWorkerPoolForTest(
 	if preRunJobFn == nil {
 		preRunJobFn = func(ctx context.Context, job *regionJob) error {
 			return nil
->>>>>>> origin/master
 		}
 	}
 	if writeFn == nil {
@@ -109,7 +83,7 @@ func newRegionJobWorkerPoolForTest(
 				ingestFn:    ingestFn,
 				regenerateJobsFn: func(
 					ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
-					regionSplitSize, regionSplitKeys int64,
+					regionSplitSize, regionSplitKeys int64, ticiWriteEnabled bool, ticiHeaderCommitTS uint64,
 				) ([]*regionJob, error) {
 					return []*regionJob{
 						{}, {}, {},

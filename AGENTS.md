@@ -49,8 +49,6 @@ This file provides guidance to agents when working with code in this repository.
 
 - When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
 
-<<<<<<< HEAD
-=======
 ### Notes
 
 - Notes directory: `docs/note/<component>/` is the canonical location for component notes. If missing, create it and add an entry here.
@@ -59,8 +57,6 @@ This file provides guidance to agents when working with code in this repository.
 - If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
 - Predicate pushdown testdata (`pkg/planner/core/casetest/rule/testdata/predicate_pushdown_suite_in.json`) should contain SQL-only cases; put DDL in the test setup to avoid `EXPLAIN` parsing DDL during record runs.
 - Integration test recording uses `./run-tests.sh -r <name>` (not `-record`).
-
->>>>>>> origin/master
 ## Building
 
 ### Bazel bootstrap (`make bazel_prepare`)
@@ -80,11 +76,8 @@ Recommended local build flow:
 make bazel_prepare
 
 # build
-<<<<<<< HEAD
 make
-=======
 make bazel_bin
->>>>>>> origin/master
 
 # optional: regenerate generated code if needed
 make gogenerate
@@ -278,8 +271,6 @@ curl -f "http://${PD_ADDR}/pd/api/v1/version"
 - **Environment check**: Check for running playground processes before starting.
 - **Fmt-only changes**: If PR only involves code formatting (gofmt, indentation), do NOT run time-consuming `realtikvtest`. Just ensure local compilation passes.
 
-<<<<<<< HEAD
-=======
 ## Issue Instructions
 
 - When submitting an issue, follow the GitHub templates under `.github/ISSUE_TEMPLATE/` and fill in all required fields.
@@ -288,10 +279,8 @@ curl -f "http://${PD_ADDR}/pd/api/v1/version"
 - Apply labels to help triage:
   - `type/*` is usually applied by the issue template; add `type/regression` when applicable.
   - Add at least one `component/*` label (for example: `component/ddl`, `component/br`, `component/parser`).
-  - For bug/regression issues, `severity/*` and affected-version label(s) are required (for example: `affects-8.5`; use `may-affects-*` if unsure).
-  - If you don't have permission to add labels, include a `Suggested labels: ...` line in the issue body.
-
->>>>>>> origin/master
+- For bug/regression issues, `severity/*` and affected-version label(s) are required (for example: `affects-8.5`; use `may-affects-*` if unsure).
+- If you don't have permission to add labels, include a `Suggested labels: ...` line in the issue body.
 ## Pull Request Instructions
 
 ### PR title
@@ -305,8 +294,6 @@ The PR title **must** strictly adhere to the following format. It uses the packa
 ### PR description
 
 The PR description **must** strictly follow the template located at @.github/pull_request_template.md and **must** keep the HTML comment elements like `Tests <!-- At least one of them must be included. -->` unchanged in the pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.
-<<<<<<< HEAD
-=======
 
 ### Language
 
@@ -315,4 +302,3 @@ Issues and PRs **must** be written in English (title and description).
 ### Force push
 
 Avoid force-push whenever possible; prefer adding follow-up commits and letting GitHub squash-merge. If a force-push is unavoidable, use `--force-with-lease` and coordinate with reviewers.
->>>>>>> origin/master

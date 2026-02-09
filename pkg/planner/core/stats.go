@@ -126,18 +126,15 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
-<<<<<<< HEAD
+	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
+	// Fill index paths for all paths
+	ds.CheckPartialIndexes()
 	// Cleanup the unused TiCI indexes.
 	// They are not suitable for normal read.
 	ds.CleanUnusedTiCIIndexes()
 	var commonHandleInfoForTiCI *model.IndexInfo
 	firstTiCIIndex := true
 	// TiCI needs pk info to build its special row layout.
-=======
-	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
-	// Fill index paths for all paths
-	ds.CheckPartialIndexes()
->>>>>>> origin/master
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			commonHandleInfoForTiCI = path.Index
@@ -183,12 +180,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	return ds.StatsInfo(), true, nil
 }
 
-<<<<<<< HEAD
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, possiblePK *model.IndexInfo) error {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 	ticiType := distsql.NotTiCIIndex
 	if path.Index.IsTiCIIndex() {
 		if path.Index.HybridInfo != nil && path.Index.HybridInfo.Sharding != nil {
@@ -199,24 +191,16 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 			ticiType = distsql.TiCIShardIntHandle
 		}
 		path.IdxCols, path.IdxColLens = expression.TiCIIndexInfo2ShardCols(ds.Columns, ds.Schema().Columns, path.Index, possiblePK)
+		path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	} else {
-		path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+		path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+			util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	}
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-=======
-func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
->>>>>>> origin/master
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.MinCountAfterAccess = 0
 	path.MaxCountAfterAccess = 0
-<<<<<<< HEAD
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) && ticiType == distsql.NotTiCIIndex {
-=======
-	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
-		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
->>>>>>> origin/master
 		handleCol := ds.GetPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
 			alreadyHandle := false
@@ -243,10 +227,6 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 }
 
 func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
 	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
 }

@@ -23,9 +23,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -196,11 +196,11 @@ func (g *DataWriterGroup) CreateFileWriter(ctx context.Context) (*FileWriter, er
 	filename := uuid.New().String()
 
 	// storage.ParseBackend parse all path components as the storage path prefix
-	storeBackend, err := storage.ParseBackend(g.indexMeta.storeURI, nil)
+	storeBackend, err := objstore.ParseBackend(g.indexMeta.storeURI, nil)
 	if err != nil {
 		return nil, err
 	}
-	store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
+	store, err := objstore.NewWithDefaultOpt(ctx, storeBackend)
 	if err != nil {
 		return nil, err
 	}

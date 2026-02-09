@@ -44,11 +44,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-<<<<<<< HEAD
 	"github.com/pingcap/tipb/go-tipb"
-=======
 	"go.uber.org/zap"
->>>>>>> origin/master
 )
 
 // DataSource represents a tableScan without condition push down.

@@ -20,13 +20,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap/zaptest"
 )
 
-// mockExternalFileWriter implements storage.ExternalFileWriter for testing.
+// mockExternalFileWriter implements objectio.Writer for testing.
 type mockExternalFileWriter struct {
 	writes [][]byte
 	closed bool
@@ -48,13 +49,15 @@ func (m *mockExternalFileWriter) Close(ctx context.Context) error {
 	return nil
 }
 
-// mockExternalStorage implements storage.ExternalStorage for testing.
+// mockExternalStorage implements storeapi.Storage for testing.
 type mockExternalStorage struct {
 	writer *mockExternalFileWriter
 	fail   bool
 }
 
-func (m *mockExternalStorage) Create(ctx context.Context, name string, opt *storage.WriterOption) (storage.ExternalFileWriter, error) {
+var _ storeapi.Storage = (*mockExternalStorage)(nil)
+
+func (m *mockExternalStorage) Create(ctx context.Context, name string, opt *storeapi.WriterOption) (objectio.Writer, error) {
 	if m.fail {
 		return nil, errors.New("create failed")
 	}
@@ -65,27 +68,18 @@ func (m *mockExternalStorage) Create(ctx context.Context, name string, opt *stor
 func (m *mockExternalStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	return nil
 }
-func (m *mockExternalStorage) Open(ctx context.Context, name string, opts *storage.ReaderOption) (storage.ExternalFileReader, error) {
+func (m *mockExternalStorage) Open(ctx context.Context, name string, opts *storeapi.ReaderOption) (objectio.Reader, error) {
 	return nil, nil
 }
 func (m *mockExternalStorage) Delete(ctx context.Context, name string) error { return nil }
 func (m *mockExternalStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	return false, nil
 }
-func (m *mockExternalStorage) List(ctx context.Context, prefix string) ([]string, error) {
-	return nil, nil
-}
 func (m *mockExternalStorage) URI() string { return "" }
-func (m *mockExternalStorage) WalkDir(ctx context.Context, opt *storage.WalkOption, fn func(string, int64) error) error {
+func (m *mockExternalStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
 	return nil
 }
-func (m *mockExternalStorage) OpenWithRange(ctx context.Context, name string, offset, length int64) (storage.ExternalFileReader, error) {
-	return nil, nil
-}
 func (m *mockExternalStorage) Rename(ctx context.Context, oldName, newName string) error { return nil }
-func (m *mockExternalStorage) CreateWithFlag(ctx context.Context, name string, opt *storage.WriterOption) (storage.ExternalFileWriter, error) {
-	return m.Create(ctx, name, opt)
-}
 
 // Implement DeleteFile to satisfy storage.ExternalStorage interface
 func (m *mockExternalStorage) DeleteFile(ctx context.Context, name string) error {
@@ -97,15 +91,12 @@ func (m *mockExternalStorage) ReadFile(ctx context.Context, name string) ([]byte
 	return nil, nil
 }
 
-// Add Close method to satisfy storage.ExternalStorage interface
-func (m *mockExternalStorage) Close() {
-	// No-op for mock
-}
-
 // Implement DeleteFiles to satisfy storage.ExternalStorage interface
 func (m *mockExternalStorage) DeleteFiles(ctx context.Context, names []string) error {
 	return nil
 }
+
+func (m *mockExternalStorage) Close() {}
 
 func TestNewTICIFileWriterAndWriteRow(t *testing.T) {
 	ctx := context.Background()

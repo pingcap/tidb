@@ -106,13 +106,8 @@ require (
 	github.com/pingcap/metering_sdk v0.0.0-20251110022152-dac449ac5389
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-<<<<<<< HEAD
 	github.com/pingcap/tipb v0.0.0-20260127060946-1852f9829ce3
-	github.com/prometheus/client_golang v1.22.0
-=======
-	github.com/pingcap/tipb v0.0.0-20251230094608-1374320b4bd8
 	github.com/prometheus/client_golang v1.23.0
->>>>>>> origin/master
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
 	github.com/prometheus/prometheus v0.50.1

@@ -485,13 +485,10 @@ var Keywords = []KeywordsType{
 	{"OPTIONAL", false, "unreserved"},
 	{"PACK_KEYS", false, "unreserved"},
 	{"PAGE", false, "unreserved"},
-<<<<<<< HEAD
-	{"PARAMETER", false, "unreserved"},
-=======
 	{"PAGE_CHECKSUM", false, "unreserved"},
 	{"PAGE_COMPRESSED", false, "unreserved"},
 	{"PAGE_COMPRESSION_LEVEL", false, "unreserved"},
->>>>>>> origin/master
+	{"PARAMETER", false, "unreserved"},
 	{"PARSER", false, "unreserved"},
 	{"PARTIAL", false, "unreserved"},
 	{"PARTITIONING", false, "unreserved"},
