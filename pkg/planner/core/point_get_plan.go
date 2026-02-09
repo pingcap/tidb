@@ -2185,7 +2185,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if err != nil {
 		return nil
 	}
-	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo, 0)
+	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo)
 	if err != nil {
 		return nil
 	}

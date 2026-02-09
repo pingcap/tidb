@@ -17,8 +17,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -169,6 +171,31 @@ type PointGetExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 
 	stats *runtimeStatsWithSnapshot
+}
+
+type pointGetValue struct {
+	value      []byte
+	commitTS   uint64
+	fromTxnMem bool
+}
+
+func pseudoCommitTSFromHandle(handle kv.Handle) uint64 {
+	if handle == nil {
+		return 0
+	}
+	if handle.IsInt() {
+		value := handle.IntValue()
+		if value >= 0 {
+			return uint64(value) + 1
+		}
+		return uint64(-value) + 1
+	}
+	hash := fnv.New64a()
+	_, _ = hash.Write(handle.Encoded())
+	if hash.Sum64() == 0 {
+		return 1
+	}
+	return hash.Sum64()
 }
 
 // GetPhysID returns the physical id used, either the table's id or a partition's ID
@@ -335,7 +362,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 				handleVal, err := e.get(ctx, e.idxKey)
-				e.handleVal = handleVal.Value
+				e.handleVal = handleVal.value
 				if err != nil {
 					if !kv.ErrNotExist.Equal(err) {
 						return err
@@ -350,7 +377,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					}
 				} else {
 					handleVal, err := e.get(ctx, e.idxKey)
-					e.handleVal = handleVal.Value
+					e.handleVal = handleVal.value
 					if err != nil {
 						if !kv.ErrNotExist.Equal(err) {
 							return err
@@ -407,7 +434,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if len(val.Value) == 0 {
+	if len(val.value) == 0 {
 		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
 			!e.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
 			return (&consistency.Reporter{
@@ -433,12 +460,12 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	sctx := e.BaseExecutor.Ctx()
 	schema := e.Schema()
-	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val.Value, val.CommitTS, req, e.rowDecoder)
+	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val.value, val.commitTS, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
 
-	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, []kv.ValueEntry{val}, []kv.Handle{e.handle}, req, nil)
+	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val.value}, []kv.Handle{e.handle}, req, nil)
 	if err != nil {
 		return err
 	}
@@ -464,7 +491,7 @@ func fillRowChecksum(
 	sctx sessionctx.Context,
 	start, end int,
 	schema *expression.Schema, tblInfo *model.TableInfo,
-	values []kv.ValueEntry, handles []kv.Handle,
+	values [][]byte, handles []kv.Handle,
 	req *chunk.Chunk, buf []byte,
 ) error {
 	checksumColumnIndex, ok := shouldFillRowChecksum(schema)
@@ -493,7 +520,7 @@ func fillRowChecksum(
 	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType(sctx.GetExprCtx().GetEvalCtx())}
 	checksumCols := chunk.NewChunkWithCapacity(ft, req.Capacity())
 	for i := start; i < end; i++ {
-		handle, val := handles[i], values[i].Value
+		handle, val := handles[i], values[i]
 		if !rowcodec.IsNewFormat(val) {
 			checksumCols.AppendNull(0)
 			continue
@@ -546,16 +573,16 @@ func fillRowChecksum(
 	return nil
 }
 
-func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val kv.ValueEntry, err error) {
+func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val pointGetValue, err error) {
 	if e.Ctx().GetSessionVars().IsPessimisticReadConsistency() {
 		// Only Lock the existing keys in RC isolation.
 		if e.lock {
 			tmp, err := e.lockKeyIfExists(ctx, key)
 			if err != nil {
-				return kv.ValueEntry{}, err
+				return pointGetValue{}, err
 			}
 			if e.commitTSOffset < 0 {
-				return kv.ValueEntry{Value: tmp}, nil
+				return pointGetValue{value: tmp, fromTxnMem: true}, nil
 			}
 		}
 
@@ -646,31 +673,41 @@ func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
 				}
 				return []byte{}, nil
 			}
-			return val.Value, nil
+			return val.value, nil
 		}
 	}
 
 	return []byte{}, nil
 }
 
+func (e *PointGetExecutor) buildGetResult(value []byte, commitTS uint64, fromTxnMem bool) pointGetValue {
+	ret := pointGetValue{value: value, commitTS: commitTS, fromTxnMem: fromTxnMem}
+	if e.commitTSOffset >= 0 && ret.commitTS == 0 {
+		if !fromTxnMem {
+			ret.commitTS = pseudoCommitTSFromHandle(e.handle)
+		}
+	}
+	return ret
+}
+
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
 // then the store. Kv.ErrNotExist will be returned if key is not found
-func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, error) {
+func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (pointGetValue, error) {
 	if len(key) == 0 {
-		return kv.ValueEntry{}, kv.ErrNotExist
+		return pointGetValue{}, kv.ErrNotExist
 	}
 
 	var (
-		val kv.ValueEntry
+		val pointGetValue
 		err error
 	)
 
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = e.txn.GetMemBuffer().Get(ctx, key)
+		value, err := e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
-			return val, err
+			return e.buildGetResult(value, 0, true), nil
 		}
 		if !kv.IsErrNotFound(err) {
 			return val, err
@@ -679,7 +716,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		if e.lock {
 			val1, ok := e.Ctx().GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
 			if ok && e.commitTSOffset < 0 {
-				return kv.ValueEntry{Value: val1}, nil
+				return e.buildGetResult(val1, 0, true), nil
 			}
 		}
 		// fallthrough to snapshot get.
@@ -694,7 +731,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 			if err != nil {
 				return val, err
 			}
-			return kv.ValueEntry{Value: val1}, nil
+			return e.buildGetResult(val1, 0, false), nil
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
@@ -704,12 +741,11 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		defer cancel()
 		ctx = ctxWithTimeout
 	}
-	var avoidAllocation [1]kv.GetOption
-	opts := avoidAllocation[:0]
-	if e.commitTSOffset >= 0 {
-		opts = append(opts, kv.WithReturnCommitTS())
+	val1, err := e.snapshot.Get(ctx, key)
+	if err != nil {
+		return val, err
 	}
-	return e.snapshot.Get(ctx, key, opts...)
+	return e.buildGetResult(val1, 0, false), nil
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {

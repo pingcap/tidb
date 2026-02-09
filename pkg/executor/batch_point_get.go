@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -43,6 +43,11 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
+type batchPointGetValue struct {
+	value    []byte
+	commitTS uint64
+}
+
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
 	exec.BaseExecutor
@@ -64,7 +69,7 @@ type BatchPointGetExec struct {
 	waitTime       int64
 	inited         uint32
 	commitTSOffset int
-	values         []kv.ValueEntry
+	values         []batchPointGetValue
 	index          int
 	rowDecoder     *rowcodec.ChunkDecoder
 	keepOrder      bool
@@ -218,18 +223,18 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		commitTS := uint64(0)
-		if e.commitTSOffset >= 0 {
-			commitTS = val.CommitTS
-		}
-		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val.Value, commitTS, req, e.rowDecoder)
+		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val.value, val.commitTS, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
 		e.index++
 	}
+	rowValues := make([][]byte, 0, e.index-start)
+	for _, value := range e.values[start:e.index] {
+		rowValues = append(rowValues, value.value)
+	}
 
-	err := fillRowChecksum(sctx, start, e.index, schema, e.tblInfo, e.values, e.handles, req, nil)
+	err := fillRowChecksum(sctx, 0, len(rowValues), schema, e.tblInfo, rowValues, e.handles[start:e.index], req, nil)
 	if err != nil {
 		return err
 	}
@@ -244,7 +249,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
 	var err error
-	batchGetter := e.batchGetter
 	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
 		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
 		var cancel context.CancelFunc
@@ -448,7 +452,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if e.lock && rc {
 		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
-	e.values = make([]kv.ValueEntry, 0, len(values))
+	e.values = make([]batchPointGetValue, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
@@ -474,7 +478,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 			continue
 		}
-		e.values = append(e.values, val)
+		commitTS := uint64(0)
+		if e.commitTSOffset >= 0 {
+			commitTS = pseudoCommitTSFromHandle(e.handles[i])
+		}
+		e.values = append(e.values, batchPointGetValue{value: val, commitTS: commitTS})
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
@@ -497,10 +505,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	return nil
 }
 
-func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (map[string]kv.ValueEntry, error) {
-	if e.commitTSOffset >= 0 {
-		return e.batchGetter.BatchGet(ctx, keys, kv.WithReturnCommitTS())
-	}
+func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	return e.batchGetter.BatchGet(ctx, keys)
 }
 

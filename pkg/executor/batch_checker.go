@@ -276,7 +276,7 @@ func dataToStrings(data []types.Datum) ([]string, error) {
 					str = string(rune(0x00))
 				}
 			}
-			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
+			str = util.FmtNonASCIIPrintableCharToHex(str)
 		}
 		strs = append(strs, str)
 	}
@@ -292,21 +292,16 @@ func getOldRow(
 	t table.Table,
 	handle kv.Handle,
 	genExprs []expression.Expression,
-	needExtraCommitTS bool,
-) ([]types.Datum, uint64, error) {
-	var options []kv.GetOption
-	if needExtraCommitTS {
-		options = append(options, kv.WithReturnCommitTS())
-	}
-	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle), options...)
+) ([]types.Datum, error) {
+	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	cols := t.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue.Value)
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
 	gIdx := 0
@@ -317,7 +312,7 @@ func getOldRow(
 			if !found {
 				oldRow[col.Offset], err = table.GetColOriginDefaultValue(exprCtx, col.ToInfo())
 				if err != nil {
-					return nil, 0, err
+					return nil, err
 				}
 			}
 		}
@@ -327,15 +322,15 @@ func getOldRow(
 			if !col.GeneratedStored {
 				val, err := genExprs[gIdx].Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(oldRow).ToRow())
 				if err != nil {
-					return nil, 0, err
+					return nil, err
 				}
 				oldRow[col.Offset], err = table.CastValue(sctx, val, col.ToInfo(), false, false)
 				if err != nil {
-					return nil, 0, err
+					return nil, err
 				}
 			}
 			gIdx++
 		}
 	}
-	return oldRow, oldValue.CommitTS, nil
+	return oldRow, nil
 }
