@@ -28,15 +28,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const (
-	// defaultBufSize specifies the default size of skip buffer.
-	// Skip buffer is used when reading data from the cloud. If there is a gap
-	// between the current read position and the last read position, the
-	// data is stored in this buffer to avoid potentially reopening the
-	// underlying file when the gap size is less than the buffer size.
-	defaultBufSize = 64 * 1024
-)
-
 var (
 	// rowGroupInMemoryThreshold is the max row-group size that enables in-memory
 	// reader. For each row group in a Parquet file that is smaller than this

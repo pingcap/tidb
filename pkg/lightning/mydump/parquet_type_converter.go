@@ -16,11 +16,9 @@ package mydump
 
 import (
 	"encoding/binary"
-	"strings"
 	"time"
 
 	"github.com/apache/arrow-go/v18/parquet"
-	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -29,20 +27,7 @@ import (
 
 type setter[T parquet.ColumnTypes] func(T, *types.Datum) error
 
-var (
-	zeroMyDecimal = types.MyDecimal{}
-
-	unsupportedParquetTypes = map[schema.ConvertedType]struct{}{
-		// TODO(joechenrh): support read list type as vector
-		schema.ConvertedTypes.List: {},
-		// The below types are not used for data exported from aurora/snowflake,
-		// so we don't support them for now.
-		schema.ConvertedTypes.Map:         {},
-		schema.ConvertedTypes.MapKeyValue: {},
-		schema.ConvertedTypes.Interval:    {},
-		schema.ConvertedTypes.NA:          {},
-	}
-)
+var zeroMyDecimal = types.MyDecimal{}
 
 const (
 	// maximumDecimalBytes is the maximum byte length allowed to be parsed directly.
@@ -50,40 +35,6 @@ const (
 	// That is: floor(log256(10^81-1))
 	maximumDecimalBytes = 33
 )
-
-func extractColumnTypes(
-	fileMeta *metadata.FileMetaData,
-) ([]convertedType, []string, error) {
-	colTypes := make([]convertedType, fileMeta.NumColumns())
-	colNames := make([]string, 0, fileMeta.NumColumns())
-
-	for i := range colTypes {
-		desc := fileMeta.Schema.Column(i)
-		colNames = append(colNames, strings.ToLower(desc.Name()))
-
-		logicalType := desc.LogicalType()
-		if logicalType.IsValid() {
-			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
-			if t, ok := logicalType.(*schema.TimeLogicalType); ok {
-				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
-			} else {
-				colTypes[i].IsAdjustedToUTC = true
-			}
-		} else {
-			colTypes[i].converted = desc.ConvertedType()
-			colTypes[i].IsAdjustedToUTC = true
-			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
-			colTypes[i].decimalMeta = pnode.DecimalMetadata()
-		}
-
-		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
-			return nil, nil,
-				errors.Errorf("unsupported parquet logical type %s",
-					colTypes[i].converted.String())
-		}
-	}
-	return colTypes, colNames, nil
-}
 
 func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
 	// reuse existing decimal

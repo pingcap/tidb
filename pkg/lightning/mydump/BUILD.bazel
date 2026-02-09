@@ -8,7 +8,7 @@ go_library(
         "csv_parser.go",
         "loader.go",
         "parquet_parser.go",
-        "parquet_type.go",
+        "parquet_type_converter.go",
         "parquet_wrapper.go",
         "parquet_writer.go",
         "parser.go",

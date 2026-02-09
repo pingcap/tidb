@@ -17,6 +17,7 @@ package mydump
 import (
 	"context"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
@@ -35,7 +36,27 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const (
+	// defaultBufSize specifies the default size of skip buffer.
+	// Skip buffer is used when reading data from the cloud. If there is a gap
+	// between the current read position and the last read position, the
+	// data is stored in this buffer to avoid potentially reopening the
+	// underlying file when the gap size is less than the buffer size.
+	defaultBufSize = 64 * 1024
+)
+
 var (
+	unsupportedParquetTypes = map[schema.ConvertedType]struct{}{
+		// TODO(joechenrh): support read list type as vector
+		schema.ConvertedTypes.List: {},
+		// The below types are not used for data exported from aurora/snowflake,
+		// so we don't support them for now.
+		schema.ConvertedTypes.Map:         {},
+		schema.ConvertedTypes.MapKeyValue: {},
+		schema.ConvertedTypes.Interval:    {},
+		schema.ConvertedTypes.NA:          {},
+	}
+
 	// readBatchSize is the number of rows to read in a single batch
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
@@ -566,10 +587,34 @@ func NewParquetParser(
 		return nil, errors.Trace(err)
 	}
 
-	fileMeta := reader.MetaData()
-	colTypes, colNames, err := extractColumnTypes(fileMeta)
-	if err != nil {
-		return nil, errors.Trace(err)
+	fileSchema := reader.MetaData().Schema
+	colTypes := make([]convertedType, fileSchema.NumColumns())
+	colNames := make([]string, 0, fileSchema.NumColumns())
+	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
+	subreaders = append(subreaders, reader)
+
+	for i := range colTypes {
+		desc := reader.MetaData().Schema.Column(i)
+		colNames = append(colNames, strings.ToLower(desc.Name()))
+
+		logicalType := desc.LogicalType()
+		if logicalType.IsValid() {
+			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
+			if t, ok := logicalType.(*schema.TimeLogicalType); ok {
+				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
+			} else {
+				colTypes[i].IsAdjustedToUTC = true
+			}
+		} else {
+			colTypes[i].converted = desc.ConvertedType()
+			colTypes[i].IsAdjustedToUTC = true
+			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
+			colTypes[i].decimalMeta = pnode.DecimalMetadata()
+		}
+
+		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
+			return nil, errors.Errorf("unsupported parquet logical type %s", colTypes[i].converted.String())
+		}
 	}
 
 	numColumns := len(colTypes)
@@ -578,7 +623,7 @@ func NewParquetParser(
 	})
 
 	parser := &ParquetParser{
-		fileMeta: fileMeta,
+		fileMeta: reader.MetaData(),
 		colTypes: colTypes,
 		colNames: colNames,
 		ctx:      ctx,
