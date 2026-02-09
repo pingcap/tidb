@@ -25,6 +25,6 @@ Update	N/A	root		N/A
 explain format = 'brief' replace into t select a, 100 from t;
 id	estRows	task	access object	operator info
 Insert	N/A	root		N/A
-└─Projection	10000.00	root		explain-non-select-stmt.t.a, 100->Column#6
+└─Projection	10000.00	root		explain-non-select-stmt.t.a, 100->Column#7
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

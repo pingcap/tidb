@@ -328,8 +328,8 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain  format = 'brief'select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
 id	estRows	task	access object	operator info
-HashJoin	3.00	root		left outer join, equal:[eq(Column#9, planner__core__casetest__index__index.t.c)]
-├─Projection(Build)	3.00	root		cast(planner__core__casetest__index__index.t.a, decimal(10,0) BINARY)->Column#9
+HashJoin	3.00	root		left outer join, equal:[eq(Column#11, planner__core__casetest__index__index.t.c)]
+├─Projection(Build)	3.00	root		cast(planner__core__casetest__index__index.t.a, decimal(10,0) BINARY)->Column#11
 │ └─IndexReader	3.00	root		index:IndexFullScan
 │   └─IndexFullScan	3.00	cop[tikv]	table:t1, index:c(c)	keep order:false
 └─TableReader(Probe)	3.00	root		data:TableFullScan
@@ -366,10 +366,10 @@ explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(
 id	estRows	task	access object	operator info
 Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
 └─Projection	10000.00	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
-  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#10), if(ne(Column#11, 0), NULL, 1)), or(eq(Column#12, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
+    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
       └─IndexMerge	63.35	root		type: union
         ├─Selection(Build)	10000.00	cop[tikv]		eq(10, planner__core__casetest__index__index.t2.c3)
         │ └─TableRangeScan	10000.00	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
@@ -385,10 +385,10 @@ explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(
 id	estRows	task	access object	operator info
 Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
 └─Projection	10000.00	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
-  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#10), if(ne(Column#11, 0), NULL, 1)), or(eq(Column#12, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
+    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
       └─IndexMerge	63.35	root		type: union
         ├─Selection(Build)	10000.00	cop[tikv]		eq(10, planner__core__casetest__index__index.t2.c3)
         │ └─TableRangeScan	10000.00	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
@@ -403,10 +403,10 @@ explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(
 id	estRows	task	access object	operator info
 Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
 └─Projection	10000.00	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
-  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#10), if(ne(Column#11, 0), NULL, 1)), or(eq(Column#12, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
+    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
       └─IndexMerge	30263.46	root		type: union
         ├─Selection(Build)	33333.33	cop[tikv]		eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)
         │ └─TableRangeScan	33333333.33	cop[tikv]	table:t1	range:[10,+inf], keep order:false, stats:pseudo
@@ -421,11 +421,11 @@ c1	c2	c3
 explain format=brief select c_int from tt1 where c_decimal < all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		planner__core__casetest__index__index.tt1.c_int
-└─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
+└─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.tt1.c_decimal, Column#11), if(ne(Column#12, 0), NULL, 1)), or(eq(Column#13, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:tt1	keep order:true, stats:pseudo
-  └─StreamAgg(Probe)	10000.00	root		funcs:min(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11
-    └─Projection	11.05	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
+  └─StreamAgg(Probe)	10000.00	root		funcs:min(Column#16)->Column#11, funcs:sum(Column#17)->Column#12, funcs:count(1)->Column#13
+    └─Projection	11.05	root		planner__core__casetest__index__index.tt2.c_decimal->Column#16, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#17
       └─IndexMerge	11.05	root		type: union
         ├─Selection(Build)	10.00	cop[tikv]		eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)
         │ └─IndexRangeScan	10000.00	cop[tikv]	table:tt2, index:c_decimal(c_decimal)	range:[9.060000,9.060000], keep order:false, stats:pseudo
@@ -441,11 +441,11 @@ c_int
 explain format=brief select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		planner__core__casetest__index__index.tt1.c_int
-└─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(planner__core__casetest__index__index.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
+└─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(planner__core__casetest__index__index.tt1.c_decimal, Column#11), if(ne(Column#12, 0), NULL, 1)), or(eq(Column#13, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:tt1	keep order:true, stats:pseudo
-  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11
-    └─Projection	17.91	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
+  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#16)->Column#11, funcs:sum(Column#17)->Column#12, funcs:count(1)->Column#13
+    └─Projection	17.91	root		planner__core__casetest__index__index.tt2.c_decimal->Column#16, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#17
       └─IndexMerge	17.91	root		type: union
         ├─Selection(Build)	10000.00	cop[tikv]		lt(7, planner__core__casetest__index__index.tt1.c_decimal)
         │ └─TableRangeScan	10000.00	cop[tikv]	table:tt2	range:[7,7], keep order:false, stats:pseudo

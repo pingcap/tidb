@@ -614,3 +614,12 @@ set @@tidb_opt_join_reorder_threshold=5;
 
 explain format='brief' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
 set @@tidb_opt_join_reorder_threshold=default;
+
+# Issue64697
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int) partition by hash(a) partitions 2;
+insert into t1 value(1,1);
+insert into t2 value(1,1);
+delete t1, t2 from t1, t2 where t1.a = t2.a;
+drop table t1, t2;

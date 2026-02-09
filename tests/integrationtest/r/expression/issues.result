@@ -532,7 +532,7 @@ insert into t1 value (3,1,3,'a');
 insert into t2 value (1,2,date'2020-05-08');
 explain format = 'brief' SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#10
+StreamAgg	1.00	root		funcs:count(1)->Column#12
 └─IndexJoin	0.03	root		inner join, inner:Selection, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id, equal cond:eq(expression__issues.t1.id, expression__issues.t2.order_id)
   ├─TableReader(Build)	0.02	root		data:Selection
   │ └─Selection	0.02	cop[tikv]		eq(cast(expression__issues.t1.org_id, double BINARY), 1), eq(expression__issues.t1.ns, "a"), in(expression__issues.t1.status, 2, 6, 10)
@@ -3183,9 +3183,9 @@ create table if not exists test.ast (i varchar(20));
 create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
 explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
 id	estRows	task	access object	operator info
-Projection	8.00	root		test.ast.i, Column#32
-└─HashAgg	8.00	root		group by:Column#35, funcs:group_concat(Column#34 order by Column#34 separator "; ")->Column#32, funcs:firstrow(Column#35)->test.ast.i
-  └─Projection	100.00	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#34, test.ast.i->Column#35
+Projection	8.00	root		test.ast.i, Column#38
+└─HashAgg	8.00	root		group by:Column#41, funcs:group_concat(Column#40 order by Column#40 separator "; ")->Column#38, funcs:firstrow(Column#41)->test.ast.i
+  └─Projection	100.00	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#40, test.ast.i->Column#41
     └─HashJoin	100.00	root		CARTESIAN inner join
       ├─TableReader(Build)	10.00	root		data:Selection
       │ └─Selection	10.00	cop[tikv]		eq(test.ast.i, "astp2019121731703151")

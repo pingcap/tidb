@@ -41,28 +41,28 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleName: "column_prune",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertAction: "Aggregation_8's columns[Column#25,test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+					assertAction: "Aggregation_8's columns[Column#27,test.t._tidb_commit_ts,test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
 				},
 				{
-					assertAction: "Aggregation_8's aggregation functions[firstrow(Column#25),firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a)] have been pruned",
+					assertAction: "Aggregation_8's aggregation functions[firstrow(Column#27),firstrow(test.t._tidb_commit_ts),firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a)] have been pruned",
 				},
 				{
-					assertAction: "DataSource_1's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+					assertAction: "DataSource_1's columns[test.t._tidb_commit_ts,test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
 				},
 				{
-					assertAction: "Projection_6's columns[Column#25] have been pruned",
+					assertAction: "Projection_6's columns[Column#27] have been pruned",
 				},
 				{
-					assertAction: "Aggregation_5's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a,Column#25] have been pruned",
+					assertAction: "Aggregation_5's columns[test.t._tidb_commit_ts,test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a,Column#27] have been pruned",
 				},
 				{
-					assertAction: "Aggregation_5's aggregation functions[firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a),count(1)] have been pruned",
+					assertAction: "Aggregation_5's aggregation functions[firstrow(test.t._tidb_commit_ts),firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a),count(1)] have been pruned",
 				},
 				{
-					assertAction: "TableDual_4's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+					assertAction: "TableDual_4's columns[test.t._tidb_commit_ts,test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
 				},
 				{
-					assertAction: "Join_7's columns[Column#27] have been pruned",
+					assertAction: "Join_7's columns[Column#29] have been pruned",
 				},
 			},
 		},
@@ -73,7 +73,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "",
-					assertAction: "DataSource_1's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c] have been pruned",
+					assertAction: "DataSource_1's columns[test.t._tidb_commit_ts,test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c] have been pruned",
 				},
 			},
 		},
@@ -320,7 +320,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertAction: "Aggregation_6 pushed down across Join_5, and Join_5 right path becomes Aggregation_8",
-					assertReason: "Aggregation_6's functions[count(Column#38)] are decomposable with join",
+					assertReason: "Aggregation_6's functions[count(Column#41)] are decomposable with join",
 				},
 			},
 		},
@@ -331,7 +331,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertAction: "Aggregation_8 pushed down, and Union_5's children changed into[Aggregation_11,Aggregation_12]",
-					assertReason: "Aggregation_8 functions[sum(Column#28)] are decomposable with Union_5",
+					assertReason: "Aggregation_8 functions[sum(Column#30)] are decomposable with Union_5",
 				},
 				{
 					assertAction: "Projection_6 is eliminated, and Aggregation_11's functions changed into[sum(test.t.c),firstrow(test.t.d)]",

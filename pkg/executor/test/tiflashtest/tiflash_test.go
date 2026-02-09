@@ -1311,7 +1311,7 @@ func TestIssue41014(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_distinct_agg_push_down = 1;")
 
 	tk.MustQuery("explain select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
-		testkit.Rows("HashAgg_11 1.00 root  funcs:count(distinct test.tai1.aid)->Column#8",
+		testkit.Rows("HashAgg_11 1.00 root  funcs:count(distinct test.tai1.aid)->Column#10",
 			"└─HashJoin_15 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
 			"  ├─Selection_20(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
 			"  │ └─Projection_19 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
@@ -1756,8 +1756,8 @@ func TestMPP47766(t *testing.T) {
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustQuery("explain select date(test_time), count(1) as test_date from `traces` group by 1").Check(testkit.Rows(
-		"Projection_4 8000.00 root  test.traces.test_time_gen->Column#5, Column#4",
-		"└─HashAgg_8 8000.00 root  group by:test.traces.test_time_gen, funcs:count(1)->Column#4, funcs:firstrow(test.traces.test_time_gen)->test.traces.test_time_gen",
+		"Projection_4 8000.00 root  test.traces.test_time_gen->Column#6, Column#5",
+		"└─HashAgg_8 8000.00 root  group by:test.traces.test_time_gen, funcs:count(1)->Column#5, funcs:firstrow(test.traces.test_time_gen)->test.traces.test_time_gen",
 		"  └─TableReader_20 10000.00 root  MppVersion: 2, data:ExchangeSender_19",
 		"    └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"      └─TableFullScan_18 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
@@ -1765,13 +1765,13 @@ func TestMPP47766(t *testing.T) {
 		Check(testkit.Rows(
 			"TableReader_31 8000.00 root  MppVersion: 2, data:ExchangeSender_30",
 			"└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4",
-			"    └─Projection_26 8000.00 mpp[tiflash]  Column#4, test.traces.test_time",
-			"      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#4, funcs:firstrow(Column#15)->test.traces.test_time",
+			"  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#6, Column#5",
+			"    └─Projection_26 8000.00 mpp[tiflash]  Column#5, test.traces.test_time",
+			"      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#14, funcs:sum(Column#15)->Column#5, funcs:firstrow(Column#16)->test.traces.test_time",
 			"        └─ExchangeReceiver_29 8000.00 mpp[tiflash]  ",
-			"          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
-			"            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#14, funcs:firstrow(Column#16)->Column#15",
-			"              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#16, date(test.traces.test_time)->Column#17",
+			"          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
+			"            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#18, funcs:count(1)->Column#15, funcs:firstrow(Column#17)->Column#16",
+			"              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#17, date(test.traces.test_time)->Column#18",
 			"                └─TableFullScan_15 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo",
 		))
 }
@@ -2018,20 +2018,20 @@ func TestMppAggShouldAlignFinalMode(t *testing.T) {
 	tk.MustQuery("explain format='brief' select 1 from (" +
 		"  select /*+ read_from_storage(tiflash[t]) */ sum(1)" +
 		"  from t where d BETWEEN '2023-07-01' and '2023-07-03' group by d" +
-		") total;").Check(testkit.Rows("Projection 400.00 root  1->Column#4",
-		"└─HashAgg 400.00 root  group by:test.t.d, funcs:count(complete,1)->Column#8",
+		") total;").Check(testkit.Rows("Projection 400.00 root  1->Column#5",
+		"└─HashAgg 400.00 root  group by:test.t.d, funcs:count(complete,1)->Column#9",
 		"  └─PartitionUnion 400.00 root  ",
 		"    ├─Projection 200.00 root  test.t.d",
-		"    │ └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#12)->Column#9",
+		"    │ └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#13)->Column#10",
 		"    │   └─TableReader 200.00 root  MppVersion: 2, data:ExchangeSender",
 		"    │     └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"    │       └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#12",
+		"    │       └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#13",
 		"    │         └─TableRangeScan 250.00 mpp[tiflash] table:t, partition:p1 range:[2023-07-01,2023-07-03], keep order:false, stats:pseudo",
 		"    └─Projection 200.00 root  test.t.d",
-		"      └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#14)->Column#10",
+		"      └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#15)->Column#11",
 		"        └─TableReader 200.00 root  MppVersion: 2, data:ExchangeSender",
 		"          └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"            └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#14",
+		"            └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#15",
 		"              └─TableRangeScan 250.00 mpp[tiflash] table:t, partition:p2 range:[2023-07-01,2023-07-03], keep order:false, stats:pseudo"))
 
 	err = failpoint.Disable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode")
@@ -2185,27 +2185,27 @@ func TestIssue59877(t *testing.T) {
 	tk.MustExec("set tiflash_fine_grained_shuffle_stream_count=8")
 	tk.MustExec("set tidb_enforce_mpp=1")
 	tk.MustQuery("explain format=\"brief\" select /*+ hash_join_build(t3) */ count(*) from t1 straight_join t2 on t1.id = t2.id straight_join t3 on t1.id = t3.id").Check(
-		testkit.Rows("HashAgg 1.00 root  funcs:count(Column#18)->Column#10",
+		testkit.Rows("HashAgg 1.00 root  funcs:count(Column#21)->Column#13",
 			"└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
 			"  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#18",
-			"      └─Projection 15609.38 mpp[tiflash]  test.t1.id, Column#14",
+			"    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#21",
+			"      └─Projection 15609.38 mpp[tiflash]  test.t1.id, Column#17",
 			"        └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.t1.id, test.t3.id)]",
 			"          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-			"          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#17, collate: binary]",
-			"          │   └─Projection 9990.00 mpp[tiflash]  test.t3.id, cast(test.t3.id, decimal(20,0))->Column#17",
+			"          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#20, collate: binary]",
+			"          │   └─Projection 9990.00 mpp[tiflash]  test.t3.id, cast(test.t3.id, decimal(20,0))->Column#20",
 			"          │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.id))",
 			"          │       └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
-			"          └─Projection(Probe) 12487.50 mpp[tiflash]  test.t1.id, Column#14",
+			"          └─Projection(Probe) 12487.50 mpp[tiflash]  test.t1.id, Column#17",
 			"            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.id, test.t2.id)]",
 			"              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-			"              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
-			"              │   └─Projection 9990.00 mpp[tiflash]  test.t1.id, cast(test.t1.id, decimal(20,0))->Column#13",
+			"              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]",
+			"              │   └─Projection 9990.00 mpp[tiflash]  test.t1.id, cast(test.t1.id, decimal(20,0))->Column#16",
 			"              │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.id))",
 			"              │       └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
 			"              └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
-			"                └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
-			"                  └─Projection 9990.00 mpp[tiflash]  test.t2.id, cast(test.t2.id, decimal(20,0) UNSIGNED)->Column#14",
+			"                └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#17, collate: binary]",
+			"                  └─Projection 9990.00 mpp[tiflash]  test.t2.id, cast(test.t2.id, decimal(20,0) UNSIGNED)->Column#17",
 			"                    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.id))",
 			"                      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"))
 }

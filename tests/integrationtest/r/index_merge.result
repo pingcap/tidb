@@ -11,7 +11,7 @@ explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and
 id	estRows	task	access object	operator info
 Sort_8	4433.77	root		index_merge.t1.c1
 └─Projection_10	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection_11	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#9))
+  └─Selection_11	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#11))
     └─HashJoin_12	5542.21	root		CARTESIAN left outer semi join, other cond:eq(index_merge.t1.c3, index_merge.t1.c3)
       ├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
       │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -31,7 +31,7 @@ explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and
 id	estRows	task	access object	operator info
 Sort_8	4433.77	root		index_merge.t1.c1
 └─Projection_10	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection_11	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#9))
+  └─Selection_11	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#11))
     └─HashJoin_12	5542.21	root		Null-aware anti left outer semi join, equal:[eq(index_merge.t1.c3, index_merge.t1.c3)]
       ├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
       │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -67,7 +67,7 @@ explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and
 id	estRows	task	access object	operator info
 Sort_9	4433.77	root		index_merge.t1.c1
 └─Projection_11	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection_12	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#10))
+  └─Selection_12	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#12))
     └─HashJoin_22	5542.21	root		left outer semi join, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
       ├─IndexReader_30(Build)	10000.00	root		index:IndexFullScan_29
       │ └─IndexFullScan_29	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -87,7 +87,7 @@ explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and
 id	estRows	task	access object	operator info
 Sort_9	4433.77	root		index_merge.t1.c1
 └─Projection_11	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection_12	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#10))
+  └─Selection_12	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#12))
     └─HashJoin_22	5542.21	root		anti left outer semi join, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
       ├─IndexReader_30(Build)	10000.00	root		index:IndexFullScan_29
       │ └─IndexFullScan_29	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -122,11 +122,11 @@ c1	c2	c3
 explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ANY(select count(1) from t2) order by 1;
 id	estRows	task	access object	operator info
 Sort_11	5098.44	root		index_merge.t1.c1
-└─HashJoin_15	5098.44	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#10), if(ne(Column#11, 0), NULL, 0))), and(ne(Column#12, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
-  ├─StreamAgg_23(Build)	1.00	root		funcs:min(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
-  │ └─StreamAgg_43	1.00	root		funcs:count(Column#25)->Column#9
+└─HashJoin_15	5098.44	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#12), if(ne(Column#13, 0), NULL, 0))), and(ne(Column#14, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
+  ├─StreamAgg_23(Build)	1.00	root		funcs:min(Column#11)->Column#12, funcs:sum(0)->Column#13, funcs:count(1)->Column#14
+  │ └─StreamAgg_43	1.00	root		funcs:count(Column#27)->Column#11
   │   └─IndexReader_44	1.00	root		index:StreamAgg_27
-  │     └─StreamAgg_27	1.00	cop[tikv]		funcs:count(1)->Column#25
+  │     └─StreamAgg_27	1.00	cop[tikv]		funcs:count(1)->Column#27
   │       └─IndexFullScan_41	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
   └─IndexMerge_21(Probe)	2825.66	root		type: union
     ├─IndexRangeScan_17(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -144,11 +144,11 @@ c1	c2	c3
 explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > SOME(select count(1) from t2) order by 1;
 id	estRows	task	access object	operator info
 Sort_11	5098.44	root		index_merge.t1.c1
-└─HashJoin_15	5098.44	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#10), if(ne(Column#11, 0), NULL, 0))), and(ne(Column#12, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
-  ├─StreamAgg_23(Build)	1.00	root		funcs:min(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
-  │ └─StreamAgg_43	1.00	root		funcs:count(Column#25)->Column#9
+└─HashJoin_15	5098.44	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#12), if(ne(Column#13, 0), NULL, 0))), and(ne(Column#14, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
+  ├─StreamAgg_23(Build)	1.00	root		funcs:min(Column#11)->Column#12, funcs:sum(0)->Column#13, funcs:count(1)->Column#14
+  │ └─StreamAgg_43	1.00	root		funcs:count(Column#27)->Column#11
   │   └─IndexReader_44	1.00	root		index:StreamAgg_27
-  │     └─StreamAgg_27	1.00	cop[tikv]		funcs:count(1)->Column#25
+  │     └─StreamAgg_27	1.00	cop[tikv]		funcs:count(1)->Column#27
   │       └─IndexFullScan_41	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
   └─IndexMerge_21(Probe)	2825.66	root		type: union
     ├─IndexRangeScan_17(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -166,11 +166,11 @@ c1	c2	c3
 explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 id	estRows	task	access object	operator info
 Sort_11	5542.21	root		index_merge.t1.c1
-└─HashJoin_15	5542.21	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#10), if(ne(Column#11, 0), NULL, 1)), or(eq(Column#12, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
-  ├─StreamAgg_22(Build)	1.00	root		funcs:max(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
-  │ └─StreamAgg_42	1.00	root		funcs:count(Column#25)->Column#9
+└─HashJoin_15	5542.21	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#12), if(ne(Column#13, 0), NULL, 1)), or(eq(Column#14, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
+  ├─StreamAgg_22(Build)	1.00	root		funcs:max(Column#11)->Column#12, funcs:sum(0)->Column#13, funcs:count(1)->Column#14
+  │ └─StreamAgg_42	1.00	root		funcs:count(Column#27)->Column#11
   │   └─IndexReader_43	1.00	root		index:StreamAgg_26
-  │     └─StreamAgg_26	1.00	cop[tikv]		funcs:count(1)->Column#25
+  │     └─StreamAgg_26	1.00	cop[tikv]		funcs:count(1)->Column#27
   │       └─IndexFullScan_40	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
   └─IndexMerge_20(Probe)	5542.21	root		type: union
     ├─IndexRangeScan_17(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -187,12 +187,12 @@ c1	c2	c3
 explain select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 id	estRows	task	access object	operator info
 Sort_39	5542.21	root		index_merge.t1.c1
-└─Projection_41	5542.21	root		index_merge.t1.c1, 15->Column#25
-  └─HashJoin_43	5542.21	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
-    ├─StreamAgg_50(Build)	1.00	root		funcs:max(Column#13)->Column#14, funcs:sum(0)->Column#15, funcs:count(1)->Column#16
-    │ └─StreamAgg_70	1.00	root		funcs:count(Column#38)->Column#13
+└─Projection_41	5542.21	root		index_merge.t1.c1, 15->Column#29
+  └─HashJoin_43	5542.21	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#17), if(ne(Column#18, 0), NULL, 1)), or(eq(Column#19, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
+    ├─StreamAgg_50(Build)	1.00	root		funcs:max(Column#16)->Column#17, funcs:sum(0)->Column#18, funcs:count(1)->Column#19
+    │ └─StreamAgg_70	1.00	root		funcs:count(Column#42)->Column#16
     │   └─IndexReader_71	1.00	root		index:StreamAgg_54
-    │     └─StreamAgg_54	1.00	cop[tikv]		funcs:count(1)->Column#38
+    │     └─StreamAgg_54	1.00	cop[tikv]		funcs:count(1)->Column#42
     │       └─IndexFullScan_68	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
     └─IndexMerge_48(Probe)	5542.21	root		type: union
       ├─IndexRangeScan_45(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -210,7 +210,7 @@ explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and
 id	estRows	task	access object	operator info
 Sort_14	4433.77	root		index_merge.t1.c1
 └─Projection_16	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection_17	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#13))
+  └─Selection_17	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#16))
     └─HashJoin_18	5542.21	root		CARTESIAN left outer semi join, other cond:eq(index_merge.t1.c3, index_merge.t2.c1)
       ├─HashJoin_37(Build)	9990.00	root		inner join, equal:[eq(index_merge.t2.c2, index_merge.t2.c3)]
       │ ├─HashAgg_41(Build)	7992.00	root		group by:index_merge.t2.c3, funcs:firstrow(index_merge.t2.c3)->index_merge.t2.c3
@@ -481,9 +481,9 @@ c1	c2	c3
 ///// GROUP BY
 explain select /*+ use_index_merge(t1) */ sum(c1) from t1 where (c1 < 10 or c2 < 10) and c3 < 10 group by c1 order by 1;
 id	estRows	task	access object	operator info
-Sort_6	1473.49	root		Column#5
-└─HashAgg_10	1473.49	root		group by:Column#13, funcs:sum(Column#12)->Column#5
-  └─Projection_23	1841.86	root		cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#12, index_merge.t1.c1->Column#13
+Sort_6	1473.49	root		Column#6
+└─HashAgg_10	1473.49	root		group by:Column#14, funcs:sum(Column#13)->Column#6
+  └─Projection_23	1841.86	root		cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#13, index_merge.t1.c1->Column#14
     └─IndexMerge_16	1841.86	root		type: union
       ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
       ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
@@ -504,17 +504,17 @@ explain select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select avg(t2
 id	estRows	task	access object	operator info
 Sort_12	1841.86	root		index_merge.t1.c1
 └─Projection_14	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Apply_16	1841.86	root		inner join, equal:[eq(Column#10, Column#9)]
-    ├─Projection_17(Build)	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#10
+  └─Apply_16	1841.86	root		inner join, equal:[eq(Column#12, Column#11)]
+    ├─Projection_17(Build)	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#12
     │ └─IndexMerge_22	1841.86	root		type: union
     │   ├─IndexRangeScan_18(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
     │   ├─IndexRangeScan_19(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
     │   └─Selection_21(Probe)	1841.86	cop[tikv]		lt(index_merge.t1.c3, 10)
     │     └─TableRowIDScan_20	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─MaxOneRow_23(Probe)	1841.86	root		
-      └─StreamAgg_35	3683.72	root		group by:index_merge.t2.c1, funcs:avg(Column#17, Column#18)->Column#9
+      └─StreamAgg_35	3683.72	root		group by:index_merge.t2.c1, funcs:avg(Column#19, Column#20)->Column#11
         └─IndexReader_36	3683.72	root		index:StreamAgg_27
-          └─StreamAgg_27	3683.72	cop[tikv]		group by:index_merge.t2.c1, funcs:count(index_merge.t2.c1)->Column#17, funcs:sum(index_merge.t2.c1)->Column#18
+          └─StreamAgg_27	3683.72	cop[tikv]		group by:index_merge.t2.c1, funcs:count(index_merge.t2.c1)->Column#19, funcs:sum(index_merge.t2.c1)->Column#20
             └─IndexRangeScan_34	4604.65	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(index_merge.t1.c1, index_merge.t2.c1)], keep order:true, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select avg(t2.c1) from t2 where t1.c1 = t2.c1 group by t2.c1) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
 c1	c2	c3
@@ -527,16 +527,16 @@ explain select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select /*+ us
 id	estRows	task	access object	operator info
 Sort_16	1841.86	root		index_merge.t1.c1
 └─Projection_18	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Apply_20	1841.86	root		inner join, equal:[eq(Column#11, Column#9)]
-    ├─Projection_21(Build)	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#11
+  └─Apply_20	1841.86	root		inner join, equal:[eq(Column#13, Column#11)]
+    ├─Projection_21(Build)	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#13
     │ └─IndexMerge_26	1841.86	root		type: union
     │   ├─IndexRangeScan_22(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
     │   ├─IndexRangeScan_23(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
     │   └─Selection_25(Probe)	1841.86	cop[tikv]		lt(index_merge.t1.c3, 10)
     │     └─TableRowIDScan_24	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─TopN_29(Probe)	1841.86	root		index_merge.t2.c1, offset:2, count:1
-      └─HashAgg_35	4900166.23	root		group by:Column#23, funcs:avg(Column#22)->Column#9, funcs:firstrow(Column#23)->index_merge.t2.c1
-        └─Projection_53	6125207.79	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column#22, index_merge.t2.c1->Column#23
+      └─HashAgg_35	4900166.23	root		group by:Column#25, funcs:avg(Column#24)->Column#11, funcs:firstrow(Column#25)->index_merge.t2.c1
+        └─Projection_53	6125207.79	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column#24, index_merge.t2.c1->Column#25
           └─IndexMerge_41	6125207.79	root		type: union
             ├─Selection_38(Build)	6121.12	cop[tikv]		eq(index_merge.t1.c1, index_merge.t2.c1)
             │ └─IndexRangeScan_37	6121120.92	cop[tikv]	table:t2, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
