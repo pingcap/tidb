@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 )
 
@@ -189,8 +191,20 @@ type analyzeIndexProcessor struct {
 	topNCurValuePair statistics.TopNMeta
 }
 
-func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
-	values, _, err := tablecodec.CutIndexKeyNew(key, p.colLen)
+func (p *analyzeIndexProcessor) Process(key, _ []byte, _ uint64) error {
+	decodedKey := key
+	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
+		// If the key is in API V2, then ignore the prefix
+		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		decodedKey = k
+		if !kv.Key(decodedKey).HasPrefix(tablecodec.TablePrefix()) {
+			return errors.Errorf("invalid index key %q after decoded", key)
+		}
+	}
+	values, _, err := tablecodec.CutIndexKeyNew(decodedKey, p.colLen)
 	if err != nil {
 		return err
 	}
@@ -237,7 +251,7 @@ type analyzeCommonHandleProcessor struct {
 	rowBuf       []byte
 }
 
-func (p *analyzeCommonHandleProcessor) Process(key, value []byte) error {
+func (p *analyzeCommonHandleProcessor) Process(key, value []byte, _ uint64) error {
 	values, _, err := tablecodec.CutCommonHandle(key, p.colLen)
 	if err != nil {
 		return err
@@ -429,8 +443,7 @@ func handleAnalyzeFullSamplingReq(
 	}
 	colGroups := make([][]int64, 0, len(analyzeReq.ColReq.ColumnGroups))
 	for _, group := range analyzeReq.ColReq.ColumnGroups {
-		colOffsets := make([]int64, len(group.ColumnOffsets))
-		copy(colOffsets, group.ColumnOffsets)
+		colOffsets := slices.Clone(group.ColumnOffsets)
 		colGroups = append(colGroups, colOffsets)
 	}
 	colReq := analyzeReq.ColReq
@@ -483,12 +496,12 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *analyzeColumnsExec) Process(key, value []byte) error {
+func (e *analyzeColumnsExec) Process(key, value []byte, _ uint64) error {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.decoder.DecodeToChunk(value, handle, e.chk)
+	err = e.decoder.DecodeToChunk(value, 0, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -615,9 +628,21 @@ type analyzeMixedExec struct {
 	topNCurValuePair statistics.TopNMeta
 }
 
-func (e *analyzeMixedExec) Process(key, value []byte) error {
+func (e *analyzeMixedExec) Process(key, value []byte, _ uint64) error {
+	decodedKey := key
+	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
+		// If the key is in API V2, then ignore the prefix
+		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		decodedKey = k
+		if !kv.Key(decodedKey).HasPrefix(tablecodec.TablePrefix()) {
+			return errors.Errorf("invalid index key %q after decoded", key)
+		}
+	}
 	// common handle
-	values, _, err := tablecodec.CutCommonHandle(key, e.colLen)
+	values, _, err := tablecodec.CutCommonHandle(decodedKey, e.colLen)
 	if err != nil {
 		return err
 	}
@@ -653,7 +678,7 @@ func (e *analyzeMixedExec) Process(key, value []byte) error {
 	}
 
 	// columns
-	err = e.analyzeColumnsExec.Process(key, value)
+	err = e.analyzeColumnsExec.Process(key, value, 0)
 	return err
 }
 

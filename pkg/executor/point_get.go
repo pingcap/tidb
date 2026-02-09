@@ -17,8 +17,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -120,7 +122,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		b.err = err
 		return nil
 	}
-	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+
+	// Cached table uses mem-buffer scan/get APIs, which can't provide `_tidb_commit_ts`.
+	// For correctness, bypass the cached table if `_tidb_commit_ts` is required.
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable && e.commitTSOffset < 0 {
 		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTS); cacheTable != nil {
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}
@@ -155,6 +160,7 @@ type PointGetExecutor struct {
 	lock             bool
 	lockWaitTime     int64
 	rowDecoder       *rowcodec.ChunkDecoder
+	commitTSOffset   int
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -165,6 +171,31 @@ type PointGetExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 
 	stats *runtimeStatsWithSnapshot
+}
+
+type pointGetValue struct {
+	value      []byte
+	commitTS   uint64
+	fromTxnMem bool
+}
+
+func pseudoCommitTSFromHandle(handle kv.Handle) uint64 {
+	if handle == nil {
+		return 0
+	}
+	if handle.IsInt() {
+		value := handle.IntValue()
+		if value >= 0 {
+			return uint64(value) + 1
+		}
+		return uint64(-value) + 1
+	}
+	hash := fnv.New64a()
+	_, _ = hash.Write(handle.Encoded())
+	if hash.Sum64() == 0 {
+		return 1
+	}
+	return hash.Sum64()
 }
 
 // GetPhysID returns the physical id used, either the table's id or a partition's ID
@@ -221,6 +252,12 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
+	e.commitTSOffset = -1
+	for i, col := range e.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			e.commitTSOffset = i
+		}
+	}
 
 	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
 	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
@@ -324,7 +361,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if err != nil {
 					return err
 				}
-				e.handleVal, err = e.get(ctx, e.idxKey)
+				handleVal, err := e.get(ctx, e.idxKey)
+				e.handleVal = handleVal.value
 				if err != nil {
 					if !kv.ErrNotExist.Equal(err) {
 						return err
@@ -332,12 +370,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 			} else {
 				if e.lock {
-					e.handleVal, err = e.lockKeyIfExists(ctx, e.idxKey)
+					handleVal, err := e.lockKeyIfExists(ctx, e.idxKey)
+					e.handleVal = handleVal
 					if err != nil {
 						return err
 					}
 				} else {
-					e.handleVal, err = e.get(ctx, e.idxKey)
+					handleVal, err := e.get(ctx, e.idxKey)
+					e.handleVal = handleVal.value
 					if err != nil {
 						if !kv.ErrNotExist.Equal(err) {
 							return err
@@ -394,7 +434,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if len(val) == 0 {
+	if len(val.value) == 0 {
 		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
 			!e.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
 			return (&consistency.Reporter{
@@ -420,12 +460,12 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	sctx := e.BaseExecutor.Ctx()
 	schema := e.Schema()
-	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val.value, val.commitTS, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
 
-	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val}, []kv.Handle{e.handle}, req, nil)
+	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val.value}, []kv.Handle{e.handle}, req, nil)
 	if err != nil {
 		return err
 	}
@@ -533,21 +573,23 @@ func fillRowChecksum(
 	return nil
 }
 
-func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []byte, err error) {
+func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val pointGetValue, err error) {
 	if e.Ctx().GetSessionVars().IsPessimisticReadConsistency() {
 		// Only Lock the existing keys in RC isolation.
 		if e.lock {
-			val, err = e.lockKeyIfExists(ctx, key)
+			tmp, err := e.lockKeyIfExists(ctx, key)
 			if err != nil {
-				return nil, err
+				return pointGetValue{}, err
 			}
-		} else {
-			val, err = e.get(ctx, key)
-			if err != nil {
-				if !kv.ErrNotExist.Equal(err) {
-					return nil, err
-				}
-				return nil, nil
+			if e.commitTSOffset < 0 {
+				return pointGetValue{value: tmp, fromTxnMem: true}, nil
+			}
+		}
+
+		val, err = e.get(ctx, key)
+		if err != nil {
+			if !kv.ErrNotExist.Equal(err) {
+				return val, err
 			}
 		}
 		return val, nil
@@ -555,14 +597,14 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 	// Lock the key before get in RR isolation, then get will get the value from the cache.
 	err = e.lockKeyIfNeeded(ctx, key)
 	if err != nil {
-		return nil, err
+		return val, err
 	}
 	val, err = e.get(ctx, key)
 	if err != nil {
 		if !kv.ErrNotExist.Equal(err) {
-			return nil, err
+			return val, err
 		}
-		return nil, nil
+		return val, nil
 	}
 	return val, nil
 }
@@ -580,9 +622,9 @@ func (e *PointGetExecutor) lockKeyIfExists(ctx context.Context, key []byte) ([]b
 
 func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 	key []byte,
-	lockOnlyIfExists bool) ([]byte, error) {
+	lockOnlyIfExists bool) (val []byte, err error) {
 	if len(key) == 0 {
-		return nil, nil
+		return val, nil
 	}
 
 	if e.lock {
@@ -590,18 +632,18 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 		lockWaitTime := e.lockWaitTime
 
 		if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
-			return nil, err
+			return val, err
 		}
 
 		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1)
 		if err != nil {
-			return nil, err
+			return val, err
 		}
 		lockCtx.LockOnlyIfExists = lockOnlyIfExists
 		lockCtx.InitReturnValues(1)
 		err = doLockKeys(ctx, e.Ctx(), lockCtx, key)
 		if err != nil {
-			return nil, err
+			return val, err
 		}
 		lockCtx.IterateValuesNotLocked(func(k, v []byte) {
 			seVars.TxnCtx.SetPessimisticLockCache(k, v)
@@ -614,7 +656,7 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 		}
 	}
 
-	return nil, nil
+	return val, nil
 }
 
 func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
@@ -627,45 +669,54 @@ func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
 			val, err := e.get(ctx, key)
 			if err != nil {
 				if !kv.ErrNotExist.Equal(err) {
-					return nil, err
+					return []byte{}, err
 				}
-				return nil, nil
+				return []byte{}, nil
 			}
-			return val, nil
+			return val.value, nil
 		}
 	}
 
-	return nil, nil
+	return []byte{}, nil
+}
+
+func (e *PointGetExecutor) buildGetResult(value []byte, commitTS uint64, fromTxnMem bool) pointGetValue {
+	ret := pointGetValue{value: value, commitTS: commitTS, fromTxnMem: fromTxnMem}
+	if e.commitTSOffset >= 0 && ret.commitTS == 0 {
+		if !fromTxnMem {
+			ret.commitTS = pseudoCommitTSFromHandle(e.handle)
+		}
+	}
+	return ret
 }
 
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
 // then the store. Kv.ErrNotExist will be returned if key is not found
-func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
+func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (pointGetValue, error) {
 	if len(key) == 0 {
-		return nil, kv.ErrNotExist
+		return pointGetValue{}, kv.ErrNotExist
 	}
 
 	var (
-		val []byte
+		val pointGetValue
 		err error
 	)
 
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = e.txn.GetMemBuffer().Get(ctx, key)
+		value, err := e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
-			return val, err
+			return e.buildGetResult(value, 0, true), nil
 		}
 		if !kv.IsErrNotFound(err) {
-			return nil, err
+			return val, err
 		}
 		// key does not exist in mem buffer, check the lock cache
 		if e.lock {
-			var ok bool
-			val, ok = e.Ctx().GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-			if ok {
-				return val, nil
+			val1, ok := e.Ctx().GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+			if ok && e.commitTSOffset < 0 {
+				return e.buildGetResult(val1, 0, true), nil
 			}
 		}
 		// fallthrough to snapshot get.
@@ -673,17 +724,28 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) {
-		if e.Ctx().GetSessionVars().EnablePointGetCache {
+		// About e.commitTSOffset < 0: when user require _tidb_commit_ts value, we just skip using cache.
+		if e.Ctx().GetSessionVars().EnablePointGetCache && e.commitTSOffset < 0 {
 			cacheDB := e.Ctx().GetStore().GetMemCache()
-			val, err = cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
+			val1, err := cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
 			if err != nil {
-				return nil, err
+				return val, err
 			}
-			return val, nil
+			return e.buildGetResult(val1, 0, false), nil
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
-	return e.snapshot.Get(ctx, key)
+	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+		// if the query has max execution time set, we need to set the context deadline for the get request
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		defer cancel()
+		ctx = ctxWithTimeout
+	}
+	val1, err := e.snapshot.Get(ctx, key)
+	if err != nil {
+		return val, err
+	}
+	return e.buildGetResult(val1, 0, false), nil
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
@@ -713,15 +775,15 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 
 // DecodeRowValToChunk decodes row value into chunk checking row format used.
 func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
-	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
+	handle kv.Handle, rowVal []byte, commitTS uint64, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
-		return rd.DecodeToChunk(rowVal, handle, chk)
+		return rd.DecodeToChunk(rowVal, commitTS, handle, chk)
 	}
-	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk)
+	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, commitTS, chk)
 }
 
 func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
-	rowVal []byte, chk *chunk.Chunk) error {
+	rowVal []byte, commitTS uint64, chk *chunk.Chunk) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
 	prefixColIDs := tables.PrimaryPrefixColumnIDs(tblInfo)
 	colID2CutPos := make(map[int64]int, schema.Len())
@@ -739,6 +801,15 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	}
 	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())
 	for i, col := range schema.Columns {
+		if col.ID == model.ExtraCommitTSID {
+			if commitTS > 0 {
+				chk.AppendUint64(i, commitTS)
+			} else {
+				chk.AppendNull(i)
+			}
+			continue
+		}
+
 		// fill the virtual column value after row calculation
 		if col.VirtualExpr != nil {
 			chk.AppendNull(i)
@@ -754,6 +825,9 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
 			colInfo := getColInfoByID(tblInfo, col.ID)
+			if colInfo == nil && col.ID == model.ExtraCommitTSID {
+				colInfo = model.NewExtraCommitTSColInfo()
+			}
 			d, err1 := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 			if err1 != nil {
 				return err1

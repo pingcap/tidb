@@ -43,6 +43,9 @@ const ExtraPhysTblID = -3
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
 const ExtraRowChecksumID = -4
 
+// ExtraCommitTSID is the column ID of column which holds the commit timestamp.
+const ExtraCommitTSID = -5
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -85,6 +88,40 @@ var ExtraHandleName = model.NewCIStr("_tidb_rowid")
 
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
+
+// ExtraCommitTSName is the name of ExtraCommitTSID Column.
+var ExtraCommitTSName = model.NewCIStr("_tidb_commit_ts")
+
+// ExtraOriginTSName is the name of ExtraOriginTSID Column.
+var ExtraOriginTSName = model.NewCIStr("_tidb_origin_ts")
+
+// ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
+var ExtraSoftDeleteTimeName = model.NewCIStr("_tidb_softdelete_time")
+
+// IsInternalColumn will check if a column name is reserved.
+func IsInternalColumn(x model.CIStr) bool {
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x) || x.L == ExtraHandleName.L || x.L == ExtraCommitTSName.L
+}
+
+// IsSoftDeleteOrActiveActiveColumn will check if a column name is reserved.
+func IsSoftDeleteOrActiveActiveColumn(x model.CIStr) bool {
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x)
+}
+
+// IsActiveActiveColumn will check if a column name is reserved.
+func IsActiveActiveColumn(x model.CIStr) bool {
+	return x.L == ExtraOriginTSName.L
+}
+
+// IsSoftDeleteColumn will check if a column name is reserved.
+func IsSoftDeleteColumn(x model.CIStr) bool {
+	return x.L == ExtraSoftDeleteTimeName.L
+}
+
+// VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
+// When read column by vector index, sometimes there is no need to read vector column just need distance,
+// so a distance column will be added to table_scan. this field is used in the action.
+const VirtualColVecSearchDistanceID int64 = -2000
 
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive

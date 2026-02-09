@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "dbreader",
-    srcs = ["db_reader.go"],
+    srcs = [
+        "db_reader.go",
+        "extra_db_reader.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader",
     visibility = ["//visibility:public"],
     deps = [

@@ -42,7 +42,7 @@ or (true)
 order by c_0 desc
 limit 1)) is null));
 c_0	c_1	c_2
-explain format='brief' select
+explain format='plan_tree' select
 subq_0.c_0 as c_0,
 subq_0.c_1 as c_1,
 subq_0.c_2 as c_2
@@ -68,27 +68,26 @@ where ((subq_0.c_1) <> (subq_0.c_2))
 or (true)
 order by c_0 desc
 limit 1)) is null));
-id	estRows	task	access object	operator info
-Projection	9990.00	root		planner__core__rule_outer2inner.t0.c0, planner__core__rule_outer2inner.t1.c2, planner__core__rule_outer2inner.t1.c2
-└─Selection	9990.00	root		isnull(eq("", Column#12))
-  └─Apply	12487.50	root		CARTESIAN left outer join
-    ├─HashJoin(Build)	12487.50	root		right outer join, equal:[eq(planner__core__rule_outer2inner.t1.c1, planner__core__rule_outer2inner.t0.c0)]
-    │ ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ │ └─TableFullScan	10000.00	cop[tikv]	table:ref_1	keep order:false, stats:pseudo
-    │ └─TableReader(Probe)	9990.00	root		data:Selection
-    │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t1.c1))
-    │     └─TableFullScan	10000.00	cop[tikv]	table:ref_0	keep order:false, stats:pseudo
-    └─Projection(Probe)	12487.50	root		 n1`->Column#12
-      └─Limit	12487.50	root		offset:0, count:1
-        └─HashJoin	12487.50	root		left outer join, equal:[eq(planner__core__rule_outer2inner.t2.c4, planner__core__rule_outer2inner.t2.c3)]
-          ├─Limit(Build)	12487.50	root		offset:0, count:1
-          │ └─TableReader	12487.50	root		data:Limit
-          │   └─Limit	12487.50	cop[tikv]		offset:0, count:1
-          │     └─Selection	12487.50	cop[tikv]		or(ne(planner__core__rule_outer2inner.t1.c2, planner__core__rule_outer2inner.t1.c2), 1)
-          │       └─TableFullScan	12487.50	cop[tikv]	table:ref_3	keep order:false, stats:pseudo
-          └─TableReader(Probe)	124750125.00	root		data:Selection
-            └─Selection	124750125.00	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t2.c3)), or(ne(planner__core__rule_outer2inner.t1.c2, planner__core__rule_outer2inner.t1.c2), 1)
-              └─TableFullScan	124875000.00	cop[tikv]	table:ref_4	keep order:false, stats:pseudo
+id	task	access object	operator info
+Projection	root		planner__core__rule_outer2inner.t0.c0, planner__core__rule_outer2inner.t1.c2, planner__core__rule_outer2inner.t1.c2
+└─Selection	root		isnull(eq("", Column#16))
+  └─Apply	root		CARTESIAN left outer join, left side:HashJoin
+    ├─HashJoin(Build)	root		right outer join, left side:TableReader, equal:[eq(planner__core__rule_outer2inner.t1.c1, planner__core__rule_outer2inner.t0.c0)]
+    │ ├─TableReader(Build)	root		data:TableFullScan
+    │ │ └─TableFullScan	cop[tikv]	table:ref_1	keep order:false, stats:pseudo
+    │ └─TableReader(Probe)	root		data:Selection
+    │   └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t1.c1))
+    │     └─TableFullScan	cop[tikv]	table:ref_0	keep order:false, stats:pseudo
+    └─Projection(Probe)	root		 n1`->Column#16
+      └─Limit	root		offset:0, count:1
+        └─HashJoin	root		left outer join, left side:Limit, equal:[eq(planner__core__rule_outer2inner.t2.c4, planner__core__rule_outer2inner.t2.c3)]
+          ├─Limit(Build)	root		offset:0, count:1
+          │ └─TableReader	root		data:Limit
+          │   └─Limit	cop[tikv]		offset:0, count:1
+          │     └─TableFullScan	cop[tikv]	table:ref_3	keep order:false, stats:pseudo
+          └─TableReader(Probe)	root		data:Selection
+            └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t2.c3))
+              └─TableFullScan	cop[tikv]	table:ref_4	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS `t0`;
 CREATE TABLE `t0` (
 `c0` int

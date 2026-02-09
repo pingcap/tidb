@@ -530,17 +530,17 @@ insert into t1 value (1,1,1,'a');
 insert into t1 value (2,1,2,'a');
 insert into t1 value (3,1,3,'a');
 insert into t2 value (1,2,date'2020-05-08');
-explain format = 'brief' SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#10
-└─IndexJoin	0.03	root		inner join, inner:Selection, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id, equal cond:eq(expression__issues.t1.id, expression__issues.t2.order_id)
-  ├─TableReader(Build)	0.02	root		data:Selection
-  │ └─Selection	0.02	cop[tikv]		eq(cast(expression__issues.t1.org_id, double BINARY), 1), eq(expression__issues.t1.ns, "a"), in(expression__issues.t1.status, 2, 6, 10)
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Selection(Probe)	0.03	root		eq(timestampdiff("MONTH", expression__issues.t2.begin_time, 2020-05-06), 0)
-    └─IndexLookUp	0.04	root		
-      ├─IndexRangeScan(Build)	0.04	cop[tikv]	table:t2, index:idx_oid(order_id)	range: decided by [eq(expression__issues.t2.order_id, expression__issues.t1.id)], keep order:false, stats:pseudo
-      └─TableRowIDScan(Probe)	0.04	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'plan_tree' SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
+id	task	access object	operator info
+StreamAgg	root		funcs:count(1)->Column#12
+└─IndexJoin	root		inner join, inner:IndexLookUp, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id, equal cond:eq(expression__issues.t1.id, expression__issues.t2.order_id)
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		eq(cast(expression__issues.t1.org_id, double BINARY), 1), eq(expression__issues.t1.ns, "a"), in(expression__issues.t1.status, 2, 6, 10)
+  │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─IndexLookUp(Probe)	root		
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx_oid(order_id)	range: decided by [eq(expression__issues.t2.order_id, expression__issues.t1.id)], keep order:false, stats:pseudo
+    └─Selection(Probe)	cop[tikv]		eq(timestampdiff("MONTH", expression__issues.t2.begin_time, 2020-05-06), 0)
+      └─TableRowIDScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
 COUNT(*)
 1
@@ -840,7 +840,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}
@@ -883,7 +883,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}
@@ -1380,7 +1380,7 @@ select .78$123;
 $123
 0.78
 select .78$421+1;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1" 
 select t. `r10` > 3 from t;
 t. `r10` > 3
 1
@@ -2097,21 +2097,21 @@ create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb
 drop table if exists t;
 create table t(a char(4) collate utf8_general_ci primary key /*T![clustered_index] clustered */);
 insert into t values('`?');
-explain format='brief' select * from t where a like '`%';
-id	estRows	task	access object	operator info
-TableReader	250.00	root		data:Selection
-└─Selection	250.00	cop[tikv]		like(expression__issues.t.a, "`%", 92)
-  └─TableRangeScan	250.00	cop[tikv]	table:t	range:["\x00`","\x00a"), keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a like '`%';
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		like(expression__issues.t.a, "`%", 92)
+  └─TableRangeScan	cop[tikv]	table:t	range:["\x00`","\x00a"), keep order:false, stats:pseudo
 select * from t where a like '`%';
 a
 `?
 drop table if exists t;
 create table t(a char(4) collate binary primary key /*T![clustered_index] clustered */);
 insert into t values('`?');
-explain format='brief' select * from t where a like '`%';
-id	estRows	task	access object	operator info
-TableReader	250.00	root		data:TableRangeScan
-└─TableRangeScan	250.00	cop[tikv]	table:t	range:["`","a"), keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a like '`%';
+id	task	access object	operator info
+TableReader	root		data:TableRangeScan
+└─TableRangeScan	cop[tikv]	table:t	range:["`","a"), keep order:false, stats:pseudo
 select * from t where a like '`%';
 a
 `?  
@@ -3181,18 +3181,18 @@ Level	Code	Message
 drop table if exists test.t;
 create table if not exists test.ast (i varchar(20));
 create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
-explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
-id	estRows	task	access object	operator info
-Projection	8.00	root		test.ast.i, Column#32
-└─HashAgg	8.00	root		group by:Column#35, funcs:group_concat(Column#34 order by Column#34 separator "; ")->Column#32, funcs:firstrow(Column#35)->test.ast.i
-  └─Projection	100.00	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#34, test.ast.i->Column#35
-    └─HashJoin	100.00	root		CARTESIAN inner join
-      ├─TableReader(Build)	10.00	root		data:Selection
-      │ └─Selection	10.00	cop[tikv]		eq(test.ast.i, "astp2019121731703151")
-      │   └─TableFullScan	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
-      └─TableReader(Probe)	10.00	root		data:Selection
-        └─Selection	10.00	cop[tikv]		eq("astp2019121731703151", test.acc.m)
-          └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
+explain format='plan_tree' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
+id	task	access object	operator info
+Projection	root		test.ast.i, Column#38
+└─HashAgg	root		group by:Column#41, funcs:group_concat(Column#40 order by Column#40 separator "; ")->Column#38, funcs:firstrow(Column#41)->test.ast.i
+  └─Projection	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#40, test.ast.i->Column#41
+    └─HashJoin	root		inner join, equal:[eq(test.ast.i, test.acc.m)]
+      ├─TableReader(Build)	root		data:Selection
+      │ └─Selection	cop[tikv]		eq(test.ast.i, "astp2019121731703151")
+      │   └─TableFullScan	cop[tikv]	table:a	keep order:false, stats:pseudo
+      └─TableReader(Probe)	root		data:Selection
+        └─Selection	cop[tikv]		eq("astp2019121731703151", test.acc.m)
+          └─TableFullScan	cop[tikv]	table:b	keep order:false, stats:pseudo
 drop table if exists test.t;
 create table test.t (a int);
 insert into test.t values(0),(20015),(20100);
@@ -3232,51 +3232,64 @@ INSERT INTO test.t VALUES (1234567890123456);
 SELECT IFNULL(id, 'abcdef') FROM test.t;
 IFNULL(id, 'abcdef')
 1234567890123456
-drop table if exists lrr_test;
-create table lrr_test( `COL1` tinyint(16),`COL3` bigint(20) DEFAULT NULL,KEY `UM_COL` (`COL1`,`COL3`));
-insert into lrr_test(col3) values(-825024501864323944);
-insert into lrr_test values(-2,2295421130981788987);
-prepare stmt from 'select * from lrr_test t1 join lrr_test t2 on t1.col1 = t2.col1 where t1. col1 + 10 > ? + 10 or t2. col1 + 10 >= ? + 10;';
-set @a=NULL, @b=-2;
-execute stmt using @a,@b;
-COL1	COL3	COL1	COL3
--2	2295421130981788987	-2	2295421130981788987
+drop table if exists test.t;
+create table test.t(a double);
+insert into test.t values('20000102030405.0078125');
+select * from test.t where date_add(a, interval 1 second) = '2000-01-02 03:04:06.007813';
+a
+20000102030405.008
+drop table if exists t0;
+create table `t0`
+(
+`vkey` integer,
+`pkey` integer,
+`c0`   integer
+);
+insert into `t0`
+values (1, 2, 3);
+select *
+from `t0`
+where (nullif(
+3 ^ 10 & (abs(-50)) ,
+round(case when (((`t0`.`c0`) >= 1) or null) then 91 else 86 end)
+)) in (select `vkey` from `t0` where false);
+vkey	pkey	c0
 use test;
 drop table if exists t;
 create table t(a int);
 insert into t values (1), (2), (3), (4), (5);
-explain format=brief select * from t where a in (1, 1, 1, 1, 1, 2);
-id	estRows	task	access object	operator info
-TableReader	20.00	root		data:Selection
-└─Selection	20.00	cop[tikv]		in(test.t.a, 1, 2)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a in (1, 1, 1, 1, 1, 2);
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		in(test.t.a, 1, 2)
+  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 create table t_str(s varchar(10));
 insert into t_str values ('test');
-explain format=brief select * from t_str where s in ('a', 'a', 'a', 'b', 'a');
-id	estRows	task	access object	operator info
-TableReader	20.00	root		data:Selection
-└─Selection	20.00	cop[tikv]		in(test.t_str.s, "a", "b")
-  └─TableFullScan	10000.00	cop[tikv]	table:t_str	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t_str where s in ('a', 'a', 'a', 'b', 'a');
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		in(test.t_str.s, "a", "b")
+  └─TableFullScan	cop[tikv]	table:t_str	keep order:false, stats:pseudo
 create table t_dec(d decimal(10,2));
 insert into t_dec values (1.5), (2.5);
-explain format=brief select * from t_dec where d in (1.5, 1.5, 2.5, 1.5);
-id	estRows	task	access object	operator info
-TableReader	20.00	root		data:Selection
-└─Selection	20.00	cop[tikv]		in(test.t_dec.d, 1.5, 2.5)
-  └─TableFullScan	10000.00	cop[tikv]	table:t_dec	keep order:false, stats:pseudo
-explain format=brief select * from t where a in (1, NULL, NULL, NULL, 2);
-id	estRows	task	access object	operator info
-TableReader	20.00	root		data:Selection
-└─Selection	20.00	cop[tikv]		in(test.t.a, 1, NULL, 2)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t_dec where d in (1.5, 1.5, 2.5, 1.5);
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		in(test.t_dec.d, 1.5, 2.5)
+  └─TableFullScan	cop[tikv]	table:t_dec	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a in (1, NULL, NULL, NULL, 2);
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		in(test.t.a, 1, NULL, 2)
+  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 create table t_date(dt date);
 insert into t_date values ('2023-01-01'), ('2023-01-02');
-explain format=brief select * from t_date where dt in
+explain format='plan_tree' select * from t_date where dt in
 ('2023-01-01', '2023-01-01', '2023-01-02');
-id	estRows	task	access object	operator info
-TableReader	20.00	root		data:Selection
-└─Selection	20.00	cop[tikv]		in(test.t_date.dt, 2023-01-01 00:00:00.000000, 2023-01-02 00:00:00.000000)
-  └─TableFullScan	10000.00	cop[tikv]	table:t_date	keep order:false, stats:pseudo
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		in(test.t_date.dt, 2023-01-01 00:00:00.000000, 2023-01-02 00:00:00.000000)
+  └─TableFullScan	cop[tikv]	table:t_date	keep order:false, stats:pseudo
 select * from t where a in (1, 1, 1, 1, 2);
 a
 1
@@ -3295,3 +3308,18 @@ select * from t_date where dt in ('2023-01-01', '2023-01-01', '2023-01-02');
 dt
 2023-01-01
 2023-01-02
+SELECT sec_to_time(b'1111');
+sec_to_time(b'1111')
+00:00:15
+SELECT sec_to_time(0x1E0);
+sec_to_time(0x1E0)
+00:08:00
+drop table if exists lrr_test;
+create table lrr_test( `COL1` tinyint(16),`COL3` bigint(20) DEFAULT NULL,KEY `UM_COL` (`COL1`,`COL3`));
+insert into lrr_test(col3) values(-825024501864323944);
+insert into lrr_test values(-2,2295421130981788987);
+prepare stmt from 'select * from lrr_test t1 join lrr_test t2 on t1.col1 = t2.col1 where t1. col1 + 10 > ? + 10 or t2. col1 + 10 >= ? + 10;';
+set @a=NULL, @b=-2;
+execute stmt using @a,@b;
+COL1	COL3	COL1	COL3
+-2	2295421130981788987	-2	2295421130981788987

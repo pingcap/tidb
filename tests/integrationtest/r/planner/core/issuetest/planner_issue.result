@@ -10,15 +10,14 @@ KEY a9af33a4 (57fd8d09,b80b3746,43b06e99),
 KEY 464b386e (b80b3746),
 KEY 19dc3c2d (57fd8d09)
 ) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin COMMENT='320f8401';
-explain select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where IsNull( `aa311c3c`.`b80b3746` ) or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
-id	estRows	task	access object	operator info
-Projection_7	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac
-└─TopN_9	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
-  └─IndexMerge_17	95.00	root		type: union
-    ├─TableFullScan_13(Build)	0.00	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
-    ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:aa311c3c, index:3080c821(57fd8d09, 43b06e99, b80b3746)	range:[-inf,2008), keep order:false, stats:pseudo
-    └─TopN_16(Probe)	95.00	cop[tikv]		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
-      └─TableRowIDScan_15	3323.33	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
+explain format='plan_tree' select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where `aa311c3c`.`b80b3746` = 3 or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
+id	task	access object	operator info
+TopN	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:aa311c3c, index:464b386e(b80b3746)	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:aa311c3c, index:3080c821(57fd8d09, 43b06e99, b80b3746)	range:[-inf,2008), keep order:false, stats:pseudo
+  └─TopN(Probe)	cop[tikv]		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
+    └─TableRowIDScan	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
 CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
 CREATE TABLE t2(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
 INSERT INTO t1 values(1,NULL,NULL,null),(2,NULL,NULL,null),(3,NULL,NULL,null);
@@ -32,37 +31,37 @@ set tidb_enable_index_merge=on;
 drop table if exists t;
 create table t(a int, b int, index idx_a(a), index idx_b(b));
 set @@session.sql_select_limit=3;
-explain format = 'brief' select * from t where a = 1 or b = 1;
-id	estRows	task	access object	operator info
-IndexMerge	3.00	root		type: union, limit embedded(offset:0, count:3)
-├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
-│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
-├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
-│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;
-id	estRows	task	access object	operator info
-IndexMerge	3.00	root		type: union, limit embedded(offset:0, count:3)
-├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
-│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
-├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
-│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t where a = 1 or b = 1;
+id	task	access object	operator info
+IndexMerge	root		type: union, limit embedded(offset:0, count:3)
+├─Limit(Build)	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
+├─Limit(Build)	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;
+id	task	access object	operator info
+IndexMerge	root		type: union, limit embedded(offset:0, count:3)
+├─Limit(Build)	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
+├─Limit(Build)	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 set @@session.sql_select_limit=18446744073709551615;
-explain format = 'brief' select * from t where a = 1 or b = 1;
-id	estRows	task	access object	operator info
-IndexMerge	19.99	root		type: union
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;
-id	estRows	task	access object	operator info
-IndexMerge	3.00	root		type: union, limit embedded(offset:0, count:3)
-├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
-│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
-├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
-│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t where a = 1 or b = 1;
+id	task	access object	operator info
+IndexMerge	root		type: union
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t where a = 1 or b = 1 limit 3;
+id	task	access object	operator info
+IndexMerge	root		type: union, limit embedded(offset:0, count:3)
+├─Limit(Build)	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
+├─Limit(Build)	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t1, t2;
 CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
 CREATE TABLE t2(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
@@ -95,13 +94,13 @@ PARTITION `p20220101` VALUES IN ('20220101'),
 PARTITION `p20230516` VALUES IN ('20230516'));
 analyze table ads_txn;
 set autocommit=OFF;
-explain update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;
-id	estRows	task	access object	operator info
-Update_5	N/A	root		N/A
-└─Projection_6	8000.00	root		planner__core__issuetest__planner_issue.ads_txn.cusno, planner__core__issuetest__planner_issue.ads_txn.txn_dt, planner__core__issuetest__planner_issue.ads_txn.unn_trno, planner__core__issuetest__planner_issue.ads_txn.aml_cntpr_accno, planner__core__issuetest__planner_issue.ads_txn.acpayr_accno, planner__core__issuetest__planner_issue.ads_txn._tidb_rowid
-  └─SelectLock_7	8000.00	root		for update 0
-    └─TableReader_9	10000.00	root	partition:all	data:TableRangeScan_8
-      └─TableRangeScan_8	10000.00	cop[tikv]	table:s	range:[1,100000], keep order:false, stats:pseudo
+explain format='plan_tree' update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;
+id	task	access object	operator info
+Update	root		N/A
+└─Projection	root		planner__core__issuetest__planner_issue.ads_txn.cusno, planner__core__issuetest__planner_issue.ads_txn.txn_dt, planner__core__issuetest__planner_issue.ads_txn.unn_trno, planner__core__issuetest__planner_issue.ads_txn.aml_cntpr_accno, planner__core__issuetest__planner_issue.ads_txn.acpayr_accno, planner__core__issuetest__planner_issue.ads_txn._tidb_rowid
+  └─SelectLock	root		for update 0
+    └─TableReader	root	partition:all	data:TableRangeScan
+      └─TableRangeScan	cop[tikv]	table:s	range:[1,100000], keep order:false, stats:pseudo
 CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10));
 CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10));
 UPDATE tb1, (SELECT code AS cid, code, MAX(class) AS class FROM tb2 GROUP BY code) tb3 SET tb1.cid = tb3.cid, tb1.code = tb3.code, tb1.class = tb3.class;
@@ -109,17 +108,15 @@ CREATE TEMPORARY TABLE v0(v1 int);
 INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;
 create table tbl_39(col_239 year(4) not null default '2009', primary key(col_239), unique key idx_223(col_239), key idx_224(col_239));
 insert into tbl_39 values (1994),(1995),(1996),(1997);
-explain select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
-id	estRows	task	access object	operator info
-Projection_8	382.00	root		planner__core__issuetest__planner_issue.tbl_39.col_239
-└─Limit_15	382.00	root		offset:0, count:382
-  └─UnionScan_23	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
-    └─IndexMerge_29	382.00	root		type: union
-      ├─Selection_25(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010))
-      │ └─IndexRangeScan_24	0.14	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
-      ├─Selection_27(Build)	458.26	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
-      │ └─IndexRangeScan_26	477.36	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
-      └─TableRowIDScan_28(Probe)	382.00	cop[tikv]	table:tbl_39	keep order:false, stats:pseudo
+explain format='plan_tree' select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
+id	task	access object	operator info
+Limit	root		offset:0, count:382
+└─UnionScan	root		or(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994), and(gt(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996), or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))))
+  └─IndexMerge	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
+    ├─Selection(Build)	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
+    │ └─IndexRangeScan	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:tbl_39	keep order:false, stats:pseudo
 select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 col_239
 1994
@@ -264,52 +261,52 @@ set @@tidb_max_chunk_size = default;
 drop table if exists t1, t2;
 create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
 insert into t1 value('测试'),('测试  '),('xxx ');
-explain format = brief select *,length(a) from t1 where a like '测试 %';
-id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
-└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
-  └─IndexReader	250.00	root		index:Selection
-    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
-      └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试!"), keep order:false, stats:pseudo
-explain format = brief select *,length(a) from t1 where a like '测试';
-id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
-└─UnionScan	10.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
-  └─IndexReader	10.00	root		index:Selection
-    └─Selection	10.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
-      └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试"], keep order:false, stats:pseudo
+explain format = 'plan_tree' select *,length(a) from t1 where a like '测试 %';
+id	task	access object	operator info
+Projection	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#4
+└─UnionScan	root		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
+  └─IndexReader	root		index:Selection
+    └─Selection	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
+      └─IndexRangeScan	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试!"), keep order:false, stats:pseudo
+explain format = 'plan_tree' select *,length(a) from t1 where a like '测试';
+id	task	access object	operator info
+Projection	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#4
+└─UnionScan	root		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
+  └─IndexReader	root		index:Selection
+    └─Selection	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
+      └─IndexRangeScan	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试"], keep order:false, stats:pseudo
 select *,length(a) from t1 where a like '测试 %';
 a	length(a)
 测试  	8
 select *,length(a) from t1 where a like '测试';
 a	length(a)
 测试	6
-explain format = brief select * from t1 use index (ia) where a like 'xxx_';
-id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a
-└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
-  └─IndexReader	250.00	root		index:Selection
-    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
-      └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["xxx","xxy"), keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 use index (ia) where a like 'xxx_';
+id	task	access object	operator info
+Projection	root		planner__core__issuetest__planner_issue.t1.a
+└─UnionScan	root		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
+  └─IndexReader	root		index:Selection
+    └─Selection	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
+      └─IndexRangeScan	cop[tikv]	table:t1, index:ia(a)	range:["xxx","xxy"), keep order:false, stats:pseudo
 select * from t1 use index (ia) where a like 'xxx_';
 a
 xxx 
 create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
 insert into t2 value('测试'),('测试  ');
-explain format = brief select *,length(a) from t2 where a like '测试 %';
-id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
-└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
-  └─IndexReader	250.00	root		index:Selection
-    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
-      └─IndexRangeScan	250.00	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%!"), keep order:false, stats:pseudo
-explain format = brief select *,length(a) from t2 where a like '测试';
-id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
-└─UnionScan	10.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
-  └─IndexReader	10.00	root		index:Selection
-    └─Selection	10.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
-      └─IndexRangeScan	10.00	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%"], keep order:false, stats:pseudo
+explain format = 'plan_tree' select *,length(a) from t2 where a like '测试 %';
+id	task	access object	operator info
+Projection	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#4
+└─UnionScan	root		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
+  └─IndexReader	root		index:Selection
+    └─Selection	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
+      └─IndexRangeScan	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%!"), keep order:false, stats:pseudo
+explain format = 'plan_tree' select *,length(a) from t2 where a like '测试';
+id	task	access object	operator info
+Projection	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#4
+└─UnionScan	root		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
+  └─IndexReader	root		index:Selection
+    └─Selection	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
+      └─IndexRangeScan	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%"], keep order:false, stats:pseudo
 select *,length(a) from t2 where a like '测试 %';
 a	length(a)
 测试  	6
@@ -652,21 +649,21 @@ create table t2 (cc1 int,cc2 text,primary key(cc1));
 insert into t2 values (2, '2');
 set tidb_executor_concurrency = 1;
 set tidb_window_concurrency = 100;
-explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
-id	estRows	task	access object	operator info
-Sort_15	20000.00	root		Column#8, Column#9, Column#10
-└─Union_18	20000.00	root		
-  ├─Projection_20	10000.00	root		test.t2.cc2->Column#8, test.t2.cc2->Column#9, test.t2.cc1->Column#10
-  │ └─TableReader_22	10000.00	root		data:TableFullScan_21
-  │   └─TableFullScan_21	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─Projection_23	10000.00	root		cast(Column#7, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8, test.t1.cc2->Column#9, test.t1.cc1->Column#10
-    └─Shuffle_28	10000.00	root		execution info: concurrency:100, data sources:[TableReader_26]
-      └─Window_24	10000.00	root		count(1)->Column#7 over(partition by test.t1.cc1)
-        └─Sort_27	10000.00	root		test.t1.cc1
-          └─ShuffleReceiver_30	10000.00	root		
-            └─TableReader_26	10000.00	root		data:TableFullScan_25
-              └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+explain format='plan_tree' select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
+id	task	access object	operator info
+Sort	root		Column#10, Column#11, Column#12
+└─Union	root		
+  ├─Projection	root		test.t2.cc2->Column#10, test.t2.cc2->Column#11, test.t2.cc1->Column#12
+  │ └─TableReader	root		data:TableFullScan
+  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection	root		cast(Column#9, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#10, test.t1.cc2->Column#11, test.t1.cc1->Column#12
+    └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
+      └─Window	root		count(1)->Column#9 over(partition by test.t1.cc1)
+        └─Sort	root		test.t1.cc1
+          └─ShuffleReceiver	root		
+            └─TableReader	root		data:TableFullScan
+              └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 a	b	c
 1	aaaa	1
 1	bbbb	2
@@ -701,7 +698,7 @@ PARTITION `p1` VALUES LESS THAN (14104),
 PARTITION `p2` VALUES LESS THAN (56927));
 INSERT INTO `tceb7972c` VALUES(NULL,32768,3820.5208),('[2978991857918245466, 2358633058135455779]',14958,9050.871),('[3209216649516490663, 8796285761077563704, 8679842102776923655, 7938639730493564777]',50028,5950.6714),('[1835017567976206479, 2]',25510,6779.271),('[7771897049175925887, 1, 5907722896328501457, 2218303279528464844, 4106409123325473016]',56899,9767.853),('[7839602274985524695, 4773627824242235154, 5873227109465605544, 4833046260666832936]',33174,3820.5208);
 analyze table tceb7972c;
-explain SELECT 1
+explain format='plan_tree' SELECT 1
 FROM (
 SELECT /*+ USE_INDEX_MERGE(tceb7972c t61a85298)*/ tceb7972c.col_17 AS col_60767
 FROM t61a85298
@@ -709,15 +706,15 @@ JOIN tceb7972c ON tceb7972c.col_19 = t61a85298.col_71
 ) AS derived_table
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
 OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
-id	estRows	task	access object	operator info
-Projection_11	6.00	root		1->Column#18
-└─HashJoin_13	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
-  ├─TableReader_16(Build)	4.80	root	partition:all	data:Selection_15
-  │ └─Selection_15	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
-  │   └─TableFullScan_14	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
-  └─Projection_17(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
-    └─TableReader_19	10000.00	root		data:TableFullScan_18
-      └─TableFullScan_18	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
+id	task	access object	operator info
+Projection	root		1->Column#20
+└─HashJoin	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#21)]
+  ├─TableReader(Build)	root	partition:all	data:Selection
+  │ └─Selection	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
+  │   └─TableFullScan	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
+  └─Projection(Probe)	root		cast(test.t61a85298.col_71, double BINARY)->Column#21
+    └─TableReader	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
 drop table if exists t0, t1;
 CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);
@@ -750,6 +747,12 @@ NULL	NULL	2	2	4	2
 show warnings;
 Level	Code	Message
 drop table if exists t1, t2, t3, t4;
+drop table if exists t0, v0;
+drop view if exists v0;
+CREATE  TABLE  t0(c0 INTEGER);
+CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
+SELECT t0.c0 FROM v0, t0 WHERE RAND();
+c0
 drop table if exists tl6e913fb9;
 CREATE TABLE `tl6e913fb9` (
 `col_36` varchar(175) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'asMF',
@@ -760,62 +763,6 @@ KEY `idx_65` (`col_36`(5))
 with cte_192 ( col_1101,col_1102,col_1103,col_1104 ) AS ( select  /*+ use_index_merge( tl6e913fb9 ) */   replace( tl6e913fb9.col_36 , tl6e913fb9.col_36 , tl6e913fb9.col_36 ) as r0 , space( 0 ) as r1 , min( distinct  tl6e913fb9.col_36 ) as r2 , count( distinct  tl6e913fb9.col_36 ) as r3 from tl6e913fb9 where tl6e913fb9.col_36 between 'n92ok$B%W#UU%O' and '()c=KVQ=T%-vzGJ' and tl6e913fb9.col_36 in ( 'T+kf' ,'Lvluod2H' ,'3#Omx@pC^fFkeH' ,'=b$z' ) group by tl6e913fb9.col_36  having tl6e913fb9.col_36 = 'xjV@' or IsNull( tl6e913fb9.col_36 ) ) ( select 1,col_1101,col_1102,col_1103,col_1104 from cte_192 where not( IsNull( cte_192.col_1102 ) ) order by 1,2,3,4,5 limit 72850972 );
 1	col_1101	col_1102	col_1103	col_1104
 drop table if exists t;
-create table t(a int, primary key (a));
-insert into t values(1), (2);
-select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
-a	a
-2	2
-explain select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
-id	estRows	task	access object	operator info
-IndexJoin_15	1.25	root		left outer join, inner:TableReader_12, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
-├─Limit_22(Build)	1.00	root		offset:1, count:1
-│ └─TableReader_26	2.00	root		data:Limit_25
-│   └─Limit_25	2.00	cop[tikv]		offset:0, count:2
-│     └─TableFullScan_24	2.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─TableReader_12(Probe)	1.00	root		data:TableRangeScan_11
-  └─TableRangeScan_11	1.00	cop[tikv]	table:t2	range: decided by [test.t.a], keep order:false, stats:pseudo
-drop table if exists t1, t2;
-create table t1(a int, b int, index idx(a, b));
-create table t2(a int, b int, index idx(a));
-explain select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
-id	estRows	task	access object	operator info
-MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
-├─Sort_23(Build)	9980.01	root		test.t2.a, test.t2.b
-│ └─TableReader_18	9980.01	root		data:Selection_17
-│   └─Selection_17	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
-│     └─TableFullScan_16	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─IndexReader_11(Probe)	9980.01	root		index:Selection_10
-  └─Selection_10	9980.01	cop[tikv]		not(isnull(test.t1.b))
-    └─IndexFullScan_9	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
-explain select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
-id	estRows	task	access object	operator info
-MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
-├─Sort_51(Build)	9980.01	root		test.t2.a, test.t2.b
-│ └─TableReader_46	9980.01	root		data:Selection_45
-│   └─Selection_45	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
-│     └─TableFullScan_44	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─IndexReader_39(Probe)	9980.01	root		index:Selection_38
-  └─Selection_38	9980.01	cop[tikv]		not(isnull(test.t1.b))
-    └─IndexFullScan_37	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
-drop table if exists t, t1;
-create table t(a int);
-create table t1(a int primary key, b int, index idx(b));
-insert into t values(1), (2), (123);
-insert into t1 values(2, 123), (123, 2);
-set tidb_opt_fix_control='44855:on';
-explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
-id	estRows	task	access object	operator info
-Projection_9	12.50	root		test.t.a, test.t1.a, test.t1.b
-└─IndexJoin_12	12.50	root		inner join, inner:IndexReader_11, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)
-  ├─TableReader_20(Build)	9990.00	root		data:Selection_19
-  │ └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t.a))
-  │   └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─IndexReader_11(Probe)	12.50	root		index:IndexRangeScan_10
-    └─IndexRangeScan_10	12.50	cop[tikv]	table:t1, index:idx(b)	range: decided by [eq(test.t1.a, test.t.a) eq(test.t1.b, 123)], keep order:false, stats:pseudo
-select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
-a	a	b
-2	2	123
-drop table if exists t;
 create table t (id int unique key, c int);
 insert into t values (1, 10);
 insert into t values (2, 20);
@@ -825,86 +772,142 @@ _tidb_rowid
 1
 2
 3
+drop table if exists t, t1;
+create table t(a int);
+create table t1(a int primary key, b int, index idx(b));
+insert into t values(1), (2), (123);
+insert into t1 values(2, 123), (123, 2);
+set tidb_opt_fix_control='44855:on';
+explain format='plan_tree' select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+id	task	access object	operator info
+Projection	root		test.t.a, test.t1.a, test.t1.b
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(test.t.a))
+  │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	root		index:IndexRangeScan
+    └─IndexRangeScan	cop[tikv]	table:t1, index:idx(b)	range: decided by [eq(test.t1.a, test.t.a) eq(test.t1.b, 123)], keep order:false, stats:pseudo
+select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+a	a	b
+2	2	123
+drop table if exists t;
+create table t(a int, primary key (a));
+insert into t values(1), (2);
+select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+a	a
+2	2
+explain format='plan_tree' select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+id	task	access object	operator info
+IndexJoin	root		left outer join, inner:TableReader, left side:Limit, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+├─Limit(Build)	root		offset:1, count:1
+│ └─TableReader	root		data:Limit
+│   └─Limit	cop[tikv]		offset:0, count:2
+│     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableRangeScan
+  └─TableRangeScan	cop[tikv]	table:t2	range: decided by [test.t.a], keep order:false, stats:pseudo
+drop table if exists t1, t2;
+create table t1(a int, b int, index idx(a, b));
+create table t2(a int, b int, index idx(a));
+explain format='plan_tree' select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+id	task	access object	operator info
+MergeJoin	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
+├─Sort(Build)	root		test.t2.a, test.t2.b
+│ └─TableReader	root		data:Selection
+│   └─Selection	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexReader(Probe)	root		index:Selection
+  └─Selection	cop[tikv]		not(isnull(test.t1.b))
+    └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
+explain format='plan_tree' select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+id	task	access object	operator info
+MergeJoin	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
+├─Sort(Build)	root		test.t2.a, test.t2.b
+│ └─TableReader	root		data:Selection
+│   └─Selection	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexReader(Probe)	root		index:Selection
+  └─Selection	cop[tikv]		not(isnull(test.t1.b))
+    └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int, b int, c int, primary key(a,b), key ib(b));
-explain format = brief select * from t use index (ib) where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = brief select /*+ use_index(t, ib) */ * from t where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = brief select * from t as tt use index (ib) where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = brief select /*+ use_index(tt, ib) */ * from t as tt where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = brief update t use index (ib) set c = 1 where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-Update	N/A	root		N/A
-└─IndexLookUp	1.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
-    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = brief update /*+ use_index(t, ib) */ t set c = 1 where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-Update	N/A	root		N/A
-└─IndexLookUp	1.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
-    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = brief delete from t use index (ib) where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-Delete	N/A	root		N/A
-└─IndexLookUp	1.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
-    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = brief delete /*+ use_index(t, ib) */ from t where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-Delete	N/A	root		N/A
-└─IndexLookUp	1.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
-    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t use index (ib) where a = 1 and b = 1;
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index(t, ib) */ * from t where a = 1 and b = 1;
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t as tt use index (ib) where a = 1 and b = 1;
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index(tt, ib) */ * from t as tt where a = 1 and b = 1;
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = 'plan_tree' update t use index (ib) set c = 1 where a = 1 and b = 1;
+id	task	access object	operator info
+Update	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' update /*+ use_index(t, ib) */ t set c = 1 where a = 1 and b = 1;
+id	task	access object	operator info
+Update	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' delete from t use index (ib) where a = 1 and b = 1;
+id	task	access object	operator info
+Delete	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' delete /*+ use_index(t, ib) */ from t where a = 1 and b = 1;
+id	task	access object	operator info
+Delete	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 create database if not exists test_59427;
 create table test_59427.t(a int, b int, c int, primary key(a,b), key ib(b));
-explain format = brief select * from test_59427.t use index (ib) where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
-  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = brief select /*+ use_index(test_59427.t, ib) */ * from test_59427.t where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
-  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = brief select * from test_59427.t as tt use index (ib) where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
-  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = brief select /*+ use_index(test_59427.tt, ib) */ * from test_59427.t as tt where a = 1 and b = 1;
-id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
-  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from test_59427.t use index (ib) where a = 1 and b = 1;
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index(test_59427.t, ib) */ * from test_59427.t where a = 1 and b = 1;
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from test_59427.t as tt use index (ib) where a = 1 and b = 1;
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index(test_59427.tt, ib) */ * from test_59427.t as tt where a = 1 and b = 1;
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
 drop database if exists test_59427;
 drop table if exists t1,t2,t3,t4,t5;
 create table t1(a int, b int, c int, d int, e int);
@@ -912,65 +915,510 @@ create table t2(a int, b int, c int, d int, e int);
 create table t3(a int, b int, c int, d int, e int);
 create table t4(a int, b int, c int, d int, e int);
 create table t5(a int, b int, c int, d int, e int);
-explain format = brief select tmp4.b
+explain format = 'plan_tree' select tmp4.b
 from t1 join t2 on t1.a = t2.b
 join t3 on t1.b = t3.b
 left join
 (select a, b, c, (row_number() over (partition by b order by e asc)) from t4) tmp4 on tmp4.b = t2.c and tmp4.c = t3.c
 join t5 on t5.a = t1.e;
-id	estRows	task	access object	operator info
-HashJoin	19472.71	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(test.t5.a))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t5	keep order:false, stats:pseudo
-└─HashJoin(Probe)	15578.17	root		left outer join, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
-  ├─Selection(Build)	7992.00	root		not(isnull(test.t4.c))
-  │ └─Shuffle	9990.00	root		execution info: concurrency:100, data sources:[TableReader]
-  │   └─Window	9990.00	root		row_number()->Column#26 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
-  │     └─Sort	9990.00	root		test.t4.b, test.t4.e
-  │       └─ShuffleReceiver	9990.00	root		
-  │         └─TableReader	9990.00	root		data:Selection
-  │           └─Selection	9990.00	cop[tikv]		not(isnull(test.t4.b))
-  │             └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	15578.17	root		inner join, equal:[eq(test.t1.b, test.t3.b)]
-    ├─HashJoin(Build)	12462.54	root		inner join, equal:[eq(test.t1.a, test.t2.b)]
-    │ ├─TableReader(Build)	9990.00	root		data:Selection
-    │ │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t2.b))
-    │ │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    │ └─TableReader(Probe)	9970.03	root		data:Selection
-    │   └─Selection	9970.03	cop[tikv]		not(isnull(test.t1.a)), not(isnull(test.t1.b)), not(isnull(test.t1.e))
-    │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	9990.00	root		data:Selection
-      └─Selection	9990.00	cop[tikv]		not(isnull(test.t3.b))
-        └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-drop table if exists t0, v0;
-drop view if exists v0;
-CREATE  TABLE  t0(c0 INTEGER);
-CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
-SELECT t0.c0 FROM v0, t0 WHERE RAND();
-c0
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(test.t5.a))
+│   └─TableFullScan	cop[tikv]	table:t5	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		left outer join, left side:HashJoin, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
+  ├─Selection(Build)	root		not(isnull(test.t4.c))
+  │ └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
+  │   └─Window	root		row_number()->Column#30 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
+  │     └─Sort	root		test.t4.b, test.t4.e
+  │       └─ShuffleReceiver	root		
+  │         └─TableReader	root		data:Selection
+  │           └─Selection	cop[tikv]		not(isnull(test.t4.b))
+  │             └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(test.t1.b, test.t3.b)]
+    ├─HashJoin(Build)	root		inner join, equal:[eq(test.t1.a, test.t2.b)]
+    │ ├─TableReader(Build)	root		data:Selection
+    │ │ └─Selection	cop[tikv]		not(isnull(test.t2.b))
+    │ │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    │ └─TableReader(Probe)	root		data:Selection
+    │   └─Selection	cop[tikv]		not(isnull(test.t1.a)), not(isnull(test.t1.b)), not(isnull(test.t1.e))
+    │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(test.t3.b))
+        └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 drop table if exists t1,t2,t3,t4;
 create table t1(a int, b int);
 create table t2 like t1;
 create table t3 like t1;
 create table t4 like t1;
 set @@tidb_opt_join_reorder_threshold=5;
-explain format='brief' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
-id	estRows	task	access object	operator info
-Projection	155937656.25	root		1->Column#13
-└─HashJoin	155937656.25	root		CARTESIAN inner join
-  ├─HashJoin(Build)	12487.50	root		inner join, equal:[eq(test.t3.b, test.t4.b)]
-  │ ├─TableReader(Build)	9990.00	root		data:Selection
-  │ │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t4.b))
-  │ │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  │ └─TableReader(Probe)	9990.00	root		data:Selection
-  │   └─Selection	9990.00	cop[tikv]		not(isnull(test.t3.b))
-  │     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(test.t1.a, test.t2.a)]
-    ├─TableReader(Build)	9990.00	root		data:Selection
-    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t2.a))
-    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─TableReader(Probe)	9990.00	root		data:Selection
-      └─Selection	9990.00	cop[tikv]		not(isnull(test.t1.a))
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
+id	task	access object	operator info
+Projection	root		1->Column#17
+└─HashJoin	root		CARTESIAN inner join
+  ├─HashJoin(Build)	root		inner join, equal:[eq(test.t3.b, test.t4.b)]
+  │ ├─TableReader(Build)	root		data:Selection
+  │ │ └─Selection	cop[tikv]		not(isnull(test.t4.b))
+  │ │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(test.t3.b))
+  │     └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(test.t1.a, test.t2.a)]
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(test.t2.a))
+    │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(test.t1.a))
+        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@tidb_opt_join_reorder_threshold=default;
+set global tidb_enable_stmt_summary = 0;
+drop table if exists long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;
+create table long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill (
+pk int primary key,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 varchar(255),
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 varchar(255),
+col_end int
+);
+insert into long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill values
+(1, 'filler1', 'filler2', 'filler3', 'filler4', 'filler5', 'filler6', 'filler7', 'filler8', 'filler9', 'filler10',
+'filler11', 'filler12', 'filler13', 'filler14', 'filler15', 'filler16', 'filler17', 'filler18', 'filler19', 'filler20',
+'filler21', 'filler22', 'filler23', 'filler24', 'filler25', 'filler26', 'filler27', 'filler28', 999);
+set global tidb_enable_stmt_summary = 1;
+set global tidb_stmt_summary_refresh_interval = 1;
+select pk,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_1,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28,
+col_end
+from long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill
+where long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 = 'filler1' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 = 'filler2' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 = 'filler3' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 = 'filler4' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 = 'filler5' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 = 'filler6' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 = 'filler7' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 = 'filler8' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 = 'filler9' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 = 'filler10' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 = 'filler11' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 = 'filler12' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 = 'filler13' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 = 'filler14' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 = 'filler15' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 = 'filler16' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 = 'filler17' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 = 'filler18' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 = 'filler19' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 = 'filler20' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 = 'filler21' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 = 'filler22' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 = 'filler23' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 = 'filler24' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 = 'filler25' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 = 'filler26' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 = 'filler27' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 = 'filler28' and
+col_end = 999;
+pk	long_column_name_just_fill_out_the_plan_and_sql_digest_text_1	long_column_name_just_fill_out_the_plan_and_sql_digest_text_2	long_column_name_just_fill_out_the_plan_and_sql_digest_text_3	long_column_name_just_fill_out_the_plan_and_sql_digest_text_4	long_column_name_just_fill_out_the_plan_and_sql_digest_text_5	long_column_name_just_fill_out_the_plan_and_sql_digest_text_6	long_column_name_just_fill_out_the_plan_and_sql_digest_text_7	long_column_name_just_fill_out_the_plan_and_sql_digest_text_8	long_column_name_just_fill_out_the_plan_and_sql_digest_text_9	long_column_name_just_fill_out_the_plan_and_sql_digest_text_10	long_column_name_just_fill_out_the_plan_and_sql_digest_text_11	long_column_name_just_fill_out_the_plan_and_sql_digest_text_12	long_column_name_just_fill_out_the_plan_and_sql_digest_text_13	long_column_name_just_fill_out_the_plan_and_sql_digest_text_14	long_column_name_just_fill_out_the_plan_and_sql_digest_text_15	long_column_name_just_fill_out_the_plan_and_sql_digest_text_16	long_column_name_just_fill_out_the_plan_and_sql_digest_text_17	long_column_name_just_fill_out_the_plan_and_sql_digest_text_18	long_column_name_just_fill_out_the_plan_and_sql_digest_text_19	long_column_name_just_fill_out_the_plan_and_sql_digest_text_20	long_column_name_just_fill_out_the_plan_and_sql_digest_text_21	long_column_name_just_fill_out_the_plan_and_sql_digest_text_22	long_column_name_just_fill_out_the_plan_and_sql_digest_text_23	long_column_name_just_fill_out_the_plan_and_sql_digest_text_24	long_column_name_just_fill_out_the_plan_and_sql_digest_text_25	long_column_name_just_fill_out_the_plan_and_sql_digest_text_26	long_column_name_just_fill_out_the_plan_and_sql_digest_text_27	long_column_name_just_fill_out_the_plan_and_sql_digest_text_28	col_end
+1	filler1	filler2	filler3	filler4	filler5	filler6	filler7	filler8	filler9	filler10	filler11	filler12	filler13	filler14	filler15	filler16	filler17	filler18	filler19	filler20	filler21	filler22	filler23	filler24	filler25	filler26	filler27	filler28	999
+(select digest, digest_text, query_sample_text, plan_digest
+from information_schema.cluster_statements_summary
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+union all
+select digest, digest_text, query_sample_text, plan_digest
+from information_schema.cluster_statements_summary_history
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%')
+order by digest,plan_digest;
+digest	digest_text	query_sample_text	plan_digest
+9a16c639ee3e26ee66e1c5e630d73546bb2e58365ffced6025ede03d1d423b47	select `pk` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_1` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_2` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_3` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_4` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_5` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_6` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_7` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_8` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_9` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_10` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_11` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_12` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_13` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_14` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_15` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_16` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_17` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_18` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_19` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_20` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_21` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_22` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_23` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_24` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_25` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_26` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_27` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_28` , `col_end` from `long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill` where `long_column_name_just_fill_out_the_plan_and_sql_digest_text_1` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_2` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_3` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_4` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_5` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_6` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_7` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_8` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_9` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_10` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_11` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_12` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_13` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_14` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_15` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_16` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_17` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_18` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_19` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_20` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_21` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_22` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_23` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_24` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_25` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_26` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_27` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_28` = ? and `col_end` = ?	select pk,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_1,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28,
+col_end
+from long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill
+where long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 = 'filler1' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 = 'filler2' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 = 'filler3' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 = 'filler4' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 = 'filler5' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 = 'filler6' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 = 'filler7' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 = 'filler8' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 = 'filler9' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 = 'filler10' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 = 'filler11' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 = 'filler12' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 = 'filler13' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 = 'filler14' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 = 'filler15' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 = 'filler16' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 = 'filler17' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 = 'filler18' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 = 'filler19' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 = 'filler20' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 = 'filler21' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 = 'filler22' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 = 'filler23' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 = 'filler24' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 = 'filler25' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 = 'filler26' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 = 'filler27' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 = 'filler28' and
+col_end = 999	34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab
+9a16c639ee3e26ee66e1c5e630d73546bb2e58365ffced6025ede03d1d423b47	select `pk` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_1` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_2` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_3` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_4` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_5` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_6` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_7` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_8` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_9` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_10` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_11` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_12` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_13` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_14` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_15` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_16` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_17` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_18` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_19` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_20` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_21` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_22` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_23` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_24` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_25` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_26` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_27` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_28` , `col_end` from `long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill` where `long_column_name_just_fill_out_the_plan_and_sql_digest_text_1` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_2` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_3` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_4` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_5` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_6` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_7` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_8` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_9` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_10` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_11` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_12` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_13` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_14` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_15` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_16` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_17` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_18` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_19` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_20` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_21` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_22` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_23` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_24` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_25` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_26` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_27` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_28` = ? and `col_end` = ?	select pk,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_1,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28,
+col_end
+from long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill
+where long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 = 'filler1' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 = 'filler2' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 = 'filler3' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 = 'filler4' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 = 'filler5' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 = 'filler6' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 = 'filler7' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 = 'filler8' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 = 'filler9' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 = 'filler10' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 = 'filler11' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 = 'filler12' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 = 'filler13' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 = 'filler14' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 = 'filler15' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 = 'filler16' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 = 'filler17' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 = 'filler18' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 = 'filler19' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 = 'filler20' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 = 'filler21' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 = 'filler22' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 = 'filler23' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 = 'filler24' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 = 'filler25' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 = 'filler26' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 = 'filler27' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 = 'filler28' and
+col_end = 999	34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab
+create global binding from history using plan digest '34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab';
+show global bindings;
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+#	#	test	enabled	#	#	utf8mb4	utf8mb4_general_ci	history	b4165ebffac47978b198f040ada87a44826284848c0ff6e0de70781bb6242d18	34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab
+select count(*) as truncated_count
+from information_schema.cluster_statements_summary
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+and (digest_text like '%(len:%' or query_sample_text like '%(len:%');
+truncated_count
+0
+set global tidb_stmt_summary_max_sql_length = 4096;
+drop global binding for sql digest 'b4165ebffac47978b198f040ada87a44826284848c0ff6e0de70781bb6242d18';
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+select pk,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_1,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28,
+col_end
+from long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill
+where long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 = 'filler1' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 = 'filler2' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 = 'filler3' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 = 'filler4' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 = 'filler5' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 = 'filler6' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 = 'filler7' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 = 'filler8' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 = 'filler9' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 = 'filler10' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 = 'filler11' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 = 'filler12' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 = 'filler13' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 = 'filler14' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 = 'filler15' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 = 'filler16' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 = 'filler17' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 = 'filler18' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 = 'filler19' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 = 'filler20' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 = 'filler21' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 = 'filler22' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 = 'filler23' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 = 'filler24' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 = 'filler25' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 = 'filler26' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 = 'filler27' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 = 'filler28' and
+col_end = 999;
+pk	long_column_name_just_fill_out_the_plan_and_sql_digest_text_1	long_column_name_just_fill_out_the_plan_and_sql_digest_text_2	long_column_name_just_fill_out_the_plan_and_sql_digest_text_3	long_column_name_just_fill_out_the_plan_and_sql_digest_text_4	long_column_name_just_fill_out_the_plan_and_sql_digest_text_5	long_column_name_just_fill_out_the_plan_and_sql_digest_text_6	long_column_name_just_fill_out_the_plan_and_sql_digest_text_7	long_column_name_just_fill_out_the_plan_and_sql_digest_text_8	long_column_name_just_fill_out_the_plan_and_sql_digest_text_9	long_column_name_just_fill_out_the_plan_and_sql_digest_text_10	long_column_name_just_fill_out_the_plan_and_sql_digest_text_11	long_column_name_just_fill_out_the_plan_and_sql_digest_text_12	long_column_name_just_fill_out_the_plan_and_sql_digest_text_13	long_column_name_just_fill_out_the_plan_and_sql_digest_text_14	long_column_name_just_fill_out_the_plan_and_sql_digest_text_15	long_column_name_just_fill_out_the_plan_and_sql_digest_text_16	long_column_name_just_fill_out_the_plan_and_sql_digest_text_17	long_column_name_just_fill_out_the_plan_and_sql_digest_text_18	long_column_name_just_fill_out_the_plan_and_sql_digest_text_19	long_column_name_just_fill_out_the_plan_and_sql_digest_text_20	long_column_name_just_fill_out_the_plan_and_sql_digest_text_21	long_column_name_just_fill_out_the_plan_and_sql_digest_text_22	long_column_name_just_fill_out_the_plan_and_sql_digest_text_23	long_column_name_just_fill_out_the_plan_and_sql_digest_text_24	long_column_name_just_fill_out_the_plan_and_sql_digest_text_25	long_column_name_just_fill_out_the_plan_and_sql_digest_text_26	long_column_name_just_fill_out_the_plan_and_sql_digest_text_27	long_column_name_just_fill_out_the_plan_and_sql_digest_text_28	col_end
+1	filler1	filler2	filler3	filler4	filler5	filler6	filler7	filler8	filler9	filler10	filler11	filler12	filler13	filler14	filler15	filler16	filler17	filler18	filler19	filler20	filler21	filler22	filler23	filler24	filler25	filler26	filler27	filler28	999
+(select digest, digest_text, query_sample_text, plan_digest
+from information_schema.cluster_statements_summary
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+union all
+select digest, digest_text, query_sample_text, plan_digest
+from information_schema.cluster_statements_summary_history
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%')
+order by digest,plan_digest;
+digest	digest_text	query_sample_text	plan_digest
+9a16c639ee3e26ee66e1c5e630d73546bb2e58365ffced6025ede03d1d423b47	select `pk` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_1` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_2` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_3` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_4` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_5` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_6` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_7` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_8` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_9` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_10` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_11` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_12` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_13` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_14` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_15` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_16` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_17` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_18` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_19` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_20` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_21` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_22` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_23` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_24` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_25` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_26` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_27` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_28` , `col_end` from `long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill` where `long_column_name_just_fill_out_the_plan_and_sql_digest_text_1` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_2` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_3` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_4` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_5` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_6` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_7` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_8` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_9` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_10` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_11` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_12` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_13` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_14` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_15` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_16` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_17` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_18` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_19` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_20` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_21` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_22` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_23` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_24` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_25` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_26` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_27` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_28` = ? and `col_end` = ?	select pk,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_1,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28,
+col_end
+from long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill
+where long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 = 'filler1' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 = 'filler2' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 = 'filler3' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 = 'filler4' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 = 'filler5' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 = 'filler6' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 = 'filler7' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 = 'filler8' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 = 'filler9' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 = 'filler10' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 = 'filler11' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 = 'filler12' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 = 'filler13' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 = 'filler14' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 = 'filler15' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 = 'filler16' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 = 'filler17' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 = 'filler18' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 = 'filler19' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 = 'filler20' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 = 'filler21' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 = 'filler22' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 = 'filler23' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 = 'filler24' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 = 'filler25' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 = 'filler26' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 = 'filler27' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 = 'filler28' a(len:4112)	34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab
+9a16c639ee3e26ee66e1c5e630d73546bb2e58365ffced6025ede03d1d423b47	select `pk` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_1` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_2` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_3` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_4` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_5` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_6` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_7` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_8` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_9` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_10` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_11` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_12` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_13` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_14` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_15` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_16` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_17` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_18` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_19` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_20` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_21` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_22` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_23` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_24` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_25` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_26` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_27` , `long_column_name_just_fill_out_the_plan_and_sql_digest_text_28` , `col_end` from `long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill` where `long_column_name_just_fill_out_the_plan_and_sql_digest_text_1` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_2` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_3` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_4` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_5` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_6` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_7` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_8` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_9` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_10` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_11` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_12` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_13` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_14` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_15` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_16` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_17` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_18` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_19` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_20` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_21` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_22` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_23` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_24` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_25` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_26` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_27` = ? and `long_column_name_just_fill_out_the_plan_and_sql_digest_text_28` = ? and `col_end` = ?	select pk,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_1,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27,
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28,
+col_end
+from long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill
+where long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 = 'filler1' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 = 'filler2' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 = 'filler3' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 = 'filler4' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 = 'filler5' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 = 'filler6' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 = 'filler7' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 = 'filler8' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 = 'filler9' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 = 'filler10' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 = 'filler11' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 = 'filler12' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 = 'filler13' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 = 'filler14' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 = 'filler15' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 = 'filler16' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 = 'filler17' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 = 'filler18' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 = 'filler19' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 = 'filler20' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 = 'filler21' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 = 'filler22' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 = 'filler23' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 = 'filler24' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 = 'filler25' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 = 'filler26' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 = 'filler27' and
+long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 = 'filler28' a(len:4112)	34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab
+create global binding from history using plan digest '34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab';
+Error 1105 (HY000): binding failed: SQL query is truncated due to tidb_stmt_summary_max_sql_length limit. Please increase tidb_stmt_summary_max_sql_length. Plan Digest: 34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab
+show global bindings;
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select count(*) as truncated_count
+from information_schema.cluster_statements_summary
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+and (digest_text like '%(len:%' or query_sample_text like '%(len:%');
+truncated_count
+1
+drop table long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;
+set global tidb_stmt_summary_max_sql_length = DEFAULT;
+select @@global.tidb_stmt_summary_max_sql_length;
+@@global.tidb_stmt_summary_max_sql_length
+32768
+set global tidb_enable_stmt_summary = DEFAULT;
+set global tidb_stmt_summary_refresh_interval = DEFAULT;

@@ -453,6 +453,7 @@ func (e *InsertExec) doDupRowUpdate(
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
 	e.Ctx().GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
+
 	// NOTE: In order to execute the expression inside the column assignment,
 	// we have to put the value of "oldRow" and "extraCols" before "newRow" in
 	// "row4Update" to be consistent with "Schema4OnDuplicate" in the "Insert"
@@ -520,6 +521,7 @@ func (e *InsertExec) doDupRowUpdate(
 	}
 
 	newData := e.row4Update[:len(oldRow)]
+
 	_, ignored, err := updateRecord(
 		ctx, e.Ctx(),
 		handle, oldRow, newData,

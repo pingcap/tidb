@@ -8,27 +8,27 @@ computed_shard bigint unsigned null,
 primary key (customer_id, id)
 );
 create index t_vitess_shard on t((vitess_hash(customer_id) >> 56));
-explain format = 'brief' select customer_id from t where (vitess_hash(customer_id) >> 56) = x'd6' ORDER BY id;
-id	estRows	task	access object	operator info
-Projection	10.00	root		expression__vitess_hash.t.customer_id
-└─Sort	10.00	root		expression__vitess_hash.t.id
-  └─IndexLookUp	10.00	root		
-    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	range:[214,214], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = 'brief' select id from t where (vitess_hash(customer_id) >> 56) IN (x'e0', x'e1') AND id BETWEEN 2 AND 5 ORDER BY id;
-id	estRows	task	access object	operator info
-Projection	0.50	root		expression__vitess_hash.t.id
-└─Sort	0.50	root		expression__vitess_hash.t.id
-  └─Projection	0.50	root		expression__vitess_hash.t.id, rightshift(vitess_hash(expression__vitess_hash.t.customer_id), 56)
-    └─IndexLookUp	0.50	root		
-      ├─IndexRangeScan(Build)	20.00	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	range:[224,224], [225,225], keep order:false, stats:pseudo
-      └─Selection(Probe)	0.50	cop[tikv]		ge(expression__vitess_hash.t.id, 2), le(expression__vitess_hash.t.id, 5)
-        └─TableRowIDScan	20.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = 'brief' select hex(vitess_hash(1123)) from t;
-id	estRows	task	access object	operator info
-Projection	10000.00	root		31B565D41BDF8CA->Column#7
-└─IndexReader	10000.00	root		index:IndexFullScan
-  └─IndexFullScan	10000.00	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	keep order:false, stats:pseudo
+explain format = 'plan_tree' select customer_id from t where (vitess_hash(customer_id) >> 56) = x'd6' ORDER BY id;
+id	task	access object	operator info
+Projection	root		expression__vitess_hash.t.customer_id
+└─Sort	root		expression__vitess_hash.t.id
+  └─IndexLookUp	root		
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	range:[214,214], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select id from t where (vitess_hash(customer_id) >> 56) IN (x'e0', x'e1') AND id BETWEEN 2 AND 5 ORDER BY id;
+id	task	access object	operator info
+Projection	root		expression__vitess_hash.t.id
+└─Sort	root		expression__vitess_hash.t.id
+  └─Projection	root		expression__vitess_hash.t.id, rightshift(vitess_hash(expression__vitess_hash.t.customer_id), 56)
+    └─IndexLookUp	root		
+      ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	range:[224,224], [225,225], keep order:false, stats:pseudo
+      └─Selection(Probe)	cop[tikv]		ge(expression__vitess_hash.t.id, 2), le(expression__vitess_hash.t.id, 5)
+        └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select hex(vitess_hash(1123)) from t;
+id	task	access object	operator info
+Projection	root		31B565D41BDF8CA->Column#8
+└─IndexReader	root		index:IndexFullScan
+  └─IndexFullScan	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	keep order:false, stats:pseudo
 drop table if exists t_int;
 create table t_int(id int, a bigint unsigned null);
 insert into t_int values (1, 30375298039), (2, 1123), (3, 30573721600), (4, 18446744073709551615), (5, 116), (6, null);

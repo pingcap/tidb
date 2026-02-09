@@ -203,7 +203,7 @@ func NewChunkDecoder(columns []ColInfo, handleColIDs []int64, defDatum func(i in
 }
 
 // DecodeToChunk decodes a row to chunk.
-func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk *chunk.Chunk) error {
+func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, commitTS uint64, handle kv.Handle, chk *chunk.Chunk) error {
 	err := decoder.fromBytes(rowData)
 	if err != nil {
 		return err
@@ -211,6 +211,15 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 
 	for colIdx := range decoder.columns {
 		col := &decoder.columns[colIdx]
+		if col.ID == model.ExtraCommitTSID {
+			if commitTS > 0 {
+				chk.AppendUint64(colIdx, commitTS)
+			} else {
+				chk.AppendNull(colIdx)
+			}
+			continue
+		}
+
 		// fill the virtual column value after row calculation
 		if col.VirtualGenCol {
 			chk.AppendNull(colIdx)
