@@ -393,7 +393,8 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 59
+	result := 60
+
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

@@ -29,6 +29,7 @@ var (
 	_ DMLNode = &InsertStmt{}
 	_ DMLNode = &SetOprStmt{}
 	_ DMLNode = &UpdateStmt{}
+	_ DMLNode = &RecoverValuesStmt{}
 	_ DMLNode = &SelectStmt{}
 	_ DMLNode = &CallStmt{}
 	_ DMLNode = &ShowStmt{}
@@ -2948,6 +2949,55 @@ func (n *UpdateStmt) SetWhereExpr(e ExprNode) {
 // TableRefsJoin implements ShardableDMLStmt interface.
 func (n *UpdateStmt) TableRefsJoin() (*Join, bool) {
 	return n.TableRefs.TableRefs, true
+}
+
+// RecoverValuesStmt is a statement to recover soft-deleted rows from a table.
+// It is semantically equivalent to UPDATE <table> SET _tidb_softdelete_time = NULL WHERE <expr>
+// but only works on tables with soft delete enabled.
+type RecoverValuesStmt struct {
+	dmlNode
+
+	Table *TableName
+	Where ExprNode
+}
+
+// Restore implements Node interface.
+func (n *RecoverValuesStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RECOVER VALUES FROM ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RecoverValuesStmt.Table")
+	}
+	if n.Where != nil {
+		ctx.WriteKeyWord(" WHERE ")
+		if err := n.Where.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore RecoverValuesStmt.Where")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RecoverValuesStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RecoverValuesStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	if n.Where != nil {
+		node, ok := n.Where.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Where = node.(ExprNode)
+	}
+	return v.Leave(n)
 }
 
 // Limit is the limit clause.

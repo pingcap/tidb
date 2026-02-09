@@ -229,6 +229,7 @@ type UpdateRecordOption interface {
 // RemoveRecordOpt contains the options will be used when removing a record.
 type RemoveRecordOpt struct {
 	indexesLayoutOffset IndexesLayout
+	extraOriginTSOffset int
 }
 
 // HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
@@ -246,9 +247,14 @@ func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
 	return opt.indexesLayoutOffset[indexID]
 }
 
+// GetExtraOriginTSOffset returns the offset of _tidb_origin_ts column.
+func (opt *RemoveRecordOpt) GetExtraOriginTSOffset() int {
+	return opt.extraOriginTSOffset
+}
+
 // NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
 func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
-	opt := &RemoveRecordOpt{}
+	opt := &RemoveRecordOpt{extraOriginTSOffset: -1}
 	for _, o := range opts {
 		o.applyRemoveRecordOpt(opt)
 	}
@@ -278,6 +284,13 @@ func (idx IndexesLayout) GetIndexLayout(idxID int64) IndexRowLayoutOption {
 
 func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
 	opt.indexesLayoutOffset = idx
+}
+
+// ExtraOriginTSOffset is an option to specify the offset of _tidb_origin_ts column.
+type ExtraOriginTSOffset int
+
+func (offset ExtraOriginTSOffset) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.extraOriginTSOffset = int(offset)
 }
 
 // CommonMutateOptFunc is a function to provide common options for mutating a table.

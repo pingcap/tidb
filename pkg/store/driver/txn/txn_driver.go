@@ -311,6 +311,8 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.SetSessionID(val.(uint64))
 	case kv.BackgroundGoroutineLifecycleHooks:
 		txn.KVTxn.SetBackgroundGoroutineLifecycleHooks(val.(transaction.LifecycleHooks))
+	case kv.CommitWaitUntilTSO:
+		txn.KVTxn.SetCommitWaitUntilTSO(val.(uint64))
 	}
 }
 

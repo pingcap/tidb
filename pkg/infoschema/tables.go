@@ -219,6 +219,8 @@ const (
 	TableKeywords = "KEYWORDS"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
+	// TableSoftDeleteTableStats is the table to show softdelete table statistics.
+	TableSoftDeleteTableStats = "TIDB_SOFTDELETE_TABLE_STATS"
 )
 
 const (
@@ -341,6 +343,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
+	TableSoftDeleteTableStats:            autoid.InformationSchemaDBID + 96,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1747,6 +1750,15 @@ var tableTiDBIndexUsage = []columnInfo{
 	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
 }
 
+// information_schema.TIDB_SOFTDELETE_TABLE_STATS
+var tableSoftDeleteTableStatsCols = []columnInfo{
+	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "ESTIMATED_TOTAL_ROW_COUNT", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "ESTIMATED_SOFTDELETED_ROW_COUNT", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2394,6 +2406,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableSoftDeleteTableStats:               tableSoftDeleteTableStatsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -200,18 +202,124 @@ func getSession(pool util.SessionPool) (session.Session, error) {
 	return se, nil
 }
 
-func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time) *ttlTableSession {
+func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time, jobType session.TTLJobType) (*ttlTableSession, error) {
+	var cfg ttlWorkConfig
+	switch jobType {
+	case session.TTLJobTypeSoftDelete:
+		cfg = ttlWorkConfig{
+			jobType:   jobType,
+			jobEnable: variable.SoftDeleteJobEnable.Load,
+			validateNew: func(_ context.Context, _ session.Session, _ *cache.PhysicalTable, _ *cache.PhysicalTable, newTblInfo *model.TableInfo, _ time.Time) error {
+				if newTblInfo.SoftdeleteInfo == nil {
+					return errors.New("table softdelete disabled")
+				}
+				return nil
+			},
+		}
+		// SoftDelete cleanup job needs to read/delete tombstones. If SoftDeleteRewrite is enabled,
+		// SELECT may hide tombstones and DELETE may be rewritten to UPDATE (soft-delete) again.
+		se.GetSessionVars().SoftDeleteRewrite = false
+	case session.TTLJobTypeTTL:
+		cfg = ttlWorkConfig{
+			jobType:   jobType,
+			jobEnable: variable.EnableTTLJob.Load,
+			validateNew: func(ctx context.Context, s session.Session, oldTbl, newTbl *cache.PhysicalTable, newTblInfo *model.TableInfo, expire time.Time) error {
+				if !newTbl.TTLInfo.Enable {
+					return errors.New("table TTL disabled")
+				}
+				newTimeCol, err := newTbl.TimeColumnForJob(session.TTLJobTypeTTL)
+				if err != nil {
+					return err
+				}
+				oldTimeCol, err := oldTbl.TimeColumnForJob(session.TTLJobTypeTTL)
+				if err != nil {
+					return err
+				}
+				if newTimeCol.Name.L != oldTimeCol.Name.L {
+					return errors.New("time column name changed")
+				}
+				if newTblInfo.TTLInfo.IntervalExprStr != oldTbl.TTLInfo.IntervalExprStr ||
+					newTblInfo.TTLInfo.IntervalTimeUnit != oldTbl.TTLInfo.IntervalTimeUnit {
+					newExpireTime, err := newTbl.EvalExpireTimeForJob(ctx, s, s.Now(), session.TTLJobTypeTTL)
+					if err != nil {
+						return err
+					}
+					if newExpireTime.Before(expire) {
+						return errors.New("expire interval changed")
+					}
+				}
+				return nil
+			},
+		}
+		// TTL job should respect soft delete rewrite: for softdelete-enabled tables, DELETE will be
+		// rewritten to UPDATE (create tombstones) and SELECT will ignore tombstones.
+		se.GetSessionVars().SoftDeleteRewrite = true
+	default:
+		return nil, errors.Errorf("unknown job type: %s", jobType)
+	}
+
 	return &ttlTableSession{
 		Session: se,
 		tbl:     tbl,
 		expire:  expire,
+		cfg:     cfg,
+	}, nil
+}
+
+// NewScanSession creates a session for scan
+func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time, jobType session.TTLJobType) (*ttlTableSession, func() error, error) {
+	origConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
+	origPaging := se.GetSessionVars().EnablePaging
+	se.GetSessionVars().InternalSQLScanUserTable = true
+	restore := func() error {
+		se.GetSessionVars().InternalSQLScanUserTable = false
+		_, err := se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=%?", origConcurrency)
+		terror.Log(err)
+
+		_, tmpErr := se.ExecuteSQL(context.Background(), "set @@tidb_enable_paging=%?", origPaging)
+		if tmpErr != nil {
+			terror.Log(tmpErr)
+			err = multierr.Append(err, tmpErr)
+		}
+
+		return err
 	}
+
+	// Set the distsql scan concurrency to 1 to reduce the number of cop tasks in TTL scan.
+	if _, err := se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=1"); err != nil {
+		terror.Log(restore())
+		return nil, nil, err
+	}
+
+	// Disable tidb_enable_paging because we have already had a `LIMIT` in the SQL to limit the result set.
+	// If `tidb_enable_paging` is enabled, it may have multiple cop tasks even in one region that makes some extra
+	// processed keys in TiKV side, see issue: https://github.com/pingcap/tidb/issues/58342.
+	// Disable it to make the scan more efficient.
+	if _, err := se.ExecuteSQL(context.Background(), "set @@tidb_enable_paging=OFF"); err != nil {
+		terror.Log(restore())
+		return nil, nil, err
+	}
+
+	tblSe, err := newTableSession(se, tbl, expire, jobType)
+	if err != nil {
+		terror.Log(restore())
+		return nil, nil, err
+	}
+
+	return tblSe, restore, nil
 }
 
 type ttlTableSession struct {
 	session.Session
 	tbl    *cache.PhysicalTable
 	expire time.Time
+	cfg    ttlWorkConfig
+}
+
+type ttlWorkConfig struct {
+	jobType     session.TTLJobType
+	jobEnable   func() bool
+	validateNew func(ctx context.Context, s session.Session, oldTbl, newTbl *cache.PhysicalTable, newTblInfo *model.TableInfo, expire time.Time) error
 }
 
 func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) ([]chunk.Row, bool, error) {
@@ -219,8 +327,8 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 	defer tracer.EnterPhase(tracer.Phase())
 
 	tracer.EnterPhase(metrics.PhaseOther)
-	if !variable.EnableTTLJob.Load() {
-		return nil, false, errors.New("global TTL job is disabled")
+	if !s.cfg.jobEnable() {
+		return nil, false, errors.Errorf("global %s job is disabled", s.cfg.jobType)
 	}
 
 	if err := s.ResetWithGlobalTimeZone(ctx); err != nil {
@@ -236,7 +344,7 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 		tracer.EnterPhase(metrics.PhaseCheckTTL)
 		// We must check the configuration after ExecuteSQL because of MDL and the meta the current transaction used
 		// can only be determined after executed one query.
-		if validateErr := validateTTLWork(ctx, s.Session, s.tbl, s.expire); validateErr != nil {
+		if validateErr := s.validateTTLWork(ctx); validateErr != nil {
 			shouldRetry = false
 			return errors.Annotatef(validateErr, "table '%s.%s' meta changed, should abort current job", s.tbl.Schema, s.tbl.Name)
 		}
@@ -256,55 +364,41 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 	return result, false, nil
 }
 
-func validateTTLWork(ctx context.Context, s session.Session, tbl *cache.PhysicalTable, expire time.Time) error {
-	curTbl, err := s.SessionInfoSchema().TableByName(context.Background(), tbl.Schema, tbl.Name)
+func (s *ttlTableSession) validateTTLWork(ctx context.Context) error {
+	newTblInfo, err := s.SessionInfoSchema().TableInfoByName(s.tbl.Schema, s.tbl.Name)
 	if err != nil {
 		return err
 	}
 
-	newTblInfo := curTbl.Meta()
-	if tbl.TableInfo == newTblInfo {
+	if s.tbl.TableInfo == newTblInfo {
 		return nil
 	}
 
-	if tbl.TableInfo.ID != newTblInfo.ID {
+	if s.tbl.TableInfo.ID != newTblInfo.ID {
 		return errors.New("table id changed")
 	}
 
-	newTTLTbl, err := cache.NewPhysicalTable(tbl.Schema, newTblInfo, tbl.Partition)
+	var newPhysical *cache.PhysicalTable
+	newPhysical, err = cache.NewPhysicalTable(
+		s.tbl.Schema,
+		newTblInfo,
+		s.tbl.Partition,
+		s.cfg.jobType == session.TTLJobTypeTTL,
+		s.cfg.jobType == session.TTLJobTypeSoftDelete,
+	)
 	if err != nil {
 		return err
 	}
 
-	if newTTLTbl.ID != tbl.ID {
+	if newPhysical.ID != s.tbl.ID {
 		return errors.New("physical id changed")
 	}
 
-	if tbl.Partition.L != "" {
-		if newTTLTbl.PartitionDef.Name.L != tbl.PartitionDef.Name.L {
+	if s.tbl.Partition.L != "" {
+		if newPhysical.PartitionDef.Name.L != s.tbl.PartitionDef.Name.L {
 			return errors.New("partition name changed")
 		}
 	}
 
-	if !newTTLTbl.TTLInfo.Enable {
-		return errors.New("table TTL disabled")
-	}
-
-	if newTTLTbl.TimeColumn.Name.L != tbl.TimeColumn.Name.L {
-		return errors.New("time column name changed")
-	}
-
-	if newTblInfo.TTLInfo.IntervalExprStr != tbl.TTLInfo.IntervalExprStr ||
-		newTblInfo.TTLInfo.IntervalTimeUnit != tbl.TTLInfo.IntervalTimeUnit {
-		newExpireTime, err := newTTLTbl.EvalExpireTime(ctx, s, s.Now())
-		if err != nil {
-			return err
-		}
-
-		if newExpireTime.Before(expire) {
-			return errors.New("expire interval changed")
-		}
-	}
-
-	return nil
+	return s.cfg.validateNew(ctx, s.Session, s.tbl, newPhysical, newTblInfo, s.expire)
 }

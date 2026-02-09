@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -155,6 +156,7 @@ func TestScanWorkerSchedule(t *testing.T) {
 		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
+			JobType:    session.TTLJobTypeTTL,
 			ExpireTime: time.UnixMilli(0),
 		},
 		statistics: &ttlStatistics{},
@@ -205,6 +207,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
+			JobType:    session.TTLJobTypeTTL,
 			ExpireTime: time.UnixMilli(0),
 		},
 		statistics: &ttlStatistics{},
@@ -247,6 +250,7 @@ func TestScanResultWhenWorkerStop(t *testing.T) {
 		TTLTask:    &cache.TTLTask{},
 		statistics: &ttlStatistics{},
 	}
+	task.TTLTask.JobType = session.TTLJobTypeTTL
 	require.NoError(t, w.Schedule(task))
 	select {
 	case <-executeCh:
@@ -284,6 +288,7 @@ func newMockScanTask(t *testing.T, sqlCnt int) *mockScanTask {
 			ctx: context.Background(),
 			tbl: tbl,
 			TTLTask: &cache.TTLTask{
+				JobType:        session.TTLJobTypeTTL,
 				ExpireTime:     time.UnixMilli(0),
 				ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
 			},
@@ -478,6 +483,7 @@ func TestScanTaskCheck(t *testing.T) {
 	task := &ttlScanTask{
 		ctx: ctx,
 		TTLTask: &cache.TTLTask{
+			JobType:    session.TTLJobTypeTTL,
 			ExpireTime: time.Unix(101, 0).Add(time.Minute),
 		},
 		tbl:        tbl,
@@ -487,13 +493,14 @@ func TestScanTaskCheck(t *testing.T) {
 	ch := make(chan *ttlDeleteTask, 1)
 	result := task.doScan(context.Background(), ch, pool)
 	require.Equal(t, task, result.task)
-	require.EqualError(t, result.err, "current expire time is after safe expire time. (161 > 160)")
+	require.ErrorContains(t, result.err, "current expire time is after safe expire time. (161 > 160")
 	require.Equal(t, 0, len(ch))
 	require.Equal(t, "Total Rows: 0, Success Rows: 0, Error Rows: 0", task.statistics.String())
 
 	task = &ttlScanTask{
 		ctx: ctx,
 		TTLTask: &cache.TTLTask{
+			JobType:    session.TTLJobTypeTTL,
 			ExpireTime: time.Unix(100, 0).Add(time.Minute),
 		},
 		tbl:        tbl,
@@ -511,6 +518,7 @@ func TestScanTaskCancelStmt(t *testing.T) {
 		ctx: context.Background(),
 		tbl: newMockTTLTbl(t, "t1"),
 		TTLTask: &cache.TTLTask{
+			JobType:        session.TTLJobTypeTTL,
 			ExpireTime:     time.UnixMilli(0),
 			ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
 		},

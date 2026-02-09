@@ -191,6 +191,38 @@ func TestModelBasic(t *testing.T) {
 	require.Equal(t, charset.CollationBin, extraPK.GetCollate())
 }
 
+func TestIsXXXColumn(t *testing.T) {
+	name := model.NewCIStr("a")
+	require.False(t, IsSoftDeleteColumn(name))
+	require.False(t, IsActiveActiveColumn(name))
+	require.False(t, IsSoftDeleteOrActiveActiveColumn(name))
+	require.False(t, IsInternalColumn(name))
+
+	softDeleteTime := model.NewCIStr(ExtraSoftDeleteTimeName.O)
+	require.True(t, IsSoftDeleteColumn(softDeleteTime))
+	require.False(t, IsActiveActiveColumn(softDeleteTime))
+	require.True(t, IsSoftDeleteOrActiveActiveColumn(softDeleteTime))
+	require.True(t, IsInternalColumn(softDeleteTime))
+
+	originTS := model.NewCIStr(ExtraOriginTSName.O)
+	require.False(t, IsSoftDeleteColumn(originTS))
+	require.True(t, IsActiveActiveColumn(originTS))
+	require.True(t, IsSoftDeleteOrActiveActiveColumn(originTS))
+	require.True(t, IsInternalColumn(originTS))
+
+	commitTS := model.NewCIStr(ExtraCommitTSName.O)
+	require.False(t, IsSoftDeleteColumn(commitTS))
+	require.False(t, IsActiveActiveColumn(commitTS))
+	require.False(t, IsSoftDeleteOrActiveActiveColumn(commitTS))
+	require.True(t, IsInternalColumn(commitTS))
+
+	handle := model.NewCIStr(ExtraHandleName.O)
+	require.False(t, IsSoftDeleteColumn(handle))
+	require.False(t, IsActiveActiveColumn(handle))
+	require.False(t, IsSoftDeleteOrActiveActiveColumn(handle))
+	require.True(t, IsInternalColumn(handle))
+}
+
 func TestTTLInfoClone(t *testing.T) {
 	ttlInfo := &TTLInfo{
 		ColumnName:       model.NewCIStr("test"),

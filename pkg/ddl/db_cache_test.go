@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -174,4 +175,56 @@ func TestIssue34069(t *testing.T) {
 	tk.MustExec("create table t_34069 (t int);")
 	// No error when SEM is enabled.
 	tk.MustExec("alter table t_34069 cache")
+}
+
+func TestCachedTableCommitTSBypassCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int, index i_v(v))")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30)")
+	commitTsStr := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()[0][0].(string)
+	commitTS, err := strconv.ParseUint(commitTsStr, 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, commitTS, uint64(0))
+	tk.MustExec("alter table t cache")
+
+	// Wait until the table is cached.
+	require.Eventually(t, func() bool {
+		tk.MustQuery("select v from t order by id").Check(testkit.Rows("10", "20", "30"))
+		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+	}, 10*time.Second, 50*time.Millisecond)
+
+	// PointGet
+	tk.MustHavePlan("select id, _tidb_commit_ts, v from t where id = 1", "Point_Get")
+	tk.MustQuery("select id,_tidb_commit_ts, v from t where id = 1").Check(testkit.Rows(
+		"1 " + commitTsStr + " 10",
+	))
+	require.False(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// BatchPointGet
+	tk.MustHavePlan("select id, _tidb_commit_ts, v from t where id in (1, 2)", "Batch_Point_Get")
+	tk.MustQuery("select id, _tidb_commit_ts, v from t where id in (1, 2) order by id").Check(testkit.Rows(
+		"1 "+commitTsStr+" 10",
+		"2 "+commitTsStr+" 20",
+	))
+	require.False(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// TableScan
+	tk.MustHavePlan("select id, _tidb_commit_ts, v from t order by id", "TableFullScan")
+	tk.MustQuery("select id, _tidb_commit_ts, v from t order by id").Check(testkit.Rows(
+		"1 "+commitTsStr+" 10",
+		"2 "+commitTsStr+" 20",
+		"3 "+commitTsStr+" 30",
+	))
+	require.False(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// IndexScan
+	tk.MustHavePlan("select id, _tidb_commit_ts, v from t use index(i_v) where v >= 20 order by id", "IndexRangeScan")
+	tk.MustQuery("select id, _tidb_commit_ts, v from t use index(i_v) where v >= 20 order by id").Check(testkit.Rows(
+		"2 "+commitTsStr+" 20",
+		"3 "+commitTsStr+" 30",
+	))
+	require.False(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 }

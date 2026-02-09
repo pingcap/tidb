@@ -116,6 +116,8 @@ const (
 	SessionID
 	// BackgroundGoroutineLifecycleHooks is the hooks to track the start and end of background goroutine
 	BackgroundGoroutineLifecycleHooks
+	// CommitWaitUntilTSO is an option to require get commit ts wait until the obtained TSO larger than the specified value
+	CommitWaitUntilTSO
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option

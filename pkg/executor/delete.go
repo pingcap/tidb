@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -274,7 +275,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 		return err
 	}
 
-	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data, posInfo.IndexesRowLayout)
+	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data, posInfo.IndexesRowLayout, posInfo.ExtraOriginTSOffset)
 	if err != nil {
 		return err
 	}
@@ -306,9 +307,36 @@ func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FK
 	return nil
 }
 
+func (e *DeleteExec) reportActiveActiveHardDelete() {
+	if vars := e.Ctx().GetSessionVars(); !vars.InRestrictedSQL {
+		var activeActiveTableIDs []int64
+		var activeActiveTableNames []string
+		for _, tbl := range e.tblID2Table {
+			tblInfo := tbl.Meta()
+			if tblInfo.IsActiveActive {
+				if activeActiveTableIDs == nil {
+					activeActiveTableIDs = make([]int64, 0, len(e.tblID2Table))
+					activeActiveTableNames = make([]string, 0, len(e.tblID2Table))
+				}
+				activeActiveTableIDs = append(activeActiveTableIDs, tblInfo.ID)
+				activeActiveTableNames = append(activeActiveTableNames, tblInfo.Name.O)
+			}
+		}
+		if len(activeActiveTableIDs) > 0 {
+			metrics.ActiveActiveHardDeleteStmtCounter.Inc()
+			logutil.BgLogger().Info("hard delete on active-active table in user session",
+				zap.Uint64("connID", vars.ConnectionID),
+				zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+				zap.Int64s("tableIDs", activeActiveTableIDs),
+				zap.Strings("tables", activeActiveTableNames))
+		}
+	}
+}
+
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
 	defer e.memTracker.ReplaceBytesUsed(0)
+	e.reportActiveActiveHardDelete()
 	return exec.Close(e.Children(0))
 }
 

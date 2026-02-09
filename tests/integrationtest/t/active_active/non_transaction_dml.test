@@ -1,0 +1,29 @@
+create table t (id int primary key, v int) active_active='on' softdelete retention 7 day;
+insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6);
+batch on t.id limit 2 delete from t where v < 6;
+select * from t;
+
+set @@tidb_translate_softdelete_sql = true;
+--error 1815
+select id, v, _tidb_softdelete_time from t;
+
+set @@tidb_translate_softdelete_sql = false;
+--replace_regex /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/TIME/
+select id, v, _tidb_softdelete_time from t;
+
+# create another table for temporary data
+create table t1 (id int primary key, v int);
+insert into t1 values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7);
+
+set @@tidb_translate_softdelete_sql = true;
+batch on t1.id limit 2 insert ignore into t select * from t1;
+set @@tidb_translate_softdelete_sql = false;
+--replace_regex /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/TIME/
+select id, v, _tidb_softdelete_time from t;
+
+
+set @@tidb_translate_softdelete_sql = true;
+batch on t.id limit 3 update t set v =  v + 1;
+set @@tidb_translate_softdelete_sql = false;
+--replace_regex /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/TIME/
+select id, v, _tidb_softdelete_time from t;

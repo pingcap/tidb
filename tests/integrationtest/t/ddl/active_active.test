@@ -1,0 +1,168 @@
+drop database if exists test_aa;
+set tidb_enable_global_index = 1;
+set @@global.tidb_enable_check_constraint = 1;
+
+-- error 8200
+create database test_aa active_active = 'ON';
+create database test_aa;
+show create database test_aa;
+alter database test_aa active_active = 'OFF' softdelete = retention 4 day;
+show create database test_aa;
+alter database test_aa active_active = 'ON' softdelete = retention 7 day;
+show create database test_aa;
+use test_aa;
+
+# ACTIVE_ACTIVE tables must have an explicit primary key.
+set @@sql_require_primary_key=false;
+-- error 8200
+create table t_no_pk (id int, name varchar(50)) active_active = 'ON' softdelete = retention 7 day;
+set @@sql_require_primary_key=DEFAULT;
+
+# ACTIVE_ACTIVE tables must not allow dropping primary key.
+set tidb_enable_clustered_index = OFF;
+drop table if exists t_drop_pk;
+create table t_drop_pk (id int primary key, v int) softdelete retention 7 day, active_active = 'ON';
+-- error 8200
+alter table t_drop_pk drop primary key;
+drop table if exists t_drop_pk;
+set tidb_enable_clustered_index = DEFAULT;
+
+create table t (id int primary key, name varchar(50));
+show create table t;
+alter database test_aa active_active = 'OFF' softdelete = 'OFF';
+select COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE, COLUMN_KEY from information_schema.columns
+  where table_schema = 'test_aa' and table_name = 't'
+    and column_name in ('_tidb_origin_ts', '_tidb_softdelete_time')
+  order by column_name;
+show create database test_aa;
+
+drop table if exists t;
+create table t (id int primary key, name varchar(50)) active_active = 'ON' softdelete = retention 7 day;
+show create table t;
+
+drop table if exists t;
+create table t (id int primary key, name varchar(50)) active_active = 'OFF';
+show create table t;
+
+drop table if exists t;
+create table t (
+	id int primary key,
+	name varchar(50)
+) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+
+ALTER TABLE t ADD INDEX i1(_tidb_origin_ts);
+ALTER TABLE t ADD INDEX i2(_tidb_softdelete_time);
+
+drop table if exists t;
+create table t (id int primary key) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ partition by hash(id) partitions 4;
+ALTER TABLE t ADD INDEX i3(_tidb_softdelete_time) GLOBAL;
+show create table t;
+drop table if exists t;
+
+create table t (
+	id int primary key,
+	name varchar(50)
+) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+
+ALTER TABLE t ADD INDEX i1(_tidb_origin_ts);
+ALTER TABLE t ADD INDEX i2(_tidb_softdelete_time);
+-- error 1846
+ALTER TABLE t ADD UNIQUE INDEX i3(_tidb_softdelete_time);
+-- error 1846
+ALTER TABLE t ADD UNIQUE INDEX i3(_tidb_origin_ts);
+-- error 1846
+ALTER TABLE t ADD UNIQUE INDEX i3(_tidb_commit_ts);
+-- error 1846
+ALTER TABLE t ADD UNIQUE INDEX i3(name);
+-- error 1072
+ALTER TABLE t ADD INDEX i3(_tidb_commit_ts);
+-- error 1846
+ALTER TABLE t ADD CONSTRAINT UNIQUE(_tidb_commit_ts);
+
+ALTER TABLE t ADD CONSTRAINT CHECK(id > 0);
+
+CREATE INDEX i4 ON t ((lower(name)));
+# unique expression index is forbidden
+-- error 1846
+CREATE UNIQUE INDEX i5 ON t ((lower(name)));
+
+# impossible generated column
+-- error 1054
+create table t5 (id int primary key, name varchar(50), g1 bigint AS (_tidb_softdelete_time) virtual) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+
+# forbid CHECK constraints for any _tidb_xxx columns
+-- error 8200
+ALTER TABLE t ADD CONSTRAINT c2 CHECK(_tidb_origin_ts > 0);
+
+# forbid dropping internal columns
+-- error 8200
+ALTER TABLE t DROP COLUMN _tidb_origin_ts;
+-- error 8200
+ALTER TABLE t DROP COLUMN _tidb_softdelete_time;
+
+# forbid adding internal columns
+-- error 1060
+ALTER TABLE t ADD COLUMN _tidb_origin_ts bigint;
+-- error 1060
+ALTER TABLE t ADD COLUMN _tidb_softdelete_time timestamp(6);
+-- error 1166
+ALTER TABLE t ADD COLUMN _tidb_commit_ts bigint;
+
+# forbid modifying internal columns
+-- error 1166
+ALTER TABLE t MODIFY COLUMN _tidb_origin_ts bigint;
+-- error 1166
+ALTER TABLE t CHANGE COLUMN _tidb_softdelete_time _tidb_softdelete_time datetime;
+
+# foreign key is not supported on softdelete / active-active tables (as a child or parent table)
+create table t2 (id int primary key, name varchar(50));
+-- error 1215
+alter table t2 add constraint fk1 foreign key (id) references t(id);
+-- error 1215
+alter table t add constraint fk2 foreign key (id) references t2(id);
+
+# forbid renaming internal columns
+-- error 1166
+ALTER TABLE t RENAME COLUMN _tidb_origin_ts TO _tidb_origin_ts2;
+-- error 1166
+ALTER TABLE t RENAME COLUMN name TO _tidb_origin_ts;
+
+DROP INDEX i1 ON t;
+DROP INDEX i2 ON t;
+DROP INDEX i4 ON t;
+show create table t;
+
+-- error 8200
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON';
+-- error 8200
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
+
+# Alter table should fail
+-- error 8200
+alter table t active_active = 'ON';
+
+# should not enable softdelete/active-active on a table with foreign key
+create table parent_fk2 (id int primary key);
+create table child_fk2 (id int primary key, pid int);
+alter table child_fk2 add constraint fk_child2 foreign key(pid) references parent_fk2(id);
+-- error 8200
+alter table parent_fk2 active_active = 'ON' softdelete = retention 7 day;
+-- error 8200
+alter table child_fk2 active_active = 'ON' softdelete = retention 7 day;
+
+# Invalid value
+-- error 1064
+alter database test_aa active_active = 'INVALID';
+-- error 1064
+create table t5 (id int) active_active = 'YES';
+
+# active-active / softdelete should not be supported for temporary tables
+-- error 8200
+create global temporary table tmp_aa (id int) active_active = 'ON' softdelete = retention 7 day on commit delete rows;
+-- error 1347
+create global temporary table tmp_aa like t on commit delete rows;
+-- error 8200
+create temporary table tmp_aa2 (id int) active_active = 'ON' softdelete = retention 7 day;
+
+drop database test_aa;
+set @@global.tidb_enable_check_constraint = default;

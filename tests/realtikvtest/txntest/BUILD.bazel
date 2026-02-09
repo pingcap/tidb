@@ -4,6 +4,7 @@ go_test(
     name = "txntest_test",
     timeout = "long",
     srcs = [
+        "active_active_test.go",
         "isolation_test.go",
         "main_test.go",
         "replica_read_test.go",
@@ -20,6 +21,7 @@ go_test(
         "//pkg/parser",
         "//pkg/session/txninfo",
         "//pkg/store/driver",
+        "//pkg/store/driver/error",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/util",

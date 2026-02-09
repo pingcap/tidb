@@ -78,6 +78,13 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb":                             {},
 		"global_variables":                 {},
 		"capture_plan_baselines_blacklist": {},
+
+		// TiDB internal ttl information.
+		"tidb_ttl_job_history":         {},
+		"tidb_ttl_table_status":        {},
+		"tidb_softdelete_table_status": {},
+		"tidb_ttl_task":                {},
+
 		// gc info don't need to recover.
 		"gc_delete_range":       {},
 		"gc_delete_range_done":  {},

@@ -39,7 +39,7 @@ func TestCancelWhileScan(t *testing.T) {
 	for i := 0; i < 10000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, NOW() - INTERVAL 24 HOUR)", i))
 	}
-	testPhysicalTableCache, err := cache.NewPhysicalTable(model.NewCIStr("test"), testTable.Meta(), model.NewCIStr(""))
+	testPhysicalTableCache, err := cache.NewPhysicalTable(model.NewCIStr("test"), testTable.Meta(), model.NewCIStr(""), true, false)
 	require.NoError(t, err)
 
 	delCh := make(chan *ttlworker.TTLDeleteTask)

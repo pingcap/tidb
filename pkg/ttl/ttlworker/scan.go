@@ -17,15 +17,16 @@ package ttlworker
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -47,18 +48,18 @@ type ttlStatistics struct {
 	ErrorRows   atomic.Uint64
 }
 
-func (s *ttlStatistics) IncTotalRows(cnt int) {
-	metrics.ScannedExpiredRows.Add(float64(cnt))
+func (s *ttlStatistics) IncTotalRows(jobType session.TTLJobType, cnt int) {
+	metrics.ExpiredRows(metrics.SQLTypeSelect, jobType, true).Add(float64(cnt))
 	s.TotalRows.Add(uint64(cnt))
 }
 
-func (s *ttlStatistics) IncSuccessRows(cnt int) {
-	metrics.DeleteSuccessExpiredRows.Add(float64(cnt))
+func (s *ttlStatistics) IncSuccessRows(jobType session.TTLJobType, cnt int) {
+	metrics.ExpiredRows(metrics.SQLTypeDelete, jobType, true).Add(float64(cnt))
 	s.SuccessRows.Add(uint64(cnt))
 }
 
-func (s *ttlStatistics) IncErrorRows(cnt int) {
-	metrics.DeleteErrorExpiredRows.Add(float64(cnt))
+func (s *ttlStatistics) IncErrorRows(jobType session.TTLJobType, cnt int) {
+	metrics.ExpiredRows(metrics.SQLTypeDelete, jobType, false).Add(float64(cnt))
 	s.ErrorRows.Add(uint64(cnt))
 }
 
@@ -110,10 +111,10 @@ func (t *ttlScanTask) result(err error) *ttlScanTaskExecResult {
 	return &ttlScanTaskExecResult{time: time.Now(), task: t, err: err, reason: reason}
 }
 
-func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
+func (t *ttlScanTask) getDatumRows(rows []chunk.Row, fieldTypes []*types.FieldType) [][]types.Datum {
 	datums := make([][]types.Datum, len(rows))
 	for i, row := range rows {
-		datums[i] = row.GetDatumRow(t.tbl.KeyColumnTypes)
+		datums[i] = row.GetDatumRow(fieldTypes)
 	}
 	return datums
 }
@@ -121,6 +122,7 @@ func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
 func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
 	return l.With(
 		zap.String("jobID", t.JobID),
+		zap.String("jobType", t.JobType),
 		zap.Int64("scanID", t.ScanID),
 		zap.Int64("tableID", t.TableID),
 		zap.String("db", t.tbl.Schema.O),
@@ -130,6 +132,16 @@ func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
 }
 
 func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
+	se, err := getSession(sessPool)
+	if err != nil {
+		return t.result(err)
+	}
+	defer se.Close()
+
+	return t.result(t.doScanWithSession(ctx, delCh, se))
+}
+
+func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDeleteTask, rawSess session.Session) error {
 	// TODO: merge the ctx and the taskCtx in ttl scan task, to allow both "cancel" and gracefully stop workers
 	// now, the taskCtx is only check at the beginning of every loop
 	taskCtx := t.ctx
@@ -137,11 +149,6 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	defer tracer.EnterPhase(tracer.Phase())
 
 	tracer.EnterPhase(metrics.PhaseOther)
-	rawSess, err := getSession(sessPool)
-	if err != nil {
-		return t.result(err)
-	}
-
 	doScanFinished, setDoScanFinished := context.WithCancel(context.Background())
 	wg := util.WaitGroupWrapper{}
 	wg.Run(func() {
@@ -172,12 +179,12 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	defer func() {
 		setDoScanFinished()
 		wg.Wait()
-		rawSess.Close()
 	}()
 
-	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, rawSess.Now())
+	now := rawSess.Now()
+	safeExpire, err := t.tbl.EvalExpireTimeForJob(taskCtx, rawSess, now, t.JobType)
 	if err != nil {
-		return t.result(err)
+		return err
 	}
 	safeExpire = safeExpire.Add(time.Minute)
 
@@ -191,40 +198,56 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	// because `ExecuteSQLWithCheck` only do checks when the table meta used by task is different with the latest one.
 	// In this case, some rows will be deleted unexpectedly.
 	if t.ExpireTime.After(safeExpire) {
-		return t.result(errors.Errorf("current expire time is after safe expire time. (%d > %d)", t.ExpireTime.Unix(), safeExpire.Unix()))
+		interval := t.tbl.TTLInfo.IntervalExprStr
+		timeunit := ast.TimeUnitType(t.tbl.TTLInfo.IntervalTimeUnit).String()
+		if t.JobType == session.TTLJobTypeSoftDelete {
+			interval = t.tbl.SoftdeleteInfo.Retention
+			timeunit = t.tbl.SoftdeleteInfo.RetentionUnit.String()
+		}
+		return errors.Errorf(
+			"current expire time is after safe expire time. (%d > %d, expire: %s %s, now: %d, nowTZ: %s)",
+			t.ExpireTime.Unix(), safeExpire.Unix(),
+			interval, timeunit,
+			now.Unix(), now.Location().String())
 	}
 
-	origConcurrency := rawSess.GetSessionVars().DistSQLScanConcurrency()
-	if _, err = rawSess.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency=1"); err != nil {
-		return t.result(err)
-	}
-	rawSess.GetSessionVars().InternalSQLScanUserTable = true
-	defer func() {
-		rawSess.GetSessionVars().InternalSQLScanUserTable = false
-		_, err = rawSess.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency="+strconv.Itoa(origConcurrency))
-		terror.Log(err)
-	}()
-
-	sess := newTableSession(rawSess, t.tbl, t.ExpireTime)
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
+	sess, restoreSession, err := NewScanSession(rawSess, t.tbl, t.ExpireTime, t.JobType)
 	if err != nil {
-		return t.result(err)
+		return err
+	}
+	defer terror.Call(restoreSession)
+
+	minCheckpointTS := uint64(0)
+	if t.JobType == session.TTLJobTypeSoftDelete && t.tbl.TableInfo.IsActiveActive {
+		minCheckpointTS, err = rawSess.GetMinActiveActiveCheckpointTS(
+			ctx,
+			t.tbl.Schema.O,
+			t.tbl.Name.O,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
+	generator, err := sqlbuilder.NewScanQueryGenerator(t.JobType, t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
+	if err != nil {
+		return err
+	}
+	generator.SetMinCheckpointTS(minCheckpointTS)
 	retrySQL := ""
 	retryTimes := 0
 	var lastResult [][]types.Datum
 	for {
 		if err = taskCtx.Err(); err != nil {
-			return t.result(err)
+			return err
 		}
 		if err = ctx.Err(); err != nil {
-			return t.result(err)
+			return err
 		}
 
 		if total := t.statistics.TotalRows.Load(); total > uint64(taskStartCheckErrorRateCnt) {
 			if t.statistics.ErrorRows.Load() > uint64(float64(total)*taskMaxErrorRate) {
-				return t.result(errors.Errorf("error exceeds the limit"))
+				return errors.Errorf("error exceeds the limit")
 			}
 		}
 
@@ -232,19 +255,19 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		if sql == "" {
 			limit := int(variable.TTLScanBatchSize.Load())
 			if sql, err = generator.NextSQL(lastResult, limit); err != nil {
-				return t.result(err)
+				return err
 			}
 		}
 
 		if sql == "" {
-			return t.result(nil)
+			return nil
 		}
 
 		sqlStart := time.Now()
 		rows, retryable, sqlErr := sess.ExecuteSQLWithCheck(ctx, sql)
 		selectInterval := time.Since(sqlStart)
 		if sqlErr != nil {
-			metrics.SelectErrorDuration.Observe(selectInterval.Seconds())
+			metrics.QueryDuration(metrics.SQLTypeSelect, t.JobType, false).Observe(selectInterval.Seconds())
 			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil && t.ctx.Err() == nil
 			logutil.BgLogger().Warn("execute query for ttl scan task failed",
 				zap.String("SQL", sql),
@@ -254,7 +277,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 			)
 
 			if !needRetry {
-				return t.result(sqlErr)
+				return sqlErr
 			}
 			retrySQL = sql
 			retryTimes++
@@ -262,22 +285,25 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 			tracer.EnterPhase(metrics.PhaseWaitRetry)
 			select {
 			case <-ctx.Done():
-				return t.result(ctx.Err())
+				return ctx.Err()
 			case <-time.After(scanTaskExecuteSQLRetryInterval):
 			}
 			tracer.EnterPhase(metrics.PhaseOther)
 			continue
 		}
 
-		metrics.SelectSuccessDuration.Observe(selectInterval.Seconds())
+		metrics.QueryDuration(metrics.SQLTypeSelect, t.JobType, true).Observe(selectInterval.Seconds())
 		retrySQL = ""
 		retryTimes = 0
-		lastResult = t.getDatumRows(rows)
+		lastResult = t.getDatumRows(rows, t.tbl.KeyColumnTypes)
 		if len(rows) == 0 {
 			continue
 		}
 
 		delTask := &ttlDeleteTask{
+			jobID:      t.JobID,
+			scanID:     t.ScanID,
+			jobType:    t.JobType,
 			tbl:        t.tbl,
 			expire:     t.ExpireTime,
 			rows:       lastResult,
@@ -287,9 +313,9 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		tracer.EnterPhase(metrics.PhaseDispatch)
 		select {
 		case <-ctx.Done():
-			return t.result(ctx.Err())
+			return ctx.Err()
 		case delCh <- delTask:
-			t.statistics.IncTotalRows(len(lastResult))
+			t.statistics.IncTotalRows(delTask.jobType, len(lastResult))
 		}
 		tracer.EnterPhase(metrics.PhaseOther)
 	}

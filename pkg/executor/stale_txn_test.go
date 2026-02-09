@@ -1353,7 +1353,7 @@ func TestStalePrepare(t *testing.T) {
 	var expected [][]any
 	for i := 0; i < 20; i++ {
 		tk.MustExec("insert into t values(?)", i)
-		time.Sleep(2 * time.Millisecond) // sleep 2ms to ensure staleread_ts > commit_ts.
+		time.Sleep(10 * time.Millisecond) // sleep 10ms to ensure staleread_ts > commit_ts.
 
 		expected = append(expected, testkit.Rows(fmt.Sprintf("%d", i))...)
 		rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)

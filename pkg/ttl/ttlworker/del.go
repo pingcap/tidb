@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
@@ -109,10 +108,22 @@ func (l *defaultDelRateLimiter) reset() (newLimit int64) {
 }
 
 type ttlDeleteTask struct {
+	jobID      string
+	scanID     int64
+	jobType    session.TTLJobType
 	tbl        *cache.PhysicalTable
 	expire     time.Time
 	rows       [][]types.Datum
 	statistics *ttlStatistics
+}
+
+func (t *ttlDeleteTask) taskLogger(l *zap.Logger) *zap.Logger {
+	return l.With(
+		zap.String("jobID", t.jobID),
+		zap.Int64("scanID", t.scanID),
+		zap.Int64("tableID", t.tbl.ID),
+		zap.String("table", t.tbl.FullName()),
+	)
 }
 
 func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (retryRows [][]types.Datum) {
@@ -127,7 +138,16 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		}
 	}()
 
-	se := newTableSession(rawSe, t.tbl, t.expire)
+	se, err := newTableSession(rawSe, t.tbl, t.expire, t.jobType)
+	if err != nil {
+		t.statistics.IncErrorRows(t.jobType, len(leftRows))
+		t.taskLogger(logutil.Logger(ctx)).Warn(
+			"create ttl table session failed",
+			zap.Error(err),
+		)
+		return
+	}
+
 	for len(leftRows) > 0 && ctx.Err() == nil {
 		maxBatch := variable.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
@@ -139,13 +159,26 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			leftRows = leftRows[maxBatch:]
 		}
 
-		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, delBatch, t.expire)
+		minCheckpointTS := uint64(0)
+		if t.jobType == session.TTLJobTypeSoftDelete && t.tbl.TableInfo.IsActiveActive {
+			minCheckpointTS, err = rawSe.GetMinActiveActiveCheckpointTS(
+				ctx,
+				t.tbl.Schema.O,
+				t.tbl.Name.O,
+			)
+			if err != nil {
+				t.statistics.IncErrorRows(t.jobType, len(leftRows))
+				t.taskLogger(logutil.Logger(ctx)).Warn("get ticdc min checkpoint ts failed", zap.Error(err))
+				return
+			}
+		}
+
+		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, t.jobType, delBatch, t.expire, minCheckpointTS)
 		if err != nil {
-			t.statistics.IncErrorRows(len(delBatch))
-			logutil.BgLogger().Warn(
+			t.statistics.IncErrorRows(t.jobType, len(delBatch))
+			t.taskLogger(logutil.Logger(ctx)).Warn(
 				"build delete SQL in TTL failed",
 				zap.Error(err),
-				zap.String("table", t.tbl.Schema.O+"."+t.tbl.Name.O),
 			)
 			return
 		}
@@ -153,7 +186,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		tracer.EnterPhase(metrics.PhaseWaitToken)
 		if err = globalDelRateLimiter.WaitDelToken(ctx); err != nil {
 			tracer.EnterPhase(metrics.PhaseOther)
-			logutil.BgLogger().Info(
+			t.taskLogger(logutil.Logger(ctx)).Info(
 				"wait TTL delete rate limiter interrupted",
 				zap.Error(err),
 				zap.Int("waitDelRowCnt", len(delBatch)),
@@ -167,11 +200,12 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		_, needRetry, err := se.ExecuteSQLWithCheck(ctx, sql)
 		sqlInterval := time.Since(sqlStart)
 		if err != nil {
-			metrics.DeleteErrorDuration.Observe(sqlInterval.Seconds())
-			logutil.BgLogger().Warn(
+			metrics.QueryDuration(metrics.SQLTypeDelete, t.jobType, false).Observe(sqlInterval.Seconds())
+			t.taskLogger(logutil.Logger(ctx)).Warn(
 				"delete SQL in TTL failed",
 				zap.Error(err),
 				zap.String("SQL", sql),
+				zap.String("jobType", t.jobType),
 				zap.Bool("needRetry", needRetry),
 			)
 
@@ -181,13 +215,13 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 				}
 				retryRows = append(retryRows, delBatch...)
 			} else {
-				t.statistics.IncErrorRows(len(delBatch))
+				t.statistics.IncErrorRows(t.jobType, len(delBatch))
 			}
 			continue
 		}
 
-		metrics.DeleteSuccessDuration.Observe(sqlInterval.Seconds())
-		t.statistics.IncSuccessRows(len(delBatch))
+		metrics.QueryDuration(metrics.SQLTypeDelete, t.jobType, true).Observe(sqlInterval.Seconds())
+		t.statistics.IncSuccessRows(t.jobType, len(delBatch))
 	}
 	return retryRows
 }
@@ -224,11 +258,11 @@ func (b *ttlDelRetryBuffer) RecordTaskResult(task *ttlDeleteTask, retryRows [][]
 	b.recordRetryItem(task, retryRows, 0)
 }
 
-func (b *ttlDelRetryBuffer) DoRetry(do func(*ttlDeleteTask) [][]types.Datum) time.Duration {
+func (b *ttlDelRetryBuffer) DoRetry(do func(*ttlDelRetryItem) [][]types.Datum) time.Duration {
 	l := b.list.Len()
 	// When `retryInterval==0`, to avoid the infinite retries, limit the max loop to the buffer length.
 	// It means one item only has one chance to retry in one `DoRetry` invoking.
-	for i := 0; i < l; i++ {
+	for range l {
 		ele := b.list.Front()
 		if ele == nil {
 			break
@@ -247,7 +281,7 @@ func (b *ttlDelRetryBuffer) DoRetry(do func(*ttlDeleteTask) [][]types.Datum) tim
 		}
 
 		b.list.Remove(ele)
-		if retryRows := do(item.task); len(retryRows) > 0 {
+		if retryRows := do(item); len(retryRows) > 0 {
 			b.recordRetryItem(item.task, retryRows, item.retryCnt+1)
 		}
 	}
@@ -263,7 +297,7 @@ func (b *ttlDelRetryBuffer) SetRetryInterval(interval time.Duration) {
 func (b *ttlDelRetryBuffer) Drain() {
 	for ele := b.list.Front(); ele != nil; ele = ele.Next() {
 		if item, ok := ele.Value.(*ttlDelRetryItem); ok {
-			item.task.statistics.IncErrorRows(len(item.task.rows))
+			item.task.statistics.IncErrorRows(item.task.jobType, len(item.task.rows))
 		} else {
 			logutil.BgLogger().Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
 		}
@@ -277,14 +311,24 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 	}
 
 	if retryCnt >= b.maxRetry {
-		task.statistics.IncErrorRows(len(retryRows))
+		task.taskLogger(logutil.BgLogger()).Warn(
+			"discard TTL rows that has failed more than maxRetry times",
+			zap.Int("rowCnt", len(retryRows)),
+			zap.Int("retryCnt", retryCnt),
+		)
+		task.statistics.IncErrorRows(task.jobType, len(retryRows))
 		return false
 	}
 
 	for b.list.Len() > 0 && b.list.Len() >= b.maxSize {
 		ele := b.list.Front()
 		if item, ok := ele.Value.(*ttlDelRetryItem); ok {
-			item.task.statistics.IncErrorRows(len(item.task.rows))
+			task.taskLogger(logutil.BgLogger()).Warn(
+				"discard TTL rows because the retry buffer is full",
+				zap.Int("rowCnt", len(retryRows)),
+				zap.Int("bufferSize", b.list.Len()),
+			)
+			item.task.statistics.IncErrorRows(task.jobType, len(item.task.rows))
 		} else {
 			logutil.BgLogger().Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
 		}
@@ -333,9 +377,18 @@ func (w *ttlDeleteWorker) loop() error {
 	defer se.Close()
 
 	ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
+	return w.loopWithSession(ctx, tracer, se)
+}
 
-	doRetry := func(task *ttlDeleteTask) [][]types.Datum {
-		return task.doDelete(ctx, se)
+func (w *ttlDeleteWorker) loopWithSession(ctx context.Context, tracer *metrics.PhaseTracer, se session.Session) error {
+	doRetry := func(item *ttlDelRetryItem) [][]types.Datum {
+		return item.task.doDelete(
+			logutil.WithFields(
+				ctx,
+				zap.Bool("inRetry", true),
+				zap.Int("retriedCnt", item.retryCnt),
+				zap.Time("inTime", item.inTime),
+			), se)
 	}
 
 	timer := time.NewTimer(w.retryBuffer.retryInterval)
@@ -346,17 +399,23 @@ func (w *ttlDeleteWorker) loop() error {
 		// to avoid leaving any TTL rows undeleted when shrinking the delete worker.
 		if w.retryBuffer.Len() > 0 {
 			start := time.Now()
-			log.Info(
+			logutil.BgLogger().Info(
 				"try to delete TTL rows in del worker buffer immediately because the worker is going to stop",
 				zap.Int("bufferLen", w.retryBuffer.Len()),
 			)
 			retryCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 			defer cancel()
 			w.retryBuffer.SetRetryInterval(0)
-			w.retryBuffer.DoRetry(func(task *ttlDeleteTask) [][]types.Datum {
-				return task.doDelete(retryCtx, se)
+			w.retryBuffer.DoRetry(func(item *ttlDelRetryItem) [][]types.Datum {
+				return item.task.doDelete(
+					logutil.WithFields(
+						retryCtx,
+						zap.Bool("inWorkerFlush", true),
+						zap.Int("retriedCnt", item.retryCnt),
+						zap.Time("inTime", item.inTime),
+					), se)
 			})
-			log.Info(
+			logutil.BgLogger().Info(
 				"delete TTL rows in del worker buffer finished",
 				zap.Duration("duration", time.Since(start)),
 			)
@@ -364,7 +423,7 @@ func (w *ttlDeleteWorker) loop() error {
 
 		// drain retry buffer to make sure the statistics are correct
 		if w.retryBuffer.Len() > 0 {
-			log.Warn(
+			logutil.BgLogger().Warn(
 				"some TTL rows are still in the buffer while the worker is going to stop, mark them as error",
 				zap.Int("bufferLen", w.retryBuffer.Len()),
 			)

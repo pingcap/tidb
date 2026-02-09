@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func firstKey(t table.Table) kv.Key {
@@ -1281,4 +1283,121 @@ func TestDupKeyCheckMode(t *testing.T) {
 		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
 		tk.MustExec("rollback")
 	})
+}
+
+type testCase struct {
+	name       string
+	resetState func(t *testing.T, tk *testkit.TestKit) uint64
+	execToErr  bool
+}
+
+func testActiveActiveTableSetCommitWaitUntilTSO(t *testing.T, tk *testkit.TestKit, tc testCase) {
+	checkUpdated := func(t *testing.T, originTS uint64) {
+		// _tidb_commit_ts should be greater than origin ts
+		rows := tk.MustQuery("select _tidb_commit_ts from t where id = 1").Rows()
+		val := rows[0][0].(string)
+		commitTS, err := strconv.ParseUint(val, 10, 64)
+		require.NoError(t, err)
+		require.True(t, commitTS > originTS)
+		// origin ts should be reset
+		tk.MustQuery("select _tidb_origin_ts from t where id = 1").Check(testkit.Rows("<nil>"))
+	}
+
+	checkCommitTSLagErr := func(t *testing.T, err error) {
+		require.ErrorContains(t, err, "[tikv:8181]TSO lags too much")
+	}
+
+	t.Run(tc.name, func(t *testing.T) {
+		{
+			originTS := tc.resetState(t, tk)
+			// insert
+			err := tk.ExecToErr("insert into t (id, v) value (1, 2)")
+			require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
+			// insert ignore
+			tk.MustExec("insert ignore into t (id, v) value (1, 2)")
+			tk.MustQuery("select id, v from t").Check(testkit.Rows("1 1"))
+			// insert on duplicate
+			if tc.execToErr {
+				checkCommitTSLagErr(t, tk.ExecToErr("insert into t (id, v) value (1, 3) on duplicate key update v = 3"))
+			} else {
+				tk.MustExec("insert into t (id, v) value (1, 3) on duplicate key update v = 3")
+				tk.MustQuery("select id, v from t").Check(testkit.Rows("1 3"))
+				checkUpdated(t, originTS)
+			}
+		}
+
+		{
+			originTS := tc.resetState(t, tk)
+			// replace
+			if tc.execToErr {
+				checkCommitTSLagErr(t, tk.ExecToErr("replace into t (id, v) value (1, 4)"))
+			} else {
+				tk.MustExec("replace into t (id, v) value (1, 4)")
+				tk.MustQuery("select id, v from t").Check(testkit.Rows("1 4"))
+				checkUpdated(t, originTS)
+			}
+		}
+
+		{
+			originTS := tc.resetState(t, tk)
+			// update
+			if tc.execToErr {
+				checkCommitTSLagErr(t, tk.ExecToErr("update t set v = 5 where id = 1"))
+			} else {
+				tk.MustExec("update t set v = 5 where id = 1")
+				tk.MustQuery("select id, v from t").Check(testkit.Rows("1 5"))
+				checkUpdated(t, originTS)
+			}
+		}
+
+		{
+			tc.resetState(t, tk)
+			// delete
+			if tc.execToErr {
+				checkCommitTSLagErr(t, tk.ExecToErr("delete from t where id = 1"))
+			} else {
+				tk.MustExec("delete from t where id = 1")
+				tk.MustQuery("select id, v from t").Check(testkit.Rows())
+			}
+		}
+	})
+}
+
+func TestActiveActiveTableSetCommitWaitUntilTSO(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int) softdelete retention 7 day, active_active = 'on'")
+
+	resetStateclockDriftNone := func(t *testing.T, tk *testkit.TestKit) uint64 {
+		tk.MustExec("truncate table t")
+		tk.MustExec("begin; insert into t (id, v, _tidb_origin_ts) values (1, 1, tidb_current_tso()); commit")
+		rows := tk.MustQuery("select _tidb_origin_ts from t where id = 1").Rows()
+		val := rows[0][0].(string)
+		var err error
+		originTS, err := strconv.ParseUint(val, 10, 64)
+		require.NoError(t, err)
+		return originTS
+	}
+	resetStateClockDriftSmall := func(t *testing.T, tk *testkit.TestKit) uint64 {
+		tk.MustExec("truncate table t")
+		originTS := oracle.GoTimeToTS(time.Now().Add(300 * time.Millisecond))
+		tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, ?)", originTS)
+		return originTS
+	}
+	resetStateClockDriftLarge := func(t *testing.T, tk *testkit.TestKit) uint64 {
+		tk.MustExec("truncate table t")
+		originTS := oracle.GoTimeToTS(time.Now().Add(5 * time.Second))
+		tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, ?)", originTS)
+		return originTS
+	}
+
+	tc := []testCase{
+		{"clockDriftNone", resetStateclockDriftNone, false},
+		{"clockDriftSmall", resetStateClockDriftSmall, false},
+		{"clockDriftLarge", resetStateClockDriftLarge, true},
+	}
+	for _, tc := range tc {
+		testActiveActiveTableSetCommitWaitUntilTSO(t, tk, tc)
+	}
 }

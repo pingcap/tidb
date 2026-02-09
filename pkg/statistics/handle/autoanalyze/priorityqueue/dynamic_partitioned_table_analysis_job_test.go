@@ -133,12 +133,15 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table"))
 	require.NoError(t, err)
+	partitionInfo := tableInfo.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
+	require.Len(t, partitionInfo.Definitions, 2)
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
 		SchemaName:    "example_schema",
 		GlobalTableID: tableInfo.Meta().ID,
 		PartitionIDs: map[int64]struct{}{
-			115: {},
-			116: {},
+			partitionInfo.Definitions[0].ID: {},
+			partitionInfo.Definitions[1].ID: {},
 		},
 		Weight: 2,
 	}
@@ -187,12 +190,15 @@ func TestPerformanceOfValidateAndPrepare(t *testing.T) {
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table"))
 	require.NoError(t, err)
+	partitionInfo := tableInfo.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
+	require.Len(t, partitionInfo.Definitions, 2)
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
 		SchemaName:    "example_schema",
 		GlobalTableID: tableInfo.Meta().ID,
 		PartitionIDs: map[int64]struct{}{
-			113: {},
-			114: {},
+			partitionInfo.Definitions[0].ID: {},
+			partitionInfo.Definitions[1].ID: {},
 		},
 		Weight: 2,
 	}

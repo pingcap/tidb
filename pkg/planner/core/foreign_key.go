@@ -346,7 +346,7 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
 	colsInfo := GetUpdateColumnsInfo(updt.tblID2Table, updt.TblColPosInfos, len(updt.SelectPlan.Schema().Columns))
 	tblID2UpdateColumns := make(map[int64]map[string]struct{})
 	for _, assign := range updt.OrderedList {
-		col := colsInfo[assign.Col.Index]
+		col := colsInfo[assign.Col.Index].Column
 		for _, content := range updt.TblColPosInfos {
 			if assign.Col.Index >= content.Start && assign.Col.Index < content.End {
 				if _, ok := tblID2UpdateColumns[content.TblID]; !ok {

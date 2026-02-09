@@ -103,7 +103,7 @@ var DefaultCumulativeTimeout = 1 * time.Minute
 // exported for testing.
 var DefaultAnalyzeCheckInterval = 10 * time.Second
 
-func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
+func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool, isUnique bool) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -118,6 +118,12 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		}
 		if isVector && col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
 			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
+		}
+		if col.Name == model.ExtraCommitTSName {
+			return nil, false, errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
+		}
+		if isUnique && model.IsSoftDeleteOrActiveActiveColumn(col.Name) {
+			return nil, false, errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
 		}
 
 		// return error in strict sql mode
@@ -368,7 +374,7 @@ func BuildIndexInfo(
 
 	var err error
 	allTableColumns := tblInfo.Columns
-	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, isVector)
+	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, isVector, isUnique)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

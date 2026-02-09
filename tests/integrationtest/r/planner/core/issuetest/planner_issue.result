@@ -974,6 +974,32 @@ Projection	155937656.25	root		1->Column#17
       └─Selection	9990.00	cop[tikv]		not(isnull(test.t1.a))
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@tidb_opt_join_reorder_threshold=default;
+drop table if exists t, t1, t2;
+create table t(a int, b int);
+insert into t value (1,1);
+select *, _tidb_rowid from t;
+a	b	_tidb_rowid
+1	1	1
+select * from (select *, _tidb_rowid from t) n;
+a	b	_tidb_rowid
+1	1	1
+create table t1(a int, b int);
+create table t2(aa int, bb int);
+explain format = 'brief' select * from (select _tidb_rowid from t1) n1 natural join (select _tidb_rowid from t2) n2;
+id	estRows	task	access object	operator info
+MergeJoin	12500.00	root		inner join, left key:test.t1._tidb_rowid, right key:test.t2._tidb_rowid
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+explain format = 'brief' select * from (select _tidb_rowid, a from t1) n1 natural join (select _tidb_rowid, aa from t2) n2;
+id	estRows	task	access object	operator info
+Projection	12500.00	root		test.t1._tidb_rowid, test.t1.a, test.t2.aa
+└─MergeJoin	12500.00	root		inner join, left key:test.t1._tidb_rowid, right key:test.t2._tidb_rowid
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 drop table if exists t1, t2;
 create table t1(a int, b int);
 create table t2(a int, b int) partition by hash(a) partitions 2;

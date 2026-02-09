@@ -326,6 +326,9 @@ var defaultSysVars = []*SysVar{
 		s.lowResolutionTSO = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBCDCActiveActiveSyncStats, Value: "", Type: TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return fmt.Sprintf("{\"conflict_skip_rows\": %d}", s.ActiveActiveConflictSkipRows.Load()), nil
+	}},
 	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
@@ -590,6 +593,10 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTranslateSoftDeleteSQL, Type: TypeBool, Value: BoolToOnOff(DefTiDBTranslateSoftdeleteSQL), SetSession: func(s *SessionVars, val string) error {
+		s.SoftDeleteRewrite = TiDBOptOn(val)
+		return nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent), nil
@@ -2896,6 +2903,12 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTTLJob.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBSoftDeleteJobEnable, Value: BoolToOnOff(DefTiDBSoftDeleteJobEnable), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		SoftDeleteJobEnable.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(SoftDeleteJobEnable.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBTTLScanBatchSize, Value: strconv.Itoa(DefTiDBTTLScanBatchSize), Type: TypeInt, MinValue: DefTiDBTTLScanBatchMinSize, MaxValue: DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)

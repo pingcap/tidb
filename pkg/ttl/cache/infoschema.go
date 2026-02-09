@@ -53,9 +53,14 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	newTables := make(map[int64]*PhysicalTable, len(isc.Tables))
 
 	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
+	ch = append(ch, is.ListTablesWithSpecialAttribute(infoschemacontext.SoftDeleteAttribute)...)
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
-			if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable || tblInfo.State != model.StatePublic {
+			isTTL := tblInfo.TTLInfo != nil && tblInfo.TTLInfo.Enable && tblInfo.State == model.StatePublic
+			isSoftDelete := tblInfo.SoftdeleteInfo != nil &&
+				tblInfo.SoftdeleteInfo.JobEnable &&
+				tblInfo.State == model.StatePublic
+			if !isTTL && !isSoftDelete {
 				continue
 			}
 			dbName := v.DBName
@@ -64,24 +69,24 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 					zap.Int64("tableID", tblInfo.ID), zap.String("tableName", tblInfo.Name.L))
 
 			if tblInfo.Partition == nil {
-				ttlTable, err := isc.newTable(dbName, tblInfo, nil)
+				phyTable, err := isc.newTable(dbName, tblInfo, nil, isTTL, isSoftDelete)
 				if err != nil {
 					logger.Warn("fail to build info schema cache", zap.Error(err))
 					continue
 				}
-				newTables[tblInfo.ID] = ttlTable
+				newTables[tblInfo.ID] = phyTable
 				continue
 			}
 
 			for _, par := range tblInfo.Partition.Definitions {
-				ttlTable, err := isc.newTable(dbName, tblInfo, &par)
+				phyTable, err := isc.newTable(dbName, tblInfo, &par, isTTL, isSoftDelete)
 				if err != nil {
 					logger.Warn("fail to build info schema cache",
 						zap.Int64("partitionID", par.ID),
 						zap.String("partition", par.Name.L), zap.Error(err))
 					continue
 				}
-				newTables[par.ID] = ttlTable
+				newTables[par.ID] = phyTable
 			}
 		}
 	}
@@ -92,8 +97,13 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	return nil
 }
 
-func (isc *InfoSchemaCache) newTable(schema pmodel.CIStr, tblInfo *model.TableInfo,
-	par *model.PartitionDefinition) (*PhysicalTable, error) {
+func (isc *InfoSchemaCache) newTable(
+	schema pmodel.CIStr,
+	tblInfo *model.TableInfo,
+	par *model.PartitionDefinition,
+	checkTTL bool,
+	checkSoftdelete bool,
+) (*PhysicalTable, error) {
 	id := tblInfo.ID
 	if par != nil {
 		id = par.ID
@@ -110,5 +120,5 @@ func (isc *InfoSchemaCache) newTable(schema pmodel.CIStr, tblInfo *model.TableIn
 	if par != nil {
 		partitionName = par.Name
 	}
-	return NewPhysicalTable(schema, tblInfo, partitionName)
+	return NewPhysicalTable(schema, tblInfo, partitionName, checkTTL, checkSoftdelete)
 }

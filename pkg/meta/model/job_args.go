@@ -206,6 +206,25 @@ func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
 	return getOrDecodeArgs[*ModifySchemaArgs](&ModifySchemaArgs{}, job)
 }
 
+// ModifySchemaSoftDeleteAndActiveActiveArgs is the arguments for modify schema soft-delete or active-active.
+type ModifySchemaSoftDeleteAndActiveActiveArgs struct {
+	SoftDelete   *SoftdeleteInfo `json:"softdelete,omitempty"`
+	ActiveActive bool            `json:"active_active,omitempty"`
+}
+
+func (a *ModifySchemaSoftDeleteAndActiveActiveArgs) getArgsV1(_ *Job) []any {
+	return []any{a.SoftDelete, a.ActiveActive}
+}
+
+func (a *ModifySchemaSoftDeleteAndActiveActiveArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.SoftDelete, &a.ActiveActive))
+}
+
+// GetModifySchemaSoftDeleteAndActiveActiveArgs gets the modify schema soft-delete args.
+func GetModifySchemaSoftDeleteAndActiveActiveArgs(job *Job) (*ModifySchemaSoftDeleteAndActiveActiveArgs, error) {
+	return getOrDecodeArgs[*ModifySchemaSoftDeleteAndActiveActiveArgs](&ModifySchemaSoftDeleteAndActiveActiveArgs{}, job)
+}
+
 // CreateTableArgs is the arguments for create table/view/sequence job.
 type CreateTableArgs struct {
 	TableInfo *TableInfo `json:"table_info,omitempty"`
@@ -951,7 +970,7 @@ func GetShardRowIDArgs(job *Job) (*ShardRowIDArgs, error) {
 type AlterTTLInfoArgs struct {
 	TTLInfo            *TTLInfo `json:"ttl_info,omitempty"`
 	TTLEnable          *bool    `json:"ttl_enable,omitempty"`
-	TTLCronJobSchedule *string  `json:"ttl_cron_job_schedule,omitempty"`
+	TTLCronJobSchedule *string  `json:"ttl_cronjob_schedule,omitempty"`
 }
 
 func (a *AlterTTLInfoArgs) getArgsV1(*Job) []any {
@@ -965,6 +984,42 @@ func (a *AlterTTLInfoArgs) decodeV1(job *Job) error {
 // GetAlterTTLInfoArgs gets the args for alter ttl info job.
 func GetAlterTTLInfoArgs(job *Job) (*AlterTTLInfoArgs, error) {
 	return getOrDecodeArgs[*AlterTTLInfoArgs](&AlterTTLInfoArgs{}, job)
+}
+
+// AlterSoftDeleteInfoArgs is the arguments for alter soft delete info job.
+type AlterSoftDeleteInfoArgs struct {
+	SoftDelete *SoftdeleteInfo `json:"softdelete,omitempty"`
+}
+
+func (a *AlterSoftDeleteInfoArgs) getArgsV1(*Job) []any {
+	return []any{&a.SoftDelete}
+}
+
+func (a *AlterSoftDeleteInfoArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.SoftDelete))
+}
+
+// GetAlterSoftDeleteInfoArgs gets the args for alter soft delete info job.
+func GetAlterSoftDeleteInfoArgs(job *Job) (*AlterSoftDeleteInfoArgs, error) {
+	return getOrDecodeArgs[*AlterSoftDeleteInfoArgs](&AlterSoftDeleteInfoArgs{}, job)
+}
+
+// AlterActiveActiveArgs is the arguments for alter active-active job.
+type AlterActiveActiveArgs struct {
+	IsActiveActive bool `json:"is_active_active"`
+}
+
+func (a *AlterActiveActiveArgs) getArgsV1(*Job) []any {
+	return []any{a.IsActiveActive}
+}
+
+func (a *AlterActiveActiveArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.IsActiveActive))
+}
+
+// GetAlterActiveActiveArgs gets the args for alter active-active job.
+func GetAlterActiveActiveArgs(job *Job) (*AlterActiveActiveArgs, error) {
+	return getOrDecodeArgs[*AlterActiveActiveArgs](&AlterActiveActiveArgs{}, job)
 }
 
 // CheckConstraintArgs is the arguments for both AlterCheckConstraint and DropCheckConstraint job.

@@ -322,6 +322,7 @@ loop:
 	for _, t := range tasks {
 		logger := logutil.Logger(m.ctx).With(
 			zap.String("jobID", t.JobID),
+			zap.String("jobType", t.JobType),
 			zap.Int64("scanID", t.ScanID),
 			zap.Int64("tableID", t.TableID),
 		)
@@ -702,17 +703,30 @@ func (m *taskManager) checkInvalidTask(se session.Session) {
 }
 
 func (m *taskManager) reportMetrics() {
-	scanningTaskCnt := 0
-	deletingTaskCnt := 0
+	var ttlScanningTaskCnt, ttlDeletingTaskCnt float64
+	var softScanningTaskCnt, softDeletingTaskCnt float64
 	for _, task := range m.runningTasks {
-		if task.result != nil {
-			scanningTaskCnt += 1
-		} else {
-			deletingTaskCnt += 1
+		switch task.JobType {
+		case session.TTLJobTypeTTL:
+
+			if task.result != nil {
+				ttlScanningTaskCnt += 1
+			} else {
+				ttlDeletingTaskCnt += 1
+			}
+		case session.TTLJobTypeSoftDelete:
+
+			if task.result != nil {
+				softScanningTaskCnt += 1
+			} else {
+				softDeletingTaskCnt += 1
+			}
 		}
 	}
-	metrics.ScanningTaskCnt.Set(float64(scanningTaskCnt))
-	metrics.DeletingTaskCnt.Set(float64(deletingTaskCnt))
+	metrics.TaskStatus(metrics.TaskStatusScan, session.TTLJobTypeTTL).Set(ttlScanningTaskCnt)
+	metrics.TaskStatus(metrics.TaskStatusDel, session.TTLJobTypeTTL).Set(ttlDeletingTaskCnt)
+	metrics.TaskStatus(metrics.TaskStatusScan, session.TTLJobTypeSoftDelete).Set(softScanningTaskCnt)
+	metrics.TaskStatus(metrics.TaskStatusDel, session.TTLJobTypeSoftDelete).Set(softDeletingTaskCnt)
 }
 
 func (m *taskManager) meetTTLRunningTask(count int, taskStatus cache.TaskStatus) bool {

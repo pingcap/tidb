@@ -109,8 +109,8 @@ func createTestTimer(t *testing.T, cli timerapi.TimerClient) (*timerapi.TimerRec
 	require.NoError(t, err)
 
 	timer, err := cli.CreateTimer(context.TODO(), timerapi.TimerSpec{
-		Key:             fmt.Sprintf("%s%d/%d", timerKeyPrefix, data.TableID, data.PhysicalID),
-		HookClass:       timerHookClass,
+		Key:             fmt.Sprintf("%s%d/%d", ttlTimerKeyPrefix, data.TableID, data.PhysicalID),
+		HookClass:       ttlTimerHookClass,
 		Tags:            []string{"db=test", "table=t1", "partition=p0"},
 		Data:            bs,
 		SchedPolicyType: timerapi.SchedEventInterval,
@@ -549,11 +549,12 @@ func TestWaitTTLJobFinish(t *testing.T) {
 }
 
 func TestTTLTimerRuntime(t *testing.T) {
-	adapter := &mockJobAdapter{}
+	ttlAdapter := &mockJobAdapter{}
+	softAdapter := &mockJobAdapter{}
 	store := timerapi.NewMemoryTimerStore()
 	defer store.Close()
 
-	r := newTTLTimerRuntime(store, adapter)
+	r := newTTLTimerRuntime(store, ttlAdapter, softAdapter)
 	r.Resume()
 	rt := r.rt
 	require.NotNil(t, rt)
@@ -572,19 +573,18 @@ func TestTTLTimerRuntime(t *testing.T) {
 }
 
 func TestGetTTLSchedulePolicy(t *testing.T) {
+	sync, err := NewTTLTimerSyncer(nil, nil)
+	require.NoError(t, err)
+
 	// normal case
-	tp, expr := getTTLSchedulePolicy(&model.TTLInfo{
-		JobInterval: "12h",
-	})
+	tp, expr := sync.cfg.getSchedPolicy(&model.TableInfo{TTLInfo: &model.TTLInfo{JobInterval: "12h", Enable: true}})
 	require.Equal(t, timerapi.SchedEventInterval, tp)
 	require.Equal(t, "12h", expr)
-	_, err := timerapi.CreateSchedEventPolicy(tp, expr)
+	_, err = timerapi.CreateSchedEventPolicy(tp, expr)
 	require.NoError(t, err)
 
 	// empty job interval
-	tp, expr = getTTLSchedulePolicy(&model.TTLInfo{
-		JobInterval: "",
-	})
+	tp, expr = sync.cfg.getSchedPolicy(&model.TableInfo{TTLInfo: &model.TTLInfo{JobInterval: "", Enable: true}})
 	require.Equal(t, timerapi.SchedEventInterval, tp)
 	require.Equal(t, model.DefaultJobIntervalStr, expr)
 	_, err = timerapi.CreateSchedEventPolicy(tp, expr)

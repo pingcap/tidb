@@ -551,6 +551,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSetOpr(ctx, x)
 	case *ast.UpdateStmt:
 		return b.buildUpdate(ctx, x)
+	case *ast.RecoverValuesStmt:
+		return b.buildRecoverValues(ctx, x)
 	case *ast.ShowStmt:
 		return b.buildShow(ctx, x)
 	case *ast.DoStmt:
@@ -4141,13 +4143,36 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, errors.Errorf("Can't get table %s", tableInfo.Name.O)
 	}
 
+	// check table info to see if it's active-active table
+	needExtraCommitTS := tableInfo.IsActiveActive
+
+	if needExtraCommitTS {
+		dbName := tnW.DBInfo.Name
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		commitTSCol := &expression.Column{
+			RetType:     tp,
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:          model.ExtraCommitTSID,
+			OrigName:    fmt.Sprintf("%v.%v.%v", dbName.L, tableInfo.Name, model.ExtraCommitTSName),
+			IsInvisible: true,
+		}
+		schema.Append(commitTSCol)
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     model.ExtraCommitTSName,
+			OrigColName: model.ExtraCommitTSName,
+		})
+	}
+
 	insertPlan := Insert{
-		Table:         tableInPlan,
-		Columns:       insert.Columns,
-		tableSchema:   schema,
-		tableColNames: names,
-		IsReplace:     insert.IsReplace,
-		IgnoreErr:     insert.IgnoreErr,
+		Table:             tableInPlan,
+		Columns:           insert.Columns,
+		tableSchema:       schema,
+		tableColNames:     names,
+		IsReplace:         insert.IsReplace,
+		IgnoreErr:         insert.IgnoreErr,
+		NeedExtraCommitTS: needExtraCommitTS,
 	}.Init(b.ctx)
 
 	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
@@ -4239,6 +4264,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 
+	// Build ReplaceConflictIfExpr for soft delete tables
+	insertPlan.ReplaceConflictIfExpr = b.buildSoftDeleteReplaceExpr(insertPlan.SCtx().GetSessionVars(), insertPlan.tableColNames, insertPlan.tableSchema.Columns, tableInfo)
+
 	err = insertPlan.ResolveIndices()
 	if err != nil {
 		return nil, err
@@ -4301,6 +4329,34 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 	return onDupColSet, nil
 }
 
+// buildSoftDeleteReplaceExpr builds the ReplaceConflictIfExpr for soft delete enabled tables.
+// It creates an expression: NOT(ISNULL(_tidb_softdelete_time)) to check if a row is soft-deleted.
+func (b *PlanBuilder) buildSoftDeleteReplaceExpr(vars *variable.SessionVars, tableColNames types.NameSlice, columns []*expression.Column, tableInfo *model.TableInfo) []expression.Expression {
+	if tableInfo.SoftdeleteInfo == nil ||
+		!vars.SoftDeleteRewrite {
+		return nil
+	}
+
+	// Find the _tidb_softdelete_time column in the table schema
+	var softDeleteCol *expression.Column
+	for i, name := range tableColNames {
+		if name.ColName.L == model.ExtraSoftDeleteTimeName.L {
+			softDeleteCol = columns[i]
+			break
+		}
+	}
+
+	// The soft delete time column should always exist when soft delete is enabled
+	intest.Assert(softDeleteCol != nil, "_tidb_softdelete_time column not found in schema when soft delete is enabled")
+
+	if softDeleteCol != nil {
+		// Build the expression: NOT(ISNULL(_tidb_softdelete_time))
+		notNullExpr := expression.BuildNotNullExpr(b.ctx.GetExprCtx(), softDeleteCol)
+		return []expression.Expression{notNullExpr}
+	}
+	return nil
+}
+
 func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
 	if len(insertStmt.Columns) > 0 {
 		// This branch is for the following scenarios:
@@ -4322,6 +4378,13 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 		// 1. `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,
 		// 2. `INSERT INTO tbl_name SELECT ...`.
 		affectedValuesCols = insertPlan.Table.VisibleCols()
+		tblInfo := insertPlan.Table.Meta()
+		if tblInfo.SoftdeleteInfo != nil || tblInfo.IsActiveActive {
+			affectedValuesCols = slices.DeleteFunc(slices.Clone(affectedValuesCols), func(col *table.Column) bool {
+				return (tblInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+					(tblInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L)
+			})
+		}
 	}
 	return affectedValuesCols, nil
 }
@@ -4635,6 +4698,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	mockTablePlan.SetOutputNames(names)
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
+
+	// Build ReplaceConflictIfExpr for soft delete tables
+	p.ReplaceConflictIfExpr = b.buildSoftDeleteReplaceExpr(b.ctx.GetSessionVars(), names, schema.Columns, tableInfo)
 	return p, err
 }
 

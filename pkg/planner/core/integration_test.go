@@ -2423,3 +2423,42 @@ func TestIssue58829(t *testing.T) {
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
 }
+
+func TestTiFlashWithCommitTSColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, v int)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	// When both tikv and tiflash are available, accessing _tidb_commit_ts should use tikv
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash,tikv'")
+	// Query with _tidb_commit_ts should NOT use tiflash
+	hasTiFlashPlan := tk.HasTiFlashPlan("select _tidb_commit_ts, id from t")
+	require.False(t, hasTiFlashPlan, "TiFlash should not be used when accessing _tidb_commit_ts column")
+
+	// With read_from_storage hint for tiflash, accessing _tidb_commit_ts should use tikv
+	hasTiFlashPlan = tk.HasTiFlashPlan("select /*+ read_from_storage(tiflash[t]) */ _tidb_commit_ts, id from t")
+	require.False(t, hasTiFlashPlan, "TiFlash should not be used when accessing _tidb_commit_ts column")
+
+	// When only tiflash is available, accessing _tidb_commit_ts should fail
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	_, err = tk.Exec("explain select _tidb_commit_ts, id from t")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Can't find a proper physical plan")
+
+	// Normal queries (without _tidb_commit_ts) can still use tiflash
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	hasTiFlashPlan = tk.HasTiFlashPlan("select id, v from t")
+	require.True(t, hasTiFlashPlan, "TiFlash should be used for normal queries without _tidb_commit_ts")
+}

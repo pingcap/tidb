@@ -504,6 +504,7 @@ func (op *Insert) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned.baseSchemaProducer = *op.baseSchemaProducer.CloneWithNewCtx(newCtx)
 	cloned.Lists = util.CloneExpression2D(op.Lists)
 	cloned.OnDuplicate = util.CloneAssignments(op.OnDuplicate)
+	cloned.ReplaceConflictIfExpr = util.CloneExpressions(op.ReplaceConflictIfExpr)
 	cloned.GenCols = op.GenCols.Copy()
 	if op.SelectPlan != nil {
 		SelectPlan, ok := op.SelectPlan.CloneForPlanCache(newCtx)

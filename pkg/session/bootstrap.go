@@ -534,9 +534,30 @@ const (
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 
+	// CreateTiDBSoftDeleteTableStatusTable is a table about softdelete job schedule
+	CreateTiDBSoftDeleteTableStatusTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_softdelete_table_status (
+		table_id bigint(64) PRIMARY KEY,
+		parent_table_id bigint(64),
+		table_statistics text DEFAULT NULL,
+		last_job_id varchar(64) DEFAULT NULL,
+		last_job_start_time timestamp NULL DEFAULT NULL,
+		last_job_finish_time timestamp NULL DEFAULT NULL,
+		last_job_ttl_expire timestamp NULL DEFAULT NULL,
+		last_job_summary text DEFAULT NULL,
+		current_job_id varchar(64) DEFAULT NULL,
+		current_job_owner_id varchar(64) DEFAULT NULL,
+		current_job_owner_addr varchar(256) DEFAULT NULL,
+		current_job_owner_hb_time timestamp,
+		current_job_start_time timestamp NULL DEFAULT NULL,
+		current_job_ttl_expire timestamp NULL DEFAULT NULL,
+		current_job_state text DEFAULT NULL,
+		current_job_status varchar(64) DEFAULT NULL,
+		current_job_status_update_time timestamp NULL DEFAULT NULL);`
+
 	// CreateTTLTask is a table about parallel ttl tasks
 	CreateTTLTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_task (
 		job_id varchar(64) NOT NULL,
+		job_type varchar(32) NOT NULL DEFAULT 'ttl',
 		table_id bigint(64) NOT NULL,
 		scan_id int NOT NULL,
 		scan_range_start BLOB,
@@ -550,11 +571,13 @@ const (
 		state text,
 		created_time timestamp NOT NULL,
 		primary key(job_id, scan_id),
+		key idx_job_type (job_type),
 		key(created_time));`
 
 	// CreateTTLJobHistory is a table that stores ttl job's history
 	CreateTTLJobHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
 		job_id varchar(64) PRIMARY KEY,
+		job_type varchar(32) NOT NULL DEFAULT 'ttl',
 		table_id bigint(64) NOT NULL,
         parent_table_id bigint(64) NOT NULL,
     	table_schema varchar(64) NOT NULL,
@@ -1238,6 +1261,12 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version223 = 223
 
+	// version224
+	// Add tidb_softdelete_table_status system table and evolve TTL tables schema to support softdelete jobs.
+	// - Add job_type to mysql.tidb_ttl_task.
+	// - Add job_type to mysql.tidb_ttl_job_history.
+	version224 = 224
+
 	// ...
 	// [version223, version238] is the version range reserved for patches of 8.5.x
 	// ...
@@ -1247,7 +1276,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version223
+var currentBootstrapVersion int64 = version224
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1426,6 +1455,7 @@ var (
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+		upgradeToVer224,
 	}
 )
 
@@ -3302,6 +3332,19 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	doReentrantDDL(s, CreateTiDBSoftDeleteTableStatusTable)
+
+	// mysql.tidb_ttl_task is introduced in version131, but schema may vary for upgraded clusters.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS job_type varchar(32) NOT NULL DEFAULT 'ttl' AFTER job_id", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD INDEX idx_job_type (job_type)", dbterror.ErrDupKeyName)
+	// mysql.tidb_ttl_job_history is introduced in version131.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_job_history ADD COLUMN IF NOT EXISTS job_type varchar(32) NOT NULL DEFAULT 'ttl' AFTER job_id", infoschema.ErrColumnExists)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3420,6 +3463,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
+	// Create tidb_softdelete_table_status table
+	mustExecute(s, CreateTiDBSoftDeleteTableStatusTable)
 	// Create tidb_ttl_task table
 	mustExecute(s, CreateTTLTask)
 	// Create tidb_ttl_job_history table

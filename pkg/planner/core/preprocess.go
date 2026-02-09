@@ -368,6 +368,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.ImportIntoStmt:
 		p.stmtTp = TypeImportInto
 		p.flag |= inImportInto
+	case *ast.LoadDataStmt:
+		p.stmtTp = TypeLoadData
+	case *ast.NonTransactionalDMLStmt:
+		p.stmtTp = TypeNonTransactionalDML
 	case *ast.CreateSequenceStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -439,6 +443,20 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.varsReadonly[node.Name] = struct{}{}
 			}
 		}
+	case *ast.ColumnName:
+		// When tidb_translate_softdelete_sql is enabled, the softdelete semantics are enabled for softdelete tables,
+		// and _tidb_softdelete_time column have special meaning, so user query should not reference the hidden column.
+		// The special semantics only apply to DML and SELECT statements, for which we implemented corresponding
+		// rewriting logic, so we only check these statements here.
+		// The _tidb_softdelete_time column can only appear in softdelete table, so we can just check the column name
+		// here without checking the TableInfo.
+		if p.sctx.GetSessionVars().SoftDeleteRewrite && node.Name.L == model.ExtraSoftDeleteTimeName.L &&
+			(p.stmtTp == TypeSelect || p.stmtTp == TypeInsert || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete ||
+				p.stmtTp == TypeLoadData || p.stmtTp == TypeImportInto || p.stmtTp == TypeNonTransactionalDML) {
+			p.err = plannererrors.ErrInternal.GenWithStack(
+				"column '%s' cannot be referenced when tidb_translate_softdelete_sql is enabled",
+				model.ExtraSoftDeleteTimeName.O)
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -490,6 +508,10 @@ const (
 	TypeExecute
 	// TypeImportInto for ImportIntoStmt
 	TypeImportInto
+	// TypeLoadData for LoadDataStmt
+	TypeLoadData
+	// TypeNonTransactionalDML for NonTransactionalDMLStmt
+	TypeNonTransactionalDML
 )
 
 func bindableStmtType(node ast.StmtNode) byte {

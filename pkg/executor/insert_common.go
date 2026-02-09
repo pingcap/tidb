@@ -19,6 +19,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -43,8 +47,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
@@ -69,6 +75,10 @@ type InsertValues struct {
 	GenExprs []expression.Expression
 
 	insertColumns []*table.Column
+
+	activeActive      ActiveActiveTableInfo
+	activeActiveStats ActiveActiveStats
+	softDeleteStats   SoftDeleteStats
 
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
@@ -148,6 +158,13 @@ func (e *InsertValues) initInsertColumns() error {
 	} else {
 		// If e.Columns are empty, use all columns instead.
 		cols = tableCols
+		tblInfo := e.Table.Meta()
+		if tblInfo.SoftdeleteInfo != nil || tblInfo.IsActiveActive {
+			cols = slices.DeleteFunc(slices.Clone(cols), func(col *table.Column) bool {
+				return (tblInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+					(tblInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L)
+			})
+		}
 	}
 	for _, col := range cols {
 		if !col.IsGenerated() {
@@ -1170,6 +1187,8 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 				BasicRuntimeStats:     e.RuntimeStats(),
 				SnapshotRuntimeStats:  snapshotStats,
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
+				ActiveActive:          &e.activeActiveStats,
+				SoftDelete:            &e.softDeleteStats,
 			}
 		}
 		return true
@@ -1226,7 +1245,7 @@ func (e *InsertValues) batchCheckAndInsert(
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	// Temporary table need not to do prefetch because its all data are stored in the memory.
 	if e.Table.Meta().TempTableType == model.TempTableNone {
-		if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
+		if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows, false); err != nil {
 			return err
 		}
 	}
@@ -1343,8 +1362,7 @@ func (e *InsertValues) removeRow(
 	r toBeCheckedRow,
 	inReplace bool,
 ) (bool, error) {
-	newRow := r.row
-	oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+	oldRow, _, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs, false)
 	if err != nil {
 		logutil.BgLogger().Error(
 			"get old row failed when replace",
@@ -1356,7 +1374,20 @@ func (e *InsertValues) removeRow(
 		}
 		return false, err
 	}
+	return e.removeOldRow(txn, handle, oldRow, r, inReplace)
+}
 
+// removeRow removes the duplicate row and cleanup its keys in the key-value map.
+// But if the to-be-removed row equals to the to-be-added row, no remove or add
+// things to do and return (true, nil).
+func (e *InsertValues) removeOldRow(
+	txn kv.Transaction,
+	handle kv.Handle,
+	oldRow []types.Datum,
+	r toBeCheckedRow,
+	inReplace bool,
+) (bool, error) {
+	newRow := r.row
 	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
 	if err != nil {
 		return false, err
@@ -1426,10 +1457,11 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		return err
 	}
 	pessimisticLazyCheck := getPessimisticLazyCheckMode(vars)
+	var handle kv.Handle
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), dupKeyCheck, pessimisticLazyCheck)
+		handle, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), dupKeyCheck, pessimisticLazyCheck)
 	} else {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), dupKeyCheck, pessimisticLazyCheck)
+		handle, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), dupKeyCheck, pessimisticLazyCheck)
 	}
 	if err != nil {
 		return err
@@ -1452,7 +1484,35 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		vars.TxnCtx.InsertTTLRowsCount++
 	}
 
+	if pos := e.activeActive.originTSColOffset; pos >= 0 {
+		recordUnsafeActiveActiveOriginTS(
+			vars,
+			e.Table.Meta(),
+			pos,
+			handle,
+			row,
+			&e.activeActiveStats,
+		)
+	}
+
 	return nil
+}
+
+func (e *InsertValues) reportActiveActiveStats(op string) {
+	if cnt := e.activeActiveStats.UnsafeOriginTSCount; cnt > 0 {
+		metrics.ActiveActiveWriteUnsafeOriginTsRowCounter.Add(float64(cnt))
+		metrics.ActiveActiveWriteUnsafeOriginTsStmtCounter.Add(1)
+		vars := e.Ctx().GetSessionVars()
+		logutil.BgLogger().Warn(
+			"Unsafe writing for active-active column _tidb_origin_ts",
+			zap.String("op", op),
+			zap.Uint64("connID", vars.ConnectionID),
+			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+			zap.Int64("tableID", e.Table.Meta().ID),
+			zap.Stringer("table", e.Table.Meta().Name),
+			zap.Uint64("unsafeCnt", cnt),
+		)
+	}
 }
 
 // CreateSession will be assigned by session package.
@@ -1466,6 +1526,8 @@ type InsertRuntimeStat struct {
 	*execdetails.BasicRuntimeStats
 	*txnsnapshot.SnapshotRuntimeStats
 	*autoid.AllocatorRuntimeStats
+	ActiveActive    *ActiveActiveStats
+	SoftDelete      *SoftDeleteStats
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
 	FKCheckTime     time.Duration
@@ -1529,6 +1591,16 @@ func (e *InsertRuntimeStat) String() string {
 			}
 		}
 	}
+	if e.ActiveActive != nil {
+		if str := e.ActiveActive.String(); str != "" {
+			fmt.Fprintf(buf, ", %s", str)
+		}
+	}
+	if e.SoftDelete != nil {
+		if str := e.SoftDelete.String(); str != "" {
+			fmt.Fprintf(buf, ", %s", str)
+		}
+	}
 	return buf.String()
 }
 
@@ -1549,6 +1621,12 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	}
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
+	}
+	if e.ActiveActive != nil {
+		newRs.ActiveActive = e.ActiveActive.Clone()
+	}
+	if e.SoftDelete != nil {
+		newRs.SoftDelete = e.SoftDelete.Clone()
 	}
 	return newRs
 }
@@ -1582,6 +1660,20 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 			e.AllocatorRuntimeStats.Merge(tmp.AllocatorRuntimeStats)
 		}
 	}
+	if tmp.ActiveActive != nil {
+		if e.ActiveActive == nil {
+			e.ActiveActive = tmp.ActiveActive.Clone()
+		} else {
+			e.ActiveActive.Merge(tmp.ActiveActive)
+		}
+	}
+	if tmp.SoftDelete != nil {
+		if e.SoftDelete == nil {
+			e.SoftDelete = tmp.SoftDelete.Clone()
+		} else {
+			e.SoftDelete.Merge(tmp.SoftDelete)
+		}
+	}
 	e.Prefetch += tmp.Prefetch
 	e.FKCheckTime += tmp.FKCheckTime
 	e.CheckInsertTime += tmp.CheckInsertTime
@@ -1590,4 +1682,161 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (*InsertRuntimeStat) Tp() int {
 	return execdetails.TpInsertRuntimeStat
+}
+
+// ActiveActiveTableInfo is the basic info for active-active table
+type ActiveActiveTableInfo struct {
+	originTSColOffset int
+}
+
+// newActiveActiveTableInfo creates a new ActiveActiveTableInfo
+func newActiveActiveTableInfo(tbl *model.TableInfo) ActiveActiveTableInfo {
+	info := ActiveActiveTableInfo{
+		originTSColOffset: -1,
+	}
+
+	if !tbl.IsActiveActive {
+		return info
+	}
+
+	for _, col := range tbl.Cols() {
+		if col.Name.L == model.ExtraOriginTSName.L {
+			info.originTSColOffset = col.Offset
+			break
+		}
+	}
+
+	intest.Assert(info.originTSColOffset >= 0)
+	return info
+}
+
+// ActiveActiveStats is the statistics for active-active operations
+type ActiveActiveStats struct {
+	CdcConflictSkipCount uint64
+	UnsafeOriginTSCount  uint64
+}
+
+// SoftDeleteStats is the statistics for softdelete operations.
+type SoftDeleteStats struct {
+	ImplicitRemoveRows uint64
+}
+
+// String implements the Stringer interface.
+func (e *SoftDeleteStats) String() string {
+	if e.ImplicitRemoveRows == 0 {
+		return ""
+	}
+	return fmt.Sprintf("softdelete: {implicit_remove_rows: %d}", e.ImplicitRemoveRows)
+}
+
+// Clone clones SoftDeleteStats.
+func (e *SoftDeleteStats) Clone() *SoftDeleteStats {
+	cloned := *e
+	return &cloned
+}
+
+// Merge merges other SoftDeleteStats into e.
+func (e *SoftDeleteStats) Merge(other *SoftDeleteStats) {
+	if other == nil {
+		return
+	}
+	e.ImplicitRemoveRows += other.ImplicitRemoveRows
+}
+
+// String implements the Stringer interface.
+func (e *ActiveActiveStats) String() string {
+	var sb strings.Builder
+	if e.CdcConflictSkipCount > 0 {
+		sb.WriteString("cdc_conflict_skip_cnt: ")
+		sb.WriteString(strconv.FormatUint(e.CdcConflictSkipCount, 10))
+	}
+
+	if e.UnsafeOriginTSCount > 0 {
+		if sb.Len() > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString("unsafe_write_origin_ts_cnt: ")
+		sb.WriteString(strconv.FormatUint(e.UnsafeOriginTSCount, 10))
+	}
+
+	if sb.Len() > 0 {
+		return fmt.Sprintf("active_active: {%s}", sb.String())
+	}
+
+	return ""
+}
+
+// Clone clones ActiveActiveStats
+func (e *ActiveActiveStats) Clone() *ActiveActiveStats {
+	cloned := *e
+	return &cloned
+}
+
+// Merge merges other ActiveActiveStats into e
+func (e *ActiveActiveStats) Merge(other *ActiveActiveStats) {
+	if other == nil {
+		return
+	}
+	e.CdcConflictSkipCount += other.CdcConflictSkipCount
+	e.UnsafeOriginTSCount += other.UnsafeOriginTSCount
+}
+
+func recordUnsafeActiveActiveOriginTS(
+	vars *variable.SessionVars,
+	tblInfo *model.TableInfo,
+	originTSOffset int,
+	handle kv.Handle,
+	newRows []types.Datum,
+	stats *ActiveActiveStats,
+) {
+	if originTSOffset < 0 {
+		return
+	}
+
+	if originTSOffset >= len(newRows) {
+		logutil.BgLogger().Error(
+			"origin TS offset is out of range in recordUnsafeActiveActiveOriginTS",
+			zap.Int("offset", originTSOffset),
+			zap.Int("rowLen", len(newRows)),
+			zap.Int64("tableID", tblInfo.ID),
+			zap.Uint64("connID", vars.ConnectionID),
+			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+			zap.Int64("tableID", tblInfo.ID),
+			zap.Stringer("table", tblInfo.Name),
+			zap.Stringer("handle", redact.Stringer(vars.EnableRedactLog, handle)),
+		)
+		intest.Assert(false, "originTSOffset %d is out of range %d", originTSOffset, len(newRows))
+		return
+	}
+
+	isCdcSession := vars.CDCWriteSource != 0
+	dt := newRows[originTSOffset]
+	isNull := dt.IsNull()
+
+	warnMsg := ""
+	if !isCdcSession && !isNull {
+		// The local updates should always set the _tidb_origin_ts to NULL to avoid inconsistency in CDC replication.
+		// If _tidb_origin_ts is not NULL, the CDC will not replicate it to downstream and may cause some inconsistency
+		// result.
+		// But we still allow the non-CDC operation to set _tidb_origin_ts as a non-NULL value in some special cases.
+		// For example, fix an inconsistency row by some unknown bugs, the consistency checking tool may detect
+		// some short-time inconsistency then, but it can be recovered finally.
+		// So we just do some logging here to make sure we can find out these unusual operations.
+		stats.UnsafeOriginTSCount++
+		warnMsg = "a non-NULL _tidb_origin_ts is set by non-CDC session"
+	}
+
+	// TODO: whether record NULL _tidb_origin_ts in CDC session?
+	// May CDC sync some rows to an active-active table with normal mode?
+
+	if warnMsg != "" && stats.UnsafeOriginTSCount <= 4 {
+		// If one statement has too many unsafe operations, just log part of them to reduce the performance overhead.
+		logutil.BgLogger().Warn(warnMsg,
+			zap.Uint64("connID", vars.ConnectionID),
+			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+			zap.Int64("tableID", tblInfo.ID),
+			zap.Stringer("table", tblInfo.Name),
+			zap.Stringer("handle", redact.Stringer(vars.EnableRedactLog, handle)),
+			zap.Uint64("updateOriginTS", dt.GetUint64()))
+	}
 }

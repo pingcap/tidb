@@ -284,6 +284,9 @@ const (
 	// TiDBExplicitRequestSourceType indicates the source of the request, it's a complement of RequestSourceType.
 	// The value maybe "lightning", "br", "dumpling" etc.
 	TiDBExplicitRequestSourceType = "tidb_request_source_type"
+
+	// TiDBCDCActiveActiveSyncStats is a read-only variable to show the status of active-active sync.
+	TiDBCDCActiveActiveSyncStats = "tidb_cdc_active_active_sync_stats"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1016,6 +1019,9 @@ const (
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+
+	// TiDBTranslateSoftDeleteSQL indicates whether to rewrite SQL for softdelete tables.
+	TiDBTranslateSoftDeleteSQL = "tidb_translate_softdelete_sql"
 )
 
 // TiDB vars that have only global scope
@@ -1124,6 +1130,8 @@ const (
 	TiDBExternalTS = "tidb_external_ts"
 	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
 	TiDBTTLJobEnable = "tidb_ttl_job_enable"
+	// TiDBSoftDeleteJobEnable is used to enable/disable scheduling softdelete cleanup job
+	TiDBSoftDeleteJobEnable = "tidb_softdelete_job_enable"
 	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
 	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
 	// TiDBTTLDeleteBatchSize is used to control the batch size in the DELETE statement for TTL jobs
@@ -1559,6 +1567,7 @@ const (
 	DefTiDBEnablePlanReplayerCapture                  = true
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
+	DefTiDBSoftDeleteJobEnable                        = true
 	DefTiDBTTLScanBatchSize                           = 500
 	DefTiDBTTLScanBatchMaxSize                        = 10240
 	DefTiDBTTLScanBatchMinSize                        = 1
@@ -1631,6 +1640,7 @@ const (
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
+	DefTiDBTranslateSoftdeleteSQL                     = true
 )
 
 // Process global variables.
@@ -1714,6 +1724,7 @@ var (
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
 	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	SoftDeleteJobEnable                = atomic.NewBool(DefTiDBSoftDeleteJobEnable)
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)

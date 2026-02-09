@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -127,6 +128,37 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
+
+	// Add soft delete filter for softdelete tables if @@tidb_translate_softdelete_sql is on
+	// and ds.DisableSoftDeleteFilter is false (for supporting the RECOVER VALUES statement).
+	if ds.TableInfo.SoftdeleteInfo != nil &&
+		ds.SCtx().GetSessionVars().SoftDeleteRewrite &&
+		!ds.DisableSoftDeleteFilter {
+		// Find the soft delete column in the schema
+		var softDeleteCol *expression.Column
+		for _, col := range ds.Schema().Columns {
+			// We should have used ds.OutputNames() to check the ExtraSoftDeleteTimeName column here, but the current
+			// implementation doesn't correctly maintain the output names during optimizations, so use col.OrigName for
+			// now.
+			if strings.HasSuffix(col.OrigName, model.ExtraSoftDeleteTimeName.L) {
+				softDeleteCol = col
+				break
+			}
+		}
+		intest.Assert(softDeleteCol != nil)
+		if softDeleteCol != nil {
+			// Construct "isnull(column)" expression
+			ctx := ds.SCtx().GetExprCtx()
+			notNullExpr, err := expression.NewFunction(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), softDeleteCol)
+			if err != nil {
+				return nil, err
+			}
+			// Add to both PushedDownConds and AllConds
+			ds.PushedDownConds = append(ds.PushedDownConds, notNullExpr)
+			ds.AllConds = append(ds.AllConds, notNullExpr)
+		}
+	}
+
 	// two preprocess here.
 	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.

@@ -1,0 +1,30 @@
+create table t (id int primary key clustered) softdelete retention 7 day;
+insert into t(id) values (1), (2);
+delete from t where id = 1;
+
+-- error 1062
+insert into t(id) values (1), (2), (3);
+set tidb_translate_softdelete_sql = false;
+select id from t;
+set tidb_translate_softdelete_sql = true;
+select id from t;
+select * from t;
+
+insert into t(id) values (1), (3);
+select id from t;
+drop table t;
+
+# test again with nonclustered pk
+create table t (id int primary key nonclustered) softdelete retention 7 day;
+insert into t(id) values (1), (2);
+delete from t where id = 1;
+
+-- error 1062
+insert into t(id) values (1), (2), (3);
+select id from t;
+set tidb_translate_softdelete_sql = false;
+select id from t;
+set tidb_translate_softdelete_sql = true;
+
+insert into t(id) values (1), (3);
+select id from t;

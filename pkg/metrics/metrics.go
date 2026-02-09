@@ -46,6 +46,7 @@ const (
 	LabelAnalyze    = "analyze"
 	LabelWorkerPool = "worker-pool"
 	LabelStats      = "stats"
+	LblJobType      = "job_type"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
@@ -197,6 +198,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(OngoingTxnDurationHistogram)
 	prometheus.MustRegister(MppCoordinatorStats)
 	prometheus.MustRegister(MppCoordinatorLatency)
+	prometheus.MustRegister(SoftDeleteImplicitDeleteRows)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
 	prometheus.MustRegister(StatementDeadlockDetectDuration)
@@ -303,6 +305,10 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	prometheus.MustRegister(ActiveActiveHardDeleteStmtCounter)
+	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsRowCounter)
+	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsStmtCounter)
 
 	// IndexLookup
 	prometheus.MustRegister(IndexLookUpExecutorDuration)

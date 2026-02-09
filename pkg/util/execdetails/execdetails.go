@@ -153,6 +153,8 @@ const (
 	CommitTimeStr = "Commit_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
 	GetCommitTSTimeStr = "Get_commit_ts_time"
+	// CommitTSLagStr means information for commit ts lagging.
+	CommitTSLagStr = "Commit_ts_lag"
 	// GetLatestTsTimeStr means the time of getting latest ts in async commit and 1pc.
 	GetLatestTsTimeStr = "Get_latest_ts_time"
 	// CommitBackoffTimeStr means the time of commit backoff.
@@ -228,6 +230,13 @@ func (d ExecDetails) String() string {
 		}
 		if commitDetails.GetLatestTsTime > 0 {
 			parts = append(parts, GetLatestTsTimeStr+": "+strconv.FormatFloat(commitDetails.GetLatestTsTime.Seconds(), 'f', -1, 64))
+		}
+		if lagDetails := commitDetails.LagDetails; lagDetails.FirstLagTS > 0 {
+			parts = append(parts, CommitTSLagStr+
+				": {wait_time: "+strconv.FormatFloat(lagDetails.WaitTime.Seconds(), 'f', -1, 64)+
+				", backoff_count: "+strconv.Itoa(lagDetails.BackoffCnt)+
+				", first_lag_ts: "+strconv.FormatUint(lagDetails.FirstLagTS, 10)+
+				", wait_until_ts: "+strconv.FormatUint(lagDetails.WaitUntilTS, 10)+"}")
 		}
 		commitDetails.Mu.Lock()
 		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
