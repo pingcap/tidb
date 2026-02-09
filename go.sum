@@ -826,10 +826,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20260204054441-9f9c4da9c007 h1:8d6nYpu+fFo7YOkI5wuy6OoU+iWzv80jjNeeEg5+uno=
-github.com/tikv/client-go/v2 v2.0.8-0.20260204054441-9f9c4da9c007/go.mod h1:lURp2rOTM9uxjY6r8EwsZlXI5kBjDvq2mjfPwv+1vBM=
-github.com/tikv/pd/client v0.0.0-20251219084741-029eb6e7d5d0 h1:fguMZ4sSn/oLbUt+zDoNPd6+OE3Li4Rop2/3vFhu8lM=
-github.com/tikv/pd/client v0.0.0-20251219084741-029eb6e7d5d0/go.mod h1:X3T+jK+4bLbDKgupmzvVXuySnCNV4Lfdm/bL8TAw3ik=
+github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286 h1:TBrJ7eyjLfI6xc7rr348sTKPUa96ZUWmfSonqLP0vVM=
+github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286/go.mod h1:kuIEDRLck7LGHiqKYrQR3fNiK06trLmmK02s4r99iWU=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
@@ -860,6 +858,8 @@ github.com/xitongsys/parquet-go-source v0.0.0-20190524061010-2b72cbee77d5/go.mod
 github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0 h1:a742S4V5A15F93smuVxA60LQWsrCnN8bKeWDBARU1/k=
 github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0/go.mod h1:HYhIKsdns7xz80OgkbgJYrtQY7FjHWHKH6cvN7+czGE=
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
+github.com/xzhangxian1008/client-go/v2 v2.0.0-20260209040955-cf2d43d03080 h1:SFG08zgK79BZO12ZZ91Y4SKgzpOfQf8iIAJnslFlOoc=
+github.com/xzhangxian1008/client-go/v2 v2.0.0-20260209040955-cf2d43d03080/go.mod h1:lURp2rOTM9uxjY6r8EwsZlXI5kBjDvq2mjfPwv+1vBM=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.32/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
