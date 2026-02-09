@@ -17,6 +17,7 @@ package runaway
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
@@ -62,9 +63,9 @@ type Manager struct {
 	// action "judging whether there is this record in the current watch list and adding records" have atomicity.
 	queryLock sync.Mutex
 	watchList *ttlcache.Cache[string, *QuarantineRecord]
-	// activeGroup is used to manage the active runaway watches of resource group
-	ActiveGroup map[string]int64
-	ActiveLock  sync.RWMutex
+	// activeGroup is used to manage the active runaway watches of resource group.
+	// It uses sync.Map + atomic.Int64 for lock-free reads on the per-query hot path.
+	activeGroup sync.Map // map[string]*atomic.Int64
 	MetricsMap  generic.SyncMap[string, prometheus.Counter]
 
 	ResourceGroupCtl   *rmclient.ResourceGroupsController
@@ -112,7 +113,6 @@ func NewRunawayManager(
 		runawayQueriesChan:    make(chan *Record, maxWatchRecordChannelSize),
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
 		staleQuarantineRecord: make(chan *QuarantineRecord, maxWatchRecordChannelSize),
-		ActiveGroup:           make(map[string]int64),
 		MetricsMap:            generic.NewSyncMap[string, prometheus.Counter](8),
 		sysSessionPool:        pool,
 		exit:                  exit,
@@ -120,14 +120,15 @@ func NewRunawayManager(
 		ddl:                   ddl,
 	}
 	m.insertionCancel = watchList.OnInsertion(func(_ context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
-		m.ActiveLock.Lock()
-		m.ActiveGroup[i.Value().ResourceGroupName]++
-		m.ActiveLock.Unlock()
+		name := i.Value().ResourceGroupName
+		counter, _ := m.loadOrStoreActiveCounter(name)
+		counter.Add(1)
 	})
 	m.evictionCancel = watchList.OnEviction(func(_ context.Context, _ ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
-		m.ActiveLock.Lock()
-		m.ActiveGroup[i.Value().ResourceGroupName]--
-		m.ActiveLock.Unlock()
+		name := i.Value().ResourceGroupName
+		if counter, ok := m.activeGroup.Load(name); ok {
+			counter.(*atomic.Int64).Add(-1)
+		}
 		if i.Value().ID == 0 {
 			return
 		}
@@ -376,6 +377,22 @@ func (rm *Manager) examineWatchList(resourceGroupName string, convict string) (b
 		return false, 0, "", ""
 	}
 	return true, item.Action, item.getSwitchGroupName(), item.GetExceedCause()
+}
+
+// loadOrStoreActiveCounter returns the counter for the given resource group name,
+// creating a new one if it doesn't exist.
+func (rm *Manager) loadOrStoreActiveCounter(name string) (*atomic.Int64, bool) {
+	counter, loaded := rm.activeGroup.LoadOrStore(name, &atomic.Int64{})
+	return counter.(*atomic.Int64), loaded
+}
+
+// getActiveWatchCount returns the active watch count for the given resource group name.
+func (rm *Manager) getActiveWatchCount(name string) int64 {
+	counter, ok := rm.activeGroup.Load(name)
+	if !ok {
+		return 0
+	}
+	return counter.(*atomic.Int64).Load()
 }
 
 // Stop stops the watchList which is a ttlCache.
