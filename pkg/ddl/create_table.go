@@ -443,6 +443,7 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 		return ver, errors.Trace(err)
 	}
 
+	// Best-effort cancel avoids leaving detached IMPORT job running after CREATE MV rollback.
 	if cancelErr := w.cancelCreateMaterializedViewBuildImportJob(jobCtx.stepCtx, job); cancelErr != nil {
 		logutil.DDLLogger().Warn("failed to cancel create materialized view build import job",
 			zap.Int64("jobID", job.ID),
@@ -509,6 +510,7 @@ func buildCreateMaterializedViewSelectSQLWithSnapshot(selectSQL string, snapshot
 	return restoreNodeToCanonicalSQL(sel)
 }
 
+// CREATE MATERIALIZED VIEW initial-build checkpoint is persisted in mysql.tidb_ddl_reorg.reorg_meta.
 const (
 	createMaterializedViewBuildCheckpointVersionCurrent = int64(1)
 
@@ -593,6 +595,7 @@ func parseCreateMaterializedViewImportJobStatusFromFailpointValue(val failpoint.
 	return strings.ToLower(parts[0]), "", true
 }
 
+// The checkpoint row is keyed by (job_id, table_id, _idx_) so owner failover can resume the build.
 func (w *worker) getCreateMaterializedViewBuildCheckpoint(ctx context.Context, job *model.Job) (*createMaterializedViewBuildCheckpoint, error) {
 	if ctx == nil {
 		ctx = w.workCtx
@@ -833,6 +836,7 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 
 	switch checkpoint.Phase {
 	case createMaterializedViewBuildPhaseInit:
+		// Submit detached IMPORT once, persist import_job_id, then poll in later rounds.
 		importJobID, err := w.submitCreateMaterializedViewBuildImportJob(ctx, job, mvTblInfo)
 		if err != nil {
 			checkpoint.LastError = err.Error()
@@ -849,11 +853,13 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 		}
 		return dbterror.ErrWaitReorgTimeout
 	case createMaterializedViewBuildPhaseImportRunning:
+		// Poll import job status and advance checkpoint only on terminal states.
 		status, importErrorMessage, found, err := w.getCreateMaterializedViewImportJobStatus(ctx, checkpoint.ImportJobID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if !found {
+			// Tiny known window: import submit may have succeeded but checkpoint upsert was lost before failover.
 			tableEmpty, tableEmptyErr := w.isCreateMaterializedViewTableEmpty(ctx, job.SchemaName, mvTblInfo.Name.O)
 			if tableEmptyErr != nil {
 				return errors.Trace(tableEmptyErr)
@@ -863,6 +869,7 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 					fmt.Sprintf("create materialized view: import job %d not found and mv table is not empty", checkpoint.ImportJobID),
 				)
 			}
+			// Empty table means it's safe to restart from init and resubmit import.
 			checkpoint.Phase = createMaterializedViewBuildPhaseInit
 			checkpoint.ImportJobID = 0
 			checkpoint.LastError = ""
