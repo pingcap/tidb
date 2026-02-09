@@ -71,6 +71,36 @@ func (d *ConflictDetector) TryCreateCartesianCheckResult(left, right *Node) *Che
 	}
 }
 
+func (d *ConflictDetector) iterateEdges(fn func(e *edge) bool) {
+	for _, e := range d.innerEdges {
+		if !fn(e) {
+			return
+		}
+	}
+	for _, e := range d.nonInnerEdges {
+		if !fn(e) {
+			return
+		}
+	}
+}
+
+func (d *ConflictDetector) CountRemainingEdges(usedEdges map[uint64]struct{}) (numOfEQEdges int, numOfNonEQEdges int) {
+	d.iterateEdges(func(e *edge) bool {
+		if len(e.eqConds) > 0 {
+			if _, ok := usedEdges[e.idx]; !ok {
+				numOfEQEdges++
+			}
+		}
+		if len(e.nonEQConds) > 0 {
+			if _, ok := usedEdges[e.idx]; !ok {
+				numOfNonEQEdges++
+			}
+		}
+		return true
+	})
+	return
+}
+
 type rule struct {
 	from intset.FastIntSet
 	to   intset.FastIntSet
@@ -618,23 +648,18 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	return join, nil
 }
 
-// CheckAllEdgesUsed checks if all edges with join conditions are used.
-func (d *ConflictDetector) CheckAllEdgesUsed(usedEdges map[uint64]struct{}) bool {
-	for _, e := range d.innerEdges {
+// HasRemainingEdges checks if there are remaining edges not in usedEdges.
+func (d *ConflictDetector) HasRemainingEdges(usedEdges map[uint64]struct{}) (remaining bool) {
+	d.iterateEdges(func(e *edge) bool {
 		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
 			if _, ok := usedEdges[e.idx]; !ok {
+				remaining = true
 				return false
 			}
 		}
-	}
-	for _, e := range d.nonInnerEdges {
-		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
-			if _, ok := usedEdges[e.idx]; !ok {
-				return false
-			}
-		}
-	}
-	return true
+		return true
+	})
+	return
 }
 
 // 0: rule doesn't apply

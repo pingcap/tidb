@@ -419,12 +419,26 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	var disableCartesian = cartesianFactor <= 0
 	allowNoEQ := !disableCartesian && j.group.allInnerJoin
-	nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ)
-	if err != nil {
+	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ); err != nil {
 		return nil, err
 	}
+
 	usedEdges := collectUsedEdges(nodes)
-	if !detector.CheckAllEdgesUsed(usedEdges) {
+	if !allowNoEQ && detector.HasRemainingEdges(usedEdges) {
+		// After the first round of greedy connection, there are still some remaining edges,
+		// for example: R1 INNER JOIN R2 ON R1.c1 < R2.c2
+		// the above join can only be connected when non-eq edges are allowed,
+		// so we start the second round of greedy connection with allowNoEQ as true.
+		befLen := len(nodes)
+		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true); err != nil {
+			return nil, err
+		}
+		if len(nodes) != befLen {
+			// Only collect usedEdges when new joins are made in the second round.
+			usedEdges = collectUsedEdges(nodes)
+		}
+	}
+	if detector.HasRemainingEdges(usedEdges) {
 		totalEdges, usedEdgeCount, missingEdges, missingDetail, nodeSets := summarizeEdges(detector, usedEdges, nodes, 4)
 		logutil.BgLogger().Warn("join reorder skipped because not all edges are used",
 			zap.Int("rootID", group.root.ID()),
@@ -440,6 +454,8 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	if len(nodes) <= 0 {
 		return nil, errors.New("internal error: bushy join tree nodes is empty")
 	}
+	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins,
+	// It handles situations where there is no edges between different subgraphs,
 	return makeBushyTree(j.ctx, nodes, j.group.vertexHints)
 }
 
