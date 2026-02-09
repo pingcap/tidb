@@ -117,6 +117,7 @@ go_library(
         "//pkg/planner/cascades/memo",
         "//pkg/planner/core/base",
         "//pkg/planner/core/cost",
+        "//pkg/planner/core/joinorder",
         "//pkg/planner/core/metrics",
         "//pkg/planner/core/operator/baseimpl",
         "//pkg/planner/core/operator/logicalop",

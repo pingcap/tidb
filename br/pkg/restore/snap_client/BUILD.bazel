@@ -37,6 +37,7 @@ go_library(
         "//br/pkg/version",
         "//pkg/bindinfo",
         "//pkg/config/kerneltype",
+        "//pkg/ddl/label",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/infoschema",

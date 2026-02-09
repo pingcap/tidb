@@ -18,6 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -96,15 +98,15 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 		}
 	}
 	// outer join elimination without duplicate agnostic aggregate functions
-	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
-	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys)
+	innerJoinKeys, innerNullEQKeys := o.extractInnerJoinKeys(p, innerChildIdx)
+	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys, innerNullEQKeys)
 	if err != nil {
 		return p, false, err
 	}
 	if contain {
 		return outerPlan, true, nil
 	}
-	contain, err = o.isInnerJoinKeysContainIndex(innerPlan, innerJoinKeys)
+	contain, err = o.isInnerJoinKeysContainIndex(innerPlan, innerJoinKeys, innerNullEQKeys)
 	if err != nil {
 		return p, false, err
 	}
@@ -115,17 +117,22 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 	return p, false, nil
 }
 
-// extract join keys as a schema for inner child of a outer join
-func (*OuterJoinEliminator) extractInnerJoinKeys(join *logicalop.LogicalJoin, innerChildIdx int) *expression.Schema {
+// extract join keys as a schema for inner child of a outer join, and record which inner join keys use NullEQ (<=>).
+func (*OuterJoinEliminator) extractInnerJoinKeys(join *logicalop.LogicalJoin, innerChildIdx int) (*expression.Schema, intset.FastIntSet) {
 	joinKeys := make([]*expression.Column, 0, len(join.EqualConditions))
+	innerNullEQKeys := intset.NewFastIntSet()
 	for _, eqCond := range join.EqualConditions {
-		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
+		innerKey := eqCond.GetArgs()[innerChildIdx].(*expression.Column)
+		joinKeys = append(joinKeys, innerKey)
+		if eqCond.FuncName.L == ast.NullEQ {
+			innerNullEQKeys.Insert(int(innerKey.UniqueID))
+		}
 	}
-	return expression.NewSchema(joinKeys...)
+	return expression.NewSchema(joinKeys...), innerNullEQKeys
 }
 
 // check whether one of unique keys sets is contained by inner join keys
-func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
+func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.LogicalPlan, joinKeys *expression.Schema, innerNullEQKeys intset.FastIntSet) (bool, error) {
 	for _, keyInfo := range innerPlan.Schema().PKOrUK {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
@@ -138,11 +145,27 @@ func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.Logic
 			return true, nil
 		}
 	}
+	for _, keyInfo := range innerPlan.Schema().NullableUK {
+		joinKeysContainKeyInfo := true
+		for _, col := range keyInfo {
+			if !joinKeys.Contains(col) {
+				joinKeysContainKeyInfo = false
+				break
+			}
+			if innerNullEQKeys.Has(int(col.UniqueID)) {
+				joinKeysContainKeyInfo = false
+				break
+			}
+		}
+		if joinKeysContainKeyInfo {
+			return true, nil
+		}
+	}
 	return false, nil
 }
 
 // check whether one of index sets is contained by inner join index
-func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
+func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPlan, joinKeys *expression.Schema, innerNullEQKeys intset.FastIntSet) (bool, error) {
 	ds, ok := innerPlan.(*logicalop.DataSource)
 	if !ok {
 		return false, nil
@@ -154,6 +177,10 @@ func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPl
 		joinKeysContainIndex := true
 		for _, idxCol := range path.IdxCols {
 			if !joinKeys.Contains(idxCol) {
+				joinKeysContainIndex = false
+				break
+			}
+			if !mysql.HasNotNullFlag(idxCol.RetType.GetFlag()) && innerNullEQKeys.Has(int(idxCol.UniqueID)) {
 				joinKeysContainIndex = false
 				break
 			}

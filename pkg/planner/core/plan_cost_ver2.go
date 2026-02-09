@@ -670,8 +670,8 @@ func getPlanCostVer24PhysicalMergeJoin(pp base.PhysicalPlan, taskType property.T
 	filterCost := costusage.SumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
 		filterCostVer2(option, rightRows, p.RightConditions, cpuFactor),
 		filterCostVer2(option, leftRows+rightRows, p.OtherConditions, cpuFactor)) // OtherConditions are applied to both sides
-	groupCost := costusage.SumCostVer2(groupCostVer2(option, leftRows, cols2Exprs(p.LeftJoinKeys), cpuFactor),
-		groupCostVer2(option, rightRows, cols2Exprs(p.RightJoinKeys), cpuFactor))
+	groupCost := costusage.SumCostVer2(groupCostVer2(option, leftRows, expression.Column2Exprs(p.LeftJoinKeys), cpuFactor),
+		groupCostVer2(option, rightRows, expression.Column2Exprs(p.RightJoinKeys), cpuFactor))
 
 	leftChildCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
 	if err != nil {
@@ -1297,12 +1297,4 @@ func getTableInfo(p base.PhysicalPlan) *model.TableInfo {
 		}
 		return getTableInfo(x.Children()[0])
 	}
-}
-
-func cols2Exprs(cols []*expression.Column) []expression.Expression {
-	exprs := make([]expression.Expression, 0, len(cols))
-	for _, c := range cols {
-		exprs = append(exprs, c)
-	}
-	return exprs
 }

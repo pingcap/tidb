@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
@@ -105,10 +104,6 @@ func (ba *bindingAuto) ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest
 	if err != nil {
 		return nil, err
 	}
-	generatedPlans, err = ba.recordIntoStmtStats(stmtSCtx, generatedPlans)
-	if err != nil {
-		return nil, err
-	}
 
 	if analyze {
 		if err := ba.runToGetExecInfo(generatedPlans); err != nil {
@@ -123,46 +118,6 @@ func (ba *bindingAuto) ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest
 	}
 	_, err = ba.fillRecommendation(planCandidates, ba.llmPredictor, "LLM")
 	return planCandidates, err
-}
-
-// recordIntoStmtStats records these plans into information_schema.tidb_statements_stats table for later usage.
-func (ba *bindingAuto) recordIntoStmtStats(stmtSCtx base.PlanContext, plans []*BindingPlanInfo) (reproduciblePlans []*BindingPlanInfo, err error) {
-	currentUser := stmtSCtx.GetSessionVars().User
-	reproduciblePlans = make([]*BindingPlanInfo, 0, len(plans))
-	for _, plan := range plans {
-		if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
-			vars := sctx.GetSessionVars()
-			defer func(db string, usePlanBaselines, inExplainExplore bool, user *auth.UserIdentity) {
-				vars.CurrentDB = db
-				vars.UsePlanBaselines = usePlanBaselines
-				vars.InExplainExplore = inExplainExplore
-				vars.User = user
-			}(vars.CurrentDB, vars.UsePlanBaselines, vars.InExplainExplore, vars.User)
-			vars.CurrentDB = plan.Binding.Db
-			vars.UsePlanBaselines = false
-			vars.InExplainExplore = true
-			vars.User = currentUser
-			_, _, err := execRows(sctx, plan.BindSQL)
-			if err != nil {
-				return err
-			}
-
-			execInfo, err := ba.getPlanExecInfo(plan.Binding.PlanDigest)
-			if err != nil {
-				return err
-			}
-			// Due to the flaw of `core.GenHintsFromFlatPlan`, sometimes we might not be able to reproduce the prior
-			// plan exactly with `plan.Binding.Hint`.
-			// In this case we can't get any record in `tidb_statements_stats` via its PlanDigest, and since
-			if execInfo != nil {
-				reproduciblePlans = append(reproduciblePlans, plan)
-			}
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-	}
-	return reproduciblePlans, nil
 }
 
 // runToGetExecInfo runs these plans to get their execution info.
