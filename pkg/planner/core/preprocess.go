@@ -1171,6 +1171,11 @@ func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
 	if indexOptions == nil {
 		return nil
 	}
+	if indexOptions.ParserName.L != "" {
+		if err := validateFullTextParserName(indexOptions.ParserName); err != nil {
+			return err
+		}
+	}
 	if indexOptions.TiCIParameter != "" &&
 		indexOptions.Tp != ast.IndexTypeFulltext && indexOptions.Tp != ast.IndexTypeHybrid {
 		return dbterror.ErrUnsupportedIndexType.FastGen("PARAMETER is only supported for FULLTEXT/HYBRID INDEX")
@@ -1202,6 +1207,14 @@ func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
 		}
 	}
 
+	return nil
+}
+
+func validateFullTextParserName(parserName ast.CIStr) error {
+	parserType := model.GetFullTextParserTypeBySQLName(parserName.L)
+	if parserType != model.FullTextParserTypeStandardV1 && parserType != model.FullTextParserTypeNgramV1 {
+		return dbterror.ErrUnsupportedIndexType.FastGen("Unsupported parser '%s'", parserName.O)
+	}
 	return nil
 }
 

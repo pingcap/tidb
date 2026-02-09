@@ -162,14 +162,7 @@ func TestFTSParser(t *testing.T) {
 	))
 	tk.MustExec("drop table tx")
 
-	tk.MustExec("create table tx (a TEXT, FULLTEXT (a) WITH PARSER multilingual)")
-	tk.MustQuery("show create table tx").Check(testkit.Rows(
-		"tx CREATE TABLE `tx` (\n" +
-			"  `a` text DEFAULT NULL,\n" +
-			"  FULLTEXT INDEX `a`(`a`) WITH PARSER MULTILINGUAL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	tk.MustExec("drop table tx")
+	tk.MustContainErrMsg("create table tx (a TEXT, FULLTEXT (a) WITH PARSER multilingual)", "Unsupported parser 'multilingual'")
 
 	tk.MustContainErrMsg("create table tx (a TEXT, FULLTEXT (a) WITH PARSER abc)", "Unsupported parser 'abc'")
 }
@@ -260,9 +253,7 @@ func TestFTSIndexSyntax(t *testing.T) {
 	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER ngram;")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`) WITH PARSER NGRAM\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t1 drop index FTSIdx")
-	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER 	MULTILINGUAL;")
-	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`) WITH PARSER MULTILINGUAL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("alter table t1 drop index FTSIdx")
+	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER 	MULTILINGUAL;", "Unsupported parser 'MULTILINGUAL'")
 	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER STANDARD;")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx2(title) WITH PARSER ngram;", "fulltext index 'FTSIdx' already exist on column title")

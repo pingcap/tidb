@@ -221,9 +221,9 @@ func TestCheckRequirementsWithTiCIIndexLocalSort(t *testing.T) {
 			DBName:         "test",
 			DataSourceType: importer.DataSourceTypeFile,
 			TableInfo:      tableInfo,
+			TotalFileSize:  1,
 		},
-		Table:         tableObj,
-		TotalFileSize: 1,
+		Table: tableObj,
 	}
 
 	err = c.CheckRequirements(ctx, tk.Session())
