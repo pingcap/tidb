@@ -155,30 +155,14 @@ func InterpretFullTextSearchExpr(expr Expression) *FTSInfo {
 	}
 }
 
-// RewriteMySQLMatchAgainstRecursively rewrites the MySQL MATCH AGAINST function into a combination of TiDB's internal FTS functions.
-func RewriteMySQLMatchAgainstRecursively(bctx BuildContext, expr Expression) (Expression, bool, error) {
+// RewriteMySQLMatchAgainst rewrites one MySQL MATCH AGAINST function into a combination of TiDB's internal FTS functions.
+func RewriteMySQLMatchAgainst(bctx BuildContext, expr Expression) (Expression, error) {
 	scalarFunc, ok := expr.(*ScalarFunction)
 	if !ok {
-		return expr, false, nil
+		return expr, nil
 	}
 	if scalarFunc.FuncName.L != ast.FTSMysqlMatchAgainst {
-		// If it's not a MySQL MATCH AGAINST function, we recursively rewrite its arguments.
-		changed := false
-		newArgs := make([]Expression, 0, len(scalarFunc.GetArgs()))
-		for _, arg := range scalarFunc.GetArgs() {
-			newArg, argChanged, err := RewriteMySQLMatchAgainstRecursively(bctx, arg)
-			if err != nil {
-				return expr, false, err
-			}
-			if argChanged {
-				changed = true
-			}
-			newArgs = append(newArgs, newArg)
-		}
-		if changed {
-			return NewFunctionInternal(bctx, scalarFunc.FuncName.L, scalarFunc.RetType, newArgs...), true, nil
-		}
-		return expr, false, nil
+		return expr, nil
 	}
 	var (
 		patternGroup matchagainst.StandardBooleanGroup
@@ -188,15 +172,24 @@ func RewriteMySQLMatchAgainstRecursively(bctx BuildContext, expr Expression) (Ex
 		patternStr := scalarFunc.GetArgs()[0].(*Constant).Value.GetString()
 		patternGroup, err = matchagainst.ParseStandardBooleanMode(patternStr)
 		if err != nil {
-			return expr, false, err
+			return expr, err
 		}
 	}
 	// Current limitation of TiDB.
 	if len(patternGroup.Must)+len(patternGroup.MustNot) > 0 && len(patternGroup.Should) > 0 {
-		return expr, false, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
+		return expr, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
 	}
 	if len(patternGroup.Must)+len(patternGroup.MustNot) == 0 && len(patternGroup.Should) > 1 {
-		return expr, false, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
+		return expr, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
+	}
+
+	// Compatible with MySQL, if there is no valid term in the pattern or only negative search, we return a constant false.
+	if (len(patternGroup.Must)+len(patternGroup.MustNot)+len(patternGroup.Should) == 0) ||
+		(len(patternGroup.Must)+len(patternGroup.Should) == 0 && len(patternGroup.MustNot) > 0) {
+		return &Constant{
+			Value:   types.NewIntDatum(0),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}, nil
 	}
 	argsBuffer := make([]Expression, len(scalarFunc.GetArgs()))
 	searchFuncs := make([]Expression, 0, len(patternGroup.Must)+len(patternGroup.MustNot)+len(patternGroup.Should))
@@ -225,14 +218,14 @@ func RewriteMySQLMatchAgainstRecursively(bctx BuildContext, expr Expression) (Ex
 	for _, item := range patternGroup.Must {
 		f, err := rewriteFunc(item)
 		if err != nil {
-			return expr, false, err
+			return expr, err
 		}
 		searchFuncs = append(searchFuncs, f)
 	}
 	for _, item := range patternGroup.MustNot {
 		f, err := rewriteFunc(item)
 		if err != nil {
-			return expr, false, err
+			return expr, err
 		}
 		// For NOT conditions, we wrap the function with a unary NOT operator.
 		nf := NewFunctionInternal(bctx, ast.UnaryNot, types.NewFieldType(mysql.TypeDouble), f)
@@ -241,7 +234,7 @@ func RewriteMySQLMatchAgainstRecursively(bctx BuildContext, expr Expression) (Ex
 	for _, item := range patternGroup.Should {
 		f, err := rewriteFunc(item)
 		if err != nil {
-			return expr, false, err
+			return expr, err
 		}
 		searchFuncs = append(searchFuncs, f)
 	}
@@ -254,5 +247,5 @@ func RewriteMySQLMatchAgainstRecursively(bctx BuildContext, expr Expression) (Ex
 		searchFuncs = searchFuncs[:startIdx+1]
 	}
 	final := ComposeCNFCondition(bctx, searchFuncs...)
-	return final, true, nil
+	return final, nil
 }
