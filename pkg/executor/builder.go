@@ -4100,6 +4100,121 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 	return keyColOffsets
 }
 
+func (builder *dataReaderBuilder) groupIndexJoinLookUpContentsByPartition(
+	pt table.PartitionedTable,
+	usedPartitions map[int64]table.PhysicalTable,
+	lookUpContents []*join.IndexJoinLookUpContent,
+) (map[int64][]*join.IndexJoinLookUpContent, bool, error) {
+	if len(lookUpContents) == 0 {
+		return nil, false, nil
+	}
+	keyColOffsets := getPartitionKeyColOffsets(lookUpContents[0].KeyColIDs, pt)
+	if len(keyColOffsets) == 0 {
+		return nil, false, nil
+	}
+	contentsByPID := make(map[int64][]*join.IndexJoinLookUpContent, len(usedPartitions))
+	locateKey := make([]types.Datum, len(pt.Cols()))
+	exprCtx := builder.ctx.GetExprCtx()
+	for _, content := range lookUpContents {
+		for i, data := range content.Keys {
+			locateKey[keyColOffsets[i]] = data
+		}
+		p, err := pt.GetPartitionByRow(exprCtx.GetEvalCtx(), locateKey)
+		if table.ErrNoPartitionForGivenValue.Equal(err) {
+			continue
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		pid := p.GetPhysicalID()
+		if _, ok := usedPartitions[pid]; !ok {
+			continue
+		}
+		contentsByPID[pid] = append(contentsByPID[pid], content)
+	}
+	return contentsByPID, true, nil
+}
+
+func (builder *dataReaderBuilder) buildPartitionedTableReaderKVRangesForIndexJoin(
+	dctx *distsqlctx.DistSQLContext,
+	rctx *rangerctx.RangerContext,
+	pt table.PartitionedTable,
+	usedPartitionList []table.PhysicalTable,
+	usedPartitions map[int64]table.PhysicalTable,
+	lookUpContents []*join.IndexJoinLookUpContent,
+	indexRanges []*ranger.Range,
+	keyOff2IdxOff []int,
+	cwc *physicalop.ColWithCmpFuncManager,
+	memTracker *memory.Tracker,
+	interruptSignal *atomic.Value,
+	isCommonHandle bool,
+) ([]kv.KeyRange, error) {
+	var handles []kv.Handle
+	if !isCommonHandle {
+		handles, lookUpContents = dedupHandles(lookUpContents)
+	}
+	contentsByPID, canLocateByKey, err := builder.groupIndexJoinLookUpContentsByPartition(pt, usedPartitions, lookUpContents)
+	if err != nil {
+		return nil, err
+	}
+
+	kvRanges := make([]kv.KeyRange, 0, len(lookUpContents)*len(usedPartitionList))
+	if isCommonHandle {
+		kvRangeMemTracker := memTracker
+		if canLocateByKey {
+			// Keep the same memory tracking behavior as the previous branchy implementation.
+			kvRangeMemTracker = nil
+		}
+		if canLocateByKey {
+			for pid, contents := range contentsByPID {
+				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, pid, -1, contents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal)
+				if err != nil {
+					return nil, err
+				}
+				kvRanges = append(kvRanges, tmp...)
+			}
+		} else {
+			for _, p := range usedPartitionList {
+				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, p.GetPhysicalID(), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal)
+				if err != nil {
+					return nil, err
+				}
+				kvRanges = append(kvRanges, tmp...)
+			}
+		}
+		sortKVRangesByStartKey(kvRanges)
+		return kvRanges, nil
+	}
+
+	if canLocateByKey {
+		for pid, contents := range contentsByPID {
+			partHandles := make([]kv.Handle, 0, len(contents))
+			for _, content := range contents {
+				partHandles = append(partHandles, kv.IntHandle(content.Keys[0].GetInt64()))
+			}
+			ranges, _ := distsql.TableHandlesToKVRanges(pid, partHandles)
+			kvRanges = append(kvRanges, ranges...)
+		}
+	} else {
+		for _, p := range usedPartitionList {
+			ranges, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
+			kvRanges = append(kvRanges, ranges...)
+		}
+	}
+
+	sortKVRangesByStartKey(kvRanges)
+	return kvRanges, nil
+}
+
+func sortKVRangesByStartKey(kvRanges []kv.KeyRange) {
+	if len(kvRanges) < 2 {
+		return
+	}
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
+	})
+}
+
 type indexJoinPartitionRanges struct {
 	partitions []table.PhysicalTable
 	rangeMap   map[int64][]*ranger.Range
@@ -4907,96 +5022,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	for _, p := range usedPartitionList {
 		usedPartitions[p.GetPhysicalID()] = p
 	}
-	var kvRanges []kv.KeyRange
-	var keyColOffsets []int
-	if len(lookUpContents) > 0 {
-		keyColOffsets = getPartitionKeyColOffsets(lookUpContents[0].KeyColIDs, pt)
+	kvRanges, err := builder.buildPartitionedTableReaderKVRangesForIndexJoin(
+		e.dctx, e.rctx, pt, usedPartitionList, usedPartitions, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal, v.IsCommonHandle)
+	if err != nil {
+		return nil, err
 	}
-	if v.IsCommonHandle {
-		if len(keyColOffsets) > 0 {
-			locateKey := make([]types.Datum, len(pt.Cols()))
-			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
-			// lookUpContentsByPID groups lookUpContents by pid(partition) so that kv ranges for same partition can be merged.
-			lookUpContentsByPID := make(map[int64][]*join.IndexJoinLookUpContent)
-			exprCtx := e.ectx
-			for _, content := range lookUpContents {
-				for i, data := range content.Keys {
-					locateKey[keyColOffsets[i]] = data
-				}
-				p, err := pt.GetPartitionByRow(exprCtx.GetEvalCtx(), locateKey)
-				if table.ErrNoPartitionForGivenValue.Equal(err) {
-					continue
-				}
-				if err != nil {
-					return nil, err
-				}
-				pid := p.GetPhysicalID()
-				if _, ok := usedPartitions[pid]; !ok {
-					continue
-				}
-				lookUpContentsByPID[pid] = append(lookUpContentsByPID[pid], content)
-			}
-			for pid, contents := range lookUpContentsByPID {
-				// buildKvRanges for each partition.
-				tmp, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, pid, -1, contents, indexRanges, keyOff2IdxOff, cwc, nil, interruptSignal)
-				if err != nil {
-					return nil, err
-				}
-				kvRanges = append(kvRanges, tmp...)
-			}
-		} else {
-			kvRanges = make([]kv.KeyRange, 0, len(usedPartitions)*len(lookUpContents))
-			for _, p := range usedPartitionList {
-				tmp, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, p.GetPhysicalID(), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
-				if err != nil {
-					return nil, err
-				}
-				kvRanges = append(tmp, kvRanges...)
-			}
-		}
-		// The key ranges should be ordered.
-		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
-			return bytes.Compare(i.StartKey, j.StartKey)
-		})
-		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
-	}
-
-	handles, lookUpContents := dedupHandles(lookUpContents)
-
-	if len(keyColOffsets) > 0 {
-		locateKey := make([]types.Datum, len(pt.Cols()))
-		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
-		exprCtx := e.ectx
-		for _, content := range lookUpContents {
-			for i, data := range content.Keys {
-				locateKey[keyColOffsets[i]] = data
-			}
-			p, err := pt.GetPartitionByRow(exprCtx.GetEvalCtx(), locateKey)
-			if table.ErrNoPartitionForGivenValue.Equal(err) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			pid := p.GetPhysicalID()
-			if _, ok := usedPartitions[pid]; !ok {
-				continue
-			}
-			handle := kv.IntHandle(content.Keys[0].GetInt64())
-			ranges, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
-			kvRanges = append(kvRanges, ranges...)
-		}
-	} else {
-		for _, p := range usedPartitionList {
-			ranges, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
-			kvRanges = append(kvRanges, ranges...)
-		}
-	}
-
-	// The key ranges should be ordered.
-	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
-		return bytes.Compare(i.StartKey, j.StartKey)
-	})
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }
 
