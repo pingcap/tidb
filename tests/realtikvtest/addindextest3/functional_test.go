@@ -94,9 +94,14 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(3)
+	idxCh := make(chan int64, len(idxIDs))
+	for _, idxID := range idxIDs {
+		idxCh <- idxID
+	}
+	close(idxCh)
 	for i := 0; i < 3; i++ {
 		go func() {
-			for _, idxID := range idxIDs {
+			for idxID := range idxCh {
 				bCtx.Unregister(1, idxID)
 			}
 			wg.Done()
