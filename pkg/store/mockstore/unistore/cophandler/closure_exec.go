@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"time"
 
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 const chunkMaxRows = 1024
@@ -497,7 +499,7 @@ func pbChunkToChunk(pbChk tipb.Chunk, chk *chunk.Chunk, fieldTypes []*types.Fiel
 	var err error
 	decoder := codec.NewDecoder(chk, timeutil.SystemLocation())
 	for len(rowsData) > 0 {
-		for i := 0; i < len(fieldTypes); i++ {
+		for i := range fieldTypes {
 			rowsData, err = decoder.DecodeOne(rowsData, i, fieldTypes[i])
 			if err != nil {
 				return err
@@ -561,7 +563,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	for i, ran := range e.kvRanges {
 		e.curNdv = 0
 		if e.isPointGetRange(ran) {
-			val, err := dbReader.Get(ran.StartKey, e.startTS)
+			val, meta, err := dbReader.Get(ran.StartKey, e.startTS)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -572,7 +574,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 				e.counts[i]++
 				e.ndvs[i] = 1
 			}
-			err = e.processor.Process(ran.StartKey, val)
+			err = e.processor.Process(ran.StartKey, val, meta.CommitTS())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -641,7 +643,7 @@ type countStarProcessor struct {
 }
 
 // countStarProcess is used for `count(*)`.
-func (e *countStarProcessor) Process(key, value []byte) error {
+func (e *countStarProcessor) Process(key, value []byte, _ uint64) error {
 	defer func(begin time.Time) {
 		if e.idxScanCtx != nil {
 			e.idxScanCtx.execDetail.update(begin, true)
@@ -677,7 +679,7 @@ type countColumnProcessor struct {
 	*closureExecutor
 }
 
-func (e *countColumnProcessor) Process(key, value []byte) error {
+func (e *countColumnProcessor) Process(key, value []byte, _ uint64) error {
 	gotRow := false
 	defer func(begin time.Time) {
 		if e.idxScanCtx != nil {
@@ -738,13 +740,13 @@ type tableScanProcessor struct {
 	*closureExecutor
 }
 
-func (e *tableScanProcessor) Process(key, value []byte) error {
+func (e *tableScanProcessor) Process(key, value []byte, commitTS uint64) error {
 	if e.rowCount == e.limit {
 		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	e.curNdv++
-	err := e.tableScanProcessCore(key, value)
+	err := e.tableScanProcessCore(key, value, commitTS)
 	if e.scanCtx.chk.NumRows() == chunkMaxRows {
 		err = e.chunkToOldChunk(e.scanCtx.chk)
 	}
@@ -755,14 +757,14 @@ func (e *tableScanProcessor) Finish() error {
 	return e.scanFinish()
 }
 
-func (e *closureExecutor) processCore(key, value []byte) error {
+func (e *closureExecutor) processCore(key, value []byte, commitTS uint64) error {
 	if e.mockReader != nil {
 		return e.mockReadScanProcessCore(key, value)
 	}
 	if e.idxScanCtx != nil {
 		return e.indexScanProcessCore(key, value)
 	}
-	return e.tableScanProcessCore(key, value)
+	return e.tableScanProcessCore(key, value, commitTS)
 }
 
 func (e *closureExecutor) hasSelection() bool {
@@ -832,7 +834,7 @@ func (e *closureExecutor) mockReadScanProcessCore(key, value []byte) error {
 	return nil
 }
 
-func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
+func (e *closureExecutor) tableScanProcessCore(key, value []byte, commitTS uint64) error {
 	incRow := false
 	defer func(begin time.Time) {
 		e.scanCtx.execDetail.update(begin, incRow)
@@ -841,7 +843,7 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.scanCtx.decoder.DecodeToChunk(value, 0, handle, e.scanCtx.chk)
+	err = e.scanCtx.decoder.DecodeToChunk(value, commitTS, handle, e.scanCtx.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -864,7 +866,7 @@ type indexScanProcessor struct {
 	*closureExecutor
 }
 
-func (e *indexScanProcessor) Process(key, value []byte) error {
+func (e *indexScanProcessor) Process(key, value []byte, commitTS uint64) error {
 	if e.rowCount == e.limit {
 		return dbreader.ErrScanBreak
 	}
@@ -881,7 +883,7 @@ func (e *indexScanProcessor) Finish() error {
 }
 
 func (isc *idxScanCtx) checkVal(curVals [][]byte) bool {
-	for i := 0; i < isc.columnLen; i++ {
+	for i := range isc.columnLen {
 		if !bytes.Equal(isc.prevVals[i], curVals[i]) {
 			return false
 		}
@@ -901,14 +903,26 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 			restoredCols = append(restoredCols, c)
 		}
 	}
-	values, err := tablecodec.DecodeIndexKV(key, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
+	decodedKey := key
+	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
+		// If the key is in API V2, then ignore the prefix
+		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		decodedKey = k
+		if !kv.Key(decodedKey).HasPrefix(tablecodec.TablePrefix()) {
+			return errors.Errorf("invalid index key %q after decoded", key)
+		}
+	}
+	values, err := tablecodec.DecodeIndexKV(decodedKey, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
 	if err != nil {
 		return err
 	}
 	if e.idxScanCtx.collectNDV {
 		if len(e.idxScanCtx.prevVals[0]) == 0 || !e.idxScanCtx.checkVal(values) {
 			e.curNdv++
-			for i := 0; i < e.idxScanCtx.columnLen; i++ {
+			for i := range e.idxScanCtx.columnLen {
 				e.idxScanCtx.prevVals[i] = append(e.idxScanCtx.prevVals[i][:0], values[i]...)
 			}
 		}
@@ -928,7 +942,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
 	// The following if statement is to fill in the tid when we needed it.
 	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID && len(e.columnInfos) >= len(values) {
-		tblID := tablecodec.DecodeTableID(key)
+		tblID := tablecodec.DecodeTableID(decodedKey)
 		chk.AppendInt64(len(e.columnInfos)-1, tblID)
 	}
 	gotRow = true
@@ -939,7 +953,7 @@ func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 	var oldRow []types.Datum
 	sc := e.sctx.GetSessionVars().StmtCtx
 	errCtx := sc.ErrCtx()
-	for i := 0; i < chk.NumRows(); i++ {
+	for i := range chk.NumRows() {
 		oldRow = oldRow[:0]
 		if e.outputOff != nil {
 			for _, outputOff := range e.outputOff {
@@ -947,7 +961,7 @@ func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 				oldRow = append(oldRow, d)
 			}
 		} else {
-			for colIdx := 0; colIdx < chk.NumCols(); colIdx++ {
+			for colIdx := range chk.NumCols() {
 				d := chk.GetRow(i).GetDatum(colIdx, e.fieldTps[colIdx])
 				oldRow = append(oldRow, d)
 			}
@@ -969,7 +983,7 @@ type selectionProcessor struct {
 	*closureExecutor
 }
 
-func (e *selectionProcessor) Process(key, value []byte) error {
+func (e *selectionProcessor) Process(key, value []byte, commitTS uint64) error {
 	var gotRow bool
 	defer func(begin time.Time) {
 		e.selectionCtx.execDetail.update(begin, gotRow)
@@ -977,7 +991,7 @@ func (e *selectionProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
 		return dbreader.ErrScanBreak
 	}
-	err := e.processCore(key, value)
+	err := e.processCore(key, value, commitTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1003,12 +1017,12 @@ type topNProcessor struct {
 	*closureExecutor
 }
 
-func (e *topNProcessor) Process(key, value []byte) (err error) {
+func (e *topNProcessor) Process(key, value []byte, commitTS uint64) (err error) {
 	gotRow := false
 	defer func(begin time.Time) {
 		e.topNCtx.execDetail.update(begin, gotRow)
 	}(time.Now())
-	if err = e.processCore(key, value); err != nil {
+	if err = e.processCore(key, value, commitTS); err != nil {
 		return err
 	}
 	if e.hasSelection() {
@@ -1052,7 +1066,7 @@ func (e *topNProcessor) Finish() error {
 	sort.Sort(&ctx.heap.topNSorter)
 	chk := e.scanCtx.chk
 	for _, row := range ctx.heap.rows {
-		err := e.processCore(row.data[0], row.data[1])
+		err := e.processCore(row.data[0], row.data[1], 0)
 		if err != nil {
 			return err
 		}
@@ -1076,12 +1090,12 @@ type hashAggProcessor struct {
 	aggCtxsMap   map[string][]*aggregation.AggEvaluateContext
 }
 
-func (e *hashAggProcessor) Process(key, value []byte) (err error) {
+func (e *hashAggProcessor) Process(key, value []byte, commitTS uint64) (err error) {
 	incRow := false
 	defer func(begin time.Time) {
 		e.aggCtx.execDetail.update(begin, incRow)
 	}(time.Now())
-	err = e.processCore(key, value)
+	err = e.processCore(key, value, commitTS)
 	if err != nil {
 		return err
 	}
@@ -1176,7 +1190,7 @@ func (e *hashAggProcessor) Finish() error {
 }
 
 func safeCopy(b []byte) []byte {
-	return append([]byte{}, b...)
+	return slices.Clone(b)
 }
 
 func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
@@ -1193,12 +1207,7 @@ func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) er
 }
 
 func isResolved(startTS uint64, resolved []uint64) bool {
-	for _, v := range resolved {
-		if startTS == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(resolved, startTS)
 }
 
 func exceedEndKey(current, endKey []byte) bool {
