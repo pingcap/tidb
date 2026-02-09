@@ -4055,7 +4055,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	// check table info to see if it's active-active table
-	needExtraCommitTS := tableInfo.IsActiveActive
+	needExtraCommitTS := tableInfo.FindPublicColumnByName(model.ExtraOriginTSName.L) != nil
 
 	if needExtraCommitTS {
 		dbName := tnW.DBInfo.Name
@@ -4065,7 +4065,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:          model.ExtraCommitTSID,
 			OrigName:    fmt.Sprintf("%v.%v.%v", dbName.L, tableInfo.Name, model.ExtraCommitTSName),
-			IsInvisible: true,
+			IsHidden: true,
 		}
 		schema.Append(commitTSCol)
 		names = append(names, &types.FieldName{

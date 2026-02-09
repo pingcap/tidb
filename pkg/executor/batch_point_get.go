@@ -17,10 +17,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"time"
 	"slices"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -244,7 +244,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
 	var err error
-	batchGetter := e.batchGetter
 	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
 		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
 		var cancel context.CancelFunc
@@ -474,7 +473,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 			continue
 		}
-		e.values = append(e.values, val)
+		e.values = append(e.values, kv.NewValueEntry(val, 0))
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
@@ -497,10 +496,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	return nil
 }
 
-func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (map[string]kv.ValueEntry, error) {
-	if e.commitTSOffset >= 0 {
-		return e.batchGetter.BatchGet(ctx, keys, kv.WithReturnCommitTS())
-	}
+func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	return e.batchGetter.BatchGet(ctx, keys)
 }
 

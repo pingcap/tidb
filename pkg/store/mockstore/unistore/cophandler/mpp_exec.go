@@ -16,22 +16,17 @@ package cophandler
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
-	"fmt"
 	"hash/fnv"
 	"io"
 	"math"
-	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -45,12 +40,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"go.uber.org/zap"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
@@ -63,9 +56,7 @@ type mppExec interface {
 	open() error
 	next() (*chunk.Chunk, error)
 	stop() error
-	getChildren() []mppExec
-	getIntermediateFieldTypes() []*types.FieldType
-	takeIntermediateResults() []*chunk.Chunk
+	child() mppExec
 	getFieldTypes() []*types.FieldType
 	buildSummary() *tipb.ExecutorExecutionSummary
 }
@@ -81,8 +72,8 @@ type baseMPPExec struct {
 	execSummary execDetail
 }
 
-func (b *baseMPPExec) getChildren() []mppExec {
-	return b.children
+func (b *baseMPPExec) child() mppExec {
+	return b.children[0]
 }
 
 func (b *baseMPPExec) getFieldTypes() []*types.FieldType {
@@ -98,14 +89,6 @@ func (b *baseMPPExec) open() error {
 }
 
 func (b *baseMPPExec) next() (*chunk.Chunk, error) {
-	panic("not implemented")
-}
-
-func (b *baseMPPExec) takeIntermediateResults() []*chunk.Chunk {
-	panic("not implemented")
-}
-
-func (b *baseMPPExec) getIntermediateFieldTypes() []*types.FieldType {
 	panic("not implemented")
 }
 
@@ -170,7 +153,7 @@ func (e *tableScanExec) Process(key, value []byte, commitTS uint64) error {
 	e.rowCnt++
 
 	if e.chk.IsFull() {
-		lastProcessed := kv.Key(slices.Clone(key)) // make a copy to avoid data race
+		lastProcessed := kv.Key(append([]byte{}, key...)) // make a copy to avoid data race
 		select {
 		case e.result <- scanResult{chk: e.chk, lastProcessedKey: lastProcessed, err: nil}:
 			e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
@@ -302,7 +285,7 @@ type indexScanExec struct {
 func (e *indexScanExec) SkipValue() bool { return false }
 
 func (e *indexScanExec) isNewVals(values [][]byte) bool {
-	for i := range e.numIdxCols {
+	for i := 0; i < e.numIdxCols; i++ {
 		if !bytes.Equal(e.prevVals[i], values[i]) {
 			return true
 		}
@@ -330,7 +313,7 @@ func (e *indexScanExec) Process(key, value []byte, _ uint64) error {
 	e.rowCnt++
 	if len(e.counts) > 0 && (len(e.prevVals[0]) == 0 || e.isNewVals(values)) {
 		e.ndvCnt++
-		for i := range e.numIdxCols {
+		for i := 0; i < e.numIdxCols; i++ {
 			e.prevVals[i] = append(e.prevVals[i][:0], values[i]...)
 		}
 	}
@@ -347,13 +330,13 @@ func (e *indexScanExec) Process(key, value []byte, _ uint64) error {
 	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
 	// The following if statement is to fill in the tid when we needed it.
 	if e.physTblIDColIdx != nil && *e.physTblIDColIdx >= len(values) {
-		tblID := tablecodec.DecodeTableID(decodedKey)
+		tblID := tablecodec.DecodeTableID(key)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)
 		if e.paging != nil {
-			lastProcessed := kv.Key(slices.Clone(key)) // need a deep copy to store the key
+			lastProcessed := kv.Key(append([]byte{}, key...)) // need a deep copy to store the key
 			e.chunkLastProcessedKeys = append(e.chunkLastProcessedKeys, lastProcessed)
 		}
 		e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
@@ -422,242 +405,6 @@ func (e *indexScanExec) next() (*chunk.Chunk, error) {
 		}
 	}
 	return nil, nil
-}
-
-type indexLookUpExec struct {
-	baseMPPExec
-	indexHandleOffsets  []uint32
-	tblScanPB           *tipb.TableScan
-	isCommonHandle      bool
-	extraReaderProvider dbreader.ExtraDbReaderProvider
-	buildTableScan      func(*dbreader.DBReader, []kv.KeyRange) (*tableScanExec, error)
-	indexChunks         []*chunk.Chunk
-}
-
-func (e *indexLookUpExec) open() error {
-	return e.children[0].open()
-}
-
-func (e *indexLookUpExec) stop() error {
-	return e.children[0].stop()
-}
-
-func (e *indexLookUpExec) next() (ret *chunk.Chunk, _ error) {
-	tblScans, counts, indexChk, err := e.fetchTableScans()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if len(tblScans) == 0 && (indexChk == nil || indexChk.NumRows() == 0) {
-		return nil, nil
-	}
-
-	if indexChk != nil {
-		e.indexChunks = append(e.indexChunks, indexChk)
-	}
-
-	for i, tblScan := range tblScans {
-		expectCnt := counts[i]
-		err = func() error {
-			err = tblScan.open()
-			defer func() {
-				err := tblScan.stop()
-				if err != nil {
-					panic(err)
-				}
-			}()
-
-			readCnt := 0
-			for {
-				chk, err := tblScan.next()
-				if err != nil {
-					return err
-				}
-
-				if chk == nil || chk.NumRows() == 0 {
-					break
-				}
-
-				if ret == nil {
-					ret = chk
-				} else {
-					ret.Append(chk, 0, chk.NumRows())
-				}
-				readCnt += chk.NumRows()
-				e.execSummary.updateOnlyRows(chk.NumRows())
-				e.children[1].(*baseMPPExec).execSummary.updateOnlyRows(chk.NumRows())
-			}
-
-			if expectCnt != readCnt {
-				panic(fmt.Sprintf("data may be inconsistency, expectCnt(%d) != readCnt(%d)", expectCnt, readCnt))
-			}
-
-			return nil
-		}()
-
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return ret, nil
-}
-
-func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts []int, indexChk *chunk.Chunk, err error) {
-	var handleFilter func(kv.Handle) bool
-	failpoint.InjectCall("inject-index-lookup-handle-filter", &handleFilter)
-	type Handle struct {
-		kv.Handle
-		IndexOrder int
-	}
-
-	rowCnt := 0
-	indexRows := make([]chunk.Row, 0, DefaultBatchSize)
-	sortedHandles := make([]Handle, 0, DefaultBatchSize)
-	for rowCnt < DefaultBatchSize {
-		chk, err := e.children[0].next()
-		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
-		}
-
-		if chk == nil || chk.NumRows() == 0 {
-			break
-		}
-
-		for i := range chk.NumRows() {
-			row := chk.GetRow(i)
-			indexRows = append(indexRows, row)
-			sortedHandles = append(sortedHandles, Handle{
-				IndexOrder: rowCnt,
-				Handle:     e.buildIntHandle(row),
-			})
-			rowCnt++
-		}
-	}
-
-	leftRows := make([]bool, len(indexRows))
-	sort.Slice(sortedHandles, func(i, j int) bool {
-		return sortedHandles[i].Compare(sortedHandles[j]) < 0
-	})
-
-	var curRegion dbreader.LocateExtraRegionResult
-	var curKeys []kv.Key
-	var curHandles []Handle
-	endRegion := func() error {
-		if len(curKeys) == 0 {
-			return nil
-		}
-
-		defer func() {
-			curRegion = dbreader.LocateExtraRegionResult{}
-			curKeys = curKeys[:0]
-			curHandles = curHandles[:0]
-		}()
-
-		ranges := make([]kv.KeyRange, 0)
-		rangeStart := 0
-		for i, h := range curHandles {
-			if !e.isCommonHandle && i < len(curHandles)-1 && h.Next().Compare(curHandles[i+1]) == 0 {
-				continue
-			}
-			ranges = append(ranges, kv.KeyRange{
-				StartKey: curKeys[rangeStart],
-				EndKey:   curKeys[i].Next(),
-			})
-			rangeStart = i + 1
-		}
-
-		reader, pbErr := e.extraReaderProvider.GetExtraDBReaderByRegion(dbreader.GetExtraDBReaderContext{
-			Region: curRegion.Region,
-			Peer:   curRegion.Peer,
-			Ranges: ranges,
-		})
-
-		if pbErr != nil {
-			for _, h := range curHandles {
-				leftRows[h.IndexOrder] = true
-			}
-			logutil.BgLogger().Info("GetExtraDBReaderByRegion failed", zap.Any("err", pbErr))
-		} else {
-			tableScan, err := e.buildTableScan(reader, ranges)
-			if err != nil {
-				return err
-			}
-			tableScans = append(tableScans, tableScan)
-			counts = append(counts, len(curHandles))
-		}
-
-		return nil
-	}
-
-	for _, h := range sortedHandles {
-		if handleFilter != nil && !handleFilter(h.Handle) {
-			leftRows[h.IndexOrder] = true
-			continue
-		}
-		rowKey := tablecodec.EncodeRowKey(e.tblScanPB.TableId, h.Encoded())
-		mvccKey := codec.EncodeBytes(nil, rowKey)
-		if curRegion.Found {
-			if e.regionContainsKey(curRegion.Region, mvccKey) {
-				curKeys = append(curKeys, rowKey)
-				curHandles = append(curHandles, h)
-				continue
-			}
-
-			if err = endRegion(); err != nil {
-				return nil, nil, nil, err
-			}
-		}
-
-		curRegion, err = e.extraReaderProvider.LocateExtraRegion(context.TODO(), mvccKey)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
-		if curRegion.Found {
-			curKeys = append(curKeys, rowKey)
-			curHandles = append(curHandles, h)
-		} else {
-			leftRows[h.IndexOrder] = true
-		}
-	}
-
-	if err = endRegion(); err != nil {
-		return nil, nil, nil, err
-	}
-
-	for i, left := range leftRows {
-		if !left {
-			continue
-		}
-
-		if indexChk == nil {
-			indexChk = chunk.NewChunkWithCapacity(e.children[0].getFieldTypes(), DefaultBatchSize)
-		}
-
-		indexChk.AppendRow(indexRows[i])
-	}
-
-	return
-}
-
-func (e *indexLookUpExec) regionContainsKey(r *metapb.Region, key []byte) bool {
-	return bytes.Compare(r.GetStartKey(), key) <= 0 &&
-		(bytes.Compare(key, r.GetEndKey()) < 0 || len(r.GetEndKey()) == 0)
-}
-
-func (e *indexLookUpExec) buildIntHandle(row chunk.Row) kv.Handle {
-	i := row.GetInt64(int(e.indexHandleOffsets[0]))
-	return kv.IntHandle(i)
-}
-
-func (e *indexLookUpExec) takeIntermediateResults() (ret []*chunk.Chunk) {
-	ret, e.indexChunks = e.indexChunks, nil
-	return
-}
-
-func (e *indexLookUpExec) getIntermediateFieldTypes() []*types.FieldType {
-	return e.children[0].getFieldTypes()
 }
 
 type limitExec struct {
@@ -757,7 +504,7 @@ func (e *expandExec) next() (*chunk.Chunk, error) {
 			row := e.lastChunk.GetRow(i)
 			e.lastNum++
 			// for every grouping set, expand the base row N times.
-			for g := range numGroupingOffset {
+			for g := 0; g < numGroupingOffset; g++ {
 				repeatRow := chunk.MutRowFromTypes(e.fieldTypes)
 				// for every targeted grouping set:
 				// 1: for every column in this grouping set, setting them as it was.
@@ -816,7 +563,7 @@ func (e *topNExec) open() error {
 	}
 	evaluatorSuite := expression.NewEvaluatorSuite(e.conds, true)
 	fieldTypes := make([]*types.FieldType, 0, len(e.conds))
-	for i := range e.conds {
+	for i := 0; i < len(e.conds); i++ {
 		fieldTypes = append(fieldTypes, e.conds[i].GetType(e.sctx.GetExprCtx().GetEvalCtx()))
 	}
 	evalChk := chunk.NewEmptyChunk(fieldTypes)
@@ -836,10 +583,10 @@ func (e *topNExec) open() error {
 			return err
 		}
 
-		for i := range numRows {
+		for i := 0; i < numRows; i++ {
 			row := evalChk.GetRow(i)
 			tmpDatums := row.GetDatumRow(fieldTypes)
-			for j := range tmpDatums {
+			for j := 0; j < len(tmpDatums); j++ {
 				tmpDatums[j].Copy(&e.row.key[j])
 			}
 			if e.heap.tryToAddRow(e.row) {
@@ -890,7 +637,7 @@ func (e *exchSenderExec) toTiPBChunk(chk *chunk.Chunk) ([]tipb.Chunk, error) {
 	var oldRow []types.Datum
 	oldChunks := make([]tipb.Chunk, 0)
 	sc := e.sctx.GetSessionVars().StmtCtx
-	for i := range chk.NumRows() {
+	for i := 0; i < chk.NumRows(); i++ {
 		oldRow = oldRow[:0]
 		for _, outputOff := range e.outputOffsets {
 			d := chk.GetRow(i).GetDatum(int(outputOff), e.fieldTypes[outputOff])
@@ -932,16 +679,15 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 		} else if !(chk != nil && chk.NumRows() != 0) {
 			return nil, nil
 		}
-		e.execSummary.updateOnlyRows(chk.NumRows())
 		if e.exchangeTp == tipb.ExchangeType_Hash {
 			rows := chk.NumRows()
 			targetChunks := make([]*chunk.Chunk, 0, len(e.tunnels))
-			for range e.tunnels {
+			for i := 0; i < len(e.tunnels); i++ {
 				targetChunks = append(targetChunks, chunk.NewChunkWithCapacity(e.fieldTypes, rows))
 			}
 			hashVals := fnv.New64()
 			payload := make([]byte, 1)
-			for i := range rows {
+			for i := 0; i < rows; i++ {
 				row := chk.GetRow(i)
 				hashVals.Reset()
 				// use hash values to get unique uint64 to mod.
@@ -1033,9 +779,6 @@ func (e *exchRecvExec) next() (*chunk.Chunk, error) {
 		defer func() {
 			e.chk = nil
 		}()
-	}
-	if e.chk != nil {
-		e.execSummary.updateOnlyRows(e.chk.NumRows())
 	}
 	return e.chk, nil
 }
@@ -1157,7 +900,7 @@ func (e *joinExec) buildHashTable() error {
 			return nil
 		}
 		rows := chk.NumRows()
-		for i := range rows {
+		for i := 0; i < rows; i++ {
 			row := chk.GetRow(i)
 			keyCol := row.GetDatum(e.buildKey.Index, e.buildChild.getFieldTypes()[e.buildKey.Index])
 			key, err := e.getHashKey(keyCol)
@@ -1185,7 +928,7 @@ func (e *joinExec) fetchRows() (bool, error) {
 	e.idx = 0
 	e.reservedRows = make([]chunk.Row, 0)
 	chkSize := chk.NumRows()
-	for i := range chkSize {
+	for i := 0; i < chkSize; i++ {
 		row := chk.GetRow(i)
 		keyCol := row.GetDatum(e.probeKey.Index, e.probeChild.getFieldTypes()[e.probeKey.Index])
 		key, err := e.getHashKey(keyCol)
@@ -1254,7 +997,6 @@ func (e *joinExec) next() (*chunk.Chunk, error) {
 		if e.idx < len(e.reservedRows) {
 			idx := e.idx
 			e.idx++
-			e.execSummary.updateOnlyRows(e.reservedRows[idx].Chunk().NumRows())
 			return e.reservedRows[idx].Chunk(), nil
 		}
 		eof, err := e.fetchRows()
@@ -1332,7 +1074,7 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 			break
 		}
 		rows := chk.NumRows()
-		for i := range rows {
+		for i := 0; i < rows; i++ {
 			row := chk.GetRow(i)
 			gbyRow, gk, err := e.getGroupKey(row)
 			if err != nil {
@@ -1414,7 +1156,7 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		for i := range selected {
+		for i := 0; i < len(selected); i++ {
 			if selected[i] {
 				ret.AppendRow(chk.GetRow(i))
 				e.execSummary.updateOnlyRows(1)
@@ -1444,7 +1186,7 @@ func (e *projExec) next() (*chunk.Chunk, error) {
 	}
 	e.baseMPPExec.execSummary.updateOnlyRows(chk.NumRows())
 	newChunk := chunk.NewChunkWithCapacity(e.fieldTypes, 10)
-	for i := range chk.NumRows() {
+	for i := 0; i < chk.NumRows(); i++ {
 		row := chk.GetRow(i)
 		newRow := chunk.MutRowFromTypes(e.fieldTypes)
 		for i, expr := range e.exprs {

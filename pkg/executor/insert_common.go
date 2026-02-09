@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -149,13 +149,9 @@ func (e *InsertValues) initInsertColumns() error {
 	} else {
 		// If e.Columns are empty, use all columns instead.
 		cols = tableCols
-		tblInfo := e.Table.Meta()
-		if tblInfo.SoftdeleteInfo != nil || tblInfo.IsActiveActive {
-			cols = slices.DeleteFunc(slices.Clone(cols), func(col *table.Column) bool {
-				return (tblInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
-					(tblInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L)
-			})
-		}
+		cols = slices.DeleteFunc(slices.Clone(cols), func(col *table.Column) bool {
+			return col.Name.L == model.ExtraSoftDeleteTimeName.L || col.Name.L == model.ExtraOriginTSName.L
+		})
 	}
 	for _, col := range cols {
 		if !col.IsGenerated() {
@@ -212,7 +208,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	e := base.insertCommon()
 	sessVars := e.Ctx().GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && vardef.EnableBatchDML.Load() && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 
 	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
@@ -477,7 +473,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 	sessVars := e.Ctx().GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && vardef.EnableBatchDML.Load() && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 	memUsageOfRows := int64(0)
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
@@ -814,7 +810,7 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 	if err == nil && d.GetInt64() < id {
 		// Auto ID is out of range.
 		sc := ctx.GetSessionVars().StmtCtx
-		insertPlan, ok := sc.GetPlan().(*physicalop.Insert)
+		insertPlan, ok := sc.GetPlan().(*core.Insert)
 		if ok && sc.TypeFlags().TruncateAsWarning() && len(insertPlan.OnDuplicate) > 0 {
 			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
 			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.
@@ -1193,7 +1189,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		}
 		return true, nil
 	}
-	handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn)
+	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn)
 	if err != nil {
 		return false, err
 	}

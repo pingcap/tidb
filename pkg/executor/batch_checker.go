@@ -276,7 +276,7 @@ func dataToStrings(data []types.Datum) ([]string, error) {
 					str = string(rune(0x00))
 				}
 			}
-			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
+			str = util.FmtNonASCIIPrintableCharToHex(str)
 		}
 		strs = append(strs, str)
 	}
@@ -294,17 +294,13 @@ func getOldRow(
 	genExprs []expression.Expression,
 	needExtraCommitTS bool,
 ) ([]types.Datum, uint64, error) {
-	var options []kv.GetOption
-	if needExtraCommitTS {
-		options = append(options, kv.WithReturnCommitTS())
-	}
-	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle), options...)
+	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
 	if err != nil {
 		return nil, 0, err
 	}
 
 	cols := t.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue.Value)
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -337,5 +333,8 @@ func getOldRow(
 			gIdx++
 		}
 	}
-	return oldRow, oldValue.CommitTS, nil
+	if needExtraCommitTS {
+		return oldRow, 0, nil
+	}
+	return oldRow, 0, nil
 }

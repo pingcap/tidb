@@ -425,6 +425,8 @@ type Insert struct {
 	IsReplace bool
 	IgnoreErr bool
 
+	NeedExtraCommitTS bool
+
 	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
 

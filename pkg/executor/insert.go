@@ -176,7 +176,15 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 			batchKeys = append(batchKeys, k.newKey)
 		}
 	}
-	return txn.BatchGet(ctx, batchKeys)
+	values, err := txn.BatchGet(ctx, batchKeys)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]kv.ValueEntry, len(values))
+	for key, value := range values {
+		result[key] = kv.NewValueEntry(value, 0)
+	}
+	return result, nil
 }
 
 func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string]kv.ValueEntry) error {
@@ -318,7 +326,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		}
 
 		for _, uk := range r.uniqueKeys {
-			handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn)
+			_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn)
 			if err != nil {
 				return err
 			}
@@ -567,11 +575,11 @@ func (e *InsertExec) doDupRowUpdate(
 	e.Ctx().GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
 
 	updateOriginTSCol := -1
-	if e.Table.Meta().IsActiveActive {
+	if e.Table.Meta().FindPublicColumnByName(model.ExtraOriginTSName.L) != nil {
 		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
 		// should be set to null rather than copy the old value.
 		for _, col := range e.Table.Cols() {
-			if col.Name.Equals(&model.ExtraOriginTSName) {
+			if col.Name.L == model.ExtraOriginTSName.L {
 				updateOriginTSCol = col.Offset
 			}
 		}

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -661,7 +662,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 	}
 
 	var (
-		val kv.ValueEntry
+		val []byte
 		err error
 	)
 
@@ -670,16 +671,16 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		// different for pessimistic transaction.
 		val, err = e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
-			return val, err
+			return kv.NewValueEntry(val, 0), nil
 		}
 		if !kv.IsErrNotFound(err) {
-			return val, err
+			return kv.ValueEntry{}, err
 		}
 		// key does not exist in mem buffer, check the lock cache
 		if e.lock {
 			val1, ok := e.Ctx().GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
 			if ok && e.commitTSOffset < 0 {
-				return kv.ValueEntry{Value: val1}, nil
+				return kv.NewValueEntry(val1, 0), nil
 			}
 		}
 		// fallthrough to snapshot get.
@@ -692,24 +693,22 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 			cacheDB := e.Ctx().GetStore().GetMemCache()
 			val1, err := cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
 			if err != nil {
-				return val, err
+				return kv.ValueEntry{}, err
 			}
-			return kv.ValueEntry{Value: val1}, nil
+			return kv.NewValueEntry(val1, 0), nil
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
 	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
-		// if the query has max execution time set, we need to set the context deadline for the get request
 		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
 		defer cancel()
 		ctx = ctxWithTimeout
 	}
-	var avoidAllocation [1]kv.GetOption
-	opts := avoidAllocation[:0]
-	if e.commitTSOffset >= 0 {
-		opts = append(opts, kv.WithReturnCommitTS())
+	val, err = e.snapshot.Get(ctx, key)
+	if err != nil {
+		return kv.ValueEntry{}, err
 	}
-	return e.snapshot.Get(ctx, key, opts...)
+	return kv.NewValueEntry(val, 0), nil
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {

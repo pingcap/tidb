@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 	"time"
 
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 const chunkMaxRows = 1024
@@ -306,9 +304,9 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) error {
 	)
 	for i, col := range e.columnInfos {
 		switch col.ColumnId {
-		case model.ExtraCommitTsID:
+		case model.ExtraCommitTSID:
 			if commitTsIdx != -1 {
-				return errors.Errorf("duplicated special column %d", model.ExtraCommitTsID)
+				return errors.Errorf("duplicated special column %d", model.ExtraCommitTSID)
 			}
 			commitTsIdx = i
 		case model.ExtraPhysTblID:
@@ -319,7 +317,7 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) error {
 		}
 	}
 	if commitTsIdx != -1 && commitTsIdx != len(e.columnInfos)-1 {
-		return errors.Errorf("special column %d must be last (got idx=%d, len=%d)", model.ExtraCommitTsID, commitTsIdx, len(e.columnInfos))
+		return errors.Errorf("special column %d must be last (got idx=%d, len=%d)", model.ExtraCommitTSID, commitTsIdx, len(e.columnInfos))
 	}
 	if physTblIDIdx != -1 {
 		expected := len(e.columnInfos) - 1
@@ -336,7 +334,7 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) error {
 
 	// Trim trailing special columns which are not encoded in the index key/value.
 	// See `tablecodec.DecodeIndexKV` / coprocessor returned special columns.
-	if lastColumn.GetColumnId() == model.ExtraCommitTsID {
+	if lastColumn.GetColumnId() == model.ExtraCommitTSID {
 		e.idxScanCtx.columnLen--
 		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
 	}
@@ -539,7 +537,7 @@ func pbChunkToChunk(pbChk tipb.Chunk, chk *chunk.Chunk, fieldTypes []*types.Fiel
 	var err error
 	decoder := codec.NewDecoder(chk, timeutil.SystemLocation())
 	for len(rowsData) > 0 {
-		for i := range fieldTypes {
+		for i := 0; i < len(fieldTypes); i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, fieldTypes[i])
 			if err != nil {
 				return err
@@ -603,7 +601,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	for i, ran := range e.kvRanges {
 		e.curNdv = 0
 		if e.isPointGetRange(ran) {
-			val, meta, err := dbReader.Get(ran.StartKey, e.startTS)
+			val, err := dbReader.Get(ran.StartKey, e.startTS)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -614,7 +612,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 				e.counts[i]++
 				e.ndvs[i] = 1
 			}
-			err = e.processor.Process(ran.StartKey, val, meta.CommitTS())
+			err = e.processor.Process(ran.StartKey, val, 0)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -928,7 +926,7 @@ func (e *indexScanProcessor) Finish() error {
 }
 
 func (isc *idxScanCtx) checkVal(curVals [][]byte) bool {
-	for i := range isc.columnLen {
+	for i := 0; i < isc.columnLen; i++ {
 		if !bytes.Equal(isc.prevVals[i], curVals[i]) {
 			return false
 		}
@@ -948,26 +946,14 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 			restoredCols = append(restoredCols, c)
 		}
 	}
-	decodedKey := key
-	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
-		// If the key is in API V2, then ignore the prefix
-		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		decodedKey = k
-		if !kv.Key(decodedKey).HasPrefix(tablecodec.TablePrefix()) {
-			return errors.Errorf("invalid index key %q after decoded", key)
-		}
-	}
-	values, err := tablecodec.DecodeIndexKV(decodedKey, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
+	values, err := tablecodec.DecodeIndexKV(key, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
 	if err != nil {
 		return err
 	}
 	if e.idxScanCtx.collectNDV {
 		if len(e.idxScanCtx.prevVals[0]) == 0 || !e.idxScanCtx.checkVal(values) {
 			e.curNdv++
-			for i := range e.idxScanCtx.columnLen {
+			for i := 0; i < e.idxScanCtx.columnLen; i++ {
 				e.idxScanCtx.prevVals[i] = append(e.idxScanCtx.prevVals[i][:0], values[i]...)
 			}
 		}
@@ -986,7 +972,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 
 	idxCommitTs := -1
 	idxPhysTblID := -1
-	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraCommitTsID {
+	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraCommitTSID {
 		idxCommitTs = len(e.columnInfos) - 1
 	}
 	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
@@ -998,7 +984,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	// If we need pid, it is filled by the loop above because `DecodeIndexKV` can return the pid in `values`.
 	// When it's not present, fill `_tidb_tid` (physical table id) from the key.
 	if idxPhysTblID >= 0 && idxPhysTblID >= filledLen {
-		tblID := tablecodec.DecodeTableID(decodedKey)
+		tblID := tablecodec.DecodeTableID(key)
 		chk.AppendInt64(idxPhysTblID, tblID)
 	}
 	if idxCommitTs >= 0 && idxCommitTs >= filledLen {
@@ -1012,7 +998,7 @@ func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 	var oldRow []types.Datum
 	sc := e.sctx.GetSessionVars().StmtCtx
 	errCtx := sc.ErrCtx()
-	for i := range chk.NumRows() {
+	for i := 0; i < chk.NumRows(); i++ {
 		oldRow = oldRow[:0]
 		if e.outputOff != nil {
 			for _, outputOff := range e.outputOff {
@@ -1020,7 +1006,7 @@ func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 				oldRow = append(oldRow, d)
 			}
 		} else {
-			for colIdx := range chk.NumCols() {
+			for colIdx := 0; colIdx < chk.NumCols(); colIdx++ {
 				d := chk.GetRow(i).GetDatum(colIdx, e.fieldTps[colIdx])
 				oldRow = append(oldRow, d)
 			}
@@ -1249,7 +1235,7 @@ func (e *hashAggProcessor) Finish() error {
 }
 
 func safeCopy(b []byte) []byte {
-	return slices.Clone(b)
+	return append([]byte{}, b...)
 }
 
 func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
@@ -1266,7 +1252,12 @@ func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) er
 }
 
 func isResolved(startTS uint64, resolved []uint64) bool {
-	return slices.Contains(resolved, startTS)
+	for _, v := range resolved {
+		if startTS == v {
+			return true
+		}
+	}
+	return false
 }
 
 func exceedEndKey(current, endKey []byte) bool {

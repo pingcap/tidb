@@ -2425,39 +2425,29 @@ func TestIssue58829(t *testing.T) {
 }
 
 func TestTiFlashWithCommitTSColumn(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(id int primary key, v int)")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, v int)")
 
-		// Create virtual tiflash replica info.
-		is := dom.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-		require.NoError(t, err)
-		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:     1,
-			Available: true,
-		}
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-		// When both tikv and tiflash are available, accessing _tidb_commit_ts should use tikv
-		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash,tikv'")
-		// Query with _tidb_commit_ts should NOT use tiflash
-		hasTiFlashPlan := tk.HasTiFlashPlan("select _tidb_commit_ts, id from t")
-		require.False(t, hasTiFlashPlan, "TiFlash should not be used when accessing _tidb_commit_ts column")
+	// When both tikv and tiflash are available, accessing _tidb_commit_ts should use tikv.
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash,tikv'")
+	require.False(t, tk.HasTiFlashPlan("select _tidb_commit_ts, id from t"))
+	require.False(t, tk.HasTiFlashPlan("select /*+ read_from_storage(tiflash[t]) */ _tidb_commit_ts, id from t"))
 
-		// With read_from_storage hint for tiflash, accessing _tidb_commit_ts should use tikv
-		hasTiFlashPlan = tk.HasTiFlashPlan("select /*+ read_from_storage(tiflash[t]) */ _tidb_commit_ts, id from t")
-		require.False(t, hasTiFlashPlan, "TiFlash should not be used when accessing _tidb_commit_ts column")
+	// When only tiflash is available, accessing _tidb_commit_ts should fail.
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	_, err = tk.Exec("explain select _tidb_commit_ts, id from t")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Can't find a proper physical plan")
 
-		// When only tiflash is available, accessing _tidb_commit_ts should fail
-		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
-		_, err = tk.Exec("explain select _tidb_commit_ts, id from t")
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "Can't find a proper physical plan")
-
-		// Normal queries (without _tidb_commit_ts) can still use tiflash
-		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
-		hasTiFlashPlan = tk.HasTiFlashPlan("select id, v from t")
-		require.True(t, hasTiFlashPlan, "TiFlash should be used for normal queries without _tidb_commit_ts")
-	})
+	// Normal queries (without _tidb_commit_ts) can still use tiflash.
+	require.True(t, tk.HasTiFlashPlan("select id, v from t"))
 }
