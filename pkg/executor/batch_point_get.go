@@ -20,6 +20,7 @@ import (
 	"slices"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -62,7 +63,8 @@ type BatchPointGetExec struct {
 	lock           bool
 	waitTime       int64
 	inited         uint32
-	values         [][]byte
+	commitTSOffset int
+	values         []kv.ValueEntry
 	index          int
 	rowDecoder     *rowcodec.ChunkDecoder
 	keepOrder      bool
@@ -213,7 +215,11 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
+		commitTS := uint64(0)
+		if e.commitTSOffset >= 0 {
+			commitTS = val.CommitTS
+		}
+		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val.Value, commitTS, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -236,6 +242,19 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var indexKeys []kv.Key
 	var err error
 	batchGetter := e.batchGetter
+	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		defer cancel()
+	}
+	e.commitTSOffset = -1
+	for i, col := range e.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			e.commitTSOffset = i
+			break
+		}
+	}
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
@@ -290,7 +309,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
-		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
+		handleVals, err = e.batchGet(ctx, toFetchIndexKeys)
 		if err != nil {
 			return err
 		}
@@ -415,8 +434,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			return err
 		}
 	}
+
 	// Fetch all values.
-	values, err = batchGetter.BatchGet(ctx, keys)
+	values, err = e.batchGet(ctx, keys)
 	if err != nil {
 		return err
 	}
@@ -425,7 +445,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if e.lock && rc {
 		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
-	e.values = make([][]byte, 0, len(values))
+	e.values = make([]kv.ValueEntry, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
@@ -472,6 +492,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	e.handles = handles
 	return nil
+}
+
+func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (map[string]kv.ValueEntry, error) {
+	if e.commitTSOffset >= 0 {
+		return e.batchGetter.BatchGet(ctx, keys, kv.WithReturnCommitTS())
+	}
+	return e.batchGetter.BatchGet(ctx, keys)
 }
 
 // LockKeys locks the keys for pessimistic transaction.
