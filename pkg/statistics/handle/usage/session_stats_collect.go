@@ -586,6 +586,7 @@ func (m *TableDelta) GetDeltaAndReset() map[int64]variable.TableDelta {
 
 // Update updates the delta of the table.
 func (m *TableDelta) Update(id int64, delta int64, count int64) {
+	intest.Assert(id > 0, "table ID should be greater than 0")
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	item := m.delta[id]
