@@ -16,11 +16,11 @@ package cophandler
 
 import (
 	"errors"
-	"slices"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/badger"
