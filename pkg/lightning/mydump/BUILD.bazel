@@ -44,15 +44,12 @@ go_library(
         "//pkg/util/table-filter",
         "//pkg/util/timeutil",
         "//pkg/util/zeropool",
-<<<<<<< HEAD
         "@com_github_apache_arrow_go_v18//arrow/memory",
         "@com_github_apache_arrow_go_v18//parquet",
         "@com_github_apache_arrow_go_v18//parquet/compress",
         "@com_github_apache_arrow_go_v18//parquet/file",
         "@com_github_apache_arrow_go_v18//parquet/schema",
-=======
         "@com_github_go_sql_driver_mysql//:mysql",
->>>>>>> 2cfc5a2ab62 (lightning: replace information_schema query when importing table schema with separate show create table (#58636))
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_spkg_bom//:bom",
