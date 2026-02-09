@@ -358,16 +358,17 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 
-		// Build snapshot tso is fixed once and reused by all reorg retries.
-		if job.SnapshotVer == 0 {
-			job.SnapshotVer = jobCtx.metaMut.StartTS
-		}
 		job.SchemaState = model.StateWriteReorganization
 		job.State = model.JobStateRunning
 		return ver, nil
 
 	case model.StateWriteReorganization:
 		// Phase-2: run initial build and persist refresh result in mysql.tidb_mview_refresh.
+		// The build snapshot tso is fixed once when reorg really starts, and reused by reorg retries.
+		// This avoids capturing an overly old tso in StateNone when the job waits in reorg queue.
+		if job.SnapshotVer == 0 {
+			job.SnapshotVer = jobCtx.metaMut.StartTS
+		}
 		reorg := &reorgInfo{Job: job, jobCtx: jobCtx}
 		storeName := ""
 		if jobCtx.store != nil {
@@ -493,6 +494,8 @@ func buildCreateMaterializedViewSelectSQLWithSnapshot(selectSQL string, snapshot
 }
 
 func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo, snapshotTS uint64) (string, error) {
+	// IMPORT FROM SELECT doesn't support setting session tidb_snapshot for historical read.
+	// Keep the source query at snapshotTS via AS OF TIMESTAMP in SELECT instead.
 	selectSQL, err := buildCreateMaterializedViewSelectSQLWithSnapshot(mvTblInfo.MaterializedView.SQLContent, snapshotTS)
 	if err != nil {
 		return "", errors.Trace(err)
