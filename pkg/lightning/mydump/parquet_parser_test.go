@@ -38,8 +38,8 @@ import (
 )
 
 func newParquetParserForTest(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	dir string,
 	fileName string,
 	meta ParquetFileMeta,
@@ -98,7 +98,7 @@ func TestParquetParser(t *testing.T) {
 	name := "test123.parquet"
 	WriteParquetFile(dir, name, pc, 100)
 
-	reader := newParquetParserForTest(t, context.Background(), dir, name, ParquetFileMeta{})
+	reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{})
 
 	require.Equal(t, []string{"ss", "a_a"}, reader.Columns())
 
@@ -157,7 +157,7 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	parser := newParquetParserForTest(t, context.Background(), dir, fileName, ParquetFileMeta{})
+	parser := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
 
 	for i := range 50 {
 		require.NoError(t, parser.ReadRow())
@@ -266,7 +266,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "test123.parquet"
 		WriteParquetFile(dir, name, pc, 1)
 
-		reader := newParquetParserForTest(t, context.Background(), dir, name, ParquetFileMeta{Loc: time.UTC})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
 
 		require.Len(t, reader.colNames, 10)
 		require.NoError(t, reader.ReadRow())
@@ -340,7 +340,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		fileName := "test.02.parquet"
 		WriteParquetFile(dir, fileName, pc, 7)
 
-		reader := newParquetParserForTest(t, context.Background(), dir, fileName, ParquetFileMeta{})
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
 
 		for i, expectValue := range expectedValues {
 			assert.NoError(t, reader.ReadRow())
@@ -375,7 +375,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		fileName := "test.bool.parquet"
 		WriteParquetFile(dir, fileName, pc, 2)
 
-		reader := newParquetParserForTest(t, context.Background(), dir, fileName, ParquetFileMeta{})
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
 
 		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
 		// compare will `DeepEqual` here
@@ -390,7 +390,7 @@ func TestParquetVariousTypes(t *testing.T) {
 
 func TestParquetAurora(t *testing.T) {
 	fileName := "test.parquet"
-	parser := newParquetParserForTest(t, context.TODO(), "examples", fileName, ParquetFileMeta{})
+	parser := newParquetParserForTest(context.TODO(), t, "examples", fileName, ParquetFileMeta{})
 
 	require.Equal(t, []string{"id", "val1", "val2", "d1", "d2", "d3", "d4", "d5", "d6"}, parser.Columns())
 
@@ -446,7 +446,7 @@ func TestParquetAurora(t *testing.T) {
 func TestHiveParquetParser(t *testing.T) {
 	name := "000000_0.parquet"
 	dir := "./parquet/"
-	reader := newParquetParserForTest(t, context.TODO(), dir, name, ParquetFileMeta{Loc: time.UTC})
+	reader := newParquetParserForTest(context.TODO(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
 	// UTC+0:00
 	results := []time.Time{
 		time.Date(2022, 9, 10, 9, 9, 0, 0, time.UTC),
@@ -526,7 +526,7 @@ func TestBasicReadFile(t *testing.T) {
 		readBatchSize = origBatchSize
 	}()
 
-	reader := newParquetParserForTest(t, context.TODO(), dir, fileName, ParquetFileMeta{})
+	reader := newParquetParserForTest(context.TODO(), t, dir, fileName, ParquetFileMeta{})
 	for i := range rowCnt {
 		require.NoError(t, reader.ReadRow())
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
@@ -593,7 +593,7 @@ func TestParquetParserWrapper(t *testing.T) {
 			rowGroupInMemoryThreshold = origThreshold
 		}()
 
-		parser := newParquetParserForTest(t, context.Background(), dir, fileName, ParquetFileMeta{})
+		parser := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
 
 		gotFixed := make([]string, 0, rowCnt)
 		gotInt := make([]int64, 0, rowCnt)

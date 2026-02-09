@@ -590,8 +590,6 @@ func NewParquetParser(
 	fileSchema := reader.MetaData().Schema
 	colTypes := make([]convertedType, fileSchema.NumColumns())
 	colNames := make([]string, 0, fileSchema.NumColumns())
-	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
-	subreaders = append(subreaders, reader)
 
 	for i := range colTypes {
 		desc := reader.MetaData().Schema.Column(i)
