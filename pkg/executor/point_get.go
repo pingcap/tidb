@@ -120,7 +120,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		b.err = err
 		return nil
 	}
-	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+
+	// Cached table uses mem-buffer scan/get APIs, which can't provide `_tidb_commit_ts`.
+	// For correctness, bypass the cached table if `_tidb_commit_ts` is required.
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable && e.commitTSOffset < 0 {
 		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTS); cacheTable != nil {
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}

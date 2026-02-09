@@ -17,17 +17,20 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -36,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestSelectCheckVisibility(t *testing.T) {
@@ -95,6 +99,93 @@ func TestReturnValues(t *testing.T) {
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
 	require.True(t, ok)
 	tk.MustExec("rollback")
+}
+
+func TestBatchPointGetForUpdateUsePessimisticLockCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	tblInfo := external.GetTableByName(t, tk, "test", "t")
+	tid := tblInfo.Meta().ID
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`))
+	defer func() {
+		unistore.UnistoreRPCClientSendHook.Store(nil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientSendHook"))
+	}()
+
+	var getCnt, batchGetCnt, lockCnt int64
+	hook := func(req *tikvrpc.Request) {
+		var key []byte
+		switch req.Type {
+		case tikvrpc.CmdGet:
+			key = req.Get().Key
+		case tikvrpc.CmdBatchGet:
+			r := req.BatchGet()
+			if len(r.Keys) == 0 {
+				return
+			}
+			key = r.Keys[0]
+		case tikvrpc.CmdPessimisticLock:
+			key = req.PessimisticLock().PrimaryLock
+		default:
+			return
+		}
+		if tablecodec.DecodeTableID(key) != tid {
+			return
+		}
+		switch req.Type {
+		case tikvrpc.CmdGet:
+			atomic.AddInt64(&getCnt, 1)
+		case tikvrpc.CmdBatchGet:
+			atomic.AddInt64(&batchGetCnt, 1)
+		case tikvrpc.CmdPessimisticLock:
+			atomic.AddInt64(&lockCnt, 1)
+		}
+	}
+	unistore.UnistoreRPCClientSendHook.Store(&hook)
+
+	tk.MustExec("begin pessimistic")
+	defer tk.MustExec("rollback")
+
+	// update the values to make sure the "for update request" needs to fetch the latest value
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("update t set v = v*10")
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1", "2 2"))
+
+	atomic.StoreInt64(&getCnt, 0)
+	atomic.StoreInt64(&batchGetCnt, 0)
+	atomic.StoreInt64(&lockCnt, 0)
+
+	sql := "select * from t where id in (1, 2) for update"
+	tk.MustHavePlan(sql, "Batch_Point_Get")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 10", "2 20"))
+
+	// the first query should lock request to fetch value
+	require.GreaterOrEqual(t, atomic.LoadInt64(&lockCnt), int64(1))
+	require.Equal(t, int64(0), atomic.LoadInt64(&getCnt)+atomic.LoadInt64(&batchGetCnt))
+
+	// the second query should use pessimistic lock cache, no request sent
+	atomic.StoreInt64(&getCnt, 0)
+	atomic.StoreInt64(&batchGetCnt, 0)
+	atomic.StoreInt64(&lockCnt, 0)
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 10", "2 20"))
+	require.Equal(t, int64(0), atomic.LoadInt64(&getCnt)+atomic.LoadInt64(&batchGetCnt)+atomic.LoadInt64(&lockCnt))
+
+	// if the rows contains _tidb_commit_ts, should not use cache
+	sql2 := "select * from t where id in (1, 2) and _tidb_commit_ts > 100 for update"
+	tk.MustHavePlan(sql2, "Batch_Point_Get")
+	atomic.StoreInt64(&getCnt, 0)
+	atomic.StoreInt64(&batchGetCnt, 0)
+	atomic.StoreInt64(&lockCnt, 0)
+	tk.MustQuery(sql2).Sort().Check(testkit.Rows("1 10", "2 20"))
+	require.GreaterOrEqual(t, atomic.LoadInt64(&lockCnt)+atomic.LoadInt64(&getCnt), int64(0))
+	require.Equal(t, int64(1), atomic.LoadInt64(&batchGetCnt))
 }
 
 func mustExecDDL(tk *testkit.TestKit, t *testing.T, sql string, dom *domain.Domain) {
@@ -184,6 +275,40 @@ func TestMemCacheReadLock(t *testing.T) {
 		require.Regexp(t, ".*num_rpc.*", explain)
 
 		mustExecDDL(tk, t, "unlock tables", dom)
+	}
+}
+
+func TestBatchPointGetCommitTSWithTableLockRead(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.Session().GetSessionVars().EnablePointGetCache = true
+	defer func() {
+		tk.Session().GetSessionVars().EnablePointGetCache = false
+		tk.MustExec("drop table if exists point")
+	}()
+
+	tk.MustExec("drop table if exists point")
+	tk.MustExec("create table point (id int primary key, v int)")
+	tk.MustExec("insert point values (1, 1), (2, 2)")
+
+	mustExecDDL(tk, t, "lock tables point read", dom)
+	defer mustExecDDL(tk, t, "unlock tables", dom)
+
+	sql := "select _tidb_commit_ts from point where id in (1, 2)"
+	tk.MustHavePlan(sql, "Batch_Point_Get")
+	rows := tk.MustQuery(sql).Rows()
+	require.Len(t, rows, 2)
+	for _, r := range rows {
+		require.Len(t, r, 1)
+		ts, err := strconv.ParseUint(r[0].(string), 10, 64)
+		require.NoError(t, err)
+		require.NotZero(t, ts)
 	}
 }
 
