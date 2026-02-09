@@ -247,6 +247,12 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		tk.MustExec(fmt.Sprintf("drop table if exists t_dump_multi_%d", i))
 		tk.MustExec(fmt.Sprintf("create table t_dump_multi_%d(a int, b int)", i))
+		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (1, 1)", i))
+		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (2, 2)", i))
+		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (3, 3)", i))
+		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (4, 4)", i))
+		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (5, 5)", i))
+		tk.MustExec(fmt.Sprintf("analyze table t_dump_multi_%d", i))
 	}
 
 	// Build 20 SQL statements using the 5 tables with qualified names (test.t_...) so
@@ -256,15 +262,15 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 		tbl := (i % 5) + 1
 		switch i % 4 {
 		case 0:
-			stmts[i] = fmt.Sprintf("'select * from test.t_dump_multi_%d'", tbl)
+			stmts[i] = fmt.Sprintf("'select * from t_dump_multi_%d'", tbl)
 		case 1:
-			stmts[i] = fmt.Sprintf("'select * from test.t_dump_multi_%d where a=1'", tbl)
+			stmts[i] = fmt.Sprintf("'select * from t_dump_multi_%d where a=1'", tbl)
 		case 2:
-			stmts[i] = fmt.Sprintf("'select * from test.t_dump_multi_%d where b>0'", tbl)
+			stmts[i] = fmt.Sprintf("'select * from t_dump_multi_%d where b>0'", tbl)
 		default:
 			// join two tables
 			t2 := (tbl % 5) + 1
-			stmts[i] = fmt.Sprintf("'select * from test.t_dump_multi_%d, test.t_dump_multi_%d where test.t_dump_multi_%d.a=test.t_dump_multi_%d.a'", tbl, t2, tbl, t2)
+			stmts[i] = fmt.Sprintf("'select * from t_dump_multi_%d, t_dump_multi_%d where t_dump_multi_%d.a=t_dump_multi_%d.a'", tbl, t2, tbl, t2)
 		}
 	}
 	sqlCmd := "plan replayer dump explain (" + strings.Join(stmts, ", ") + ")"
