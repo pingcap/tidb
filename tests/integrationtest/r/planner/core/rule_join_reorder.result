@@ -117,7 +117,7 @@ Projection	root		planner__core__rule_join_reorder.t3.market_id, planner__core__r
   │ └─Selection	cop[tikv]		not(isnull(planner__core__rule_join_reorder.t3.market_id)), not(isnull(planner__core__rule_join_reorder.t3.te_partition))
   │   └─IndexFullScan	cop[tikv]	table:tt, index:t_pbu_partition_id(offer_pbu_id, market_id, te_partition)	keep order:false, stats:pseudo
   └─HashJoin(Probe)	root		CARTESIAN inner join
-    ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__rule_join_reorder.t3.fk_id, planner__core__rule_join_reorder.t2.id)]
+    ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__rule_join_reorder.t2.id, planner__core__rule_join_reorder.t3.fk_id)]
     │ ├─TableReader(Build)	root		data:Selection
     │ │ └─Selection	cop[tikv]		eq(planner__core__rule_join_reorder.t2.routing_rule_switch, 1)
     │ │   └─TableFullScan	cop[tikv]	table:e	keep order:false, stats:pseudo
