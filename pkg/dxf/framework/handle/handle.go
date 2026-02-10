@@ -309,25 +309,25 @@ func GetTargetScope() string {
 	return vardef.ServiceScope.Load()
 }
 
-// GetCloudStorageURI returns the cloud storage URI with cluster ID appended to the path.
+// GetCloudStorageURI returns the cloud storage URI for global-sort.
+// cloud storage URI is shared by other components, we add the dxf prefix to
+// differentiate them.
+// when deploying without SEM and with explicit prefix, we assume that the
+// bucket might be shared by multiple clusters, such as during test, to
+// avoid 2 clusters mistakenly configured the same URI, we add the cluster
+// ID in the prefix.
+// when deploying with SEM, such as on CLOUD, the bucket is uniquely used
+// by current cluster. or if the prefix is empty, we assume that the bucket
+// is not shared.
 func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 	cloudURI := vardef.CloudStorageURI.Load()
 	if cloudURI == "" {
 		return cloudURI
 	}
-	// cloud storage URI is shared by other components, we add the dxf prefix to
-	// differentiate them.
 	// when setting the cloudURI value by SQL, we already checked the
 	// effectiveness, so we don't need to check it again here.
 	u, _ := objstore.ParseRawURL(cloudURI)
 	prefix := storeapi.NewPrefix(u.Path)
-	// when deploying with SEM, such as on CLOUD, the bucket is uniquely used
-	// by current cluster. or if the prefix is empty, we assume that the bucket
-	// is not shared.
-	// when deploying without SEM and with explicit prefix, we assume that the
-	// bucket might be shared by multiple clusters, such as during test, to
-	// avoid 2 clusters mistakenly configured the same URI, we add the cluster
-	// ID in the prefix.
 	var clusterIDStr string
 	if !compat.IsEnabled() && prefix.String() != "" {
 		if s, ok := store.(kv.StorageWithPD); ok {
