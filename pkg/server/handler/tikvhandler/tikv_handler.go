@@ -194,9 +194,19 @@ type ProfileHandler struct {
 	*handler.TikvHandlerTool
 }
 
+// AdminCheckIndexHandler is the handler for admin check index inconsistency summary.
+type AdminCheckIndexHandler struct {
+	store kv.Storage
+}
+
 // NewProfileHandler creates a new ProfileHandler.
 func NewProfileHandler(tool *handler.TikvHandlerTool) *ProfileHandler {
 	return &ProfileHandler{tool}
+}
+
+// NewAdminCheckIndexHandler creates a new AdminCheckIndexHandler.
+func NewAdminCheckIndexHandler(store kv.Storage) *AdminCheckIndexHandler {
+	return &AdminCheckIndexHandler{store: store}
 }
 
 // DDLHookHandler is the handler for use pre-defined ddl callback.
@@ -1171,6 +1181,71 @@ func (h DDLResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	}
 
 	handler.WriteData(w, "success!")
+}
+
+func (h AdminCheckIndexHandler) checkIndexByName(dbName, tableName, indexName string) (*executor.AdminCheckIndexInconsistentSummary, error) {
+	se, err := session.CreateSession(h.store)
+	if err != nil {
+		return nil, err
+	}
+	defer se.Close()
+
+	if err = se.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
+		return nil, err
+	}
+
+	collector := executor.NewAdminCheckIndexInconsistentCollector()
+	checkCtx := executor.WithAdminCheckIndexInconsistentCollector(context.Background(), collector)
+	checkSQL := fmt.Sprintf("admin check index %s %s", quoteTable(dbName, tableName), quoteName(indexName))
+
+	rs, execErr := se.Execute(checkCtx, checkSQL)
+	for _, one := range rs {
+		if one != nil {
+			terror.Call(one.Close)
+		}
+	}
+
+	summary := collector.Summary()
+	if execErr != nil && summary.InconsistentRowCount == 0 {
+		return nil, execErr
+	}
+	return summary, execErr
+}
+
+// ServeHTTP handles request of admin check index summary.
+func (h AdminCheckIndexHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	dbName := req.FormValue(handler.DBName)
+	tableName := req.FormValue(handler.TableName)
+	indexName := req.FormValue(handler.IndexName)
+	if dbName == "" || tableName == "" || indexName == "" {
+		handler.WriteError(w, errors.Errorf("db, table and index are required"))
+		return
+	}
+
+	summary, err := h.checkIndexByName(dbName, tableName, indexName)
+	if err != nil && summary == nil {
+		handler.WriteError(w, err)
+		return
+	}
+	if summary == nil {
+		summary = &executor.AdminCheckIndexInconsistentSummary{}
+	}
+	// For inconsistency errors from `admin check index`, summary already contains
+	// all mismatched handles and mismatch types, which are required by this API.
+	handler.WriteData(w, summary)
+}
+
+func quoteName(name string) string {
+	return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``"))
+}
+
+func quoteTable(schema, table string) string {
+	return fmt.Sprintf("%s.%s", quoteName(schema), quoteName(table))
 }
 
 func (h *TableHandler) getPDAddr() ([]string, error) {
