@@ -331,9 +331,13 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	var (
 		eg      errgroup.Group
-		builder = pp.getBuilder()
 		readers = make([]*file.Reader, pp.fileMeta.NumColumns())
 	)
+
+	builder, err := pp.getBuilder()
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	defer func() {
 		if err != nil {
@@ -345,6 +349,7 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 		}
 	}()
 
+	eg.SetLimit(16)
 	for i := range pp.fileMeta.NumColumns() {
 		eg.Go(func() error {
 			wrapper, err := builder(i)
@@ -381,8 +386,12 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-func (pp *ParquetParser) getBuilder() func(int) (readerAtSeekerCloser, error) {
-	ranges := rowGroupRangeFromMeta(pp.fileMeta.RowGroup(pp.curRowGroup))
+func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
+	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
+	if err != nil {
+		return nil, err
+	}
+
 	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
 		base, err := newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
 		return func(c int) (readerAtSeekerCloser, error) {
@@ -391,7 +400,7 @@ func (pp *ParquetParser) getBuilder() func(int) (readerAtSeekerCloser, error) {
 				pos:      ranges.columnStarts[c],
 				fileSize: pp.fileMeta.GetSourceFileSize(),
 			}, err
-		}
+		}, nil
 	}
 
 	return func(c int) (readerAtSeekerCloser, error) {
@@ -400,7 +409,7 @@ func (pp *ParquetParser) getBuilder() func(int) (readerAtSeekerCloser, error) {
 				StartOffset: &ranges.columnStarts[c],
 				EndOffset:   &ranges.columnEnds[c],
 			})
-	}
+	}, nil
 }
 
 func (pp *ParquetParser) moveToNextRowGroup() error {

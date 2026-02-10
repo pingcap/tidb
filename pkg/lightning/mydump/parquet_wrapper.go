@@ -16,6 +16,7 @@ package mydump
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 
@@ -27,6 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"golang.org/x/sync/errgroup"
 )
+
+// Copied from https://github.com/apache/arrow-go/blob/bbf7ab7523a6411e25c7a08566a40e8759cc6c13/parquet/file/row_group_reader.go#L32C1-L34C2
+const maxDictHeaderSize int64 = 100
 
 var (
 	// rowGroupInMemoryThreshold is the max row-group size that enables in-memory
@@ -180,6 +184,7 @@ func (r *inMemoryReaderBase) loadRowGroup(
 	rg := r.rowGroup
 
 	var eg errgroup.Group
+	eg.SetLimit(8)
 	readStart := rg.start
 	for readStart < rg.end {
 		batchSize := min(int64(external.ConcurrentReaderBufferSizePerConc), rg.end-readStart)
@@ -235,16 +240,41 @@ func (*inMemoryParquetWrapper) Close() error {
 	return nil
 }
 
-func rowGroupRangeFromMeta(rg *metadata.RowGroupMetaData) rowGroupRange {
+// Copied from https://github.com/apache/arrow-go/blob/bbf7ab7523a6411e25c7a08566a40e8759cc6c13/parquet/file/row_group_reader.go
+func rowGroupRangeFromMeta(fileMeta *metadata.FileMetaData, idx int) (rowGroupRange, error) {
+	rg := fileMeta.RowGroup(idx)
 	ranges := rowGroupRange{start: math.MaxInt64}
 	for i := range rg.NumColumns() {
 		col, _ := rg.ColumnChunk(i)
-		start := col.DataPageOffset()
+		colStart := col.DataPageOffset()
 		if col.HasDictionaryPage() && col.DictionaryPageOffset() > 0 {
-			start = min(start, col.DictionaryPageOffset())
+			colStart = min(colStart, col.DictionaryPageOffset())
 		}
-		ranges.add(start, start+col.TotalCompressedSize())
+
+		colLen := col.TotalCompressedSize()
+		// PARQUET-816 workaround for old files created by older parquet-mr
+		if fileMeta.WriterVersion().LessThan(metadata.Parquet816FixedVersion) {
+			sourceSz := fileMeta.GetSourceFileSize()
+			// The Parquet MR writer had a bug in 1.2.8 and below where it didn't include the
+			// dictionary page header size in total_compressed_size and total_uncompressed_size
+			// (see IMPALA-694). We add padding to compensate.
+			if colStart < 0 || colLen < 0 {
+				return ranges, fmt.Errorf(
+					"invalid column chunk metadata, offset (%d) and length (%d) should both be positive",
+					colStart, colLen)
+			}
+			if colStart > sourceSz || colLen > sourceSz {
+				return ranges, fmt.Errorf(
+					"invalid column chunk metadata, offset (%d) and length (%d) must both be less than total source size (%d)",
+					colStart, colLen, sourceSz)
+			}
+			bytesRemain := sourceSz - (colStart + colLen)
+			padding := min(maxDictHeaderSize, bytesRemain)
+			colLen += padding
+		}
+
+		ranges.add(colStart, colStart+colLen)
 	}
 
-	return ranges
+	return ranges, nil
 }
