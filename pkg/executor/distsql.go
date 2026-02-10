@@ -1682,14 +1682,14 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 	}
 	if ok {
 		pidIdx := row.Len() - 1
-		if e.isVersionAware {
+		if tp == getHandleFromIndex && e.isVersionAware {
 			pidIdx--
 		}
 		pid := row.GetInt64(pidIdx)
 		handle = kv.NewPartitionHandle(pid, handle)
 	}
 
-	if e.isVersionAware {
+	if tp == getHandleFromIndex && e.isVersionAware {
 		version = row.GetUint64(row.Len() - 1)
 	}
 	return
