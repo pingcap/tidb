@@ -124,11 +124,15 @@ func (e *SortExec) Close() error {
 		// will use `e.Parallel.workers` and `e.Parallel.merger`.
 		channel.Clear(e.Parallel.resultChannel)
 		for i := range e.Parallel.workers {
-			e.Parallel.workers[i].batchRows = nil
-			e.Parallel.workers[i].localSortedRows = nil
-			e.Parallel.workers[i].sortedRowsIter = nil
-			e.Parallel.workers[i].merger = nil
-			e.Parallel.workers[i].memTracker.ReplaceBytesUsed(0)
+			worker := e.Parallel.workers[i]
+			if worker == nil {
+				continue
+			}
+			worker.batchRows = nil
+			worker.localSortedRows = nil
+			worker.sortedRowsIter = nil
+			worker.merger = nil
+			worker.memTracker.ReplaceBytesUsed(0)
 		}
 		e.Parallel.merger = nil
 		if e.Parallel.spillAction != nil {
@@ -669,11 +673,6 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	// Wait for the finish of chunk fetcher
 	fetcherWaiter := util.WaitGroupWrapper{}
 
-	// Fetch chunks from child and put chunks into chunkChannel
-	fetcherWaiter.Run(func() {
-		e.fetchChunksFromChild(ctx)
-	})
-
 	for i := range e.Parallel.workers {
 		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.Parallel.resultChannel, e.finishCh, e.memTracker, e.Parallel.sortedRowsIters[i], e.MaxChunkSize(), e.Parallel.spillHelper)
 		worker := e.Parallel.workers[i]
@@ -681,6 +680,11 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 			worker.run()
 		})
 	}
+
+	// Fetch chunks from child and put chunks into chunkChannel
+	fetcherWaiter.Run(func() {
+		e.fetchChunksFromChild(ctx)
+	})
 
 	go e.generateResult(&workersWaiter, &fetcherWaiter)
 	return nil

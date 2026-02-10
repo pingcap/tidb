@@ -97,6 +97,40 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 	return canBePushDown, canNotBePushDown
 }
 
+func isNotNullExprOnColumn(expr expression.Expression) (*expression.Column, bool) {
+	notExpr, ok := expr.(*expression.ScalarFunction)
+	if !ok || notExpr.FuncName.L != ast.UnaryNot || len(notExpr.GetArgs()) != 1 {
+		return nil, false
+	}
+	isNullExpr, ok := notExpr.GetArgs()[0].(*expression.ScalarFunction)
+	if !ok || isNullExpr.FuncName.L != ast.IsNull || len(isNullExpr.GetArgs()) != 1 {
+		return nil, false
+	}
+	col, ok := isNullExpr.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return nil, false
+	}
+	return col, true
+}
+
+func removeRedundantNotNullPredicates(schema *expression.Schema, predicates []expression.Expression) []expression.Expression {
+	if len(predicates) == 0 {
+		return predicates
+	}
+	filtered := make([]expression.Expression, 0, len(predicates))
+	for _, predicate := range predicates {
+		col, ok := isNotNullExprOnColumn(predicate)
+		if ok {
+			realCol := schema.RetrieveColumn(col)
+			if realCol != nil && mysql.HasNotNullFlag(realCol.RetType.GetFlag()) {
+				continue
+			}
+		}
+		filtered = append(filtered, predicate)
+	}
+	return filtered
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	predicates = DeleteTrueExprs(p, predicates)
@@ -146,6 +180,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	predicates = removeRedundantNotNullPredicates(ds.schema, predicates)
 	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
 	predicates = DeleteTrueExprs(ds, predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios

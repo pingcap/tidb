@@ -153,13 +153,17 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
-	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
-	require.NotNil(t, server)
+	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
+	require.Nil(t, server)
 
 	sch := schManager.MockScheduler(task)
 	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", "return(123456)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort"))
+	})
 	sch.Extension = ext
 
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", task.Meta)
@@ -192,9 +196,12 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 			TotalKVSize: 12,
 			MultipleFilesStats: []external.MultipleFilesStat{
 				{
+					MinKey: []byte("ta"),
+					MaxKey: []byte("tc"),
 					Filenames: [][2]string{
 						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
 					},
+					MaxOverlappingNum: external.MergeSortOverlapThreshold + 1,
 				},
 			},
 		}},
@@ -205,10 +212,6 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
 	}
 	// 2. to merge-sort stage.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
-	})
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -244,20 +247,9 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	for _, s := range gotSubtasks {
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, mergeSortStepMetaBytes))
 	}
-	// 3. to write&ingest stage.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest"))
-	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
-	require.NoError(t, err)
-	require.Len(t, subtaskMetas, 1)
+	// 3. check step transition to write&ingest and done.
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepWriteAndIngest, task.Step)
-	// 4. to done stage.
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
-	require.NoError(t, err)
-	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 }
@@ -330,10 +322,12 @@ func createAddIndexTask(t *testing.T,
 			PublicHost: gcsHost,
 		}
 		server, err = fakestorage.NewServerWithOptions(opt)
-		t.Cleanup(func() {
-			server.Stop()
-		})
 		require.NoError(t, err)
+		t.Cleanup(func() {
+			if server != nil {
+				server.Stop()
+			}
+		})
 		server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 		taskMeta.CloudStorageURI = fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
 	}

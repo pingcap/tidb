@@ -117,7 +117,13 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 	workerWaiter.Add(workerNum)
 	sortedRowsIters := make([]*chunk.Iterator4Slice, workerNum)
 	for i := 0; i < workerNum; i++ {
-		go func(idx int) {
+		worker := p.sortExec.Parallel.workers[i]
+		if worker == nil {
+			sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
+			workerWaiter.Done()
+			continue
+		}
+		go func(idx int, worker *parallelSortWorker) {
 			defer func() {
 				if r := recover(); r != nil {
 					processPanicAndLog(p.errOutputChan, r)
@@ -125,14 +131,14 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 				workerWaiter.Done()
 			}()
 
-			sortedRows, err := p.sortExec.Parallel.workers[idx].sortLocalRows()
+			sortedRows, err := worker.sortLocalRows()
 			if err != nil {
 				p.errOutputChan <- rowWithError{err: err}
 				return
 			}
 			sortedRowsIters[idx] = chunk.NewIterator4Slice(sortedRows)
 			injectParallelSortRandomFail(200)
-		}(i)
+		}(i, worker)
 	}
 
 	workerWaiter.Wait()
@@ -156,6 +162,9 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 func (p *parallelSortSpillHelper) releaseMemory() {
 	totalReleasedMemory := int64(0)
 	for _, worker := range p.sortExec.Parallel.workers {
+		if worker == nil {
+			continue
+		}
 		totalReleasedMemory += worker.totalMemoryUsage
 		worker.totalMemoryUsage = 0
 	}
