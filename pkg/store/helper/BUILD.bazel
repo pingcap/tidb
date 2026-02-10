@@ -49,6 +49,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "@com_github_gorilla_mux//:mux",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
