@@ -1623,6 +1623,10 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if len(args.IndexArgs) != 1 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index only supports one index per DDL job")
+	}
 
 	a := args.IndexArgs[0]
 	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, model.ColumnarIndexTypeFulltext, false, a)
@@ -1632,7 +1636,14 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
-		// none -> delete only
+		// Keep the fulltext add-index state machine aligned with onCreateIndex
+		// for fast-reorg setup.
+		err = initForReorgIndexes(w, job, []*model.IndexInfo{indexInfo})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
 		indexInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
@@ -1640,16 +1651,22 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 		}
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
-		// delete only -> write only
 		indexInfo.State = model.StateWriteOnly
+		_, err = checkPrimaryKeyNotNull(jobCtx, w, job, tblInfo, indexInfo)
+		if err != nil {
+			break
+		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
 		}
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
-		// write only -> reorganization
 		indexInfo.State = model.StateWriteReorganization
+		_, err = checkPrimaryKeyNotNull(jobCtx, w, job, tblInfo, indexInfo)
+		if err != nil {
+			break
+		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
@@ -1658,7 +1675,6 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		// reorganization -> public
 		tbl, err := getTable(jobCtx.getAutoIDRequirement(), schemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1668,51 +1684,76 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 			return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, dbterror.ErrCancelledDDLJob)
 		}
 
-		// Send sync schema notification to CI.
-		if job.SnapshotVer == 0 {
-			currVer, err := getValidCurrentVersion(jobCtx.store)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-			parserInfo, err := w.buildTiCIFulltextParserInfo(jobCtx, job, indexInfo)
-			if err != nil {
-				if !isRetryableJobError(err, job.ErrorCount) {
-					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
+			if !skipReorg {
+				if err := ensureFulltextIndexReorgMeta(job); err != nil {
+					job.State = model.JobStateCancelled
+					return ver, errors.Trace(err)
 				}
-				return ver, errors.Trace(err)
 			}
-
-			err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName, parserInfo)
-			if err != nil {
-				if !isRetryableJobError(err, job.ErrorCount) {
-					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+			// TiCI add-index ingest needs the add-index scan snapshot TS
+			// wired into its WriteHeader (not ingestData.GetTS()),
+			// so job.SnapshotVer will be captured and propagated
+			// through dist-task metadata.
+			if !job.ReorgMeta.TiCIIndexCreated {
+				parserInfo, err := w.buildTiCIFulltextParserInfo(jobCtx, job, indexInfo)
+				if err != nil {
+					if !isRetryableJobError(err, job.ErrorCount) {
+						return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+					}
+					return ver, errors.Trace(err)
 				}
+				err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName, parserInfo)
+				if err != nil {
+					if !isRetryableJobError(err, job.ErrorCount) {
+						return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+					}
+					return ver, errors.Trace(err)
+				}
+				job.ReorgMeta.TiCIIndexCreated = true
+			}
+
+			var done bool
+			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, []*model.IndexInfo{indexInfo})
+			if !done {
+				return ver, err
+			}
+
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateRunning:
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			taskID := strconv.FormatInt(job.ID, 10)
+			if err := tici.FinishIndexUpload(jobCtx.stepCtx, jobCtx.store, taskID); err != nil {
 				return ver, errors.Trace(err)
 			}
-			job.SnapshotVer = currVer.Ver
-			return ver, nil
-		}
 
-		// Don't need to check the progress of TiCI for fulltext index, just mark it as done.
-		indexInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+			AddIndexColumnFlag(tblInfo, indexInfo)
+			indexInfo.State = model.StatePublic
 
-		finishedArgs := &model.ModifyIndexArgs{
-			IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
-			PartitionIDs: getPartitionIDs(tblInfo),
-			OpType:       model.OpAddIndex,
-		}
-		job.FillFinishedArgs(finishedArgs)
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		logutil.DDLLogger().Info("[ddl] run add fulltext index job done",
-			zap.Int64("ver", ver),
-			zap.String("charset", job.Charset),
-			zap.String("collation", job.Collate))
+			finishedArgs := &model.ModifyIndexArgs{
+				IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
+				PartitionIDs: getPartitionIDs(tblInfo),
+				OpType:       model.OpAddIndex,
+			}
+			job.FillFinishedArgs(finishedArgs)
+
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			logutil.DDLLogger().Info("[ddl] run add fulltext index job done",
+				zap.Int64("ver", ver),
+				zap.String("charset", job.Charset),
+				zap.String("collation", job.Collate))
+		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
@@ -1900,6 +1941,24 @@ func ensureHybridIndexReorgMeta(job *model.Job) error {
 	}
 	if reorgTp != model.ReorgTypeIngest {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires ingest backfill")
+	}
+	return nil
+}
+
+func ensureFulltextIndexReorgMeta(job *model.Job) error {
+	if job.ReorgMeta == nil {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index requires distributed fast reorg ingest")
+	}
+	// Fulltext index requires DXF + fast reorg ingest only; reject other modes early.
+	if !job.ReorgMeta.IsDistReorg || !job.ReorgMeta.IsFastReorg {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index requires distributed fast reorg ingest")
+	}
+	reorgTp, err := pickBackfillType(job)
+	if err != nil {
+		return err
+	}
+	if reorgTp != model.ReorgTypeIngest {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index requires ingest backfill")
 	}
 	return nil
 }
@@ -2956,8 +3015,9 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 
 func shouldSkipTempIndexMerge(allIndexInfos []*model.IndexInfo) bool {
 	for _, indexInfo := range allIndexInfos {
-		if indexInfo.GetColumnarIndexType() == model.ColumnarIndexTypeHybrid {
-			// Hybrid (TiCI) indexes do not write to TiKV, so the transactional
+		if indexInfo.GetColumnarIndexType() == model.ColumnarIndexTypeHybrid ||
+			indexInfo.GetColumnarIndexType() == model.ColumnarIndexTypeFulltext {
+			// Hybrid and fulltext (TiCI) indexes do not write to TiKV, so the transactional
 			// temp-index merge path must be skipped.
 			return true
 		}

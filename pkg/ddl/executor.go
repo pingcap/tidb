@@ -4757,6 +4757,9 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if len(indexName.L) == 0 {
+		return nil
+	}
 	_, err = buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -4781,9 +4784,19 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddFullTextIndex
-	indexPartSpecifications[0].Expr = nil
+	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
+	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
+	// indexPartSpecifications[i].Expr can not be unmarshaled, so we set them to nil.
+	for _, spec := range indexPartSpecifications {
+		spec.Expr = nil
+	}
 
 	if err := e.captureFullTextIndexSysvarsToJob(ctx, job, indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
+	if err != nil {
 		return errors.Trace(err)
 	}
 

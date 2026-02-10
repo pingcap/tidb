@@ -1225,6 +1225,43 @@ func hybridShardingIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInf
 	return values, nil
 }
 
+func fulltextIndexKeyValues(tblInfo *model.TableInfo, h kv.Handle) ([]types.Datum, bool, error) {
+	if h == nil {
+		return nil, false, errors.New("fulltext index requires handle for primary key encoding")
+	}
+	if !h.IsInt() {
+		pkIdx := tblInfo.GetPrimaryKey()
+		if pkIdx == nil {
+			return nil, false, errors.New("fulltext index requires primary key for common handle")
+		}
+		values := make([]types.Datum, len(pkIdx.Columns))
+		for i, idxCol := range pkIdx.Columns {
+			col := tblInfo.Columns[idxCol.Offset]
+			d, err := decodeHandleToDatum(h, &col.FieldType, i)
+			if err != nil {
+				return nil, false, err
+			}
+			values[i] = d
+			TruncateIndexValue(&values[i], idxCol, col)
+		}
+		return values, true, nil
+	}
+	if tblInfo.PKIsHandle {
+		pkIdx := tblInfo.GetPrimaryKey()
+		if pkIdx != nil && len(pkIdx.Columns) > 0 {
+			idxCol := pkIdx.Columns[0]
+			col := tblInfo.Columns[idxCol.Offset]
+			d, err := decodeHandleToDatum(h, &col.FieldType, 0)
+			if err != nil {
+				return nil, false, err
+			}
+			TruncateIndexValue(&d, idxCol, col)
+			return []types.Datum{d}, true, nil
+		}
+	}
+	return []types.Datum{types.NewIntDatum(h.IntValue())}, true, nil
+}
+
 // GenIndexKey generates index key using input physical table id
 func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
@@ -1245,6 +1282,13 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	// using col_name(length) syntax to specify an index prefix length.
 	TruncateIndexValues(tblInfo, idxInfo, indexedValues)
 	keyValues := indexedValues
+	fulltextKeyed := false
+	if idxInfo.FullTextInfo != nil {
+		keyValues, fulltextKeyed, err = fulltextIndexKeyValues(tblInfo, h)
+		if err != nil {
+			return nil, false, err
+		}
+	}
 	if shardingCols := hybridShardingIndexColumns(idxInfo); len(shardingCols) > 0 {
 		keyValues, err = hybridShardingIndexValues(tblInfo, idxInfo, shardingCols, indexedValues)
 		if err != nil {
@@ -1258,7 +1302,7 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	if err != nil {
 		return nil, false, err
 	}
-	if !distinct && h != nil {
+	if !distinct && h != nil && !fulltextKeyed {
 		if h.IsInt() {
 			// We choose the efficient path here instead of calling `codec.EncodeKey`
 			// because the int handle must be an int64, and it must be comparable.
@@ -1587,8 +1631,8 @@ func TempIndexValueIsUntouched(b []byte) bool {
 func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
-	if shardingCols := hybridShardingIndexColumns(idxInfo); len(shardingCols) > 0 {
-		// TODO: For hybrid indexes, we always store all index columns for now. This can be optimized later:
+	if idxInfo.FullTextInfo != nil || len(hybridShardingIndexColumns(idxInfo)) > 0 {
+		// TODO: For hybrid and fulltext indexes, we always store all index columns for now. This can be optimized later:
 		// - Sharding key columns can follow the original restored data rules.
 		// - Non-sharding columns can be forced into restored data.
 		needRestoredData = true
@@ -1643,11 +1687,11 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 	if idxInfo.Global {
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
-	// If an index is a hybrid index (detected by the presence of sharding columns),
+	// If an index is a hybrid or fulltext index (detected by the presence of sharding columns or fulltext info),
 	// we must encode restored data for *all index columns* into the index value.
 	// The sharding columns are only used to identify the hybrid-index case and to build the key;
 	// the value side intentionally carries all index columns to satisfy TiCi’s data ingest.
-	forceAllColumns := len(hybridShardingIndexColumns(idxInfo)) > 0
+	forceAllColumns := idxInfo.FullTextInfo != nil || len(hybridShardingIndexColumns(idxInfo)) > 0
 	if idxValNeedRestoredData || len(handleRestoredData) > 0 || forceAllColumns {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
 		colIDSet := make(map[int64]struct{}, len(idxInfo.Columns)+len(handleRestoredData))

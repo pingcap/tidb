@@ -669,6 +669,130 @@ func TestHybridShardingIndexEncoding(t *testing.T) {
 	require.Equal(t, indexedValues[2], decodedMap[colC.ID])
 }
 
+func TestFulltextIndexEncoding(t *testing.T) {
+	colID := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	colID.AddFlag(mysql.PriKeyFlag)
+	colA := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+	colB := &model.ColumnInfo{ID: 3, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	tblInfo := &model.TableInfo{
+		ID:         11,
+		PKIsHandle: true,
+		Columns:    []*model.ColumnInfo{colID, colA, colB},
+	}
+	pkIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+	}
+	fulltextIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_fts"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}, {Offset: 2, Length: types.UnspecifiedLength}},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	tblInfo.Indices = []*model.IndexInfo{pkIdx, fulltextIdx}
+
+	indexedValues := []types.Datum{
+		types.NewStringDatum("hello"),
+		types.NewIntDatum(7),
+	}
+	handle := kv.IntHandle(42)
+	key, distinct, err := GenIndexKey(time.UTC, tblInfo, fulltextIdx, tblInfo.ID, indexedValues, handle, nil)
+	require.NoError(t, err)
+	require.False(t, distinct)
+
+	valuesBytes, handleBytes, err := CutIndexKeyNew(key, 1)
+	require.NoError(t, err)
+	require.Empty(t, handleBytes)
+	_, decodedID, err := codec.DecodeOne(valuesBytes[0])
+	require.NoError(t, err)
+	require.Equal(t, types.NewIntDatum(handle.IntValue()), decodedID)
+
+	value, err := GenIndexValuePortal(time.UTC, tblInfo, fulltextIdx, false, distinct, false, indexedValues, handle, tblInfo.ID, nil, nil)
+	require.NoError(t, err)
+	segs := SplitIndexValue(value)
+	require.NotNil(t, segs.RestoredValues)
+	colInfos := []rowcodec.ColInfo{
+		{ID: colA.ID, Ft: &colA.FieldType},
+		{ID: colB.ID, Ft: &colB.FieldType},
+	}
+	decoder := rowcodec.NewDatumMapDecoder(colInfos, time.UTC)
+	decodedMap, err := decoder.DecodeToDatumMap(segs.RestoredValues, nil)
+	require.NoError(t, err)
+	require.Len(t, decodedMap, 2)
+	require.Equal(t, indexedValues[0], decodedMap[colA.ID])
+	require.Equal(t, indexedValues[1], decodedMap[colB.ID])
+}
+
+func TestFulltextIndexEncodingCommonHandleCompositePK(t *testing.T) {
+	colPKInt := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	colDoc := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+	colPKStr := &model.ColumnInfo{ID: 3, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+
+	tblInfo := &model.TableInfo{
+		ID:                  12,
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
+		Columns:             []*model.ColumnInfo{colPKInt, colDoc, colPKStr},
+	}
+	pkIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{
+			{Offset: 2, Length: 3}, // PK column order differs from table offset order.
+			{Offset: 0, Length: types.UnspecifiedLength},
+		},
+	}
+	fulltextIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_fts"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	tblInfo.Indices = []*model.IndexInfo{pkIdx, fulltextIdx}
+
+	handleRaw, err := codec.EncodeKey(time.UTC, nil, types.NewStringDatum("abcdef"), types.NewIntDatum(99))
+	require.NoError(t, err)
+	handle, err := kv.NewCommonHandle(handleRaw)
+	require.NoError(t, err)
+
+	indexedValues := []types.Datum{types.NewStringDatum("hello world")}
+	key, distinct, err := GenIndexKey(time.UTC, tblInfo, fulltextIdx, tblInfo.ID, indexedValues, handle, nil)
+	require.NoError(t, err)
+	require.False(t, distinct)
+
+	valuesBytes, handleBytes, err := CutIndexKeyNew(key, len(pkIdx.Columns))
+	require.NoError(t, err)
+	require.Empty(t, handleBytes)
+
+	_, decodedPKStr, err := codec.DecodeOne(valuesBytes[0])
+	require.NoError(t, err)
+	require.Equal(t, types.NewStringDatum("abc"), decodedPKStr)
+
+	_, decodedPKInt, err := codec.DecodeOne(valuesBytes[1])
+	require.NoError(t, err)
+	require.Equal(t, types.NewIntDatum(99), decodedPKInt)
+
+	value, err := GenIndexValuePortal(time.UTC, tblInfo, fulltextIdx, false, distinct, false, indexedValues, handle, tblInfo.ID, nil, nil)
+	require.NoError(t, err)
+	segs := SplitIndexValue(value)
+	require.NotNil(t, segs.RestoredValues)
+
+	decoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{{ID: colDoc.ID, Ft: &colDoc.FieldType}}, time.UTC)
+	decodedMap, err := decoder.DecodeToDatumMap(segs.RestoredValues, nil)
+	require.NoError(t, err)
+	require.Len(t, decodedMap, 1)
+	require.Equal(t, indexedValues[0], decodedMap[colDoc.ID])
+}
+
 func TestCutPrefix(t *testing.T) {
 	key := EncodeTableIndexPrefix(42, 666)
 	res := CutRowKeyPrefix(key)

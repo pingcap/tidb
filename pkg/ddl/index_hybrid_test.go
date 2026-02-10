@@ -90,6 +90,75 @@ func TestEnsureHybridIndexReorgMeta(t *testing.T) {
 	}
 }
 
+func TestEnsureFulltextIndexReorgMeta(t *testing.T) {
+	cases := []struct {
+		name string
+		job  *model.Job
+		want string
+	}{
+		{
+			name: "missing reorg meta",
+			job:  &model.Job{},
+			want: "fulltext index requires",
+		},
+		{
+			name: "not dist reorg",
+			job: &model.Job{
+				ReorgMeta: &model.DDLReorgMeta{
+					IsDistReorg: false,
+					IsFastReorg: true,
+					ReorgTp:     model.ReorgTypeIngest,
+				},
+			},
+			want: "fulltext index requires",
+		},
+		{
+			name: "not fast reorg",
+			job: &model.Job{
+				ReorgMeta: &model.DDLReorgMeta{
+					IsDistReorg: true,
+					IsFastReorg: false,
+					ReorgTp:     model.ReorgTypeIngest,
+				},
+			},
+			want: "fulltext index requires",
+		},
+		{
+			name: "non ingest reorg type",
+			job: &model.Job{
+				ReorgMeta: &model.DDLReorgMeta{
+					IsDistReorg: true,
+					IsFastReorg: true,
+					ReorgTp:     model.ReorgTypeTxn,
+				},
+			},
+			want: "fulltext index requires",
+		},
+		{
+			name: "ingest ok",
+			job: &model.Job{
+				ReorgMeta: &model.DDLReorgMeta{
+					IsDistReorg: true,
+					IsFastReorg: true,
+					ReorgTp:     model.ReorgTypeIngest,
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ensureFulltextIndexReorgMeta(tc.job)
+			if tc.want == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
 func TestShouldSkipTempIndexMerge(t *testing.T) {
 	require.False(t, shouldSkipTempIndexMerge(nil))
 
@@ -99,5 +168,9 @@ func TestShouldSkipTempIndexMerge(t *testing.T) {
 
 	require.True(t, shouldSkipTempIndexMerge([]*model.IndexInfo{
 		{HybridInfo: &model.HybridIndexInfo{}},
+	}))
+
+	require.True(t, shouldSkipTempIndexMerge([]*model.IndexInfo{
+		{FullTextInfo: &model.FullTextIndexInfo{}},
 	}))
 }
