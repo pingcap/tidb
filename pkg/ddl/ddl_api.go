@@ -7472,6 +7472,11 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		}
 	}
 
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	job := &model.Job{
@@ -7482,7 +7487,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		Type:           model.ActionAddPrimaryKey,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      nil,
-		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
+		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global, splitOpt},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
@@ -7734,6 +7739,11 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:       schema.ID,
@@ -7743,7 +7753,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		Type:           model.ActionAddIndex,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      nil,
-		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global, splitOpt},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		Charset:        chs,
 		Collate:        coll,

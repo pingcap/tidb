@@ -400,6 +400,7 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	var indexOption []*ast.IndexOption
 	var hiddenCols [][]*model.ColumnInfo
 	var global []bool
+	var splitOpts []*IndexArgSplitOpt
 
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
 	for _, subJob := range info.SubJobs {
@@ -416,12 +417,17 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
 			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
 			global = append(global, subJob.Args[5].(bool))
+			if len(subJob.Args) > 6 {
+				splitOpts = append(splitOpts, subJob.Args[6].(*IndexArgSplitOpt))
+			} else {
+				splitOpts = append(splitOpts, nil)
+			}
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
 	if newSubJob != nil {
-		newSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+		newSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global, splitOpts}
 		newSubJobs = append(newSubJobs, newSubJob)
 		info.SubJobs = newSubJobs
 	}
