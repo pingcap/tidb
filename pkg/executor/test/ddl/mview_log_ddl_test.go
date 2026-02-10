@@ -149,3 +149,43 @@ func TestTruncateMaterializedViewRelatedTablesRejected(t *testing.T) {
 	err = tk.ExecToErr("truncate table t_truncate_mv")
 	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view dependencies")
 }
+
+func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_ddl_mv (a int not null, b int)")
+	tk.MustExec("create materialized view log on t_ddl_mv (a, b)")
+	tk.MustExec("create materialized view mv_ddl_mv (a, cnt) refresh fast next 300 as select a, count(1) from t_ddl_mv group by a")
+
+	err := tk.ExecToErr("alter table t_ddl_mv add column c int")
+	require.ErrorContains(t, err, "ALTER TABLE on base table with materialized view dependencies")
+	err = tk.ExecToErr("drop table t_ddl_mv")
+	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view dependencies")
+	err = tk.ExecToErr("rename table t_ddl_mv to t_ddl_mv2")
+	require.ErrorContains(t, err, "RENAME TABLE on base table with materialized view dependencies")
+
+	err = tk.ExecToErr("alter table mv_ddl_mv add column x int")
+	require.ErrorContains(t, err, "ALTER TABLE on materialized view table")
+	err = tk.ExecToErr("drop table mv_ddl_mv")
+	require.ErrorContains(t, err, "DROP TABLE on materialized view table")
+	err = tk.ExecToErr("rename table mv_ddl_mv to mv_ddl_mv2")
+	require.ErrorContains(t, err, "RENAME TABLE on materialized view table")
+
+	err = tk.ExecToErr("alter table `$mlog$t_ddl_mv` add column y int")
+	require.ErrorContains(t, err, "ALTER TABLE on materialized view log table")
+	err = tk.ExecToErr("drop table `$mlog$t_ddl_mv`")
+	require.ErrorContains(t, err, "DROP TABLE on materialized view log table")
+	err = tk.ExecToErr("rename table `$mlog$t_ddl_mv` to mlog_ddl_mv2")
+	require.ErrorContains(t, err, "RENAME TABLE on materialized view log table")
+}
+
+func TestTruncateOrdinaryTableStillWorks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_normal_truncate (a int)")
+	tk.MustExec("insert into t_normal_truncate values (1), (2)")
+	tk.MustExec("truncate table t_normal_truncate")
+	tk.MustQuery("select count(*) from t_normal_truncate").Check(testkit.Rows("0"))
+}

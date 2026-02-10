@@ -1865,6 +1865,10 @@ func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
 }
 
 func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
+	return e.alterTable(ctx, sctx, stmt, false)
+}
+
+func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt, allowMaterializedViewRelated bool) (err error) {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	validSpecs, err := ResolveAlterTableSpec(sctx, stmt.Specs)
 	if err != nil {
@@ -1878,6 +1882,11 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 	}
 	if tb.Meta().IsView() || tb.Meta().IsSequence() {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
+	}
+	if !allowMaterializedViewRelated {
+		if err := checkTableMaterializedViewConstraints(tb.Meta(), "ALTER TABLE"); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		if len(validSpecs) != 1 {
@@ -4276,6 +4285,7 @@ func (e *executor) dropTableObject(
 	objects []*ast.TableName,
 	ifExists bool,
 	tableObjectType objectType,
+	allowMaterializedViewRelated bool,
 ) error {
 	var (
 		notExistTables []string
@@ -4339,6 +4349,11 @@ func (e *executor) dropTableObject(
 			if !tableInfo.Meta().IsBaseTable() {
 				notExistTables = append(notExistTables, fullti.String())
 				continue
+			}
+			if !allowMaterializedViewRelated {
+				if err := checkTableMaterializedViewConstraints(tableInfo.Meta(), "DROP TABLE"); err != nil {
+					return errors.Trace(err)
+				}
 			}
 
 			tempTableType := tableInfo.Meta().TempTableType
@@ -4423,12 +4438,12 @@ func (e *executor) dropTableObject(
 
 // DropTable will proceed even if some table in the list does not exists.
 func (e *executor) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject)
+	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject, false)
 }
 
 // DropView will proceed even if some view in the list does not exists.
 func (e *executor) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject)
+	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject, false)
 }
 
 func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
@@ -4440,7 +4455,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tblInfo.Name.O)
 	}
-	if err := checkTruncateTableMaterializedViewConstraints(tblInfo); err != nil {
+	if err := checkTableMaterializedViewConstraints(tblInfo, "TRUNCATE TABLE"); err != nil {
 		return errors.Trace(err)
 	}
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
@@ -4485,16 +4500,16 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	return nil
 }
 
-func checkTruncateTableMaterializedViewConstraints(tblInfo *model.TableInfo) error {
+func checkTableMaterializedViewConstraints(tblInfo *model.TableInfo, op string) error {
 	if tblInfo.MaterializedView != nil {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on materialized view table")
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 	if tblInfo.MaterializedViewLog != nil {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on materialized view log table")
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view log table", op))
 	}
 	if tblInfo.MaterializedViewBase != nil &&
 		(tblInfo.MaterializedViewBase.MLogID != 0 || len(tblInfo.MaterializedViewBase.MViewIDs) > 0) {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on base table with materialized view dependencies")
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on base table with materialized view dependencies", op))
 	}
 	return nil
 }
@@ -4533,6 +4548,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 	}
 
 	if tbl, ok := is.TableByID(e.ctx, tableID); ok {
+		if err := checkTableMaterializedViewConstraints(tbl.Meta(), "RENAME TABLE"); err != nil {
+			return errors.Trace(err)
+		}
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
@@ -4580,6 +4598,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		}
 
 		if t, ok := is.TableByID(e.ctx, tableID); ok {
+			if err := checkTableMaterializedViewConstraints(t.Meta(), "RENAME TABLE"); err != nil {
+				return errors.Trace(err)
+			}
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
 			}
@@ -6051,7 +6072,7 @@ func (e *executor) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequence
 }
 
 func (e *executor) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
-	return e.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject)
+	return e.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject, false)
 }
 
 func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName pmodel.CIStr, visibility ast.IndexVisibility) error {

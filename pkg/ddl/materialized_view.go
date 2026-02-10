@@ -229,8 +229,7 @@ func (e *executor) DropMaterializedView(ctx sessionctx.Context, s *ast.DropMater
 	}
 
 	dropStmt := &ast.DropTableStmt{Tables: []*ast.TableName{{Schema: schemaName, Name: s.ViewName.Name}}}
-	err = e.DropTable(ctx, dropStmt)
-	return err
+	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)
 }
 
 func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMaterializedViewLogStmt) error {
@@ -274,8 +273,7 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	}
 
 	dropStmt := &ast.DropTableStmt{Tables: []*ast.TableName{{Schema: schemaName, Name: mlogName}}}
-	err = e.DropTable(ctx, dropStmt)
-	return err
+	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)
 }
 
 func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMaterializedViewStmt) error {
@@ -322,7 +320,7 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 					}},
 				}},
 			}
-			if err := e.AlterTable(e.ctx, ctx, alterStmt); err != nil {
+			if err := e.alterTable(e.ctx, ctx, alterStmt, true); err != nil {
 				return err
 			}
 		default:
