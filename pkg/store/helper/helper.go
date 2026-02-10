@@ -733,7 +733,10 @@ func (h *Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter 
 	if filter != nil {
 		dbInfos = filter(dbInfos)
 	}
-	regionKeyCodec := h.Store.GetCodec()
+	regionKeyCodec := tikv.NewCodecV1(tikv.ModeTxn)
+	if h.Store != nil {
+		regionKeyCodec = h.Store.GetCodec()
+	}
 	for _, db := range dbInfos {
 		tableInfos, _ := is.SchemaTableInfos(context.Background(), db.Name)
 		for _, table := range tableInfos {

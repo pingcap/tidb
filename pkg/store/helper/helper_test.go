@@ -16,12 +16,14 @@ package helper_test
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +125,10 @@ func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
 			tables = append(tables, helper.NewIndexWithKeyRange(db, table, index, codecV2))
 		}
 	}
+	// Sort tables by start key to match the production contract expected by ParseRegionsTableInfos.
+	slices.SortFunc(tables, func(i, j helper.TableInfoWithKeyRange) int {
+		return cmp.Compare(i.StartKey, j.StartKey)
+	})
 
 	// Construct mock region info using the keyspace-encoded key ranges.
 	// Region 1: ends before all tables (should be empty).
