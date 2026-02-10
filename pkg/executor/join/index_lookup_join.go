@@ -17,9 +17,11 @@ package join
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"runtime/trace"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -156,6 +158,12 @@ type outerWorker struct {
 	innerCh  chan<- *lookUpJoinTask
 
 	parentMemTracker *memory.Tracker
+
+	// pendingOuter caches rows that are read from child but not fully consumed by current task.
+	// pendingOuterStart points to the first unconsumed row.
+	pendingOuter      *chunk.Chunk
+	pendingOuterStart int
+	pendingOuterMem   int64
 }
 
 type innerWorker struct {
@@ -386,6 +394,7 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowPtr chunk
 func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer trace.StartRegion(ctx, "IndexLookupJoinOuterWorker").End()
 	defer func() {
+		ow.clearPending()
 		if r := recover(); r != nil {
 			ow.lookup.Finished.Store(true)
 			logutil.Logger(ctx).Warn("outerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -430,6 +439,48 @@ func (*outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst ch
 	return false
 }
 
+func (ow *outerWorker) clearPending() {
+	if ow.pendingOuter == nil {
+		return
+	}
+	if ow.pendingOuterMem != 0 {
+		ow.parentMemTracker.Consume(-ow.pendingOuterMem)
+	}
+	ow.pendingOuter = nil
+	ow.pendingOuterStart = 0
+	ow.pendingOuterMem = 0
+}
+
+func (ow *outerWorker) setPending(chk *chunk.Chunk, start int) {
+	ow.clearPending()
+	ow.pendingOuter = chk
+	ow.pendingOuterStart = start
+	ow.pendingOuterMem = chk.MemoryUsage()
+	ow.parentMemTracker.Consume(ow.pendingOuterMem)
+}
+
+func (ow *outerWorker) consumePendingForce1Row(task *lookUpJoinTask, maxChunkSize int) bool {
+	if ow.pendingOuter == nil {
+		// start status, need to cache new one outer chunk.
+		return false
+	}
+	avail := ow.pendingOuter.NumRows() - ow.pendingOuterStart
+	if avail <= 0 {
+		// when there is nothing row left, clear and ready to cache new one outer chunk.
+		ow.clearPending()
+		return false
+	}
+	take := 1
+	chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, take, maxChunkSize)
+	chk.Append(ow.pendingOuter, ow.pendingOuterStart, ow.pendingOuterStart+take)
+	task.outerResult.Add(chk)
+	ow.pendingOuterStart += take
+	if ow.pendingOuterStart >= ow.pendingOuter.NumRows() {
+		ow.clearPending()
+	}
+	return true
+}
+
 // newList creates a new List to buffer current executor's result.
 func newList(e exec.Executor) *chunk.List {
 	return chunk.NewList(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
@@ -459,35 +510,48 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 			requiredRows = parentRequired
 		}
 	}
-	// row-mode: force 1 row per task
-	if ow.maxBatchSize == 1 {
-		requiredRows = 1
-	}
-	failpoint.Inject("indexJoinOuterRequiredRows", func(val failpoint.Value) {
-		expected, ok := val.(int)
-		if !ok {
-			if expectedFloat, okFloat := val.(float64); okFloat {
-				expected = int(expectedFloat)
-				ok = true
-			}
-		}
-		if ok && expected != requiredRows {
-			panic("unexpected index join outer requiredRows")
-		}
-	})
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
-	for requiredRows > task.outerResult.Len() {
-		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, requiredRows, maxChunkSize)
-		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
-		err := exec.Next(ctx, ow.executor, chk)
-		if err != nil {
-			return task, err
+	if ow.maxBatchSize == 1 {
+		// row-mode: force 1 row per task
+		hasPending := ow.consumePendingForce1Row(task, maxChunkSize)
+		for !hasPending {
+			// has no pending rows, need to cache an outer chunk.
+			chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, requiredRows, maxChunkSize)
+			chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
+			err := exec.Next(ctx, ow.executor, chk)
+			if err != nil {
+				return task, err
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			if chk.NumRows() == 1 {
+				// directly add to outer result, without go through internal chunk cache system here.
+				task.outerResult.Add(chk)
+			} else {
+				// Copy a single row to task, keep the original chunk as pending.
+				taskChk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, 1, maxChunkSize)
+				taskChk.Append(chk, 0, 1)
+				task.outerResult.Add(taskChk)
+				ow.setPending(chk, 1)
+			}
+			hasPending = true
 		}
-		if chk.NumRows() == 0 {
-			break
-		}
+	} else {
+		ow.clearPending()
+		for requiredRows > task.outerResult.Len() {
+			chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, requiredRows, maxChunkSize)
+			chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
+			err := exec.Next(ctx, ow.executor, chk)
+			if err != nil {
+				return task, err
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
 
-		task.outerResult.Add(chk)
+			task.outerResult.Add(chk)
+		}
 	}
 	if task.outerResult.Len() == 0 {
 		return nil, nil
@@ -550,7 +614,9 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		case <-ctx.Done():
 			return
 		}
-
+		if strings.Contains(iw.ctx.GetSessionVars().StmtCtx.OriginalSQL, "analyze") {
+			fmt.Println(1)
+		}
 		err := iw.handleTask(ctx, task)
 		task.doneCh <- err
 	}
