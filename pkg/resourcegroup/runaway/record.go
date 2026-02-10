@@ -461,8 +461,6 @@ func (rm *Manager) AddRunawayWatch(record *QuarantineRecord) (uint64, error) {
 
 // RemoveRunawayWatch is used to remove runaway watch item manually.
 func (rm *Manager) RemoveRunawayWatch(recordID int64) error {
-	rm.runawaySyncer.mu.Lock()
-	defer rm.runawaySyncer.mu.Unlock()
 	records, err := rm.runawaySyncer.getWatchRecordByID(recordID)
 	if err != nil {
 		return err
@@ -477,8 +475,6 @@ func (rm *Manager) RemoveRunawayWatch(recordID int64) error {
 
 // RemoveRunawayResourceGroupWatch is used to remove all runaway watch items of a resource group.
 func (rm *Manager) RemoveRunawayResourceGroupWatch(groupName string) error {
-	rm.runawaySyncer.mu.Lock()
-	defer rm.runawaySyncer.mu.Unlock()
 	records, err := rm.runawaySyncer.getWatchRecordByGroup(groupName)
 	if err != nil {
 		return errors.Annotate(err, "get watch records by resource group failed")

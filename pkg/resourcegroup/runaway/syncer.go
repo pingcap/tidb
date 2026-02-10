@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -53,8 +52,6 @@ type syncer struct {
 	deletionWatchReader *systemTableReader
 	sysSessionPool      util.SessionPool
 	infoCache           *infoschema.InfoCache
-
-	mu sync.Mutex
 }
 
 func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache) *syncer {
