@@ -1,0 +1,16 @@
+diff --git a/util/intest/BUILD.bazel b/util/intest/BUILD.bazel
+index 36c3d40..f2d7ba2 100644
+--- a/util/intest/BUILD.bazel
++++ b/util/intest/BUILD.bazel
+@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
+ 
+ go_library(
+     name = "intest",
+-    srcs = ["not_in_unittest.go"],
++    srcs = [
++        "in_unittest.go",
++        "not_in_unittest.go",
++    ],
+     importpath = "github.com/tikv/client-go/v2/util/intest",
+     importpath_aliases = ["github.com/tikv/client-go/util/intest"],
+     visibility = ["//visibility:public"],
