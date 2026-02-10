@@ -289,7 +289,6 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		if !atFullRange && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
 			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
-			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
 				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
@@ -299,11 +298,9 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && c != nil && c.Histogram.NDV > 0 && c.Histogram.Len() > 0 {
-					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
 					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, c.TopN, skewRatio))
 				} else {
 					// TODO: Extend original datatype out-of-range estimation to multi-column
-					histNDV -= int64(idx.TopN.Num())
 					count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, idx.TopN, skewRatio))
 				}
 			} else {
@@ -364,7 +361,7 @@ func estimateRowCountWithUniformDistribution(
 		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
 		// Calculate histNDV excluding TopN from NDV
 		count.MinEst = 0
-		count.Est = float64(notNullCount) / float64(histNDV)
+		count.Est = notNullCount / histNDV
 		if skewRatio > 0 {
 			// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
 			skewEstimate := notNullCount - (histNDV - 1)
