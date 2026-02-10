@@ -336,9 +336,6 @@ var joinTypeConvertTable = []int{
 	4, // ANTI LEFT OUTER SEMI
 }
 
-// TODO doesn't support null-rejective for now(2 in the Table-2 and Table-3).
-// Table-2 and Table-3 are from the paper "On the Correct and Complete Enumeration of the Core Search Space".
-// It will be treated as rule doesn't apply.
 func assoc(e1, e2 *edge) bool {
 	j1 := joinTypeConvertTable[e1.joinType]
 	j2 := joinTypeConvertTable[e2.joinType]
@@ -648,6 +645,12 @@ func (d *ConflictDetector) HasRemainingEdges(usedEdges map[uint64]struct{}) (rem
 // 0: rule doesn't apply
 // 1: rule applies
 // 2: rule applies when null-rejective holds
+// NOTE: for now 2 is not used, and both assoc(left, left) and assoc(right, right) are 1:
+//  1. TiDB doesn't support FULL OUTER JOIN: in the table-2 of the original paper, most of null-rejective is related to FULL OUTER JOIN.
+//  2. We only support reorder NON-INNER JOIN when it has eqConds, which means it must be null-rejective on both sides.
+//     See the eqCond check in extractJoinGroup() for the guarantee.
+//
+// But I still leave 2 here for future extension.
 type ruleTableEntry int
 
 var assocRuleTable = [][]ruleTableEntry{
@@ -662,7 +665,7 @@ var assocRuleTable = [][]ruleTableEntry{
 	// LEFT OUTER
 	{
 		0, // INNER
-		0, // LEFT OUTER
+		1, // LEFT OUTER, check NOTE above.
 		0, // RIGHT OUTER
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
@@ -671,7 +674,7 @@ var assocRuleTable = [][]ruleTableEntry{
 	{
 		1, // INNER
 		1, // LEFT OUTER
-		0, // RIGHT OUTER
+		1, // RIGHT OUTER, check NOTE above.
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
 	},

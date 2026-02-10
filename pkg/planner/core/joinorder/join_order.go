@@ -117,6 +117,11 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	// So We have temporarily disabled reordering for non INNER JOIN that without eqCond.
 	// For INNER JOINs, we introduced a penalty factor. If the factor is set less equal to 0,
 	// Cartesian products will only be applied at the final step(which will generate a bushy tree).
+	//
+	// Also we allow both assoc(left, left) and assoc(right, right) without considering null-rejective property,
+	// Because for NON-INNER JOIN with eqCond, it must be null-rejective on both sides.
+	// If we support reorder NON-INNER JOIN without eqCond in the future, we need to consider null-rejective property here.
+	// See assocRuleTable in conflict_detector.go for more details.
 	if join.JoinType != base.InnerJoin && len(join.EqualConditions) == 0 {
 		return makeSingleGroup(p)
 	}
