@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -543,7 +544,16 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 
 	for i := 0; i < e.rowLen; i++ {
 		col := e.insertColumns[i].ToInfo()
-		casted, err := table.CastValue(e.Ctx(), vals[i], col, false, false)
+		val := vals[i]
+		if inLoadData && col.GetType() == mysql.TypeBit && col.GetFlen() == 1 {
+			switch strings.ToLower(strings.TrimSpace(val.GetString())) {
+			case "true", "1":
+				val = types.NewIntDatum(1)
+			case "false", "0":
+				val = types.NewIntDatum(0)
+			}
+		}
+		casted, err := table.CastValue(e.Ctx(), val, col, false, false)
 		if newErr := e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); newErr != nil {
 			if inLoadData {
 				return nil, newErr
