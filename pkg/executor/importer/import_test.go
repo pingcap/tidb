@@ -156,7 +156,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI, sql)
+	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sql)
 
 	// override cloud storage uri using option
 	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"
