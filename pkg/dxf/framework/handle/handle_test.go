@@ -182,9 +182,9 @@ func TestHandles(t *testing.T) {
 		vardef.CloudStorageURI.Store(bak)
 		require.NoError(t, store.Close())
 		if semEnabledBak {
-			sem.Disable()
-		} else {
 			sem.Enable()
+		} else {
+			sem.Disable()
 		}
 	})
 	for _, semEnable := range []bool{true, false} {

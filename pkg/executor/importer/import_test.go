@@ -58,7 +58,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
 	}
-	vardef.CloudStorageURI.Store("s3://bucket/path")
+	vardef.CloudStorageURI.Store("s3://bucket")
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
@@ -78,7 +78,7 @@ func TestInitDefaultOptions(t *testing.T) {
 		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	}
 
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
+	require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)

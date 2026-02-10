@@ -342,7 +342,7 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 	}
 
 	const dxfPrefix = "dxf"
-	u.Path = prefix.JoinStr(path.Join(dxfPrefix, clusterIDStr)).String()
+	u.Path = prefix.JoinStr(path.Join(dxfPrefix, clusterIDStr)).ToPath()
 	return u.String()
 }
 
