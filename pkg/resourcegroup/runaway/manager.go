@@ -126,9 +126,8 @@ func NewRunawayManager(
 	})
 	m.evictionCancel = watchList.OnEviction(func(_ context.Context, _ ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
 		name := i.Value().ResourceGroupName
-		if counter, ok := m.activeGroup.Load(name); ok {
-			counter.(*atomic.Int64).Add(-1)
-		}
+		counter, _ := m.loadOrStoreActiveCounter(name)
+		counter.Add(-1)
 		if i.Value().ID == 0 {
 			return
 		}
@@ -382,6 +381,9 @@ func (rm *Manager) examineWatchList(resourceGroupName string, convict string) (b
 // loadOrStoreActiveCounter returns the counter for the given resource group name,
 // creating a new one if it doesn't exist.
 func (rm *Manager) loadOrStoreActiveCounter(name string) (*atomic.Int64, bool) {
+	if counter, ok := rm.activeGroup.Load(name); ok {
+		return counter.(*atomic.Int64), true
+	}
 	counter, loaded := rm.activeGroup.LoadOrStore(name, &atomic.Int64{})
 	return counter.(*atomic.Int64), loaded
 }
