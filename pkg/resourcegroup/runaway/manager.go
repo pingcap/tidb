@@ -389,22 +389,32 @@ func (rm *Manager) UpdateNewAndDoneWatch() error {
 	if !rm.runawaySyncer.checkWatchTableExist() {
 		return nil
 	}
-	records, err := rm.runawaySyncer.getNewWatchRecords()
-	if err != nil {
-		return err
-	}
-	for _, r := range records {
-		rm.AddWatch(r)
+	for {
+		records, err := rm.runawaySyncer.getNewWatchRecords()
+		if err != nil {
+			return err
+		}
+		for _, r := range records {
+			rm.AddWatch(r)
+		}
+		if len(records) < watchSyncBatchLimit {
+			break
+		}
 	}
 	if !rm.runawaySyncer.checkWatchDoneTableExist() {
 		return nil
 	}
-	doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
-	if err != nil {
-		return err
-	}
-	for _, r := range doneRecords {
-		rm.removeWatch(r)
+	for {
+		doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
+		if err != nil {
+			return err
+		}
+		for _, r := range doneRecords {
+			rm.removeWatch(r)
+		}
+		if len(doneRecords) < watchSyncBatchLimit {
+			break
+		}
 	}
 	return nil
 }
