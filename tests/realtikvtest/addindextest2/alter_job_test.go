@@ -147,10 +147,6 @@ func TestIssue65958ReproCleanupCrashOnCancelDistTask(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("nextgen always uses DXF; repro currently targeted at classic kernel")
 	}
-	testIssue65958ReproChild(t)
-}
-
-func testIssue65958ReproChild(t *testing.T) {
 	tmpDir := t.TempDir()
 	restore := config.RestoreFunc()
 	t.Cleanup(restore)
