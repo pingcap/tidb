@@ -82,7 +82,8 @@ func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
 	tk1.MustQuery("select * from child").Check(testkit.Rows("1 1"))
 	tk3.MustExec("commit")
 	tk1.MustQuery("select * from child").Check(testkit.Rows("1 1", "2 1"))
-	tk1.MustExec("admin check table parent, child")
+	tk1.MustExec("admin check table parent")
+	tk1.MustExec("admin check table child")
 }
 
 func TestSharedLockBlockExclusiveLock(t *testing.T) {
@@ -134,7 +135,8 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	<-tk1Done
 
 	tk1.MustExec("commit")
-	tk1.MustExec("admin check table parent, child")
+	tk1.MustExec("admin check table parent")
+	tk1.MustExec("admin check table child")
 }
 
 func TestSharedLockChildTableConflict(t *testing.T) {
@@ -175,7 +177,8 @@ func TestSharedLockChildTableConflict(t *testing.T) {
 	tk3.MustExec("commit")
 
 	tk2.MustQuery("select * from child").Check(testkit.Rows("1 1"))
-	tk2.MustExec("admin check table parent, child")
+	tk2.MustExec("admin check table parent")
+	tk2.MustExec("admin check table child")
 
 	tk1.MustExec("delete from child")
 
@@ -233,7 +236,8 @@ func TestSharedLockChildTableConflict(t *testing.T) {
 	require.Error(t, anotherErr())
 
 	tk1.MustQuery("select * from child").Check(results)
-	tk1.MustExec("admin check table parent, child")
+	tk1.MustExec("admin check table parent")
+	tk1.MustExec("admin check table child")
 }
 
 func TestSharedLockLockView(t *testing.T) {

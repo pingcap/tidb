@@ -890,6 +890,8 @@ github.com/tidwall/pretty v1.2.1 h1:qjsOFOWWQl+N3RsoF5/ssm1pHmJJwhjlSbZ51I6wMl4=
 github.com/tidwall/pretty v1.2.1/go.mod h1:ITEVvHYasfjBbM0u2Pg8T2nJnzm8xPwvNhhsoaGGjNU=
 github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
 github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
+github.com/tikv/client-go/v2 v2.0.8-0.20260209125252-1fd09ba3ef10 h1:IN8USSwL3oqUXXcBU6tC5W+sMxIyzEOuIDbBScuF2gA=
+github.com/tikv/client-go/v2 v2.0.8-0.20260209125252-1fd09ba3ef10/go.mod h1:4jHqtFu0MeXVYFbka4yTZRxV/nR1Jw46hkyD5qhxi7s=
 github.com/tikv/pd/client v0.0.0-20260122075414-848dd85011e9 h1:3rE2zAKWw8LEnCkybQEyrOIi/S2YESGDSgs7ae3DlLI=
 github.com/tikv/pd/client v0.0.0-20260122075414-848dd85011e9/go.mod h1:JsDKQ70x0OWIhTj0SCuwiRjwPEC+d+Z8WV+QUXNKBSo=
 github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67 h1:9LPGD+jzxMlnk5r6+hJnar67cgpDIz/iyD+rfl5r2Vk=
@@ -921,8 +923,6 @@ github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510/go.mod h1:UETIi67q
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
 github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
-github.com/you06/client-go/v2 v2.0.0-alpha.0.20260209113914-ee8872d791bc h1:887eOz5nVJX3kuDaNhWsSI0jB2hQCUQaROAa0Bx7mLc=
-github.com/you06/client-go/v2 v2.0.0-alpha.0.20260209113914-ee8872d791bc/go.mod h1:4jHqtFu0MeXVYFbka4yTZRxV/nR1Jw46hkyD5qhxi7s=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.30/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

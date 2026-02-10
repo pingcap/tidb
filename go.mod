@@ -124,7 +124,7 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.10.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260209023355-87fc7df40b40
+	github.com/tikv/client-go/v2 v2.0.8-0.20260209125252-1fd09ba3ef10
 	github.com/tikv/pd/client v0.0.0-20260122075414-848dd85011e9
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
@@ -377,5 +377,3 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/tikv/client-go/v2 => github.com/you06/client-go/v2 v2.0.0-alpha.0.20260209113914-ee8872d791bc
