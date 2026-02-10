@@ -707,33 +707,112 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
 
 // TryToPassTiCITopN checks whether the TopN can be embedded into TiCI index scan.
 func (p *PhysicalIndexScan) TryToPassTiCITopN(topN *PhysicalTopN) {
-	hybridSearchInfo := p.Index.HybridInfo
-	if hybridSearchInfo == nil || hybridSearchInfo.Sort == nil {
+	if p.FtsQueryInfo == nil {
 		return
 	}
+	hybridSearchInfo := p.Index.HybridInfo
+	if hybridSearchInfo == nil {
+		return
+	}
+
+	// Try to match by hybrid sort columns only if Sort is available.
 	orderPos := 0
-	for _, byItem := range topN.ByItems {
-		// All order by items should be covered by hybrid index sort columns.
-		if orderPos >= len(hybridSearchInfo.Sort.Columns) {
-			return
+	sortMatched := false
+	var sortColumnIDs []int64
+	var sortColumnAsc []bool
+	if hybridSearchInfo.Sort != nil {
+		sortMatched = true
+		for _, byItem := range topN.ByItems {
+			// All order by items should be covered by hybrid index sort columns.
+			if orderPos >= len(hybridSearchInfo.Sort.Columns) {
+				// instead of returning directly, try inverted columns below
+				sortMatched = false
+				break
+			}
+			switch x := byItem.Expr.(type) {
+			case *expression.Column:
+				if orderPos >= len(hybridSearchInfo.Sort.IsAsc) {
+					// invalid metadata, fallback to inverted
+					sortMatched = false
+					break
+				}
+				if byItem.Desc != !hybridSearchInfo.Sort.IsAsc[orderPos] {
+					// instead of returning directly, try inverted columns below
+					sortMatched = false
+					break
+				}
+				colID := p.Table.Columns[hybridSearchInfo.Sort.Columns[orderPos].Offset].ID
+				if colID != x.ID {
+					// instead of returning directly, try inverted columns below
+					sortMatched = false
+					break
+				}
+				// record the matched sort column id and asc
+				sortColumnIDs = append(sortColumnIDs, colID)
+				sortColumnAsc = append(sortColumnAsc, !byItem.Desc)
+				orderPos++
+			case *expression.ScalarFunction:
+				// inverted fallback can't handle ScalarFunction either
+				return
+			}
+			if !sortMatched {
+				break
+			}
 		}
-		switch x := byItem.Expr.(type) {
-		case *expression.Column:
-			if byItem.Desc != !hybridSearchInfo.Sort.IsAsc[orderPos] {
-				return
-			}
-			colID := p.Table.Columns[hybridSearchInfo.Sort.Columns[orderPos].Offset].ID
-			if colID != x.ID {
-				return
-			}
-			orderPos++
-		case *expression.ScalarFunction:
+		// matched by hybrid sort columns
+		if sortMatched {
+			p.FtsQueryInfo.TopK = new(uint32)
+			// The passed TopN here may be the global one. We need to consider the offset.
+			*p.FtsQueryInfo.TopK = uint32(topN.Count) + uint32(topN.Offset)
+			// Populate sort column ids and asc using matched byItems.
+			p.FtsQueryInfo.SortColumnIds = sortColumnIDs
+			p.FtsQueryInfo.SortColumnAsc = sortColumnAsc
 			return
 		}
 	}
+
+	// Try to match all ByItems with hybridSearchInfo.Inverted columns even if Sort is nil.
+	if hybridSearchInfo.Inverted == nil {
+		return
+	}
+
+	// Build a set of all inverted column IDs for membership checks.
+	invertedColIDs := make(map[int64]struct{}, 8)
+	for _, inv := range hybridSearchInfo.Inverted {
+		if inv == nil {
+			continue
+		}
+		for _, c := range inv.Columns {
+			if c == nil {
+				continue
+			}
+			colID := p.Table.Columns[c.Offset].ID
+			invertedColIDs[colID] = struct{}{}
+		}
+	}
+	if len(invertedColIDs) == 0 {
+		return
+	}
+
+	// Check every ByItem is a column and exists in inverted specs.
+	sortColumnIDs = sortColumnIDs[:0]
+	sortColumnAsc = sortColumnAsc[:0]
+	for _, byItem := range topN.ByItems {
+		x, ok := byItem.Expr.(*expression.Column)
+		if !ok {
+			return
+		}
+		if _, ok := invertedColIDs[x.ID]; !ok {
+			return
+		}
+		sortColumnIDs = append(sortColumnIDs, x.ID)
+		sortColumnAsc = append(sortColumnAsc, !byItem.Desc)
+	}
+
 	p.FtsQueryInfo.TopK = new(uint32)
-	// The passed TopN here may be the global one. We need to consider the offset.
 	*p.FtsQueryInfo.TopK = uint32(topN.Count) + uint32(topN.Offset)
+	p.FtsQueryInfo.SortColumnIds = sortColumnIDs
+	p.FtsQueryInfo.SortColumnAsc = sortColumnAsc
 }
 
 // GetPhysicalIndexScan4LogicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
