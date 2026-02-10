@@ -737,7 +737,7 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 		avgInnerRowCnt = p.EqualCondOutCnt / count
 	}
 	var preferINL bool
-	if p.PreferAny(h.PreferLeftAsINLJInner, h.PreferRightAsINLJInner, h.PreferLeftAsINLMJInner, h.PreferRightAsINLMJInner, h.PreferLeftAsINLHashJInner, h.PreferRightAsINLHashJInner) {
+	if p.PreferAny(h.PreferLeftAsINLJInner, h.PreferRightAsINLJInner, h.PreferLeftAsINLMJInner, h.PreferRightAsINLMJInner, h.PreferLeftAsINLHJInner, h.PreferRightAsINLHJInner) {
 		preferINL = true
 	}
 	// for pk path

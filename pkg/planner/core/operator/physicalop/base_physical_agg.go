@@ -931,7 +931,7 @@ func (p *BasePhysicalAgg) ResolveIndices() (err error) {
 	return
 }
 
-func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinProperty) bool {
+func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinRuntimeProp) bool {
 	// Make sure join key set is subset of group by items.
 	groupByCols := expression.ExtractColumnsMapFromExpressions(nil, la.GroupByItems...)
 	if len(indexJoinProp.InnerJoinKeys) > len(groupByCols) {
