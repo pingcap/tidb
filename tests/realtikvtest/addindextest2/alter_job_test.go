@@ -16,10 +16,6 @@ package addindextest
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,7 +24,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
@@ -145,35 +140,14 @@ func TestAlterJobOnDXF(t *testing.T) {
 	tk.MustExec("admin check index t1 idx;")
 }
 
-const issue65958ReproChildEnv = "TIDB_ISSUE_65958_REPRO_CHILD"
-
-// TestIssue65958ReproCleanupCrashOnCancelDistTask reproduces issue #65958:
-// canceling an add-index dist-task while local backend is still importing, then
-// the tmp_ddl cleanup loop deletes the job directory, and Pebble later fatals on
-// missing `00000x.sst`.
+// TestIssue65958ReproCleanupCrashOnCancelDistTask is a regression test for issue #65958.
+// It pauses Lightning local backend right before importing SSTs, cancels the DDL,
+// and ensures the tmp_ddl cleanup loop won't delete the active job directory and crash TiDB.
 func TestIssue65958ReproCleanupCrashOnCancelDistTask(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("nextgen always uses DXF; repro currently targeted at classic kernel")
 	}
-	if os.Getenv(issue65958ReproChildEnv) == "1" {
-		testIssue65958ReproChild(t)
-		return
-	}
-
-	cmd := exec.Command(os.Args[0], "-test.run=^TestIssue65958ReproCleanupCrashOnCancelDistTask$")
-	cmd.Env = append(os.Environ(), issue65958ReproChildEnv+"=1")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected child process to crash (issue #65958 repro), but it exited normally:\n%s", out)
-	}
-
-	outStr := string(out)
-	if !strings.Contains(outStr, ".sst:") ||
-		!strings.Contains(outStr, "orig err: open") ||
-		!strings.Contains(outStr, "list err: open") ||
-		!strings.Contains(outStr, "no such file or directory") {
-		t.Fatalf("child exited non-zero, but output does not look like a missing SST fatal: %v\n%s", err, out)
-	}
+	testIssue65958ReproChild(t)
 }
 
 func testIssue65958ReproChild(t *testing.T) {
@@ -241,14 +215,18 @@ func testIssue65958ReproChild(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", id))
 
-	jobDir := filepath.Join(ingest.GetIngestTempDataDir(), strconv.FormatInt(id, 10))
+	// Wait until job row disappears from mysql.tidb_ddl_job (issue precondition).
 	for {
-		_, err := os.Stat(jobDir)
-		if err != nil && os.IsNotExist(err) {
+		tkCheck := testkit.NewTestKit(t, store)
+		rs := tkCheck.MustQuery(fmt.Sprintf("select job_id from mysql.tidb_ddl_job where job_id=%d", id))
+		if len(rs.Rows()) == 0 {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
+
+	// Give tmp_ddl cleanup loop time to run. It should not remove the active job dir.
+	time.Sleep(1 * time.Second)
 
 	close(resumeImport)
 	err := <-alterDone
