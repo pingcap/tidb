@@ -343,7 +343,7 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
-	bucketSize := int(CheckTableFastBucketSize.Load())
+	bucketSize := int(CheckTableFastBucketSize.Load()) * 10
 
 	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
 
@@ -440,6 +440,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			zap.String("index name", idxInfo.Name.String()),
 			zap.Int("times", times),
 			zap.Int("current offset", offset), zap.Int("current mod", mod),
+			zap.Int("bucket size", bucketSize),
 		)
 		logger.Info("fast check table by group",
 			zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
