@@ -591,6 +591,14 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	}
 	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %?", mviewID)
 	_, err := w.sess.Execute(ctx, deleteSQL, "mview-refresh-info-delete")
+	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
+		if val.(bool) {
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
+		}
+	})
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return nil
+	}
 	return errors.Trace(err)
 }
 

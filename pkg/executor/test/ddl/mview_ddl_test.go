@@ -257,6 +257,35 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
 
+func TestCreateMaterializedViewRollbackIgnoreMissingRefreshInfoTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDeleteCreateMaterializedViewRefreshInfoTableNotExists", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDeleteCreateMaterializedViewRefreshInfoTableNotExists"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"))
+	}()
+
+	err := tk.ExecToErr("create materialized view mv_missing_refresh_meta (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	require.Error(t, err)
+
+	tk.MustQuery("show tables like 'mv_missing_refresh_meta'").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
+	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
+}
+
 func TestCreateTableLikeShouldNotCarryMaterializedViewMetadata(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
