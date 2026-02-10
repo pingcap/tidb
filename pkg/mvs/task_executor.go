@@ -233,7 +233,7 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 		done <- e.safeExecute(name, task)
 	}()
 
-	timer := time.NewTimer(timeout)
+	timer := mvsNewTimer(timeout)
 	defer timer.Stop()
 
 	ch := timer.C

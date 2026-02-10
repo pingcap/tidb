@@ -61,7 +61,7 @@ func (sch *ServerConsistentHash) init() bool {
 		select {
 		case <-sch.ctx.Done():
 			return false
-		case <-time.After(waitBackoff):
+		case <-mvsAfter(waitBackoff):
 			backoff = waitBackoff * 2
 		}
 	}

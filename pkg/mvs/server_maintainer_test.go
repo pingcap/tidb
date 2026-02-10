@@ -56,6 +56,7 @@ func (m *mockServerHelper) getAllServerInfo(_ context.Context) (map[string]serve
 }
 
 func TestServerConsistentHashAddRemoveAndAvailable(t *testing.T) {
+	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeB#0": 20,
@@ -106,6 +107,7 @@ func TestServerConsistentHashAddRemoveAndAvailable(t *testing.T) {
 }
 
 func TestServerConsistentHashFetchAppliesFilter(t *testing.T) {
+	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeB#0": 20,
@@ -142,6 +144,7 @@ func TestServerConsistentHashFetchAppliesFilter(t *testing.T) {
 }
 
 func TestServerConsistentHashFetchNoChange(t *testing.T) {
+	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"key-mid": 15,
@@ -179,6 +182,7 @@ func TestServerConsistentHashFetchNoChange(t *testing.T) {
 }
 
 func TestServerConsistentHashInit(t *testing.T) {
+	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"key-mid": 15,
@@ -212,6 +216,7 @@ func TestServerConsistentHashInit(t *testing.T) {
 }
 
 func TestServerConsistentHashInitCanceled(t *testing.T) {
+	installMockTimeForTest(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -221,12 +226,12 @@ func TestServerConsistentHashInitCanceled(t *testing.T) {
 	}
 	sch := NewServerConsistentHash(ctx, 1, helper)
 
-	start := time.Now()
+	start := mvsNow()
 	ok := sch.init()
 	if ok {
 		t.Fatalf("expected init failed when context canceled")
 	}
-	if time.Since(start) > 200*time.Millisecond {
+	if mvsSince(start) > 200*time.Millisecond {
 		t.Fatalf("init should return quickly when context is canceled")
 	}
 	if got := helper.getServerInfoCalls; got > 1 {
@@ -235,6 +240,7 @@ func TestServerConsistentHashInitCanceled(t *testing.T) {
 }
 
 func TestServerConsistentHashFetchError(t *testing.T) {
+	installMockTimeForTest(t)
 	helper := &mockServerHelper{
 		allErr: errors.New("boom"),
 	}

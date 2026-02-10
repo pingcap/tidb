@@ -9,6 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func installMockTimeForTest(t *testing.T) {
+	t.Helper()
+	module := NewMockTimeModule(mvsUnix(1700000000, 0))
+	restore := InstallMockTimeModuleForTest(module)
+	t.Cleanup(restore)
+}
+
 func mustHash(mapping map[string]uint32) func([]byte) uint32 {
 	return func(data []byte) uint32 {
 		if v, ok := mapping[string(data)]; ok {
@@ -19,6 +26,7 @@ func mustHash(mapping map[string]uint32) func([]byte) uint32 {
 }
 
 func TestConsistentHash_GetNodeWraps(t *testing.T) {
+	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0":  10,
 		"nodeB#0":  20,
@@ -49,6 +57,7 @@ func TestConsistentHash_GetNodeWraps(t *testing.T) {
 }
 
 func TestConsistentHash_RemoveNodeUpdatesState(t *testing.T) {
+	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeA#1": 30,
@@ -96,6 +105,7 @@ func TestConsistentHash_RemoveNodeUpdatesState(t *testing.T) {
 }
 
 func TestConsistentHash_EmptyState(t *testing.T) {
+	installMockTimeForTest(t)
 	c := NewConsistentHash(1)
 
 	if got := c.GetNode("any"); got != "" {
@@ -110,6 +120,7 @@ func TestConsistentHash_EmptyState(t *testing.T) {
 }
 
 func TestConsistentHash_RebuildResetsRing(t *testing.T) {
+	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeA#1": 30,
@@ -150,6 +161,7 @@ func TestConsistentHash_RebuildResetsRing(t *testing.T) {
 }
 
 func TestConsistentHash_RebuildFromMap(t *testing.T) {
+	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeA#1": 30,
@@ -183,24 +195,25 @@ func TestConsistentHash_RebuildFromMap(t *testing.T) {
 
 type node struct {
 	v  string
-	ts time.Time
+	ts int64
 }
 
 func (t node) Less(other node) bool {
-	return t.ts.Before(other.ts)
+	return t.ts < other.ts
 }
 
 func TestPriorityQueue(t *testing.T) {
-	base := time.Now()
+	installMockTimeForTest(t)
+	base := time.Time{}.Add(time.Hour * 8192).UnixMilli()
 	t.Run("basic ordering and update", func(t *testing.T) {
 		pq := &PriorityQueue[node]{}
-		pq.Push(node{v: "b", ts: base.Add(2 * time.Second)})
-		pq.Push(node{v: "a", ts: base.Add(time.Second)})
-		pq.Push(node{v: "c", ts: base.Add(3 * time.Second)})
+		pq.Push(node{v: "b", ts: base + int64(2*time.Second/time.Millisecond)})
+		pq.Push(node{v: "a", ts: base + int64(time.Second/time.Millisecond)})
+		pq.Push(node{v: "c", ts: base + int64(3*time.Second/time.Millisecond)})
 		require.True(t, pq.Front().Value.v == "a")
 
-		pq.Update(pq.Front(), node{v: "d", ts: base.Add(5 * time.Second)})
-		pq.Push(node{v: "c", ts: base.Add(500 * time.Millisecond)})
+		pq.Update(pq.Front(), node{v: "d", ts: base + int64(5*time.Second/time.Millisecond)})
+		pq.Push(node{v: "c", ts: base + int64(500*time.Millisecond/time.Millisecond)})
 
 		popRes := make([]string, 0, 4)
 		for pq.Len() > 0 {
@@ -219,24 +232,24 @@ func TestPriorityQueue(t *testing.T) {
 		require.Equal(t, zero, pq.Remove(nil))
 		pq.Update(nil, node{v: "ignored", ts: base})
 
-		ghost := NewItem(node{v: "ghost", ts: base.Add(time.Second)})
-		pq.Update(ghost, node{v: "still-ghost", ts: base.Add(2 * time.Second)})
+		ghost := NewItem(node{v: "ghost", ts: base + int64(time.Second/time.Millisecond)})
+		pq.Update(ghost, node{v: "still-ghost", ts: base + int64(2*time.Second/time.Millisecond)})
 		require.Equal(t, zero, pq.Remove(ghost))
 	})
 
 	t.Run("remove and update after removal", func(t *testing.T) {
 		pq := &PriorityQueue[node]{}
-		itemA := pq.Push(node{v: "a", ts: base.Add(2 * time.Second)})
-		itemB := pq.Push(node{v: "b", ts: base.Add(3 * time.Second)})
-		itemC := pq.Push(node{v: "c", ts: base.Add(time.Second)})
+		itemA := pq.Push(node{v: "a", ts: base + int64(2*time.Second/time.Millisecond)})
+		itemB := pq.Push(node{v: "b", ts: base + int64(3*time.Second/time.Millisecond)})
+		itemC := pq.Push(node{v: "c", ts: base + int64(time.Second/time.Millisecond)})
 
 		removed := pq.Remove(itemB)
 		require.Equal(t, "b", removed.v)
 
-		pq.Update(itemB, node{v: "b2", ts: base.Add(500 * time.Millisecond)})
+		pq.Update(itemB, node{v: "b2", ts: base + int64(500*time.Millisecond/time.Millisecond)})
 
-		pq.Update(itemA, node{v: "a2", ts: base.Add(4 * time.Second)})
-		pq.Push(node{v: "d", ts: base.Add(1500 * time.Millisecond)})
+		pq.Update(itemA, node{v: "a2", ts: base + int64(4*time.Second/time.Millisecond)})
+		pq.Push(node{v: "d", ts: base + int64(1500*time.Millisecond/time.Millisecond)})
 
 		popRes := make([]string, 0, 4)
 		for pq.Len() > 0 {

@@ -133,7 +133,7 @@ func retryDelay(retryCount int) time.Duration {
 	return delay
 }
 
-func resetTimer(timer *time.Timer, delay time.Duration) {
+func resetTimer(timer *mvsTimer, delay time.Duration) {
 	if delay < 0 {
 		delay = 0
 	}
@@ -156,7 +156,7 @@ func (t *MVService) Run() {
 		return
 	}
 	t.executor.Run()
-	timer := time.NewTimer(0)
+	timer := mvsNewTimer(0)
 
 	defer func() {
 		timer.Stop()
@@ -174,11 +174,11 @@ func (t *MVService) Run() {
 			return
 		}
 
-		now := time.Now()
+		now := mvsNow()
 
 		if forceFetch || t.shouldFetch(now) {
 			t.sch.refresh()
-			if err := t.FetchAllMVMeta(); err != nil {
+			if err := t.fetchAllMVMeta(); err != nil {
 				// avoid tight retries on fetch failures
 				t.lastRefresh.Store(now.UnixMilli())
 			}
@@ -189,7 +189,7 @@ func (t *MVService) Run() {
 		t.refreshMV(mvToRefresh)
 
 		next := t.nextScheduleTime(now)
-		resetTimer(timer, time.Until(next))
+		resetTimer(timer, mvsUntil(next))
 	}
 }
 
@@ -198,7 +198,7 @@ func (t *MVService) shouldFetch(now time.Time) bool {
 	if last == 0 {
 		return true
 	}
-	return now.Sub(time.UnixMilli(last)) >= defaultMVFetchInterval
+	return now.Sub(mvsUnixMilli(last)) >= defaultMVFetchInterval
 }
 
 func (t *MVService) nextFetchTime(now time.Time) time.Time {
@@ -206,7 +206,7 @@ func (t *MVService) nextFetchTime(now time.Time) time.Time {
 	if last == 0 {
 		return now
 	}
-	next := time.UnixMilli(last).Add(defaultMVFetchInterval)
+	next := mvsUnixMilli(last).Add(defaultMVFetchInterval)
 	if next.Before(now) {
 		return now
 	}
@@ -219,7 +219,7 @@ func (t *MVService) nextDueTime() (time.Time, bool) {
 	{
 		t.mvRefreshMu.Lock()
 		if item := t.mvRefreshMu.prio.Front(); item != nil {
-			next = time.UnixMilli(item.Value.orderTs)
+			next = mvsUnixMilli(item.Value.orderTs)
 			has = true
 		}
 		t.mvRefreshMu.Unlock()
@@ -228,7 +228,7 @@ func (t *MVService) nextDueTime() (time.Time, bool) {
 	{
 		t.mvLogPurgeMu.Lock()
 		if item := t.mvLogPurgeMu.prio.Front(); item != nil {
-			due := time.UnixMilli(item.Value.orderTs)
+			due := mvsUnixMilli(item.Value.orderTs)
 			if !has || due.Before(next) {
 				next = due
 				has = true
@@ -259,7 +259,7 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 			if l.orderTs == maxNextScheduleTs {
 				break
 			}
-			if time.UnixMilli(l.orderTs).After(now) {
+			if mvsUnixMilli(l.orderTs).After(now) {
 				break
 			}
 			mvLogToPurge = append(mvLogToPurge, l)
@@ -276,7 +276,7 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 			if m.orderTs == maxNextScheduleTs {
 				break
 			}
-			if time.UnixMilli(m.orderTs).After(now) {
+			if mvsUnixMilli(m.orderTs).After(now) {
 				break
 			}
 			mvToRefresh = append(mvToRefresh, m)
@@ -299,7 +299,7 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 			nextRefresh, deleted, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
 			if err != nil {
 				retryCount := m.retryCount.Add(1)
-				t.rescheduleMV(m, time.Now().Add(retryDelay(int(retryCount))).UnixMilli())
+				t.rescheduleMV(m, mvsNow().Add(retryDelay(int(retryCount))).UnixMilli())
 				t.notifier.Wake()
 				return err
 			}
@@ -328,7 +328,7 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 			nextPurge, deleted, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
 			if err != nil {
 				retryCount := l.retryCount.Add(1)
-				t.rescheduleMVLog(l, time.Now().Add(retryDelay(int(retryCount))).UnixMilli())
+				t.rescheduleMVLog(l, mvsNow().Add(retryDelay(int(retryCount))).UnixMilli())
 				t.notifier.Wake()
 				return err
 			}
@@ -512,7 +512,7 @@ func (t *MVService) fetchAllTiDBMViews() error {
 	return t.buildMVRefreshTasks(newPending)
 }
 
-func (t *MVService) FetchAllMVMeta() error {
+func (t *MVService) fetchAllMVMeta() error {
 	if err := t.fetchAllTiDBMLogPurge(); err != nil {
 		return err
 	}
@@ -520,6 +520,6 @@ func (t *MVService) FetchAllMVMeta() error {
 		return err
 	}
 
-	t.lastRefresh.Store(time.Now().UnixMilli())
+	t.lastRefresh.Store(mvsNow().UnixMilli())
 	return nil
 }

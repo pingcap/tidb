@@ -9,6 +9,7 @@ import (
 )
 
 func TestTaskExecutorMaxConcurrency(t *testing.T) {
+	installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 0)
 	exec.Run()
 	defer exec.Close()
@@ -55,7 +56,7 @@ func TestTaskExecutorMaxConcurrency(t *testing.T) {
 	second := waitForStart(t, started, 200*time.Millisecond)
 	require.NotEqual(t, first, second)
 
-	waitForCount(t, "completed", exec.metrics.completedCount.Load, 2)
+	waitForCount(t, exec.metrics.completedCount.Load, 2)
 	require.Equal(t, int64(0), exec.metrics.runningCount.Load())
 	require.Equal(t, int64(0), exec.metrics.waitingCount.Load())
 	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
@@ -64,6 +65,7 @@ func TestTaskExecutorMaxConcurrency(t *testing.T) {
 }
 
 func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
+	installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 0)
 	exec.Run()
 	defer exec.Close()
@@ -111,7 +113,7 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 
 	close(block)
 
-	waitForCount(t, "completed", exec.metrics.completedCount.Load, 2)
+	waitForCount(t, exec.metrics.completedCount.Load, 2)
 	require.Equal(t, int64(0), exec.metrics.runningCount.Load())
 	require.Equal(t, int64(0), exec.metrics.waitingCount.Load())
 	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
@@ -120,6 +122,7 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 }
 
 func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
+	installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 50*time.Millisecond)
 	exec.Run()
 	defer exec.Close()
@@ -152,8 +155,8 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
 
 	mockCh <- time.Time{}
-	waitForCount(t, "timeout", exec.metrics.timeoutCount.Load, 1)
-	waitForCount(t, "running", exec.metrics.runningCount.Load, 0)
+	waitForCount(t, exec.metrics.timeoutCount.Load, 1)
+	waitForCount(t, exec.metrics.runningCount.Load, 0)
 
 	exec.Submit("short", func() error {
 		started <- "short"
@@ -164,13 +167,14 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 
 	close(block)
 
-	waitForCount(t, "completed", exec.metrics.completedCount.Load, 2)
+	waitForCount(t, exec.metrics.completedCount.Load, 2)
 	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
 	require.Equal(t, int64(1), exec.metrics.timeoutCount.Load())
 	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
 }
 
 func TestTaskExecutorUpdateTimeout(t *testing.T) {
+	installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 0)
 	exec.Run()
 	defer exec.Close()
@@ -211,13 +215,14 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 
 	close(block)
 
-	waitForCount(t, "timeout", exec.metrics.timeoutCount.Load, 1)
-	waitForCount(t, "completed", exec.metrics.completedCount.Load, 2)
+	waitForCount(t, exec.metrics.timeoutCount.Load, 1)
+	waitForCount(t, exec.metrics.completedCount.Load, 2)
 	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
 	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
 }
 
 func TestTaskExecutorRejectAfterClose(t *testing.T) {
+	installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 0)
 	exec.Close()
 
@@ -237,7 +242,7 @@ func waitForSignal(t *testing.T, ch <-chan struct{}, timeout time.Duration) {
 	select {
 	case <-ch:
 		return
-	case <-time.After(timeout):
+	case <-mvsAfter(timeout):
 		t.Fatalf("timeout waiting for signal")
 	}
 }
@@ -247,7 +252,7 @@ func waitForStart(t *testing.T, ch <-chan string, timeout time.Duration) string 
 	select {
 	case got := <-ch:
 		return got
-	case <-time.After(timeout):
+	case <-mvsAfter(timeout):
 		t.Fatalf("timeout waiting for start")
 		return ""
 	}
@@ -255,7 +260,7 @@ func waitForStart(t *testing.T, ch <-chan string, timeout time.Duration) string 
 
 func waitForNamedStart(t *testing.T, ch <-chan string, want string, timeout time.Duration) {
 	t.Helper()
-	deadline := time.After(timeout)
+	deadline := mvsAfter(timeout)
 	for {
 		select {
 		case got := <-ch:
@@ -268,12 +273,12 @@ func waitForNamedStart(t *testing.T, ch <-chan string, want string, timeout time
 	}
 }
 
-func waitForCount(t *testing.T, name string, get func() int64, want int64) {
+func waitForCount(t *testing.T, get func() int64, want int64) {
 	t.Helper()
 	for {
 		if got := get(); got == want {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		mvsSleep(5 * time.Millisecond)
 	}
 }

@@ -153,7 +153,7 @@ func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Session
 			return errors.New("mview refresh failed: " + lastRefreshState.GetString(1))
 		}
 		lastRefreshSec := lastRefreshState.GetInt64(0)
-		nextRefresh = calcNextExecTime(time.Unix(refreshStartSec, 0), refreshIntervalSec, time.Unix(lastRefreshSec, 0))
+		nextRefresh = calcNextExecTime(mvsUnix(refreshStartSec, 0), refreshIntervalSec, mvsUnix(lastRefreshSec, 0))
 		return nil
 	})
 	if err != nil {
@@ -190,7 +190,7 @@ UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = `last_purge_time`, LAST_PURGE
 将 PURGE_START 精确到秒级，计算从 PURGE_START 开始，每隔 PURGE_INTERVAL 秒需要执行一次 purge 的下次执行时间点，找出比 last_purge_time 晚的第一个时间点，作为 nextPurge 返回
 */
 func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, deleted bool, err error) {
-	purgeTime := time.Now()
+	purgeTime := mvsNow()
 	purgeEndTime := purgeTime
 	mlogName := mvLogID
 	purgeMethod := "UNKNOWN"
@@ -199,7 +199,7 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 	err = withRCRestrictedTxn(ctx, sysSessionPool, func(txnCtx context.Context, sctx sessionctx.Context) error {
 		recordFailedPurge := func(stepErr error, purgeRows uint64) error {
 			failedErr = stepErr
-			purgeEndTime = time.Now()
+			purgeEndTime = mvsNow()
 			return recordMLogPurgeHist(txnCtx, sctx, mvLogID, mlogName, purgeMethod, purgeTime, purgeEndTime, purgeRows, "FAILED")
 		}
 
@@ -248,14 +248,14 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 		}
 
 		const deleteMLogSQL = `DELETE FROM %n.%n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
-		deleteStart := time.Now()
+		deleteStart := mvsNow()
 		if _, runErr = execRCRestrictedSQLWithSession(txnCtx, sctx, deleteMLogSQL, []any{schemaName, mlogName, minRefreshReadTSO}); runErr != nil {
 			return recordFailedPurge(runErr, 0)
 		}
-		deleteDurationMS := time.Since(deleteStart).Milliseconds()
+		deleteDurationMS := mvsSince(deleteStart).Milliseconds()
 		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
 
-		purgeEndTime = time.Now()
+		purgeEndTime = mvsNow()
 		const updatePurgeSQL = `UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = %?, LAST_PURGE_ROWS = %?, LAST_PURGE_DURATION = %? WHERE MLOG_ID = %?`
 		if _, runErr = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{purgeEndTime, affectedRows, deleteDurationMS, mvLogID}); runErr != nil {
 			return recordFailedPurge(runErr, affectedRows)
@@ -263,7 +263,7 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 		if runErr = recordMLogPurgeHist(txnCtx, sctx, mvLogID, mlogName, purgeMethod, purgeTime, purgeEndTime, affectedRows, "SUCCESS"); runErr != nil {
 			return runErr
 		}
-		nextPurge = calcNextExecTime(time.Unix(purgeStartSec, 0), purgeIntervalSec, purgeEndTime)
+		nextPurge = calcNextExecTime(mvsUnix(purgeStartSec, 0), purgeIntervalSec, purgeEndTime)
 		return nil
 	})
 	if err != nil {
@@ -279,12 +279,12 @@ func calcNextExecTime(start time.Time, intervalSec int64, last time.Time) time.T
 	startSec := start.Unix()
 	lastSec := last.Unix()
 	if lastSec < startSec {
-		return time.Unix(startSec, 0)
+		return mvsUnix(startSec, 0)
 	}
 	elapsed := lastSec - startSec
 	intervals := elapsed / intervalSec
 	nextSec := startSec + (intervals+1)*intervalSec
-	return time.Unix(nextSec, 0)
+	return mvsUnix(nextSec, 0)
 }
 
 /*
@@ -311,12 +311,12 @@ func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool b
 			continue
 		}
 
-		purgeStart := time.Unix(row.GetInt64(1), 0)
+		purgeStart := mvsUnix(row.GetInt64(1), 0)
 		intervalSec := row.GetInt64(2)
 
 		lastPurgeTime := time.Time{}
 		if !row.IsNull(3) {
-			lastPurgeTime = time.Unix(row.GetInt64(3), 0)
+			lastPurgeTime = mvsUnix(row.GetInt64(3), 0)
 		}
 
 		nextPurge := calcNextExecTime(purgeStart, intervalSec, lastPurgeTime)
@@ -356,12 +356,12 @@ func (*serverHelper) fetchAllTiDBMViews(ctx context.Context, sysSessionPool basi
 			continue
 		}
 
-		refreshStart := time.Unix(row.GetInt64(1), 0)
+		refreshStart := mvsUnix(row.GetInt64(1), 0)
 		intervalSec := max(row.GetInt64(2), 1)
 
 		lastRefreshTime := time.Time{}
 		if !row.IsNull(3) {
-			lastRefreshTime = time.Unix(row.GetInt64(3), 0)
+			lastRefreshTime = mvsUnix(row.GetInt64(3), 0)
 		}
 
 		nextRefresh := calcNextExecTime(refreshStart, intervalSec, lastRefreshTime)
