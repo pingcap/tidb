@@ -4294,6 +4294,12 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 		if column.Hidden {
 			return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(column.Name, clauseMsg[fieldList])
 		}
+		// If columns in set list contains primary key columns on soft-delete tables, raise error.
+		// It's because if updating PK meets a conflict row, we need to delete the conflict row if that row is
+		// already soft-deleted. And this behavior is not implemented yet. So we forbid this kind of update now.
+		if tblInfo.SoftdeleteInfo != nil && mysql.HasPriKeyFlag(column.GetFlag()) {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
+		}
 		// Check whether the column to be updated is the generated column.
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html

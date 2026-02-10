@@ -1,3 +1,17 @@
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+insert into message values (1, '24h'), (2, '24h');
+insert into message values (2, 'new') on duplicate key update text = 'new';
+select * from message where id = 2;
+id	text
+2	new
+select * from message order by id;
+id	text
+1	24h
+2	new
+insert into message values (2, 'new') on duplicate key update id = 3;
+Error 1235 (42000): This version of TiDB doesn't yet support 'updating primary key column on soft-delete table'
+drop table message;
 create table t (id int primary key clustered, v int) softdelete retention 7 day;
 insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4);
 delete from t where id in (1, 2);
@@ -30,11 +44,9 @@ id	v
 2	0
 3	3
 insert into t values (2, 22) on duplicate key update id = 3;
-Error 1062 (23000): Duplicate entry '3' for key 't.PRIMARY'
+Error 1235 (42000): This version of TiDB doesn't yet support 'updating primary key column on soft-delete table'
 insert ignore into t values (2, 22) on duplicate key update id = 3;
-show warnings;
-Level	Code	Message
-Warning	1062	Duplicate entry '3' for key 't.PRIMARY'
+Error 1235 (42000): This version of TiDB doesn't yet support 'updating primary key column on soft-delete table'
 select id, v from t;
 id	v
 2	0
@@ -66,11 +78,9 @@ id	v
 2	0
 3	3
 insert into t values (2, 22) on duplicate key update id = 3;
-Error 1062 (23000): Duplicate entry '3' for key 't.PRIMARY'
+Error 1235 (42000): This version of TiDB doesn't yet support 'updating primary key column on soft-delete table'
 insert ignore into t values (2, 22) on duplicate key update id = 3;
-show warnings;
-Level	Code	Message
-Warning	1062	Duplicate entry '3' for key 't.PRIMARY'
+Error 1235 (42000): This version of TiDB doesn't yet support 'updating primary key column on soft-delete table'
 select id, v from t;
 id	v
 2	0

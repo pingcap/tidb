@@ -1,0 +1,54 @@
+# Test plan cache behavior with soft-delete tables
+
+# ===== Non-Prepared Execution Plan Cache =====
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+
+# Step 1: Enable non-prepared plan cache
+set tidb_enable_non_prepared_plan_cache = ON;
+
+# Step 2: Insert data and delete data
+insert into message values (1, '24h'), (2, '24h'), (3, '24h'), (4, '24h');
+delete from message where id = 2;
+
+# Execute twice - second should hit cache
+select * from message where id > 1;
+select * from message where id > 1;
+select @@last_plan_from_cache;
+
+# Step 3: Disable softdelete semantics and select again
+set @@tidb_translate_softdelete_sql = false;
+select * from message where id > 1;
+# Cache should be invalidated
+select @@last_plan_from_cache;
+
+# Restore and clean up
+set @@tidb_translate_softdelete_sql = true;
+set tidb_enable_non_prepared_plan_cache = OFF;
+drop table message;
+
+# ===== Prepared Execution Plan Cache =====
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+
+# Step 1: Insert data and delete data
+insert into message values (1, '24h'), (2, '24h'), (3, '24h'), (4, '24h');
+delete from message where id = 2;
+
+# Prepare and execute twice - second should hit cache
+prepare stmt from 'select * from message where id > ?';
+set @a = 1;
+execute stmt using @a;
+execute stmt using @a;
+select @@last_plan_from_cache;
+
+# Step 2: Disable softdelete semantics and execute again
+set @@tidb_translate_softdelete_sql = false;
+execute stmt using @a;
+# Cache should be invalidated
+select @@last_plan_from_cache;
+
+# Restore
+set @@tidb_translate_softdelete_sql = true;
+deallocate prepare stmt;
+drop table message;

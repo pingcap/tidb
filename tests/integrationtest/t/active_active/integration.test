@@ -1,0 +1,20 @@
+CREATE DATABASE t ACTIVE_ACTIVE = "ON" SOFTDELETE RETENTION 7 DAY;
+USE t;
+CREATE TABLE test (
+    id int PRIMARY KEY,
+    text varchar(10)
+);
+INSERT INTO test VALUES (1, "24h"),(2,"24h");
+-- replace_regex /^[1-9][0-9]+/TSO/
+select @a:=json_extract(@@tidb_last_txn_info, '$.commit_ts');
+INSERT INTO test VALUES (3, "24h");
+-- replace_regex /^[1-9][0-9]+/TSO/
+select @b:=json_extract(@@tidb_last_txn_info, '$.commit_ts');
+SELECT id,text,_tidb_origin_ts,_tidb_commit_ts = @a,_tidb_commit_ts = @b FROM test ORDER BY _tidb_commit_ts DESC;
+select * from test where _tidb_origin_ts is not NULL;
+ALTER TABLE test ADD INDEX i1(_tidb_origin_ts);
+ALTER TABLE test DROP INDEX i1;
+-- error 1846
+ALTER TABLE test ADD UNIQUE INDEX i1(_tidb_origin_ts);
+-- error 1072
+ALTER TABLE test ADD INDEX i1(_tidb_commit_ts);

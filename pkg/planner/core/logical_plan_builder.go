@@ -5923,7 +5923,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	b.curClause = fieldList
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`
-	modifyColumns := make(map[string]bool, p.Schema().Len())
+	type fullColumnName struct {
+		db, tbl, col string
+	}
+	modifyColumns := make(map[fullColumnName]bool, p.Schema().Len())
 	var columnsIdx map[*ast.ColumnName]int
 	cacheColumnsIdx := false
 	if len(p.OutputNames()) > 16 {
@@ -5959,10 +5962,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			// --- subQuery is not counted as updatable table.
 			return nil, nil, false, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
 		}
-		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
+		columnKey := fullColumnName{name.DBName.L, name.TblName.L, name.ColName.L}
 		// We save a flag for the column in map `modifyColumns`
 		// This flag indicated if assign keyword `DEFAULT` to the column
-		modifyColumns[columnFullName] = IsDefaultExprSameColumn(p.OutputNames()[idx:idx+1], assign.Expr)
+		modifyColumns[columnKey] = IsDefaultExprSameColumn(p.OutputNames()[idx:idx+1], assign.Expr)
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -5983,8 +5986,8 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if !colInfo.IsGenerated() {
 				continue
 			}
-			columnFullName := fmt.Sprintf("%s.%s.%s", tnW.DBInfo.Name.L, tn.Name.L, colInfo.Name.L)
-			isDefault, ok := modifyColumns[columnFullName]
+			columnKey := fullColumnName{tnW.DBInfo.Name.L, tn.Name.L, colInfo.Name.L}
+			isDefault, ok := modifyColumns[columnKey]
 			if ok && colInfo.Hidden {
 				return nil, nil, false, plannererrors.ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
 			}
@@ -5997,6 +6000,21 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
 				Expr:   tableVal.Cols()[i].GeneratedExpr.Clone(),
 			})
+		}
+	}
+
+	// If columns in set list contains primary key columns on soft-delete tables, raise error.
+	for name := range modifyColumns {
+		for _, tn := range tableList {
+			tnW := b.resolveCtx.GetTableName(tn)
+			if tnW.DBInfo.Name.L != name.db || tn.Name.L != name.tbl || tnW.TableInfo.SoftdeleteInfo == nil {
+				continue
+			}
+			for _, colInfo := range tnW.TableInfo.Columns {
+				if colInfo.Name.L == name.col && mysql.HasPriKeyFlag(colInfo.GetFlag()) {
+					return nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
+				}
+			}
 		}
 	}
 

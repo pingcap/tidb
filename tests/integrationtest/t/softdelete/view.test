@@ -1,0 +1,24 @@
+# Test the view created from the soft-delete table
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+
+# Step 1: Create view from the soft-delete table
+create view v1 as select * from message where id >= 2;
+
+# Step 2: Insert data and delete data
+insert into message values (1, '24h'), (2, '24h'), (3, '24h');
+delete from message where id = 2;
+
+# With softdelete on, view should only return id=3 (id=2 is soft-deleted)
+select * from v1 order by id;
+
+# Step 3: Disable softdelete semantics
+set @@tidb_translate_softdelete_sql = false;
+
+# With softdelete off, view should return id=2 and id=3 (soft-deleted rows visible)
+select * from v1 order by id;
+
+# Restore
+set @@tidb_translate_softdelete_sql = true;
+drop view v1;
+drop table message;
