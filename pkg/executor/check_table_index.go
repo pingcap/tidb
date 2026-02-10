@@ -20,19 +20,16 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/dxf/operator"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -41,17 +38,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/admin"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
-
-var errCheckPartialIndexWithoutFastCheck = dbterror.ClassExecutor.NewStd(errno.ErrCheckPartialIndexWithoutFastCheck)
 
 // CheckTableExec represents a check table executor.
 // It is built from the "admin check table" statement, and it checks if the
@@ -150,9 +142,6 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if idx.MVIndex || idx.IsColumnarIndex() {
 			continue
 		}
-		if idx.HasCondition() {
-			return errors.Trace(errCheckPartialIndexWithoutFastCheck)
-		}
 		idxNames = append(idxNames, idx.Name.O)
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
@@ -234,10 +223,7 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 		return err
 	}
 	if e.table.Meta().GetPartitionInfo() == nil {
-		idx, err := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
-		if err != nil {
-			return err
-		}
+		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
 		return admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, e.table, idx)
 	}
 
@@ -245,10 +231,7 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := e.table.(table.PartitionedTable).GetPartition(pid)
-		idx, err := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
-		if err != nil {
-			return err
-		}
+		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
 		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, partition, idx); err != nil {
 			return errors.Trace(err)
 		}
@@ -267,8 +250,187 @@ type FastCheckTableExec struct {
 	table      table.Table
 	indexInfos []*model.IndexInfo
 	done       bool
-	is         infoschema.InfoSchema
+	err        *atomic.Pointer[error]
+	collector  *AdminCheckIndexInconsistentCollector
+	wg         sync.WaitGroup
 	contextCtx context.Context
+}
+
+// AdminCheckIndexInconsistentType describes the inconsistency category found by
+// fast `admin check index`.
+type AdminCheckIndexInconsistentType string
+
+const (
+	// AdminCheckIndexRowWithoutIndex means one table row exists but the index row is missing.
+	AdminCheckIndexRowWithoutIndex AdminCheckIndexInconsistentType = "row_without_index"
+	// AdminCheckIndexIndexWithoutRow means one index row exists but the table row is missing.
+	AdminCheckIndexIndexWithoutRow AdminCheckIndexInconsistentType = "index_without_row"
+	// AdminCheckIndexRowIndexMismatch means table and index rows both exist but values don't match.
+	AdminCheckIndexRowIndexMismatch AdminCheckIndexInconsistentType = "row_index_mismatch"
+)
+
+// AdminCheckIndexInconsistentRow stores one inconsistent handle and mismatch type.
+type AdminCheckIndexInconsistentRow struct {
+	Handle       string                          `json:"handle"`
+	MismatchType AdminCheckIndexInconsistentType `json:"mismatch_type"`
+}
+
+// AdminCheckIndexInconsistentSummary is returned by HTTP API.
+type AdminCheckIndexInconsistentSummary struct {
+	InconsistentRowCount uint64                           `json:"inconsistent_row_count"`
+	Rows                 []AdminCheckIndexInconsistentRow `json:"rows"`
+}
+
+// AdminCheckIndexInconsistentCollector collects all inconsistent handles for one statement execution.
+// It is enabled only when the execution context carries this collector.
+type AdminCheckIndexInconsistentCollector struct {
+	count atomic.Uint64
+	first atomic.Pointer[error]
+
+	mu     sync.Mutex
+	rows   []AdminCheckIndexInconsistentRow
+	rowSet map[string]struct{}
+}
+
+// NewAdminCheckIndexInconsistentCollector creates a collector for fast `admin check index`.
+func NewAdminCheckIndexInconsistentCollector() *AdminCheckIndexInconsistentCollector {
+	return &AdminCheckIndexInconsistentCollector{
+		rowSet: make(map[string]struct{}),
+	}
+}
+
+type adminCheckIndexCollectorCtxKeyType struct{}
+
+var adminCheckIndexCollectorCtxKey = adminCheckIndexCollectorCtxKeyType{}
+
+// WithAdminCheckIndexInconsistentCollector enables collecting all inconsistent handles in fast check.
+func WithAdminCheckIndexInconsistentCollector(
+	ctx context.Context,
+	collector *AdminCheckIndexInconsistentCollector,
+) context.Context {
+	if collector == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, adminCheckIndexCollectorCtxKey, collector)
+}
+
+func adminCheckIndexCollectorFromContext(ctx context.Context) *AdminCheckIndexInconsistentCollector {
+	collector, ok := ctx.Value(adminCheckIndexCollectorCtxKey).(*AdminCheckIndexInconsistentCollector)
+	if !ok {
+		return nil
+	}
+	return collector
+}
+
+func (c *AdminCheckIndexInconsistentCollector) recordInconsistent(
+	handle string,
+	mismatchType AdminCheckIndexInconsistentType,
+	err error,
+) {
+	if err == nil {
+		return
+	}
+	c.first.CompareAndSwap(nil, &err)
+	if handle == "" {
+		return
+	}
+
+	rowKey := handle + "\x00" + string(mismatchType)
+	c.mu.Lock()
+	if _, exists := c.rowSet[rowKey]; exists {
+		c.mu.Unlock()
+		return
+	}
+	c.rowSet[rowKey] = struct{}{}
+	c.rows = append(c.rows, AdminCheckIndexInconsistentRow{Handle: handle, MismatchType: mismatchType})
+	c.mu.Unlock()
+
+	c.count.Add(1)
+}
+
+func (c *AdminCheckIndexInconsistentCollector) firstErr() error {
+	if c == nil {
+		return nil
+	}
+	err := c.first.Load()
+	if err == nil {
+		return nil
+	}
+	return *err
+}
+
+// Summary returns a copy of collected inconsistency rows.
+func (c *AdminCheckIndexInconsistentCollector) Summary() *AdminCheckIndexInconsistentSummary {
+	if c == nil {
+		return &AdminCheckIndexInconsistentSummary{}
+	}
+
+	c.mu.Lock()
+	rows := make([]AdminCheckIndexInconsistentRow, len(c.rows))
+	copy(rows, c.rows)
+	c.mu.Unlock()
+
+	return &AdminCheckIndexInconsistentSummary{
+		InconsistentRowCount: c.count.Load(),
+		Rows:                 rows,
+	}
+}
+
+type checksumBucketTask struct {
+	offset int
+	mod    int
+	depth  int
+}
+
+type mismatchBucket struct {
+	bucket uint64
+	count  int64
+}
+
+type leafRowStream struct {
+	ctx context.Context
+	rs  sqlexec.RecordSet
+	chk *chunk.Chunk
+	idx int
+}
+
+func newLeafRowStream(ctx context.Context, se sessionctx.Context, sql string) (*leafRowStream, error) {
+	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	return &leafRowStream{
+		ctx: ctx,
+		rs:  rs,
+		chk: rs.NewChunk(nil),
+	}, nil
+}
+
+func (s *leafRowStream) Next() (chunk.Row, bool, error) {
+	for {
+		if s.idx < s.chk.NumRows() {
+			row := s.chk.GetRow(s.idx)
+			s.idx++
+			return row, true, nil
+		}
+		err := s.rs.Next(s.ctx, s.chk)
+		if err != nil {
+			return chunk.Row{}, false, err
+		}
+		if s.chk.NumRows() == 0 {
+			return chunk.Row{}, false, nil
+		}
+		s.idx = 0
+	}
+}
+
+func (s *leafRowStream) Close() {
+	if s == nil || s.rs == nil {
+		return
+	}
+	if err := s.rs.Close(); err != nil {
+		logutil.BgLogger().Warn("close leaf row stream failed", zap.Error(err))
+	}
 }
 
 var _ exec.Executor = &FastCheckTableExec{}
@@ -290,6 +452,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return nil
 	}
 	defer func() { e.done = true }()
+	e.collector = adminCheckIndexCollectorFromContext(ctx)
 
 	// Here we need check all indexes, includes invisible index
 	e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = true
@@ -297,32 +460,29 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	ch := make(chan checkIndexTask)
-	dc := operator.NewSimpleDataChannel(ch)
+	workerPool := workerpool.NewWorkerPool("checkIndex",
+		poolutil.CheckTable, 3, e.createWorker)
+	workerPool.Start(ctx)
 
-	wctx := workerpool.NewContext(ctx)
-	op := operator.NewAsyncOperator(wctx,
-		workerpool.NewWorkerPool("checkIndex",
-			poolutil.CheckTable, 3, e.createWorker))
-	op.SetSource(dc)
-	//nolint: errcheck
-	op.Open()
-
-OUTER:
+	e.wg.Add(len(e.indexInfos))
 	for i := range e.indexInfos {
-		select {
-		case ch <- checkIndexTask{indexOffset: i}:
-		case <-wctx.Done():
-			break OUTER
+		workerPool.AddTask(checkIndexTask{indexOffset: i, err: e.err})
+	}
+
+	e.wg.Wait()
+	workerPool.ReleaseAndWait()
+
+	if e.collector != nil {
+		if firstErr := e.collector.firstErr(); firstErr != nil {
+			return firstErr
 		}
 	}
-	close(ch)
 
-	err := op.Close()
-	if opErr := wctx.OperatorErr(); opErr != nil {
-		return opErr
+	p := e.err.Load()
+	if p == nil {
+		return nil
 	}
-	return err
+	return *p
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
@@ -337,54 +497,13 @@ type checkIndexWorker struct {
 	e          *FastCheckTableExec
 }
 
-type fastCheckSysSessionVarsBackup struct {
-	optimizerUseInvisibleIndexes bool
-	memQuotaQuery                int64
-	distSQLScanConcurrency       int
-	executorConcurrency          int
-	maxExecutionTime             uint64
-	tikvClientReadTimeout        uint64
-}
-
-func backupFastCheckSysSessionVars(sv *variable.SessionVars) fastCheckSysSessionVarsBackup {
-	return fastCheckSysSessionVarsBackup{
-		optimizerUseInvisibleIndexes: sv.OptimizerUseInvisibleIndexes,
-		memQuotaQuery:                sv.MemQuotaQuery,
-		distSQLScanConcurrency:       sv.DistSQLScanConcurrency(),
-		executorConcurrency:          sv.ExecutorConcurrency,
-		maxExecutionTime:             sv.MaxExecutionTime,
-		tikvClientReadTimeout:        sv.TiKVClientReadTimeout,
-	}
-}
-
-func (b fastCheckSysSessionVarsBackup) restoreTo(sv *variable.SessionVars) {
-	sv.OptimizerUseInvisibleIndexes = b.optimizerUseInvisibleIndexes
-	sv.MemQuotaQuery = b.memQuotaQuery
-	if sv.MemTracker != nil {
-		sv.MemTracker.SetBytesLimit(sv.MemQuotaQuery)
-	}
-	sv.SetDistSQLScanConcurrency(b.distSQLScanConcurrency)
-	sv.ExecutorConcurrency = b.executorConcurrency
-	sv.MaxExecutionTime = b.maxExecutionTime
-	sv.TiKVClientReadTimeout = b.tikvClientReadTimeout
-}
-
-func applyFastCheckSysSessionVars(sysVars, userVars *variable.SessionVars) {
-	sysVars.OptimizerUseInvisibleIndexes = true
-	sysVars.MemQuotaQuery = userVars.MemQuotaQuery
-	if sysVars.MemTracker != nil {
-		sysVars.MemTracker.SetBytesLimit(sysVars.MemQuotaQuery)
-	}
-	sysVars.SetDistSQLScanConcurrency(userVars.DistSQLScanConcurrency())
-	sysVars.ExecutorConcurrency = userVars.ExecutorConcurrency
-	sysVars.MaxExecutionTime = userVars.MaxExecutionTime
-	sysVars.TiKVClientReadTimeout = userVars.TiKVClientReadTimeout
-}
-
 func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	sessVars := se.GetSessionVars()
-	backup := backupFastCheckSysSessionVars(sessVars)
-	applyFastCheckSysSessionVars(sessVars, w.sctx.GetSessionVars())
+	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
+	originMemQuotaQuery := sessVars.MemQuotaQuery
+
+	sessVars.OptimizerUseInvisibleIndexes = true
+	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
 	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
 	if snapshot != 0 {
 		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
@@ -394,7 +513,8 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	}
 
 	return func() {
-		backup.restoreTo(sessVars)
+		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
+		sessVars.MemQuotaQuery = originMemQuotaQuery
 		if snapshot != 0 {
 			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
 			if err != nil {
@@ -404,97 +524,40 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	}
 }
 
-func queryToRow(ctx context.Context, se sessionctx.Context, sql string) ([]chunk.Row, error) {
-	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
-	if err != nil {
-		return nil, err
-	}
-	return sqlexec.DrainRecordSetAndClose(ctx, rs, 4096)
-}
-
-func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string) bool {
-	rows, err := queryToRow(ctx, se, "explain "+sql)
-	if err != nil {
-		return false
-	}
-
-	isTableScan := false
-	isIndexScan := false
-	for _, row := range rows {
-		op := row.GetString(0)
-		if strings.Contains(op, "TableFullScan") {
-			isTableScan = true
-		} else if strings.Contains(op, "IndexFullScan") || strings.Contains(op, "IndexRangeScan") {
-			// It's also possible to be index range scan if the index has condition.
-			// TODO: if the planner eliminates the range in the index scan, we can remove the `IndexRangeScan` check.
-			isIndexScan = true
-		} else if strings.Contains(op, "PointGet") || strings.Contains(op, "BatchPointGet") {
-			if row.Len() > 3 {
-				accessObject := row.GetString(3)
-				// accessObject is a normalized string with components separated by ", ".
-				// Match ", index:" to identify non-clustered index paths and avoid
-				// treating ", clustered index:" (PRIMARY/handle path) as index access.
-				if strings.Contains(accessObject, ", index:") {
-					isIndexScan = true
-				}
-			}
-		}
-	}
-
-	if isTableScan || !isIndexScan {
-		return false
-	}
-	return true
-}
-
-func (w *checkIndexWorker) quickPassGlobalChecksum(ctx context.Context, se sessionctx.Context, tblName string, idxInfo *model.IndexInfo, rowChecksumExpr, idxCondition string) (bool, error) {
-	tableGlobalQuery := fmt.Sprintf(
-		"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ bit_xor(%s), count(*) from %s use index() where %s(0 = 0)",
-		tblName, rowChecksumExpr, tblName, idxCondition)
-	indexGlobalQuery := fmt.Sprintf(
-		"select /*+ AGG_TO_COP() */ bit_xor(%s), count(*) from %s use index(`%s`) where %s(0 = 0)",
-		rowChecksumExpr, tblName, idxInfo.Name, idxCondition)
-
-	tableGlobalChecksum, tableGlobalCnt, err := getGlobalCheckSum(w.e.contextCtx, se, tableGlobalQuery)
-	if err != nil {
-		return false, err
-	}
-	intest.AssertFunc(func() bool {
-		return verifyIndexSideQuery(ctx, se, indexGlobalQuery)
-	}, "index side query plan is not correct: %s", indexGlobalQuery)
-	indexGlobalChecksum, indexGlobalCnt, err := getGlobalCheckSum(w.e.contextCtx, se, indexGlobalQuery)
-	if err != nil {
-		return false, err
-	}
-
-	return tableGlobalCnt == indexGlobalCnt && tableGlobalChecksum == indexGlobalChecksum, nil
-}
-
 // HandleTask implements the Worker interface.
-func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) error {
-	failpoint.Inject("mockFastCheckTableError", func() {
-		failpoint.Return(errors.New("mock fast check table error"))
-	})
-
+func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
+	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
 
 	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
 
+	trySaveErr := func(err error) {
+		w.e.err.CompareAndSwap(nil, &err)
+	}
+	reportErr := func(err error) bool {
+		if err == nil {
+			return false
+		}
+		if w.e.collector == nil {
+			trySaveErr(err)
+			return true
+		}
+		w.e.collector.first.CompareAndSwap(nil, &err)
+		trySaveErr(err)
+		return true
+	}
+
 	se, err := w.e.BaseExecutor.GetSysSession()
 	if err != nil {
-		return err
+		trySaveErr(err)
+		return
 	}
 	restoreCtx := w.initSessCtx(se)
 	defer func() {
 		restoreCtx()
 		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
 	}()
-	var fpErr error
-	failpoint.InjectCall("fastCheckTableAfterInitSessCtx", se.GetSessionVars(), &fpErr)
-	if fpErr != nil {
-		return fpErr
-	}
 
 	tblMeta := w.table.Meta()
 	tblName := TableName(w.e.dbName, tblMeta.Name.String())
@@ -532,330 +595,360 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	// Used to group by and order.
 	md5Handle := fmt.Sprintf("crc32(md5(concat_ws(0x2, %s)))", handleColumns)
 
-	tableRowCntToCheck := int64(0)
-
-	offset := 0
-	mod := 1
-	meetError := false
-
 	lookupCheckThreshold := int64(100)
-	checkOnce := false
-
-	idxCondition := ""
-	if idxInfo.HasCondition() {
-		idxCondition = fmt.Sprintf("(%s) AND ", idxInfo.ConditionExprString)
-	}
 
 	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
 	if err != nil {
-		return err
+		trySaveErr(err)
+		return
 	}
 
-	// Quick pass: avoid bucketed grouping if table/index checksum already matches.
-	match, err := w.quickPassGlobalChecksum(ctx, se, tblName, idxInfo, md5HandleAndIndexCol, idxCondition)
-	if err != nil {
-		return err
-	}
-	failpoint.Inject("forceAdminCheckBucketed", func() {
-		match = false
-	})
-	if match {
-		return nil
-	}
-
-	failpoint.Inject("mockFastCheckTableBucketedCalled", func() {
-		failpoint.Return(errors.New("mock fast check table bucketed called"))
-	})
-
-	times := 0
-	const maxTimes = 10
-	for tableRowCntToCheck > lookupCheckThreshold || !checkOnce {
-		times++
-		if times == maxTimes {
-			logutil.BgLogger().Warn("compare checksum by group reaches time limit", zap.Int("times", times))
-			break
+	errCtx := w.sctx.GetSessionVars().StmtCtx.ErrCtx()
+	getHandleFromRow := func(row chunk.Row) (kv.Handle, error) {
+		if tblMeta.IsCommonHandle {
+			handleDatum := make([]types.Datum, 0, len(pkTypes))
+			for i, t := range pkTypes {
+				handleDatum = append(handleDatum, row.GetDatum(i, t))
+			}
+			handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleDatum...)
+			err = errCtx.HandleError(err)
+			if err != nil {
+				return nil, err
+			}
+			return kv.NewCommonHandle(handleBytes)
 		}
-		whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
-		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle, offset, mod, bucketSize)
-		if !checkOnce {
+		return kv.IntHandle(row.GetInt64(0)), nil
+	}
+	getValueFromRow := func(row chunk.Row) ([]types.Datum, error) {
+		valueDatum := make([]types.Datum, 0, len(idxInfo.Columns))
+		for i, t := range idxInfo.Columns {
+			valueDatum = append(valueDatum, row.GetDatum(i+len(pkCols), &tblMeta.Columns[t.Offset].FieldType))
+		}
+		return valueDatum, nil
+	}
+	getRowChecksum := func(row chunk.Row) uint64 {
+		return row.GetUint64(len(pkCols) + len(idxInfo.Columns))
+	}
+
+	buildRecordData := func(row chunk.Row) (*consistency.RecordData, error) {
+		handle, err := getHandleFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		value, err := getValueFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		return &consistency.RecordData{Handle: handle, Values: value}, nil
+	}
+	cloneRecordData := func(record *consistency.RecordData) *consistency.RecordData {
+		if record == nil {
+			return nil
+		}
+		return &consistency.RecordData{Handle: record.Handle, Values: types.CloneRow(record.Values)}
+	}
+	newReporter := func() *consistency.Reporter {
+		return &consistency.Reporter{
+			HandleEncode: func(handle kv.Handle) kv.Key {
+				return tablecodec.EncodeRecordKey(w.table.RecordPrefix(), handle)
+			},
+			IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+				var idx table.Index
+				for _, v := range w.table.Indices() {
+					if strings.EqualFold(v.Meta().Name.String(), idxInfo.Name.O) {
+						idx = v
+						break
+					}
+				}
+				if idx == nil {
+					return nil
+				}
+				sc := w.sctx.GetSessionVars().StmtCtx
+				k, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+				if err != nil {
+					return nil
+				}
+				return k
+			},
+			Tbl:             tblMeta,
+			Idx:             idxInfo,
+			EnableRedactLog: w.sctx.GetSessionVars().EnableRedactLog,
+			Storage:         w.sctx.GetStore(),
+		}
+	}
+	reportInconsistent := func(reporter *consistency.Reporter, mismatchType AdminCheckIndexInconsistentType, handle kv.Handle, idxRecord, tblRecord *consistency.RecordData) bool {
+		err := reporter.ReportAdminCheckInconsistent(w.e.contextCtx, handle, idxRecord, tblRecord)
+		if err == nil {
+			return false
+		}
+		if w.e.collector == nil {
+			trySaveErr(err)
+			return true
+		}
+		w.e.collector.recordInconsistent(handle.String(), mismatchType, err)
+		return false
+	}
+
+	compareChecksumBuckets := func(tableChecksum, indexChecksum []groupByChecksum) []mismatchBucket {
+		mismatch := make([]mismatchBucket, 0)
+		i, j := 0, 0
+		for i < len(tableChecksum) && j < len(indexChecksum) {
+			if tableChecksum[i].bucket == indexChecksum[j].bucket {
+				if tableChecksum[i].checksum != indexChecksum[j].checksum {
+					mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: max(tableChecksum[i].count, indexChecksum[j].count)})
+				}
+				i++
+				j++
+				continue
+			}
+			if tableChecksum[i].bucket < indexChecksum[j].bucket {
+				mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: tableChecksum[i].count})
+				i++
+				continue
+			}
+			mismatch = append(mismatch, mismatchBucket{bucket: indexChecksum[j].bucket, count: indexChecksum[j].count})
+			j++
+		}
+		for ; i < len(tableChecksum); i++ {
+			mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: tableChecksum[i].count})
+		}
+		for ; j < len(indexChecksum); j++ {
+			mismatch = append(mismatch, mismatchBucket{bucket: indexChecksum[j].bucket, count: indexChecksum[j].count})
+		}
+		return mismatch
+	}
+	sumChecksumCount := func(checksums []groupByChecksum) int64 {
+		total := int64(0)
+		for _, checksum := range checksums {
+			total += checksum.count
+		}
+		return total
+	}
+	buildChecksumQueries := func(task checksumBucketTask, forceRoot bool) (tblQuery, idxQuery string) {
+		whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, task.offset, task.mod)
+		if forceRoot {
 			whereKey = "0"
 		}
-		checkOnce = true
+		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle, task.offset, task.mod, bucketSize)
+		tblQuery = fmt.Sprintf(
+			"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
+			tblName, md5HandleAndIndexCol, groupByKey, tblName, whereKey, groupByKey)
+		idxQuery = fmt.Sprintf(
+			"select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
+			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, whereKey, groupByKey)
+		return tblQuery, idxQuery
+	}
+	buildRowQueries := func(task checksumBucketTask) (tableSQL, indexSQL string) {
+		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, task.offset, task.mod)
+		indexSQL = fmt.Sprintf(
+			"select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s",
+			handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name, groupByKey, handleColumns)
+		tableSQL = fmt.Sprintf(
+			"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s",
+			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
+		return tableSQL, indexSQL
+	}
+	nextRecord := func(stream *leafRowStream) (*consistency.RecordData, chunk.Row, bool, error) {
+		row, ok, err := stream.Next()
+		if err != nil || !ok {
+			return nil, chunk.Row{}, ok, err
+		}
+		record, err := buildRecordData(row)
+		if err != nil {
+			return nil, chunk.Row{}, false, err
+		}
+		return record, row, true, nil
+	}
+	checkLeafBucket := func(task checksumBucketTask) bool {
+		tableSQL, indexSQL := buildRowQueries(task)
+		tableStream, err := newLeafRowStream(ctx, se, tableSQL)
+		if err != nil {
+			return reportErr(err)
+		}
+		defer tableStream.Close()
+		indexStream, err := newLeafRowStream(ctx, se, indexSQL)
+		if err != nil {
+			return reportErr(err)
+		}
+		defer indexStream.Close()
 
-		tblQuery := fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ bit_xor(%s), %s, count(*) from %s use index() where %s(%s = 0) group by %s",
-			tblName, md5HandleAndIndexCol, groupByKey, tblName, idxCondition, whereKey, groupByKey)
-		idxQuery := fmt.Sprintf(
-			"select /*+ AGG_TO_COP() */ bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s (%s = 0) group by%s",
-			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, idxCondition, whereKey, groupByKey)
+		reporter := newReporter()
+		var lastTableRecord *consistency.RecordData
+		tableRecord, tableRow, hasTable, err := nextRecord(tableStream)
+		if err != nil {
+			return reportErr(err)
+		}
+		indexRecord, indexRow, hasIndex, err := nextRecord(indexStream)
+		if err != nil {
+			return reportErr(err)
+		}
+		// Merge two ordered streams by handle and classify each mismatch.
+		for hasTable || hasIndex {
+			switch {
+			case !hasTable:
+				if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
+					tableRecord = lastTableRecord
+				}
+				if reportInconsistent(reporter, AdminCheckIndexIndexWithoutRow, indexRecord.Handle, indexRecord, tableRecord) {
+					return true
+				}
+				indexRecord, indexRow, hasIndex, err = nextRecord(indexStream)
+				if err != nil {
+					return reportErr(err)
+				}
+			case !hasIndex:
+				if reportInconsistent(reporter, AdminCheckIndexRowWithoutIndex, tableRecord.Handle, nil, tableRecord) {
+					return true
+				}
+				lastTableRecord = cloneRecordData(tableRecord)
+				tableRecord, tableRow, hasTable, err = nextRecord(tableStream)
+				if err != nil {
+					return reportErr(err)
+				}
+			case tableRecord.Handle.Equal(indexRecord.Handle):
+				if getRowChecksum(tableRow) != getRowChecksum(indexRow) {
+					if reportInconsistent(reporter, AdminCheckIndexRowIndexMismatch, tableRecord.Handle, indexRecord, tableRecord) {
+						return true
+					}
+				}
+				lastTableRecord = cloneRecordData(tableRecord)
+				tableRecord, tableRow, hasTable, err = nextRecord(tableStream)
+				if err != nil {
+					return reportErr(err)
+				}
+				indexRecord, indexRow, hasIndex, err = nextRecord(indexStream)
+				if err != nil {
+					return reportErr(err)
+				}
+			case tableRecord.Handle.Compare(indexRecord.Handle) < 0:
+				if reportInconsistent(reporter, AdminCheckIndexRowWithoutIndex, tableRecord.Handle, nil, tableRecord) {
+					return true
+				}
+				lastTableRecord = cloneRecordData(tableRecord)
+				tableRecord, tableRow, hasTable, err = nextRecord(tableStream)
+				if err != nil {
+					return reportErr(err)
+				}
+			default:
+				compareTableRecord := lastTableRecord
+				if compareTableRecord != nil && compareTableRecord.Handle.Equal(indexRecord.Handle) {
+					if reportInconsistent(reporter, AdminCheckIndexRowIndexMismatch, indexRecord.Handle, indexRecord, compareTableRecord) {
+						return true
+					}
+				} else if reportInconsistent(reporter, AdminCheckIndexIndexWithoutRow, indexRecord.Handle, indexRecord, nil) {
+					return true
+				}
+				indexRecord, indexRow, hasIndex, err = nextRecord(indexStream)
+				if err != nil {
+					return reportErr(err)
+				}
+			}
+		}
+		return false
+	}
 
-		logger := logutil.BgLogger().With(
+	queue := make([]checksumBucketTask, 0, 16)
+	queue = append(queue, checksumBucketTask{offset: 0, mod: 1, depth: 0})
+	const maxRefineDepth = 10
+	for len(queue) > 0 {
+		task := queue[0]
+		queue = queue[1:]
+
+		tblQuery, idxQuery := buildChecksumQueries(task, task.depth == 0)
+		logutil.BgLogger().Info(
+			"fast check table by group",
 			zap.String("table name", tblMeta.Name.String()),
 			zap.String("index name", idxInfo.Name.String()),
-			zap.Int("times", times),
-			zap.Int("current offset", offset), zap.Int("current mod", mod),
-			zap.Int("bucket size", bucketSize),
+			zap.Int("depth", task.depth),
+			zap.Int("current offset", task.offset),
+			zap.Int("current mod", task.mod),
+			zap.String("table sql", tblQuery),
+			zap.String("index sql", idxQuery),
 		)
-		logger.Info("fast check table by group",
-			zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
 
-		// compute table side checksum.
 		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
 		if err != nil {
-			return err
+			reportErr(err)
+			return
 		}
 		slices.SortFunc(tableChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
 		})
-
-		// compute index side checksum.
-		intest.AssertFunc(func() bool {
-			return verifyIndexSideQuery(ctx, se, idxQuery)
-		}, "index side query plan is not correct: %s", idxQuery)
 		indexChecksum, err := getCheckSum(w.e.contextCtx, se, idxQuery)
 		if err != nil {
-			return err
+			reportErr(err)
+			return
 		}
 		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
 		})
-
-		tableChecksumMap, indexChecksumMap := make(map[uint64]groupByChecksum), make(map[uint64]groupByChecksum)
-		for _, c := range tableChecksum {
-			tableChecksumMap[c.bucket] = c
+		if task.depth == 0 {
+			logutil.BgLogger().Info(
+				"fast check index root row count",
+				zap.String("table name", tblMeta.Name.String()),
+				zap.String("index name", idxInfo.Name.String()),
+				zap.Int64("table row count", sumChecksumCount(tableChecksum)),
+				zap.Int64("index row count", sumChecksumCount(indexChecksum)),
+			)
 		}
-		for _, c := range indexChecksum {
-			indexChecksumMap[c.bucket] = c
-		}
 
-		for bktIdx := range bucketSize {
-			tblBktSum, tblOk := tableChecksumMap[uint64(bktIdx)]
-			idxBktSum, idxOk := indexChecksumMap[uint64(bktIdx)]
-			if tblOk {
-				if idxOk {
-					if tblBktSum.checksum != idxBktSum.checksum || tblBktSum.count != idxBktSum.count {
-						logger.Info("found different checksum in the same bucket",
-							zap.Int("bucket", bktIdx), zap.Stringer("tblBktSum", tblBktSum),
-							zap.Stringer("idxBktSum", idxBktSum))
-					}
-				} else {
-					logger.Info("found bucket only exists in table side",
-						zap.Int("bucket", bktIdx), zap.Stringer("tblBktSum", tblBktSum))
-				}
-			} else {
-				if !idxOk {
-					continue
-				}
-				logger.Info("found bucket only exists in index side",
-					zap.Int("bucket", bktIdx), zap.Stringer("idxBktSum", idxBktSum))
+		mismatches := compareChecksumBuckets(tableChecksum, indexChecksum)
+		if len(mismatches) == 0 {
+			continue
+		}
+		// Fast path keeps original fail-fast behavior; collector mode keeps all mismatches.
+		if w.e.collector == nil {
+			mismatches = mismatches[:1]
+		}
+		for _, mismatch := range mismatches {
+			nextTask := checksumBucketTask{
+				offset: task.offset + int(mismatch.bucket)*task.mod,
+				mod:    task.mod * bucketSize,
+				depth:  task.depth + 1,
 			}
-		}
-
-		currentOffset := 0
-
-		meetError = false
-		// Every checksum in table side should be the same as the index side.
-		i := 0
-		for i < len(tableChecksum) && i < len(indexChecksum) {
-			if tableChecksum[i].bucket != indexChecksum[i].bucket || tableChecksum[i].checksum != indexChecksum[i].checksum {
-				if tableChecksum[i].bucket <= indexChecksum[i].bucket {
-					currentOffset = int(tableChecksum[i].bucket)
-					tableRowCntToCheck = tableChecksum[i].count
-				} else {
-					currentOffset = int(indexChecksum[i].bucket)
-					tableRowCntToCheck = indexChecksum[i].count
+			if nextTask.mod <= 0 {
+				if checkLeafBucket(task) {
+					return
 				}
-				meetError = true
+				if w.e.collector == nil {
+					break
+				}
+				continue
+			}
+			if w.e.collector == nil && (mismatch.count <= lookupCheckThreshold || nextTask.depth >= maxRefineDepth) {
+				if checkLeafBucket(nextTask) {
+					return
+				}
 				break
 			}
-			i++
-		}
-
-		if !meetError && i < len(indexChecksum) && i == len(tableChecksum) {
-			// Table side has fewer buckets.
-			currentOffset = int(indexChecksum[i].bucket)
-			tableRowCntToCheck = indexChecksum[i].count
-			meetError = true
-		} else if !meetError && i < len(tableChecksum) && i == len(indexChecksum) {
-			// Index side has fewer buckets.
-			currentOffset = int(tableChecksum[i].bucket)
-			tableRowCntToCheck = tableChecksum[i].count
-			meetError = true
-		}
-
-		if !meetError {
-			if times != 1 {
-				logutil.BgLogger().Error(
-					"unexpected result, no error detected in this round, but an error is detected in the previous round",
-					zap.Int("times", times), zap.Int("offset", offset), zap.Int("mod", mod))
-			}
-			break
-		}
-
-		offset += currentOffset * mod
-		mod *= bucketSize
-	}
-
-	if meetError {
-		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
-		indexSQL := fmt.Sprintf(
-			"select /*+ AGG_TO_COP() */ %s, %s, %s from %s use index(`%s`) where %s(%s = 0) order by %s",
-			handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name, idxCondition, groupByKey, handleColumns)
-		tableSQL := fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ %s, %s, %s from %s use index() where %s(%s = 0) order by %s",
-			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxCondition, groupByKey, handleColumns)
-		intest.AssertFunc(func() bool {
-			return verifyIndexSideQuery(ctx, se, indexSQL)
-		}, "index side query plan is not correct: %s", indexSQL)
-		idxRow, err := queryToRow(ctx, se, indexSQL)
-		if err != nil {
-			return err
-		}
-		tblRow, err := queryToRow(ctx, se, tableSQL)
-		if err != nil {
-			return err
-		}
-
-		errCtx := w.sctx.GetSessionVars().StmtCtx.ErrCtx()
-		getHandleFromRow := func(row chunk.Row) (kv.Handle, error) {
-			if tblMeta.IsCommonHandle {
-				handleDatum := make([]types.Datum, 0)
-				for i, t := range pkTypes {
-					handleDatum = append(handleDatum, row.GetDatum(i, t))
+			if w.e.collector != nil && (mismatch.count <= 1 || nextTask.depth >= maxRefineDepth) {
+				if checkLeafBucket(nextTask) {
+					return
 				}
-				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleDatum...)
-				err = errCtx.HandleError(err)
-				if err != nil {
-					return nil, err
-				}
-				return kv.NewCommonHandle(handleBytes)
+				continue
 			}
-			return kv.IntHandle(row.GetInt64(0)), nil
-		}
-		getValueFromRow := func(row chunk.Row) ([]types.Datum, error) {
-			valueDatum := make([]types.Datum, 0)
-			for i, t := range idxInfo.Columns {
-				valueDatum = append(valueDatum, row.GetDatum(i+len(pkCols), &tblMeta.Columns[t.Offset].FieldType))
-			}
-			return valueDatum, nil
-		}
-
-		ir := func() *consistency.Reporter {
-			return &consistency.Reporter{
-				HandleEncode: func(handle kv.Handle) kv.Key {
-					return tablecodec.EncodeRecordKey(w.table.RecordPrefix(), handle)
-				},
-				IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
-					var idx table.Index
-					for _, v := range w.table.Indices() {
-						if strings.EqualFold(v.Meta().Name.String(), idxInfo.Name.O) {
-							idx = v
-							break
-						}
-					}
-					if idx == nil {
-						return nil
-					}
-					sc := w.sctx.GetSessionVars().StmtCtx
-					k, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
-					if err != nil {
-						return nil
-					}
-					return k
-				},
-				Tbl:             tblMeta,
-				Idx:             idxInfo,
-				EnableRedactLog: w.sctx.GetSessionVars().EnableRedactLog,
-				Storage:         w.sctx.GetStore(),
-			}
-		}
-
-		getCheckSum := func(row chunk.Row) uint64 {
-			return row.GetUint64(len(pkCols) + len(idxInfo.Columns))
-		}
-
-		var handle kv.Handle
-		var tableRecord *consistency.RecordData
-		var lastTableRecord *consistency.RecordData
-		var indexRecord *consistency.RecordData
-		i := 0
-		for i < len(tblRow) || i < len(idxRow) {
-			if i == len(tblRow) {
-				// No more rows in table side.
-				tableRecord = nil
-			} else {
-				handle, err = getHandleFromRow(tblRow[i])
-				if err != nil {
-					return err
-				}
-				value, err := getValueFromRow(tblRow[i])
-				if err != nil {
-					return err
-				}
-				tableRecord = &consistency.RecordData{Handle: handle, Values: value}
-			}
-			if i == len(idxRow) {
-				// No more rows in index side.
-				indexRecord = nil
-			} else {
-				indexHandle, err := getHandleFromRow(idxRow[i])
-				if err != nil {
-					return err
-				}
-				indexValue, err := getValueFromRow(idxRow[i])
-				if err != nil {
-					return err
-				}
-				indexRecord = &consistency.RecordData{Handle: indexHandle, Values: indexValue}
-			}
-
-			if tableRecord == nil {
-				if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
-					tableRecord = lastTableRecord
-				}
-				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, tableRecord)
-			} else if indexRecord == nil {
-				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, tableRecord.Handle, indexRecord, tableRecord)
-			} else if tableRecord.Handle.Equal(indexRecord.Handle) && getCheckSum(tblRow[i]) != getCheckSum(idxRow[i]) {
-				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, tableRecord.Handle, indexRecord, tableRecord)
-			} else if !tableRecord.Handle.Equal(indexRecord.Handle) {
-				if tableRecord.Handle.Compare(indexRecord.Handle) < 0 {
-					err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, tableRecord.Handle, nil, tableRecord)
-				} else {
-					if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
-						err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, lastTableRecord)
-					} else {
-						err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, nil)
-					}
-				}
-			}
-			if err != nil {
-				return err
-			}
-			i++
-			if tableRecord != nil {
-				lastTableRecord = &consistency.RecordData{Handle: tableRecord.Handle, Values: tableRecord.Values}
-			} else {
-				lastTableRecord = nil
+			queue = append(queue, nextTask)
+			if w.e.collector == nil {
+				break
 			}
 		}
 	}
-
-	return nil
 }
 
 // Close implements the Worker interface.
-func (*checkIndexWorker) Close() error {
-	return nil
-}
+func (*checkIndexWorker) Close() {}
 
 type checkIndexTask struct {
 	indexOffset int
+	err         *atomic.Pointer[error]
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
-	return "fast_check_table", "checkIndexTask", nil
+func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return "fast_check_table", "RecoverArgs", func() {
+		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", c.indexOffset)
+		c.err.CompareAndSwap(nil, &err)
+	}, false
 }
 
 type groupByChecksum struct {
@@ -864,15 +957,8 @@ type groupByChecksum struct {
 	count    int64
 }
 
-func (c groupByChecksum) String() string {
-	return fmt.Sprintf("{bkt:%d,sum:%d,cnt:%d}", c.bucket, c.checksum, c.count)
-}
-
 func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
-	// Create a new ExecDetails for the internal SQL to avoid data race with the parent statement.
-	// The parent context may carry an ExecDetails that is still being written to by concurrent goroutines.
-	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
 	if err != nil {
 		return nil, err
@@ -892,35 +978,6 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 		checksums = append(checksums, groupByChecksum{bucket: row.GetUint64(1), checksum: row.GetUint64(0), count: row.GetInt64(2)})
 	}
 	return checksums, nil
-}
-
-func getGlobalCheckSum(ctx context.Context, se sessionctx.Context, sql string) (checksum uint64, count int64, err error) {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
-	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer func(rs sqlexec.RecordSet) {
-		err := rs.Close()
-		if err != nil {
-			logutil.BgLogger().Error("close record set failed", zap.Error(err))
-		}
-	}(rs)
-
-	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-	if err != nil {
-		return 0, 0, err
-	}
-	if len(rows) == 0 {
-		return 0, 0, nil
-	}
-
-	row := rows[0]
-	if !row.IsNull(0) {
-		checksum = row.GetUint64(0)
-	}
-	count = row.GetInt64(1)
-	return checksum, count, nil
 }
 
 // TableName returns `schema`.`table`
