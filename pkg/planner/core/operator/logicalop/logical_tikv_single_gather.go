@@ -87,8 +87,12 @@ func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (*TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	if len(childrenProperties) == 0 || childrenProperties[0] == nil {
+		return &base.PossiblePropertiesInfo{}
+	}
 	return &base.PossiblePropertiesInfo{
-		Order: childrenProperties[0].Order,
+		Order:      childrenProperties[0].Order,
+		HasTiflash: childrenProperties[0].HasTiflash,
 	}
 }
 

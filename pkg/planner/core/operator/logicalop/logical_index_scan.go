@@ -131,7 +131,11 @@ func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *exp
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
-	is.hasTiflash = is.Source.GetHasTiFlash()
+	hasTiflash := false
+	if is.Source != nil {
+		hasTiflash = is.Source.HasTiflash() && is.SCtx().GetSessionVars().IsMPPAllowed()
+	}
+	is.hasTiflash = hasTiflash
 	if len(is.IdxCols) == 0 {
 		return nil
 	}

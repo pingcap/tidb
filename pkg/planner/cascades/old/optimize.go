@@ -360,13 +360,23 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group]*base.
 		return prop
 	}
 	groupPropertyMap := make(map[string][]*expression.Column)
+	groupHasTiflash := false
 	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*memo.GroupExpr)
 		childrenProperties := make([]*base.PossiblePropertiesInfo, len(expr.Children))
 		for i, child := range expr.Children {
-			childrenProperties[i] = preparePossibleProperties(child, propertyMap)
+			childProps := preparePossibleProperties(child, propertyMap)
+			if childProps == nil {
+				childProps = &base.PossiblePropertiesInfo{}
+			}
+			childrenProperties[i] = childProps
 		}
-		exprProperties := expr.ExprNode.PreparePossibleProperties(expr.Schema(), childrenProperties...).Order
+		exprInfo := expr.ExprNode.PreparePossibleProperties(expr.Schema(), childrenProperties...)
+		if exprInfo == nil {
+			continue
+		}
+		groupHasTiflash = groupHasTiflash || exprInfo.HasTiflash
+		exprProperties := exprInfo.Order
 		for _, newPropCols := range exprProperties {
 			// Check if the prop has already been in `groupPropertyMap`.
 			newProp := property.PhysicalProperty{SortItems: property.SortItemsFromCols(newPropCols, true)}
@@ -381,7 +391,8 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group]*base.
 		resultProps = append(resultProps, prop)
 	}
 	result := &base.PossiblePropertiesInfo{
-		Order: resultProps,
+		Order:      resultProps,
+		HasTiflash: groupHasTiflash,
 	}
 	propertyMap[g] = result
 	return result
