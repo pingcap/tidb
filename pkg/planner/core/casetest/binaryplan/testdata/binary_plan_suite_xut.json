@@ -68,19 +68,19 @@
         "SQL": "explain analyze format = 'binary' select sum(t.a) from t join t2",
         "BinaryPlan": {
           "main": {
-            "name": "HashAgg_13",
+            "name": "HashAgg_12",
             "children": [
               {
-                "name": "Projection_61",
+                "name": "Projection_60",
                 "children": [
                   {
-                    "name": "HashJoin_32",
+                    "name": "HashJoin_31",
                     "children": [
                       {
-                        "name": "IndexReader_37",
+                        "name": "IndexReader_36",
                         "children": [
                           {
-                            "name": "IndexFullScan_36",
+                            "name": "IndexFullScan_35",
                             "cost": 1628000.000001,
                             "est_rows": 10000,
                             "act_rows": 2,
@@ -97,13 +97,13 @@
                         "act_rows": 2,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "index:IndexFullScan_36"
+                        "operator_info": "index:IndexFullScan_35"
                       },
                       {
-                        "name": "TableReader_39",
+                        "name": "TableReader_38",
                         "children": [
                           {
-                            "name": "TableFullScan_38",
+                            "name": "TableFullScan_37",
                             "cost": 4546159.475587022,
                             "est_rows": 10000,
                             "act_rows": 4,
@@ -120,7 +120,7 @@
                         "act_rows": 4,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "data:TableFullScan_38"
+                        "operator_info": "data:TableFullScan_37"
                       }
                     ],
                     "cost": 1128387.631705868,
