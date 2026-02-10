@@ -116,7 +116,7 @@ func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
 	schemas := getMockRegionsTableInfoSchema()
 	db := schemas[0]
 	// Build table info key ranges using the V2 codec (with keyspace prefix).
-	var tables []helper.TableInfoWithKeyRange
+	tables := make([]helper.TableInfoWithKeyRange, 0, 6)
 	for _, table := range db.Deprecated.Tables {
 		tables = append(tables, helper.NewTableWithKeyRange(db, table, codecV2))
 		for _, index := range table.Indices {
@@ -125,14 +125,14 @@ func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
 	}
 
 	// Construct mock region info using the keyspace-encoded key ranges.
-	// Region 1: spans table 41 record range + index 1 range.
+	// Region 1: ends before all tables (should be empty).
 	tbl41 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[0], codecV2)
 	tbl41Idx1 := helper.NewIndexWithKeyRange(db, db.Deprecated.Tables[0], db.Deprecated.Tables[0].Indices[0], codecV2)
-	// Region 2: spans table 63 record range.
+	// Region 2: spans table 41's index 1 range and record range.
 	tbl63 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[1], codecV2)
-	// Region 3: spans table 66 record range.
+	// Region 3: spans table 63 record range.
 	tbl66 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[2], codecV2)
-
+	// Region 4: spans table 66 record range.
 	regions := []*pd.RegionInfo{
 		{ID: 1, StartKey: "", EndKey: tbl41Idx1.StartKey},
 		{ID: 2, StartKey: tbl41Idx1.StartKey, EndKey: tbl41.EndKey},

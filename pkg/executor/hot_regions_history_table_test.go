@@ -496,7 +496,7 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 		result := tk.MustQuery(sql)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 		require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnings: %+v, sql: %s", warnings, sql))
-		var expected []string
+		expected := make([]string, 0, len(cas.expected))
 		for _, row := range cas.expected {
 			expectedRow := row
 			expected = append(expected, strings.Join(expectedRow, " "))
