@@ -491,7 +491,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 				if !idxOk {
 					continue
 				}
-				logger.Info("found bucket only exists in table side",
+				logger.Info("found bucket only exists in index side",
 					zap.Int("bucket", bktIdx), zap.Stringer("idxBktSum", idxBktSum))
 			}
 		}
