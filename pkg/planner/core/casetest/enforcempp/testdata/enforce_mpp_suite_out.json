@@ -405,13 +405,13 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN SELECT count(*) from t where a=1; -- 1. static partition prune",
+        "SQL": "EXPLAIN FORMAT = 'brief' SELECT count(*) from t where a=1; -- 1. static partition prune",
         "Plan": [
-          "StreamAgg_14 1.00 root  funcs:count(1)->Column#5",
-          "└─TableReader_43 10.00 root  MppVersion: 3, data:ExchangeSender_42",
-          "  └─ExchangeSender_42 10.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection_41 10.00 mpp[tiflash]  eq(test.t.a, 1)",
-          "      └─TableFullScan_40 10000.00 mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#5",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Selection 10.00 mpp[tiflash]  eq(test.t.a, 1)",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
