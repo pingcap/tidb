@@ -38,12 +38,13 @@ import (
 func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	joinMethodHintInfo := make(map[int]*joinorder.JoinMethodHint)
 	var (
-		group             []base.LogicalPlan
-		joinOrderHintInfo []*h.PlanHints
-		eqEdges           []*expression.ScalarFunction
-		otherConds        []expression.Expression
-		joinTypes         []*joinTypeWithExtMsg
-		hasOuterJoin      bool
+		group              []base.LogicalPlan
+		joinOrderHintInfo  []*h.PlanHints
+		eqEdges            []*expression.ScalarFunction
+		otherConds         []expression.Expression
+		joinTypes          []*joinTypeWithExtMsg
+		hasOuterJoin       bool
+		currentLeadingHint *h.PlanHints
 	)
 
 	// Check if the current plan is a Selection. If its child is a join, add the selection conditions
@@ -67,6 +68,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
 		// We need to return the hint information to warn
 		joinOrderHintInfo = append(joinOrderHintInfo, join.HintInfo)
+		currentLeadingHint = join.HintInfo
 	}
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
