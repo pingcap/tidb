@@ -8,6 +8,10 @@ go_test(
         "timeout_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:pkg/bindinfo/tests/timeout/BUILD.bazel
+=======
+    shard_count = 12,
+>>>>>>> c6d1fffb98c (planner, executor: support `nulleq` for `IndexJoin` and `IndexHashJoin` (#66017)):pkg/executor/join/test/indexjoin/BUILD.bazel
     deps = [
         "//pkg/bindinfo",
         "//pkg/testkit",
