@@ -255,8 +255,12 @@ func (*BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expressi
 
 // PreparePossibleProperties implements LogicalPlan.<13th> interface.
 func (p *BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, info ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
-	hasTiflash := true
+	hasTiflash := len(info) > 0
 	for _, childInfo := range info {
+		if childInfo == nil {
+			hasTiflash = false
+			continue
+		}
 		hasTiflash = hasTiflash && childInfo.HasTiflash
 	}
 	p.hasTiflash = hasTiflash

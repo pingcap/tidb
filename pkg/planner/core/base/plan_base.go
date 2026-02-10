@@ -273,7 +273,7 @@ type LogicalPlan interface {
 	// GetJoinChildStatsAndSchema gets the stats and schema of both children.
 	GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema)
 
-	// SetHasTiFlashSetHasTiFlash sets whether the plan has tiflash replica.
+	// SetHasTiFlash sets whether the plan has tiflash replica.
 	SetHasTiFlash(hasTiFlash bool)
 
 	// GetHasTiFlash gets whether the plan has tiflash replica.
