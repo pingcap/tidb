@@ -395,6 +395,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		}
 
 		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID, job.SnapshotVer, true, ""); err != nil {
+			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 
@@ -581,6 +582,11 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	}
 	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, success, failedReason)
 	_, err := w.sess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
+	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
+		if val.(bool) {
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
+		}
+	})
 	return errors.Trace(err)
 }
 
