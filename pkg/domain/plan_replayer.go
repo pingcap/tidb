@@ -564,7 +564,7 @@ type PlanReplayerStatusRecord struct {
 	SQLDigest    string
 	PlanDigest   string
 	OriginSQL    string
-	Token        string // file name of the dump
+	Token        string
 	FailedReason string
 }
 

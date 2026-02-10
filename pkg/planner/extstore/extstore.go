@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -61,8 +62,7 @@ func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 	uri := vardef.CloudStorageURI.Load()
 
 	// When classic kernel or cloud storage URI is not set, use local directory.
-	// if kerneltype.IsClassic() || uri == "" {
-	if uri == "" {
+	if kerneltype.IsClassic() || uri == "" {
 		localPath := getLocalPathDirName()
 		if absPath, err := filepath.Abs(localPath); err == nil {
 			localPath = absPath
