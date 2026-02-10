@@ -127,3 +127,25 @@ func TestCreateMaterializedViewLogUpdatesPlacementBundle(t *testing.T) {
 	tk.MustQuery("show placement for table `$mlog$t_placement`").CheckContain("TABLE test.$mlog$t_placement")
 	tk.MustQuery("show placement for table `$mlog$t_placement`").CheckContain("FOLLOWERS=1")
 }
+
+func TestTruncateMaterializedViewRelatedTablesRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_truncate_mv (a int not null, b int)")
+	tk.MustExec("create materialized view log on t_truncate_mv (a, b)")
+
+	err := tk.ExecToErr("truncate table t_truncate_mv")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view dependencies")
+
+	tk.MustExec("create materialized view mv_truncate_mv (a, cnt) refresh fast next 300 as select a, count(1) from t_truncate_mv group by a")
+
+	err = tk.ExecToErr("truncate table mv_truncate_mv")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view table")
+
+	err = tk.ExecToErr("truncate table `$mlog$t_truncate_mv`")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view log table")
+
+	err = tk.ExecToErr("truncate table t_truncate_mv")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view dependencies")
+}

@@ -4440,6 +4440,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tblInfo.Name.O)
 	}
+	if err := checkTruncateTableMaterializedViewConstraints(tblInfo); err != nil {
+		return errors.Trace(err)
+	}
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
@@ -4479,6 +4482,20 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+func checkTruncateTableMaterializedViewConstraints(tblInfo *model.TableInfo) error {
+	if tblInfo.MaterializedView != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on materialized view table")
+	}
+	if tblInfo.MaterializedViewLog != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on materialized view log table")
+	}
+	if tblInfo.MaterializedViewBase != nil &&
+		(tblInfo.MaterializedViewBase.MLogID != 0 || len(tblInfo.MaterializedViewBase.MViewIDs) > 0) {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on base table with materialized view dependencies")
+	}
 	return nil
 }
 

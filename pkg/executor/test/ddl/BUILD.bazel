@@ -10,7 +10,7 @@ go_test(
         "mview_log_ddl_test.go",
     ],
     flaky = True,
-    shard_count = 32,
+    shard_count = 33,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
