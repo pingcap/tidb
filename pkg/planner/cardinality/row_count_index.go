@@ -392,8 +392,8 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	val := types.NewBytesDatum(b)
 	if idx.StatsVer < statistics.Version2 {
 		if idx.Histogram.NDV > 0 && outOfRangeOnIndex(idx, val) {
-			count := idx.Histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeRowCount, modifyCount, nil, 0)
-			return statistics.DefaultRowEst(count.Est)
+			outOfRangeCnt := outOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
+			return statistics.DefaultRowEst(outOfRangeCnt)
 		}
 		if idx.CMSketch != nil {
 			return statistics.DefaultRowEst(float64(idx.QueryBytes(sctx, b)))
