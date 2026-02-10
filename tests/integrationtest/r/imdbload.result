@@ -321,8 +321,8 @@ IndexLookUp	5283.37	root
 └─TableRowIDScan(Probe)	5283.37	cop[tikv]	table:aka_title	keep order:false
 explain format = 'brief' select * from aka_title where kind_id > 7;
 id	estRows	task	access object	operator info
-TableReader	106389.00	root		data:Selection
-└─Selection	106389.00	cop[tikv]		gt(imdbload.aka_title.kind_id, 7)
+TableReader	106385.93	root		data:Selection
+└─Selection	106385.93	cop[tikv]		gt(imdbload.aka_title.kind_id, 7)
   └─TableFullScan	528337.00	cop[tikv]	table:aka_title	keep order:false
 explain format = 'brief' select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
 id	estRows	task	access object	operator info

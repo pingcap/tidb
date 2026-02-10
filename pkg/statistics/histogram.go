@@ -718,9 +718,26 @@ func (hg *Histogram) TotalRowCount() float64 {
 }
 
 // AbsRowCountDifference returns the absolute difference between the realtime row count
-// and the histogram's total row count, representing data changes since the last ANALYZE.
-func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64) float64 {
-	return math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
+// and the histogram's total row count (optionally including TopN), representing data changes since the last ANALYZE.
+// topNCount is the TopN total count to include in the histogram row count (pass 0 to exclude TopN).
+func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64, topNCount uint64) (float64, bool) {
+	histRowCount := hg.NotNullCount() + float64(hg.NullCount) + float64(topNCount)
+	isNegative := realtimeRowCount < int64(histRowCount)
+	// Avoid division by zero. This should not happen since we
+	// only call this function when we have data in the histogram.
+	if histRowCount == 0 {
+		return 0, isNegative
+	}
+	// Calculate the percentage of NULLs in the original row count
+	// Assume that 50% of the newly added rows are NULLs
+	nullsRatio := (float64(hg.NullCount) / histRowCount) * 0.5
+	// Calculate the percent of topN in the original row count
+	// Assume that 50% of the newly added rows are topN
+	topNRatio := (float64(topNCount) / histRowCount) * 0.5
+	addedRows := math.Abs(float64(realtimeRowCount) - histRowCount)
+	// Adjust the added rows by the NULLs and topN ratios
+	addedRows = addedRows * (1 - nullsRatio - topNRatio)
+	return addedRows, isNegative
 }
 
 // NotNullCount indicates the count of non-null values in column histogram and single-column index histogram,
@@ -1159,7 +1176,7 @@ func (hg *Histogram) calcOutOfRangePercent(lDatum, rDatum *types.Datum) (leftPer
 	return leftPercent, rightPercent
 }
 
-// outOfRangeRowCount calculates the out-of-range rows for range and equals predicates.
+// OutOfRangeRowCount calculates the out-of-range rows for range and equals predicates.
 // The caller may provide a lDatum and rDatum if the predicate is a range predicate.
 // If the predicate is an equals predicate, set lDatum and rDatum to nil.
 func (hg *Histogram) OutOfRangeRowCount(
@@ -1227,8 +1244,21 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
-	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, uint64(topN.Num()))
+	// If addedRows is too small, it may be caused by a delay in updates to modifyCount.
+	// ModifyCount == 0 is a known issue - where large tables can have a large time
+	// delay before the first update to ModifyCount.
+	// Assume a minimum worst case of 1% of the total row count.
+	onePercentChange := float64(realtimeRowCount) / outOfRangeBetweenRate
 	maxAddedRows := addedRows
+	if modifyCount == 0 || addedRows == 0 {
+		maxAddedRows = max(addedRows, onePercentChange)
+	}
+	// If the realtime row count has decreased, it means there have been
+	// more deletes than inserts. We need to adjust the added rows downward.
+	if isNegative {
+		addedRows = min(addedRows, onePercentChange)
+	}
 
 	// Step 7: Calculate the estimated rows
 	estRows := oneValue
@@ -1247,19 +1277,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		estRows = (addedRows * addedRowMultiplier) * totalPercent
 	}
 
-	// Step 8: Calculate a potential worst case for use in final MaxEst
-	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
-	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
-	// account for at least 1% of the total row count as a worst case for "addedRows".
-	// We inflate this here so ONLY to impact the MaxEst value.
-	if modifyCount == 0 || addedRows == 0 {
-		if realtimeRowCount <= 0 {
-			realtimeRowCount = int64(hg.TotalRowCount())
-		}
-		// Use outOfRangeBetweenRate as a divisor to get a small percentage of the approximate
-		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
-		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
-	}
+	// Step 8: Ensure that the maxAddedRows respects the upper bound of the predicate.
 	if maxTotalPercent > 0 {
 		// Always apply maxTotalPercent to maxAddedRows to limit scaling when the predicate has an upper bound
 		maxAddedRows *= maxTotalPercent

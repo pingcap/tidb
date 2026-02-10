@@ -229,8 +229,6 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			var topN *statistics.TopN
 			if c.StatsVer == statistics.Version2 {
 				topN = c.TopN
-			} else {
-
 			}
 			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
