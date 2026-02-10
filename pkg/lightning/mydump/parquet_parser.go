@@ -26,14 +26,15 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -224,24 +225,35 @@ type rowGroupParser struct {
 }
 
 // init creates column iterators for each column.
-func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location) error {
+func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location) (err error) {
 	meta := rgp.readers[0].MetaData()
 	numCols := meta.Schema.NumColumns()
 	rgp.iterators = make([]iterator, numCols)
-	for col := range numCols {
-		tp := meta.Schema.Column(col).PhysicalType()
-		iter := createColumnIterator(tp, &colTypes[col], loc, readBatchSize)
+
+	defer func() {
+		if err != nil {
+			for _, iter := range rgp.iterators {
+				if iter != nil {
+					_ = iter.Close()
+				}
+			}
+		}
+	}()
+
+	for idx := range numCols {
+		tp := meta.Schema.Column(idx).PhysicalType()
+		iter := createColumnIterator(tp, &colTypes[idx], loc, readBatchSize)
 		if iter == nil {
 			return errors.Errorf("unsupported parquet type %s", tp.String())
 		}
 
-		rowGroup := rgp.readers[col].RowGroup(rgp.rowGroup)
-		colReader, err := rowGroup.Column(col)
+		rowGroup := rgp.readers[idx].RowGroup(rgp.rowGroup)
+		colReader, err := rowGroup.Column(idx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		iter.SetReader(colReader)
-		rgp.iterators[col] = iter
+		rgp.iterators[idx] = iter
 	}
 	rgp.totalRows = meta.RowGroups[rgp.rowGroup].NumRows
 	return nil
@@ -265,20 +277,17 @@ func (rgp *rowGroupParser) readRow(row []types.Datum) error {
 	return nil
 }
 
-func (rgp *rowGroupParser) Close() (err error) {
+func (rgp *rowGroupParser) Close() error {
+	var onceErr common.OnceError
 	for _, iter := range rgp.iterators {
-		err2 := iter.Close()
-		if err2 != nil && err == nil {
-			err = err2
-		}
+		err := iter.Close()
+		onceErr.Set(err)
 	}
 	for _, r := range rgp.readers {
-		err2 := r.Close()
-		if err2 != nil && err == nil {
-			err = err2
-		}
+		err := r.Close()
+		onceErr.Set(err)
 	}
-	return err
+	return onceErr.Get()
 }
 
 // ParquetParser parses a parquet file for import
@@ -329,16 +338,15 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 }
 
 func (pp *ParquetParser) buildRowGroupParser() (err error) {
-	var (
-		eg      errgroup.Group
-		readers = make([]*file.Reader, pp.fileMeta.NumColumns())
-	)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
+	eg.SetLimit(16)
 
-	builder, err := pp.getBuilder()
+	builder, err := pp.getBuilder(egCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	readers := make([]*file.Reader, pp.fileMeta.NumColumns())
 	defer func() {
 		if err != nil {
 			for _, r := range readers {
@@ -349,7 +357,6 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 		}
 	}()
 
-	eg.SetLimit(16)
 	for i := range pp.fileMeta.NumColumns() {
 		eg.Go(func() error {
 			wrapper, err := builder(i)
@@ -386,14 +393,14 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
+func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
 		return nil, err
 	}
 
 	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
-		base, err := newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
+		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
 		return func(c int) (readerAtSeekerCloser, error) {
 			return &inMemoryParquetWrapper{
 				base:     base,
@@ -404,7 +411,7 @@ func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), 
 	}
 
 	return func(c int) (readerAtSeekerCloser, error) {
-		return newParquetWrapper(pp.ctx, pp.store, pp.path,
+		return newParquetWrapper(ctx, pp.store, pp.path,
 			&storeapi.ReaderOption{
 				StartOffset: &ranges.columnStarts[c],
 				EndOffset:   &ranges.columnEnds[c],
