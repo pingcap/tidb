@@ -504,6 +504,17 @@ func TestParseSessionSlowLogRules(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "non-negative")
 
+	// Non-finite float thresholds should be rejected.
+	_, err = variable.ParseSessionSlowLogRules("Query_time:NaN")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "finite")
+	_, err = variable.ParseSessionSlowLogRules("Query_time:Inf")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "finite")
+	_, err = variable.ParseSessionSlowLogRules("cop_mvcc_read_amplification:+Inf")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "finite")
+
 	// Field resetting
 	slowLogRules, err = variable.ParseSessionSlowLogRules("Mem_max:100,Succ:true,Succ:false,Mem_max:200")
 	require.NoError(t, err)

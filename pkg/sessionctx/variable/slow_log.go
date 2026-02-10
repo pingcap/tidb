@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc64"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -655,7 +656,7 @@ func matchZero(threshold any) bool {
 	}
 }
 
-// ParseString converts the input string to lowercase and returns it.
+// ParseString returns the input string as-is.
 func ParseString(v string) (any, error) { return v, nil }
 func parseInt64(v string) (any, error) {
 	n, err := strconv.ParseInt(v, 10, 64)
@@ -672,6 +673,9 @@ func parseFloat64(v string) (any, error) {
 	f, err := strconv.ParseFloat(v, 64)
 	if err != nil {
 		return nil, err
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return nil, fmt.Errorf("threshold value must be finite, got %v", f)
 	}
 	if f < 0 {
 		return nil, fmt.Errorf("threshold value must be non-negative, got %v", f)
