@@ -1207,7 +1207,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 		maxNotNullCount = int64(hg.NotNullCount())
 	}
 	if topN != nil {
+		// Address situations where majority of the data is in TopN.
+		// In such situations, the histogram count & NDV may be too small to represent the data.
 		maxNotNullCount = max(maxNotNullCount, int64(topN.TotalCount()))
+		histNDV = max(histNDV, int64(topN.Num()))
 	}
 	maxNotNullCount = max(maxNotNullCount, 1)
 	oneValue := float64(maxNotNullCount) / float64(histNDV)
