@@ -1235,7 +1235,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// Step 5: Calculate the left and right out-of-range percentages for the predicate range
 	// If this is a point (equal) predicate, we don't use a percentage
-	// Insead we use oneValue to estimate the row count.
+	// Instead we use oneValue to estimate the row count.
 	leftPercent, rightPercent := 0.0, 0.0
 	if hg != nil && hg.Len() > 0 && (lDatum != nil || rDatum != nil) {
 		leftPercent, rightPercent = hg.calcOutOfRangePercent(lDatum, rDatum)
