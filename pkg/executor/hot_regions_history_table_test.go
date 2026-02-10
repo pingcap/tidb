@@ -196,6 +196,7 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 	}
 
 	mockDB := &model.DBInfo{}
+	storeCodec := s.store.(helper.Storage).GetCodec()
 	pdResps := []map[string]*executor.HistoryHotRegions{
 		{
 			core.HotRegionTypeRead: {
@@ -203,14 +204,14 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 					// mysql table_id = 11, table_name = TABLES_PRIV
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:11"), RegionID: 1, StoreID: 1, PeerID: 11111, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, storeCodec).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, storeCodec).EndKey,
 					},
 					// mysql table_id = 21, table_name = STATS_META
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:13"), RegionID: 3, StoreID: 3, PeerID: 33333, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, storeCodec).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, storeCodec).EndKey,
 					},
 				},
 			},
@@ -219,14 +220,14 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 					// mysql table_id = 11, table_name = TABLES_PRIV
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:12"), RegionID: 2, StoreID: 2, PeerID: 22222, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, storeCodec).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, storeCodec).EndKey,
 					},
 					// mysql table_id = 21, table_name = STATS_META
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:14"), RegionID: 4, StoreID: 4, PeerID: 44444, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, storeCodec).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, storeCodec).EndKey,
 					},
 				},
 			},
@@ -237,14 +238,14 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 					// table_id = 1313, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:15"), RegionID: 5, StoreID: 5, PeerID: 55555, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 1313}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 1313}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, storeCodec).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, storeCodec).EndKey,
 					},
 					// mysql table_id = 11, index_id = 1, table_name = TABLES_PRIV, index_name = PRIMARY
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:17"), RegionID: 1, StoreID: 1, PeerID: 11111, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}, storeCodec).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}, storeCodec).EndKey,
 					},
 				},
 			},
@@ -253,14 +254,14 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 					// table_id = 1313, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:16"), RegionID: 6, StoreID: 6, PeerID: 66666, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 1313}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 1313}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, storeCodec).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, storeCodec).EndKey,
 					},
 					// mysql table_id = 11, index_id = 1, table_name = TABLES_PRIV, index_name = PRIMARY
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:18"), RegionID: 2, StoreID: 2, PeerID: 22222, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}, storeCodec).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}, storeCodec).EndKey,
 					},
 				},
 			},
@@ -271,20 +272,20 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 					// mysql table_id = 21 ,index_id = 1, table_name = STATS_META, index_name = IDX_VER
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:19"), RegionID: 3, StoreID: 3, PeerID: 33333, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}, storeCodec).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}, storeCodec).EndKey,
 					},
 					// mysql table_id = 21 ,index_id = 2, table_name = STATS_META, index_name = TBL
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:21"), RegionID: 5, StoreID: 5, PeerID: 55555, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}, storeCodec).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}, storeCodec).EndKey,
 					},
 					//      table_id = 1313, index_id = 1, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:23"), RegionID: 7, StoreID: 7, PeerID: 77777, IsLeader: true,
 						HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, &model.IndexInfo{ID: 1}, storeCodec).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, &model.IndexInfo{ID: 1}, storeCodec).EndKey,
 					},
 				},
 			},
@@ -293,20 +294,20 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 					// mysql table_id = 21 ,index_id = 1, table_name = STATS_META, index_name = IDX_VER
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:20"), RegionID: 4, StoreID: 4, PeerID: 44444, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}, storeCodec).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}, storeCodec).EndKey,
 					},
 					// mysql table_id = 21 ,index_id = 2, table_name = STATS_META, index_name = TBL
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:22"), RegionID: 6, StoreID: 6, PeerID: 66666, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}, storeCodec).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}, storeCodec).EndKey,
 					},
 					//      table_id = 1313, index_id = 1, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:24"), RegionID: 8, StoreID: 8, PeerID: 88888, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, &model.IndexInfo{ID: 1}, storeCodec).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 1313}, &model.IndexInfo{ID: 1}, storeCodec).EndKey,
 					},
 				},
 			},

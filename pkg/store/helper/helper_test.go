@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -99,6 +100,65 @@ func TestGetRegionsTableInfo(t *testing.T) {
 	schemas := getMockRegionsTableInfoSchema()
 	tableInfos := h.GetRegionsTableInfo(regionsInfo, infoschema.DBInfoAsInfoSchema(schemas), nil)
 	require.Equal(t, getRegionsTableInfoAns(schemas), tableInfos)
+}
+
+// TestGetRegionsTableInfoWithKeyspace verifies that ParseRegionsTableInfos correctly
+// matches region-to-table mappings when both region keys and table key ranges include
+// a keyspace prefix (API V2 / keyspace-aware mode).
+func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
+	keyspaceID := uint32(1)
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Id:   keyspaceID,
+		Name: "test_keyspace",
+	})
+	require.NoError(t, err)
+
+	schemas := getMockRegionsTableInfoSchema()
+	db := schemas[0]
+	// Build table info key ranges using the V2 codec (with keyspace prefix).
+	var tables []helper.TableInfoWithKeyRange
+	for _, table := range db.Deprecated.Tables {
+		tables = append(tables, helper.NewTableWithKeyRange(db, table, codecV2))
+		for _, index := range table.Indices {
+			tables = append(tables, helper.NewIndexWithKeyRange(db, table, index, codecV2))
+		}
+	}
+
+	// Construct mock region info using the keyspace-encoded key ranges.
+	// Region 1: spans table 41 record range + index 1 range.
+	tbl41 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[0], codecV2)
+	tbl41Idx1 := helper.NewIndexWithKeyRange(db, db.Deprecated.Tables[0], db.Deprecated.Tables[0].Indices[0], codecV2)
+	// Region 2: spans table 63 record range.
+	tbl63 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[1], codecV2)
+	// Region 3: spans table 66 record range.
+	tbl66 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[2], codecV2)
+
+	regions := []*pd.RegionInfo{
+		{ID: 1, StartKey: "", EndKey: tbl41Idx1.StartKey},
+		{ID: 2, StartKey: tbl41Idx1.StartKey, EndKey: tbl41.EndKey},
+		{ID: 3, StartKey: tbl63.StartKey, EndKey: tbl63.EndKey},
+		{ID: 4, StartKey: tbl66.StartKey, EndKey: tbl66.EndKey},
+	}
+
+	h := &helper.Helper{}
+	tableInfos := h.ParseRegionsTableInfos(regions, tables)
+
+	// Region 1 is before all tables — should be empty.
+	require.Empty(t, tableInfos[1])
+	// Region 2 spans table 41's index and record range.
+	require.Len(t, tableInfos[2], 2) // index 1 + record
+	require.Equal(t, int64(41), tableInfos[2][0].Table.ID)
+	// Region 3 spans table 63.
+	require.NotEmpty(t, tableInfos[3])
+	require.Equal(t, int64(63), tableInfos[3][0].Table.ID)
+	// Region 4 spans table 66.
+	require.NotEmpty(t, tableInfos[4])
+	require.Equal(t, int64(66), tableInfos[4][0].Table.ID)
+
+	// Verify that V2 keys differ from V1 keys (keyspace prefix is present).
+	codecV1 := tikv.NewCodecV1(tikv.ModeTxn)
+	tbl41V1 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[0], codecV1)
+	require.NotEqual(t, tbl41.StartKey, tbl41V1.StartKey, "V2 keys should differ from V1 due to keyspace prefix")
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
