@@ -80,8 +80,8 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 			return statistics.DefaultRowEst(0.0), nil
 		}
 		if c.Histogram.NDV > 0 && c.OutOfRange(val) {
-			count := c.Histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeRowCount, modifyCount, nil, 0)
-			return statistics.DefaultRowEst(count.Est), nil
+			outOfRangeCnt := outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount()
+			return statistics.DefaultRowEst(outOfRangeCnt), nil
 		}
 		if c.CMSketch != nil {
 			count, err := statistics.QueryValue(sctx, c.CMSketch, c.TopN, val)

@@ -39,6 +39,10 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	outOfRangeBetweenRate int64 = 100
+)
+
 // Selectivity is a function calculate the selectivity of the expressions on the specified HistColl.
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]`
@@ -1027,12 +1031,24 @@ func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl
 	}
 	val := types.NewBytesDatum(bytes)
 	if outOfRangeOnIndex(idx, val) {
-		realtimeCnt, modifyCnt := coll.GetScaledRealtimeAndModifyCnt(idx)
-		if realtimeCnt <= 0 {
-			return 0, nil
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
+		// When the value is out of range, we could not found this value in the CM Sketch,
+		// so we use heuristic methods to estimate the selectivity.
+		if idx.NDV > 0 && coverAll {
+			return outOfRangeEQSelectivity(sctx, idx.NDV, realtimeCnt, int64(idx.TotalRowCount())), nil
 		}
-		count := idx.Histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeCnt, modifyCnt, idx.TopN, 0)
-		return min(count.Est/float64(realtimeCnt), float64(realtimeCnt)), nil
+		// The equal condition only uses prefix columns of the index.
+		colIDs := coll.Idx2ColUniqueIDs[idx.ID]
+		var ndv int64
+		for i, colID := range colIDs {
+			if i >= usedColsLen {
+				break
+			}
+			if col := coll.GetCol(colID); col != nil {
+				ndv = max(ndv, col.Histogram.NDV)
+			}
+		}
+		return outOfRangeEQSelectivity(sctx, ndv, realtimeCnt, int64(idx.TotalRowCount())), nil
 	}
 
 	minRowCount, crossValidSelectivity, err := crossValidationSelectivity(sctx, coll, idx, usedColsLen, idxPointRange)
@@ -1045,6 +1061,26 @@ func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl
 		return crossValidSelectivity, nil
 	}
 	return idxCount / idx.TotalRowCount(), nil
+}
+
+// outOfRangeEQSelectivity estimates selectivities for out-of-range values.
+// It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
+// and has the same distribution with analyzed rows, which means each unique value should have the
+// same number of rows(Tot/NDV) of it.
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func outOfRangeEQSelectivity(_ planctx.PlanContext, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
+	increaseRowCount := realtimeRowCount - columnRowCount
+	if increaseRowCount <= 0 {
+		return 0 // it must be 0 since the histogram contains the whole data
+	}
+	if ndv < outOfRangeBetweenRate {
+		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
+	}
+	selectivity := 1 / float64(ndv)
+	if selectivity*float64(columnRowCount) > float64(increaseRowCount) {
+		selectivity = float64(increaseRowCount) / float64(columnRowCount)
+	}
+	return selectivity
 }
 
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
