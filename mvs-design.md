@@ -1,268 +1,255 @@
-# MVS Design (pkg/mvs)
+# MVS 设计说明（基于最新代码）
 
-## 1. Scope
+## 1. 范围
 
-This document describes the current design of `pkg/mvs` in TiDB, based on the implementation in:
+本文档对应当前工作区 `pkg/mvs` 的实现（调度 + 执行 + 元数据访问）。
 
-- `pkg/mvs/tasks.go`
-- `pkg/mvs/task_handler.go`
-- `pkg/mvs/task_executor.go`
+主要文件：
+
+- `pkg/mvs/service.go`
+- `pkg/mvs/impl.go`
 - `pkg/mvs/server_maintainer.go`
+- `pkg/mvs/task_executor.go`
 - `pkg/mvs/consistenthash.go`
 - `pkg/mvs/priority_queue.go`
 - `pkg/mvs/utils.go`
 
-The module is a background scheduler for Materialized View (MV) refresh and MV log (MVLog) purge jobs.
+MVS 负责两类后台任务：
 
-## 2. Design Goals
+- 物化视图刷新（`mv`）
+- MVLog 清理（`mvLog`）
 
-- Distribute MV tasks across TiDB nodes by consistent hashing.
-- Keep per-node scheduling state in memory with low overhead.
-- React quickly to DDL changes while still doing periodic reconciliation.
-- Isolate execution with a bounded worker pool and timeout control.
-- Expose clear extension points for actual refresh/purge business logic.
+## 2. 启动与接线
 
-## 3. High-Level Architecture
+### 2.1 注册
 
-### 3.1 Entry point
+`Domain.Init()` 中调用：
 
-- `RegisterMVS` (`pkg/mvs/tasks.go`) is called from session bootstrap (`pkg/session/session.go`).
-- It creates a singleton `MVService`, registers a DDL notifier handler, then starts service loop.
+- `do.mvService = mvs.RegisterMVS(do.ctx, do.ddlNotifier.RegisterHandler, do.sysSessionPool, do.notifyMVSMetadataChange)`
+- 位置：`pkg/domain/domain.go`
 
-### 3.2 Main components
+`RegisterMVS(...)`（`pkg/mvs/impl.go`）做三件事：
 
-- `MVService`
-    - Owns scheduler loop, in-memory queues, retry state, and task submission.
-- `ServerConsistentHash`
-    - Tracks active TiDB nodes and maps task IDs to owner nodes.
-- `TaskExecutor`
-    - Bounded async executor with dynamic concurrency and timeout logic.
-- `Notifier`
-    - Multi-producer single-consumer wakeup primitive.
-- `MVRefreshHandler` / `MVLogPurgeHandler`
-    - Injected business logic interfaces for real refresh/purge behavior.
+1. `NewMVJobsManager(ctx, se, &serverHelper{})` 构造服务。
+2. 立即 `NotifyDDLChange()`，保证启动后第一次循环强制拉元数据。
+3. 注册 `notifier.MVJobsHandlerID`，当前仅在 `meta.ActionCreateMaterializedViewLog` 时触发 `onDDLHandled()`。
 
-## 4. Core Data Structures
+### 2.2 启动
 
-### 4.1 Service state (`MVService`)
+`dom.StartMVService()` 启动两个 goroutine：
 
-- `lastRefresh atomic.Int64`
-    - Last successful (or failure-throttled) metadata fetch timestamp.
-- `running atomic.Bool`
-    - Service lifecycle state.
+- `mvService.Run`
+- `watchMVSMetaChange`
+
+`watchMVSMetaChange` 监听 etcd key `/tidb/mvs/ddl`，收到事件后调用 `mvService.NotifyDDLChange()`。
+当 `etcdClient == nil` 时，watcher 不启动，服务只靠周期拉取。
+
+## 3. 核心结构
+
+### 3.1 `MVService`
+
+职责：
+
+- 周期/事件触发拉取元数据；
+- 基于一致性哈希做 owner 过滤；
+- 维护内存 pending + 小根堆；
+- 将到期任务提交到 `TaskExecutor`；
+- 处理成功、删除、失败重试。
+
+关键字段：
+
+- `lastRefresh atomic.Int64`：最近一次拉取时间（ms）
+- `ddlDirty atomic.Bool` + `notifier Notifier`：DDL/任务完成唤醒
+- `mvRefreshMu`：`pending map[string]mvItem` + `PriorityQueue[*mv]`
+- `mvLogPurgeMu`：`pending map[string]mvLogItem` + `PriorityQueue[*mvLog]`
 - `sch *ServerConsistentHash`
-    - Ownership resolution by consistent hash.
 - `executor *TaskExecutor`
-    - Background execution pool.
-- `mvDDLEventNotifier Notifier`, `ddlDirty atomic.Bool`
-    - Wakeup and "force fetch" signaling.
-- `taskHandler` (`RWMutex`, `refresh`, `purge`)
-    - Handler registry for MV and MVLog operations.
-- `mvRefreshMu` / `mvLogPurgeMu`
-    - Each has:
-        - `pending map[id]item`: authoritative in-memory task index.
-        - `prio PriorityQueue`: min-heap by next execution time.
 
-### 4.2 Task models
+### 3.2 任务对象
 
-- `mv`
-    - `ID`, `refreshInterval`, `nextRefresh`, `retryCount`.
-- `mvLog`
-    - `ID`, `purgeInterval`, `nextPurge`, `retryCount`.
+- `mv`: `ID / refreshInterval / nextRefresh / orderTs / retryCount`
+- `mvLog`: `ID / purgeInterval / nextPurge / orderTs / retryCount`
+- `orderTs` 为调度排序键（ms）。
+- `maxNextScheduleTs = 9e18` 作为“已投递未回收”的运行中哨兵，避免重复出队。
 
-## 5. Ownership and Distribution
+### 3.3 `ServerConsistentHash`
 
-`ServerConsistentHash` flow:
+- `init()`：循环重试拿本节点 server ID（带 backoff，直到成功或 ctx 取消）。
+- `refresh()`：拉全量 server 列表并重建 hash ring。
+- `Available(taskID)`：判断当前节点是否 owner。
 
-1. `Init()` resolves local server ID via `infosync.GetServerInfo()`.
-2. Initial `Refresh()` loads all servers and builds hash ring.
-3. Runtime `Refresh(ctx)` updates ring only when server membership changes.
-4. `Available(taskID)` returns true if `ToServerID(taskID) == localServerID`.
+### 3.4 `TaskExecutor`
 
-The scheduler only keeps tasks owned by current node in memory.
+- FIFO 队列 + worker 池；
+- 支持动态调整并发和超时；
+- `timeout > 0` 时，超时仅释放 worker，不会取消真实任务；
+- `Close()` 会清空未执行队列并等待运行中任务结束。
 
-## 6. Scheduling Lifecycle
+## 4. `Run()` 主循环
 
-### 6.1 Start
+`MVService.Run()` 流程：
 
-- `Start()`:
-    - Guarded by `running.Swap(true)`.
-    - Initializes server hash.
-    - Marks `ddlDirty=true` and wakes notifier.
-    - Starts `scheduleLoop()` goroutine.
+1. `sch.init()`；失败直接退出。
+2. `executor.Run()` 启动 worker。
+3. 进入循环，等待：
+   - `timer.C`
+   - `notifier.C`
+   - `ctx.Done()`
+4. 每轮逻辑：
+   - 若来自 notifier：`forceFetch = ddlDirty.Swap(false)`。
+   - 若 `forceFetch` 或 `shouldFetch(now)` 为真：
+     - `sch.refresh()`
+     - `FetchAllMVMeta()`
+     - 若 `FetchAllMVMeta()` 失败，仍将 `lastRefresh=now`，避免紧循环重试。
+   - `fetchExecTasks(now)` 从两类堆中取到期任务（并将 `orderTs` 设为 `maxNextScheduleTs`）。
+   - 调用 `purgeMVLog(...)` 和 `refreshMV(...)` 提交执行。
+   - 计算下次唤醒：`min(nextFetchTime, nextDueTime)`。
 
-### 6.2 Event and timer driven loop
+## 5. 元数据拉取与任务重建
 
-`scheduleLoop()` uses a timer and notifier channel:
+### 5.1 `FetchAllMVMeta()`
 
-1. Wait on timer or DDL notifier.
-2. On DDL event:
+顺序执行：
 
-- `clear()` notifier.
-- `forceFetch = ddlDirty.Swap(false)`.
+1. `fetchAllTiDBMLogPurge()`
+2. `fetchAllTiDBMViews()`
+3. 两者成功后更新 `lastRefresh = now`
 
-3. Exit if `running=false`.
-2. Fetch metadata if:
+任一步失败即返回 error。
 
-- `forceFetch == true`, or
-- `shouldFetch(now)` (default interval 30s).
+### 5.2 `fetchAllTiDBMLogPurge()`
 
-5. Pop due tasks from both priority queues.
-2. Submit due tasks to executor.
-3. Compute next wake time:
+SQL：
 
-- min(next fetch time, next due task time).
+- `SELECT t.MLOG_ID, UNIX_TIMESTAMP(l.PURGE_START), l.PURGE_INTERVAL, UNIX_TIMESTAMP(t.LAST_PURGE_TIME) ...`
 
-### 6.3 Stop
+行处理：
 
-- `Close()`:
-    - Sets `running=false`.
-    - Wakes notifier so loop can exit.
-    - Closes executor and sets pointer to nil.
+- 忽略空 `MLOG_ID`、空 `PURGE_START/PURGE_INTERVAL`；
+- `lastPurgeTime` 为空时按 `time.Time{}`；
+- 用 `calcNextExecTime(purgeStart, intervalSec, lastPurgeTime)` 算 `nextPurge`；
+- 初始化 `orderTs = nextPurge.UnixMilli()`；
+- 过滤非 owner（`!sch.Available(id)`）后进入 `buildMLogPurgeTasks`。
 
-## 7. Metadata Fetch and Reconciliation
+### 5.3 `fetchAllTiDBMViews()`
 
-### 7.1 Sources
+SQL：
 
-- MVLog purge metadata:
-    - `mysql.tidb_mlog_purge` JOIN `mysql.tidb_mlogs`.
-- MV refresh metadata:
-    - `mysql.tidb_mview_refresh` JOIN `mysql.tidb_mviews`.
+- `SELECT t.MVIEW_ID, UNIX_TIMESTAMP(v.REFRESH_START), v.REFRESH_INTERVAL, UNIX_TIMESTAMP(t.LAST_REFRESH_TIME) ...`
 
-### 7.2 Pipeline
+行处理：
 
-1. Fetch rows via `ExecRCRestrictedSQL`.
-2. Build `newPending` for tasks owned by current node.
-3. Reconcile with in-memory `pending` map:
+- 忽略空 `MVIEW_ID`、空 `REFRESH_START/REFRESH_INTERVAL`；
+- `intervalSec = max(rowInterval, 1)`；
+- `lastRefreshTime` 为空时按 `time.Time{}`；
+- 计算 `nextRefresh`，并置 `orderTs`；
+- 过滤非 owner 后进入 `buildMVRefreshTasks`。
 
-- Existing task:
-    - Update interval.
-    - If not retrying (`retryCount == 0`) and next time changed, update heap position.
-- New task:
-    - Insert into map and heap.
-- Removed task:
-    - Remove from map and heap.
+### 5.4 `buildMLogPurgeTasks()`（按最新伪代码）
 
-4. Update metrics counters.
+对 `newPending` 全量重建当前节点任务视图：
 
-### 7.3 Fetch timestamp semantics
+- 已存在任务：
+  - 更新 `purgeInterval`；
+  - 比较 `nextPurge` 是否变化；
+  - 始终更新 `nextPurge`；
+  - 若任务不在运行中（`orderTs != maxNextScheduleTs`）且发生变化，则同步更新 `orderTs = nextPurge.UnixMilli()` 并 `prio.Update(...)`。
+- 新任务：插入 `pending` 与堆。
+- 消失任务：从 `pending` 与堆删除。
 
-- On full fetch success: `lastRefresh = now`.
-- On fetch failure in loop: `lastRefresh = now` too, intentionally throttling retries.
+### 5.5 `buildMVRefreshTasks()`
 
-## 8. Execution and Retry
+逻辑与 `buildMLogPurgeTasks()` 对称：
 
-### 8.1 Handler abstraction
+- 更新 `refreshInterval` 与 `nextRefresh`；
+- 非运行中且变化时，更新 `orderTs = nextRefresh.UnixMilli()`；
+- 处理新增与删除。
 
-`MVService` does not implement MV logic directly. It calls injected handlers:
+## 6. 执行路径（refresh / purge）
 
-- `RefreshMV(ctx, mvID) -> (relatedMVLogIDs, nextRefresh, err)`
-- `PurgeMVLog(ctx, mvLogID) -> (nextPurge, err)`
+### 6.1 出队与投递
 
-Default handler is `noopMVTaskHandler` returning:
+`fetchExecTasks(now)` 从小根堆连续取出到期任务：
 
-- `ErrMVRefreshHandlerNotRegistered`
-- `ErrMVLogPurgeHandlerNotRegistered`
+- 一旦遇到 `orderTs == maxNextScheduleTs` 或未到期，即停止该队列扫描；
+- 每个被选中任务先写回 `orderTs = maxNextScheduleTs`，再提交给执行器。
 
-### 8.2 Submission flow
+### 6.2 `refreshMV(...)` 成功/失败处理
 
-- For each due MV:
-    - Submit `mv-refresh/<id>`.
-    - On success:
-        - `retryCount = 0`, reschedule to handler-provided `nextRefresh`.
-    - On failure:
-        - `retryCount++`, reschedule to `now + retryDelay(retryCount)`.
-- For each due MVLog:
-    - Same pattern with purge variant.
-- Each completion wakes notifier to recalculate next schedule time.
+每个任务调用 `mh.RefreshMV(...)`：
 
-### 8.3 Retry backoff
+- 失败：`retryCount++`，按 `now + retryDelay(retryCount)` 重排；
+- 成功且 `deleted=true`：从内存队列移除；
+- 成功且 `deleted=false`：
+  - `retryCount = 0`
+  - 调用 `rescheduleMVSuccess`，同时更新：
+    - `m.nextRefresh = nextRefresh`
+    - `m.orderTs = nextRefresh.UnixMilli()`
+  - 再 `prio.Update(...)`
 
-- Base: 5s
-- Exponential doubling
-- Cap: 5m
+### 6.3 `purgeMVLog(...)` 成功/失败处理
 
-## 9. TaskExecutor Design
+每个任务调用 `mh.PurgeMVLog(...)`：
 
-### 9.1 Behavior
+- 失败：`retryCount++`，按退避重排；
+- 成功且 `deleted=true`：移除任务；
+- 成功且 `deleted=false`：
+  - `retryCount = 0`
+  - 调用 `rescheduleMVLogSuccess`，同时更新：
+    - `l.nextPurge = nextPurge`
+    - `l.orderTs = nextPurge.UnixMilli()`
+  - 再 `prio.Update(...)`
 
-- FIFO queue protected by mutex + condition variable.
-- Worker count can scale up/down dynamically via `UpdateConfig`.
-- Timeout handling:
-    - If timeout <= 0: run task inline in worker.
-    - Else run task in child goroutine and `select` on done vs timer.
-    - On timeout: worker slot is released, task continues in background.
+### 6.4 重试策略
 
-### 9.2 Metrics
+- 基础延迟：5s
+- 指数翻倍
+- 上限：5min
 
-- Submitted, running, waiting, completed, failed, timeout, rejected.
+任务收尾都会 `notifier.Wake()`，让主循环尽快重算调度点。
 
-### 9.3 Close semantics
+## 7. `serverHelper` SQL 语义
 
-- `Close()` marks executor closed, wakes waiting workers, waits for:
-    - all tasks (`tasksWG`)
-    - all workers (`workers.wg`)
+### 7.1 `RefreshMV`
 
-## 10. Utility Components
+在 `withRCRestrictedTxn(..., BEGIN PESSIMISTIC)` 事务里：
 
-- `Notifier`
-    - Buffered channel size 1 + atomic `awake` bit.
-    - Coalesces multiple wakeups.
-- `PriorityQueue`
-    - Generic min-heap with O(log n) push/pop/update/remove.
-- `ConsistentHash`
-    - CRC32-based ring with virtual nodes.
+1. 查 `mysql.tidb_mviews` 元数据；
+2. 执行 `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`；
+3. 查 `mysql.tidb_mview_refresh_hist` 最新记录；
+4. 若 `REFRESH_FAILED_REASON` 非空，返回错误；
+5. 计算并返回 `nextRefresh`。
 
-## 11. Current Known Constraints and Risks
+无元数据时返回 `deleted=true`。
 
-1. Handler registration is not wired in production path yet.
-   - `RegisterMVS` only creates and starts `MVService`.
-   - Without injected handler, tasks fail and enter retry flow.
+### 7.2 `PurgeMVLog`
 
-2. No strict validation for handler-returned next schedule timestamps.
-   - Zero or stale timestamps can cause immediate re-trigger loops.
+同一事务内：
 
-3. Retry fields are mutable task state shared by scheduling and worker paths.
-   - Current code uses locks for queue operations but does not fully serialize all reads/writes of `retryCount`.
+1. 查 `mysql.tidb_mlogs`（schema、mlog、related mv、purge 配置）；
+2. 解析关联 MV，求 `MIN(LAST_SUCCESSFUL_REFRESH_READ_TSO)`；
+3. `SELECT ... FOR UPDATE` 锁 `mysql.tidb_mlog_purge` 行；
+4. 删 mlog 表中 `COMMIT_TSO = 0` 或 `<= minTSO` 的数据；
+5. 更新 `mysql.tidb_mlog_purge`（时间、行数、耗时）；
+6. 写 `mysql.tidb_mlog_purge_hist`（SUCCESS/FAILED）。
 
-4. `TaskExecutor` timeout does not cancel task body.
-   - Timed-out task keeps running in background.
+无元数据时返回 `deleted=true`。
 
-5. `Close()` sets `executor=nil`.
-   - Service lifecycle ordering must ensure no concurrent submit path touches nil pointer.
+实现细节：步骤失败时会尽量写 FAILED 历史，并通过返回 `failedErr` 让调度层进入重试分支。
 
-## 12. Test Coverage Snapshot
+## 8. 基础组件
 
-- `pkg/mvs/mvs_test.go`
-    - TaskExecutor concurrency, dynamic config, timeout behavior, close rejection.
-- `pkg/mvs/utils_test.go`
-    - ConsistentHash behavior and priority queue correctness.
-- `pkg/mvs/task_handler_test.go`
-    - Default handler errors and injected handler dispatch.
+- `Notifier`：多生产者单消费者唤醒器，`awake` 位实现信号合并。
+- `PriorityQueue`：泛型小根堆，支持 `Push/Front/Update/Remove`。
+- `ConsistentHash`：CRC32 环 + 虚拟节点（副本数限制 `1..200`）。
 
-No dedicated end-to-end scheduler integration test exists yet for:
+## 9. 当前约束与 TODO
 
-- full fetch -> queue -> execute -> reschedule loop
-- DDL-triggered force fetch path
-- close/race edge cases
+1. DDL 触发面仍有限。
+当前仅 `ActionCreateMaterializedViewLog` 触发跨节点通知，代码中已有 TODO 扩展到更多 MV 元数据变更事件。
 
-## 13. Suggested Integration Contract for Future Modules
+2. 任务超时为“统计超时”而非“取消执行”。
+超时后真实 SQL 仍会继续跑到结束。
 
-When plugging in real MV logic, handler implementations should:
-
-1. Return deterministic next schedule times.
-2. Distinguish retryable and non-retryable errors.
-3. Keep operations idempotent.
-4. Respect `context.Context` for timeout/cancel integration.
-5. Emit business metrics and structured logs for traceability.
-
-## 14. Summary
-
-`pkg/mvs` already provides a reusable scheduling framework:
-
-- distributed ownership,
-- in-memory priority scheduling,
-- bounded asynchronous execution,
-- and pluggable business handlers.
-
-The main remaining work is business logic integration and hardening around lifecycle, retries, and observability.
+3. `fetchAllTiDBMLogPurge()` 对异常 `PURGE_INTERVAL` 未做下限钳制。
+`calcNextExecTime(interval<=0)` 会直接返回 `last`，会影响调度语义；如需强约束建议与 `fetchAllTiDBMViews()` 一样做最小值保护。

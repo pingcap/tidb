@@ -7,6 +7,8 @@ import (
 	"time"
 
 	basic "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type mvLogItem Item[*mvLog]
@@ -32,8 +34,6 @@ type MVService struct {
 	metrics struct {
 		mvCount                atomic.Int64
 		mvLogCount             atomic.Int64
-		pendingMVRefreshCount  atomic.Int64
-		pendingMVLogPurgeCount atomic.Int64
 		runningMVRefreshCount  atomic.Int64
 		runningMVLogPurgeCount atomic.Int64
 	}
@@ -56,7 +56,7 @@ const (
 	defaultMVFetchInterval      = 30 * time.Second
 	defaultMVTaskRetryBase      = 5 * time.Second
 	defaultMVTaskRetryMax       = 5 * time.Minute
-	maxNextScheduleTs           = 9e18 // corresponds to year 5138
+	maxNextScheduleTs           = 9e18
 
 	defaultServerConsistentHashReplicas = 10
 )
@@ -93,7 +93,6 @@ type mv struct {
 	ID              string
 	lastRefresh     time.Time
 	refreshInterval time.Duration
-	dependentMLogs  map[string]struct{}
 	nextRefresh     time.Time
 
 	orderTs    int64 // unix timestamp in milliseconds
@@ -105,10 +104,7 @@ type mvLog struct {
 	baseTableID   string
 	lastPurge     time.Time
 	purgeInterval time.Duration
-	dependentMVs  map[string]struct {
-		tso int64
-	}
-	nextPurge time.Time
+	nextPurge     time.Time
 
 	orderTs    int64 // unix timestamp in milliseconds
 	retryCount atomic.Int64
@@ -151,6 +147,11 @@ func resetTimer(timer *time.Timer, delay time.Duration) {
 }
 
 func (t *MVService) Run() {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("MVService panicked", zap.Any("error", r))
+		}
+	}()
 	if !t.sch.init() {
 		return
 	}
@@ -255,15 +256,16 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 		for t.mvLogPurgeMu.prio.Len() > 0 {
 			it := t.mvLogPurgeMu.prio.Front()
 			l := it.Value
-			if l.orderTs != maxNextScheduleTs && l.nextPurge.Compare(now) <= 0 {
-				mvLogToPurge = append(mvLogToPurge, l)
-				l.orderTs = maxNextScheduleTs // set to max to avoid being picked again before reschedule
-				t.mvLogPurgeMu.prio.Update(it, l)
-			} else {
+			if l.orderTs == maxNextScheduleTs {
 				break
 			}
+			if time.UnixMilli(l.orderTs).After(now) {
+				break
+			}
+			mvLogToPurge = append(mvLogToPurge, l)
+			l.orderTs = maxNextScheduleTs // set to max to avoid being picked again before reschedule
+			t.mvLogPurgeMu.prio.Update(it, l)
 		}
-		t.metrics.pendingMVLogPurgeCount.Store(int64(t.mvLogPurgeMu.prio.Len()))
 		t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 	}
 	{
@@ -271,15 +273,16 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 		for t.mvRefreshMu.prio.Len() > 0 {
 			it := t.mvRefreshMu.prio.Front()
 			m := it.Value
-			if m.orderTs != maxNextScheduleTs && m.nextRefresh.Compare(now) <= 0 {
-				mvToRefresh = append(mvToRefresh, m)
-				m.orderTs = maxNextScheduleTs // set to max to avoid being picked again before reschedule
-				t.mvRefreshMu.prio.Update(it, m)
-			} else {
+			if m.orderTs == maxNextScheduleTs {
 				break
 			}
+			if time.UnixMilli(m.orderTs).After(now) {
+				break
+			}
+			mvToRefresh = append(mvToRefresh, m)
+			m.orderTs = maxNextScheduleTs // set to max to avoid being picked again before reschedule
+			t.mvRefreshMu.prio.Update(it, m)
 		}
-		t.metrics.pendingMVRefreshCount.Store(int64(t.mvRefreshMu.prio.Len()))
 		t.mvRefreshMu.Unlock() // release mv refresh queue guard
 	}
 	return
@@ -293,15 +296,21 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 		t.executor.Submit("mv-refresh/"+m.ID, func() error {
 			t.metrics.runningMVRefreshCount.Add(1)
 			defer t.metrics.runningMVRefreshCount.Add(-1)
-			_, nextRefresh, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
+			nextRefresh, deleted, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
 			if err != nil {
 				retryCount := m.retryCount.Add(1)
 				t.rescheduleMV(m, time.Now().Add(retryDelay(int(retryCount))).UnixMilli())
 				t.notifier.Wake()
 				return err
 			}
+			if deleted {
+				m.retryCount.Store(0)
+				t.removeMVTask(m)
+				t.notifier.Wake()
+				return nil
+			}
 			m.retryCount.Store(0)
-			t.rescheduleMV(m, nextRefresh.UnixMilli())
+			t.rescheduleMVSuccess(m, nextRefresh)
 			t.notifier.Wake()
 			return nil
 		})
@@ -316,19 +325,45 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 		t.executor.Submit("mvlog-purge/"+l.ID, func() error {
 			t.metrics.runningMVLogPurgeCount.Add(1)
 			defer t.metrics.runningMVLogPurgeCount.Add(-1)
-			nextPurge, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
+			nextPurge, deleted, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
 			if err != nil {
 				retryCount := l.retryCount.Add(1)
 				t.rescheduleMVLog(l, time.Now().Add(retryDelay(int(retryCount))).UnixMilli())
 				t.notifier.Wake()
 				return err
 			}
+			if deleted {
+				l.retryCount.Store(0)
+				t.removeMVLogTask(l)
+				t.notifier.Wake()
+				return nil
+			}
 			l.retryCount.Store(0)
-			t.rescheduleMVLog(l, nextPurge.UnixMilli())
+			t.rescheduleMVLogSuccess(l, nextPurge)
 			t.notifier.Wake()
 			return nil
 		})
 	}
+}
+
+func (t *MVService) removeMVLogTask(l *mvLog) {
+	t.mvLogPurgeMu.Lock() // guard mvlog purge queue
+	if it, ok := t.mvLogPurgeMu.pending[l.ID]; ok && it.Value == l {
+		delete(t.mvLogPurgeMu.pending, l.ID)
+		t.mvLogPurgeMu.prio.Remove(it)
+	}
+	t.metrics.mvLogCount.Store(int64(len(t.mvLogPurgeMu.pending)))
+	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
+}
+
+func (t *MVService) removeMVTask(m *mv) {
+	t.mvRefreshMu.Lock() // guard mv refresh queue
+	if it, ok := t.mvRefreshMu.pending[m.ID]; ok && it.Value == m {
+		delete(t.mvRefreshMu.pending, m.ID)
+		t.mvRefreshMu.prio.Remove(it)
+	}
+	t.metrics.mvCount.Store(int64(len(t.mvRefreshMu.pending)))
+	t.mvRefreshMu.Unlock() // release mv refresh queue guard
 }
 
 func (t *MVService) rescheduleMV(m *mv, next int64) {
@@ -337,7 +372,18 @@ func (t *MVService) rescheduleMV(m *mv, next int64) {
 		m.orderTs = next
 		t.mvRefreshMu.prio.Update(it, m)
 	}
-	t.metrics.pendingMVRefreshCount.Store(int64(t.mvRefreshMu.prio.Len()))
+	t.mvRefreshMu.Unlock() // release mv refresh queue guard
+}
+
+func (t *MVService) rescheduleMVSuccess(m *mv, nextRefresh time.Time) {
+	orderTs := nextRefresh.UnixMilli()
+
+	t.mvRefreshMu.Lock() // guard mv refresh queue
+	if it, ok := t.mvRefreshMu.pending[m.ID]; ok && it.Value == m {
+		m.nextRefresh = nextRefresh
+		m.orderTs = orderTs
+		t.mvRefreshMu.prio.Update(it, m)
+	}
 	t.mvRefreshMu.Unlock() // release mv refresh queue guard
 }
 
@@ -347,10 +393,29 @@ func (t *MVService) rescheduleMVLog(l *mvLog, next int64) {
 		l.orderTs = next
 		t.mvLogPurgeMu.prio.Update(it, l)
 	}
-	t.metrics.pendingMVLogPurgeCount.Store(int64(t.mvLogPurgeMu.prio.Len()))
 	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 }
 
+func (t *MVService) rescheduleMVLogSuccess(l *mvLog, nextPurge time.Time) {
+	orderTs := nextPurge.UnixMilli()
+
+	t.mvLogPurgeMu.Lock() // guard mvlog purge queue
+	if it, ok := t.mvLogPurgeMu.pending[l.ID]; ok && it.Value == l {
+		l.nextPurge = nextPurge
+		l.orderTs = orderTs
+		t.mvLogPurgeMu.prio.Update(it, l)
+	}
+	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
+}
+
+/*
+对于 newPending 中每条记录：
+
+	更新 purgeInterval 和 nextPurge 字段
+	如果 nextPurge 字段发生变化，表示核心元信息变动
+		如果正在执行任务（orderTs == maxNextScheduleTs），则等待任务执行完毕后根据最新的 nextPurge 更新 orderTs 并调整优先级队列中的位置
+		如果未在执行任务，则根据 nextPurge 更新 orderTs 并调整优先级队列中的位置
+*/
 func (t *MVService) buildMLogPurgeTasks(newPending map[string]*mvLog) error {
 	t.mvLogPurgeMu.Lock()         // guard mvlog purge queue
 	defer t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
@@ -360,9 +425,7 @@ func (t *MVService) buildMLogPurgeTasks(newPending map[string]*mvLog) error {
 	}
 	for id, nl := range newPending {
 		if ol, ok := t.mvLogPurgeMu.pending[id]; ok {
-			{ // copy fields that may be updated by purge task execution to avoid overwriting them
-				ol.Value.purgeInterval = nl.purgeInterval
-			}
+			ol.Value.purgeInterval = nl.purgeInterval
 			changed := ol.Value.nextPurge != nl.nextPurge
 			ol.Value.nextPurge = nl.nextPurge
 			if ol.Value.orderTs != maxNextScheduleTs { // not running
@@ -384,7 +447,6 @@ func (t *MVService) buildMLogPurgeTasks(newPending map[string]*mvLog) error {
 	}
 
 	t.metrics.mvLogCount.Store(int64(len(t.mvLogPurgeMu.pending)))
-	t.metrics.pendingMVLogPurgeCount.Store(int64(t.mvLogPurgeMu.prio.Len()))
 
 	return nil
 }
@@ -398,9 +460,7 @@ func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
 	}
 	for id, nm := range newPending {
 		if om, ok := t.mvRefreshMu.pending[id]; ok {
-			{ // copy fields that may be updated by refresh task execution to avoid overwriting them
-				om.Value.refreshInterval = nm.refreshInterval
-			}
+			om.Value.refreshInterval = nm.refreshInterval
 			changed := om.Value.nextRefresh != nm.nextRefresh
 			om.Value.nextRefresh = nm.nextRefresh
 			if om.Value.orderTs != maxNextScheduleTs { // not running
@@ -422,7 +482,6 @@ func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
 	}
 
 	t.metrics.mvCount.Store(int64(len(t.mvRefreshMu.pending)))
-	t.metrics.pendingMVRefreshCount.Store(int64(t.mvRefreshMu.prio.Len()))
 
 	return nil
 }

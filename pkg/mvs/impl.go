@@ -89,42 +89,77 @@ func (m *serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverI
 /*
 手动实现 mv 增量刷新逻辑，伪代码如下：
 
+开始 txn
 
-执行 sql：REFRESH MATERIALIZED VIEW ? WITH SYNC MODE FAST;
+执行 sql：SELECT TABLE_SCHEMA, MVIEW_NAME, UNIX_TIMESTAMP(REFRESH_START) as REFRESH_START_SEC, REFRESH_INTERVAL FROM mysql.tidb_mviews WHERE MVIEW_ID = `mvID`
 
-开始 txn（以下执行结果记录到 mysql.tidb_mview_refresh_hist（表结构定义在 pkg/session/bootstrap.go））
+执行 sql：REFRESH MATERIALIZED VIEW TABLE_SCHEMA.MVIEW_NAME WITH SYNC MODE FAST;
 
-SELECT * FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = ? FOR UPDATE;
+	该 sql 自动更新 mysql.tidb_mview_refresh 和 mysql.tidb_mview_refresh_hist
 
-如果非手动 refresh 且 LAST_REFRESH_TIME + REFRESH_INTERVAL > now()
+执行 sql：SELECT UNIX_TIMESTAMP(REFRESH_ENDTIME) as LAST_REFRESH_TIME_SEC, REFRESH_FAILED_REASON FROM mysql.tidb_mview_refresh_hist WHERE MVIEW_ID = `mvID` AND IS_NEWEST_REFRESH = 'YES'
 
-	COMMIT;
-	RETURN;
+如果 REFRESH_FAILED_REASON 非 null 则返回错误
 
-TSO = GET_COMMIT_TSO();
+提交 txn
 
-找出该物化视图所依赖的所有 MVLOG
-
-READ MVLOG data in range (LAST_REFRESH_READ_TSO, TSO])
-
-COMPUTE new MV data;
-
-UPDATE MV table with new data;
-
-UPDATE mysql.tidb_mview_refresh SET
-
-	LAST_REFRESH_TIME = now(),
-	LAST_REFRESH_READ_TSO = TSO,
-	LAST_REFRESH_ERR = NULL
-
-WHERE MVIEW_ID = ?;
-
-COMMIT;
-
-返回所有相关 MVLOG 的 ID
+返回 nextRefresh：以 REFRESH_START_SEC 为起点，以 REFRESH_INTERVAL 秒为间隔计算的大于 LAST_REFRESH_TIME_SEC 的第一个时间点
 */
-func (*serverHelper) RefreshMV(_ context.Context, _ basic.SessionPool, _ string) (relatedMVLog []string, nextRefresh time.Time, err error) {
-	return nil, time.Time{}, ErrMVRefreshHandlerNotRegistered
+func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (nextRefresh time.Time, deleted bool, err error) {
+	const (
+		findMVSQL          = `SELECT TABLE_SCHEMA, MVIEW_NAME, UNIX_TIMESTAMP(REFRESH_START), REFRESH_INTERVAL FROM mysql.tidb_mviews WHERE MVIEW_ID = %?`
+		refreshMVSQL       = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
+		findLastRefreshSQL = `SELECT UNIX_TIMESTAMP(REFRESH_ENDTIME), REFRESH_FAILED_REASON FROM mysql.tidb_mview_refresh_hist WHERE MVIEW_ID = %? AND IS_NEWEST_REFRESH = 'YES'`
+	)
+
+	err = withRCRestrictedTxn(ctx, sysSessionPool, func(txnCtx context.Context, sctx sessionctx.Context) error {
+		rows, runErr := execRCRestrictedSQLWithSession(txnCtx, sctx, findMVSQL, []any{mvID})
+		if runErr != nil {
+			return runErr
+		}
+		if len(rows) == 0 {
+			deleted = true
+			return nil
+		}
+		row := rows[0]
+		if row.IsNull(0) || row.IsNull(1) || row.IsNull(2) || row.IsNull(3) {
+			return errors.New("mview metadata is invalid")
+		}
+
+		schemaName := row.GetString(0)
+		mviewName := row.GetString(1)
+		if schemaName == "" || mviewName == "" {
+			return errors.New("mview metadata is invalid")
+		}
+		refreshStartSec := row.GetInt64(2)
+		refreshIntervalSec := row.GetInt64(3)
+		if refreshIntervalSec <= 0 {
+			return errors.New("mview metadata is invalid")
+		}
+
+		if _, runErr = execRCRestrictedSQLWithSession(txnCtx, sctx, refreshMVSQL, []any{schemaName, mviewName}); runErr != nil {
+			return runErr
+		}
+
+		rows, runErr = execRCRestrictedSQLWithSession(txnCtx, sctx, findLastRefreshSQL, []any{mvID})
+		if runErr != nil {
+			return runErr
+		}
+		if len(rows) == 0 || rows[0].IsNull(0) {
+			return errors.New("mview refresh state not found")
+		}
+		lastRefreshState := rows[0]
+		if !lastRefreshState.IsNull(1) {
+			return errors.New("mview refresh failed: " + lastRefreshState.GetString(1))
+		}
+		lastRefreshSec := lastRefreshState.GetInt64(0)
+		nextRefresh = calcNextExecTime(time.Unix(refreshStartSec, 0), refreshIntervalSec, time.Unix(lastRefreshSec, 0))
+		return nil
+	})
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return nextRefresh, deleted, nil
 }
 
 /*
@@ -134,7 +169,7 @@ func (*serverHelper) RefreshMV(_ context.Context, _ basic.SessionPool, _ string)
 
 令 find_mvs_by_mslog：找出所有 mvLogID 关联的 MV
 
-	执行 sql：select RELATED_MV,PURGE_START,PURGE_INTERVAL,MLOG_NAME from mysql.tidb_mlogs where MLOG_ID = `mvLogID`
+	执行 sql：select RELATED_MV, UNIX_TIMESTAMP(PURGE_START) as PURGE_START_SEC, PURGE_INTERVAL, MLOG_NAME from mysql.tidb_mlogs where MLOG_ID = `mvLogID`
 
 令 find_min_mv_tso：找出所有 mvLogID 关联的 MV 中最小的 LAST_REFRESH_READ_TSO
 
@@ -154,7 +189,7 @@ UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = `last_purge_time`, LAST_PURGE
 
 将 PURGE_START 精确到秒级，计算从 PURGE_START 开始，每隔 PURGE_INTERVAL 秒需要执行一次 purge 的下次执行时间点，找出比 last_purge_time 晚的第一个时间点，作为 nextPurge 返回
 */
-func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, err error) {
+func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, deleted bool, err error) {
 	purgeTime := time.Now()
 	purgeEndTime := purgeTime
 	mlogName := mvLogID
@@ -168,13 +203,14 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 			return recordMLogPurgeHist(txnCtx, sctx, mvLogID, mlogName, purgeMethod, purgeTime, purgeEndTime, purgeRows, "FAILED")
 		}
 
-		const findMLogSQL = `SELECT TABLE_SCHEMA, MLOG_NAME, RELATED_MV, PURGE_START, PURGE_INTERVAL, PURGE_METHOD FROM mysql.tidb_mlogs WHERE MLOG_ID = %?`
+		const findMLogSQL = `SELECT TABLE_SCHEMA, MLOG_NAME, RELATED_MV, UNIX_TIMESTAMP(PURGE_START), PURGE_INTERVAL, PURGE_METHOD FROM mysql.tidb_mlogs WHERE MLOG_ID = %?`
 		rows, runErr := execRCRestrictedSQLWithSession(txnCtx, sctx, findMLogSQL, []any{mvLogID})
 		if runErr != nil {
 			return recordFailedPurge(runErr, 0)
 		}
 		if len(rows) == 0 {
-			return recordFailedPurge(errors.New("mvlog metadata not found"), 0)
+			deleted = true
+			return nil
 		}
 		row := rows[0]
 		if row.IsNull(0) || row.IsNull(1) || row.IsNull(3) || row.IsNull(4) {
@@ -183,10 +219,7 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 
 		schemaName := row.GetString(0)
 		mlogName = row.GetString(1)
-		purgeStart, gtErr := row.GetTime(3).GoTime(time.Local)
-		if gtErr != nil {
-			return recordFailedPurge(errors.New("mvlog metadata is invalid"), 0)
-		}
+		purgeStartSec := row.GetInt64(3)
 		purgeIntervalSec := row.GetInt64(4)
 		if purgeIntervalSec <= 0 {
 			return recordFailedPurge(errors.New("mvlog metadata is invalid"), 0)
@@ -230,13 +263,13 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 		if runErr = recordMLogPurgeHist(txnCtx, sctx, mvLogID, mlogName, purgeMethod, purgeTime, purgeEndTime, affectedRows, "SUCCESS"); runErr != nil {
 			return runErr
 		}
-		nextPurge = calcNextExecTime(purgeStart, purgeIntervalSec, purgeEndTime)
+		nextPurge = calcNextExecTime(time.Unix(purgeStartSec, 0), purgeIntervalSec, purgeEndTime)
 		return nil
 	})
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, false, err
 	}
-	return nextPurge, failedErr
+	return nextPurge, deleted, failedErr
 }
 
 func calcNextExecTime(start time.Time, intervalSec int64, last time.Time) time.Time {
@@ -254,76 +287,91 @@ func calcNextExecTime(start time.Time, intervalSec int64, last time.Time) time.T
 	return time.Unix(nextSec, 0)
 }
 
+/*
+执行 sql： SELECT t.MLOG_ID, UNIX_TIMESTAMP(l.PURGE_START), l.PURGE_INTERVAL, UNIX_TIMESTAMP(t.LAST_PURGE_TIME) FROM mysql.tidb_mlog_purge t JOIN mysql.tidb_mlogs l ON t.MLOG_ID = l.MLOG_ID
+
+对于每行数据：
+
+	如果 last_purge_time 为 null 则令 last_purge_time  为 time.Zero
+	计算 nextPurge 为 以 PURGE_START 精确到秒级为起点，每隔 PURGE_INTERVAL 秒需要执行一次 purge 的下次执行时间点，找出比 last_purge_time 晚的第一个时间点
+*/
 func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[string]*mvLog, error) {
-	const sql = `SELECT t.MLOG_ID, l.PURGE_START, l.PURGE_INTERVAL, t.LAST_PURGE_TIME FROM mysql.tidb_mlog_purge t JOIN mysql.tidb_mlogs l ON t.MLOG_ID = l.MLOG_ID`
+	const sql = `SELECT t.MLOG_ID, UNIX_TIMESTAMP(l.PURGE_START), l.PURGE_INTERVAL, UNIX_TIMESTAMP(t.LAST_PURGE_TIME) FROM mysql.tidb_mlog_purge t JOIN mysql.tidb_mlogs l ON t.MLOG_ID = l.MLOG_ID`
 	rows, err := execRCRestrictedSQL(ctx, sysSessionPool, sql, nil)
 	if err != nil {
 		return nil, err
 	}
 	newPending := make(map[string]*mvLog, len(rows))
-	now := time.Now()
 	for _, row := range rows {
-		l := &mvLog{
-			ID: row.GetString(0),
-		}
-		if l.ID == "" {
+		mvLogID := row.GetString(0)
+		if mvLogID == "" {
 			continue
 		}
 		if row.IsNull(1) || row.IsNull(2) {
 			continue
 		}
-		purgeStart, gtErr := row.GetTime(1).GoTime(time.Local)
-		if gtErr != nil {
-			continue
-		}
+
+		purgeStart := time.Unix(row.GetInt64(1), 0)
 		intervalSec := row.GetInt64(2)
-		l.purgeInterval = time.Second * time.Duration(intervalSec)
-		calcBase := now
+
+		lastPurgeTime := time.Time{}
 		if !row.IsNull(3) {
-			if gt, gtErr := row.GetTime(3).GoTime(time.Local); gtErr == nil {
-				calcBase = gt
-			}
+			lastPurgeTime = time.Unix(row.GetInt64(3), 0)
 		}
-		l.nextPurge = calcNextExecTime(purgeStart, intervalSec, calcBase)
+
+		nextPurge := calcNextExecTime(purgeStart, intervalSec, lastPurgeTime)
+		l := &mvLog{
+			ID:            mvLogID,
+			purgeInterval: time.Second * time.Duration(intervalSec),
+			nextPurge:     nextPurge,
+		}
 		l.orderTs = l.nextPurge.UnixMilli()
-		newPending[l.ID] = l
+		newPending[mvLogID] = l
 	}
 	return newPending, nil
 }
 
+/*
+执行 sql： SELECT t.MVIEW_ID, UNIX_TIMESTAMP(v.REFRESH_START), v.REFRESH_INTERVAL, UNIX_TIMESTAMP(t.LAST_REFRESH_TIME) FROM mysql.tidb_mview_refresh t JOIN mysql.tidb_mviews v ON t.MVIEW_ID = v.MVIEW_ID
+
+对于每行数据：
+
+	REFRESH_INTERVAL 单位为秒，最小值为 1 秒
+	如果 last_refresh_time 为 null 则令 last_refresh_time  为 time.Zero
+	计算 nextRefresh 为 以 REFRESH_START 精确到秒级为起点，每隔 REFRESH_INTERVAL 秒需要执行一次 refresh 的下次执行时间点，找出比 last_refresh_time 晚的第一个时间点
+*/
 func (*serverHelper) fetchAllTiDBMViews(ctx context.Context, sysSessionPool basic.SessionPool) (map[string]*mv, error) {
-	const sql = `SELECT t.MVIEW_ID, v.REFRESH_START, v.REFRESH_INTERVAL, t.LAST_REFRESH_TIME FROM mysql.tidb_mview_refresh t JOIN mysql.tidb_mviews v ON t.MVIEW_ID = v.MVIEW_ID`
+	const sql = `SELECT t.MVIEW_ID, UNIX_TIMESTAMP(v.REFRESH_START), v.REFRESH_INTERVAL, UNIX_TIMESTAMP(t.LAST_REFRESH_TIME) FROM mysql.tidb_mview_refresh t JOIN mysql.tidb_mviews v ON t.MVIEW_ID = v.MVIEW_ID`
 	rows, err := execRCRestrictedSQL(ctx, sysSessionPool, sql, nil)
 	if err != nil {
 		return nil, err
 	}
 	newPending := make(map[string]*mv, len(rows))
-	now := time.Now()
 	for _, row := range rows {
-		m := &mv{
-			ID: row.GetString(0),
-		}
-		if m.ID == "" {
+		mvID := row.GetString(0)
+		if mvID == "" {
 			continue
 		}
 		if row.IsNull(1) || row.IsNull(2) {
 			continue
 		}
-		refreshStart, gtErr := row.GetTime(1).GoTime(time.Local)
-		if gtErr != nil {
-			continue
-		}
-		intervalSec := row.GetInt64(2)
-		m.refreshInterval = time.Duration(intervalSec) * time.Second
-		calcBase := now
+
+		refreshStart := time.Unix(row.GetInt64(1), 0)
+		intervalSec := max(row.GetInt64(2), 1)
+
+		lastRefreshTime := time.Time{}
 		if !row.IsNull(3) {
-			if gt, gtErr := row.GetTime(3).GoTime(time.Local); gtErr == nil {
-				calcBase = gt
-			}
+			lastRefreshTime = time.Unix(row.GetInt64(3), 0)
 		}
-		m.nextRefresh = calcNextExecTime(refreshStart, intervalSec, calcBase)
+
+		nextRefresh := calcNextExecTime(refreshStart, intervalSec, lastRefreshTime)
+		m := &mv{
+			ID:              mvID,
+			refreshInterval: time.Duration(intervalSec) * time.Second,
+			nextRefresh:     nextRefresh,
+		}
 		m.orderTs = m.nextRefresh.UnixMilli()
-		newPending[m.ID] = m
+		newPending[mvID] = m
 	}
 	return newPending, nil
 }

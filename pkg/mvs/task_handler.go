@@ -17,12 +17,12 @@ var (
 
 // MVRefreshHandler defines the refresh contract for one MV ID.
 type MVRefreshHandler interface {
-	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (relatedMVLog []string, nextRefresh time.Time, err error)
+	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (nextRefresh time.Time, deleted bool, err error)
 }
 
 // MVLogPurgeHandler defines the purge contract for one MVLog ID.
 type MVLogPurgeHandler interface {
-	PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, err error)
+	PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, deleted bool, err error)
 }
 
 // MVMetaFetchHandler defines the metadata fetch contract for MV scheduler bootstrap.
