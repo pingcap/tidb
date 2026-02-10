@@ -517,22 +517,35 @@ func prepareCompareDatums() ([]Datum, []Datum) {
 
 func TestStringToMysqlBit(t *testing.T) {
 	tests := []struct {
-		a   Datum
-		out []byte
+		a         Datum
+		out       []byte
+		flen      int
+		truncated bool
 	}{
-		{NewStringDatum("true"), []byte{1}},
-		{NewStringDatum("false"), []byte{0}},
-		{NewStringDatum("1"), []byte{1}},
-		{NewStringDatum("0"), []byte{0}},
-		{NewStringDatum("b'1'"), []byte{1}},
-		{NewStringDatum("b'0'"), []byte{0}},
+		{NewStringDatum("true"), []byte{1}, 1, true},
+		{NewStringDatum("true"), []byte{0x74, 0x72, 0x75, 0x65}, 32, false},
+		{NewStringDatum("false"), []byte{0x1}, 1, true},
+		{NewStringDatum("false"), []byte{0x66, 0x61, 0x6c, 0x73, 0x65}, 40, false},
+		{NewStringDatum("1"), []byte{1}, 1, true},
+		{NewStringDatum("1"), []byte{0x31}, 8, false},
+		{NewStringDatum("0"), []byte{1}, 1, true},
+		{NewStringDatum("0"), []byte{0x30}, 8, false},
+		{NewStringDatum("b'1'"), []byte{0x62, 0x27, 0x31, 0x27}, 32, false},
+		{NewStringDatum("b'0'"), []byte{0x62, 0x27, 0x30, 0x27}, 32, false},
 	}
-	tp := NewFieldType(mysql.TypeBit)
-	tp.SetFlen(1)
 	for _, tt := range tests {
-		bin, err := tt.a.convertToMysqlBit(DefaultStmtNoWarningContext, tp)
-		require.NoError(t, err)
-		require.Equal(t, tt.out, bin.b)
+		t.Run(fmt.Sprintf("%s %d %t", tt.a.GetString(), tt.flen, tt.truncated), func(t *testing.T) {
+			tp := NewFieldType(mysql.TypeBit)
+			tp.SetFlen(tt.flen)
+
+			bin, err := tt.a.convertToMysqlBit(DefaultStmtNoWarningContext, tp)
+			if tt.truncated {
+				require.Contains(t, err.Error(), "Data Too Long")
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tt.out, bin.b)
+		})
 	}
 }
 
