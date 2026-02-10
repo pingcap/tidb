@@ -301,6 +301,8 @@ func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 
 	err := tk.ExecToErr("create materialized view mv_upsert_fail (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
 	require.Error(t, err)
+	require.ErrorContains(t, err, "tidb_mview_refresh")
+	require.NotContains(t, err.Error(), "Information schema is changed")
 	require.NotContains(t, err.Error(), "Duplicate entry")
 
 	tk.MustQuery("show tables like 'mv_upsert_fail'").Check(testkit.Rows())
@@ -312,6 +314,29 @@ func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
 	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
+}
+
+func TestCreateMaterializedViewRetryAfterUpsertFailure(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", "1*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpsertCreateMaterializedViewRefreshInfoTableNotExists"))
+	}()
+
+	err := tk.ExecToErr("create materialized view mv_retry (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "tidb_mview_refresh")
+	require.NotContains(t, err.Error(), "Information schema is changed")
+	tk.MustQuery("show tables like 'mv_retry'").Check(testkit.Rows())
+
+	tk.MustExec("create materialized view mv_retry (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	tk.MustQuery("select a, s, cnt from mv_retry order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 }
 
 func TestCreateTableLikeShouldNotCarryMaterializedViewMetadata(t *testing.T) {
