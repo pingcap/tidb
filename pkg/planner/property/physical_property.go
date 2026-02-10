@@ -381,7 +381,8 @@ type IndexJoinRuntimeProp struct {
 	// copTask phase because of the latter attached operators into cop and the single
 	// and double reader cost consideration. Therefore, we introduce another bool to
 	// indicate prefer tableRangeScan or indexRangeScan each at a time.
-	TableRangeScan bool
+	TableRangeScan      bool
+	HintPreferIndexJoin bool
 }
 
 // NewPhysicalProperty builds property from columns.

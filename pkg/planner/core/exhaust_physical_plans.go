@@ -736,21 +736,27 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	if count := outerStats.RowCount; count > 0 {
 		avgInnerRowCnt = p.EqualCondOutCnt / count
 	}
+	var preferINL bool
+	if p.PreferAny(h.PreferLeftAsINLJInner, h.PreferRightAsINLJInner, h.PreferLeftAsINLMJInner, h.PreferRightAsINLMJInner, h.PreferLeftAsINLHashJInner, h.PreferRightAsINLHashJInner) {
+		preferINL = true
+	}
 	// for pk path
 	indexJoinPropTS := &property.IndexJoinRuntimeProp{
-		OtherConditions: p.OtherConditions,
-		InnerJoinKeys:   innerJoinKeys,
-		OuterJoinKeys:   outerJoinKeys,
-		AvgInnerRowCnt:  avgInnerRowCnt,
-		TableRangeScan:  true,
+		OtherConditions:     p.OtherConditions,
+		InnerJoinKeys:       innerJoinKeys,
+		OuterJoinKeys:       outerJoinKeys,
+		AvgInnerRowCnt:      avgInnerRowCnt,
+		TableRangeScan:      true,
+		HintPreferIndexJoin: preferINL,
 	}
 	// for normal index path
 	indexJoinPropIS := &property.IndexJoinRuntimeProp{
-		OtherConditions: p.OtherConditions,
-		InnerJoinKeys:   innerJoinKeys,
-		OuterJoinKeys:   outerJoinKeys,
-		AvgInnerRowCnt:  avgInnerRowCnt,
-		TableRangeScan:  false,
+		OtherConditions:     p.OtherConditions,
+		InnerJoinKeys:       innerJoinKeys,
+		OuterJoinKeys:       outerJoinKeys,
+		AvgInnerRowCnt:      avgInnerRowCnt,
+		TableRangeScan:      false,
+		HintPreferIndexJoin: preferINL,
 	}
 	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropTS, outerStats)
 	indexJoins = append(indexJoins, constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropIS, outerStats)...)
