@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
@@ -475,6 +476,10 @@ func (p *Insert) ResolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 		column := colMap[assign.Column.Name.L]
 		if column.Hidden {
 			return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(column.Name, "field list")
+		}
+		// Check whether the column to be updated is a primary key column on a soft-delete table.
+		if tblInfo.SoftdeleteInfo != nil && mysql.HasPriKeyFlag(column.GetFlag()) {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
 		}
 		// Check whether the column to be updated is the generated column.
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.

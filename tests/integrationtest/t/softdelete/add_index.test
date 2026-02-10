@@ -1,0 +1,22 @@
+# Test ADD INDEX on soft-delete table
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+
+insert into message values (1, '24h'), (2, '24h');
+
+# ADD INDEX should succeed
+alter table message add index i_text(text);
+
+# EXPLAIN should show _tidb_softdelete_time IS NULL filter and use index
+explain select * from message where text = '24h';
+
+drop table message;
+
+# Test again with nonclustered primary key
+create table message (id int primary key nonclustered, text varchar(10)) softdelete retention 7 day;
+
+insert into message values (1, '24h'), (2, '24h');
+alter table message add index i_text(text);
+explain select * from message where text = '24h';
+
+drop table message;
