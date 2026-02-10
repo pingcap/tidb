@@ -499,8 +499,7 @@
       {
         "SQL": "explain format='brief' select id from t1 where match(title) against ('-banana' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:0, keep order:false, stats:pseudo"
+          "TableDual 1.00 root  rows:0"
         ],
         "Warn": null
       },
@@ -515,8 +514,7 @@
       {
         "SQL": "explain format='brief' select id from t1 where match(title) against ('\"\"' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:0, keep order:false, stats:pseudo"
+          "TableDual 1.00 root  rows:0"
         ],
         "Warn": null
       },
@@ -563,8 +561,7 @@
       {
         "SQL": "explain format='brief' select id from t6 where match(title) against ('\"\"' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t6, index:idx_title(title) range:[-inf,+inf], search func:0, keep order:false, stats:pseudo"
+          "TableDual 1.00 root  rows:0"
         ],
         "Warn": null
       }
