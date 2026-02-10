@@ -227,9 +227,9 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	}
 }
 
-// TestPlanReplayerDumpMultiple tests PLAN REPLAYER DUMP EXPLAIN ( "sql1", "sql2", ... ) with 20 statements.
 func TestPlanReplayerDumpMultiple(t *testing.T) {
-	const numStmts = 20
+	const numStmts = 50
+	const numTables = 5
 	ctx := context.Background()
 	tempDir := t.TempDir()
 	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
@@ -242,35 +242,53 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	// Create 5 tables for multi-SQL dump
-	for i := 1; i <= 5; i++ {
-		tk.MustExec(fmt.Sprintf("drop table if exists t_dump_multi_%d", i))
-		tk.MustExec(fmt.Sprintf("create table t_dump_multi_%d(a int, b int)", i))
-		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (1, 1)", i))
-		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (2, 2)", i))
-		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (3, 3)", i))
-		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (4, 4)", i))
-		tk.MustExec(fmt.Sprintf("insert into t_dump_multi_%d values (5, 5)", i))
-		tk.MustExec(fmt.Sprintf("analyze table t_dump_multi_%d", i))
+	// Prepare multiple databases and tables for multi-SQL dump.
+	dbs := []string{"test", "test_multi_db1", "test_multi_db2", "test_multi_db3", "test_multi_db4"}
+	for _, db := range dbs {
+		tk.MustExec(fmt.Sprintf("create database if not exists %s", db))
 	}
+	for _, db := range dbs {
+		tk.MustExec("use " + db)
+		for i := 1; i <= numTables; i++ {
+			tableName := fmt.Sprintf("t_dump_multi_%d", i)
+			tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+			tk.MustExec(fmt.Sprintf("create table %s(a int, b int)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (1, 1)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (2, 2)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (3, 3)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (4, 4)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (5, 5)", tableName))
+			tk.MustExec(fmt.Sprintf("analyze table %s", tableName))
+		}
+	}
+	tk.MustExec("use test")
 
-	// Build 20 SQL statements using the 5 tables with qualified names (test.t_...) so
-	// the plan replayer extractor finds them regardless of current DB / schema sync.
+	// empty statement list should return error
+	tk.MustContainErrMsg("plan replayer dump explain ()", "[parser:1064]")
+
+	// Build multiple SQL statements using the tables across multiple databases with fully
+	// qualified names (db.table) so the plan replayer extractor finds them regardless
+	// of current DB / schema sync.
 	stmts := make([]string, numStmts)
+	pairMod := len(dbs) * numTables
 	for i := 0; i < numStmts; i++ {
-		tbl := (i % 5) + 1
+		// Make sure every (db, table) pair is covered at least once.
+		pairIdx := i % pairMod
+		db := dbs[pairIdx/numTables]
+		tbl := (pairIdx % numTables) + 1
 		switch i % 4 {
 		case 0:
-			stmts[i] = fmt.Sprintf("'select * from t_dump_multi_%d'", tbl)
+			stmts[i] = fmt.Sprintf("'select * from %s.t_dump_multi_%d'", db, tbl)
 		case 1:
-			stmts[i] = fmt.Sprintf("'select * from t_dump_multi_%d where a=1'", tbl)
+			stmts[i] = fmt.Sprintf("'select * from %s.t_dump_multi_%d where a=1'", db, tbl)
 		case 2:
-			stmts[i] = fmt.Sprintf("'select * from t_dump_multi_%d where b>0'", tbl)
+			stmts[i] = fmt.Sprintf("'select * from %s.t_dump_multi_%d where b>0'", db, tbl)
 		default:
-			// join two tables
-			t2 := (tbl % 5) + 1
-			stmts[i] = fmt.Sprintf("'select * from t_dump_multi_%d, t_dump_multi_%d where t_dump_multi_%d.a=t_dump_multi_%d.a'", tbl, t2, tbl, t2)
+			// join two tables, potentially across databases
+			t2 := (tbl % numTables) + 1
+			otherDB := dbs[(i+1)%len(dbs)]
+			stmts[i] = fmt.Sprintf("'select * from %s.t_dump_multi_%d, %s.t_dump_multi_%d where %s.t_dump_multi_%d.a=%s.t_dump_multi_%d.a'",
+				db, tbl, otherDB, t2, db, tbl, otherDB, t2)
 		}
 	}
 	sqlCmd := "plan replayer dump explain (" + strings.Join(stmts, ", ") + ")"
@@ -300,11 +318,14 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 	}
 	require.NotContains(t, names, "explain.txt") // single explain.txt is not used for multi-SQL
 
-	// Check 5 stats files and 5 schema files for the 5 tables
-	const numTables = 5
-	for i := 1; i <= numTables; i++ {
-		tableName := fmt.Sprintf("t_dump_multi_%d", i)
-		require.Contains(t, names, fmt.Sprintf("stats/test.%s.json", tableName))
-		require.Contains(t, names, fmt.Sprintf("schema/test.%s.schema.txt", tableName))
+	// Check stats and schema files for all tables in all databases
+	for _, db := range dbs {
+		for i := 1; i <= numTables; i++ {
+			tableName := fmt.Sprintf("t_dump_multi_%d", i)
+			statsName := fmt.Sprintf("stats/%s.%s.json", db, tableName)
+			schemaName := fmt.Sprintf("schema/%s.%s.schema.txt", db, tableName)
+			require.Contains(t, names, statsName, "missing stats file for db=%s table=%s (expected %s)", db, tableName, statsName)
+			require.Contains(t, names, schemaName, "missing schema file for db=%s table=%s (expected %s)", db, tableName, schemaName)
+		}
 	}
 }
