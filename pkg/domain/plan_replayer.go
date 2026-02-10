@@ -183,8 +183,8 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 	_, _, err := exec.ExecRestrictedSQL(
 		ctx,
 		nil,
-		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, token, presigned_url, instance) values (%?,%?,%?,%?,%?,%?)",
-		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, record.PresignedURL, instance,
+		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, token, instance) values (%?,%?,%?,%?,%?)",
+		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, instance,
 	)
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
@@ -199,8 +199,8 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 		_, _, err = exec.ExecRestrictedSQL(
 			ctx,
 			nil,
-			"insert into mysql.plan_replayer_status (sql_digest, plan_digest, token, presigned_url, instance) values (%?,%?,%?,%?,%?)",
-			record.SQLDigest, record.PlanDigest, record.Token, record.PresignedURL, instance,
+			"insert into mysql.plan_replayer_status (sql_digest, plan_digest, token, instance) values (%?,%?,%?,%?)",
+			record.SQLDigest, record.PlanDigest, record.Token, instance,
 		)
 		if err != nil {
 			logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
@@ -565,7 +565,6 @@ type PlanReplayerStatusRecord struct {
 	PlanDigest   string
 	OriginSQL    string
 	Token        string // file name of the dump
-	PresignedURL string // presigned URL for external storage; empty for local
 	FailedReason string
 }
 

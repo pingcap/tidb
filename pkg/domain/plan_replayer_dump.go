@@ -415,21 +415,20 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 
 func generateRecords(ctx context.Context, task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 	records := make([]PlanReplayerStatusRecord, 0)
-	var presignedURL string
-	if storage, err := extstore.GetGlobalExtStorage(ctx); err == nil {
-		if url, err := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour); err == nil {
-			presignedURL = url
-			task.PresignedURL = url
+	if !task.IsCapture {
+		if storage, err := extstore.GetGlobalExtStorage(ctx); err == nil {
+			if url, err := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour); err == nil {
+				task.PresignedURL = url
+			}
 		}
 	}
 	if len(task.ExecStmts) > 0 {
 		for _, execStmt := range task.ExecStmts {
 			records = append(records, PlanReplayerStatusRecord{
-				SQLDigest:    task.SQLDigest,
-				PlanDigest:   task.PlanDigest,
-				OriginSQL:    execStmt.Text(),
-				Token:        task.FileName,
-				PresignedURL: presignedURL,
+				SQLDigest:  task.SQLDigest,
+				PlanDigest: task.PlanDigest,
+				OriginSQL:  execStmt.Text(),
+				Token:      task.FileName,
 			})
 		}
 	}
@@ -783,11 +782,11 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 }
 
 func dumpPlanReplayerExplain(ctx context.Context, sctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
-	var presignedURL string
-	if storage, err := extstore.GetGlobalExtStorage(ctx); err == nil {
-		if url, err := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour); err == nil {
-			presignedURL = url
-			task.PresignedURL = url
+	if !task.IsCapture {
+		if storage, err := extstore.GetGlobalExtStorage(ctx); err == nil {
+			if url, err := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour); err == nil {
+				task.PresignedURL = url
+			}
 		}
 	}
 	sqls := make([]string, 0)
@@ -795,9 +794,8 @@ func dumpPlanReplayerExplain(ctx context.Context, sctx sessionctx.Context, zw *z
 		sql := execStmt.Text()
 		sqls = append(sqls, sql)
 		*records = append(*records, PlanReplayerStatusRecord{
-			OriginSQL:    sql,
-			Token:        task.FileName,
-			PresignedURL: presignedURL,
+			OriginSQL: sql,
+			Token:     task.FileName,
 		})
 	}
 	debugTraces, err := dumpExplain(sctx, zw, task.Analyze, sqls, false)
