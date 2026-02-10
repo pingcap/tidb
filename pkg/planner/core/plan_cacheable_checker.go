@@ -489,7 +489,7 @@ func (checker *nonPreparedPlanCacheableChecker) Leave(in ast.Node) (out ast.Node
 
 func (*nonPreparedPlanCacheableChecker) isFilterNode(node ast.Node) bool {
 	switch node.(type) {
-	case *ast.BetweenExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr:
+	case *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.IsNullExpr, *ast.PatternInExpr:
 		return true
 	}
 	return false
