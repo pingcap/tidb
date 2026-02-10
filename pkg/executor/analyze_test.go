@@ -210,3 +210,29 @@ func TestAnalyzeSaveResultErrorDoesNotHang(t *testing.T) {
 		t.Fatal("analyze hangs after save analyze result error")
 	}
 }
+
+func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("create table t (a int, b int, key idx_b(b)) partition by hash(a) partitions 4")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockAnalyzeSaveWorkerKill", "1*return(true)")
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tk.ExecToErr("analyze table t")
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("analyze hangs after kill during save")
+	}
+}

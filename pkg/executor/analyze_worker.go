@@ -17,9 +17,11 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
@@ -55,6 +57,22 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 		}
 	}()
 	for results := range worker.resultsCh {
+		mockKill := false
+		failpoint.Inject("mockAnalyzeSaveWorkerKill", func(val failpoint.Value) {
+			if val.(bool) {
+				mockKill = true
+			}
+		})
+		if mockKill {
+			err := exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+			finishJobWithLog(statsHandle, results.Job, err)
+			results.DestroyAndPutToPool()
+			if !errReported {
+				worker.errCh <- err
+				errReported = true
+			}
+			return
+		}
 		if err := worker.killer.HandleSignal(); err != nil {
 			finishJobWithLog(statsHandle, results.Job, err)
 			results.DestroyAndPutToPool()
