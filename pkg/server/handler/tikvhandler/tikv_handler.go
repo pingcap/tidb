@@ -1217,23 +1217,47 @@ func (h DDLCheckHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	checkSQL := fmt.Sprintf("admin check index %s %s", quotedTableName, quotedIndexName)
 
 	rs, err := sctx.Execute(req.Context(), checkSQL)
-	for _, one := range rs {
-		if one != nil {
-			terror.Call(one.Close)
-		}
-	}
-	if err != nil {
-		handler.WriteError(w, err)
+	rows, rowsErr := collectRecordSetRows(req.Context(), sctx, rs)
+	if rowsErr != nil {
+		handler.WriteError(w, rowsErr)
 		return
 	}
 
-	handler.WriteData(w, map[string]any{
+	result := map[string]any{
 		"db":        dbName,
 		"table":     tableName,
 		"index":     indexName,
 		"check_sql": checkSQL,
-		"result":    "success",
-	})
+	}
+	if len(rows) > 0 {
+		result["rows"] = rows
+	}
+
+	if err != nil {
+		result["result"] = "failed"
+		result["error"] = err.Error()
+		handler.WriteData(w, result)
+		return
+	}
+
+	result["result"] = "success"
+	handler.WriteData(w, result)
+}
+
+func collectRecordSetRows(ctx context.Context, se sessionapi.Session, rss []sqlexec.RecordSet) ([][]string, error) {
+	rows := make([][]string, 0)
+	for _, one := range rss {
+		if one == nil {
+			continue
+		}
+		sRows, err := session.ResultSetToStringSlice(ctx, se, one)
+		if err != nil {
+			terror.Call(one.Close)
+			return nil, err
+		}
+		rows = append(rows, sRows...)
+	}
+	return rows, nil
 }
 
 func (h *TableHandler) getPDAddr() ([]string, error) {
