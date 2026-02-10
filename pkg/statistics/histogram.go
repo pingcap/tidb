@@ -1215,6 +1215,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	maxNotNullCount = max(maxNotNullCount, 1)
 	oneValue := float64(maxNotNullCount) / float64(histNDV)
 	oneValue = max(oneValue, 1.0)
+	maxAddedRows := oneValue
 
 	// Step 3: If modifications are not allowed, return the one value.
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
@@ -1253,9 +1254,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// delay before the first update to ModifyCount.
 	// Assume a minimum worst case of 1% of the total row count.
 	onePercentChange := float64(realtimeRowCount) / outOfRangeBetweenRate
-	maxAddedRows := addedRows
+	maxAddedRows = max(maxAddedRows, addedRows)
 	if modifyCount == 0 || addedRows == 0 {
-		maxAddedRows = max(addedRows, onePercentChange)
+		maxAddedRows = max(maxAddedRows, onePercentChange)
 	}
 	// If the realtime row count has decreased, it means there have been
 	// more deletes than inserts. We need to adjust the added rows downward.
@@ -1288,6 +1289,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// Step 9: Calculate the final min/max/est rows including the skew ratio adjustment
 	result.MinEst = min(estRows, oneValue)
+	maxAddedRows = max(estRows, maxAddedRows)
 	// NOTE: Skew ratio is used twice in this function.
 	// This second usage scales the estimate from the base estimate to the max estimate.
 	if skewRatio > 0 {
