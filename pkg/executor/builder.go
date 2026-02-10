@@ -1187,11 +1187,9 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 		for _, sqlStr := range v.StmtList {
 			node, err := b.ctx.GetRestrictedSQLExecutor().ParseWithParams(context.Background(), sqlStr)
 			if err != nil {
-				// If parsing fails, add warning and leave ExecStmts empty
-				// The executor's Next() will return an error when ExecStmts is nil/empty
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("plan replayer: failed to parse SQL: %s, error: %v", sqlStr, err))
-				e.DumpInfo.ExecStmts = nil
-				break
+				// If parsing fails, propagate the error immediately so the statement fails.
+				b.err = errors.Errorf("plan replayer: failed to parse SQL: %s, error: %v", sqlStr, err)
+				return nil
 			}
 			e.DumpInfo.ExecStmts = append(e.DumpInfo.ExecStmts, node)
 		}

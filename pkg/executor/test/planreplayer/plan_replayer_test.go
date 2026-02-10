@@ -227,6 +227,22 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	}
 }
 
+func TestPlanReplayerDumpMultipleError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+
+	// empty statement list should return error
+	tk.MustContainErrMsg("plan replayer dump explain ()", "[parser:1064]")
+
+	// one error statement
+	tk.MustContainErrMsg("plan replayer dump explain ('select x om t')", "[parser:1064]")
+
+	// multiple error statements
+	tk.MustContainErrMsg("plan replayer dump explain ('select x from t', 'select y om t')", "[parser:1064]")
+}
+
 func TestPlanReplayerDumpMultiple(t *testing.T) {
 	const numStmts = 50
 	const numTables = 5
@@ -262,9 +278,6 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 		}
 	}
 	tk.MustExec("use test")
-
-	// empty statement list should return error
-	tk.MustContainErrMsg("plan replayer dump explain ()", "[parser:1064]")
 
 	// Build multiple SQL statements using the tables across multiple databases with fully
 	// qualified names (db.table) so the plan replayer extractor finds them regardless
