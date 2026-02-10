@@ -414,7 +414,60 @@ explain format='brief' select  /*+ force_index(t_varchar, idx_name_prefix) */   
 set @@tidb_opt_partial_ordered_index_for_topn = DEFAULT;
 
 # ==========================================
-# Section 9: Case sensitivity of session variable
+# Section 9: ORDER_INDEX / NO_ORDER_INDEX with session variable combinations
+# ==========================================
+
+# ==========================================
+# Section 9.1: ORDER_INDEX + COST
+# 1) choose partial-order index directly
+# 2) choose normal keep-order index only
+# 3) cannot keep order -> invalid task
+# ==========================================
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'COST';
+
+# 1) partial order index (prefix index) is available in COST mode
+explain format='brief' select /*+ order_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+# 2) choose normal keep-order index
+explain format='brief' select /*+ order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+
+# 3) cannot satisfy keep order requirement
+-- error 1815
+explain format='brief' select /*+ order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by data limit 5;
+
+# ==========================================
+# Section 9.2: ORDER_INDEX + DISABLE
+# 1) normal keep-order index still works
+# 2) cannot keep order -> invalid task
+# ==========================================
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE';
+
+# 1) normal keep-order index
+explain format='brief' select /*+ order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+
+# 2) prefix index cannot be used as keep-order index in DISABLE mode
+-- error 1815
+explain format='brief' select /*+ order_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+# ==========================================
+# Section 9.3: NO_ORDER_INDEX + COST / DISABLE
+# ==========================================
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'COST';
+explain format='brief' select /*+ no_order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+explain format='brief' select /*+ no_order_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE';
+explain format='brief' select /*+ no_order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+explain format='brief' select /*+ no_order_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+# Reset to default
+set @@tidb_opt_partial_ordered_index_for_topn = DEFAULT;
+
+# ==========================================
+# Section 10: Case sensitivity of session variable
 # ==========================================
 
 set @@tidb_opt_partial_ordered_index_for_topn = 'cost';

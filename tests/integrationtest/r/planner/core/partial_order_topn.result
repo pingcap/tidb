@@ -483,6 +483,62 @@ TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, coun
   │ └─IndexFullScan	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
 set @@tidb_opt_partial_ordered_index_for_topn = DEFAULT;
+set @@tidb_opt_partial_ordered_index_for_topn = 'COST';
+explain format='brief' select /*+ order_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+id	estRows	task	access object	operator info
+TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
+└─IndexLookUp	5.00	root		
+  ├─Limit(Build)	5.00	cop[tikv]		offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
+  │ └─IndexFullScan	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
+explain format='brief' select /*+ order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+id	estRows	task	access object	operator info
+IndexLookUp	5.00	root		limit embedded(offset:0, count:5)
+├─Limit(Build)	5.00	cop[tikv]		offset:0, count:5
+│ └─IndexFullScan	5.00	cop[tikv]	table:t_no_prefix, index:idx_name(name)	keep order:true, stats:pseudo
+└─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_no_prefix	keep order:false, stats:pseudo
+explain format='brief' select /*+ order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by data limit 5;
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE';
+explain format='brief' select /*+ order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+id	estRows	task	access object	operator info
+IndexLookUp	5.00	root		limit embedded(offset:0, count:5)
+├─Limit(Build)	5.00	cop[tikv]		offset:0, count:5
+│ └─IndexFullScan	5.00	cop[tikv]	table:t_no_prefix, index:idx_name(name)	keep order:true, stats:pseudo
+└─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_no_prefix	keep order:false, stats:pseudo
+explain format='brief' select /*+ order_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+set @@tidb_opt_partial_ordered_index_for_topn = 'COST';
+explain format='brief' select /*+ no_order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+id	estRows	task	access object	operator info
+TopN	5.00	root		planner__core__partial_order_topn.t_no_prefix.name, offset:0, count:5
+└─IndexLookUp	5.00	root		
+  ├─TopN(Build)	5.00	cop[tikv]		planner__core__partial_order_topn.t_no_prefix.name, offset:0, count:5
+  │ └─IndexFullScan	10000.00	cop[tikv]	table:t_no_prefix, index:idx_name(name)	keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_no_prefix	keep order:false, stats:pseudo
+explain format='brief' select /*+ no_order_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+id	estRows	task	access object	operator info
+TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5
+└─IndexLookUp	5.00	root		
+  ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:false, stats:pseudo
+  └─TopN(Probe)	5.00	cop[tikv]		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5
+    └─TableRowIDScan	10000.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
+set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE';
+explain format='brief' select /*+ no_order_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+id	estRows	task	access object	operator info
+TopN	5.00	root		planner__core__partial_order_topn.t_no_prefix.name, offset:0, count:5
+└─IndexLookUp	5.00	root		
+  ├─TopN(Build)	5.00	cop[tikv]		planner__core__partial_order_topn.t_no_prefix.name, offset:0, count:5
+  │ └─IndexFullScan	10000.00	cop[tikv]	table:t_no_prefix, index:idx_name(name)	keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_no_prefix	keep order:false, stats:pseudo
+explain format='brief' select /*+ no_order_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+id	estRows	task	access object	operator info
+TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5
+└─IndexLookUp	5.00	root		
+  ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:false, stats:pseudo
+  └─TopN(Probe)	5.00	cop[tikv]		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5
+    └─TableRowIDScan	10000.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
+set @@tidb_opt_partial_ordered_index_for_topn = DEFAULT;
 set @@tidb_opt_partial_ordered_index_for_topn = 'cost';
 select @@tidb_opt_partial_ordered_index_for_topn;
 @@tidb_opt_partial_ordered_index_for_topn
