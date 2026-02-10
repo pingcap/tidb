@@ -746,14 +746,22 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	pbExprs := make([]tipb.Expr, 0, len(matchedFuncs))
 	// It represents the TiCI search functions currently.
 	ds.PossibleAccessPaths[0].AccessConds = ds.PossibleAccessPaths[0].AccessConds[:0]
+	parserType := model.FullTextParserTypeStandardV1
+	if index.FullTextInfo != nil {
+		parserType = index.FullTextInfo.ParserType
+	}
 	for ftsFunc := range matchedFuncs {
-		pbExpr := pbConverter.ExprToPB(ftsFunc)
+		rewrittenExpr, _, err := expression.RewriteMySQLMatchAgainstRecursively(ds.SCtx().GetExprCtx(), ftsFunc, parserType)
+		if err != nil {
+			return err
+		}
+		pbExpr := pbConverter.ExprToPB(rewrittenExpr)
 		if pbExpr == nil {
 			// If the expression is not converted to PB, we should return an error.
 			return errors.New("Failed to convert FTS function to PB expression")
 		}
 		pbExprs = append(pbExprs, *pbExpr)
-		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
+		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, rewrittenExpr)
 	}
 
 	// Build tipb protobuf info for the matched index.

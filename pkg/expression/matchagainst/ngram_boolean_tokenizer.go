@@ -22,6 +22,7 @@ const (
 	ngramTokWord ngramTokType = iota
 	ngramTokLParen
 	ngramTokRParen
+	ngramTokUnsupportedOp
 	ngramTokEOF
 )
 
@@ -32,11 +33,7 @@ type ngramToken struct {
 	text  string
 	trunc bool
 
-	// modifiers (apply to this token/group)
-	//
-	// NOTE: These three fields are the inputs to InnoDB's unary op selection
-	// priority (see pickNgramModifier):
-	//   yesno (+ / -) > weightAdjust (> / <) > negateToggle (~).
+	// modifier (applies to this token/phrase)
 	//
 	// yesno corresponds to '+' / '-' prefix operators:
 	//   +1: '+' (must include)
@@ -45,19 +42,11 @@ type ngramToken struct {
 	// In MySQL DEFAULT_FTB_SYNTAX, inside quotes the default behaves like '+'
 	// (required), so defaultYesno() returns 1 when inQuote is true.
 	yesno int8
-	// weightAdjust counts how many '>' and '<' were seen; only its sign matters
-	// (positive => BooleanModifierBoost, negative => BooleanModifierDeBoost).
-	weightAdjust int8
-	// negateToggle is toggled by '~'. If it's true (odd number of '~') and no
-	// higher-priority modifier exists, it becomes BooleanModifierNegate.
-	negateToggle bool
+
+	// Unsupported operator only.
+	op rune
 
 	fromQuote bool
-
-	// '@' handling: mark the first WORD after '@'. If the word is all digits,
-	// it is treated as a distance term (to be ignored by later stages).
-	fromAt     bool
-	isDistance bool
 }
 
 type ngramScanState struct {
@@ -69,9 +58,6 @@ type ngramScanState struct {
 	prevChar rune
 	// inQuote indicates we are inside a quoted phrase (started by '"').
 	inQuote bool
-	// afterAt marks the delimiter '@' to tag the first following word as a
-	// potential distance term (e.g. @"phrase"@2).
-	afterAt bool
 }
 
 func newNgramScanState(input string) *ngramScanState {
@@ -85,16 +71,13 @@ func isNgramWordChar(ch rune) bool {
 	return unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_'
 }
 
-func isAllDigits(s string) bool {
-	if s == "" {
+func isNgramUnsupportedOp(ch rune) bool {
+	switch ch {
+	case '(', ')', '<', '>', '~', '@':
+		return true
+	default:
 		return false
 	}
-	for _, ch := range s {
-		if ch < '0' || ch > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 func (s *ngramScanState) defaultYesno() int8 {
@@ -106,8 +89,6 @@ func (s *ngramScanState) defaultYesno() int8 {
 
 func (s *ngramScanState) nextToken() ngramToken {
 	yesno := s.defaultYesno()
-	var weightAdjust int8
-	var negateToggle bool
 
 	for s.i < len(s.runes) {
 		ch := s.runes[s.i]
@@ -119,32 +100,18 @@ func (s *ngramScanState) nextToken() ngramToken {
 		if s.inQuote && ch == '"' {
 			s.i++
 			return ngramToken{
-				typ:          ngramTokRParen,
-				yesno:        yesno,
-				weightAdjust: weightAdjust,
-				negateToggle: negateToggle,
-				fromQuote:    true,
+				typ:       ngramTokRParen,
+				yesno:     yesno,
+				fromQuote: true,
 			}
 		}
 
 		if !s.inQuote {
-			// '(' / ')' directly produce parenthesis tokens (do not change prevChar).
-			if ch == '(' {
+			if isNgramUnsupportedOp(ch) {
 				s.i++
 				return ngramToken{
-					typ:          ngramTokLParen,
-					yesno:        yesno,
-					weightAdjust: weightAdjust,
-					negateToggle: negateToggle,
-				}
-			}
-			if ch == ')' {
-				s.i++
-				return ngramToken{
-					typ:          ngramTokRParen,
-					yesno:        yesno,
-					weightAdjust: weightAdjust,
-					negateToggle: negateToggle,
+					typ: ngramTokUnsupportedOp,
+					op:  ch,
 				}
 			}
 
@@ -153,11 +120,9 @@ func (s *ngramScanState) nextToken() ngramToken {
 				s.i++
 				s.inQuote = true
 				return ngramToken{
-					typ:          ngramTokLParen,
-					yesno:        yesno,
-					weightAdjust: weightAdjust,
-					negateToggle: negateToggle,
-					fromQuote:    true,
+					typ:       ngramTokLParen,
+					yesno:     yesno,
+					fromQuote: true,
 				}
 			}
 
@@ -172,30 +137,13 @@ func (s *ngramScanState) nextToken() ngramToken {
 					yesno = -1
 					s.i++
 					continue
-				case '>':
-					weightAdjust++
-					s.i++
-					continue
-				case '<':
-					weightAdjust--
-					s.i++
-					continue
-				case '~':
-					negateToggle = !negateToggle
-					s.i++
-					continue
 				}
 			}
 		}
 
 		// Other delimiter: update prevChar, reset modifiers.
-		if ch == '@' {
-			s.afterAt = true
-		}
 		s.prevChar = ch
 		yesno = s.defaultYesno()
-		weightAdjust = 0
-		negateToggle = false
 		s.i++
 	}
 
@@ -226,18 +174,10 @@ func (s *ngramScanState) nextToken() ngramToken {
 		s.i++
 	}
 
-	fromAt := s.afterAt
-	s.afterAt = false
-	isDistance := fromAt && isAllDigits(word)
-
 	return ngramToken{
-		typ:          ngramTokWord,
-		text:         word,
-		trunc:        trunc,
-		yesno:        yesno,
-		weightAdjust: weightAdjust,
-		negateToggle: negateToggle,
-		fromAt:       fromAt,
-		isDistance:   isDistance,
+		typ:   ngramTokWord,
+		text:  word,
+		trunc: trunc,
+		yesno: yesno,
 	}
 }

@@ -81,10 +81,10 @@ func dumpGroup(g *BooleanGroup) string {
 
 func TestParseNgramBooleanMode(t *testing.T) {
 	type testCase struct {
-		name    string
-		input   string
-		want    string
-		wantErr error
+		name            string
+		input           string
+		want            string
+		wantErrContains string
 	}
 
 	cases := []testCase{
@@ -124,34 +124,69 @@ func TestParseNgramBooleanMode(t *testing.T) {
 			want:  "M[] S[foo*] N[]",
 		},
 		{
-			name:  "weight and negate kept in should",
-			input: ">foo <bar ~baz",
-			want:  "M[] S[>foo <bar ~baz] N[]",
+			name:  "non-ASCII term is accepted",
+			input: "你好",
+			want:  "M[] S[你好] N[]",
 		},
 		{
-			name:  "weight prefix accumulates but only sign kept",
-			input: ">>foo <<bar",
-			want:  "M[] S[>foo <bar] N[]",
+			name:  "underscore is part of term",
+			input: "foo_bar baz_qux",
+			want:  "M[] S[foo_bar baz_qux] N[]",
 		},
 		{
-			name:  "weight prefixes can cancel out",
-			input: "><foo <>bar",
+			name:  "digits and letters are one term",
+			input: "123foo",
+			want:  "M[] S[123foo] N[]",
+		},
+		{
+			name:  "newline is treated as delimiter",
+			input: "foo\nbar",
 			want:  "M[] S[foo bar] N[]",
 		},
 		{
-			name:  "multiple prefixes choose by priority yesno over others",
-			input: "+>~foo",
+			name:  "leading '*' before a term is ignored",
+			input: "*foo",
+			want:  "M[] S[foo] N[]",
+		},
+		{
+			name:  "wildcard requires adjacency to the word",
+			input: "foo * bar",
+			want:  "M[] S[foo bar] N[]",
+		},
+		{
+			name:  "multiple prefix signs are tolerated and the last one wins",
+			input: "-+foo",
 			want:  "M[+foo] S[] N[]",
 		},
 		{
-			name:  "multiple prefixes choose by priority weight over negate",
-			input: ">~foo",
-			want:  "M[] S[>foo] N[]",
+			name:  "prefix can be neutralized by delimiter before the term",
+			input: "+*foo",
+			want:  "M[] S[foo] N[]",
 		},
 		{
-			name:  "negate toggle twice cancels",
-			input: "~~foo",
-			want:  "M[] S[foo] N[]",
+			name:            "reject unsupported operator '>'",
+			input:           ">foo",
+			wantErrContains: "unsupported operator '>'",
+		},
+		{
+			name:            "reject unsupported operator '<'",
+			input:           "<bar",
+			wantErrContains: "unsupported operator '<'",
+		},
+		{
+			name:            "reject unsupported operator '~'",
+			input:           "~baz",
+			wantErrContains: "unsupported operator '~'",
+		},
+		{
+			name:            "reject unsupported operator '('",
+			input:           "(foo)",
+			wantErrContains: "unsupported operator '('",
+		},
+		{
+			name:            "reject unsupported operator ')'",
+			input:           "foo)",
+			wantErrContains: "unsupported operator ')'",
 		},
 		{
 			name:  "only negative terms",
@@ -159,44 +194,14 @@ func TestParseNgramBooleanMode(t *testing.T) {
 			want:  "M[] S[] N[-foo -bar]",
 		},
 		{
-			name:  "paren group",
-			input: "+(foo bar)",
-			want:  "M[+(M[] S[foo bar] N[])] S[] N[]",
-		},
-		{
-			name:  "paren group without prefix is should",
-			input: "(foo)",
-			want:  "M[] S[(M[] S[foo] N[])] N[]",
-		},
-		{
-			name:  "prefix before group requires space",
-			input: "a+(foo)",
-			want:  "M[] S[a (M[] S[foo] N[])] N[]",
-		},
-		{
-			name:  "prefix before group with space works",
-			input: "a +(foo)",
-			want:  "M[+(M[] S[foo] N[])] S[a] N[]",
-		},
-		{
-			name:  "ignore applies to group",
-			input: "-(foo bar)",
-			want:  "M[] S[] N[-(M[] S[foo bar] N[])]",
-		},
-		{
-			name:  "nested group and mixed ops",
-			input: "+(foo -(bar baz) >qux)",
-			want:  "M[+(M[] S[foo >qux] N[-(M[] S[bar baz] N[])])] S[] N[]",
-		},
-		{
 			name:  "quoted phrase",
 			input: `"foo bar"`,
 			want:  `M[] S["foo bar"] N[]`,
 		},
 		{
-			name:  "empty quoted phrase",
+			name:  "empty quoted phrase is ignored",
 			input: `""`,
-			want:  `M[] S[""] N[]`,
+			want:  `M[] S[] N[]`,
 		},
 		{
 			name:  "quoted phrase with prefix",
@@ -224,37 +229,63 @@ func TestParseNgramBooleanMode(t *testing.T) {
 			want:  `M[] S["foo" bar] N[]`,
 		},
 		{
+			name:  "quoted phrase can be adjacent to words on both sides",
+			input: `foo"bar"baz`,
+			want:  `M[] S[foo "bar" baz] N[]`,
+		},
+		{
+			name:  "unsupported operators inside quote are treated as delimiters",
+			input: `"a>b ~c (d)"`,
+			want:  `M[] S["a b c d"] N[]`,
+		},
+		{
+			name:  "empty quoted phrase with '+' is ignored",
+			input: `+""`,
+			want:  `M[] S[] N[]`,
+		},
+		{
+			name:  "empty quoted phrase with '-' is ignored",
+			input: `-""`,
+			want:  `M[] S[] N[]`,
+		},
+		{
 			name:  "word after quoted phrase can take prefix if separated by space",
 			input: `"foo" +bar`,
 			want:  `M[+bar] S["foo"] N[]`,
 		},
 		{
-			name:  "@N distance produces ignored word node",
-			input: `"foo"@2 bar`,
-			want:  `M[] S["foo" 2{ign} bar] N[]`,
+			name:            "reject unsupported operator '@' after phrase",
+			input:           `"foo"@2 bar`,
+			wantErrContains: "unsupported operator '@'",
 		},
 		{
-			name:  "@non-numeric is not distance and is not ignored",
-			input: `"foo"@N bar`,
-			want:  `M[] S["foo" N bar] N[]`,
+			name:            "reject unsupported operator '@'",
+			input:           `foo@bar`,
+			wantErrContains: "unsupported operator '@'",
 		},
 		{
-			name:    "unmatched right paren",
-			input:   ")",
-			wantErr: ErrUnmatchedRightParen,
+			name:            "reject unsupported operator '@' with whitespace before distance",
+			input:           `"hello" @10`,
+			wantErrContains: "unsupported operator '@'",
 		},
 		{
-			name:    "unmatched left paren",
-			input:   "(",
-			wantErr: ErrUnmatchedLeftParen,
+			name:            "reject unsupported operator '@' at beginning",
+			input:           `@1`,
+			wantErrContains: "unsupported operator '@'",
+		},
+		{
+			name:            "unsupported operators mixed with supported prefix",
+			input:           "+>~foo",
+			wantErrContains: "unsupported operator '>'",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root, err := ParseNgramBooleanMode(tc.input)
-			if tc.wantErr != nil {
-				require.ErrorIs(t, err, tc.wantErr)
+			if tc.wantErrContains != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantErrContains)
 				return
 			}
 			require.NoError(t, err)
