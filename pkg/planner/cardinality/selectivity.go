@@ -39,10 +39,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	outOfRangeBetweenRate int64 = 100
-)
-
 // Selectivity is a function calculate the selectivity of the expressions on the specified HistColl.
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]`
@@ -537,15 +533,16 @@ const valueAwareRowAddedThreshold = 0.5
 
 // IsLastBucketEndValueUnderrepresented detects when the last value (upper bound) of the last bucket
 // has a suspiciously low count that may be stale due to concentrated writes after ANALYZE.
+// topNCount is the total row count in TopN (pass 0 if the stats have no TopN or when not available).
 func IsLastBucketEndValueUnderrepresented(sctx planctx.PlanContext, hg *statistics.Histogram, val types.Datum,
-	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64) bool {
+	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64, topNCount uint64) bool {
 	if modifyCount <= 0 || len(hg.Buckets) == 0 || histNDV <= 0 {
 		return false
 	}
 
 	// This represents data changes since ANALYZE - we use absolute difference as a proxy for
 	// activity level since we cannot distinguish between inserts, deletes, and updates
-	newRowsAdded := hg.AbsRowCountDifference(realtimeRowCount)
+	newRowsAdded, _ := hg.AbsRowCountDifference(realtimeRowCount, topNCount)
 
 	// Calculate average count per distinct value
 	avgValueCount := hg.NotNullCount() / histNDV
@@ -1035,7 +1032,7 @@ func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl
 			return 0, nil
 		}
 		count := idx.Histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeCnt, modifyCnt, idx.TopN, 0)
-		return count.Est / float64(realtimeCnt), nil
+		return min(count.Est/float64(realtimeCnt), float64(realtimeCnt)), nil
 	}
 
 	minRowCount, crossValidSelectivity, err := crossValidationSelectivity(sctx, coll, idx, usedColsLen, idxPointRange)

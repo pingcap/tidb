@@ -108,8 +108,12 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	// also check if this last bucket end value is underrepresented
+	topNCount := uint64(0)
+	if c.TopN != nil {
+		topNCount = c.TopN.TotalCount()
+	}
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
-		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
+		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount, topNCount) {
 		return statistics.DefaultRowEst(histCnt), nil
 	}
 	// 3. use uniform distribution assumption for the rest, and address special cases for out of range

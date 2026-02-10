@@ -353,9 +353,11 @@ func estimateRowCountWithUniformDistribution(
 
 	histNDV := float64(histogram.NDV - int64(topN.Num()))
 	notNullCount := histogram.NotNullCount()
+	minTopN := topN.MinCount()
 	var count statistics.RowEstimate
 	if histNDV <= 0 || notNullCount == 0 || modifyCount == 0 {
 		// Branch 1: all NDV's are in TopN, and no histograms.
+		// SKewRatio is handed inside the OutOfRangeRowCount function.
 		count = histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeRowCount, modifyCount, topN, skewRatio)
 	} else {
 		// Branch 2: some NDV's are in histograms
@@ -363,13 +365,21 @@ func estimateRowCountWithUniformDistribution(
 		// Calculate histNDV excluding TopN from NDV
 		count.MinEst = 0
 		count.Est = float64(notNullCount) / float64(histNDV)
+		if skewRatio > 0 {
+			// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+			skewEstimate := notNullCount - (histNDV - 1)
+			if minTopN > 0 {
+				// The skewEstimate should not be larger than the minimum TopN value.
+				skewEstimate = min(skewEstimate, float64(minTopN))
+			}
+			count = statistics.CalculateSkewRatioCounts(count.Est, skewEstimate, skewRatio)
+		}
 	}
 
-	minTopN := float64(topN.MinCount())
-	if count.MaxEst > count.Est && minTopN > count.Est {
-		count.MaxEst = min(count.MaxEst, minTopN)
+	if count.MaxEst > count.Est && float64(minTopN) > count.Est {
+		count.MaxEst = min(count.MaxEst, float64(minTopN))
 	} else {
-		count.MaxEst = max(count.Est, minTopN)
+		count.MaxEst = max(count.Est, float64(minTopN))
 	}
 
 	return count
@@ -407,8 +417,12 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	// also check if this last bucket end value is underrepresented
+	topNCount := uint64(0)
+	if idx.TopN != nil {
+		topNCount = idx.TopN.TotalCount()
+	}
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
-		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
+		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount, topNCount) {
 		return statistics.DefaultRowEst(histCnt)
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
