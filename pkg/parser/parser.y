@@ -6497,18 +6497,6 @@ IndexOption:
 			PrimaryKeyTp: $1.(model.PrimaryKeyType),
 		}
 	}
-|	"GLOBAL"
-	{
-		$$ = &ast.IndexOption{
-			Global: true,
-		}
-	}
-|	"LOCAL"
-	{
-		$$ = &ast.IndexOption{
-			Global: false,
-		}
-	}
 |	"PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
 	{
 		$$ = &ast.IndexOption{
