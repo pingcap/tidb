@@ -1238,6 +1238,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			// When `tidb_foreign_key_check_in_shared_lock` is off, lock all keys in exclusive mode
 			keys = txnCtx.CollectUnchangedKeysForXLock(keys)
 			keys = txnCtx.CollectUnchangedKeysForSLock(keys)
+			startLock := time.Now()
 			ex, err := tryLockKeys(e, keys, false)
 			if err != nil {
 				return err
@@ -1246,6 +1247,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 				e = ex
 				continue
 			}
+			updateFKCheckLockStats(e, time.Since(startLock))
 			return nil
 		}
 
@@ -1265,14 +1267,33 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 
 		// acquire slocks
 		keys = txnCtx.CollectUnchangedKeysForSLock(keys[:0])
+		startLock := time.Now()
 		if ex, err := tryLockKeys(e, keys, true); err != nil {
 			return err
 		} else if ex != nil {
 			e = ex
 			continue
 		}
+		updateFKCheckLockStats(e, time.Since(startLock))
 
 		return nil
+	}
+}
+
+// updateFKCheckLockStats updates the Lock stats of FK check executors after the deferred
+// pessimistic lock phase completes. In pessimistic mode, FK check keys are not locked
+// inline during doCheck but deferred to handlePessimisticDML. This function attributes
+// the lock duration back to FK check runtime stats.
+func updateFKCheckLockStats(e exec.Executor, lockDur time.Duration) {
+	fkExec, ok := e.(WithForeignKeyTrigger)
+	if !ok {
+		return
+	}
+	for _, fkCheck := range fkExec.GetFKChecks() {
+		if fkCheck.stats != nil {
+			fkCheck.stats.Lock = lockDur
+			fkCheck.stats.Total += lockDur
+		}
 	}
 }
 
