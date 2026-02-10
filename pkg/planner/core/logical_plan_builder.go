@@ -5886,7 +5886,8 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	for name := range modifyColumns {
 		for _, tn := range tableList {
 			tnW := b.resolveCtx.GetTableName(tn)
-			if tnW.DBInfo.Name.L != name.db || tn.Name.L != name.tbl || tnW.TableInfo.SoftdeleteInfo == nil {
+			if isCTE(tnW) || tnW.TableInfo.IsView() || tnW.TableInfo.IsSequence() ||
+				tnW.DBInfo.Name.L != name.db || tn.Name.L != name.tbl || tnW.TableInfo.SoftdeleteInfo == nil {
 				continue
 			}
 			for _, colInfo := range tnW.TableInfo.Columns {
