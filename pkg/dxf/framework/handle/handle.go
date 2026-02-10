@@ -331,7 +331,7 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 	var clusterIDStr string
 	if !compat.IsEnabled() && prefix.String() != "" {
 		if s, ok := store.(kv.StorageWithPD); ok {
-			clusterIDStr = path.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10))
+			clusterIDStr = strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10)
 		} else {
 			logutil.BgLogger().Warn("Can't get cluster id from store, use default cloud storage uri",
 				zap.String("schema", u.Scheme),
@@ -343,7 +343,7 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 
 	const dxfPrefix = "dxf"
 	u.Path = prefix.JoinStr(path.Join(dxfPrefix, clusterIDStr)).String()
-	return cloudURI
+	return u.String()
 }
 
 // UpdatePauseScaleInFlag updates the pause scale-in flag.
