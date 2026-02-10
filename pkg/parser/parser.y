@@ -16173,6 +16173,7 @@ RowStmt:
  * 		[DUMP EXPLAIN
  *			[ANALYZE]
  *			{ExplainableStmt
+ *			| ExecuteStmt
  *			| [WHERE where_condition]
  *			  [ORDER BY {col_name | expr | position}
  *    			[ASC | DESC], ... [WITH ROLLUP]]
@@ -16186,6 +16187,44 @@ PlanReplayerStmt:
 	{
 		x := &ast.PlanReplayerStmt{
 			Stmt:    $6,
+			Analyze: false,
+			Load:    false,
+			File:    "",
+			Where:   nil,
+			OrderBy: nil,
+			Limit:   nil,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt "EXPLAIN" ExecuteStmt
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    $6,
+			Analyze: false,
+			Load:    false,
+			File:    "",
+			Where:   nil,
+			OrderBy: nil,
+			Limit:   nil,
+		}
+		if $4 != nil {
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" PlanReplayerDumpOpt ExecuteStmt
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    $5,
 			Analyze: false,
 			Load:    false,
 			File:    "",

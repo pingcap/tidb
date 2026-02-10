@@ -7548,6 +7548,7 @@ func TestPlanReplayer(t *testing.T) {
 		{"PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'", true, "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'"},
 		{"PLAN REPLAYER DUMP EXPLAIN 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'"},
 		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'"},
+		{"PLAN REPLAYER DUMP EXECUTE stmt1 USING @a", true, "PLAN REPLAYER DUMP EXPLAIN EXECUTE `stmt1` USING @`a`"},
 		{"PLAN REPLAYER CAPTURE '123' '123'", true, "PLAN REPLAYER CAPTURE '123' '123'"},
 		{"PLAN REPLAYER CAPTURE REMOVE '123' '123'", true, "PLAN REPLAYER CAPTURE REMOVE '123' '123'"},
 	}
@@ -7567,6 +7568,13 @@ func TestPlanReplayer(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "SELECT a FROM t", v.Stmt.Text())
 	require.True(t, v.Analyze)
+
+	sms, _, err = p.Parse("PLAN REPLAYER DUMP EXECUTE stmt1 USING @a", "", "")
+	require.NoError(t, err)
+	v, ok = sms[0].(*ast.PlanReplayerStmt)
+	require.True(t, ok)
+	require.Equal(t, "EXECUTE stmt1 USING @a", v.Stmt.Text())
+	require.False(t, v.Analyze)
 }
 
 func TestTrafficStmt(t *testing.T) {
