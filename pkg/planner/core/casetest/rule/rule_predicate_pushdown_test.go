@@ -49,13 +49,52 @@ func runPredicatePushdownTestData(t *testing.T, tk *testkit.TestKit, cascades, n
 	}
 }
 
+func runPredicatePushdownTestDataWithResult(t *testing.T, tk *testkit.TestKit, cascades, name string) {
+	var input []string
+	var output []struct {
+		SQL     string
+		Plan    []string
+		Result  []string
+		Warning []string
+	}
+	predicatePushdownSuiteData := GetPredicatePushdownSuiteData()
+	predicatePushdownSuiteData.LoadTestCasesByName(name, t, &input, &output, cascades)
+	require.Equal(t, len(input), len(output))
+	for i := range input {
+		if strings.Contains(input[i], "set") {
+			tk.MustExec(input[i])
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + input[i]).Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + input[i]).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func TestConstantPropagateWithCollation(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec("create table t (id int primary key, name varchar(20));")
 		tk.MustExec(`create table foo(a int, b int, c int, primary key(a));`)
 		tk.MustExec(`create table bar(a int, b int, c int, primary key(a));`)
-		runPredicatePushdownTestData(t, tk, cascades, "TestConstantPropagateWithCollation")
+		tk.MustExec("create table t0 (k0 int, p1 bigint)")
+		tk.MustExec("create table t1 (k0 int, d0 varchar(64))")
+		tk.MustExec("create table t2 (k0 int, k1 int)")
+		tk.MustExec("create table t3 (k0 int, d0 decimal(12,2))")
+		tk.MustExec("create table t4 (k0 int)")
+		tk.MustExec("drop table if exists t1_65994")
+		tk.MustExec("drop table if exists t2_65994")
+		tk.MustExec("create table t1_65994 (a int, b int)")
+		tk.MustExec("create table t2_65994 (a int, b int)")
+		tk.MustExec("insert into t0 values (1, 10), (2, 20), (3, 30)")
+		tk.MustExec("insert into t2 values (1, 100), (3, 300), (4, 400)")
+		runPredicatePushdownTestDataWithResult(t, tk, cascades, "TestConstantPropagateWithCollation")
 	})
 }
 

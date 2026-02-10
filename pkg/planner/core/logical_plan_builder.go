@@ -1514,7 +1514,8 @@ func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (re
 
 func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression.Expression {
 	// current block doesn't have an expand OP, just return it.
-	if b.currentBlockExpand == nil {
+	// expr can be nil when rewrite eliminates a predicate in non-scalar contexts.
+	if b.currentBlockExpand == nil || expr == nil {
 		return expr
 	}
 	// curExpand can supply the DistinctGbyExprs and gid col.
