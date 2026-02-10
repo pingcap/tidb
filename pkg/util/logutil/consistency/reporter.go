@@ -47,13 +47,18 @@ var (
 	ErrAdminCheckInconsistentWithColInfo = dbterror.ClassExecutor.NewStd(errno.ErrDataInconsistentMismatchIndex)
 )
 
+// GetMVCCByKeyResp get the MVCC resp.
+func GetMVCCByKeyResp(tikvStore helper.Storage, key kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	h := helper.NewHelper(tikvStore)
+	return h.GetMvccByEncodedKey(key)
+}
+
 // GetMvccByKey gets the MVCC value by key, and returns a json string including decoded data
 func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any)) string {
 	if key == nil {
 		return ""
 	}
-	h := helper.NewHelper(tikvStore)
-	data, err := h.GetMvccByEncodedKey(key)
+	mvccResp, err := GetMVCCByKeyResp(tikvStore, key)
 	if err != nil {
 		return ""
 	}
@@ -64,11 +69,11 @@ func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key
 	resp := map[string]any{
 		"key":      decodeKey,
 		"regionID": regionID,
-		"mvcc":     data,
+		"mvcc":     mvccResp,
 	}
 
 	if decodeMvccFn != nil {
-		decodeMvccFn(key, data, resp)
+		decodeMvccFn(key, mvccResp, resp)
 	}
 
 	rj, err := json.Marshal(resp)
@@ -260,6 +265,9 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 		zap.Stringer("row_id", redact.Stringer(rmode, handle)),
 		zap.Stringer("index", redact.Stringer(rmode, idxRow)),
 		zap.Stringer("row", redact.Stringer(rmode, tblRow)),
+	}
+	if handle.IsInt() {
+		fs = append(fs, zap.Int64("int_handle", handle.IntValue()))
 	}
 	if rmode != errors.RedactLogEnable {
 		store, ok := r.Storage.(helper.Storage)
