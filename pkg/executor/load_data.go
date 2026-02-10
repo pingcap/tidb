@@ -344,6 +344,7 @@ func createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) 
 		rowLen:         len(insertColumns),
 		hasExtraHandle: hasExtraHandle,
 		activeActive:   newActiveActiveTableInfo(e.table.Meta()),
+		softDelete:     newSoftDeleteTableInfo(e.table.Meta()),
 	}
 	if len(insertColumns) > 0 {
 		ret.initEvalBuffer()

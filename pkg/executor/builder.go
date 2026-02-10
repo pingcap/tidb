@@ -1020,6 +1020,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 		rowLen:                    v.RowLen,
 		ignoreErr:                 v.IgnoreErr,
 		activeActive:              newActiveActiveTableInfo(v.Table.Meta()),
+		softDelete:                newSoftDeleteTableInfo(v.Table.Meta()),
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
