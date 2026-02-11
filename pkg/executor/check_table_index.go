@@ -282,14 +282,11 @@ type AdminCheckIndexInconsistentSummary struct {
 }
 
 // AdminCheckIndexInconsistentCollector collects inconsistent handles for one statement execution.
-// It is enabled only when the execution context carries this collector.
 type AdminCheckIndexInconsistentCollector struct {
-	count atomic.Uint64
-	first atomic.Pointer[error]
-
 	collectLimit int
 
 	mu     sync.Mutex
+	first  error
 	rows   []AdminCheckIndexInconsistentRow
 	rowSet map[string]struct{}
 }
@@ -311,29 +308,6 @@ func NewAdminCheckIndexInconsistentCollectorWithLimit(limit int) *AdminCheckInde
 	}
 }
 
-type adminCheckIndexCollectorCtxKeyType struct{}
-
-var adminCheckIndexCollectorCtxKey = adminCheckIndexCollectorCtxKeyType{}
-
-// WithAdminCheckIndexInconsistentCollector enables collecting inconsistent handles in fast check.
-func WithAdminCheckIndexInconsistentCollector(
-	ctx context.Context,
-	collector *AdminCheckIndexInconsistentCollector,
-) context.Context {
-	if collector == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, adminCheckIndexCollectorCtxKey, collector)
-}
-
-func adminCheckIndexCollectorFromContext(ctx context.Context) *AdminCheckIndexInconsistentCollector {
-	collector, ok := ctx.Value(adminCheckIndexCollectorCtxKey).(*AdminCheckIndexInconsistentCollector)
-	if !ok {
-		return nil
-	}
-	return collector
-}
-
 func (c *AdminCheckIndexInconsistentCollector) recordInconsistent(
 	handle string,
 	mismatchType AdminCheckIndexInconsistentType,
@@ -342,7 +316,12 @@ func (c *AdminCheckIndexInconsistentCollector) recordInconsistent(
 	if err == nil {
 		return
 	}
-	c.first.CompareAndSwap(nil, &err)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.first == nil {
+		c.first = err
+	}
 	if handle == "" {
 		return
 	}
@@ -350,31 +329,34 @@ func (c *AdminCheckIndexInconsistentCollector) recordInconsistent(
 	// Deduplicate by (handle, mismatch_type) so one handle can still appear
 	// multiple times when different mismatch types are detected.
 	rowKey := handle + "\x00" + string(mismatchType)
-	c.mu.Lock()
 	if _, exists := c.rowSet[rowKey]; exists {
-		c.mu.Unlock()
 		return
 	}
 	if c.collectLimit > 0 && len(c.rows) >= c.collectLimit {
-		c.mu.Unlock()
 		return
 	}
 	c.rowSet[rowKey] = struct{}{}
 	c.rows = append(c.rows, AdminCheckIndexInconsistentRow{Handle: handle, MismatchType: mismatchType})
-	c.mu.Unlock()
+}
 
-	c.count.Add(1)
+func (c *AdminCheckIndexInconsistentCollector) recordErr(err error) {
+	if c == nil || err == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.first == nil {
+		c.first = err
+	}
+	c.mu.Unlock()
 }
 
 func (c *AdminCheckIndexInconsistentCollector) firstErr() error {
 	if c == nil {
 		return nil
 	}
-	err := c.first.Load()
-	if err == nil {
-		return nil
-	}
-	return *err
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.first
 }
 
 // Summary returns a copy of collected inconsistency rows.
@@ -386,10 +368,11 @@ func (c *AdminCheckIndexInconsistentCollector) Summary() *AdminCheckIndexInconsi
 	c.mu.Lock()
 	rows := make([]AdminCheckIndexInconsistentRow, len(c.rows))
 	copy(rows, c.rows)
+	count := uint64(len(c.rows))
 	c.mu.Unlock()
 
 	return &AdminCheckIndexInconsistentSummary{
-		InconsistentRowCount: c.count.Load(),
+		InconsistentRowCount: count,
 		Rows:                 rows,
 	}
 }
@@ -470,14 +453,12 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return nil
 	}
 	defer func() { e.done = true }()
-	collectAll := e.Ctx().GetSessionVars().FastCheckTableCollectInconsistent
+	sessVars := e.Ctx().GetSessionVars()
+	collectAll := sessVars.FastCheckTableCollectInconsistent
+	sessVars.FastCheckTableInconsistentSummary = nil
 	if collectAll {
-		// Collector mode is opened by session variable. HTTP API injects its own
-		// collector via context to receive mismatched handles in response (optionally capped).
-		e.collector = adminCheckIndexCollectorFromContext(ctx)
-		if e.collector == nil {
-			e.collector = NewAdminCheckIndexInconsistentCollector()
-		}
+		// Collector mode is opened by session variable.
+		e.collector = NewAdminCheckIndexInconsistentCollectorWithLimit(sessVars.FastCheckTableInconsistentLimit)
 	} else {
 		// Keep original fail-fast path untouched when switch is disabled.
 		e.collector = nil
@@ -502,6 +483,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	workerPool.ReleaseAndWait()
 
 	if e.collector != nil {
+		sessVars.FastCheckTableInconsistentSummary = e.collector.Summary()
 		if firstErr := e.collector.firstErr(); firstErr != nil {
 			return firstErr
 		}
@@ -573,9 +555,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			trySaveErr(err)
 			return true
 		}
-		// HTTP collector path: keep the first error but continue to collect
+		// Collector path: keep the first error but continue to collect
 		// mismatched handles from other buckets.
-		w.e.collector.first.CompareAndSwap(nil, &err)
+		w.e.collector.recordErr(err)
 		trySaveErr(err)
 		return true
 	}

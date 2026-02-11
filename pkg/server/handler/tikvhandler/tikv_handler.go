@@ -1200,20 +1200,27 @@ func (h AdminCheckIndexHandler) checkIndexByName(dbName, tableName, indexName st
 		return nil, err
 	}
 
-	collector := executor.NewAdminCheckIndexInconsistentCollectorWithLimit(limit)
-	// Attach collector to execution context so fast admin check can collect
-	// up to `limit` mismatched handles instead of stopping at the first error.
-	checkCtx := executor.WithAdminCheckIndexInconsistentCollector(context.Background(), collector)
+	sessVars := se.GetSessionVars()
+	sessVars.FastCheckTableInconsistentLimit = limit
+	sessVars.FastCheckTableInconsistentSummary = nil
+	defer func() {
+		sessVars.FastCheckTableInconsistentLimit = 0
+		sessVars.FastCheckTableInconsistentSummary = nil
+	}()
+
 	checkSQL := fmt.Sprintf("admin check index %s %s", quoteTable(dbName, tableName), quoteName(indexName))
 
-	rs, execErr := se.Execute(checkCtx, checkSQL)
+	rs, execErr := se.Execute(context.Background(), checkSQL)
 	for _, one := range rs {
 		if one != nil {
 			terror.Call(one.Close)
 		}
 	}
 
-	summary := collector.Summary()
+	summary, _ := sessVars.FastCheckTableInconsistentSummary.(*executor.AdminCheckIndexInconsistentSummary)
+	if summary == nil {
+		summary = &executor.AdminCheckIndexInconsistentSummary{}
+	}
 	// Return SQL error only when no inconsistency rows were collected.
 	// If rows are collected, ServeHTTP still returns the summary payload.
 	if execErr != nil && summary.InconsistentRowCount == 0 {
