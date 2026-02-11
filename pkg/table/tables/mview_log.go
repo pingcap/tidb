@@ -114,10 +114,7 @@ func WrapTableWithMaterializedViewLog(
 	for _, c := range mlogMeta.MaterializedViewLog.Columns {
 		offset, ok := baseColOffsetByName[c.L]
 		if !ok {
-			return nil, errors.Errorf(
-				"wrap table with mlog: base column %s not found",
-				c.O,
-			)
+			return nil, errors.Errorf("wrap table with mlog: base column %s not found", c.O)
 		}
 		trackedOffsets = append(trackedOffsets, offset)
 	}
@@ -296,7 +293,7 @@ func (t *mlogTable) writeMLogRow(
 	for _, offset := range t.trackedBaseOffsets {
 		if offset < 0 || offset >= len(baseRow) {
 			return errors.Errorf(
-				"write mlog row: base row too short, need offset=%d, row len=%d",
+				"write mlog row: column at offset %d is missing from the base row (len %d)",
 				offset,
 				len(baseRow),
 			)
