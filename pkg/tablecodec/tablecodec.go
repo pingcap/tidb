@@ -1225,6 +1225,10 @@ func hybridShardingIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInf
 	return values, nil
 }
 
+// fulltextIndexKeyValues returns the datum list used to build a fulltext index key.
+// For fulltext indexes, the key is intentionally filled with PK values from the handle
+// rather than the indexed document columns. This behavior was requested by TiCi so
+// global sort during reorg/backfill orders index entries by PK instead of fulltext columns.
 func fulltextIndexKeyValues(tblInfo *model.TableInfo, h kv.Handle) ([]types.Datum, bool, error) {
 	if h == nil {
 		return nil, false, errors.New("fulltext index requires handle for primary key encoding")
@@ -1284,6 +1288,8 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	keyValues := indexedValues
 	fulltextKeyed := false
 	if idxInfo.FullTextInfo != nil {
+		// TiCi requires fulltext index keys to be PK-derived, so we switch key payload
+		// from fulltext document values to handle/PK values here for global-sort ordering.
 		keyValues, fulltextKeyed, err = fulltextIndexKeyValues(tblInfo, h)
 		if err != nil {
 			return nil, false, err

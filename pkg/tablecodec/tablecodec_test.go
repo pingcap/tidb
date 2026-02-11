@@ -796,6 +796,174 @@ func TestFulltextIndexEncodingCommonHandleCompositePK(t *testing.T) {
 	require.Equal(t, indexedValues[0], decodedMap[colDoc.ID])
 }
 
+func TestFulltextIndexKeyValues(t *testing.T) {
+	t.Run("nil handle", func(t *testing.T) {
+		_, _, err := fulltextIndexKeyValues(&model.TableInfo{}, nil)
+		require.ErrorContains(t, err, "fulltext index requires handle")
+	})
+
+	t.Run("common handle without primary key", func(t *testing.T) {
+		colPK := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+		tblInfo := &model.TableInfo{
+			ID:                  13,
+			IsCommonHandle:      true,
+			CommonHandleVersion: 1,
+			Columns:             []*model.ColumnInfo{colPK},
+		}
+		handleRaw, err := codec.EncodeKey(time.UTC, nil, types.NewStringDatum("abcd"))
+		require.NoError(t, err)
+		handle, err := kv.NewCommonHandle(handleRaw)
+		require.NoError(t, err)
+
+		_, _, err = fulltextIndexKeyValues(tblInfo, handle)
+		require.ErrorContains(t, err, "fulltext index requires primary key")
+	})
+
+	t.Run("common handle composite primary key", func(t *testing.T) {
+		colPKInt := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+		colPKStr := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+		pkIdx := &model.IndexInfo{
+			ID:      1,
+			Name:    ast.NewCIStr("PRIMARY"),
+			Primary: true,
+			Unique:  true,
+			Columns: []*model.IndexColumn{
+				{Offset: 1, Length: 2},
+				{Offset: 0, Length: types.UnspecifiedLength},
+			},
+		}
+		tblInfo := &model.TableInfo{
+			ID:                  14,
+			IsCommonHandle:      true,
+			CommonHandleVersion: 1,
+			Columns:             []*model.ColumnInfo{colPKInt, colPKStr},
+			Indices:             []*model.IndexInfo{pkIdx},
+		}
+		handleRaw, err := codec.EncodeKey(time.UTC, nil, types.NewStringDatum("wxyz"), types.NewIntDatum(8))
+		require.NoError(t, err)
+		handle, err := kv.NewCommonHandle(handleRaw)
+		require.NoError(t, err)
+
+		values, keyed, err := fulltextIndexKeyValues(tblInfo, handle)
+		require.NoError(t, err)
+		require.True(t, keyed)
+		require.Len(t, values, 2)
+		require.Equal(t, types.NewStringDatum("wx"), values[0])
+		require.Equal(t, types.NewIntDatum(8), values[1])
+	})
+
+	t.Run("int handle pk is handle unsigned", func(t *testing.T) {
+		colID := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+		colID.AddFlag(mysql.PriKeyFlag)
+		colID.AddFlag(mysql.UnsignedFlag)
+		pkIdx := &model.IndexInfo{
+			ID:      1,
+			Name:    ast.NewCIStr("PRIMARY"),
+			Primary: true,
+			Unique:  true,
+			Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+		}
+		tblInfo := &model.TableInfo{
+			ID:         15,
+			PKIsHandle: true,
+			Columns:    []*model.ColumnInfo{colID},
+			Indices:    []*model.IndexInfo{pkIdx},
+		}
+
+		values, keyed, err := fulltextIndexKeyValues(tblInfo, kv.IntHandle(11))
+		require.NoError(t, err)
+		require.True(t, keyed)
+		require.Len(t, values, 1)
+		require.Equal(t, types.NewUintDatum(11), values[0])
+	})
+
+	t.Run("int handle fallback rowid", func(t *testing.T) {
+		colDoc := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+		tblInfo := &model.TableInfo{
+			ID:      16,
+			Columns: []*model.ColumnInfo{colDoc},
+		}
+
+		values, keyed, err := fulltextIndexKeyValues(tblInfo, kv.IntHandle(123))
+		require.NoError(t, err)
+		require.True(t, keyed)
+		require.Len(t, values, 1)
+		require.Equal(t, types.NewIntDatum(123), values[0])
+	})
+}
+
+func TestFulltextIndexEncodingIntHandleFallback(t *testing.T) {
+	colDoc := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+	tblInfo := &model.TableInfo{
+		ID:      17,
+		Columns: []*model.ColumnInfo{colDoc},
+	}
+	fulltextIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_fts"),
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	tblInfo.Indices = []*model.IndexInfo{fulltextIdx}
+
+	indexedValues := []types.Datum{types.NewStringDatum("document body")}
+	key, distinct, err := GenIndexKey(time.UTC, tblInfo, fulltextIdx, tblInfo.ID, indexedValues, kv.IntHandle(77), nil)
+	require.NoError(t, err)
+	require.False(t, distinct)
+
+	valuesBytes, handleBytes, err := CutIndexKeyNew(key, 1)
+	require.NoError(t, err)
+	require.Empty(t, handleBytes)
+	_, decodedID, err := codec.DecodeOne(valuesBytes[0])
+	require.NoError(t, err)
+	require.Equal(t, types.NewIntDatum(77), decodedID)
+}
+
+func TestGenIndexKeyFulltextErrors(t *testing.T) {
+	fulltextIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_fts"),
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	indexedValues := []types.Datum{types.NewStringDatum("doc")}
+
+	t.Run("missing handle", func(t *testing.T) {
+		colDoc := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+		tblInfo := &model.TableInfo{
+			ID:      18,
+			Columns: []*model.ColumnInfo{colDoc},
+		}
+		tblInfo.Indices = []*model.IndexInfo{fulltextIdx}
+
+		_, _, err := GenIndexKey(time.UTC, tblInfo, fulltextIdx, tblInfo.ID, indexedValues, nil, nil)
+		require.ErrorContains(t, err, "fulltext index requires handle")
+	})
+
+	t.Run("common handle without primary key", func(t *testing.T) {
+		colPK := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+		tblInfo := &model.TableInfo{
+			ID:                  19,
+			IsCommonHandle:      true,
+			CommonHandleVersion: 1,
+			Columns:             []*model.ColumnInfo{colPK},
+		}
+		tblInfo.Indices = []*model.IndexInfo{fulltextIdx}
+
+		handleRaw, err := codec.EncodeKey(time.UTC, nil, types.NewStringDatum("pk"))
+		require.NoError(t, err)
+		handle, err := kv.NewCommonHandle(handleRaw)
+		require.NoError(t, err)
+
+		_, _, err = GenIndexKey(time.UTC, tblInfo, fulltextIdx, tblInfo.ID, indexedValues, handle, nil)
+		require.ErrorContains(t, err, "fulltext index requires primary key")
+	})
+}
+
 func TestCutPrefix(t *testing.T) {
 	key := EncodeTableIndexPrefix(42, 666)
 	res := CutRowKeyPrefix(key)
