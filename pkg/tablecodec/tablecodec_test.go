@@ -730,7 +730,10 @@ func TestFulltextIndexEncoding(t *testing.T) {
 
 func TestFulltextIndexEncodingCommonHandleCompositePK(t *testing.T) {
 	colPKInt := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
-	colDoc := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+	colDocType := types.NewFieldType(mysql.TypeVarchar)
+	colDocType.SetCharset(charset.CharsetUTF8MB4)
+	colDocType.SetCollate("utf8mb4_general_ci")
+	colDoc := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *colDocType}
 	colPKStr := &model.ColumnInfo{ID: 3, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
 
 	tblInfo := &model.TableInfo{
@@ -764,7 +767,7 @@ func TestFulltextIndexEncodingCommonHandleCompositePK(t *testing.T) {
 	handle, err := kv.NewCommonHandle(handleRaw)
 	require.NoError(t, err)
 
-	indexedValues := []types.Datum{types.NewStringDatum("hello world")}
+	indexedValues := []types.Datum{types.NewCollationStringDatum("hello world", "utf8mb4_general_ci")}
 	key, distinct, err := GenIndexKey(time.UTC, tblInfo, fulltextIdx, tblInfo.ID, indexedValues, handle, nil)
 	require.NoError(t, err)
 	require.False(t, distinct)
@@ -775,7 +778,7 @@ func TestFulltextIndexEncodingCommonHandleCompositePK(t *testing.T) {
 
 	_, decodedPKStr, err := codec.DecodeOne(valuesBytes[0])
 	require.NoError(t, err)
-	require.Equal(t, types.NewStringDatum("abc"), decodedPKStr)
+	require.Equal(t, types.NewBytesDatum([]byte("abc")), decodedPKStr)
 
 	_, decodedPKInt, err := codec.DecodeOne(valuesBytes[1])
 	require.NoError(t, err)
