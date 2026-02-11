@@ -512,13 +512,13 @@ IndexLookUp_7	10000.00	root
 │ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 do sleep(0.1);
-explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 as of timestamp NOW(6) - interval 0.05 second;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 as of timestamp NOW(6) - interval 0.1 second;
 id	estRows	task	access object	operator info
 TableReader_6	10000.00	root		data:TableFullScan_5
 └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, stale read is not supported
-start transaction read only as of timestamp now(6) - interval 0.05 second;
+start transaction read only as of timestamp now(6) - interval 0.1 second;
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
 id	estRows	task	access object	operator info
 TableReader_6	10000.00	root		data:TableFullScan_5
@@ -526,7 +526,7 @@ TableReader_6	10000.00	root		data:TableFullScan_5
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, stale read is not supported
 rollback;
-set transaction read only as of timestamp now(6) - interval 0.05 second;
+set transaction read only as of timestamp now(6) - interval 0.1 second;
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
 id	estRows	task	access object	operator info
 TableReader_6	10000.00	root		data:TableFullScan_5
@@ -534,7 +534,7 @@ TableReader_6	10000.00	root		data:TableFullScan_5
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, stale read is not supported
 insert ignore into mysql.tidb VALUES ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800', 'mock for index lookup push down test');
-set @@tidb_snapshot=(now(6) - interval 0.05 second);
+set @@tidb_snapshot=(now(6) - interval 0.1 second);
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
 id	estRows	task	access object	operator info
 TableReader_6	10000.00	root		data:TableFullScan_5
