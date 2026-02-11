@@ -100,30 +100,23 @@ func TestMLogInsert(t *testing.T) {
 	tk.MustExec("create table t (a int primary key, b int, c int)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
+	// Single-row insert.
 	tk.MustExec("insert into t values (1, 10, 100)")
 	tk.MustQuery(
 		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Check(testkit.Rows(
 		"1 10 100 I 1",
 	))
-}
 
-func TestMLogMultiRowInsert(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t (a int primary key, b int, c int)")
-	tk.MustExec("create materialized view log on t (a, b, c)")
-
-	tk.MustExec("insert into t values (1,10,100), (2,20,200), (3,30,300)")
-
+	// Multi-row insert.
+	tk.MustExec("delete from `$mlog$t`")
+	tk.MustExec("insert into t values (2,20,200), (3,30,300), (4,40,400)")
 	tk.MustQuery(
 		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a",
 	).Check(testkit.Rows(
-		"1 10 100 I 1",
 		"2 20 200 I 1",
 		"3 30 300 I 1",
+		"4 40 400 I 1",
 	))
 }
 
@@ -133,15 +126,28 @@ func TestMLogUpdate(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
-	tk.MustExec("insert into t values (1,10,100)")
+	tk.MustExec("insert into t values (1,10,100), (2,20,200), (3,30,300)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
+	// Single-row update.
 	tk.MustExec("update t set c=101 where a=1")
 	tk.MustQuery(
 		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Sort().Check(testkit.Rows(
 		"1 10 100 U -1",
 		"1 10 101 U 1",
+	))
+
+	// Multi-row update.
+	tk.MustExec("delete from `$mlog$t`")
+	tk.MustExec("update t set c = c + 1 where a in (2, 3)")
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"2 20 200 U -1",
+		"2 20 201 U 1",
+		"3 30 300 U -1",
+		"3 30 301 U 1",
 	))
 }
 
@@ -151,14 +157,25 @@ func TestMLogDelete(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
-	tk.MustExec("insert into t values (1,10,100)")
+	tk.MustExec("insert into t values (1,10,100), (2,20,200), (3,30,300)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
+	// Single-row delete.
 	tk.MustExec("delete from t where a=1")
 	tk.MustQuery(
 		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Check(testkit.Rows(
 		"1 10 100 D -1",
+	))
+
+	// Multi-row delete.
+	tk.MustExec("delete from `$mlog$t`")
+	tk.MustExec("delete from t where a in (2, 3)")
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"2 20 200 D -1",
+		"3 30 300 D -1",
 	))
 }
 
