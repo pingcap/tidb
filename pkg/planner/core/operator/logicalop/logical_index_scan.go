@@ -133,7 +133,7 @@ func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *exp
 func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	hasTiflash := false
 	if is.Source != nil {
-		hasTiflash = is.Source.HasTiflash()
+		hasTiflash = is.Source.HasTiflash() && is.SCtx().GetSessionVars().IsMPPAllowed()
 	}
 	is.hasTiflash = hasTiflash
 	if len(is.IdxCols) == 0 {
