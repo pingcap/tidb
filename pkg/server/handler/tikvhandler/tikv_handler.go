@@ -75,7 +75,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const requestDefaultTimeout = 10 * time.Second
+const (
+	requestDefaultTimeout       = 10 * time.Second
+	adminCheckIndexDefaultLimit = 1000
+)
 
 // SettingsHandler is the handler for list tidb server settings.
 type SettingsHandler struct {
@@ -1234,6 +1237,12 @@ func (h AdminCheckIndexHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 		return
 	}
 
+	limit, err := parseAdminCheckIndexLimit(req)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
 	summary, err := h.checkIndexByName(dbName, tableName, indexName)
 	if err != nil && summary == nil {
 		handler.WriteError(w, err)
@@ -1242,9 +1251,40 @@ func (h AdminCheckIndexHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 	if summary == nil {
 		summary = &executor.AdminCheckIndexInconsistentSummary{}
 	}
+
+	// Keep the complete inconsistency count, but cap response row payload
+	// to protect API size and memory usage for large mismatch sets.
+	truncateAdminCheckIndexSummaryRows(summary, limit)
+
 	// For inconsistency errors from `admin check index`, summary already contains
-	// all mismatched handles and mismatch types, which are required by this API.
+	// mismatched handles and mismatch types required by this API.
 	handler.WriteData(w, summary)
+}
+
+func parseAdminCheckIndexLimit(req *http.Request) (int, error) {
+	limitValue := req.FormValue(handler.Limit)
+	if len(limitValue) == 0 {
+		return adminCheckIndexDefaultLimit, nil
+	}
+
+	limit, err := strconv.Atoi(limitValue)
+	if err != nil {
+		return 0, errors.Annotatef(err, "invalid limit %q", limitValue)
+	}
+	if limit <= 0 {
+		return 0, errors.New("limit must be greater than 0")
+	}
+	return limit, nil
+}
+
+func truncateAdminCheckIndexSummaryRows(summary *executor.AdminCheckIndexInconsistentSummary, limit int) {
+	if summary == nil || limit < 0 {
+		return
+	}
+	if len(summary.Rows) <= limit {
+		return
+	}
+	summary.Rows = summary.Rows[:limit]
 }
 
 func quoteName(name string) string {
