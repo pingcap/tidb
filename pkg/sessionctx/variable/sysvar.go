@@ -3050,7 +3050,7 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(vardef.DefTiDBMergePartitionStatsConcurrency, 10), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(vardef.DefTiDBMergePartitionStatsConcurrency, 10), Type: vardef.TypeInt, MinValue: 0, MaxValue: vardef.MaxConfigurableConcurrency,
 		SetSession: func(s *SessionVars, val string) error {
 			s.AnalyzePartitionMergeConcurrency = TidbOptInt(val, vardef.DefTiDBMergePartitionStatsConcurrency)
 			return nil

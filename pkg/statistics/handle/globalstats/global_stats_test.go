@@ -1018,3 +1018,27 @@ partitions 12;`)
 	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
 	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 }
+
+func TestGlobalStatsV3(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(` create table t (
+	a int primary key,
+	b int not null,
+	c int,
+	d varchar(255) not null,
+	e varchar(255),
+	key(a,b),
+	key(e,c),
+	key(d)
+)
+partition by hash (a) partitions 7`)
+	tk.MustExec(`insert into t values (1,1,1,1,1),(2,2,1,1,1),(3,3,3,3,3),(4,4,1,1,1)`)
+	tk.MustExec(`insert into t select a + 4, b + 4, b + 4, b + 4, b + 4 from t`)
+	tk.MustExec(`insert into t select a + 8, b + 8, b + 8, b + 8, b + 8 from t`)
+	tk.MustExec(`insert into t select a + 16, b + 16, b + 16, b + 16, b + 16 from t`)
+	tk.MustExec(`insert into t select a + 32, b + 32, b + 32, b + 32, b + 32 from t`)
+	tk.MustExec(`analyze table t`)
+}
