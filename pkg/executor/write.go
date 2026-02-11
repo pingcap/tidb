@@ -395,13 +395,22 @@ func addUnchangedKeysForLockByRow(
 			if err != nil {
 				return count, err
 			}
+			idxTblID := physicalID
+			fullHandle := h
+			if meta.Global {
+				idxTblID = t.Meta().ID
+				if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
+					meta.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+					fullHandle = kv.NewPartitionHandle(physicalID, fullHandle)
+				}
+			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
 				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,
-				physicalID,
+				idxTblID,
 				ukVals,
-				h,
+				fullHandle,
 				nil,
 			)
 			err = stmtCtx.HandleError(err)
