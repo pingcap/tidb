@@ -250,6 +250,8 @@ var (
 	ErrInvalidArrayValue = ErrInvalidValueOfType.FastGenByArgs("ARRAY")
 	// ErrInvalidXMLValue means invalid xml value.
 	ErrInvalidXMLValue = ErrInvalidValueOfType.FastGenByArgs("XML")
+	// ErrInvalidIntervalValue means invalid INTERVAL value.
+	ErrInvalidIntervalValue = ErrInvalidValueOfType.FastGenByArgs("Interval")
 )
 
 // json_contains_path function type choices

@@ -44,6 +44,7 @@ type Info struct {
 	Flag         uint16
 	Decimal      uint8
 	Type         uint8
+	SubType      uint8
 }
 
 // Dump dumps Info to bytes.
@@ -160,6 +161,18 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 		}
 		switch col.Type {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
+			switch col.SubType {
+			case mysql.SubTypeIntervalYearToMonth:
+				out := types.FormatIntervalYearToMonth(row.GetInt64(i))
+				buffer = dump.LengthEncodedString(buffer, []byte(out))
+				continue
+			case mysql.SubTypeIntervalDayToSecond:
+				out := types.FormatIntervalDayToSecond(row.GetInt64(i))
+				buffer = dump.LengthEncodedString(buffer, []byte(out))
+				continue
+			default:
+				// Unknown qualifier: fall through to base type output.
+			}
 			tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
 			buffer = dump.LengthEncodedString(buffer, tmp)
 		case mysql.TypeYear:

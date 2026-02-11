@@ -50,9 +50,11 @@ const (
 )
 
 const (
-	SubTypeUnspecified byte = 0
-	SubTypeArray       byte = 1
-	SubTypeXML         byte = 2
+	SubTypeUnspecified         byte = 0
+	SubTypeArray               byte = 1
+	SubTypeXML                 byte = 2
+	SubTypeIntervalYearToMonth byte = 3
+	SubTypeIntervalDayToSecond byte = 4
 )
 
 // Flag information.

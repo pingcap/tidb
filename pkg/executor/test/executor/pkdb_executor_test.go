@@ -226,6 +226,169 @@ func TestXMLType(t *testing.T) {
 	}
 }
 
+func TestIntervalYearToMonthType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set global pkdb_extra_data_type = on")
+	t.Cleanup(func() {
+		tk.MustExec("set global pkdb_extra_data_type = off")
+	})
+
+	// Test create table with interval year to month
+	tk.MustExec("create table t (date_t interval year(3) to month, id int key, name varchar(10))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `date_t` interval year(3) to month DEFAULT NULL,\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `name` varchar(10) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("desc t").Check(testkit.Rows(
+		"date_t interval year(3) to month YES  <nil> ",
+		"id int(11) NO PRI <nil> ",
+		"name varchar(10) YES  <nil> ",
+	))
+
+	// Test insert values
+	tk.MustExec("insert into t values('2-11',1,'ZTE'),('10-4',2,'zte'),('1-0',9,'ZTe'),('-1-1',12,'Zte');")
+	tk.MustQuery("select * from t").Check(testkit.Rows(
+		"2-11 1 ZTE",
+		"10-4 2 zte",
+		"1-0 9 ZTe",
+		"-1-1 12 Zte",
+	))
+
+	// tk.MustExecToErr("insert into t values('10-13',10,'ZTE')")
+
+	// Test select with condition
+	tk.MustQuery("select * from t where date_t='2-11'").Check(testkit.Rows("2-11 1 ZTE"))
+
+	// Test update
+	tk.MustExec("update t set date_t='20-11' where id=2")
+	tk.MustQuery("select * from t where id=2").Check(testkit.Rows("20-11 2 zte"))
+
+	// Test delete
+	tk.MustExec("delete from t where id=1")
+	tk.MustQuery("select * from t").Check(testkit.Rows(
+		"20-11 2 zte",
+		"1-0 9 ZTe",
+		"-1-1 12 Zte",
+	))
+
+	// Test DATE + INTERVAL operations
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int key, date_col date)")
+
+	// Test DATE_ADD with positive interval
+	tk.MustExec("insert into t1 values(12, date_add('20121212', interval '1-1' year to month))")
+
+	// Test DATE_SUB with positive interval
+	tk.MustExec("insert into t1 values(13, date_sub('20121212', interval '1-1' year to month))")
+
+	// Test DATE_ADD with negative interval
+	tk.MustExec("insert into t1 values(14, date_add('20121212', interval '-1-1' year to month))")
+
+	// Verify results
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows(
+		"12 2014-01-12",
+		"13 2011-11-12",
+		"14 2011-11-12",
+	))
+
+	// Test Invalid Input
+	invalidCases := []string{
+		"invalid",
+		"88-18",
+		"1000-1",
+		"1-12",
+		"1-123",
+		"",
+		"- 1-1",
+	}
+	for i, v := range invalidCases {
+		err := tk.ExecToErr(fmt.Sprintf("insert into t values('%s',%d,'test')", v, 100+i))
+		require.EqualError(t, err, "[types:8801]Invalid Interval value", v)
+	}
+
+	// Test drop table
+	tk.MustExec("drop table t")
+	tk.MustExec("drop table t1")
+}
+
+func TestIntervalDayToSecondType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set global pkdb_extra_data_type = on")
+	t.Cleanup(func() {
+		tk.MustExec("set global pkdb_extra_data_type = off")
+	})
+
+	// Test create table with interval day to second
+	tk.MustExec("create table t (itv interval day(3) to second, id int key, name varchar(10));")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `itv` interval day(3) to second DEFAULT NULL,\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `name` varchar(10) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("desc t").Check(testkit.Rows(
+		"itv interval day(3) to second YES  <nil> ",
+		"id int(11) NO PRI <nil> ",
+		"name varchar(10) YES  <nil> ",
+	))
+
+	// Test insert values + canonicalize.
+	tk.MustExec("insert into t values ('2 11:04:05',1,'a'), (' 02  3:4:5 ',2,'b'), ('-1 1:1:1',3,'c');")
+	tk.MustQuery("select itv, id, name from t order by id").Check(testkit.Rows(
+		"2 11:04:05 1 a",
+		"2 03:04:05 2 b",
+		"-1 01:01:01 3 c",
+	))
+
+	// Test select with condition.
+	tk.MustQuery("select * from t where itv='2 11:04:05'").Check(testkit.Rows("2 11:04:05 1 a"))
+
+	// Test update.
+	tk.MustExec("update t set itv='0 0:0:0' where id=1")
+	tk.MustQuery("select itv from t where id=1").Check(testkit.Rows("0 00:00:00"))
+
+	// Test DATE_ADD/DATE_SUB with DAY TO SECOND time unit.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int key, dt datetime)")
+	tk.MustExec("insert into t1 values (1, date_add('2012-12-12 00:00:00', interval '1 01:01:01' day to second));")
+	tk.MustExec("insert into t1 values (2, date_sub('2012-12-12 00:00:00', interval '1 01:01:01' day to second));")
+	tk.MustExec("insert into t1 values (3, date_add('2012-12-12 00:00:00', interval '-1 01:01:01' day to second));")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows(
+		"1 2012-12-13 01:01:01",
+		"2 2012-12-10 22:58:59",
+		"3 2012-12-10 22:58:59",
+	))
+
+	// Test invalid input.
+	invalidCases := []string{
+		"invalid",
+		"",
+		"- 1 01:01:01",
+		"1 24:00:00",
+		"1 00:60:00",
+		"1 00:00:60",
+		"1000 00:00:00",
+		"1 00:00",
+		"1 00:00:00.1",
+	}
+	for i, v := range invalidCases {
+		err := tk.ExecToErr(fmt.Sprintf("insert into t values('%s',%d,'x')", v, 100+i))
+		require.EqualError(t, err, "[types:8801]Invalid Interval value", v)
+	}
+
+	tk.MustExec("drop table t")
+	tk.MustExec("drop table t1")
+}
+
 func TestPKDBExtraDataType(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -235,17 +398,21 @@ func TestPKDBExtraDataType(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set global pkdb_extra_data_type = off")
 	})
-	tk.MustExec("create table t (a array, b xml);")
+	tk.MustExec("create table t (a array, b xml, c interval year(3) to month, d interval day(3) to second);")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` json DEFAULT NULL,\n" +
-		"  `b` longblob DEFAULT NULL\n" +
+		"  `b` longblob DEFAULT NULL,\n" +
+		"  `c` int(3) DEFAULT NULL,\n" +
+		"  `d` int(3) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table t;")
 
 	tk.MustExec("set global pkdb_extra_data_type = on")
-	tk.MustExec("create table t (a array, b xml);")
+	tk.MustExec("create table t (a array, b xml, c interval year(3) to month, d interval day(3) to second);")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` array DEFAULT NULL,\n" +
-		"  `b` xml DEFAULT NULL\n" +
+		"  `b` xml DEFAULT NULL,\n" +
+		"  `c` interval year(3) to month DEFAULT NULL,\n" +
+		"  `d` interval day(3) to second DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }

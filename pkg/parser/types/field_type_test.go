@@ -316,6 +316,17 @@ func TestFieldTypeSubType(t *testing.T) {
 	require.False(t, ft.Equal(base))
 	require.False(t, ft.Equals(base))
 	require.False(t, ft.PartialEqual(base, true))
+
+	intervalFT := NewFieldType(mysql.TypeLong)
+	intervalFT.SetSubType(mysql.SubTypeIntervalYearToMonth)
+
+	intervalCopied := intervalFT.DeepCopy()
+	require.Equal(t, mysql.SubTypeIntervalYearToMonth, intervalCopied.GetSubType())
+
+	intervalBase := NewFieldType(mysql.TypeLong)
+	require.False(t, intervalFT.Equal(intervalBase))
+	require.False(t, intervalFT.Equals(intervalBase))
+	require.False(t, intervalFT.PartialEqual(intervalBase, true))
 }
 
 func TestCompactStr(t *testing.T) {
@@ -346,4 +357,34 @@ func TestCompactStr(t *testing.T) {
 		TiDBStrictIntegerDisplayWidth = true
 		require.Equal(t, cc.e2, ft.CompactStr())
 	}
+}
+
+func TestIntervalYearToMonthCompactStr(t *testing.T) {
+	EnableExtraDataType.Store(true)
+	defer func() {
+		EnableExtraDataType.Store(false)
+	}()
+
+	ft := NewFieldType(mysql.TypeLong)
+	ft.SetCharset(charset.CharsetBin)
+	ft.SetCollate(charset.CollationBin)
+	ft.SetFlen(3)
+	ft.SetSubType(mysql.SubTypeIntervalYearToMonth)
+
+	require.Equal(t, "interval year(3) to month", ft.CompactStr())
+}
+
+func TestIntervalDayToSecondCompactStr(t *testing.T) {
+	EnableExtraDataType.Store(true)
+	defer func() {
+		EnableExtraDataType.Store(false)
+	}()
+
+	ft := NewFieldType(mysql.TypeLong)
+	ft.SetCharset(charset.CharsetBin)
+	ft.SetCollate(charset.CollationBin)
+	ft.SetFlen(3)
+	ft.SetSubType(mysql.SubTypeIntervalDayToSecond)
+
+	require.Equal(t, "interval day(3) to second", ft.CompactStr())
 }

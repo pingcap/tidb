@@ -243,6 +243,35 @@ func TestDumpTextValue(t *testing.T) {
 	require.Equal(t, `{"a": 1, "b": 2}`, mustDecodeStr(t, bs))
 }
 
+func TestDumpTextIntervalValue(t *testing.T) {
+	dp := NewResultEncoder(charset.CharsetUTF8MB4)
+
+	columns := []*Info{{
+		Type:    mysql.TypeLong,
+		Decimal: mysql.NotFixedDec,
+		SubType: mysql.SubTypeIntervalYearToMonth,
+	}}
+	bs, err := DumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(35)}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "2-11", mustDecodeStr(t, bs))
+
+	columns[0].SubType = mysql.SubTypeIntervalDayToSecond
+	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(183845)}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "2 03:04:05", mustDecodeStr(t, bs))
+
+	// Negative non-zero values keep the sign.
+	columns[0].SubType = mysql.SubTypeIntervalYearToMonth
+	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(-13)}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "-1-1", mustDecodeStr(t, bs))
+
+	columns[0].SubType = mysql.SubTypeIntervalDayToSecond
+	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(-1)}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "-0 00:00:01", mustDecodeStr(t, bs))
+}
+
 func mustDecodeStr(t *testing.T, b []byte) string {
 	str, _, _, err := util.ParseLengthEncodedBytes(b)
 	require.NoError(t, err)

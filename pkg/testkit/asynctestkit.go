@@ -25,8 +25,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	tidbtypes "github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -226,7 +228,20 @@ func (tk *AsyncTestKit) resultSetToResult(ctx context.Context, rs sqlexec.Record
 			if row.IsNull(j) {
 				resultRow[j] = "<nil>"
 			} else {
-				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				ft := &rs.Fields()[j].Column.FieldType
+				d := row.GetDatum(j, ft)
+				switch ft.GetSubType() {
+				case mysql.SubTypeIntervalYearToMonth:
+					out := tidbtypes.FormatIntervalYearToMonth(d.GetInt64())
+					resultRow[j] = string(out)
+					continue
+				case mysql.SubTypeIntervalDayToSecond:
+					out := tidbtypes.FormatIntervalDayToSecond(d.GetInt64())
+					resultRow[j] = string(out)
+					continue
+				default:
+					// fall through to base type
+				}
 				resultRow[j], err = d.ToString()
 				tk.require.NoError(err, comment)
 			}

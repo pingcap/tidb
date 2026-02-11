@@ -8838,6 +8838,14 @@ TimeUnit:
 	{
 		$$ = ast.TimeUnitYearMonth
 	}
+|	"YEAR" "TO" "MONTH"
+	{
+		$$ = ast.TimeUnitYearMonth
+	}
+|	"DAY" "TO" "SECOND"
+	{
+		$$ = ast.TimeUnitDaySecond
+	}
 
 TimestampUnit:
 	"MICROSECOND"
@@ -13438,6 +13446,40 @@ StringType:
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 		tp.SetSubType(mysql.SubTypeXML)
+		$$ = tp
+	}
+|	"INTERVAL" "YEAR" OptFieldLen "TO" "MONTH"
+	{
+		p := $3.(int)
+		if p == types.UnspecifiedLength {
+			p = 2
+		}
+		if p < 1 || p > 9 {
+			yylex.AppendError(ErrTooBigPrecision.GenWithStackByArgs(p, "INTERVAL YEAR", 9))
+			return -1
+		}
+		tp := types.NewFieldType(mysql.TypeLong)
+		tp.SetFlen(p)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetSubType(mysql.SubTypeIntervalYearToMonth)
+		$$ = tp
+	}
+|	"INTERVAL" "DAY" OptFieldLen "TO" "SECOND"
+	{
+		p := $3.(int)
+		if p == types.UnspecifiedLength {
+			p = 2
+		}
+		if p < 1 || p > 9 {
+			yylex.AppendError(ErrTooBigPrecision.GenWithStackByArgs(p, "INTERVAL DAY", 9))
+			return -1
+		}
+		tp := types.NewFieldType(mysql.TypeLong)
+		tp.SetFlen(p)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetSubType(mysql.SubTypeIntervalDayToSecond)
 		$$ = tp
 	}
 |	"LONG" Varchar OptCharsetWithOptBinary

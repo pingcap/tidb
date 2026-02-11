@@ -549,6 +549,14 @@ func (ft *FieldType) CompactStr() string {
 			suffix = fmt.Sprintf("(%d)", displayFlen)
 		}
 	case mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		switch ft.subType {
+		case mysql.SubTypeIntervalYearToMonth:
+			return fmt.Sprintf("interval year(%d) to month", ft.flen)
+		case mysql.SubTypeIntervalDayToSecond:
+			return fmt.Sprintf("interval day(%d) to second", ft.flen)
+		default:
+			// fall back to base type representation.
+		}
 		// Referring this issue #6688, the integer max display length is deprecated in MySQL 8.0.
 		// Since the length doesn't take any effect in TiDB storage or showing result, we remove it here.
 		if !TiDBStrictIntegerDisplayWidth || mysql.HasZerofillFlag(ft.flag) {

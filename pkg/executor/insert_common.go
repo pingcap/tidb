@@ -289,7 +289,7 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 		if err1 != nil {
 			logutil.BgLogger().Debug("truncated/wrong value error", zap.Error(err1))
 		}
-		err = table.ErrTruncatedWrongValueForField.FastGenByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+		err = table.ErrTruncatedWrongValueForField.FastGenByArgs(types.FieldTypeToStr(&col.FieldType), valStr, colName, rowIdx+1)
 	} else if types.ErrWarnDataOutOfRange.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.FastGenByArgs(colName, rowIdx+1)
 	}
