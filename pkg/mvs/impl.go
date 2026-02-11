@@ -312,7 +312,7 @@ func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool b
 		}
 
 		purgeStart := mvsUnix(row.GetInt64(1), 0)
-		intervalSec := row.GetInt64(2)
+		intervalSec := max(1, row.GetInt64(2))
 
 		lastPurgeTime := time.Time{}
 		if !row.IsNull(3) {
