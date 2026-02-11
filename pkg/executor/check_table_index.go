@@ -343,7 +343,7 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
-	bucketSize := int(CheckTableFastBucketSize.Load())
+	bucketSize := int(CheckTableFastBucketSize.Load()) * 10
 
 	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
 
@@ -435,14 +435,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			"select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
 			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, whereKey, groupByKey)
 
-		logutil.BgLogger().Info(
-			"fast check table by group",
+		logger := logutil.BgLogger().With(
 			zap.String("table name", tblMeta.Name.String()),
 			zap.String("index name", idxInfo.Name.String()),
 			zap.Int("times", times),
 			zap.Int("current offset", offset), zap.Int("current mod", mod),
-			zap.String("table sql", tblQuery), zap.String("index sql", idxQuery),
+			zap.Int("bucket size", bucketSize),
 		)
+		logger.Info("fast check table by group",
+			zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
 
 		// compute table side checksum.
 		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
@@ -463,6 +464,37 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
 		})
+
+		tableChecksumMap, indexChecksumMap := make(map[uint64]groupByChecksum), make(map[uint64]groupByChecksum)
+		for _, c := range tableChecksum {
+			tableChecksumMap[c.bucket] = c
+		}
+		for _, c := range indexChecksum {
+			indexChecksumMap[c.bucket] = c
+		}
+
+		for bktIdx := range bucketSize {
+			tblBktSum, tblOk := tableChecksumMap[uint64(bktIdx)]
+			idxBktSum, idxOk := indexChecksumMap[uint64(bktIdx)]
+			if tblOk {
+				if idxOk {
+					if tblBktSum.checksum != idxBktSum.checksum || tblBktSum.count != idxBktSum.count {
+						logger.Info("found different checksum in the same bucket",
+							zap.Int("bucket", bktIdx), zap.Stringer("tblBktSum", tblBktSum),
+							zap.Stringer("idxBktSum", idxBktSum))
+					}
+				} else {
+					logger.Info("found bucket only exists in table side",
+						zap.Int("bucket", bktIdx), zap.Stringer("tblBktSum", tblBktSum))
+				}
+			} else {
+				if !idxOk {
+					continue
+				}
+				logger.Info("found bucket only exists in index side",
+					zap.Int("bucket", bktIdx), zap.Stringer("idxBktSum", idxBktSum))
+			}
+		}
 
 		currentOffset := 0
 
@@ -696,6 +728,10 @@ type groupByChecksum struct {
 	bucket   uint64
 	checksum uint64
 	count    int64
+}
+
+func (c groupByChecksum) String() string {
+	return fmt.Sprintf("{bkt:%d,sum:%d,cnt:%d}", c.bucket, c.checksum, c.count)
 }
 
 func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {
