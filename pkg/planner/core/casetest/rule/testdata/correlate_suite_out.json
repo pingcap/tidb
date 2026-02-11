@@ -29,6 +29,65 @@
         "Result": [
           "3 3"
         ]
+      },
+      {
+        "SQL": "select * from t1 where a in (select a from t2)",
+        "Plan": [
+          "HashJoin 9990.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─StreamAgg(Build) 7992.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "│ └─IndexReader 7992.00 root  index:StreamAgg",
+          "│   └─StreamAgg 7992.00 cop[tikv]  group by:test.t2.a, ",
+          "│     └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where exists (select 1 from t2)",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery N/A root  Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12, ScalarQueryCol#13",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2",
+          "3 3"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a not in (select a from t2)",
+        "Plan": [
+          "HashJoin 8000.00 root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3 3"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where exists (select 1 from t2 where t2.a > t1.a)",
+        "Plan": [
+          "HashJoin 7992.00 root  CARTESIAN semi join, left side:TableReader, other cond:gt(test.t2.a, test.t1.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ]
       }
     ]
   }
