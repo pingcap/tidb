@@ -58,7 +58,7 @@ func ExhaustPhysicalPlans4LogicalSelection(p *logicalop.LogicalSelection, prop *
 	newProps = append(newProps, childProp)
 	// we lift the p.CanPushDown(kv.TiFlash) check here, which may depend on the children.
 	// Guard with TiFlash availability to avoid emitting TiFlash pushdown warnings when no TiFlash path exists.
-	canPushDownToTiFlash := util.ShouldCheckTiFlashPushDown(p.SCtx(), p.GetHasTiFlash()) &&
+	canPushDownToTiFlash := util.ShouldCheckTiFlashPushDown(p.SCtx(), logicalop.GetHasTiFlash(p)) &&
 		!expression.ContainVirtualColumn(p.Conditions) &&
 		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, kv.TiFlash)
 

@@ -450,7 +450,7 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	windows := make([]base.PhysicalPlan, 0, 2)
 
 	// we lift the p.CanPushToCop(tiFlash) check here.
-	if lw.SCtx().GetSessionVars().IsMPPAllowed() && util.ShouldCheckTiFlashPushDown(lw.SCtx(), lw.GetHasTiFlash()) {
+	if lw.SCtx().GetSessionVars().IsMPPAllowed() && util.ShouldCheckTiFlashPushDown(lw.SCtx(), logicalop.GetHasTiFlash(lw)) {
 		mppWindows := tryToGetMppWindows(lw, prop)
 		windows = append(windows, mppWindows...)
 	}

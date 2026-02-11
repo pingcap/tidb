@@ -171,6 +171,18 @@ func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSche
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
+func (p *LogicalUnionAll) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiflash := len(childrenProperties) > 0
+	for _, child := range childrenProperties {
+		if child == nil {
+			hasTiflash = false
+			continue
+		}
+		hasTiflash = hasTiflash && child.HasTiflash
+	}
+	p.hasTiflash = hasTiflash
+	return &base.PossiblePropertiesInfo{HasTiflash: p.hasTiflash}
+}
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
 
