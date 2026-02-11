@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -215,4 +216,45 @@ func TestEncodedPassword(t *testing.T) {
 	pwd, ok = encodedPassword(&u, "")
 	require.True(t, ok)
 	require.Equal(t, "", pwd)
+}
+
+func TestAdminCheckIndexInconsistentCollectorDeduplicate(t *testing.T) {
+	collector := NewAdminCheckIndexInconsistentCollector()
+
+	collector.recordInconsistent("1", AdminCheckIndexRowWithoutIndex, errors.New("first"))
+	collector.recordInconsistent("1", AdminCheckIndexRowWithoutIndex, errors.New("duplicate"))
+	collector.recordInconsistent("1", AdminCheckIndexIndexWithoutRow, errors.New("second"))
+	collector.recordInconsistent("2", AdminCheckIndexRowIndexMismatch, errors.New("third"))
+
+	summary := collector.Summary()
+	require.Equal(t, uint64(3), summary.InconsistentRowCount)
+	require.ElementsMatch(t, []AdminCheckIndexInconsistentRow{
+		{Handle: "1", MismatchType: AdminCheckIndexRowWithoutIndex},
+		{Handle: "1", MismatchType: AdminCheckIndexIndexWithoutRow},
+		{Handle: "2", MismatchType: AdminCheckIndexRowIndexMismatch},
+	}, summary.Rows)
+
+	require.EqualError(t, collector.firstErr(), "first")
+}
+
+func TestAdminCheckIndexInconsistentCollectorIgnoreEmptyHandle(t *testing.T) {
+	collector := NewAdminCheckIndexInconsistentCollector()
+
+	collector.recordInconsistent("", AdminCheckIndexRowWithoutIndex, errors.New("first"))
+
+	summary := collector.Summary()
+	require.Equal(t, uint64(0), summary.InconsistentRowCount)
+	require.Empty(t, summary.Rows)
+	require.EqualError(t, collector.firstErr(), "first")
+}
+
+func TestAdminCheckIndexInconsistentCollectorContextHelper(t *testing.T) {
+	baseCtx := context.Background()
+
+	require.Nil(t, adminCheckIndexCollectorFromContext(baseCtx))
+	require.Equal(t, baseCtx, WithAdminCheckIndexInconsistentCollector(baseCtx, nil))
+
+	collector := NewAdminCheckIndexInconsistentCollector()
+	ctx := WithAdminCheckIndexInconsistentCollector(baseCtx, collector)
+	require.Same(t, collector, adminCheckIndexCollectorFromContext(ctx))
 }
