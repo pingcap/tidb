@@ -45,7 +45,7 @@ type TableKVEncoder struct {
 	rowCache             []types.Datum
 	hasValueCache        []bool
 
-	insertColumnSkipCastInfos []mydump.ParquetColumnSkipCastInfo
+	insertColumnSkipCastInfos []mydump.ColumnSkipCastInfo
 }
 
 // NewTableKVEncoder creates a new TableKVEncoder.
@@ -89,16 +89,16 @@ func newTableKVEncoderInner(
 	}, nil
 }
 
-// SetParquetSkipCastInfos sets per-input-column parquet precheck results.
+// SetSkipCastInfos sets per-input-column precheck results.
 // The input infos are in file-column order and will be remapped into
 // insert-column order so getRow can decide cast-or-skip quickly.
-func (en *TableKVEncoder) SetParquetSkipCastInfos(infos []mydump.ParquetColumnSkipCastInfo) {
+func (en *TableKVEncoder) SetSkipCastInfos(infos []mydump.ColumnSkipCastInfo) {
 	if len(infos) == 0 {
 		en.insertColumnSkipCastInfos = nil
 		return
 	}
 
-	mapped := make([]mydump.ParquetColumnSkipCastInfo, 0, len(en.fieldMappings))
+	mapped := make([]mydump.ColumnSkipCastInfo, 0, len(en.fieldMappings))
 	for i, mapping := range en.fieldMappings {
 		if mapping == nil || mapping.Column == nil {
 			continue
@@ -106,40 +106,37 @@ func (en *TableKVEncoder) SetParquetSkipCastInfos(infos []mydump.ParquetColumnSk
 		if i < len(infos) {
 			mapped = append(mapped, infos[i])
 		} else {
-			mapped = append(mapped, mydump.ParquetColumnSkipCastInfo{})
+			mapped = append(mapped, mydump.ColumnSkipCastInfo{})
 		}
 	}
 
-	plans := make([]mydump.ParquetColumnSkipCastInfo, len(en.insertColumns))
+	plans := make([]mydump.ColumnSkipCastInfo, len(en.insertColumns))
 	copy(plans, mapped)
 	en.insertColumnSkipCastInfos = plans
 }
 
-func (en *TableKVEncoder) shouldSkipCastForInsertColumn(idx int, val types.Datum) bool {
+func (en *TableKVEncoder) canSkipCastColumnValue(idx int, val types.Datum) bool {
+	if val.IsNull() {
+		return true
+	}
 	if idx >= len(en.insertColumnSkipCastInfos) {
 		return false
 	}
 	info := en.insertColumnSkipCastInfos[idx]
-	if !info.CanSkip {
-		return false
-	}
-	if val.IsNull() {
-		return true
-	}
 
-	switch info.PostCheck {
-	case mydump.ParquetPostCheckNone:
+	switch info.CastingCheck {
+	case mydump.CastingCheckSkip:
 		return true
-	case mydump.ParquetPostCheckStringLength:
-		return passParquetStringLengthPostCheck(val, info)
-	case mydump.ParquetPostCheckDecimal:
-		return passParquetDecimalPostCheck(val, info)
+	case mydump.CastingCheckStringLength:
+		return passStringLengthPostCheck(val, info)
+	case mydump.CastingCheckDecimal:
+		return passDecimalPostCheck(val, info)
 	default:
 		return false
 	}
 }
 
-func passParquetStringLengthPostCheck(val types.Datum, info mydump.ParquetColumnSkipCastInfo) bool {
+func passStringLengthPostCheck(val types.Datum, info mydump.ColumnSkipCastInfo) bool {
 	if val.Kind() != types.KindString && val.Kind() != types.KindBytes {
 		return false
 	}
@@ -153,7 +150,7 @@ func passParquetStringLengthPostCheck(val types.Datum, info mydump.ParquetColumn
 	return utf8.RuneCount(b) <= info.TargetFlen
 }
 
-func passParquetDecimalPostCheck(val types.Datum, info mydump.ParquetColumnSkipCastInfo) bool {
+func passDecimalPostCheck(val types.Datum, info mydump.ColumnSkipCastInfo) bool {
 	if val.Kind() != types.KindMysqlDecimal {
 		return false
 	}
@@ -273,7 +270,7 @@ func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int6
 	row := en.rowCache
 	for i := range en.insertColumns {
 		offset := en.insertColumns[i].Offset
-		if en.shouldSkipCastForInsertColumn(i, vals[i]) {
+		if en.canSkipCastColumnValue(i, vals[i]) {
 			row[offset] = vals[i]
 			continue
 		}

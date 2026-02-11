@@ -23,32 +23,47 @@ import (
 )
 
 func TestParquetStringLengthPostCheck(t *testing.T) {
-	info := mydump.ParquetColumnSkipCastInfo{
-		CanSkip:    true,
-		PostCheck:  mydump.ParquetPostCheckStringLength,
-		TargetFlen: 3,
+	info := mydump.ColumnSkipCastInfo{
+		CastingCheck: mydump.CastingCheckStringLength,
+		TargetFlen:   3,
 	}
 
-	require.True(t, passParquetStringLengthPostCheck(types.NewStringDatum("abc"), info))
-	require.False(t, passParquetStringLengthPostCheck(types.NewStringDatum("abcd"), info))
-	require.True(t, passParquetStringLengthPostCheck(types.NewStringDatum("中a"), info))
-	require.True(t, passParquetStringLengthPostCheck(types.NewStringDatum("中中文"), info))
-	require.False(t, passParquetStringLengthPostCheck(types.NewStringDatum("中中文a"), info))
+	require.True(t, passStringLengthPostCheck(types.NewStringDatum("abc"), info))
+	require.False(t, passStringLengthPostCheck(types.NewStringDatum("abcd"), info))
+	require.True(t, passStringLengthPostCheck(types.NewStringDatum("中a"), info))
+	require.True(t, passStringLengthPostCheck(types.NewStringDatum("中中文"), info))
+	require.False(t, passStringLengthPostCheck(types.NewStringDatum("中中文a"), info))
 }
 
 func TestParquetDecimalPostCheck(t *testing.T) {
-	decimalInfo := mydump.ParquetColumnSkipCastInfo{
-		CanSkip:       true,
-		PostCheck:     mydump.ParquetPostCheckDecimal,
+	decimalInfo := mydump.ColumnSkipCastInfo{
+		CastingCheck:  mydump.CastingCheckDecimal,
 		TargetFlen:    5,
 		TargetDecimal: 2,
 	}
-	require.True(t, passParquetDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("123.45")), decimalInfo))
-	require.False(t, passParquetDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("1234.56")), decimalInfo))
-	require.False(t, passParquetDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("12.345")), decimalInfo))
+	require.True(t, passDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("123.45")), decimalInfo))
+	require.False(t, passDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("1234.56")), decimalInfo))
+	require.False(t, passDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("12.345")), decimalInfo))
 
 	unsignedInfo := decimalInfo
 	unsignedInfo.Unsigned = true
-	require.True(t, passParquetDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("0.00")), unsignedInfo))
-	require.False(t, passParquetDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("-0.01")), unsignedInfo))
+	require.True(t, passDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("0.00")), unsignedInfo))
+	require.False(t, passDecimalPostCheck(types.NewDecimalDatum(types.NewDecFromStringForTest("-0.01")), unsignedInfo))
+}
+
+func TestShouldSkipCastForInsertColumnNull(t *testing.T) {
+	var (
+		encoder *TableKVEncoder
+		nullVal types.Datum
+	)
+	nullVal.SetNull()
+
+	require.True(t, encoder.canSkipCastColumnValue(0, nullVal))
+
+	encoder = &TableKVEncoder{
+		insertColumnSkipCastInfos: []mydump.ColumnSkipCastInfo{
+			{CastingCheck: mydump.CastingCheckNoSkip},
+		},
+	}
+	require.True(t, encoder.canSkipCastColumnValue(0, nullVal))
 }

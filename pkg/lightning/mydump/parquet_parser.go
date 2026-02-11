@@ -279,7 +279,7 @@ type ParquetParser struct {
 
 	physicalTypes []parquet.Type
 	targetCols    []*model.ColumnInfo
-	skipCastInfos []ParquetColumnSkipCastInfo
+	skipCastInfos []ColumnSkipCastInfo
 
 	ctx   context.Context
 	store storeapi.Storage
@@ -519,8 +519,8 @@ func (pp *ParquetParser) Columns() []string {
 }
 
 // SkipCastInfos returns prechecked skip-cast info in parquet file-column order.
-func (pp *ParquetParser) SkipCastInfos() []ParquetColumnSkipCastInfo {
-	infos := make([]ParquetColumnSkipCastInfo, len(pp.skipCastInfos))
+func (pp *ParquetParser) SkipCastInfos() []ColumnSkipCastInfo {
+	infos := make([]ColumnSkipCastInfo, len(pp.skipCastInfos))
 	copy(infos, pp.skipCastInfos)
 	return infos
 }

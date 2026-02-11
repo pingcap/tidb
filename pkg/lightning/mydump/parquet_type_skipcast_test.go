@@ -44,8 +44,7 @@ func TestParquetSkipCastTimestampAlwaysCast(t *testing.T) {
 		[]*model.ColumnInfo{newParquetTargetColumnInfo(mysql.TypeTimestamp, 0, 19, 0, "", "")},
 	)
 	require.Len(t, infos, 1)
-	require.False(t, infos[0].CanSkip)
-	require.Equal(t, ParquetPostCheckNone, infos[0].PostCheck)
+	require.Equal(t, CastingCheckNoSkip, infos[0].CastingCheck)
 }
 
 func TestParquetTemporalSetterUsesTargetType(t *testing.T) {
@@ -69,8 +68,8 @@ func TestParquetSkipCastInfoForStringAndDecimal(t *testing.T) {
 				newParquetTargetColumnInfo(mysql.TypeDouble, 0, 0, 0, "", ""),
 			},
 		)
-		require.True(t, infos[0].CanSkip)
-		require.True(t, infos[1].CanSkip)
+		require.Equal(t, CastingCheckSkip, infos[0].CastingCheck)
+		require.Equal(t, CastingCheckSkip, infos[1].CastingCheck)
 	})
 
 	t.Run("utf8 string target", func(t *testing.T) {
@@ -81,8 +80,7 @@ func TestParquetSkipCastInfoForStringAndDecimal(t *testing.T) {
 				newParquetTargetColumnInfo(mysql.TypeVarchar, 0, 20, 0, "utf8mb4", ""),
 			},
 		)
-		require.True(t, infos[0].CanSkip)
-		require.Equal(t, ParquetPostCheckStringLength, infos[0].PostCheck)
+		require.Equal(t, CastingCheckStringLength, infos[0].CastingCheck)
 	})
 
 	t.Run("binary charset string target", func(t *testing.T) {
@@ -93,7 +91,7 @@ func TestParquetSkipCastInfoForStringAndDecimal(t *testing.T) {
 				newParquetTargetColumnInfo(mysql.TypeVarchar, 0, 20, 0, "binary", ""),
 			},
 		)
-		require.False(t, infos[0].CanSkip)
+		require.Equal(t, CastingCheckNoSkip, infos[0].CastingCheck)
 	})
 
 	t.Run("decimal byte array", func(t *testing.T) {
@@ -111,8 +109,7 @@ func TestParquetSkipCastInfoForStringAndDecimal(t *testing.T) {
 				newParquetTargetColumnInfo(mysql.TypeNewDecimal, 0, 8, 2, "binary", "binary"),
 			},
 		)
-		require.True(t, infos[0].CanSkip)
-		require.Equal(t, ParquetPostCheckDecimal, infos[0].PostCheck)
+		require.Equal(t, CastingCheckDecimal, infos[0].CastingCheck)
 	})
 
 	t.Run("decimal scale mismatch", func(t *testing.T) {
@@ -130,6 +127,6 @@ func TestParquetSkipCastInfoForStringAndDecimal(t *testing.T) {
 				newParquetTargetColumnInfo(mysql.TypeNewDecimal, 0, 8, 2, "", ""),
 			},
 		)
-		require.False(t, infos[0].CanSkip)
+		require.Equal(t, CastingCheckNoSkip, infos[0].CastingCheck)
 	})
 }

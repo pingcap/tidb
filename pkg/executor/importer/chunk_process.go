@@ -443,9 +443,7 @@ func NewFileChunkProcessor(
 	collector execute.Collector,
 ) ChunkProcessor {
 	if parquetParser, ok := parser.(*mydump.ParquetParser); ok {
-		encoder.SetParquetSkipCastInfos(parquetParser.SkipCastInfos())
-	} else {
-		encoder.SetParquetSkipCastInfos(nil)
+		encoder.SetSkipCastInfos(parquetParser.SkipCastInfos())
 	}
 
 	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))

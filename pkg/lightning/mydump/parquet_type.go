@@ -31,24 +31,25 @@ import (
 
 type setter[T parquet.ColumnTypes] func(T, *types.Datum) error
 
-// ParquetPostCheckType indicates the value-level check to run before skipping
-// cast in the encoder.
-type ParquetPostCheckType uint8
+// CastingCheckType indicates the cast-skip decision and value-level
+// check to run in the encoder.
+type CastingCheckType uint8
 
 const (
-	// ParquetPostCheckNone means no value-level check is required.
-	ParquetPostCheckNone ParquetPostCheckType = iota
-	// ParquetPostCheckStringLength verifies string length before skipping cast.
-	ParquetPostCheckStringLength
-	// ParquetPostCheckDecimal validates decimal shape before skipping cast.
-	ParquetPostCheckDecimal
+	// CastingCheckNoSkip means this column/value must go through cast.
+	CastingCheckNoSkip CastingCheckType = iota
+	// CastingCheckSkip means this column/value can skip cast directly.
+	CastingCheckSkip
+	// CastingCheckStringLength verifies string length before skipping cast.
+	CastingCheckStringLength
+	// CastingCheckDecimal validates decimal shape before skipping cast.
+	CastingCheckDecimal
 )
 
-// ParquetColumnSkipCastInfo describes whether a parquet column can skip cast
+// ColumnSkipCastInfo describes whether a parquet column can skip cast
 // for the mapped target column under strict-mode semantics.
-type ParquetColumnSkipCastInfo struct {
-	CanSkip   bool
-	PostCheck ParquetPostCheckType
+type ColumnSkipCastInfo struct {
+	CastingCheck CastingCheckType
 
 	TargetType    byte
 	TargetFlen    int
@@ -116,8 +117,8 @@ func buildParquetSkipCastInfos(
 	colTypes []convertedType,
 	physicalTypes []parquet.Type,
 	targetCols []*model.ColumnInfo,
-) []ParquetColumnSkipCastInfo {
-	infos := make([]ParquetColumnSkipCastInfo, len(colTypes))
+) []ColumnSkipCastInfo {
+	infos := make([]ColumnSkipCastInfo, len(colTypes))
 	for i := range colTypes {
 		if i >= len(physicalTypes) || i >= len(targetCols) || targetCols[i] == nil {
 			continue
@@ -131,8 +132,8 @@ func parquetColumnSkipCastInfo(
 	converted convertedType,
 	physicalType parquet.Type,
 	target *model.ColumnInfo,
-) ParquetColumnSkipCastInfo {
-	info := ParquetColumnSkipCastInfo{
+) ColumnSkipCastInfo {
+	info := ColumnSkipCastInfo{
 		TargetType:    target.GetType(),
 		TargetFlen:    target.GetFlen(),
 		TargetDecimal: target.GetDecimal(),
@@ -147,13 +148,19 @@ func parquetColumnSkipCastInfo(
 
 	switch physicalType {
 	case parquet.Types.Boolean:
-		info.CanSkip = canSkipBoolToInteger(target)
+		if canSkipBoolToInteger(target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 		return info
 	case parquet.Types.Float:
-		info.CanSkip = target.GetType() == mysql.TypeFloat
+		if target.GetType() == mysql.TypeFloat {
+			info.CastingCheck = CastingCheckSkip
+		}
 		return info
 	case parquet.Types.Double:
-		info.CanSkip = target.GetType() == mysql.TypeDouble
+		if target.GetType() == mysql.TypeDouble {
+			info.CastingCheck = CastingCheckSkip
+		}
 		return info
 	case parquet.Types.Int32:
 		info = parquetInt32SkipCastInfo(converted, target, info)
@@ -163,20 +170,18 @@ func parquetColumnSkipCastInfo(
 		return info
 	case parquet.Types.Int96:
 		if target.GetType() == mysql.TypeDate || target.GetType() == mysql.TypeDatetime {
-			info.CanSkip = true
+			info.CastingCheck = CastingCheckSkip
 		}
 		return info
 	case parquet.Types.ByteArray, parquet.Types.FixedLenByteArray:
 		if converted.converted == schema.ConvertedTypes.Decimal && target.GetType() == mysql.TypeNewDecimal {
 			if canSkipDecimalByMeta(converted.decimalMeta, target) {
-				info.CanSkip = true
-				info.PostCheck = ParquetPostCheckDecimal
+				info.CastingCheck = CastingCheckDecimal
 			}
 			return info
 		}
 		if converted.converted == schema.ConvertedTypes.UTF8 && canSkipUTF8StringTarget(target) {
-			info.CanSkip = true
-			info.PostCheck = ParquetPostCheckStringLength
+			info.CastingCheck = CastingCheckStringLength
 		}
 		return info
 	default:
@@ -187,28 +192,41 @@ func parquetColumnSkipCastInfo(
 func parquetInt32SkipCastInfo(
 	converted convertedType,
 	target *model.ColumnInfo,
-	info ParquetColumnSkipCastInfo,
-) ParquetColumnSkipCastInfo {
+	info ColumnSkipCastInfo,
+) ColumnSkipCastInfo {
 	switch converted.converted {
 	case schema.ConvertedTypes.Date:
-		info.CanSkip = target.GetType() == mysql.TypeDate
+		if target.GetType() == mysql.TypeDate {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.TimeMillis:
-		info.CanSkip = target.GetType() == mysql.TypeDate || target.GetType() == mysql.TypeDatetime
+		if target.GetType() == mysql.TypeDate || target.GetType() == mysql.TypeDatetime {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Decimal:
 		if target.GetType() == mysql.TypeNewDecimal && canSkipDecimalByMeta(converted.decimalMeta, target) {
-			info.CanSkip = true
-			info.PostCheck = ParquetPostCheckDecimal
+			info.CastingCheck = CastingCheckDecimal
 		}
 	case schema.ConvertedTypes.Int8:
-		info.CanSkip = signedRangeFitsTarget(-1<<7, 1<<7-1, target)
+		if signedRangeFitsTarget(-1<<7, 1<<7-1, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Int16:
-		info.CanSkip = signedRangeFitsTarget(-1<<15, 1<<15-1, target)
+		if signedRangeFitsTarget(-1<<15, 1<<15-1, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Int32, schema.ConvertedTypes.None:
-		info.CanSkip = signedRangeFitsTarget(math.MinInt32, math.MaxInt32, target)
+		if signedRangeFitsTarget(math.MinInt32, math.MaxInt32, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Uint8:
-		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint8, target)
+		if unsignedRangeFitsTarget(math.MaxUint8, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Uint16:
-		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint16, target)
+		if unsignedRangeFitsTarget(math.MaxUint16, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	}
 	return info
 }
@@ -216,26 +234,37 @@ func parquetInt32SkipCastInfo(
 func parquetInt64SkipCastInfo(
 	converted convertedType,
 	target *model.ColumnInfo,
-	info ParquetColumnSkipCastInfo,
-) ParquetColumnSkipCastInfo {
+	info ColumnSkipCastInfo,
+) ColumnSkipCastInfo {
 	switch converted.converted {
 	case schema.ConvertedTypes.TimeMicros, schema.ConvertedTypes.TimestampMillis, schema.ConvertedTypes.TimestampMicros:
-		info.CanSkip = target.GetType() == mysql.TypeDate || target.GetType() == mysql.TypeDatetime
+		if target.GetType() == mysql.TypeDate || target.GetType() == mysql.TypeDatetime {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Decimal:
 		if target.GetType() == mysql.TypeNewDecimal && canSkipDecimalByMeta(converted.decimalMeta, target) {
-			info.CanSkip = true
-			info.PostCheck = ParquetPostCheckDecimal
+			info.CastingCheck = CastingCheckDecimal
 		}
 	case schema.ConvertedTypes.Int64, schema.ConvertedTypes.None:
-		info.CanSkip = signedRangeFitsTarget(math.MinInt64, math.MaxInt64, target)
+		if signedRangeFitsTarget(math.MinInt64, math.MaxInt64, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Uint8:
-		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint8, target)
+		if unsignedRangeFitsTarget(math.MaxUint8, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Uint16:
-		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint16, target)
+		if unsignedRangeFitsTarget(math.MaxUint16, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Uint32:
-		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint32, target)
+		if unsignedRangeFitsTarget(math.MaxUint32, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	case schema.ConvertedTypes.Uint64:
-		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint64, target)
+		if unsignedRangeFitsTarget(math.MaxUint64, target) {
+			info.CastingCheck = CastingCheckSkip
+		}
 	}
 	return info
 }
