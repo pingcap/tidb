@@ -219,6 +219,7 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 		"select * from t where a in (1, 2) and b < 15",
 		"select * from t where a between 1 and 10",
 		"select * from t where a between 1 and 10 and b < 15",
+		"select * from t where a<'10'",
 	}
 
 	for _, query := range queries {
@@ -266,6 +267,7 @@ func TestPreparedPlanCachePlanSelectionRegressions(t *testing.T) {
 	runPreparedPlanCacheLeftJoinRangeScan(t, tk)
 	runPreparedPlanCacheInlJoinRangeScan(t, tk)
 	runPreparedPlanCachePointGetSafety(t, tk)
+	runPreparedPlanCacheIntStrCmp(t, tk)
 }
 
 func TestPreparedPlanCacheWarningRegressions(t *testing.T) {
@@ -1076,6 +1078,123 @@ func runPreparedPlanCachePointGetSafety(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // can hit
 	tk.MustExec("deallocate prepare st")
+}
+
+// runPreparedPlanCacheIntStrCmp verifies that prepared statements with int column
+// compared to a parameter (int or string) can use plan cache after the change to
+// skip refineArgs when plan cache is enabled (support_cacheing_with_int_str_cmps).
+func runPreparedPlanCacheIntStrCmp(t *testing.T, tk *testkit.TestKit) {
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, y year, d decimal(10,2), r double, dt datetime, key(dt), key(r), key(d), key(y), key(a))")
+	tk.MustExec("insert into t values (1, 2023, 1.5, 1.1, '2024-01-01 10:00:00')")
+	tk.MustExec("insert into t values (2, 2024, 2.5, 2.2, '2024-06-15 12:30:00')")
+	tk.MustExec("insert into t values (3, 2025, 3.5, 3.3, '2025-01-01 00:00:00')")
+
+	// int column = ? with int param
+	tk.MustExec("prepare st from 'select * from t where a = ?'")
+	tk.MustExec("set @p=1")
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p=2")
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// switch to string parameter
+	tk.MustExec("set @p='3'")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p='1'")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// back to ints
+	tk.MustExec("set @p=2")
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// YEAR column = ? with int and string parameters
+	tk.MustExec("prepare st from 'select * from t where y = ?'")
+	tk.MustExec("set @p=2024")
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p=2025")
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// switch to string parameter
+	tk.MustExec("set @p='2025'")
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p='2024'")
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// back to int
+	tk.MustExec("set @p=2025")
+	tk.MustQuery("execute st using @p").Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// DECIMAL column = ? with decimal and string parameters
+	tk.MustExec("prepare st from 'select * from t where d > ?'")
+	tk.MustExec("set @p=1.0")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00", "2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00", "2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p=2.5")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// switch to strings
+	tk.MustExec("set @p='2.5'")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p='1.5'")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// back to int
+	tk.MustExec("set @p=2.5")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// REAL (double) column = ? with string and decimal parameters
+	tk.MustExec("prepare st from 'select * from t where r >= ?'")
+	tk.MustExec("set @p='3.0'")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p='2.2'")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// switch to decimal from string
+	tk.MustExec("set @p=2.2")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @p=2.1")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// back to string
+	tk.MustExec("set @p='2.2'")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// DATETIME column = ? with string datetime
+	tk.MustExec("prepare st from 'select * from t where dt > ?'")
+	tk.MustExec("set @p='2024-01-01 10:00:00'")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p='2024-06-01 00:00:00'")
+	tk.MustQuery("execute st using @p").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanExplainWarning(t *testing.T) {
@@ -1991,4 +2110,96 @@ func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
 	tk.MustExec(`rollback`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+}
+
+func TestNonPreparedPlanCacheIntStrCmp(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, y year, d decimal(10,2), r double, dt datetime, key(dt), key(r), key(d), key(y), key(a))")
+	tk.MustExec("insert into t values (1, 2023, 1.5, 1.1, '2024-01-01 10:00:00')")
+	tk.MustExec("insert into t values (2, 2024, 2.5, 2.2, '2024-06-15 12:30:00')")
+	tk.MustExec("insert into t values (3, 2025, 3.5, 3.3, '2025-01-01 00:00:00')")
+
+	// int column = ? with int param
+	tk.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// switch to string parameter
+	tk.MustQuery("select * from t where a = '3'").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where a = '3'").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where a = '1'").Sort().Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// back to int
+	tk.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// YEAR column = ? with int and string parameters
+	tk.MustQuery("select * from t where y = 2024").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where y = 2024").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where y = 2025").Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// switch to string parameter
+	tk.MustQuery("select * from t where y = '2025'").Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where y = '2025'").Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where y = '2024'").Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// back to int
+	tk.MustQuery("select * from t where y = 2025").Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// DECIMAL column = ? with decimal and string parameters
+	tk.MustQuery("select * from t where d > 1.0").Sort().Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00", "2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where d > 1.0").Sort().Check(testkit.Rows("1 2023 1.50 1.1 2024-01-01 10:00:00", "2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where d > 2.5").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// switch to strings
+	tk.MustQuery("select * from t where d > '2.5'").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where d > '2.5'").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p='1.5'")
+	tk.MustQuery("select * from t where d > '1.5'").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// back to int
+	tk.MustQuery("select * from t where d > 2.5").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// REAL (double) column = ? with string and decimal parameters
+	tk.MustQuery("select * from t where r >= '3.0'").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where r >= '3.0'").Sort().Check(testkit.Rows("3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where r >= '2.2'").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// switch to decimal from string
+	tk.MustQuery("select * from t where r >= 2.2").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where r >= 2.1").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// back to string
+	tk.MustQuery("select * from t where r >= '2.2'").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// DATETIME column = ? with string datetime
+	tk.MustQuery("select * from t where dt > '2024-01-01 10:00:00'").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where dt > '2024-01-01 10:00:00'").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where dt > '2024-06-01 00:00:00'").Sort().Check(testkit.Rows("2 2024 2.50 2.2 2024-06-15 12:30:00", "3 2025 3.50 3.3 2025-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
