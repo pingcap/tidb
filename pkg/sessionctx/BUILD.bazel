@@ -2,12 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "sessionctx",
-    srcs = ["context.go"],
+    srcs = [
+        "context.go",
+        "context_exprctx_override.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/sessionctx",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/distsql/context",
         "//pkg/domain/sqlsvrapi",
+        "//pkg/errctx",
+        "//pkg/expression/exprctx",
         "//pkg/extension",
         "//pkg/infoschema/validatorapi",
         "//pkg/kv",
@@ -18,6 +23,7 @@ go_library(
         "//pkg/sessionctx/sessionstates",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/table/tblctx",
+        "//pkg/util/ranger/context",
         "//pkg/util/sli",
         "//pkg/util/topsql/stmtstats",
         "@com_github_tikv_client_go_v2//oracle",
