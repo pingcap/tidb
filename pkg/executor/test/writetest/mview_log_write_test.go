@@ -311,6 +311,21 @@ func TestMLogPartitionedTableNotSupported(t *testing.T) {
 	tk.MustGetErrCode("insert into t values (1,100)", mysql.ErrNotSupportedYet)
 }
 
+func TestMLogImportIntoNotSupported(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	tk.MustGetErrCode(
+		"import into t from '/nonexistent.csv'",
+		mysql.ErrNotSupportedYet,
+	)
+}
+
 func TestMLogWriteUpdatePK(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

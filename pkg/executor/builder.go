@@ -1062,6 +1062,13 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "IMPORT")
 		return nil
 	}
+	if meta := tbl.Meta(); meta.MaterializedViewBase != nil &&
+		meta.MaterializedViewBase.MLogID != 0 {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"IMPORT INTO on tables with materialized view log",
+		)
+		return nil
+	}
 
 	var (
 		selectExec exec.Executor
