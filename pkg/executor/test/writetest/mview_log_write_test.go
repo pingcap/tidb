@@ -98,6 +98,13 @@ func TestMLogWriteIODKU(t *testing.T) {
 	))
 }
 
+func setLoadDataReader(tk *testkit.TestKit, data string) {
+	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (io.ReadCloser, error) {
+		return mydump.NewStringReader(data), nil
+	}
+	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+}
+
 func TestMLogWriteLoadDataIgnore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -109,13 +116,9 @@ func TestMLogWriteLoadDataIgnore(t *testing.T) {
 	tk.MustExec("insert into t values (1,10,100)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
-	data := "1\t11\t111\n2\t10\t222\n3\t30\t333\n"
-	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (r io.ReadCloser, err error) {
-		return mydump.NewStringReader(data), nil
-	}
-	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	setLoadDataReader(tk, "1,11,111\n2,10,222\n3,30,333\n")
 
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table t (a, b, c)")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table t fields terminated by ',' (a, b, c)")
 
 	tk.MustQuery("select a, b, c from t order by a").Check(
 		testkit.Rows("1 10 100", "3 30 333"),
@@ -137,13 +140,9 @@ func TestMLogWriteLoadDataReplacePKAndUKConflict(t *testing.T) {
 	tk.MustExec("insert into t values (1,10,100), (2,20,200)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
-	data := "1\t20\t999\n"
-	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (r io.ReadCloser, err error) {
-		return mydump.NewStringReader(data), nil
-	}
-	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	setLoadDataReader(tk, "1,20,999\n")
 
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' replace into table t (a, b, c)")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' replace into table t fields terminated by ',' (a, b, c)")
 
 	tk.MustQuery("select a, b, c from t order by a").Check(
 		testkit.Rows("1 20 999"),

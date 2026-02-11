@@ -39,7 +39,7 @@ drop table if exists `$mlog$t`;
 create table t (id int primary key, uk int unique, v int);
 insert into t values (1,10,100);
 create materialized view log on t (id, uk, v);
-load data local infile './t/executor/mview_log_dml.tsv' ignore into table t fields terminated by '\t' lines terminated by '\n' (id, uk, v);
+load data local infile './t/executor/mview_log_dml.csv' ignore into table t fields terminated by ',' lines terminated by '\n' (id, uk, v);
 select id, uk, v from t order by id;
 id	uk	v
 1	10	100

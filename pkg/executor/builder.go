@@ -2881,6 +2881,8 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 	return deleteExec
 }
 
+// wrapTableWithMLogIfExists wraps tbl with its materialized view log table if one exists.
+// It returns the original table unchanged when there is no associated MLog.
 func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, tp tables.MLogDMLType) table.Table {
 	if tbl == nil {
 		return nil
@@ -3953,7 +3955,8 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 }
 
 func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, physPlanPartInfo *plannercore.PhysPlanPartInfo,
-	lookUpContent []*join.IndexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
+	lookUpContent []*join.IndexJoinLookUpContent,
+) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
 
 	// In index join, this is called by multiple goroutines simultaneously, but partitionPruning is not thread-safe.
@@ -5084,7 +5087,8 @@ func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*jo
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.RangerContext, tableID, indexID int64, lookUpContents []*join.IndexJoinLookUpContent,
-	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (_ []kv.KeyRange, err error) {
+	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (_ []kv.KeyRange, err error) {
 	kvRanges := make([]kv.KeyRange, 0, len(ranges)*len(lookUpContents))
 	if len(ranges) == 0 {
 		return []kv.KeyRange{}, nil
