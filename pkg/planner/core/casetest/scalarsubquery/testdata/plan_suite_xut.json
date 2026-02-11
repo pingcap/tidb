@@ -194,19 +194,19 @@
       {
         "SQL": "explain analyze select * from t1 where a = (select a from t2 where b = (select b from t3 where c = (select c from t4 where a = 1)))",
         "Plan": [
-          "TableDual_42 root rows:0",
+          "TableDual_38 root rows:0",
           "ScalarSubQuery_20 root Output: ScalarQueryCol#131",
           "└─MaxOneRow_11 root ",
           "  └─TableReader_19 root data:Projection_13",
           "    └─Projection_13 cop[tikv] test.t4.c",
           "      └─Selection_18 cop[tikv] eq(test.t4.a, 1)",
           "        └─TableFullScan_17 cop[tikv] keep order:false, stats:pseudo",
-          "ScalarSubQuery_29 root Output: ScalarQueryCol#132",
+          "ScalarSubQuery_27 root Output: ScalarQueryCol#132",
           "└─MaxOneRow_24 root ",
-          "  └─TableDual_27 root rows:0",
-          "ScalarSubQuery_38 root Output: ScalarQueryCol#133",
-          "└─MaxOneRow_33 root ",
-          "  └─TableDual_36 root rows:0"
+          "  └─TableDual_26 root rows:0",
+          "ScalarSubQuery_34 root Output: ScalarQueryCol#133",
+          "└─MaxOneRow_31 root ",
+          "  └─TableDual_33 root rows:0"
         ]
       },
       {
@@ -293,7 +293,7 @@
       {
         "SQL": "explain analyze select * from t1 where a > (select a from t2 where b = (select b from t3 where c = (select c from t4 where aa = 255))) and b < (select bb from t2 where cc = (select dd from t3 where ee = (select ff from t4 where gg = 32767)))",
         "Plan": [
-          "TableDual_69 root rows:0",
+          "TableDual_67 root rows:0",
           "ScalarSubQuery_20 root Output: ScalarQueryCol#131",
           "└─MaxOneRow_11 root ",
           "  └─TableReader_19 root data:Projection_13",
@@ -306,15 +306,15 @@
           "    └─Projection_25 cop[tikv] test.t3.b",
           "      └─Selection_30 cop[tikv] eq(cast(test.t3.c, double BINARY), ScalarQueryCol#131(456.789))",
           "        └─TableFullScan_29 cop[tikv] keep order:false, stats:pseudo",
-          "ScalarSubQuery_41 root Output: ScalarQueryCol#135",
+          "ScalarSubQuery_39 root Output: ScalarQueryCol#135",
           "└─MaxOneRow_36 root ",
-          "  └─TableDual_39 root rows:0",
-          "ScalarSubQuery_59 root Output: ScalarQueryCol#239",
-          "└─MaxOneRow_50 root ",
-          "  └─TableReader_58 root data:Projection_52",
-          "    └─Projection_52 cop[tikv] test.t4.ff",
-          "      └─Selection_57 cop[tikv] eq(test.t4.gg, 32767)",
-          "        └─TableFullScan_56 cop[tikv] keep order:false, stats:pseudo"
+          "  └─TableDual_38 root rows:0",
+          "ScalarSubQuery_57 root Output: ScalarQueryCol#239",
+          "└─MaxOneRow_48 root ",
+          "  └─TableReader_56 root data:Projection_50",
+          "    └─Projection_50 cop[tikv] test.t4.ff",
+          "      └─Selection_55 cop[tikv] eq(test.t4.gg, 32767)",
+          "        └─TableFullScan_54 cop[tikv] keep order:false, stats:pseudo"
         ]
       }
     ]
