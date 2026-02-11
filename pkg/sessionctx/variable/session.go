@@ -333,7 +333,9 @@ func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte, shared bool) {
 	if tc.unchangedKeys == nil {
 		tc.unchangedKeys = map[string]bool{}
 	}
-	tc.unchangedKeys[string(key)] = shared
+	k := string(key)
+	alreadyShared, exist := tc.unchangedKeys[k]
+	tc.unchangedKeys[k] = shared && (!exist || (exist && alreadyShared))
 }
 
 // CollectUnchangedKeysForXLock collects unchanged keys for pessimistic lock.
