@@ -187,7 +187,7 @@ Limit	root		offset:0, count:5
 desc select 1 as a from dual order by a limit 1;
 id	estRows	task	access object	operator info
 Projection_6	1.00	root		1->Column#1
-└─TableDual_8	1.00	root		rows:1
+└─TableDual_7	1.00	root		rows:1
 drop table if exists t1;
 drop table if exists t2;
 create table t1(a bigint, b bigint);
