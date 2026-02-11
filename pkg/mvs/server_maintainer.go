@@ -130,6 +130,7 @@ func (sch *ServerConsistentHash) ToServerID(key string) string {
 	return sch.chash.GetNode(key)
 }
 
+// Available checks if the server responsible for the given key is available (i.e. matches current server ID).
 func (sch *ServerConsistentHash) Available(key string) bool {
 	return sch.ToServerID(key) == sch.ID
 }

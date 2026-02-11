@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -17,6 +16,7 @@ type TaskExecutor struct {
 
 	maxConcurrency atomic.Int64
 	timeoutNanos   atomic.Int64
+	lifecycleState atomic.Int32
 
 	metrics struct {
 		submittedCount atomic.Int64
@@ -31,7 +31,7 @@ type TaskExecutor struct {
 	queue struct {
 		mu    sync.Mutex
 		cond  *sync.Cond
-		tasks []taskRequest
+		tasks taskQueue
 	}
 
 	workers struct {
@@ -40,12 +40,76 @@ type TaskExecutor struct {
 	}
 
 	tasksWG sync.WaitGroup
-	closed  atomic.Bool
 }
+
+const (
+	taskExecutorStateInit int32 = iota
+	taskExecutorStateRunning
+	taskExecutorStateClosed
+)
 
 type taskRequest struct {
 	name string
 	task func() error
+}
+
+type taskQueue struct {
+	buf  []taskRequest
+	head int
+	size int
+}
+
+func (q *taskQueue) length() int {
+	return q.size
+}
+
+func (q *taskQueue) push(req taskRequest) {
+	if q.size == len(q.buf) {
+		q.grow()
+	}
+	tail := (q.head + q.size) % len(q.buf)
+	q.buf[tail] = req
+	q.size++
+}
+
+func (q *taskQueue) pop() (taskRequest, bool) {
+	if q.size == 0 {
+		return taskRequest{}, false
+	}
+	req := q.buf[q.head]
+	q.buf[q.head] = taskRequest{} // Clear references for GC.
+	q.head = (q.head + 1) % len(q.buf)
+	q.size--
+	if q.size == 0 {
+		q.head = 0
+	}
+	return req, true
+}
+
+func (q *taskQueue) clear() int {
+	pending := q.size
+	q.buf = nil
+	q.head = 0
+	q.size = 0
+	return pending
+}
+
+func (q *taskQueue) grow() {
+	newCap := len(q.buf) * 2
+	if newCap == 0 {
+		newCap = 4
+	}
+	newBuf := make([]taskRequest, newCap)
+	if q.size > 0 {
+		if q.head+q.size <= len(q.buf) {
+			copy(newBuf, q.buf[q.head:q.head+q.size])
+		} else {
+			n := copy(newBuf, q.buf[q.head:])
+			copy(newBuf[n:], q.buf[:q.size-n])
+		}
+	}
+	q.buf = newBuf
+	q.head = 0
 }
 
 func NewTaskExecutor(ctx context.Context, maxConcurrency int, timeout time.Duration) *TaskExecutor {
@@ -62,15 +126,20 @@ func NewTaskExecutor(ctx context.Context, maxConcurrency int, timeout time.Durat
 }
 
 // Run starts worker goroutines according to current maxConcurrency.
-func (e *TaskExecutor) Run() {
-	if e == nil || e.closed.Load() {
-		return
+// It returns true only when workers are started in this call.
+func (e *TaskExecutor) Run() bool {
+	if e == nil {
+		return false
+	}
+	if !e.lifecycleState.CompareAndSwap(taskExecutorStateInit, taskExecutorStateRunning) {
+		return false
 	}
 	workers := int(e.maxConcurrency.Load())
 	if workers <= 0 {
 		workers = 1
 	}
 	e.startWorkers(workers)
+	return true
 }
 
 // UpdateConfig updates maxConcurrency and timeout dynamically.
@@ -79,7 +148,7 @@ func (e *TaskExecutor) UpdateConfig(maxConcurrency int, timeout time.Duration) {
 	if e == nil {
 		return
 	}
-	if e.closed.Load() {
+	if e.lifecycleState.Load() == taskExecutorStateClosed {
 		return
 	}
 	if maxConcurrency > 0 {
@@ -115,27 +184,28 @@ func (e *TaskExecutor) Submit(name string, task func() error) {
 	e.queue.mu.Lock()
 	defer e.queue.mu.Unlock()
 
-	if e.closed.Load() || e.ctx.Err() != nil {
+	if e.lifecycleState.Load() == taskExecutorStateClosed || e.ctx.Err() != nil {
 		e.metrics.rejectedCount.Add(1)
 		return
 	}
 	e.metrics.submittedCount.Add(1)
 	e.metrics.waitingCount.Add(1)
 	e.tasksWG.Add(1)
-	e.queue.tasks = append(e.queue.tasks, taskRequest{name: name, task: task})
+	e.queue.tasks.push(taskRequest{name: name, task: task})
 	e.queue.cond.Signal()
 }
 
-func (e *TaskExecutor) Close() {
+// Close closes the executor.
+// It returns true when this call performs close and all workers/tasks finish within timeout.
+func (e *TaskExecutor) Close() bool {
 	if e == nil {
-		return
+		return false
 	}
-	if e.closed.Swap(true) {
-		return
+	if e.lifecycleState.Swap(taskExecutorStateClosed) == taskExecutorStateClosed {
+		return false
 	}
 	e.queue.mu.Lock()
-	pending := len(e.queue.tasks)
-	e.queue.tasks = nil
+	pending := e.queue.tasks.clear()
 	e.queue.cond.Broadcast()
 	e.queue.mu.Unlock()
 	if pending > 0 {
@@ -146,6 +216,7 @@ func (e *TaskExecutor) Close() {
 	}
 	e.tasksWG.Wait()
 	e.workers.wg.Wait()
+	return true
 }
 
 func (e *TaskExecutor) startWorkers(n int) {
@@ -169,14 +240,14 @@ func (e *TaskExecutor) workerLoop() {
 
 func (e *TaskExecutor) nextTask() (taskRequest, bool) {
 	e.queue.mu.Lock()
-	for !e.closed.Load() && len(e.queue.tasks) == 0 {
+	for e.lifecycleState.Load() != taskExecutorStateClosed && e.queue.tasks.length() == 0 {
 		if e.tryExitWorkerWithLock() {
 			e.queue.mu.Unlock()
 			return taskRequest{}, false
 		}
 		e.queue.cond.Wait()
 	}
-	if e.closed.Load() && len(e.queue.tasks) == 0 {
+	if e.lifecycleState.Load() == taskExecutorStateClosed && e.queue.tasks.length() == 0 {
 		e.queue.mu.Unlock()
 		e.workers.count.Add(-1)
 		return taskRequest{}, false
@@ -185,18 +256,10 @@ func (e *TaskExecutor) nextTask() (taskRequest, bool) {
 		e.queue.mu.Unlock()
 		return taskRequest{}, false
 	}
-	req := e.queue.tasks[0]
-	e.queue.tasks = e.queue.tasks[1:]
-	queued := len(e.queue.tasks)
+	req, _ := e.queue.tasks.pop()
 	e.queue.mu.Unlock()
 
 	e.metrics.waitingCount.Add(-1)
-
-	if intest.InTest && mockInjection != nil && queued > 0 {
-		inj := mockInjection
-		mockInjection = nil
-		inj()
-	}
 
 	return req, true
 }
@@ -213,8 +276,6 @@ func (e *TaskExecutor) tryExitWorkerWithLock() bool {
 		}
 	}
 }
-
-var mockInjectionTimer func(<-chan time.Time) <-chan time.Time
 
 func (e *TaskExecutor) runTask(name string, task func() error) {
 	e.metrics.runningCount.Add(1)
@@ -236,19 +297,12 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 	timer := mvsNewTimer(timeout)
 	defer timer.Stop()
 
-	ch := timer.C
-	if intest.InTest {
-		if mockInjectionTimer != nil {
-			ch = mockInjectionTimer(ch)
-		}
-	}
-
 	select {
 	case err := <-done:
 		e.metrics.runningCount.Add(-1)
 		e.tasksWG.Done()
 		e.logResult(name, err)
-	case <-ch:
+	case <-timer.C:
 		e.metrics.timeoutCount.Add(1)
 		e.metrics.runningCount.Add(-1)
 		logutil.BgLogger().Warn("mv task timed out, continue in background", zap.String("task", name), zap.Duration("timeout", timeout))
@@ -259,8 +313,6 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 		}()
 	}
 }
-
-var mockInjection func()
 
 func (e *TaskExecutor) logResult(name string, err error) {
 	if err == nil {

@@ -15,8 +15,8 @@ type ItemImpl[V Lessable[V]] struct {
 
 type Item[V Lessable[V]] = *ItemImpl[V]
 
-func NewItem[V Lessable[V]](value V) Item[V] {
-	return &ItemImpl[V]{Value: value}
+func newItem[V Lessable[V]](value V) Item[V] {
+	return &ItemImpl[V]{Value: value, index: -1}
 }
 
 // PriorityQueue implements heap.Interface.
@@ -37,7 +37,7 @@ func (p *PriorityQueue[V]) Front() Item[V] {
 
 // Push adds a value to the priority queue.
 func (p *PriorityQueue[V]) Push(value V) Item[V] {
-	item := NewItem(value)
+	item := newItem(value)
 	heap.Push(&p.impl, item)
 	return item
 }

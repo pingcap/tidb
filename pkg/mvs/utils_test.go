@@ -9,11 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func installMockTimeForTest(t *testing.T) {
+func installMockTimeForTest(t *testing.T) *MockTimeModule {
 	t.Helper()
 	module := NewMockTimeModule(mvsUnix(1700000000, 0))
 	restore := InstallMockTimeModuleForTest(module)
 	t.Cleanup(restore)
+	return module
 }
 
 func mustHash(mapping map[string]uint32) func([]byte) uint32 {
@@ -232,7 +233,7 @@ func TestPriorityQueue(t *testing.T) {
 		require.Equal(t, zero, pq.Remove(nil))
 		pq.Update(nil, node{v: "ignored", ts: base})
 
-		ghost := NewItem(node{v: "ghost", ts: base + int64(time.Second/time.Millisecond)})
+		ghost := newItem(node{v: "ghost", ts: base + int64(time.Second/time.Millisecond)})
 		pq.Update(ghost, node{v: "still-ghost", ts: base + int64(2*time.Second/time.Millisecond)})
 		require.Equal(t, zero, pq.Remove(ghost))
 	})

@@ -1,11 +1,11 @@
 package mvs
 
 import (
+	"maps"
 	"context"
 	"errors"
 	"sync"
 	"testing"
-	"time"
 )
 
 type mockServerHelper struct {
@@ -49,9 +49,7 @@ func (m *mockServerHelper) getAllServerInfo(_ context.Context) (map[string]serve
 	}
 
 	res := make(map[string]serverInfo, len(m.allInfos))
-	for k, v := range m.allInfos {
-		res[k] = v
-	}
+	maps.Copy(res, m.allInfos)
 	return res, nil
 }
 
@@ -231,7 +229,7 @@ func TestServerConsistentHashInitCanceled(t *testing.T) {
 	if ok {
 		t.Fatalf("expected init failed when context canceled")
 	}
-	if mvsSince(start) > 200*time.Millisecond {
+	if mvsSince(start) > 0 {
 		t.Fatalf("init should return quickly when context is canceled")
 	}
 	if got := helper.getServerInfoCalls; got > 1 {

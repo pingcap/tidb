@@ -2,6 +2,7 @@ package mvs
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,7 +12,8 @@ import (
 func TestTaskExecutorMaxConcurrency(t *testing.T) {
 	installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 0)
-	exec.Run()
+	require.True(t, exec.Run())
+	require.False(t, exec.Run()) // idempotent
 	defer exec.Close()
 
 	started := make(chan string, 2)
@@ -25,22 +27,16 @@ func TestTaskExecutorMaxConcurrency(t *testing.T) {
 		}
 	}
 
-	wg := make(chan struct{})
-	mockInjection = func() {
-		close(wg)
-	}
-
 	exec.Submit("t1", task("t1"))
 	exec.Submit("t2", task("t2"))
 
-	first := waitForStart(t, started, 200*time.Millisecond)
+	first := waitForStart(t, started, time.Hour)
 	require.True(t, first == "t1" || first == "t2")
 
 	select {
 	case got := <-started:
 		t.Fatalf("unexpected concurrent start: %s", got)
-	case <-wg:
-		break
+	default:
 	}
 
 	require.Equal(t, int64(2), exec.metrics.submittedCount.Load())
@@ -53,7 +49,7 @@ func TestTaskExecutorMaxConcurrency(t *testing.T) {
 
 	close(block)
 
-	second := waitForStart(t, started, 200*time.Millisecond)
+	second := waitForStart(t, started, time.Hour)
 	require.NotEqual(t, first, second)
 
 	waitForCount(t, exec.metrics.completedCount.Load, 2)
@@ -79,21 +75,15 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 		return nil
 	}
 
-	wg := make(chan struct{})
-	mockInjection = func() {
-		close(wg)
-	}
-
 	exec.Submit("t1", task)
 	exec.Submit("t2", task)
 
-	waitForSignal(t, started, 200*time.Millisecond)
+	waitForSignal(t, started, time.Hour)
 
 	select {
 	case got := <-started:
 		t.Fatalf("unexpected concurrent start: %s", got)
-	case <-wg:
-		break
+	default:
 	}
 
 	require.Equal(t, int64(2), exec.metrics.submittedCount.Load())
@@ -106,7 +96,7 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 
 	exec.setMaxConcurrency(2)
 
-	waitForSignal(t, started, 200*time.Millisecond)
+	waitForSignal(t, started, time.Hour)
 
 	require.Equal(t, int64(2), exec.metrics.runningCount.Load())
 	require.Equal(t, int64(0), exec.metrics.waitingCount.Load())
@@ -122,7 +112,7 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 }
 
 func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
-	installMockTimeForTest(t)
+	module := installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 50*time.Millisecond)
 	exec.Run()
 	defer exec.Close()
@@ -138,13 +128,7 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 		return nil
 	})
 
-	mockCh := make(chan time.Time, 1)
-	mockInjectionTimer = func(_ <-chan time.Time) <-chan time.Time {
-		return mockCh
-	}
-	defer func() { mockInjectionTimer = nil }()
-
-	waitForSignal(t, longStarted, 200*time.Millisecond)
+	waitForSignal(t, longStarted, time.Hour)
 
 	require.Equal(t, int64(1), exec.metrics.submittedCount.Load())
 	require.Equal(t, int64(1), exec.metrics.runningCount.Load())
@@ -154,7 +138,8 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
 	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
 
-	mockCh <- time.Time{}
+	module.Advance(500 * time.Millisecond)
+
 	waitForCount(t, exec.metrics.timeoutCount.Load, 1)
 	waitForCount(t, exec.metrics.runningCount.Load, 0)
 
@@ -163,7 +148,7 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 		return nil
 	})
 
-	waitForNamedStart(t, started, "short", 300*time.Millisecond)
+	waitForNamedStart(t, started, "short", time.Hour)
 
 	close(block)
 
@@ -174,7 +159,7 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 }
 
 func TestTaskExecutorUpdateTimeout(t *testing.T) {
-	installMockTimeForTest(t)
+	module := installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 0)
 	exec.Run()
 	defer exec.Close()
@@ -185,12 +170,6 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 	block := make(chan struct{})
 	longStarted := make(chan struct{})
 
-	mockCh := make(chan time.Time, 1)
-	mockInjectionTimer = func(_ <-chan time.Time) <-chan time.Time {
-		return mockCh
-	}
-	defer func() { mockInjectionTimer = nil }()
-
 	exec.Submit("long", func() error {
 		started <- "long"
 		close(longStarted)
@@ -198,7 +177,7 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 		return nil
 	})
 
-	waitForSignal(t, longStarted, 200*time.Millisecond)
+	waitForSignal(t, longStarted, time.Hour)
 
 	require.Equal(t, int64(1), exec.metrics.submittedCount.Load())
 	require.Equal(t, int64(1), exec.metrics.runningCount.Load())
@@ -210,7 +189,7 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 		return nil
 	})
 
-	mockCh <- time.Time{}
+	module.Advance(40 * time.Millisecond)
 	waitForNamedStart(t, started, "short", 300*time.Millisecond)
 
 	close(block)
@@ -224,7 +203,8 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 func TestTaskExecutorRejectAfterClose(t *testing.T) {
 	installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 0)
-	exec.Close()
+	require.True(t, exec.Close())
+	require.False(t, exec.Close())
 
 	exec.Submit("rejected", func() error { return nil })
 
@@ -235,6 +215,61 @@ func TestTaskExecutorRejectAfterClose(t *testing.T) {
 	require.Equal(t, int64(0), exec.metrics.completedCount.Load())
 	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
 	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
+}
+
+func TestTaskQueueRingBufferFIFO(t *testing.T) {
+	var q taskQueue
+	mkReq := func(i int) taskRequest {
+		return taskRequest{
+			name: fmt.Sprintf("t%d", i),
+			task: func() error { return nil },
+		}
+	}
+
+	for i := 1; i <= 4; i++ {
+		q.push(mkReq(i))
+	}
+	for i := 1; i <= 2; i++ {
+		req, ok := q.pop()
+		require.True(t, ok)
+		require.Equal(t, fmt.Sprintf("t%d", i), req.name)
+	}
+
+	for i := 5; i <= 12; i++ {
+		q.push(mkReq(i))
+	}
+	require.Equal(t, 10, q.length())
+
+	for i := 3; i <= 12; i++ {
+		req, ok := q.pop()
+		require.True(t, ok)
+		require.Equal(t, fmt.Sprintf("t%d", i), req.name)
+	}
+	require.Equal(t, 0, q.length())
+
+	_, ok := q.pop()
+	require.False(t, ok)
+}
+
+func TestTaskQueueClearsReferences(t *testing.T) {
+	var q taskQueue
+	fn := func() error { return nil }
+	q.push(taskRequest{name: "a", task: fn})
+
+	_, ok := q.pop()
+	require.True(t, ok)
+	require.Equal(t, 0, q.length())
+	require.GreaterOrEqual(t, len(q.buf), 1)
+	require.Empty(t, q.buf[0].name)
+	require.Nil(t, q.buf[0].task)
+
+	q.push(taskRequest{name: "b", task: fn})
+	q.push(taskRequest{name: "c", task: fn})
+	pending := q.clear()
+	require.Equal(t, 2, pending)
+	require.Equal(t, 0, q.length())
+	require.Nil(t, q.buf)
+	require.Equal(t, 0, q.head)
 }
 
 func waitForSignal(t *testing.T, ch <-chan struct{}, timeout time.Duration) {
@@ -279,6 +314,6 @@ func waitForCount(t *testing.T, get func() int64, want int64) {
 		if got := get(); got == want {
 			return
 		}
-		mvsSleep(5 * time.Millisecond)
+		mvsSleep(time.Hour)
 	}
 }
