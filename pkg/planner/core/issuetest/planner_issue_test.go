@@ -296,6 +296,17 @@ WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t
 GROUP BY field1;`).Check(testkit.Rows("0"))
 	})
 
+	t.Run("rollup-having-exists-nil-expression", func(t *testing.T) {
+		tk := newTestKit(t)
+		tk.MustExec("create table t_panic(a int primary key, b int)")
+		tk.MustExec("insert into t_panic values (1, 2)")
+		// issue:66165
+		tk.MustQuery(`SELECT a*0+1 AS x
+FROM t_panic
+GROUP BY x WITH ROLLUP
+HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<nil>"))
+	})
+
 	t.Run("merge-join-with-correlated-count", func(t *testing.T) {
 		tk := newTestKit(t)
 		tk.MustExec("create table t1(a int primary key, b int);")
