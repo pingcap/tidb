@@ -380,7 +380,7 @@ func addUnchangedKeysForLockByRow(
 	}
 	if keySet&lockRowKey > 0 {
 		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
-		txnCtx.AddUnchangedKeyForLock(unchangedRowKey)
+		txnCtx.AddUnchangedKeyForLock(unchangedRowKey, false)
 		count++
 	}
 	if keySet&lockUniqueKeys > 0 {
@@ -417,7 +417,7 @@ func addUnchangedKeysForLockByRow(
 			if err != nil {
 				return count, err
 			}
-			txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey)
+			txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey, false)
 			count++
 		}
 	}
