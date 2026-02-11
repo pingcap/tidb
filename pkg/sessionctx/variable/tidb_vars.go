@@ -1834,6 +1834,14 @@ func serverMemoryLimitDefaultValue() string {
 	return "0"
 }
 
+// SetDefServerMemoryLimit sets the default server memory limit.
+func SetDefServerMemoryLimit(v string) {
+	DefTiDBServerMemoryLimit = v
+	if sysVars != nil {
+		SetSysVar(TiDBServerMemoryLimit, v)
+	}
+}
+
 func mustParseDuration(str string) time.Duration {
 	duration, err := time.ParseDuration(str)
 	if err != nil {
