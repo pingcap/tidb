@@ -271,6 +271,10 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 				if expBackoffResult.Est > upperLimit {
 					expBackoffResult.Est = upperLimit
 				}
+				// Keep MinEst/MaxEst consistent with Est and the histogram: MaxEst is the worst case for "most filtering"
+				// and must not exceed the range upper limit; MinEst must not exceed the point estimate.
+				expBackoffResult.MaxEst = min(expBackoffResult.MaxEst, upperLimit)
+				expBackoffResult.MinEst = min(expBackoffResult.MinEst, expBackoffResult.Est)
 				count.Add(expBackoffResult)
 			}
 		}
@@ -351,24 +355,27 @@ func estimateRowCountWithUniformDistribution(
 	histNDV := float64(histogram.NDV - int64(topN.Num()))
 	notNullCount := histogram.NotNullCount()
 	minTopN := topN.MinCount()
+	// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+	skewMax := notNullCount - (histNDV - 1)
+	if minTopN > 0 && skewMax > 0 {
+		// The skewEstimate should not be larger than the minimum TopN value.
+		skewMax = min(skewMax, float64(minTopN))
+	} else {
+		skewMax = max(skewMax, float64(minTopN))
+	}
 	var count statistics.RowEstimate
 	if histNDV <= 0 || notNullCount == 0 || modifyCount == 0 {
 		// Branch 1: all NDV's are in TopN, and no histograms.
 		// SKewRatio is handled inside the OutOfRangeRowCount function.
 		count = histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeRowCount, modifyCount, topN, skewRatio)
+		count.MinEst = 0
 	} else {
 		// Branch 2: some NDV's are in histograms
 		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
 		// Calculate histNDV excluding TopN from NDV
-		count.MinEst = 0
 		count.Est = notNullCount / histNDV
+		skewMax = max(skewMax, count.Est)
 		if skewRatio > 0 {
-			// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-			skewMax := notNullCount - (histNDV - 1)
-			if minTopN > 0 {
-				// The skewEstimate should not be larger than the minimum TopN value.
-				skewMax = min(skewMax, float64(minTopN))
-			}
 			count = statistics.CalculateSkewRatioCounts(count.Est, skewMax, skewRatio)
 		}
 	}
