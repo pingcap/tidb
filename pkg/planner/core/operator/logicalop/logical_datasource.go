@@ -249,6 +249,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 // HasTiflash checks whether the table has TiFlash replicas (real or hypothetical).
 // It does not include MPP gating; callers should check IsMPPAllowed() separately when needed.
 func (ds *DataSource) HasTiflash() bool {
+	if _, ok := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiFlash]; !ok {
+		return false
+	}
+	if ds.PreferStoreType&h.PreferTiKV != 0 && ds.PreferStoreType&h.PreferTiFlash == 0 {
+		return false
+	}
 	return (ds.TableInfo.TiFlashReplica != nil && ds.TableInfo.TiFlashReplica.Available &&
 		ds.TableInfo.TiFlashReplica.Count > 0) ||
 		UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)
@@ -341,9 +347,7 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...*base
 			copy(result[len(result)-1], path.IdxCols[i+1:])
 		}
 	}
-	hasTiFlashReplica := ds.TableInfo.TiFlashReplica != nil &&
-		ds.TableInfo.TiFlashReplica.Available && ds.TableInfo.TiFlashReplica.Count > 0 ||
-		UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)
+	hasTiFlashReplica := ds.HasTiflash()
 	ds.hasTiflash = hasTiFlashReplica && ds.SCtx().GetSessionVars().IsMPPAllowed()
 	return &base.PossiblePropertiesInfo{
 		Order:      result,
