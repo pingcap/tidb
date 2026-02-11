@@ -305,11 +305,8 @@ func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.Push
 // ShouldCheckTiFlashPushDown returns true when TiFlash pushdown checks are meaningful.
 // It requires both TiFlash replica availability in plan and TiFlash enabled in isolation read engines.
 func ShouldCheckTiFlashPushDown(pctx base.PlanContext, hasTiFlash bool) bool {
-	if !hasTiFlash {
-		return false
-	}
 	_, ok := pctx.GetSessionVars().GetIsolationReadEngines()[kv.TiFlash]
-	return ok
+	return hasTiFlash && ok
 }
 
 // FilterPathByIsolationRead filter out AccessPath by isolation read engine requirement.
