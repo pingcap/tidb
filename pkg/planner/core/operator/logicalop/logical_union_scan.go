@@ -125,7 +125,15 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) (ba
 func (p *LogicalUnionScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	// ref exhaustPhysicalPlans4LogicalUnionScan: it will push down the sort prop directly.
 	// in union scan exec, it will feel the underlying tableReader or indexReader to get the keepOrder.
-	return p.Children()[0].PreparePossibleProperties(schema, childrenProperties...)
+	childProps := p.Children()[0].PreparePossibleProperties(schema, childrenProperties...)
+	p.hasTiflash = false
+	if childProps == nil {
+		return &base.PossiblePropertiesInfo{}
+	}
+	return &base.PossiblePropertiesInfo{
+		Order:      childProps.Order,
+		HasTiflash: false,
+	}
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.

@@ -240,7 +240,12 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+func (p *LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	if len(childrenProperties) == 0 || childrenProperties[0] == nil {
+		p.hasTiflash = false
+		return &base.PossiblePropertiesInfo{}
+	}
+	p.hasTiflash = childrenProperties[0].HasTiflash
 	return childrenProperties[0]
 }
 
