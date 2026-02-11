@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
@@ -133,6 +134,21 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(parentUsedCols, s.Schema())
+	if len(parentUsedCols) == 0 {
+		// Keep one smallest column when no parent column is required.
+		// Empty output layouts are fragile in MPP plan construction.
+		minColLen := math.MaxInt
+		chosenPos := 0
+		for i, col := range s.schema.Columns {
+			if col.GetType().GetFlen() < minColLen {
+				minColLen = col.GetType().GetFlen()
+				chosenPos = i
+			}
+		}
+		if len(used) > 0 {
+			used[chosenPos] = true
+		}
+	}
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, s.Schema().Columns[i])

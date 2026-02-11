@@ -70,6 +70,56 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
+	allPruned := true
+	for i, b := range used {
+		if b || exprHasSetVarOrSleep(p.Exprs[i]) {
+			// Mark it as used to avoid checking side-effect expression twice.
+			used[i] = true
+			allPruned = false
+			break
+		}
+	}
+	if allPruned {
+		if _, ok := child.(*LogicalTableDual); ok {
+			// Keep one virtual output column for table dual to preserve semantics.
+			if len(p.Exprs) == 0 {
+				p.Exprs = append(p.Exprs, expression.NewZero())
+				p.schema.Columns = append(p.schema.Columns, &expression.Column{
+					UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  p.Exprs[0].GetType(),
+				})
+			} else {
+				p.Exprs = p.Exprs[:1]
+				p.schema.Columns = p.schema.Columns[:1]
+				p.Exprs[0] = expression.NewZero()
+				p.schema.Columns[0] = &expression.Column{
+					UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  p.Exprs[0].GetType(),
+				}
+			}
+			return nil
+		}
+		if child.Schema().Len() > 0 {
+			// Old 6.5 pruning API cannot replace this projection node directly.
+			// Keep one passthrough column to prevent generating an empty projection.
+			if len(p.Exprs) == 0 {
+				p.Exprs = append(p.Exprs, child.Schema().Columns[0])
+				p.schema.Columns = append(p.schema.Columns, &expression.Column{
+					UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  child.Schema().Columns[0].GetType(),
+				})
+				used = append(used, true)
+			} else {
+				p.Exprs[0] = child.Schema().Columns[0]
+				p.schema.Columns[0] = &expression.Column{
+					UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  child.Schema().Columns[0].GetType(),
+				}
+				used[0] = true
+			}
+		}
+	}
+
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
 			prunedColumns = append(prunedColumns, p.schema.Columns[i])
@@ -87,11 +137,9 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	child := p.children[0]
 	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
-	err := child.PruneColumns(parentUsedCols, opt)
-	if err != nil {
+	if err := child.PruneColumns(parentUsedCols, opt); err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.children[0])
 	return nil
 }
 
@@ -172,16 +220,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	err := child.PruneColumns(selfUsedCols, opt)
 	if err != nil {
 		return err
-	}
-	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
-	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
-	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
-	// the last rule. So we specially handle this case here.
-	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
-		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
-			childOfChild := childProjection.children[0]
-			la.SetChildren(childOfChild)
-		}
 	}
 	return nil
 }
@@ -446,13 +484,11 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.children[0])
 
 	err = p.children[1].PruneColumns(rightCols, opt)
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.children[1])
 
 	p.mergeSchema()
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
@@ -471,7 +507,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(la.children[1])
 
 	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
@@ -482,7 +517,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(la.children[0])
 
 	la.mergeSchema()
 	return nil
@@ -554,10 +588,6 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
-	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
-		return nil
-	}
-
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
 	if err := p.children[0].PruneColumns(parentUsedCols, opt); err != nil {
@@ -570,28 +600,6 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *lo
 
 func (*columnPruner) name() string {
 	return "column_prune"
-}
-
-// By add const one, we can avoid empty Projection is eliminated.
-// Because in some cases, Projectoin cannot be eliminated even its output is empty.
-func addConstOneForEmptyProjection(p LogicalPlan) {
-	proj, ok := p.(*LogicalProjection)
-	if !ok {
-		return
-	}
-	if proj.Schema().Len() != 0 {
-		return
-	}
-
-	constOne := expression.NewOne()
-	proj.schema.Append(&expression.Column{
-		UniqueID: proj.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  constOne.GetType(),
-	})
-	proj.Exprs = append(proj.Exprs, &expression.Constant{
-		Value:   constOne.Value,
-		RetType: constOne.GetType(),
-	})
 }
 
 func appendColumnPruneTraceStep(p LogicalPlan, prunedColumns []*expression.Column, opt *logicalOptimizeOp) {
