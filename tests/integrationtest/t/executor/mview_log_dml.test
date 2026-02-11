@@ -70,3 +70,37 @@ insert into t values (1, 10, 200) on duplicate key update id = 3, v = values(v);
 select id, uk, v from t order by id;
 select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 
+
+# DDL on non-tracked columns keeps mlog usable
+
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (id int primary key, tracked int, untracked int);
+create materialized view log on t (id, tracked);
+insert into t values (1, 10, 100);
+delete from `$mlog$t`;
+
+alter table t add column c_new int default 0;
+update t set untracked = 101 where id = 1;
+select count(*) from `$mlog$t`;
+
+insert into t (id, tracked, untracked) values (2, 20, 200);
+select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
+
+alter table t drop column untracked;
+update t set tracked = 11 where id = 1;
+select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
+
+# Current behavior: DDL on tracked columns is not rejected up-front
+
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (id int primary key, tracked int, untracked int);
+create materialized view log on t (id, tracked);
+alter table t drop column tracked;
+--error 1105
+insert into t values (1, 100);
+--error 1105
+update t set untracked = 101 where id = 1;
+--error 1105
+delete from t where id = 1;

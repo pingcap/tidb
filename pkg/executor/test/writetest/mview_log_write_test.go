@@ -16,14 +16,81 @@ package writetest
 
 import (
 	"io"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/stretchr/testify/require"
 )
+
+const (
+	addColumnStateWriteReorgFailpoint = "github.com/pingcap/tidb/pkg/ddl/onAddColumnStateWriteReorg"
+	dropColumnStateWriteOnlyFailpoint = "github.com/pingcap/tidb/pkg/ddl/onDropColumnStateWriteOnly"
+)
+
+// ddlCtrl controls DDL statements paused at a failpoint for testing mlog behavior during online DDL.
+type ddlCtrl struct {
+	paused chan struct{}
+	resume chan struct{}
+
+	ddlWg  sync.WaitGroup
+	ddlErr error
+
+	pausedOnce  sync.Once
+	releaseOnce sync.Once
+}
+
+// startDDLPausedAtFailpoint installs a failpoint callback and starts DDL in background.
+func startDDLPausedAtFailpoint(
+	t *testing.T,
+	tkDDL *testkit.TestKit,
+	failpointName string,
+	ddlSQL string,
+) *ddlCtrl {
+	ctrl := &ddlCtrl{
+		paused: make(chan struct{}),
+		resume: make(chan struct{}),
+	}
+
+	testfailpoint.EnableCall(t, failpointName, func() {
+		ctrl.pausedOnce.Do(func() {
+			close(ctrl.paused)
+		})
+		<-ctrl.resume
+	})
+
+	ctrl.ddlWg.Add(1)
+	go func() {
+		defer ctrl.ddlWg.Done()
+		ctrl.ddlErr = tkDDL.ExecToErr(ddlSQL)
+	}()
+	return ctrl
+}
+
+// waitUntilPaused waits until the failpoint callback is hit.
+func (c *ddlCtrl) waitUntilPaused(t *testing.T, desc string) {
+	select {
+	case <-c.paused:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting ddl failpoint", "desc=%s", desc)
+	}
+}
+
+// releaseAndWaitFinish resumes the paused DDL and waits for completion.
+// It is idempotent and safe to call multiple times.
+func (c *ddlCtrl) releaseAndWaitFinish(t *testing.T) {
+	c.releaseOnce.Do(func() {
+		close(c.resume)
+		c.ddlWg.Wait()
+		require.NoError(t, c.ddlErr)
+	})
+}
 
 func TestMLogInsert(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -530,6 +597,150 @@ func TestMLogPrunedColumns(t *testing.T) {
 			"1 11 U 1",
 		))
 	})
+}
+
+func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100)")
+	tk.MustExec("delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter table t add column c_new int default 0",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "add-column write-reorg")
+
+	// Update an untracked column during online DDL: mlog should stay empty.
+	tk.MustExec("update t set untracked = 101 where id = 1")
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+
+	// Insert during online DDL: mlog should still capture tracked columns.
+	tk.MustExec("insert into t (id, tracked, untracked) values (2, 20, 200)")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"2 20 I 1",
+	))
+
+	ctrl.releaseAndWaitFinish(t)
+
+	tk.MustQuery("select id, tracked, untracked, c_new from t order by id").Check(testkit.Rows(
+		"1 10 101 0",
+		"2 20 200 0",
+	))
+}
+
+func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int, to_drop int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100)")
+	tk.MustExec("delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		dropColumnStateWriteOnlyFailpoint,
+		"alter table t drop column to_drop",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "drop-untracked-column write-only")
+
+	// Update a tracked column during online DDL should still emit update logs.
+	tk.MustExec("update t set tracked = 11 where id = 1")
+	// Insert during online DDL should still emit insert logs.
+	tk.MustExec("insert into t (id, tracked) values (2, 20)")
+
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 U -1",
+		"1 11 U 1",
+		"2 20 I 1",
+	))
+
+	ctrl.releaseAndWaitFinish(t)
+
+	tk.MustQuery("select id, tracked from t order by id").Check(testkit.Rows(
+		"1 11",
+		"2 20",
+	))
+}
+
+func TestMLogOnlineDDLDropTrackedColumnCurrentBehavior(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100)")
+	tk.MustExec("delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		dropColumnStateWriteOnlyFailpoint,
+		"alter table t drop column tracked",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "drop-tracked-column write-only")
+
+	// While online DDL is paused in an intermediate state, tracked column offsets in mlog metadata
+	// can no longer match the partial insert row layout, so mlog writing fails in the DML path.
+	err := tk.ExecToErr("insert into t (id, untracked) values (2, 200)")
+	require.ErrorContains(t, err, "write mlog row: base row too short")
+
+	ctrl.releaseAndWaitFinish(t)
+
+	// Current behavior after DDL completion: wrapped DML fails because tracked column metadata
+	// still exists in mlog definition but is removed from the base table schema.
+	err = tk.ExecToErr("insert into t (id, untracked) values (3, 300)")
+	require.ErrorContains(t, err, "wrap table with mlog: base column tracked not found")
+}
+
+func TestMLogDropTrackedColumnCurrentBehavior(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("alter table t drop column tracked")
+
+	// Current behavior: DDL succeeds, then wrapped DML fails at execution build time because
+	// mlog metadata still references a tracked column that no longer exists on base table.
+	err := tk.ExecToErr("insert into t values (1, 100)")
+	require.ErrorContains(t, err, "wrap table with mlog: base column tracked not found")
+
+	err = tk.ExecToErr("update t set untracked = 101 where id = 1")
+	require.ErrorContains(t, err, "wrap table with mlog: base column tracked not found")
+
+	err = tk.ExecToErr("delete from t where id = 1")
+	require.ErrorContains(t, err, "wrap table with mlog: base column tracked not found")
 }
 
 func TestMLogGeneratedColumn(t *testing.T) {
