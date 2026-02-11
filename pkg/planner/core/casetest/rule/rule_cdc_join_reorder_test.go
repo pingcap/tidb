@@ -26,16 +26,18 @@ func TestCDCJoinReorder(tt *testing.T) {
 	testfailpoint.Enable(tt, "github.com/pingcap/tidb/pkg/planner/core/enableCDCJoinReorder", `return(true)`)
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1, t2, t3, t4")
+		tk.MustExec("drop table if exists t1, t2, t3, t4, t5")
 		tk.MustExec("CREATE TABLE t1 (a INT, b INT)")
 		tk.MustExec("CREATE TABLE t2 (a INT, b INT)")
 		tk.MustExec("CREATE TABLE t3 (a INT, b INT)")
 		tk.MustExec("CREATE TABLE t4 (a INT, b INT)")
+		tk.MustExec("CREATE TABLE t5 (a INT, b INT)")
 
 		tk.MustExec("INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30)")
 		tk.MustExec("INSERT INTO t2 VALUES (1, 100), (2, 200), (4, 400)")
 		tk.MustExec("INSERT INTO t3 VALUES (1, 1000), (3, 3000), (5, 5000)")
 		tk.MustExec("INSERT INTO t4 VALUES (1, 10000), (4, 40000), (6, 60000)")
+		tk.MustExec("INSERT INTO t5 VALUES (2, 20000), (5, 50000), (7, 70000)")
 
 		var input []string
 		var output []struct {

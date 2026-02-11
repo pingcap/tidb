@@ -641,6 +641,568 @@
         "Result": [
           "1 10 <nil> <nil> 1 1000 1 10000"
         ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t3.a = t4.a JOIN t5 ON t4.a = t5.a ORDER BY t1.a",
+        "Plan": [
+          "Sort 24389.65 root  test.t1.a",
+          "└─HashJoin 24389.65 root  inner join, equal:[eq(test.t4.a, test.t5.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t5.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t5 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a JOIN t4 ON t1.a = t4.a RIGHT JOIN t5 ON t4.a = t5.a ORDER BY t5.a",
+        "Plan": [
+          "Sort 24389.65 root  test.t5.a",
+          "└─HashJoin 24389.65 root  right outer join, left side:HashJoin, equal:[eq(test.t4.a, test.t5.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t5 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t4.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 15609.38 root  left outer join, left side:HashJoin, equal:[eq(test.t2.a, test.t3.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 2 20000",
+          "<nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 5 50000",
+          "<nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 7 70000"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a LEFT JOIN t4 ON t3.a = t4.a LEFT JOIN t5 ON t4.a = t5.a ORDER BY t1.a",
+        "Plan": [
+          "Sort 24389.65 root  test.t1.a",
+          "└─HashJoin 24389.65 root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 19511.72 root  left outer join, left side:HashJoin, equal:[eq(test.t4.a, test.t5.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t5.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t5 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 15609.38 root  left outer join, left side:HashJoin, equal:[eq(test.t3.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.a, test.t3.a)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 1 1000 1 10000 <nil> <nil>",
+          "2 20 2 200 <nil> <nil> <nil> <nil> <nil> <nil>",
+          "3 30 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a LEFT JOIN t4 ON t3.a = t4.a ORDER BY t1.a",
+        "Plan": [
+          "Sort 19511.72 root  test.t1.a",
+          "└─HashJoin 19511.72 root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  left outer join, left side:HashJoin, equal:[eq(test.t3.a, test.t4.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.a, test.t3.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 1 1000 1 10000",
+          "2 20 2 200 <nil> <nil> <nil> <nil>",
+          "3 30 <nil> <nil> <nil> <nil> <nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a RIGHT JOIN t3 ON t2.a = t3.a RIGHT JOIN t4 ON t3.a = t4.a ORDER BY t4.a",
+        "Plan": [
+          "Sort 19511.72 root  test.t4.a",
+          "└─HashJoin 19511.72 root  right outer join, left side:HashJoin, equal:[eq(test.t3.a, test.t4.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  right outer join, left side:HashJoin, equal:[eq(test.t2.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  right outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 1 1000 1 10000",
+          "<nil> <nil> <nil> <nil> <nil> <nil> 4 40000",
+          "<nil> <nil> <nil> <nil> <nil> <nil> 6 60000"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a RIGHT JOIN t3 ON t2.a = t3.a LEFT JOIN t4 ON t3.a = t4.a ORDER BY t3.a",
+        "Plan": [
+          "Sort 19492.21 root  test.t3.a",
+          "└─HashJoin 19492.21 root  left outer join, left side:HashJoin, equal:[eq(test.t3.a, test.t4.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  right outer join, left side:HashJoin, equal:[eq(test.t2.a, test.t3.a)]",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 1 1000 1 10000",
+          "<nil> <nil> <nil> <nil> 3 3000 <nil> <nil>",
+          "<nil> <nil> <nil> <nil> 5 5000 <nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a RIGHT JOIN t4 ON t3.a = t4.a ORDER BY t4.a",
+        "Plan": [
+          "Sort 19511.72 root  test.t4.a",
+          "└─HashJoin 19511.72 root  right outer join, left side:HashJoin, equal:[eq(test.t3.a, test.t4.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  right outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 1 1000 1 10000",
+          "<nil> <nil> <nil> <nil> <nil> <nil> 4 40000",
+          "<nil> <nil> <nil> <nil> <nil> <nil> 6 60000"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a WHERE t1.b > 10 ORDER BY t1.a",
+        "Plan": [
+          "Sort 5208.33 root  test.t1.a",
+          "└─HashJoin 5208.33 root  left outer join, left side:HashJoin, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─HashJoin(Build) 4166.67 root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "  │ ├─TableReader(Build) 3333.33 root  data:Selection",
+          "  │ │ └─Selection 3333.33 cop[tikv]  gt(test.t1.b, 10)",
+          "  │ │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 20 2 200 <nil> <nil>",
+          "3 30 <nil> <nil> <nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t1.a = t3.a WHERE t2.a IS NULL ORDER BY t1.a",
+        "Plan": [
+          "Sort 15593.77 root  test.t1.a",
+          "└─HashJoin 15593.77 root  left outer join, left side:Projection, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─Projection(Probe) 12487.50 root  test.t1.a, test.t1.b, <nil>->test.t2.a, <nil>->test.t2.b",
+          "    └─HashJoin 12487.50 root  anti semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3 30 <nil> <nil> 3 3000"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a JOIN t3 ON t1.a = t3.a WHERE t2.b > 100 ORDER BY t1.a",
+        "Plan": [
+          "Sort 5203.12 root  test.t1.a",
+          "└─Projection 5203.12 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "  └─HashJoin 5203.12 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "    ├─HashJoin(Build) 4162.50 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    │ ├─TableReader(Build) 3330.00 root  data:Selection",
+          "    │ │ └─Selection 3330.00 cop[tikv]  gt(test.t2.b, 100), not(isnull(test.t2.a))",
+          "    │ │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    │ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT * FROM t1 x JOIN t1 y ON x.a = y.b ORDER BY x.a, y.a",
+        "Plan": [
+          "Sort 12487.50 root  test.t1.a, test.t1.a",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t1.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:y keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:x keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT * FROM t1 x LEFT JOIN t1 y ON x.a = y.b JOIN t2 ON x.a = t2.a ORDER BY x.a, t2.a",
+        "Plan": [
+          "Sort 15609.38 root  test.t1.a, test.t2.a",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t1.b)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:y keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:x keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 <nil> <nil> 1 100",
+          "2 20 <nil> <nil> 2 200"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a AND t1.b < t2.b JOIN t3 ON t1.a = t3.a ORDER BY t1.a, t3.a",
+        "Plan": [
+          "Sort 15593.77 root  test.t1.a, test.t3.a",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)], other cond:lt(test.t1.b, test.t2.b)",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 1 1000",
+          "3 30 <nil> <nil> 3 3000"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a AND t1.b > t2.b JOIN t3 ON t2.a = t3.a ORDER BY t2.a, t3.a",
+        "Plan": [
+          "Sort 15593.77 root  test.t2.a, test.t3.a",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  right outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t1.b, test.t2.b)",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> <nil> 1 100 1 1000"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t1.a = t3.a ORDER BY t2.a",
+        "Plan": [
+          "Sort 15609.38 root  test.t2.a",
+          "└─HashJoin 15609.38 root  left outer join, left side:HashJoin, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  right outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 1 1000",
+          "2 20 2 200 <nil> <nil>",
+          "<nil> <nil> 4 400 <nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a JOIN t3 ON t1.a = t3.a ORDER BY t2.a, t3.a",
+        "Plan": [
+          "Sort 15609.38 root  test.t2.a, test.t3.a",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 1 1000"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t2 JOIN t3 ON t2.a = t3.a LEFT JOIN t1 ON t1.a = t3.a ORDER BY t2.a",
+        "Plan": [
+          "Sort 15609.38 root  test.t2.a",
+          "└─HashJoin 15609.38 root  left outer join, left side:HashJoin, equal:[eq(test.t3.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 100 1 1000 1 10"
+        ]
+      },
+      {
+        "SQL": "SELECT t1.a, COUNT(*) FROM t1 JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.a = t3.a GROUP BY t1.a ORDER BY t1.a",
+        "Plan": [
+          "Sort 7992.00 root  test.t1.a",
+          "└─Projection 7992.00 root  test.t1.a, Column#13",
+          "  └─HashAgg 7992.00 root  group by:test.t1.a, funcs:count(1)->Column#13, funcs:firstrow(test.t1.a)->test.t1.a",
+          "    └─HashJoin 15609.38 root  left outer join, left side:HashJoin, equal:[eq(test.t2.a, test.t3.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a LIMIT 2",
+        "Plan": [
+          "TopN 2.00 root  test.t1.a, offset:0, count:2",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 1 1000"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a WHERE EXISTS (SELECT 1 FROM t3 WHERE t3.a = t1.a) ORDER BY t1.a",
+        "Plan": [
+          "Sort 9990.00 root  test.t1.a",
+          "└─HashJoin 9990.00 root  semi join, left side:HashJoin, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a WHERE NOT EXISTS (SELECT 1 FROM t3 WHERE t3.a = t1.a) ORDER BY t1.a",
+        "Plan": [
+          "Sort 9990.00 root  test.t1.a",
+          "└─HashJoin 9990.00 root  anti semi join, left side:HashJoin, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 20 2 200"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a WHERE t1.a IN (SELECT a FROM t3) ORDER BY t1.a",
+        "Plan": [
+          "Sort 12487.50 root  test.t1.a",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─HashAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "  │ └─TableReader 7992.00 root  data:HashAgg",
+          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t3.a, ",
+          "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │       └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a WHERE t1.b > 10 OR t2.b > 150 ORDER BY t1.a",
+        "Plan": [
+          "Sort 15609.38 root  test.t1.a",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)], other cond:or(gt(test.t1.b, 10), gt(test.t2.b, 150))",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a AND (t2.b > 100 OR t2.b < 50) JOIN t3 ON t1.a = t3.a ORDER BY t1.a",
+        "Plan": [
+          "Sort 12487.50 root  test.t1.a",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 9990.00 root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 6650.01 root  data:Selection",
+          "    │ └─Selection 6650.01 cop[tikv]  not(isnull(test.t2.a)), or(gt(test.t2.b, 100), lt(test.t2.b, 50))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 <nil> <nil> 1 1000",
+          "3 30 <nil> <nil> 3 3000"
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 JOIN t2 ON t1.b = t2.b LEFT JOIN t3 ON t2.b = t3.b ORDER BY t1.a",
+        "Plan": [
+          "Sort 15609.38 root  test.t1.a",
+          "└─HashJoin 15609.38 root  left outer join, left side:HashJoin, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a LEFT JOIN t3 ON t2.b = t3.b ORDER BY t1.a",
+        "Plan": [
+          "Sort 15609.38 root  test.t1.a",
+          "└─HashJoin 15609.38 root  left outer join, left side:HashJoin, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 1 100 <nil> <nil>",
+          "2 20 2 200 <nil> <nil>"
+        ]
       }
     ]
   }
