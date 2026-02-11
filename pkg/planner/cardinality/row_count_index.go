@@ -354,7 +354,7 @@ func estimateRowCountWithUniformDistribution(
 	var count statistics.RowEstimate
 	if histNDV <= 0 || notNullCount == 0 || modifyCount == 0 {
 		// Branch 1: all NDV's are in TopN, and no histograms.
-		// SKewRatio is handed inside the OutOfRangeRowCount function.
+		// SKewRatio is handled inside the OutOfRangeRowCount function.
 		count = histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeRowCount, modifyCount, topN, skewRatio)
 	} else {
 		// Branch 2: some NDV's are in histograms
@@ -364,20 +364,20 @@ func estimateRowCountWithUniformDistribution(
 		count.Est = notNullCount / histNDV
 		if skewRatio > 0 {
 			// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-			skewEstimate := notNullCount - (histNDV - 1)
+			skewMax := notNullCount - (histNDV - 1)
 			if minTopN > 0 {
 				// The skewEstimate should not be larger than the minimum TopN value.
-				skewEstimate = min(skewEstimate, float64(minTopN))
+				skewMax = min(skewMax, float64(minTopN))
 			}
-			count = statistics.CalculateSkewRatioCounts(count.Est, skewEstimate, skewRatio)
+			count = statistics.CalculateSkewRatioCounts(count.Est, skewMax, skewRatio)
 		}
 	}
 
-	if count.MaxEst > count.Est && float64(minTopN) > count.Est {
-		count.MaxEst = min(count.MaxEst, float64(minTopN))
-	} else {
-		count.MaxEst = max(count.Est, float64(minTopN))
+	if minTopN > 0 {
+		count.Est = min(count.Est, float64(minTopN))
 	}
+	count.MinEst = min(count.MinEst, count.Est)
+	count.MaxEst = max(count.MaxEst, count.Est)
 
 	return count
 }

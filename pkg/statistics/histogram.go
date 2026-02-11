@@ -721,7 +721,10 @@ func (hg *Histogram) TotalRowCount() float64 {
 // and the histogram's total row count (optionally including TopN), representing data changes since the last ANALYZE.
 // topNCount is the TopN total count to include in the histogram row count (pass 0 to exclude TopN).
 func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64, topNCount uint64) (float64, bool) {
-	histRowCount := hg.NotNullCount() + float64(hg.NullCount) + float64(topNCount)
+	histRowCount := float64(topNCount)
+	if hg != nil {
+		histRowCount += hg.NotNullCount() + float64(hg.NullCount)
+	}
 	isNegative := realtimeRowCount < int64(histRowCount)
 	// Avoid division by zero. This should not happen since we
 	// only call this function when we have data in the histogram.
@@ -1101,8 +1104,8 @@ func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float6
 
 // calcOutOfRangePercent estimates the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
-// The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
-// As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
+// As it shows below. To calculate the out-of-range percentage, we need to calculate the percentage of the shaded area
+// on both the left and right sides of the histogram. These are returned as leftPercent and rightPercent.
 // Note that we assume histL-boundL == histR-histL == boundR-histR here.
 /*
                /│             │\
@@ -1248,7 +1251,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
-	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, uint64(topN.Num()))
+	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, uint64(topN.TotalCount()))
 	// If addedRows is too small, it may be caused by a delay in updates to modifyCount.
 	// ModifyCount == 0 is a known issue - where large tables can have a large time
 	// delay before the first update to ModifyCount.
