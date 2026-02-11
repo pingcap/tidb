@@ -4,13 +4,24 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+package joinorder
+
+import (
+	"maps"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/util/intset"
+)
 
 // This file implements the CD-C (Conflict Detection C) algorithm
 // from the paper:
@@ -56,17 +67,6 @@
 // holds. They are derived from Table 2 and Table 3 of the paper. Since TiDB does not
 // support FULL OUTER JOIN, many conditional entries (requiring null-rejection checks)
 // reduce to unconditional values. See the comments on each table for details.
-package joinorder
-
-import (
-	"maps"
-
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/util/intset"
-)
 
 // ConflictDetector builds a join graph from the original plan tree and attaches
 // conflict rules to each edge. It is then used by the join enumerator (greedy or
