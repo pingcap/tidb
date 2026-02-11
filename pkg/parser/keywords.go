@@ -134,6 +134,7 @@ var Keywords = []KeywordsType{
 	{"KILL", true, "reserved"},
 	{"LAG", true, "reserved"},
 	{"LAST_VALUE", true, "reserved"},
+	{"LATERAL", true, "reserved"},
 	{"LEAD", true, "reserved"},
 	{"LEADING", true, "reserved"},
 	{"LEAVE", true, "reserved"},
