@@ -2223,6 +2223,54 @@ func TestAdminCheckIndexCollectInconsistentBySessionVar(t *testing.T) {
 	}, summaryOn.Rows)
 }
 
+func TestAdminCheckIndexCollectInconsistentMultiLayerLocate(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_collect_deep")
+	tk.MustExec("create table admin_collect_deep (id int primary key, a int, key idx_a(a))")
+	tk.MustExec("set cte_max_recursion_depth=2000")
+	tk.MustExec("insert into admin_collect_deep with recursive cte(a) as (select 1 union select a+1 from cte where a < 1024) select a, a from cte")
+
+	sctx := mock.NewContext()
+	sctx.Store = store
+	is := domain.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("admin_collect_deep"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.FindIndexByName("idx_a")
+	require.NotNil(t, idxInfo)
+	idxOp := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+
+	// Remove one index row so this handle becomes row_without_index.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = idxOp.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(512), kv.IntHandle(512))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	oldBucketSize := executor.CheckTableFastBucketSize.Load()
+	executor.CheckTableFastBucketSize.Store(8)
+	defer executor.CheckTableFastBucketSize.Store(oldBucketSize)
+
+	tk.MustExec("set @@tidb_enable_fast_table_check = ON")
+	tk.MustExec("set @@tidb_fast_check_table_collect_inconsistent = ON")
+
+	collector := executor.NewAdminCheckIndexInconsistentCollector()
+	checkCtx := executor.WithAdminCheckIndexInconsistentCollector(context.Background(), collector)
+	_, err = tk.ExecWithContext(checkCtx, "admin check index admin_collect_deep idx_a")
+	require.Error(t, err)
+	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+
+	summary := collector.Summary()
+	require.Equal(t, uint64(1), summary.InconsistentRowCount)
+	require.Equal(t, []executor.AdminCheckIndexInconsistentRow{
+		{Handle: "512", MismatchType: executor.AdminCheckIndexRowWithoutIndex},
+	}, summary.Rows)
+}
+
 func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
