@@ -459,7 +459,19 @@ func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	hasOuterJoin bool,
 ) (base.LogicalPlan, bool) {
 	lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nextNode)
-	if hasOuterJoin && usedEdges == nil {
+
+	// If there is an outer join but no join conditions (equality or other)
+	// connecting the two nodes, the leading hint is inapplicable because
+	// it would require a cartesian product, which we want to avoid.
+	// However, if there is a non-equijoin condition (e.g., OR conditions)
+	// connecting the two sides in otherConds, the join is not truly
+	// cartesian and should be allowed. This handles cases like:
+	// t1 join t2 on (t1.a = t2.a or t1.a = t2.b) left join t3 ...
+	// where the OR condition prevents the join from being an equijoin but
+	// there is still a meaningful join condition. See
+	// https://github.com/pingcap/tidb/issues/56513
+	hasJoinCond := len(usedEdges) > 0 || s.hasOtherJoinCondition(lNode, rNode)
+	if hasOuterJoin && !hasJoinCond {
 		// If the joinGroups contain an outer join, we disable cartesian product.
 		return nil, false
 	}
@@ -533,6 +545,25 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 		}
 	}
 	return
+}
+
+// hasOtherJoinCondition checks whether there are non-equality join conditions
+// connecting the two plans (i.e. conditions referencing columns from both sides).
+func (s *baseSingleGroupJoinOrderSolver) hasOtherJoinCondition(leftPlan, rightPlan base.LogicalPlan) bool {
+	if len(s.otherConds) == 0 {
+		return false
+	}
+	mergedSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
+	for _, cond := range s.otherConds {
+		if !expression.ExprFromSchema(cond, mergedSchema) {
+			continue
+		}
+		if expression.ExprFromSchema(cond, leftPlan.Schema()) || expression.ExprFromSchema(cond, rightPlan.Schema()) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.

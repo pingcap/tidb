@@ -150,3 +150,35 @@ func TestLeadingHintInapplicableKeepsOtherConds(t *testing.T) {
 		testKit.MustQuery("show warnings").CheckContain("leading hint is inapplicable")
 	})
 }
+
+// TestLeadingHintWithNonEqJoinUnderOuterJoin tests that the leading hint works
+// correctly when combining a non-equijoin (OR condition) with an outer join.
+// Regression test for https://github.com/pingcap/tidb/issues/56513
+func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("set @@tidb_enable_outer_join_reorder=true")
+		testKit.MustExec("drop table if exists t1_56513, t2_56513, t3_56513;")
+		testKit.MustExec("create table t1_56513(a int, b int, c int);")
+		testKit.MustExec("create table t2_56513(a int, b int, c int);")
+		testKit.MustExec("create table t3_56513(a int, b int, c int);")
+
+		// With leading(t1, t3, t2): t1 joins t3 first (via left join), then t2
+		plan132 := testKit.MustQuery("explain format = 'brief' " +
+			"select /*+ leading(t1_56513, t3_56513, t2_56513) */ * from t1_56513 " +
+			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
+			"left join t3_56513 on t1_56513.a = t3_56513.b;")
+		// The hint should be applicable (no "inapplicable" warning)
+		testKit.MustQuery("show warnings").CheckNotContain("leading hint is inapplicable")
+
+		// With leading(t1, t2, t3): t1 joins t2 first, then t3
+		plan123 := testKit.MustQuery("explain format = 'brief' " +
+			"select /*+ leading(t1_56513, t2_56513, t3_56513) */ * from t1_56513 " +
+			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
+			"left join t3_56513 on t1_56513.a = t3_56513.b;")
+		testKit.MustQuery("show warnings").CheckNotContain("leading hint is inapplicable")
+
+		// The two plans should be different since different join orders are specified
+		require.NotEqual(t, plan132.Rows(), plan123.Rows(), caller)
+	})
+}
