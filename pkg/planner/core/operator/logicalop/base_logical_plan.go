@@ -479,13 +479,3 @@ func (p *BaseLogicalPlan) ReAlloc4Cascades(tp string, self base.LogicalPlan) {
 	// fdSet should be re-derived from the children, cuz apply -> join have different derive logic.
 	p.fdSet = nil
 }
-
-// SetHasTiFlash sets whether the plan has tiflash replica.
-func (p *BaseLogicalPlan) SetHasTiFlash(hasTiflash bool) {
-	p.hasTiflash = hasTiflash
-}
-
-// GetHasTiFlash gets whether the plan has tiflash replica.
-func (p *BaseLogicalPlan) GetHasTiFlash() bool {
-	return p.hasTiflash
-}

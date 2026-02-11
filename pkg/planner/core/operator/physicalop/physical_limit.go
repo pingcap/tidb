@@ -58,7 +58,7 @@ func ExhaustPhysicalPlans4LogicalLimit(p *logicalop.LogicalLimit, prop *property
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
 	sessionVars := p.SCtx().GetSessionVars()
 	// lift the recursive check of canPushToCop(tiFlash)
-	if util.ShouldCheckTiFlashPushDown(p.SCtx(), p.GetHasTiFlash()) && sessionVars.IsMPPAllowed() {
+	if util.ShouldCheckTiFlashPushDown(p.SCtx(), logicalop.GetHasTiFlash(p)) && sessionVars.IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))

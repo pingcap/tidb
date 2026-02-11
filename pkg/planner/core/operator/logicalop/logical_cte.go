@@ -246,7 +246,7 @@ func (p *LogicalCTE) PreparePossibleProperties(_ *expression.Schema, childrenPro
 
 	hasTiflash := false
 	if p.Cte != nil && p.Cte.SeedPartLogicalPlan != nil {
-		hasTiflash = p.Cte.SeedPartLogicalPlan.GetHasTiFlash()
+		hasTiflash = GetHasTiFlash(p.Cte.SeedPartLogicalPlan)
 	}
 	p.hasTiflash = hasTiflash
 	return &base.PossiblePropertiesInfo{HasTiflash: p.hasTiflash}

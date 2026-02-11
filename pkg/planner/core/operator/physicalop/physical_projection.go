@@ -64,7 +64,7 @@ func ExhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *proper
 	pushDownCtx := util.GetPushDownCtx(ctx)
 	sessionVars := ctx.GetSessionVars()
 	// lift the recursive check of canPushToCop(tiFlash)
-	if util.ShouldCheckTiFlashPushDown(ctx, p.GetHasTiFlash()) &&
+	if util.ShouldCheckTiFlashPushDown(ctx, logicalop.GetHasTiFlash(p)) &&
 		newProp.TaskTp != property.MppTaskType && sessionVars.IsMPPAllowed() &&
 		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
