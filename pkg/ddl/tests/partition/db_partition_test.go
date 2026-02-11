@@ -3224,10 +3224,10 @@ func TestModifyColumnPartitionedTableGlobalIndexConsistency(t *testing.T) {
 
 func TestModifyColumnPartitionedTableListAndKeyPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
 
 	t.Run("list columns", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_list_mod")
 		tk.MustExec(`create table t_list_mod (
 			a int,
@@ -3247,6 +3247,8 @@ func TestModifyColumnPartitionedTableListAndKeyPartition(t *testing.T) {
 	})
 
 	t.Run("key partition", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_key_mod")
 		tk.MustExec(`create table t_key_mod (
 			a int,
