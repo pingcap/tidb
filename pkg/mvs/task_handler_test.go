@@ -416,34 +416,32 @@ func TestCalcNextScheduleTimeZeroInterval(t *testing.T) {
 
 func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 	installMockTimeForTest(t)
-	const fetchMLogPurgeSQL = `SELECT t.MLOG_ID, UNIX_TIMESTAMP(l.PURGE_START), l.PURGE_INTERVAL, UNIX_TIMESTAMP(t.LAST_PURGE_TIME) FROM mysql.tidb_mlog_purge t JOIN mysql.tidb_mlogs l ON t.MLOG_ID = l.MLOG_ID`
+	const fetchMLogPurgeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
 
-	purgeStartSec := int64(600)
-	intervalSec := int64(60)
-	lastPurgeSec := int64(720)
+	nextPurgeSec1 := int64(600)
+	nextPurgeSec2 := int64(720)
 
 	se := newRecordingSessionContext()
 	se.restrictedRows[fetchMLogPurgeSQL] = []chunk.Row{
-		// LAST_PURGE_TIME is NULL -> should use time.Time{} as calculation base.
+		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(nextPurgeSec1),
 			types.NewStringDatum("201"),
-			types.NewIntDatum(purgeStartSec),
-			types.NewIntDatum(intervalSec),
-			types.NewDatum(nil),
 		}).ToRow(),
-		// LAST_PURGE_TIME exists -> should use the returned timestamp.
+		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(nextPurgeSec2),
 			types.NewStringDatum("202"),
-			types.NewIntDatum(purgeStartSec),
-			types.NewIntDatum(intervalSec),
-			types.NewIntDatum(lastPurgeSec),
 		}).ToRow(),
 		// invalid row with empty ID should be ignored.
 		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(nextPurgeSec2),
 			types.NewStringDatum(""),
-			types.NewIntDatum(purgeStartSec),
-			types.NewIntDatum(intervalSec),
-			types.NewIntDatum(lastPurgeSec),
+		}).ToRow(),
+		// invalid row with NULL NEXT_TIME should be ignored.
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewDatum(nil),
+			types.NewStringDatum("203"),
 		}).ToRow(),
 	}
 	pool := recordingSessionPool{se: se}
@@ -455,49 +453,47 @@ func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 
 	l201 := got["201"]
 	require.NotNil(t, l201)
-	expect201 := calcNextExecTime(time.Unix(purgeStartSec, 0), intervalSec, time.Time{})
+	expect201 := time.Unix(nextPurgeSec1, 0)
 	require.Equal(t, expect201, l201.nextPurge)
 	require.Equal(t, expect201.UnixMilli(), l201.orderTs)
-	require.Equal(t, intervalSec*int64(time.Second), int64(l201.purgeInterval))
+	require.Equal(t, int64(0), int64(l201.purgeInterval))
 
 	l202 := got["202"]
 	require.NotNil(t, l202)
-	expect202 := calcNextExecTime(time.Unix(purgeStartSec, 0), intervalSec, time.Unix(lastPurgeSec, 0))
+	expect202 := time.Unix(nextPurgeSec2, 0)
 	require.Equal(t, expect202, l202.nextPurge)
 	require.Equal(t, expect202.UnixMilli(), l202.orderTs)
-	require.Equal(t, intervalSec*int64(time.Second), int64(l202.purgeInterval))
+	require.Equal(t, int64(0), int64(l202.purgeInterval))
 }
 
 func TestServerHelperFetchAllTiDBMViews(t *testing.T) {
 	installMockTimeForTest(t)
-	const fetchMViewsSQL = `SELECT t.MVIEW_ID, UNIX_TIMESTAMP(v.REFRESH_START), v.REFRESH_INTERVAL, UNIX_TIMESTAMP(t.LAST_REFRESH_TIME) FROM mysql.tidb_mview_refresh t JOIN mysql.tidb_mviews v ON t.MVIEW_ID = v.MVIEW_ID`
+	const fetchMViewsSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
 
-	refreshStartSec := int64(900)
-	intervalSec := int64(120)
-	lastRefreshSec := int64(1200)
+	nextRefreshSec1 := int64(900)
+	nextRefreshSec2 := int64(1200)
 
 	se := newRecordingSessionContext()
 	se.restrictedRows[fetchMViewsSQL] = []chunk.Row{
-		// LAST_REFRESH_TIME is NULL -> should use time.Time{} as calculation base.
+		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(nextRefreshSec1),
 			types.NewStringDatum("101"),
-			types.NewIntDatum(refreshStartSec),
-			types.NewIntDatum(intervalSec),
-			types.NewDatum(nil),
 		}).ToRow(),
-		// LAST_REFRESH_TIME exists -> should use the returned timestamp.
+		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(nextRefreshSec2),
 			types.NewStringDatum("102"),
-			types.NewIntDatum(refreshStartSec),
-			types.NewIntDatum(intervalSec),
-			types.NewIntDatum(lastRefreshSec),
 		}).ToRow(),
 		// invalid row with empty ID should be ignored.
 		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(nextRefreshSec2),
 			types.NewStringDatum(""),
-			types.NewIntDatum(refreshStartSec),
-			types.NewIntDatum(intervalSec),
-			types.NewIntDatum(lastRefreshSec),
+		}).ToRow(),
+		// invalid row with NULL NEXT_TIME should be ignored.
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewDatum(nil),
+			types.NewStringDatum("103"),
 		}).ToRow(),
 	}
 	pool := recordingSessionPool{se: se}
@@ -509,25 +505,24 @@ func TestServerHelperFetchAllTiDBMViews(t *testing.T) {
 
 	m101 := got["101"]
 	require.NotNil(t, m101)
-	expect101 := calcNextExecTime(time.Unix(refreshStartSec, 0), intervalSec, time.Time{})
+	expect101 := time.Unix(nextRefreshSec1, 0)
 	require.Equal(t, expect101, m101.nextRefresh)
 	require.Equal(t, expect101.UnixMilli(), m101.orderTs)
-	require.Equal(t, intervalSec*int64(time.Second), int64(m101.refreshInterval))
+	require.Equal(t, int64(0), int64(m101.refreshInterval))
 
 	m102 := got["102"]
 	require.NotNil(t, m102)
-	expect102 := calcNextExecTime(time.Unix(refreshStartSec, 0), intervalSec, time.Unix(lastRefreshSec, 0))
+	expect102 := time.Unix(nextRefreshSec2, 0)
 	require.Equal(t, expect102, m102.nextRefresh)
 	require.Equal(t, expect102.UnixMilli(), m102.orderTs)
-	require.Equal(t, intervalSec*int64(time.Second), int64(m102.refreshInterval))
+	require.Equal(t, int64(0), int64(m102.refreshInterval))
 }
 
 func TestWithRCRestrictedTxnCommit(t *testing.T) {
 	installMockTimeForTest(t)
 	se := newRecordingSessionContext()
-	pool := recordingSessionPool{se: se}
 
-	err := withRCRestrictedTxn(context.Background(), pool, func(_ context.Context, _ sessionctx.Context) error {
+	err := withRCRestrictedTxn(context.Background(), se, func(_ context.Context, _ sessionctx.Context) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -537,10 +532,9 @@ func TestWithRCRestrictedTxnCommit(t *testing.T) {
 func TestWithRCRestrictedTxnRollbackOnError(t *testing.T) {
 	installMockTimeForTest(t)
 	se := newRecordingSessionContext()
-	pool := recordingSessionPool{se: se}
 	injectedErr := errors.New("injected error")
 
-	err := withRCRestrictedTxn(context.Background(), pool, func(_ context.Context, _ sessionctx.Context) error {
+	err := withRCRestrictedTxn(context.Background(), se, func(_ context.Context, _ sessionctx.Context) error {
 		return injectedErr
 	})
 	require.ErrorIs(t, err, injectedErr)
@@ -550,10 +544,9 @@ func TestWithRCRestrictedTxnRollbackOnError(t *testing.T) {
 func TestWithRCRestrictedTxnRollbackOnPanic(t *testing.T) {
 	installMockTimeForTest(t)
 	se := newRecordingSessionContext()
-	pool := recordingSessionPool{se: se}
 
 	require.PanicsWithValue(t, "panic in txn body", func() {
-		_ = withRCRestrictedTxn(context.Background(), pool, func(_ context.Context, _ sessionctx.Context) error {
+		_ = withRCRestrictedTxn(context.Background(), se, func(_ context.Context, _ sessionctx.Context) error {
 			panic("panic in txn body")
 		})
 	})
@@ -569,18 +562,18 @@ func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, deleted)
 	require.True(t, nextRefresh.IsZero())
-	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+	require.Empty(t, se.executedSQL)
 	require.Equal(t, []string{
-		`SELECT TABLE_SCHEMA, MVIEW_NAME, UNIX_TIMESTAMP(REFRESH_START), REFRESH_INTERVAL FROM mysql.tidb_mviews WHERE MVIEW_ID = %?`,
+		`SELECT TABLE_SCHEMA, MVIEW_NAME FROM mysql.tidb_mviews WHERE MVIEW_ID = %?`,
 	}, se.executedRestrictedSQL)
 }
 
 func TestServerHelperRefreshMVSuccess(t *testing.T) {
 	installMockTimeForTest(t)
 	const (
-		findMVSQL          = `SELECT TABLE_SCHEMA, MVIEW_NAME, UNIX_TIMESTAMP(REFRESH_START), REFRESH_INTERVAL FROM mysql.tidb_mviews WHERE MVIEW_ID = %?`
-		refreshMVSQL       = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
-		findLastRefreshSQL = `SELECT UNIX_TIMESTAMP(REFRESH_ENDTIME), REFRESH_FAILED_REASON FROM mysql.tidb_mview_refresh_hist WHERE MVIEW_ID = %? AND IS_NEWEST_REFRESH = 'YES'`
+		findMVSQL       = `SELECT TABLE_SCHEMA, MVIEW_NAME FROM mysql.tidb_mviews WHERE MVIEW_ID = %?`
+		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
+		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
 
 	se := newRecordingSessionContext()
@@ -588,15 +581,12 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewStringDatum("test"),
 			types.NewStringDatum("mv1"),
-			types.NewIntDatum(0),
-			types.NewIntDatum(60),
 		}).ToRow(),
 	}
-	lastRefreshSec := mvsNow().Unix()
-	se.restrictedRows[findLastRefreshSQL] = []chunk.Row{
+	nextRefreshSec := mvsNow().Add(time.Minute).Unix()
+	se.restrictedRows[findNextTimeSQL] = []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(lastRefreshSec),
-			types.NewDatum(nil),
+			types.NewIntDatum(nextRefreshSec),
 		}).ToRow(),
 	}
 	pool := recordingSessionPool{se: se}
@@ -604,21 +594,21 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 	nextRefresh, deleted, err := (&serverHelper{}).RefreshMV(context.Background(), pool, "101")
 	require.NoError(t, err)
 	require.False(t, deleted)
-	require.Equal(t, calcNextExecTime(time.Unix(0, 0), 60, time.Unix(lastRefreshSec, 0)), nextRefresh)
-	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+	require.Equal(t, time.Unix(nextRefreshSec, 0), nextRefresh)
+	require.Empty(t, se.executedSQL)
 	require.Equal(t, []string{
 		findMVSQL,
 		refreshMVSQL,
-		findLastRefreshSQL,
+		findNextTimeSQL,
 	}, se.executedRestrictedSQL)
 }
 
-func TestServerHelperRefreshMVFailedResult(t *testing.T) {
+func TestServerHelperRefreshMVDeletedWhenNextTimeNotFound(t *testing.T) {
 	installMockTimeForTest(t)
 	const (
-		findMVSQL          = `SELECT TABLE_SCHEMA, MVIEW_NAME, UNIX_TIMESTAMP(REFRESH_START), REFRESH_INTERVAL FROM mysql.tidb_mviews WHERE MVIEW_ID = %?`
-		refreshMVSQL       = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
-		findLastRefreshSQL = `SELECT UNIX_TIMESTAMP(REFRESH_ENDTIME), REFRESH_FAILED_REASON FROM mysql.tidb_mview_refresh_hist WHERE MVIEW_ID = %? AND IS_NEWEST_REFRESH = 'YES'`
+		findMVSQL       = `SELECT TABLE_SCHEMA, MVIEW_NAME FROM mysql.tidb_mviews WHERE MVIEW_ID = %?`
+		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
+		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
 
 	se := newRecordingSessionContext()
@@ -626,28 +616,20 @@ func TestServerHelperRefreshMVFailedResult(t *testing.T) {
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewStringDatum("test"),
 			types.NewStringDatum("mv1"),
-			types.NewIntDatum(0),
-			types.NewIntDatum(60),
 		}).ToRow(),
 	}
-	se.restrictedRows[findLastRefreshSQL] = []chunk.Row{
-		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(mvsNow().Unix()),
-			types.NewStringDatum("refresh timeout"),
-		}).ToRow(),
-	}
+	se.restrictedRows[findNextTimeSQL] = nil
 	pool := recordingSessionPool{se: se}
 
 	nextRefresh, deleted, err := (&serverHelper{}).RefreshMV(context.Background(), pool, "101")
-	require.ErrorContains(t, err, "mview refresh failed")
-	require.ErrorContains(t, err, "refresh timeout")
-	require.False(t, deleted)
+	require.NoError(t, err)
+	require.True(t, deleted)
 	require.True(t, nextRefresh.IsZero())
-	require.Equal(t, []string{"BEGIN PESSIMISTIC", "ROLLBACK"}, se.executedSQL)
+	require.Empty(t, se.executedSQL)
 	require.Equal(t, []string{
 		findMVSQL,
 		refreshMVSQL,
-		findLastRefreshSQL,
+		findNextTimeSQL,
 	}, se.executedRestrictedSQL)
 }
 
@@ -702,6 +684,46 @@ func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
 	require.Equal(t, []string{
 		findMLogSQL,
+		lockPurgeSQL,
+		deleteMLogSQL,
+		updatePurgeSQL,
+		clearNewestSQL,
+		insertHistSQL,
+	}, se.executedRestrictedSQL)
+}
+
+func TestPurgeMVLogImplSuccess(t *testing.T) {
+	installMockTimeForTest(t)
+	const (
+		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
+		lockPurgeSQL             = `SELECT 1 FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
+		deleteMLogSQL            = `DELETE FROM %n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
+		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = %?, LAST_PURGE_ROWS = %?, LAST_PURGE_DURATION = %? WHERE MLOG_ID = %?`
+		clearNewestSQL           = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
+		insertHistSQL            = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
+	)
+
+	se := newRecordingSessionContext()
+	se.restrictedRows[findMinRefreshReadTSOSQL] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(100),
+		}).ToRow(),
+	}
+	se.restrictedRows[lockPurgeSQL] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(1),
+		}).ToRow(),
+	}
+	mvInfo := &meta.MaterializedViewBaseInfo{
+		MLogID:   201,
+		MViewIDs: []int64{101, 102},
+	}
+
+	err := purgeMVLogImpl(context.Background(), se, mvInfo, "mlog1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+	require.Equal(t, []string{
+		findMinRefreshReadTSOSQL,
 		lockPurgeSQL,
 		deleteMLogSQL,
 		updatePurgeSQL,
