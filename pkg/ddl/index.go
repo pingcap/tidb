@@ -364,6 +364,15 @@ func BuildIndexInfo(
 		return nil, errors.Trace(err)
 	}
 
+	if isUnique {
+		if columnarIndexType == model.ColumnarIndexTypeHybrid || (indexOption != nil && indexOption.Tp == ast.IndexTypeHybrid) {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index does not support UNIQUE")
+		}
+		if columnarIndexType == model.ColumnarIndexTypeFulltext || (indexOption != nil && indexOption.Tp == ast.IndexTypeFulltext) {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support UNIQUE")
+		}
+	}
+
 	// Create index info.
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,
@@ -1755,11 +1764,6 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 		}
 	}
 
-	if err := ensureHybridIndexReorgMeta(job); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
@@ -1812,6 +1816,13 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 
 		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
+			skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
+			if !skipReorg {
+				if err := ensureHybridIndexReorgMeta(job); err != nil {
+					job.State = model.JobStateCancelled
+					return ver, errors.Trace(err)
+				}
+			}
 			// TiCI add-index ingest needs the add-index scan snapshot TS
 			// wired into its WriteHeader (not ingestData.GetTS()),
 			// so job.SnapshotVer will be captured and propagated
