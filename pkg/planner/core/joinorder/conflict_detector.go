@@ -12,6 +12,50 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// This file implements the CD-C (Conflict Detection C) algorithm
+// from the paper:
+//
+//	"On the Correct and Complete Enumeration of the Core Search Space"
+//	  — Guido Moerkotte, Pit Fender, Marius Eich (2013)
+//
+// # Overview
+//
+// CD-C determines which join reorderings are semantically valid when outer joins
+// (and semi/anti joins) are present. The key insight is that, unlike pure inner
+// joins, outer joins are neither associative nor commutative in general.
+// Rearranging them arbitrarily can change query results.
+//
+// # Core Concepts
+//
+// TES (Total Eligibility Set):
+//
+//	For each join predicate (edge), the TES records which base relations must be
+//	present in a candidate subgraph for that predicate to be applicable. It starts
+//	as the SES (Syntactic Eligibility Set, i.e. the relations referenced by the
+//	predicate) and is extended by conflict rules.
+//
+// Conflict Rules:
+//
+//	A conflict rule {from → to} states: "if any relation in `from` appears in a
+//	candidate join's input set S, then every relation in `to` must also appear in S."
+//	These rules are derived by checking, for each pair of a parent edge and a child
+//	edge, whether the three properties — associativity (assoc), left-asscom, and
+//	right-asscom — hold for their join-type combination. When a property does NOT
+//	hold, a conflict rule is generated to prevent the invalid reordering.
+//
+// Validity Check:
+//
+//	When the join enumerator proposes connecting two subgraphs (S1, S2), each edge
+//	checks: (1) its TES is a subset of S1 ∪ S2, (2) it intersects both S1 and S2,
+//	and (3) all conflict rules are satisfied. Only then is the join considered valid.
+//
+// # Rule Tables
+//
+// The three rule tables (assocRuleTable, leftAsscomRuleTable, rightAsscomRuleTable)
+// encode, for every pair of join types, whether the corresponding algebraic property
+// holds. They are derived from Table 2 and Table 3 of the paper. Since TiDB does not
+// support FULL OUTER JOIN, many conditional entries (requiring null-rejection checks)
+// reduce to unconditional values. See the comments on each table for details.
 package joinorder
 
 import (
@@ -24,8 +68,36 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
-// ConflictDetector is used to detect conflicts between join edges in a join graph.
-// It's based on the paper "On the Correct and Complete Enumeration of the Core Search Space".
+// ConflictDetector builds a join graph from the original plan tree and attaches
+// conflict rules to each edge. It is then used by the join enumerator (greedy or
+// DP) to validate candidate join pairs at enumeration time.
+//
+// # Workflow
+//
+// The lifecycle has two phases:
+//
+// Phase 1 — Build (called once per join group):
+//
+//	Build() walks the plan tree bottom-up via buildRecursive(). At each join
+//	node it creates one or more edges:
+//	  - Inner join: each conjunct becomes a separate edge (makeInnerEdge),
+//	    expanding the search space.
+//	  - Non-inner join: all predicates stay in a single edge (makeNonInnerEdge),
+//	    keeping the join atomic.
+//	For every new edge, makeEdge() computes its TES and generates conflict rules
+//	by comparing it against child edges from both subtrees.
+//
+// Phase 2 — CheckConnection (called repeatedly by the join enumerator):
+//
+//	CheckConnection(node1, node2) iterates over all edges and tests whether
+//	each edge can validly connect the two nodes. The check differs by join kind:
+//	  - Inner edge (checkInnerEdgeApplicable): TES ⊆ (S1 ∪ S2) and TES intersects both
+//	    S1 and S2, plus all conflict rules pass.
+//	  - Non-inner edge (checkNonInnerEdgeApplicable): additionally requires that the
+//	    original left/right vertexes (intersected with TES) are fully contained
+//	    in node1/node2 respectively, preserving outer-join side semantics.
+//	When edges pass, MakeJoin() constructs the actual LogicalJoin plan from the
+//	collected edges and returns a new merged Node.
 type ConflictDetector struct {
 	ctx           base.PlanContext
 	groupRoot     base.LogicalPlan
@@ -35,20 +107,31 @@ type ConflictDetector struct {
 	allInnerJoin  bool
 }
 
+// edge represents a single join predicate (or a group of predicates for non-inner
+// joins) in the join graph. Each edge knows its join type, conditions, the base
+// relations it originally connects (leftVertexes, rightVertexes), its TES, and
+// any conflict rules that constrain how it may be applied.
 type edge struct {
-	idx uint64
-	// No need to store the original join operator,
-	// because we may generate a new join operator, so only join conditions are enough.
+	idx      uint64
 	joinType base.JoinType
 	eqConds  []*expression.ScalarFunction
-	// It could be otherCond, leftCond or rightCond.
+	// nonEQConds holds otherCond, leftCond, or rightCond — anything that is not
+	// an equi-join predicate.
 	nonEQConds expression.CNFExprs
 
-	tes   intset.FastIntSet
+	// TES is the Total Eligibility Set: the set of base relations that must be
+	// present in the candidate subgraph for this edge to be applicable.
+	// For now, TES is totally same with SES, check the TODO in makeEdge().
+	tes intset.FastIntSet
+	// rules are conflict rules {from → to} derived during Build. They encode
+	// reordering constraints imposed by non-assoc/l-asscom/r-asscom join-type combinations.
 	rules []*rule
-	// If all joins in the group are inner joins, conflict rules are unnecessary.
+	// skipRules is true when the entire join group is inner-join-only, in which
+	// case conflict rules are unnecessary.
 	skipRules bool
 
+	// leftEdges/rightEdges are the child edges from the left/right subtrees at
+	// build time. They are used to derive conflict rules for this edge.
 	leftEdges     []*edge
 	rightEdges    []*edge
 	leftVertexes  intset.FastIntSet
@@ -84,16 +167,26 @@ func (d *ConflictDetector) iterateEdges(fn func(e *edge) bool) {
 	}
 }
 
+// rule is a conflict rule {from → to}: if any relation in `from` appears in the
+// candidate set S, then every relation in `to` must also appear in S. Violating
+// this would produce a semantically invalid join reordering.
 type rule struct {
 	from intset.FastIntSet
 	to   intset.FastIntSet
 }
 
-// Node can be a leaf node(vertex) or a intermediate node(join of two nodes).
+// Node represents either a leaf vertex (a single base relation) or an
+// intermediate result (a join of two nodes). During enumeration, the greedy
+// algorithm repeatedly merges two Nodes into one via MakeJoin().
 type Node struct {
-	bitSet    intset.FastIntSet
-	p         base.LogicalPlan
-	cumCost   float64
+	// bitSet tracks which base relations (by index) are contained in this node.
+	bitSet intset.FastIntSet
+	p      base.LogicalPlan
+	// cumCost is the cumulative cost (sum of row counts) of this node and all
+	// its descendants. It is used by the enumerator for join ordering.
+	cumCost float64
+	// usedEdges records which edges have already been consumed by joins that
+	// produced this node. An edge must not be applied twice.
 	usedEdges map[uint64]struct{}
 }
 
@@ -116,7 +209,8 @@ func newConflictDetector(ctx base.PlanContext) *ConflictDetector {
 	}
 }
 
-// Build will construct the conflict detector from the given join group.
+// Build constructs the join graph (edges + conflict rules) from a joinGroup.
+// It returns the list of leaf Nodes (vertexes) of current join group, which will be merged to new join by the enumerator.
 func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 	d.groupRoot = group.root
 	d.allInnerJoin = group.allInnerJoin
@@ -139,6 +233,12 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 	return d.groupVertexes, nil
 }
 
+// buildRecursive walks the plan tree bottom-up. For each join node, it:
+//  1. Recurses into left and right children to collect their edges and vertex sets.
+//  2. Creates new edge(s) for the current join operator.
+//  3. Returns the accumulated edges and the union of all vertex sets seen so far.
+//
+// The returned edges list is used by parent calls to generate conflict rules.
 func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
 	if vertexNode, ok := vertexMap[p.ID()]; ok {
 		d.groupVertexes = append(d.groupVertexes, vertexNode)
@@ -178,6 +278,9 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]
 	return append(leftEdges, append(rightEdges, curEdges...)...), curVertexes, nil
 }
 
+// makeInnerEdge splits an inner join into one edge per conjunct (eq-cond or
+// non-eq-cond). This follows the approach from CockroachDB: splitting enlarges
+// the search space by allowing each predicate to be applied independently.
 func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) (res []*edge, err error) {
 	if len(joinop.NAEQConditions) > 0 {
 		return nil, errors.New("NAEQConditions not supported in conflict detector yet")
@@ -211,6 +314,9 @@ func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVert
 	return
 }
 
+// makeNonInnerEdge creates a single edge for a non-inner join. Unlike inner
+// joins, all predicates are kept together because outer/semi/anti joins are
+// atomic — their predicates cannot be applied independently.
 func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) *edge {
 	nonEQConds := make([]expression.Expression, 0, len(joinop.LeftConditions)+len(joinop.RightConditions)+len(joinop.OtherConditions))
 	nonEQConds = append(nonEQConds, joinop.LeftConditions...)
@@ -243,9 +349,9 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 		skipRules:     d.allInnerJoin,
 	}
 
-	// setup TES. Only consider EqualConditions and NAEQConditions.
-	// OtherConditions are not edges.
+	// Setup TES. Only consider EqualConditions and NAEQConditions. OtherConditions are not edges.
 	e.tes = d.calcTES(conds)
+
 	// For degenerate predicates (only one side referenced), force TES to include
 	// both sides so the edge can't connect unrelated subsets.
 	if !e.tes.Intersects(e.leftVertexes) {
@@ -261,7 +367,21 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 		d.nonInnerEdges = append(d.nonInnerEdges, e)
 	}
 
-	// setup conflict rules
+	// Generate conflict rules by checking assoc / l-asscom / r-asscom for every
+	// (child, parent) edge pair. Skipped when all joins are inner joins, because
+	// inner joins are freely reorderable.
+	//
+	// For each child edge in leftEdges (child sits below the left input):
+	//   !assoc(child, e)      → add rightToLeftRule(child)
+	//   !leftAsscom(child, e) → add leftToRightRule(child)
+	//
+	// For each child edge in rightEdges (child sits below the right input):
+	//   !assoc(e, child)       → add leftToRightRule(child)
+	//   !rightAsscom(e, child) → add rightToLeftRule(child)
+	//
+	// TODO: the paper describes an optimisation that merges conflict rules into
+	// the TES directly (addRule). We defer this because the greedy enumerator
+	// has a much smaller search space than DP, so the rule-check overhead is low.
 	if d.allInnerJoin {
 		return e
 	}
@@ -373,19 +493,9 @@ func (r *CheckConnectionResult) NoEQEdge() bool {
 	return !r.hasEQCond
 }
 
-// CheckAndMakeJoin checks the connection between two nodes and makes a join if they are connected.
-func (d *ConflictDetector) CheckAndMakeJoin(node1, node2 *Node, vertexHints map[int]*JoinMethodHint) (*Node, error) {
-	checkResult, err := d.CheckConnection(node1, node2)
-	if err != nil {
-		return nil, err
-	}
-	if !checkResult.Connected() {
-		return nil, nil
-	}
-	return d.MakeJoin(checkResult, vertexHints)
-}
-
-// CheckConnection checks if there is a connection between two nodes.
+// CheckConnection tests whether any edge can validly connect node1 and node2.
+// It collects all applicable inner edges (there can be many) and at most one
+// non-inner edge. The result is later passed to MakeJoin() to build the plan.
 func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnectionResult, error) {
 	if node1 == nil || node2 == nil {
 		return nil, errors.Errorf("nil node found in CheckConnection, node1: %v, node2: %v", node1, node2)
@@ -399,7 +509,7 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 		if node1.checkUsedEdges(e.idx) || node2.checkUsedEdges(e.idx) {
 			continue
 		}
-		if e.checkInnerEdge(node1, node2) {
+		if e.checkInnerEdgeApplicable(node1, node2) {
 			result.appliedInnerEdges = append(result.appliedInnerEdges, e)
 			result.hasEQCond = result.hasEQCond || len(e.eqConds) > 0
 		}
@@ -408,7 +518,7 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 		if node1.checkUsedEdges(e.idx) || node2.checkUsedEdges(e.idx) {
 			continue
 		}
-		if e.checkNonInnerEdge(node1, node2) {
+		if e.checkNonInnerEdgeApplicable(node1, node2) {
 			if result.appliedNonInnerEdge != nil {
 				return nil, errors.New("multiple non-inner edges applied between two nodes")
 			}
@@ -419,7 +529,12 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 	return result, nil
 }
 
-func (e *edge) checkInnerEdge(node1, node2 *Node) bool {
+// checkInnerEdgeApplicable validates that this inner edge can connect node1 and node2.
+// For inner joins the two sides are symmetric, so we only require:
+//   - All conflict rules are satisfied.
+//   - TES ⊆ (S1 ∪ S2): all required relations are present.
+//   - TES ∩ S1 ≠ ∅ and TES ∩ S2 ≠ ∅: the edge truly connects both sides.
+func (e *edge) checkInnerEdgeApplicable(node1, node2 *Node) bool {
 	if !e.skipRules && !e.checkRules(node1, node2) {
 		return false
 	}
@@ -428,7 +543,12 @@ func (e *edge) checkInnerEdge(node1, node2 *Node) bool {
 		e.tes.Intersects(node2.bitSet)
 }
 
-func (e *edge) checkNonInnerEdge(node1, node2 *Node) bool {
+// checkNonInnerEdgeApplicable validates that this non-inner edge can connect node1 (left)
+// and node2 (right). Beyond the inner-edge checks, it enforces side semantics:
+// the original left vertexes (∩ TES) must land entirely in node1, and the
+// original right vertexes (∩ TES) must land entirely in node2. This prevents
+// the outer-join's preserved side from being split across the two inputs.
+func (e *edge) checkNonInnerEdgeApplicable(node1, node2 *Node) bool {
 	if !e.skipRules && !e.checkRules(node1, node2) {
 		return false
 	}
@@ -438,6 +558,8 @@ func (e *edge) checkNonInnerEdge(node1, node2 *Node) bool {
 		e.tes.Intersects(node2.bitSet)
 }
 
+// checkRules verifies that all conflict rules are satisfied for the candidate
+// set S = S1 ∪ S2. A rule {from → to} fails if from ∩ S ≠ ∅ but to ⊄ S.
 func (e *edge) checkRules(node1, node2 *Node) bool {
 	s := node1.bitSet.Union(node2.bitSet)
 	for _, r := range e.rules {
@@ -459,6 +581,8 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	var err error
 	var p base.LogicalPlan
 	var newJoin *logicalop.LogicalJoin
+	// Note that non-inner edges should be processed first then inner edges,
+	// because inner joins can be appended to existing non-inner join as selections.
 	if numNonInnerEdges > 0 {
 		if newJoin, err = makeNonInnerJoin(d.ctx, checkResult, vertexHints); err != nil {
 			return nil, err
@@ -572,7 +696,10 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 
 func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) (base.LogicalPlan, error) {
 	if existingJoin != nil {
-		// Append selections to existing join
+		// Append selections to existing join.
+		// For example: (R1 LEFT JOIN R2 ON R1.c1 = R2.c1) INNER JOIN R3 ON R2.c2 = R3.c2 and (R1.c3 = R2.c3 and R1.c4 IS NULL)
+		// there will be two edges for R1 and R2, one is R1.c1 = R2.c1, the other is R1.c3 = R2.c3 and R1.c4 IS NULL,
+		// the second edge is a INNER JOIN edge, and we will append it as selection to the first LEFT JOIN edge.
 		condCap := 0
 		for _, e := range checkResult.appliedInnerEdges {
 			condCap += len(e.eqConds) + len(e.nonEQConds)
@@ -642,17 +769,31 @@ func (d *ConflictDetector) HasRemainingEdges(usedEdges map[uint64]struct{}) (rem
 	return
 }
 
-// 0: rule doesn't apply
-// 1: rule applies
-// 2: rule applies when null-rejective holds
-// NOTE: for now 2 is not used, and both assoc(left, left) and assoc(right, right) are 1:
-//  1. TiDB doesn't support FULL OUTER JOIN: in the table-2 of the original paper, most of null-rejective is related to FULL OUTER JOIN.
-//  2. We only support reorder NON-INNER JOIN when it has eqConds, which means it must be null-rejective on both sides.
-//     See the eqCond check in extractJoinGroup() for the guarantee.
+// ruleTableEntry encodes whether a given algebraic property holds for a pair of
+// join types (see Table 2 and Table 3 in the paper):
 //
-// But I still leave 2 here for future extension.
+//	0 — property does NOT hold; a conflict rule must be generated.
+//	1 — property holds unconditionally.
+//	2 — property holds only when the null-rejection condition is satisfied.
+//
+// Currently, value 2 is unused because:
+//  1. TiDB does not support FULL OUTER JOIN, which is the main source of
+//     conditional entries in the paper's tables.
+//  2. extractJoinGroup() only admits non-inner joins that have at least one
+//     equi-condition, which implicitly guarantees null-rejection on both sides.
+//     This allows assoc(LEFT, LEFT) and assoc(RIGHT, RIGHT) to be treated as
+//     unconditional (value 1). If non-inner joins without equi-conditions are
+//     admitted in the future, null-rejection checks must be added here.
+//
+// The value 2 is retained as a placeholder for future extension.
 type ruleTableEntry int
 
+// assocRuleTable[e1][e2] indicates whether the associativity transformation
+//
+//	(R1 ⋈_e1 R2) ⋈_e2 R3  ⟺  R1 ⋈_e1 (R2 ⋈_e2 R3)
+//
+// is valid for the given pair of join types.
+// Rows = join type of e1 (left/child edge), Columns = join type of e2 (right/parent edge).
 var assocRuleTable = [][]ruleTableEntry{
 	// INNER
 	{
@@ -697,6 +838,11 @@ var assocRuleTable = [][]ruleTableEntry{
 	},
 }
 
+// leftAsscomRuleTable[e1][e2] indicates whether the left-asscom transformation
+//
+//	(R1 ⋈_e1 R2) ⋈_e2 R3  ⟺  (R1 ⋈_e2 R3) ⋈_e1 R2
+//
+// is valid. Here e1 is the child edge (in leftEdges) and e2 is the parent edge.
 var leftAsscomRuleTable = [][]ruleTableEntry{
 	// INNER
 	{
@@ -740,6 +886,11 @@ var leftAsscomRuleTable = [][]ruleTableEntry{
 	},
 }
 
+// rightAsscomRuleTable[e1][e2] indicates whether the right-asscom transformation
+//
+//	R1 ⋈_e1 (R2 ⋈_e2 R3)  ⟺  R2 ⋈_e2 (R1 ⋈_e1 R3)
+//
+// is valid. Here e1 is the parent edge and e2 is the child edge (in rightEdges).
 var rightAsscomRuleTable = [][]ruleTableEntry{
 	// INNER
 	{

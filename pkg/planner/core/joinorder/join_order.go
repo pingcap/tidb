@@ -83,7 +83,7 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	}
 	defer func() {
 		if curLeadingHint != nil {
-			resJoinGroup.leadingHints = []*hint.PlanHints{curLeadingHint}
+			resJoinGroup.leadingHints = append(resJoinGroup.leadingHints, curLeadingHint)
 		}
 	}()
 
@@ -236,6 +236,15 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 	return p, nil
 }
 
+// replaceJoinGroupVertexes walks the join-group subtree rooted at `root` and
+// swaps every leaf vertex with its optimized replacement from vertexMap.
+//
+// Why this is needed: each vertex in the join group is recursively optimized
+// (optimizeRecursive) before join reorder runs. That optimisation may rebuild
+// the plan node (new ID, new children), so the original plan tree still points
+// to the stale, pre-optimisation nodes. This function patches the tree so that
+// the ConflictDetector.Build(), which traverses from root down to locate
+// vertexes by plan ID, sees the up-to-date nodes.
 func replaceJoinGroupVertexes(root base.LogicalPlan, vertexMap map[int]base.LogicalPlan) base.LogicalPlan {
 	if root == nil {
 		return nil
@@ -258,7 +267,8 @@ func replaceJoinGroupVertexes(root base.LogicalPlan, vertexMap map[int]base.Logi
 func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
 	originalSchema := group.root.Schema()
 
-	// TODO impl DP
+	// TODO impl DP OR merge the old DP impl with the new CD-C impl.
+	// Make sure there is no behavior change since some users already rely on the old DP impl.
 	// useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 	useGreedy := true
 	if useGreedy {
@@ -432,7 +442,8 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		// After the first round of greedy connection, there are still some remaining edges,
 		// for example: R1 INNER JOIN R2 ON R1.c1 < R2.c2
 		// the above join can only be connected when non-eq edges are allowed,
-		// so we start the second round of greedy connection with allowNoEQ as true.
+		// and the first round of greedy enumeration is not allowed to use non-eq edges.
+		// So we got here and we need to the second round of enumeration with `allowNoEQ` as true.
 		befLen := len(nodes)
 		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true); err != nil {
 			return nil, err
