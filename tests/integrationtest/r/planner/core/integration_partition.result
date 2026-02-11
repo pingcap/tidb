@@ -1143,8 +1143,8 @@ TableReader_8	7.00	root	partition:all	data:Selection_7
   └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
 explain select * from t where a > '2003-03-13';
 id	estRows	task	access object	operator info
-TableReader_8	4.00	root	partition:p2,p3,p4,p5,p6	data:Selection_7
-└─Selection_7	4.00	cop[tikv]		gt(rcd.t.a, 2003-03-13 00:00:00.000000)
+TableReader_8	3.00	root	partition:p2,p3,p4,p5,p6	data:Selection_7
+└─Selection_7	3.00	cop[tikv]		gt(rcd.t.a, 2003-03-13 00:00:00.000000)
   └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
 explain select * from t where a < '2006-02-03';
 id	estRows	task	access object	operator info
@@ -1158,8 +1158,8 @@ TableReader_8	1.00	root	partition:p2	data:Selection_7
   └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
 explain select * from t where a > '1949-10-10';
 id	estRows	task	access object	operator info
-TableReader_8	7.00	root	partition:all	data:Selection_7
-└─Selection_7	7.00	cop[tikv]		gt(rcd.t.a, 1949-10-10 00:00:00.000000)
+TableReader_8	6.00	root	partition:all	data:Selection_7
+└─Selection_7	6.00	cop[tikv]		gt(rcd.t.a, 1949-10-10 00:00:00.000000)
   └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
 explain select * from t where a > '2016-02-01' AND a < '20000103';
 id	estRows	task	access object	operator info
@@ -1178,13 +1178,13 @@ TableReader_8	1.00	root	partition:p0	data:Selection_7
   └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
 explain select * from t where '2003-02-27' >= a;
 id	estRows	task	access object	operator info
-TableReader_8	3.00	root	partition:p0,p1,p2	data:Selection_7
-└─Selection_7	3.00	cop[tikv]		ge(2003-02-27 00:00:00.000000, rcd.t.a)
+TableReader_8	4.00	root	partition:p0,p1,p2	data:Selection_7
+└─Selection_7	4.00	cop[tikv]		ge(2003-02-27 00:00:00.000000, rcd.t.a)
   └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
 explain select * from t where '20141024' < a;
 id	estRows	task	access object	operator info
-TableReader_8	2.00	root	partition:p4,p5,p6	data:Selection_7
-└─Selection_7	2.00	cop[tikv]		lt(2014-10-24 00:00:00.000000, rcd.t.a)
+TableReader_8	1.00	root	partition:p4,p5,p6	data:Selection_7
+└─Selection_7	1.00	cop[tikv]		lt(2014-10-24 00:00:00.000000, rcd.t.a)
   └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
 explain select * from t where '2003-03-30' > a;
 id	estRows	task	access object	operator info
@@ -1193,8 +1193,8 @@ TableReader_8	3.00	root	partition:p0,p1,p2	data:Selection_7
   └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
 explain select * from t where a between '2003-03-30' AND '2014-01-01';
 id	estRows	task	access object	operator info
-TableReader_8	2.00	root	partition:p2,p3,p4	data:Selection_7
-└─Selection_7	2.00	cop[tikv]		ge(rcd.t.a, 2003-03-30 00:00:00.000000), le(rcd.t.a, 2014-01-01 00:00:00.000000)
+TableReader_8	3.00	root	partition:p2,p3,p4	data:Selection_7
+└─Selection_7	3.00	cop[tikv]		ge(rcd.t.a, 2003-03-30 00:00:00.000000), le(rcd.t.a, 2014-01-01 00:00:00.000000)
   └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
 drop database if exists rcd;
 create database rcd;

@@ -414,9 +414,9 @@ analyze table t;
 explain format = 'plan_tree' select * from t where (lower(b) = "a" and a+1 = 2) or (lower(b) = "b" and a+1 = 5);
 id	task	access object	operator info
 Projection	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b
-└─IndexLookUp	root		
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:["a" 2,"a" 2], ["b" 5,"b" 5], keep order:false
-  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false
+└─Selection	root		or(and(eq(lower(explain_generate_column_substitute.t.b), "a"), eq(plus(explain_generate_column_substitute.t.a, 1), 2)), and(eq(lower(explain_generate_column_substitute.t.b), "b"), eq(plus(explain_generate_column_substitute.t.a, 1), 5)))
+  └─TableReader	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t	keep order:false
 explain format = 'plan_tree' select * from t where not (lower(b) >= "a");
 id	task	access object	operator info
 Projection	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b
