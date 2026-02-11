@@ -237,6 +237,23 @@ func TestAdminCheckIndexInconsistentCollectorDeduplicate(t *testing.T) {
 	require.EqualError(t, collector.firstErr(), "first")
 }
 
+func TestAdminCheckIndexInconsistentCollectorWithLimit(t *testing.T) {
+	collector := NewAdminCheckIndexInconsistentCollectorWithLimit(2)
+
+	collector.recordInconsistent("1", AdminCheckIndexRowWithoutIndex, errors.New("first"))
+	collector.recordInconsistent("1", AdminCheckIndexRowWithoutIndex, errors.New("duplicate"))
+	collector.recordInconsistent("2", AdminCheckIndexIndexWithoutRow, errors.New("second"))
+	collector.recordInconsistent("3", AdminCheckIndexRowIndexMismatch, errors.New("third"))
+
+	summary := collector.Summary()
+	require.Equal(t, uint64(2), summary.InconsistentRowCount)
+	require.Equal(t, []AdminCheckIndexInconsistentRow{
+		{Handle: "1", MismatchType: AdminCheckIndexRowWithoutIndex},
+		{Handle: "2", MismatchType: AdminCheckIndexIndexWithoutRow},
+	}, summary.Rows)
+	require.EqualError(t, collector.firstErr(), "first")
+}
+
 func TestAdminCheckIndexInconsistentCollectorIgnoreEmptyHandle(t *testing.T) {
 	collector := NewAdminCheckIndexInconsistentCollector()
 

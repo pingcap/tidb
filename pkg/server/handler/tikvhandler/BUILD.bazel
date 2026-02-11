@@ -71,7 +71,6 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/disttask/framework/schstatus",
-        "//pkg/executor",
         "//pkg/server/handler",
         "@com_github_stretchr_testify//require",
     ],
