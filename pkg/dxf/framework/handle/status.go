@@ -34,6 +34,12 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
+// ActiveTaskSummary is the summary of active tasks in `mysql.tidb_global_task`.
+type ActiveTaskSummary struct {
+	TotalActiveTasks int64            `json:"total_active_tasks"`
+	TasksPerKeyspace map[string]int64 `json:"tasks_per_keyspace"`
+}
+
 // GetScheduleStatus returns the schedule status.
 func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
@@ -74,6 +80,31 @@ func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
 		Flags: flags,
 	}
 	return status, nil
+}
+
+// GetActiveTaskSummary returns the number of active tasks (i.e. rows in `mysql.tidb_global_task`)
+// and their breakdown by keyspace.
+func GetActiveTaskSummary(ctx context.Context) (*ActiveTaskSummary, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	if err != nil {
+		return nil, err
+	}
+	rs, err := manager.ExecuteSQLWithNewSession(ctx,
+		`select keyspace, count(1) from mysql.tidb_global_task group by keyspace`)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	summary := &ActiveTaskSummary{
+		TasksPerKeyspace: make(map[string]int64, len(rs)),
+	}
+	for _, r := range rs {
+		keyspace := r.GetString(0)
+		cnt := r.GetInt64(1)
+		summary.TotalActiveTasks += cnt
+		summary.TasksPerKeyspace[keyspace] = cnt
+	}
+	return summary, nil
 }
 
 // GetNodesInfo retrieves the number of managed nodes and their CPU count.
