@@ -315,7 +315,7 @@ type adminCheckIndexCollectorCtxKeyType struct{}
 
 var adminCheckIndexCollectorCtxKey = adminCheckIndexCollectorCtxKeyType{}
 
-// WithAdminCheckIndexInconsistentCollector enables collecting all inconsistent handles in fast check.
+// WithAdminCheckIndexInconsistentCollector enables collecting inconsistent handles in fast check.
 func WithAdminCheckIndexInconsistentCollector(
 	ctx context.Context,
 	collector *AdminCheckIndexInconsistentCollector,
