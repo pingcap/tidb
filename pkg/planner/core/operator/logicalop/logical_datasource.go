@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -837,4 +838,17 @@ func (ds *DataSource) CheckPartialIndexes() {
 			return checkIndex(path, false)
 		})
 	}
+}
+
+// UsedHypoTiFlashReplicas checks whether the table uses hypothetical TiFlash replicas.
+func UsedHypoTiFlashReplicas(ctx *variable.SessionVars, dbName ast.CIStr, tblInfo *model.TableInfo) bool {
+	if ctx.StmtCtx.InExplainStmt && ctx.HypoTiFlashReplicas != nil {
+		hypoReplicas := ctx.HypoTiFlashReplicas
+		originalTableName := tblInfo.Name.L
+		if hypoReplicas[dbName.L] != nil {
+			_, ok := hypoReplicas[dbName.L][originalTableName]
+			return ok
+		}
+	}
+	return false
 }
