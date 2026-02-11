@@ -153,7 +153,7 @@ func (c *mockPDClient) BatchScanRegions(ctx context.Context, ranges []pd.KeyRang
 	return reg, nil
 }
 
-func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
+func (c *mockPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	return &metapb.Store{
 		Id:      storeID,
 		Address: fmt.Sprintf("127.0.0.%d", storeID),

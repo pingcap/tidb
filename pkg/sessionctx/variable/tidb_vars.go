@@ -906,6 +906,9 @@ const (
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
 
+	// TiDBForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
+	TiDBForeignKeyCheckInSharedLock = "tidb_foreign_key_check_in_shared_lock"
+
 	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
 	// TODO(crazycs520): remove this after foreign key GA.
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
@@ -1547,6 +1550,7 @@ const (
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
+	DefTiDBForeignKeyCheckInSharedLock           = false
 	DefTiDBOptAdvancedJoinHint                   = true
 	DefTiDBAnalyzePartitionConcurrency           = 2
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
