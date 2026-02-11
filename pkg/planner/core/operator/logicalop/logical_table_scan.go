@@ -97,7 +97,7 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	hasTiflash := false
 	if ts.Source != nil {
-		hasTiflash = ts.Source.HasTiflash() && ts.SCtx().GetSessionVars().IsMPPAllowed()
+		hasTiflash = ts.Source.HasTiflash()
 	}
 	ts.hasTiflash = hasTiflash
 	if ts.HandleCols != nil {
