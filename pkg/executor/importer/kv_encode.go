@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -112,6 +113,62 @@ func (en *TableKVEncoder) SetParquetSkipCastInfos(infos []mydump.ParquetColumnSk
 	plans := make([]mydump.ParquetColumnSkipCastInfo, len(en.insertColumns))
 	copy(plans, mapped)
 	en.insertColumnSkipCastInfos = plans
+}
+
+func (en *TableKVEncoder) shouldSkipCastForInsertColumn(idx int, val types.Datum) bool {
+	if idx >= len(en.insertColumnSkipCastInfos) {
+		return false
+	}
+	info := en.insertColumnSkipCastInfos[idx]
+	if !info.CanSkip {
+		return false
+	}
+	if val.IsNull() {
+		return true
+	}
+
+	switch info.PostCheck {
+	case mydump.ParquetPostCheckNone:
+		return true
+	case mydump.ParquetPostCheckStringLength:
+		return passParquetStringLengthPostCheck(val, info)
+	case mydump.ParquetPostCheckDecimal:
+		return passParquetDecimalPostCheck(val, info)
+	default:
+		return false
+	}
+}
+
+func passParquetStringLengthPostCheck(val types.Datum, info mydump.ParquetColumnSkipCastInfo) bool {
+	if val.Kind() != types.KindString && val.Kind() != types.KindBytes {
+		return false
+	}
+	if info.TargetFlen < 0 {
+		return true
+	}
+	b := val.GetBytes()
+	if len(b) <= info.TargetFlen {
+		return true
+	}
+	return utf8.RuneCount(b) <= info.TargetFlen
+}
+
+func passParquetDecimalPostCheck(val types.Datum, info mydump.ParquetColumnSkipCastInfo) bool {
+	if val.Kind() != types.KindMysqlDecimal {
+		return false
+	}
+	dec := val.GetMysqlDecimal()
+	if info.Unsigned && dec.IsNegative() && !dec.IsZero() {
+		return false
+	}
+	precision, frac := dec.PrecisionAndFrac()
+	if info.TargetFlen > 0 && precision > info.TargetFlen {
+		return false
+	}
+	if info.TargetDecimal >= 0 && frac != info.TargetDecimal {
+		return false
+	}
+	return true
 }
 
 // Encode table row into KVs.
@@ -215,12 +272,16 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
 	row := en.rowCache
 	for i := range en.insertColumns {
+		offset := en.insertColumns[i].Offset
+		if en.shouldSkipCastForInsertColumn(i, vals[i]) {
+			row[offset] = vals[i]
+			continue
+		}
+
 		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
 			return nil, err
 		}
-
-		offset := en.insertColumns[i].Offset
 		row[offset] = casted
 	}
 

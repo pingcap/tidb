@@ -149,6 +149,12 @@ func parquetColumnSkipCastInfo(
 	case parquet.Types.Boolean:
 		info.CanSkip = canSkipBoolToInteger(target)
 		return info
+	case parquet.Types.Float:
+		info.CanSkip = target.GetType() == mysql.TypeFloat
+		return info
+	case parquet.Types.Double:
+		info.CanSkip = target.GetType() == mysql.TypeDouble
+		return info
 	case parquet.Types.Int32:
 		info = parquetInt32SkipCastInfo(converted, target, info)
 		return info
@@ -530,7 +536,6 @@ func getInt32Setter(converted *convertedType, loc *time.Location, target *model.
 	if temporalType == mysql.TypeDate {
 		temporalFSP = 0
 	}
-
 	switch converted.converted {
 	case schema.ConvertedTypes.Decimal:
 		return func(val int32, d *types.Datum) error {
@@ -574,7 +579,6 @@ func getInt64Setter(converted *convertedType, loc *time.Location, target *model.
 	if temporalType == mysql.TypeDate {
 		temporalFSP = 0
 	}
-
 	switch converted.converted {
 	case schema.ConvertedTypes.Uint64,
 		schema.ConvertedTypes.Uint32, schema.ConvertedTypes.Int32,
@@ -675,7 +679,6 @@ func getInt96Setter(converted *convertedType, loc *time.Location, target *model.
 	if temporalType == mysql.TypeDate {
 		temporalFSP = 0
 	}
-
 	return func(val parquet.Int96, d *types.Datum) error {
 		setInt96Data(val, d, loc, converted.IsAdjustedToUTC, temporalType, temporalFSP)
 		return nil
