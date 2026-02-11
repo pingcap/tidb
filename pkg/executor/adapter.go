@@ -365,7 +365,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, a.InfoSchema)
 	})
 
-	ctx = a.observeStmtBeginForTopSQL(ctx)
+	ctx = a.observeStmtBeginForTopProfiling(ctx)
 	startTs, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
 	if err != nil {
 		return nil, err
@@ -638,7 +638,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			stmtCtx.ResourceGroupName = switchGroupName
 		}
 	}
-	ctx = a.observeStmtBeginForTopSQL(ctx)
+	ctx = a.observeStmtBeginForTopProfiling(ctx)
 
 	// Record start time before buildExecutor() to include TSO waiting time in maxExecutionTime timeout.
 	// buildExecutor() may block waiting for TSO, so we should start the timer earlier.
@@ -1520,7 +1520,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	a.observeStmtFinishedForTopSQL()
+	a.observeStmtFinishedForTopProfiling()
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
@@ -2152,10 +2152,10 @@ func (a *ExecStmt) updatePrevStmt() {
 	}
 }
 
-func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
-	if !topsqlstate.TopSQLEnabled() && IsFastPlan(a.Plan) {
+func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.Context {
+	if !topsqlstate.TopProfilingEnabled() && IsFastPlan(a.Plan) {
 		// To reduce the performance impact on fast plan.
-		// Drop them does not cause notable accuracy issue in TopSQL.
+		// Drop them does not cause notable accuracy issue in Top Profiling.
 		return ctx
 	}
 
@@ -2171,8 +2171,9 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 		planDigestByte = planDigest.Bytes()
 	}
 	stats := a.Ctx.GetStmtStats()
-	if !topsqlstate.TopSQLEnabled() {
-		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
+	if !topsqlstate.TopProfilingEnabled() {
+		// Always attach the SQL and plan info uses to catch the running SQL when Top Profiling is enabled in execution.
+		// Note: Goroutine labels for CPU profiling are only set when TopSQL is enabled.
 		if stats != nil {
 			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
 		}
@@ -2222,12 +2223,12 @@ func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
 	a.Ctx.GetSessionVars().PlanCacheValue = nil // reset
 }
 
-func (a *ExecStmt) observeStmtFinishedForTopSQL() {
+func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
 	vars := a.Ctx.GetSessionVars()
 	if vars == nil {
 		return
 	}
-	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
+	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopProfilingEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		execDuration := vars.GetTotalCostDuration()
 		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration, vars.OutPacketBytes.Load())

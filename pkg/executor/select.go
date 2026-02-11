@@ -1061,7 +1061,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+		if topsqlstate.TopProfilingEnabled() && prepareStmt.SQLDigest != nil {
 			sc.IsSQLRegistered.Store(true)
 			topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}

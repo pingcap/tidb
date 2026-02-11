@@ -16,14 +16,17 @@ package planreplayer
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -56,6 +59,16 @@ func checkFileName(s string) bool {
 }
 
 func TestPlanReplayer(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
@@ -67,7 +80,6 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustQuery("plan replayer dump explain select * from t where a=10")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
@@ -89,6 +101,16 @@ func TestPlanReplayer(t *testing.T) {
 }
 
 func TestPlanReplayerCaptureSEM(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	originSEM := config.GetGlobalConfig().Security.EnableSEM
 	defer func() {
 		config.GetGlobalConfig().Security.EnableSEM = originSEM
@@ -99,7 +121,6 @@ func TestPlanReplayerCaptureSEM(t *testing.T) {
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustExec("create table t(id int)")
 	tk.MustQuery("plan replayer dump explain select * from t")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
@@ -131,11 +152,21 @@ func TestPlanReplayerCapture(t *testing.T) {
 }
 
 func TestPlanReplayerContinuesCapture(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@global.tidb_enable_historical_stats='OFF'")
-	_, err := tk.Exec("set @@global.tidb_enable_plan_replayer_continuous_capture='ON'")
+	_, err = tk.Exec("set @@global.tidb_enable_plan_replayer_continuous_capture='ON'")
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture")
 
@@ -152,12 +183,21 @@ func TestPlanReplayerContinuesCapture(t *testing.T) {
 	require.NotNil(t, task)
 	worker := prHandle.GetWorker()
 	success := worker.HandleTask(task)
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	require.True(t, success)
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
 func TestPlanReplayerDumpSingle(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "tidb.log")
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -171,9 +211,17 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
 	path := testdata.ConvertRowsToStrings(res.Rows())
 
-	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), path[0])
+	fileReader, err := storage.Open(ctx, filePath, nil)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, reader.Close()) }()
+	defer fileReader.Close()
+
+	content, err := io.ReadAll(fileReader)
+	require.NoError(t, err)
+
+	readerAt := bytes.NewReader(content)
+	reader, err := zip.NewReader(readerAt, int64(len(content)))
+	require.NoError(t, err)
 	for _, file := range reader.File {
 		require.True(t, checkFileName(file.Name), file.Name)
 	}

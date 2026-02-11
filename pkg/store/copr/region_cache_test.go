@@ -408,9 +408,9 @@ func TestPanicInSplitKeyRangesByBuckets(t *testing.T) {
 	t.Logf("Test completed successfully - panic was caught, diagnostics logged, and re-panicked as expected")
 }
 
-// TestLocateBucketNilFallback tests that when LocateBucket returns nil
-// (range outside location boundaries), splitKeyRangesByBuckets returns
-// unsplit ranges instead of panicking.
+// TestLocateBucketNilFallback tests that when the first range starts outside the
+// location boundaries, splitKeyRangesByBuckets returns unsplit ranges instead of
+// panicking.
 func TestLocateBucketNilFallback(t *testing.T) {
 	ctx := context.Background()
 
@@ -425,8 +425,8 @@ func TestLocateBucketNilFallback(t *testing.T) {
 		},
 	}
 
-	// Create ranges where the first one is OUTSIDE the location (starts at "x")
-	// This simulates the bug scenario where ranges don't match locations
+	// Create ranges where the first one is OUTSIDE the location (starts at "x").
+	// This simulates the bug scenario where ranges don't match locations.
 	outsideRanges := NewKeyRanges([]kv.KeyRange{
 		{StartKey: []byte("x"), EndKey: []byte("z")}, // Outside [a, m)
 	})
@@ -438,11 +438,102 @@ func TestLocateBucketNilFallback(t *testing.T) {
 	}
 
 	// Call splitKeyRangesByBuckets - should NOT panic, should return unsplit ranges
-	result := lkr.splitKeyRangesByBuckets(ctx)
+	result, fb := lkr.splitKeyRangesByBuckets(ctx)
+	require.NotNil(t, fb)
 
 	// Verify we got the fallback behavior: unsplit original LocationKeyRanges
 	require.Len(t, result, 1, "Expected 1 unsplit LocationKeyRanges")
 	require.Equal(t, lkr, result[0], "Expected original LocationKeyRanges to be returned")
 
-	t.Log("LocateBucket nil fallback working correctly - returned unsplit ranges instead of panicking")
+	t.Log("StartKey outside location fallback working correctly - returned unsplit ranges instead of panicking")
+}
+
+// TestLocateBucketOutsideRegionNonNilFallback tests a subtle stale-bucket case:
+// LocateBucket can return a non-nil bucket even when key is outside the region boundaries.
+// Our bucket splitting must not livelock and should fall back safely.
+func TestLocateBucketOutsideRegionNonNilFallback(t *testing.T) {
+	ctx := context.Background()
+
+	// Location covers [m, z). Buckets are stale (start before region start), so LocateBucket("b")
+	// returns a non-nil bucket, clamping falls back to region boundaries, and bucket.Contains("b") is false.
+	loc := &tikv.KeyLocation{
+		Region:   tikv.NewRegionVerID(1, 0, 0),
+		StartKey: []byte("m"),
+		EndKey:   []byte("z"),
+		Buckets: &metapb.Buckets{
+			Keys:    [][]byte{[]byte("a"), []byte("f"), []byte("z")},
+			Version: 1,
+		},
+	}
+
+	startKey := []byte("b") // outside [m, z)
+	require.False(t, loc.Contains(startKey), "sanity: startKey should be outside location")
+	b := loc.LocateBucket(startKey)
+	require.NotNil(t, b, "LocateBucket should return a non-nil bucket for this stale metadata")
+	require.False(t, b.Contains(startKey), "sanity: clamped bucket should not contain the key")
+
+	lkr := &LocationKeyRanges{
+		Location: loc,
+		Ranges:   NewKeyRanges([]kv.KeyRange{{StartKey: startKey, EndKey: []byte("c")}}),
+	}
+
+	result, fb := lkr.splitKeyRangesByBuckets(ctx)
+	require.NotNil(t, fb)
+	require.Len(t, result, 1, "Expected unsplit LocationKeyRanges fallback")
+	require.Equal(t, lkr, result[0], "Expected original LocationKeyRanges to be returned")
+}
+
+func TestOverlappingRangesCanProduceOutOfOrderRangesAfterSplit(t *testing.T) {
+	ctx := context.Background()
+
+	// This test demonstrates a concrete root-cause for `range.StartKey < location.StartKey`:
+	//
+	// 1) Input key ranges are overlapping/contained (e.g. [a,z) contains [b,c)).
+	// 2) `splitKeyRangesByLocation` splits the first range at the location boundary and stores the remainder
+	//    as `ranges.first`, but keeps the still-unprocessed contained range in `ranges.mid`.
+	// 3) The remaining `KeyRanges` becomes non-monotonic: [m,z) then [b,c).
+	// 4) A later location can end up receiving a range whose start is < location.StartKey, which triggers
+	//    the bucket-splitting fallback guard (and used to be able to livelock).
+
+	loc0 := &tikv.KeyLocation{
+		Region:   tikv.NewRegionVerID(1, 0, 0),
+		StartKey: []byte("a"),
+		EndKey:   []byte("m"),
+	}
+	loc1 := &tikv.KeyLocation{
+		Region:   tikv.NewRegionVerID(2, 0, 0),
+		StartKey: []byte("m"),
+		EndKey:   []byte("z"),
+		Buckets: &metapb.Buckets{
+			// One bucket covering the full location is enough to exercise the
+			// bucket-splitting loop and reach the mismatch.
+			Keys:    [][]byte{[]byte("m"), []byte("z")},
+			Version: 1,
+		},
+	}
+
+	ranges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("z")}, // spans loc0 -> loc1
+		{StartKey: []byte("b"), EndKey: []byte("c")}, // fully inside loc0, contained by the first range
+	})
+
+	cache := &RegionCache{}
+	res := []*LocationKeyRanges{}
+	_, remaining, isBreak := cache.splitKeyRangesByLocation(ctx, loc0, ranges, res)
+	require.False(t, isBreak, "should not break: more locations remain")
+	require.Equal(t, 2, remaining.Len(), "expect [m,z) + original contained range to remain")
+
+	require.Equal(t, "m", string(remaining.At(0).StartKey))
+	require.Equal(t, "z", string(remaining.At(0).EndKey))
+	require.Equal(t, "b", string(remaining.At(1).StartKey))
+	require.Equal(t, "c", string(remaining.At(1).EndKey))
+
+	// Now bucket splitting must observe that remaining ranges are inconsistent with loc1 boundaries
+	// and fall back safely instead of looping forever.
+	lkr := &LocationKeyRanges{Location: loc1, Ranges: remaining}
+	result, fb := lkr.splitKeyRangesByBuckets(ctx)
+	require.NotNil(t, fb)
+	require.Equal(t, "range_start_outside_location", fb.reason)
+	require.Len(t, result, 1)
+	require.Equal(t, lkr, result[0])
 }

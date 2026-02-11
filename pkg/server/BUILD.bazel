@@ -177,6 +177,8 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
+        "//pkg/planner/extstore",
+        "//pkg/resourcegroup",
         "//pkg/server/internal",
         "//pkg/server/internal/column",
         "//pkg/server/internal/handshake",

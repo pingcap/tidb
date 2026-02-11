@@ -782,8 +782,8 @@ func (e *Explain) renderResultForExplore() error {
 			strconv.FormatFloat(p.ScanRowsPerReturnRow, 'f', -1, 64),
 			p.Recommend,
 			p.Reason,
-			fmt.Sprintf("EXPLAIN ANALYZE '%v'", p.PlanDigest),
-			fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)})
+			fmt.Sprintf("EXPLAIN ANALYZE %v", p.BindSQL),
+			fmt.Sprintf("CREATE GLOBAL BINDING USING %v", p.BindSQL)})
 	}
 	return nil
 }
