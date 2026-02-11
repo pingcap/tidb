@@ -40,7 +40,7 @@ import (
 const (
 	// defaultBufSize specifies the default size of skip buffer.
 	// Skip buffer is used when reading data from the cloud. If there is a gap
-	// between the current read position and the last read position, the
+	// between the current read position and the last read position, these
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
@@ -339,7 +339,7 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 
 func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
-	eg.SetLimit(16)
+	eg.SetLimit(8)
 
 	builder, err := pp.getBuilder(egCtx)
 	if err != nil {
@@ -404,6 +404,7 @@ func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSee
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		pp.logger.Debug("use in memory reader for parquet file", zap.String("path", pp.path))
 		return func(c int) (readerAtSeekerCloser, error) {
 			return &inMemoryParquetWrapper{
 				base:     base,

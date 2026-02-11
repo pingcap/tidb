@@ -37,9 +37,9 @@ var (
 	// If the row-group size is no larger than this threshold, we read it once
 	// into memory and let all column readers share that buffer. This reduces
 	// number of GET requests for files with many small columns, where first-byte
-	// latency can dominate read time. 140 MiB is an heuristic value which we can
+	// latency can dominate read time. 128 MiB is an heuristic value which we can
 	// tolerate the extra memory usage for row group.
-	rowGroupInMemoryThreshold = 140 * units.MiB
+	rowGroupInMemoryThreshold = 128 * units.MiB
 )
 
 type readerAtSeekerCloser interface {
