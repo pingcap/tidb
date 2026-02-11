@@ -265,16 +265,11 @@ func constructIndexJoinStatic(
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
 		isNullEQ      []bool
-		hasNullEQ     bool
 	)
 	if outerIdx == 0 {
-		outerJoinKeys, innerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
+		outerJoinKeys, innerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	} else {
-		innerJoinKeys, outerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
-	}
-	// TODO: support null equal join keys for index join
-	if hasNullEQ {
-		return nil
+		innerJoinKeys, outerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	// outer side expected cnt will be amplified by the prop.ExpectedCnt / p.StatsInfo().RowCount with same ratio.
@@ -475,16 +470,11 @@ func constructIndexJoin(
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
 		isNullEQ      []bool
-		hasNullEQ     bool
 	)
 	if outerIdx == 0 {
-		outerJoinKeys, innerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
+		outerJoinKeys, innerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	} else {
-		innerJoinKeys, outerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
-	}
-	// TODO: support null equal join keys for index join
-	if hasNullEQ {
-		return nil
+		innerJoinKeys, outerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64,
@@ -583,6 +573,10 @@ func constructIndexMergeJoin(
 	hintExists := false
 	if (outerIdx == 1 && (p.PreferJoinType&h.PreferLeftAsINLMJInner) > 0) || (outerIdx == 0 && (p.PreferJoinType&h.PreferRightAsINLMJInner) > 0) {
 		hintExists = true
+	}
+	_, _, _, hasNullEQ := p.GetJoinKeys()
+	if hasNullEQ {
+		return nil
 	}
 	indexJoins := constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, !hintExists)
 	indexMergeJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
@@ -1107,11 +1101,6 @@ func buildIndexJoinInner2TableScan(
 		lastColMng = indexJoinResult.lastColManager
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
-		}
-	})
 	joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng, true)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
@@ -1148,11 +1137,6 @@ func buildIndexJoinInner2IndexScan(
 	joins = make([]base.PhysicalPlan, 0, 3)
 	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(p.SCtx(), outerJoinKeys, indexJoinResult)
 	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager))
-		}
-	})
 	if innerTask != nil {
 		joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager, true)...)
 		// We can reuse the `innerTask` here since index nested loop hash join
@@ -1230,7 +1214,7 @@ func constructDS2TableScanTask(
 	countAfterAccess := rowCount
 	if len(ts.FilterCondition) > 0 {
 		var err error
-		selectivity, _, err = cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.FilterCondition, ds.PossibleAccessPaths)
+		selectivity, err = cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.FilterCondition, ds.PossibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
 			selectivity = cost.SelectionFactor
@@ -1447,6 +1431,9 @@ func constructDS2IndexScanTask(
 		TblColHists:      ds.TblColHists,
 		PkIsHandleCol:    ds.GetPKIsHandleCol(),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+
+	is.SetNoncacheableReason(path.NoncacheableReason)
+
 	cop := &physicalop.CopTask{
 		IndexPlan:   is,
 		TblColHists: ds.TblColHists,
@@ -1552,7 +1539,7 @@ func constructDS2IndexScanTask(
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(tblConds) > 0 {
-		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, tblConds, ds.PossibleAccessPaths)
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, tblConds, ds.PossibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = cost.SelectionFactor
@@ -1570,7 +1557,7 @@ func constructDS2IndexScanTask(
 		tmpPath.CountAfterAccess = cnt
 	}
 	if len(indexConds) > 0 {
-		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, indexConds, ds.PossibleAccessPaths)
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, indexConds, ds.PossibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = cost.SelectionFactor
@@ -2667,12 +2654,6 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 // If the hint is not figured, we will pick all candidates.
 func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			indexJoins, _ := tryToGetIndexJoin(p, prop)
-			failpoint.Return(indexJoins, true, nil)
-		}
-	})
 
 	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
 		if hasMPPJoinHints(p.PreferJoinType) {

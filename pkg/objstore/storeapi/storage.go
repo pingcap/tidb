@@ -22,7 +22,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
@@ -194,7 +194,7 @@ type Options struct {
 
 	// S3Retryer is the retryer for create s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
-	S3Retryer retry.Standard
+	S3Retryer aws.Retryer
 
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.
@@ -239,6 +239,14 @@ func (p Prefix) ObjectKey(name string) string {
 	// key.
 	// this is existing behavior, we keep it.
 	return string(p) + name
+}
+
+// ToPath convert the object storage prefix into a URL path.
+// we expect `p` relative to the bucket, not to another prefix, so we add a
+// leading '/' directly. if p is empty, it will return '/', which is also a
+// valid path.
+func (p Prefix) ToPath() string {
+	return "/" + string(p)
 }
 
 // String implements fmt.Stringer interface.

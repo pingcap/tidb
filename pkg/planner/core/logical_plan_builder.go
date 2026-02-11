@@ -926,6 +926,10 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 		if err != nil {
 			return nil, err
 		}
+		p = np
+		if expr == nil {
+			continue
+		}
 		// for case: explain SELECT year+2 as y, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002;
 		// currently, we succeed to resolve y to (year+2), but fail to resolve (year+2) to grouping col, and to base column function: plus(year, 2) instead.
 		// which will cause this selection being pushed down through Expand OP itself.
@@ -933,10 +937,6 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 		// In expand, we will additionally project (year+2) out as a new column, let's say grouping_col here, and we wanna it can substitute any upper layer's (year+2)
 		expr = b.replaceGroupingFunc(expr)
 
-		p = np
-		if expr == nil {
-			continue
-		}
 		expressions = append(expressions, expr)
 	}
 	cnfExpres := make([]expression.Expression, 0)
@@ -1257,7 +1257,8 @@ func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (re
 
 func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression.Expression {
 	// current block doesn't have an expand OP, just return it.
-	if b.currentBlockExpand == nil {
+	// expr can be nil when rewrite eliminates a predicate in non-scalar contexts.
+	if b.currentBlockExpand == nil || expr == nil {
 		return expr
 	}
 	// curExpand can supply the DistinctGbyExprs and gid col.
@@ -4637,7 +4638,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if tableInfo.IsCommonHandle {
 			primaryIdx := tables.FindPrimaryIndex(tableInfo)
 			handleCols = util.NewCommonHandleCols(tableInfo, primaryIdx, ds.TblCols)
-		} else {
+		} else if !tbl.Type().IsClusterTable() {
+			// Cluster tables are memory tables that don't support ExtraHandleID.
+			// ExtraHandleID would cause "Column ID -1 not found" errors when
+			// coprocessor requests are sent to other TiDB nodes.
 			extraCol := ds.NewExtraHandleSchemaCol()
 			handleCols = util.NewIntHandleCols(extraCol)
 			ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
@@ -4652,16 +4656,19 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	// Append extra commit ts column to the schema.
-	commitTSCol := ds.NewExtraCommitTSSchemaCol()
-	ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
-	schema.Append(commitTSCol)
-	names = append(names, &types.FieldName{
-		DBName:      dbName,
-		TblName:     tableInfo.Name,
-		ColName:     model.ExtraCommitTSName,
-		OrigColName: model.ExtraCommitTSName,
-	})
-	ds.AppendTableCol(commitTSCol)
+	// Cluster tables are memory tables that don't support extra column IDs.
+	if !tbl.Type().IsClusterTable() {
+		commitTSCol := ds.NewExtraCommitTSSchemaCol()
+		ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
+		schema.Append(commitTSCol)
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     model.ExtraCommitTSName,
+			OrigColName: model.ExtraCommitTSName,
+		})
+		ds.AppendTableCol(commitTSCol)
+	}
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)

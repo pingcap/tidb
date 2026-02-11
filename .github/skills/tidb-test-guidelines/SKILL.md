@@ -40,6 +40,7 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 
 - Apply the same rules (placement, shard_count, naming) to other packages beyond `pkg/planner`.
 - Use existing testdata patterns (`*_in.json`, `*_out.json`, `*_xut.json`) in the same directory when extending suites. When tests use testdata, run with `-record --tags=intest` as needed.
+- For `pkg/planner/core/casetest/rule` predicate pushdown cases, keep SQL in `predicate_pushdown_suite_in.json` and record both `EXPLAIN format='brief'` and query results via the test runner (see `rule_predicate_pushdown_test.go`).
 - When moving benchmarks between packages, update any `TestBenchDaily` wrappers that list them and keep `Makefile` `bench-daily` entries aligned with the new package location.
 - When updating tests in any `pkg/*` package, ask AI to update the corresponding case map under `references/`.
 - When updating tests in any other directory, also update this skill: add or extend a case map under `references/` and add guidance in this `SKILL.md` so future changes stay consistent.
