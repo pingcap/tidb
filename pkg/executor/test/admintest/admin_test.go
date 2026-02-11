@@ -2154,6 +2154,75 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 	}
 }
 
+func TestAdminCheckIndexCollectInconsistentBySessionVar(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_collect_test")
+	tk.MustExec("create table admin_collect_test (id int primary key, a int, b int, key idx_a(a))")
+	tk.MustExec("insert admin_collect_test values (1, 10, 100), (2, 20, 200), (3, 30, 300), (4, 40, 400)")
+
+	// Build one inconsistency for each mismatch type:
+	// 1) row_without_index: remove index(handle=1)
+	// 2) row_index_mismatch: replace index(handle=2) with wrong index value
+	// 3) index_without_row: add phantom index(handle=999)
+	sctx := mock.NewContext()
+	sctx.Store = store
+	is := domain.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("admin_collect_test"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.FindIndexByName("idx_a")
+	require.NotNil(t, idxInfo)
+	idxOp := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = idxOp.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(10), kv.IntHandle(1))
+	require.NoError(t, err)
+	err = idxOp.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(20), kv.IntHandle(2))
+	require.NoError(t, err)
+	_, err = idxOp.Create(sctx.GetTableCtx(), txn, types.MakeDatums(200), kv.IntHandle(2), nil)
+	require.NoError(t, err)
+	_, err = idxOp.Create(sctx.GetTableCtx(), txn, types.MakeDatums(999), kv.IntHandle(999), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	tk.MustExec("set @@tidb_enable_fast_table_check = ON")
+	runCheck := func(collectAll bool) (*executor.AdminCheckIndexInconsistentSummary, error) {
+		if collectAll {
+			tk.MustExec("set @@tidb_fast_check_table_collect_inconsistent = ON")
+		} else {
+			tk.MustExec("set @@tidb_fast_check_table_collect_inconsistent = OFF")
+		}
+
+		collector := executor.NewAdminCheckIndexInconsistentCollector()
+		checkCtx := executor.WithAdminCheckIndexInconsistentCollector(context.Background(), collector)
+		_, execErr := tk.ExecWithContext(checkCtx, "admin check index admin_collect_test idx_a")
+		return collector.Summary(), execErr
+	}
+
+	// Default path (variable OFF) keeps fail-fast behavior and does not fill collector.
+	summaryOff, err := runCheck(false)
+	require.Error(t, err)
+	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+	require.Equal(t, uint64(0), summaryOff.InconsistentRowCount)
+	require.Empty(t, summaryOff.Rows)
+
+	// Collector path (variable ON) collects all mismatches with explicit type.
+	summaryOn, err := runCheck(true)
+	require.Error(t, err)
+	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+	require.Equal(t, uint64(3), summaryOn.InconsistentRowCount)
+	require.ElementsMatch(t, []executor.AdminCheckIndexInconsistentRow{
+		{Handle: "1", MismatchType: executor.AdminCheckIndexRowWithoutIndex},
+		{Handle: "2", MismatchType: executor.AdminCheckIndexRowIndexMismatch},
+		{Handle: "999", MismatchType: executor.AdminCheckIndexIndexWithoutRow},
+	}, summaryOn.Rows)
+}
+
 func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
