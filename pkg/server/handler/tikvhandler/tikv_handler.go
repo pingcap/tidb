@@ -1186,7 +1186,7 @@ func (h DDLResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	handler.WriteData(w, "success!")
 }
 
-func (h AdminCheckIndexHandler) checkIndexByName(dbName, tableName, indexName string) (*executor.AdminCheckIndexInconsistentSummary, error) {
+func (h AdminCheckIndexHandler) checkIndexByName(dbName, tableName, indexName string, limit int) (*executor.AdminCheckIndexInconsistentSummary, error) {
 	se, err := session.CreateSession(h.store)
 	if err != nil {
 		return nil, err
@@ -1200,9 +1200,9 @@ func (h AdminCheckIndexHandler) checkIndexByName(dbName, tableName, indexName st
 		return nil, err
 	}
 
-	collector := executor.NewAdminCheckIndexInconsistentCollector()
+	collector := executor.NewAdminCheckIndexInconsistentCollectorWithLimit(limit)
 	// Attach collector to execution context so fast admin check can collect
-	// all mismatched handles instead of stopping at the first error.
+	// up to `limit` mismatched handles instead of stopping at the first error.
 	checkCtx := executor.WithAdminCheckIndexInconsistentCollector(context.Background(), collector)
 	checkSQL := fmt.Sprintf("admin check index %s %s", quoteTable(dbName, tableName), quoteName(indexName))
 
@@ -1243,7 +1243,7 @@ func (h AdminCheckIndexHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	summary, err := h.checkIndexByName(dbName, tableName, indexName)
+	summary, err := h.checkIndexByName(dbName, tableName, indexName, limit)
 	if err != nil && summary == nil {
 		handler.WriteError(w, err)
 		return
@@ -1251,10 +1251,6 @@ func (h AdminCheckIndexHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 	if summary == nil {
 		summary = &executor.AdminCheckIndexInconsistentSummary{}
 	}
-
-	// Keep the complete inconsistency count, but cap response row payload
-	// to protect API size and memory usage for large mismatch sets.
-	truncateAdminCheckIndexSummaryRows(summary, limit)
 
 	// For inconsistency errors from `admin check index`, summary already contains
 	// mismatched handles and mismatch types required by this API.
@@ -1275,16 +1271,6 @@ func parseAdminCheckIndexLimit(req *http.Request) (int, error) {
 		return 0, errors.New("limit must be greater than 0")
 	}
 	return limit, nil
-}
-
-func truncateAdminCheckIndexSummaryRows(summary *executor.AdminCheckIndexInconsistentSummary, limit int) {
-	if summary == nil || limit < 0 {
-		return
-	}
-	if len(summary.Rows) <= limit {
-		return
-	}
-	summary.Rows = summary.Rows[:limit]
 }
 
 func quoteName(name string) string {

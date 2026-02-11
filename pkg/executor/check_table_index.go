@@ -281,21 +281,33 @@ type AdminCheckIndexInconsistentSummary struct {
 	Rows                 []AdminCheckIndexInconsistentRow `json:"rows"`
 }
 
-// AdminCheckIndexInconsistentCollector collects all inconsistent handles for one statement execution.
+// AdminCheckIndexInconsistentCollector collects inconsistent handles for one statement execution.
 // It is enabled only when the execution context carries this collector.
 type AdminCheckIndexInconsistentCollector struct {
 	count atomic.Uint64
 	first atomic.Pointer[error]
+
+	collectLimit int
 
 	mu     sync.Mutex
 	rows   []AdminCheckIndexInconsistentRow
 	rowSet map[string]struct{}
 }
 
-// NewAdminCheckIndexInconsistentCollector creates a collector for fast `admin check index`.
+// NewAdminCheckIndexInconsistentCollector creates an uncapped collector for fast `admin check index`.
 func NewAdminCheckIndexInconsistentCollector() *AdminCheckIndexInconsistentCollector {
+	return NewAdminCheckIndexInconsistentCollectorWithLimit(0)
+}
+
+// NewAdminCheckIndexInconsistentCollectorWithLimit creates a collector with an optional cap.
+// When limit is greater than zero, at most `limit` rows are collected.
+func NewAdminCheckIndexInconsistentCollectorWithLimit(limit int) *AdminCheckIndexInconsistentCollector {
+	if limit < 0 {
+		limit = 0
+	}
 	return &AdminCheckIndexInconsistentCollector{
-		rowSet: make(map[string]struct{}),
+		collectLimit: limit,
+		rowSet:       make(map[string]struct{}),
 	}
 }
 
@@ -340,6 +352,10 @@ func (c *AdminCheckIndexInconsistentCollector) recordInconsistent(
 	rowKey := handle + "\x00" + string(mismatchType)
 	c.mu.Lock()
 	if _, exists := c.rowSet[rowKey]; exists {
+		c.mu.Unlock()
+		return
+	}
+	if c.collectLimit > 0 && len(c.rows) >= c.collectLimit {
 		c.mu.Unlock()
 		return
 	}
@@ -457,7 +473,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	collectAll := e.Ctx().GetSessionVars().FastCheckTableCollectInconsistent
 	if collectAll {
 		// Collector mode is opened by session variable. HTTP API injects its own
-		// collector via context to receive all mismatched handles in response.
+		// collector via context to receive mismatched handles in response (optionally capped).
 		e.collector = adminCheckIndexCollectorFromContext(ctx)
 		if e.collector == nil {
 			e.collector = NewAdminCheckIndexInconsistentCollector()
