@@ -291,7 +291,9 @@ func (t *mlogTable) writeMLogRow(
 				len(baseRow),
 			)
 		}
-		mlogRow = append(mlogRow, baseRow[offset])
+		var d types.Datum
+		baseRow[offset].Copy(&d)
+		mlogRow = append(mlogRow, d)
 	}
 	mlogRow = append(mlogRow, types.NewStringDatum(string(dmlType)), types.NewIntDatum(oldNew))
 
