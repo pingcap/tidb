@@ -15,12 +15,12 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 explain format = 'brief' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	estRows	task	access object	operator info
-HashJoin	1600.00	root		semi join, equal:[eq(Column#13, Column#11)]
-├─StreamAgg(Build)	1.00	root		funcs:sum(Column#16)->Column#11
+HashJoin	1600.00	root		semi join, equal:[eq(Column#15, Column#13)]
+├─StreamAgg(Build)	1.00	root		funcs:sum(Column#18)->Column#13
 │ └─TableReader	1.00	root		data:StreamAgg
-│   └─StreamAgg	1.00	cop[tikv]		funcs:sum(explain_easy_stats.t3.a)->Column#16
+│   └─StreamAgg	1.00	cop[tikv]		funcs:sum(explain_easy_stats.t3.a)->Column#18
 │     └─TableFullScan	2000.00	cop[tikv]	table:s	keep order:false
-└─Projection(Probe)	2000.00	root		explain_easy_stats.t3.a, explain_easy_stats.t3.b, explain_easy_stats.t3.c, explain_easy_stats.t3.d, cast(explain_easy_stats.t3.a, decimal(20,0) BINARY)->Column#13
+└─Projection(Probe)	2000.00	root		explain_easy_stats.t3.a, explain_easy_stats.t3.b, explain_easy_stats.t3.c, explain_easy_stats.t3.d, cast(explain_easy_stats.t3.a, decimal(20,0) BINARY)->Column#15
   └─TableReader	2000.00	root		data:TableFullScan
     └─TableFullScan	2000.00	cop[tikv]	table:t3	keep order:false
 explain format = 'brief' select * from t1;
@@ -64,9 +64,9 @@ Delete	N/A	root		N/A
   └─IndexRangeScan	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
-Projection	1985.00	root		Column#7
+Projection	1985.00	root		Column#9
 └─HashJoin	1985.00	root		inner join, equal:[eq(explain_easy_stats.t1.c1, explain_easy_stats.t2.c2)]
-  ├─HashAgg(Build)	1985.00	root		group by:explain_easy_stats.t2.c2, funcs:count(explain_easy_stats.t2.c2)->Column#8, funcs:firstrow(explain_easy_stats.t2.c2)->explain_easy_stats.t2.c2
+  ├─HashAgg(Build)	1985.00	root		group by:explain_easy_stats.t2.c2, funcs:count(explain_easy_stats.t2.c2)->Column#10, funcs:firstrow(explain_easy_stats.t2.c2)->explain_easy_stats.t2.c2
   │ └─TableReader	1985.00	root		data:Selection
   │   └─Selection	1985.00	cop[tikv]		not(isnull(explain_easy_stats.t2.c2))
   │     └─TableFullScan	1985.00	cop[tikv]	table:b	keep order:false
@@ -102,7 +102,7 @@ id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:COLUMNS	
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
-Projection	1999.00	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)->Column#11
+Projection	1999.00	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)->Column#14
 └─Apply	1999.00	root		CARTESIAN left outer join
   ├─TableReader(Build)	1999.00	root		data:TableFullScan
   │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
