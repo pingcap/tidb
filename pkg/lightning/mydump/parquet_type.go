@@ -16,6 +16,7 @@ package mydump
 
 import (
 	"encoding/binary"
+	"math"
 	"strings"
 	"time"
 
@@ -29,6 +30,31 @@ import (
 )
 
 type setter[T parquet.ColumnTypes] func(T, *types.Datum) error
+
+// ParquetPostCheckType indicates the value-level check to run before skipping
+// cast in the encoder.
+type ParquetPostCheckType uint8
+
+const (
+	// ParquetPostCheckNone means no value-level check is required.
+	ParquetPostCheckNone ParquetPostCheckType = iota
+	// ParquetPostCheckStringLength verifies string length before skipping cast.
+	ParquetPostCheckStringLength
+	// ParquetPostCheckDecimal validates decimal shape before skipping cast.
+	ParquetPostCheckDecimal
+)
+
+// ParquetColumnSkipCastInfo describes whether a parquet column can skip cast
+// for the mapped target column under strict-mode semantics.
+type ParquetColumnSkipCastInfo struct {
+	CanSkip   bool
+	PostCheck ParquetPostCheckType
+
+	TargetType    byte
+	TargetFlen    int
+	TargetDecimal int
+	Unsigned      bool
+}
 
 var (
 	zeroMyDecimal = types.MyDecimal{}
@@ -84,6 +110,236 @@ func extractColumnTypes(
 		}
 	}
 	return colTypes, colNames, nil
+}
+
+func buildParquetSkipCastInfos(
+	colTypes []convertedType,
+	physicalTypes []parquet.Type,
+	targetCols []*model.ColumnInfo,
+) []ParquetColumnSkipCastInfo {
+	infos := make([]ParquetColumnSkipCastInfo, len(colTypes))
+	for i := range colTypes {
+		if i >= len(physicalTypes) || i >= len(targetCols) || targetCols[i] == nil {
+			continue
+		}
+		infos[i] = parquetColumnSkipCastInfo(colTypes[i], physicalTypes[i], targetCols[i])
+	}
+	return infos
+}
+
+func parquetColumnSkipCastInfo(
+	converted convertedType,
+	physicalType parquet.Type,
+	target *model.ColumnInfo,
+) ParquetColumnSkipCastInfo {
+	info := ParquetColumnSkipCastInfo{
+		TargetType:    target.GetType(),
+		TargetFlen:    target.GetFlen(),
+		TargetDecimal: target.GetDecimal(),
+		Unsigned:      mysql.HasUnsignedFlag(target.GetFlag()),
+	}
+
+	if target.GetType() == mysql.TypeTimestamp {
+		// TIMESTAMP always requires cast/conversion because of timezone and
+		// DST semantics.
+		return info
+	}
+
+	switch physicalType {
+	case parquet.Types.Boolean:
+		info.CanSkip = canSkipBoolToInteger(target)
+		return info
+	case parquet.Types.Int32:
+		info = parquetInt32SkipCastInfo(converted, target, info)
+		return info
+	case parquet.Types.Int64:
+		info = parquetInt64SkipCastInfo(converted, target, info)
+		return info
+	case parquet.Types.Int96:
+		if target.GetType() == mysql.TypeDate || target.GetType() == mysql.TypeDatetime {
+			info.CanSkip = true
+		}
+		return info
+	case parquet.Types.ByteArray, parquet.Types.FixedLenByteArray:
+		if converted.converted == schema.ConvertedTypes.Decimal && target.GetType() == mysql.TypeNewDecimal {
+			if canSkipDecimalByMeta(converted.decimalMeta, target) {
+				info.CanSkip = true
+				info.PostCheck = ParquetPostCheckDecimal
+			}
+			return info
+		}
+		if converted.converted == schema.ConvertedTypes.UTF8 && canSkipUTF8StringTarget(target) {
+			info.CanSkip = true
+			info.PostCheck = ParquetPostCheckStringLength
+		}
+		return info
+	default:
+		return info
+	}
+}
+
+func parquetInt32SkipCastInfo(
+	converted convertedType,
+	target *model.ColumnInfo,
+	info ParquetColumnSkipCastInfo,
+) ParquetColumnSkipCastInfo {
+	switch converted.converted {
+	case schema.ConvertedTypes.Date:
+		info.CanSkip = target.GetType() == mysql.TypeDate
+	case schema.ConvertedTypes.TimeMillis:
+		info.CanSkip = target.GetType() == mysql.TypeDate || target.GetType() == mysql.TypeDatetime
+	case schema.ConvertedTypes.Decimal:
+		if target.GetType() == mysql.TypeNewDecimal && canSkipDecimalByMeta(converted.decimalMeta, target) {
+			info.CanSkip = true
+			info.PostCheck = ParquetPostCheckDecimal
+		}
+	case schema.ConvertedTypes.Int8:
+		info.CanSkip = signedRangeFitsTarget(-1<<7, 1<<7-1, target)
+	case schema.ConvertedTypes.Int16:
+		info.CanSkip = signedRangeFitsTarget(-1<<15, 1<<15-1, target)
+	case schema.ConvertedTypes.Int32, schema.ConvertedTypes.None:
+		info.CanSkip = signedRangeFitsTarget(math.MinInt32, math.MaxInt32, target)
+	case schema.ConvertedTypes.Uint8:
+		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint8, target)
+	case schema.ConvertedTypes.Uint16:
+		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint16, target)
+	}
+	return info
+}
+
+func parquetInt64SkipCastInfo(
+	converted convertedType,
+	target *model.ColumnInfo,
+	info ParquetColumnSkipCastInfo,
+) ParquetColumnSkipCastInfo {
+	switch converted.converted {
+	case schema.ConvertedTypes.TimeMicros, schema.ConvertedTypes.TimestampMillis, schema.ConvertedTypes.TimestampMicros:
+		info.CanSkip = target.GetType() == mysql.TypeDate || target.GetType() == mysql.TypeDatetime
+	case schema.ConvertedTypes.Decimal:
+		if target.GetType() == mysql.TypeNewDecimal && canSkipDecimalByMeta(converted.decimalMeta, target) {
+			info.CanSkip = true
+			info.PostCheck = ParquetPostCheckDecimal
+		}
+	case schema.ConvertedTypes.Int64, schema.ConvertedTypes.None:
+		info.CanSkip = signedRangeFitsTarget(math.MinInt64, math.MaxInt64, target)
+	case schema.ConvertedTypes.Uint8:
+		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint8, target)
+	case schema.ConvertedTypes.Uint16:
+		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint16, target)
+	case schema.ConvertedTypes.Uint32:
+		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint32, target)
+	case schema.ConvertedTypes.Uint64:
+		info.CanSkip = unsignedRangeFitsTarget(math.MaxUint64, target)
+	}
+	return info
+}
+
+func canSkipBoolToInteger(target *model.ColumnInfo) bool {
+	if !isIntegerType(target.GetType()) {
+		return false
+	}
+	if mysql.HasUnsignedFlag(target.GetFlag()) {
+		_, maxValue, ok := unsignedIntTypeRange(target.GetType())
+		return ok && maxValue >= 1
+	}
+	minValue, maxValue, ok := signedIntTypeRange(target.GetType())
+	return ok && minValue <= 0 && maxValue >= 1
+}
+
+func signedRangeFitsTarget(sourceMin int64, sourceMax int64, target *model.ColumnInfo) bool {
+	if !isIntegerType(target.GetType()) {
+		return false
+	}
+	if mysql.HasUnsignedFlag(target.GetFlag()) {
+		if sourceMin < 0 {
+			return false
+		}
+		_, maxValue, ok := unsignedIntTypeRange(target.GetType())
+		return ok && uint64(sourceMax) <= maxValue
+	}
+	minValue, maxValue, ok := signedIntTypeRange(target.GetType())
+	return ok && sourceMin >= minValue && sourceMax <= maxValue
+}
+
+func unsignedRangeFitsTarget(sourceMax uint64, target *model.ColumnInfo) bool {
+	if !isIntegerType(target.GetType()) {
+		return false
+	}
+	if mysql.HasUnsignedFlag(target.GetFlag()) {
+		_, maxValue, ok := unsignedIntTypeRange(target.GetType())
+		return ok && sourceMax <= maxValue
+	}
+	_, maxValue, ok := signedIntTypeRange(target.GetType())
+	return ok && sourceMax <= uint64(maxValue)
+}
+
+func isIntegerType(tp byte) bool {
+	switch tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		return true
+	default:
+		return false
+	}
+}
+
+func signedIntTypeRange(tp byte) (minValue int64, maxValue int64, ok bool) {
+	switch tp {
+	case mysql.TypeTiny:
+		return math.MinInt8, math.MaxInt8, true
+	case mysql.TypeShort:
+		return math.MinInt16, math.MaxInt16, true
+	case mysql.TypeInt24:
+		return -(1 << 23), (1 << 23) - 1, true
+	case mysql.TypeLong:
+		return math.MinInt32, math.MaxInt32, true
+	case mysql.TypeLonglong:
+		return math.MinInt64, math.MaxInt64, true
+	default:
+		return 0, 0, false
+	}
+}
+
+func unsignedIntTypeRange(tp byte) (minValue uint64, maxValue uint64, ok bool) {
+	switch tp {
+	case mysql.TypeTiny:
+		return 0, math.MaxUint8, true
+	case mysql.TypeShort:
+		return 0, math.MaxUint16, true
+	case mysql.TypeInt24:
+		return 0, (1 << 24) - 1, true
+	case mysql.TypeLong:
+		return 0, math.MaxUint32, true
+	case mysql.TypeLonglong:
+		return 0, math.MaxUint64, true
+	default:
+		return 0, 0, false
+	}
+}
+
+func canSkipDecimalByMeta(decimalMeta schema.DecimalMetadata, target *model.ColumnInfo) bool {
+	if target.GetType() != mysql.TypeNewDecimal || target.GetFlen() <= 0 || target.GetDecimal() < 0 {
+		return false
+	}
+	if !decimalMeta.IsSet {
+		return false
+	}
+	if int(decimalMeta.Scale) != target.GetDecimal() {
+		return false
+	}
+	if int(decimalMeta.Precision) > target.GetFlen() {
+		return false
+	}
+	return true
+}
+
+func canSkipUTF8StringTarget(target *model.ColumnInfo) bool {
+	if target.GetType() != mysql.TypeVarchar && target.GetType() != mysql.TypeVarString {
+		return false
+	}
+	if mysql.HasBinaryFlag(target.GetFlag()) || strings.EqualFold(target.GetCharset(), "binary") {
+		return false
+	}
+	return strings.EqualFold(target.GetCharset(), "utf8mb4")
 }
 
 func temporalTargetType(target *model.ColumnInfo, defaultType byte) byte {

@@ -277,7 +277,9 @@ type ParquetParser struct {
 	colTypes []convertedType
 	colNames []string
 
-	targetCols []*model.ColumnInfo
+	physicalTypes []parquet.Type
+	targetCols    []*model.ColumnInfo
+	skipCastInfos []ParquetColumnSkipCastInfo
 
 	ctx   context.Context
 	store storeapi.Storage
@@ -516,6 +518,13 @@ func (pp *ParquetParser) Columns() []string {
 	return pp.colNames
 }
 
+// SkipCastInfos returns prechecked skip-cast info in parquet file-column order.
+func (pp *ParquetParser) SkipCastInfos() []ParquetColumnSkipCastInfo {
+	infos := make([]ParquetColumnSkipCastInfo, len(pp.skipCastInfos))
+	copy(infos, pp.skipCastInfos)
+	return infos
+}
+
 // SetColumns set restored column names to parser
 func (*ParquetParser) SetColumns(_ []string) {
 	// just do nothing
@@ -586,6 +595,12 @@ func NewParquetParser(
 		return nil, errors.Trace(err)
 	}
 
+	physicalTypes := make([]parquet.Type, fileMeta.NumColumns())
+	for i := range physicalTypes {
+		physicalTypes[i] = fileMeta.Schema.Column(i).PhysicalType()
+	}
+	skipCastInfos := buildParquetSkipCastInfos(colTypes, physicalTypes, targetColumns)
+
 	numColumns := len(colTypes)
 	pool := zeropool.New(func() []types.Datum {
 		return make([]types.Datum, numColumns)
@@ -596,14 +611,16 @@ func NewParquetParser(
 		colTypes: colTypes,
 		colNames: colNames,
 
-		targetCols: targetColumns,
-		ctx:        ctx,
-		store:      store,
-		path:       path,
-		prop:       prop,
-		alloc:      allocator,
-		logger:     logger,
-		rowPool:    &pool,
+		physicalTypes: physicalTypes,
+		targetCols:    targetColumns,
+		skipCastInfos: skipCastInfos,
+		ctx:           ctx,
+		store:         store,
+		path:          path,
+		prop:          prop,
+		alloc:         allocator,
+		logger:        logger,
+		rowPool:       &pool,
 	}
 	if err := parser.Init(meta.Loc); err != nil {
 		return nil, errors.Trace(err)
