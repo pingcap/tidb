@@ -198,16 +198,16 @@ func TestMLogWritePrunedColumns(t *testing.T) {
 		tk.MustExec("insert into t values (1,10)")
 		tk.MustExec("delete from `$mlog$t`")
 
-		// TODO: DELETE may prune output columns to only keep handle/index data.
-		// For a table without PK/index, RemoveRecord receives an empty row and mlog write fails.
-		tk.MustContainErrMsg(
-			"delete from t where b=10",
-			"write mlog row: base row too short",
-		)
+		// Delete normally can prune non-handle/index columns, but mlog RemoveRecord reads
+		// tracked columns by base offsets; pruning them would make mlog writing fail.
+		tk.MustExec("delete from t where b=10")
 
-		// The statement should be rolled back when mlog writing fails.
-		tk.MustQuery("select a, b from t").Check(testkit.Rows("1 10"))
-		tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+		tk.MustQuery("select a, b from t").Check(testkit.Rows())
+		tk.MustQuery(
+			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+		).Check(testkit.Rows(
+			"1 10 D -1",
+		))
 	})
 
 	t.Run("update", func(t *testing.T) {
@@ -458,32 +458,30 @@ func TestMLogWriteMultiTableDelete(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// TODO: In multi-table DELETE, the row passed to RemoveRecord contains only the columns
-	// projected by the planner (typically just handle + index columns). Tracked mlog columns
-	// that fall outside this projection would cause an out-of-bounds error. To avoid this,
-	// track only the PK column which is always available as the handle.
 	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (a int primary key, b int)")
-	tk.MustExec("create table t2 (a int primary key, b int)")
-	tk.MustExec("insert into t1 values (1,10), (2,20)")
-	tk.MustExec("insert into t2 values (1,100), (2,200)")
-	tk.MustExec("create materialized view log on t1 (a)")
-	tk.MustExec("create materialized view log on t2 (a)")
+	tk.MustExec("create table t1 (a int primary key, b int, c int)")
+	tk.MustExec("create table t2 (a int primary key, b int, c int)")
+	tk.MustExec("insert into t1 values (1,10,100), (2,20,200)")
+	tk.MustExec("insert into t2 values (1,100,1000), (2,200,2000)")
+	// Use different tracked columns for two tables to cover per-table mlog mapping in
+	// multi-table DELETE, including non-handle tracked columns that used to be pruned.
+	tk.MustExec("create materialized view log on t1 (b)")
+	tk.MustExec("create materialized view log on t2 (c)")
 
 	tk.MustExec("delete t1, t2 from t1, t2 where t1.a=t2.a and t1.a=1")
 
-	tk.MustQuery("select a, b from t1 order by a").Check(testkit.Rows("2 20"))
-	tk.MustQuery("select a, b from t2 order by a").Check(testkit.Rows("2 200"))
+	tk.MustQuery("select a, b, c from t1 order by a").Check(testkit.Rows("2 20 200"))
+	tk.MustQuery("select a, b, c from t2 order by a").Check(testkit.Rows("2 200 2000"))
 
 	tk.MustQuery(
-		"select a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t1`",
+		"select b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t1`",
 	).Check(testkit.Rows(
-		"1 D -1",
+		"10 D -1",
 	))
 	tk.MustQuery(
-		"select a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t2`",
+		"select c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t2`",
 	).Check(testkit.Rows(
-		"1 D -1",
+		"1000 D -1",
 	))
 }
 

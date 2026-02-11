@@ -1009,9 +1009,18 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	baseExec := exec.NewBaseExecutor(b.ctx, nil, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
+	mlogDMLType := tables.MLogDMLTypeInsert
+	if v.IsReplace {
+		mlogDMLType = tables.MLogDMLTypeReplace
+	}
+	insertTable := b.wrapTableWithMLogIfExists(v.Table, mlogDMLType)
+	if b.err != nil {
+		return nil
+	}
+
 	ivs := &InsertValues{
 		BaseExecutor:              baseExec,
-		Table:                     v.Table,
+		Table:                     insertTable,
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
 		GenExprs:                  v.GenCols.Exprs,
@@ -1020,14 +1029,6 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 		SelectExec:                selectExec,
 		rowLen:                    v.RowLen,
 		ignoreErr:                 v.IgnoreErr,
-	}
-	mlogDMLType := tables.MLogDMLTypeInsert
-	if v.IsReplace {
-		mlogDMLType = tables.MLogDMLTypeReplace
-	}
-	ivs.Table = b.wrapTableWithMLogIfExists(ivs.Table, mlogDMLType)
-	if b.err != nil {
-		return nil
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {

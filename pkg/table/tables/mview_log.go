@@ -45,6 +45,11 @@ const (
 	MLogDMLTypeLoadData MLogDMLType = "L"
 )
 
+const (
+	mlogOldRowMarker int64 = -1
+	mlogNewRowMarker int64 = 1
+)
+
 func validateMLogMetaColumn(mlogMeta *model.TableInfo) error {
 	cols := mlogMeta.Columns
 	expectedLen := len(mlogMeta.MaterializedViewLog.Columns) + 2
@@ -166,11 +171,14 @@ func (t *mlogTable) AddRecord(
 
 	opt := table.NewAddRecordOpt(opts...)
 	dmlType := t.addRecordDMLType(opt)
-	mlogOpts := []table.AddRecordOption{table.DupKeyCheckSkip}
+	mlogOpts := []table.AddRecordOption{
+		table.DupKeyCheckSkip,
+		opt.PessimisticLazyDupKeyCheck(),
+	}
 	if goCtx := opt.Ctx(); goCtx != nil {
 		mlogOpts = append(mlogOpts, table.WithCtx(goCtx))
 	}
-	if err := t.writeMLogRow(ctx, txn, r, dmlType, 1, mlogOpts...); err != nil {
+	if err := t.writeMLogRow(ctx, txn, r, dmlType, mlogNewRowMarker, mlogOpts...); err != nil {
 		return nil, err
 	}
 	return recordID, nil
@@ -194,15 +202,18 @@ func (t *mlogTable) UpdateRecord(
 	}
 
 	updateOpt := table.NewUpdateRecordOpt(opts...)
-	mlogOpts := []table.AddRecordOption{table.DupKeyCheckSkip}
+	mlogOpts := []table.AddRecordOption{
+		table.DupKeyCheckSkip,
+		updateOpt.PessimisticLazyDupKeyCheck(),
+	}
 	if goCtx := updateOpt.Ctx(); goCtx != nil {
 		mlogOpts = append(mlogOpts, table.WithCtx(goCtx))
 	}
 	dmlType := t.updateRecordDMLType()
-	if err := t.writeMLogRow(ctx, txn, currData, dmlType, -1, mlogOpts...); err != nil {
+	if err := t.writeMLogRow(ctx, txn, currData, dmlType, mlogOldRowMarker, mlogOpts...); err != nil {
 		return err
 	}
-	return t.writeMLogRow(ctx, txn, newData, dmlType, 1, mlogOpts...)
+	return t.writeMLogRow(ctx, txn, newData, dmlType, mlogNewRowMarker, mlogOpts...)
 }
 
 // RemoveRecord implements table.Table.
@@ -222,7 +233,7 @@ func (t *mlogTable) RemoveRecord(
 	}
 
 	dmlType := t.removeRecordDMLType()
-	return t.writeMLogRow(ctx, txn, r, dmlType, -1, table.DupKeyCheckSkip)
+	return t.writeMLogRow(ctx, txn, r, dmlType, mlogOldRowMarker, table.DupKeyCheckSkip)
 }
 
 func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
