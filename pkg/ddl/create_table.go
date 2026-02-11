@@ -153,10 +153,6 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 			return tbInfo, errors.Trace(err)
 		}
 
-		if err := createTiCIIndexes(jobCtx, job.SchemaName, tbInfo); err != nil {
-			return tbInfo, errors.Trace(err)
-		}
-
 		return tbInfo, nil
 	default:
 		return tbInfo, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
@@ -204,7 +200,7 @@ func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableIn
 	return nil
 }
 
-func createTiCIIndexes(jobCtx *jobContext, schemaName string, tblInfo *model.TableInfo) error {
+func (w *worker) createTiCIIndexes(jobCtx *jobContext, job *model.Job, schemaName string, tblInfo *model.TableInfo) error {
 	if tblInfo == nil {
 		return nil
 	}
@@ -218,7 +214,15 @@ func createTiCIIndexes(jobCtx *jobContext, schemaName string, tblInfo *model.Tab
 		if !index.IsTiCIIndex() {
 			continue
 		}
-		if err := tici.CreateFulltextIndex(ctx, jobCtx.store, tblInfo, index, schemaName); err != nil {
+		var parserInfo *tici.ParserInfo
+		if index.FullTextInfo != nil {
+			info, err := w.buildTiCIFulltextParserInfo(jobCtx, job, index)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			parserInfo = info
+		}
+		if err := tici.CreateFulltextIndex(ctx, jobCtx.store, tblInfo, index, schemaName, parserInfo); err != nil {
 			return err
 		}
 	}
@@ -283,6 +287,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if err := w.createTiCIIndexes(jobCtx, job, job.SchemaName, tbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -312,6 +319,9 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 			autoidCli: w.autoidCli,
 		}, args)
 		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err := w.createTiCIIndexes(jobCtx, job, job.SchemaName, tbInfo); err != nil {
 			return ver, errors.Trace(err)
 		}
 		tbInfo.State = model.StateDeleteOnly
@@ -380,6 +390,10 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 				autoidCli: w.autoidCli,
 			}, tblArgs)
 			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			if err := w.createTiCIIndexes(jobCtx, stubJob, stubJob.SchemaName, tbInfo); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}

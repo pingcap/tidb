@@ -1722,11 +1722,21 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
 			return retNode, false
 		}
+		if v.Modifier != ast.FulltextSearchModifierBooleanMode {
+			er.err = errors.Errorf("Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
+			return retNode, false
+		}
 		if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
 			er.err = err
 			return retNode, false
 		}
-		er.ctxStackAppend(fn, types.EmptyName)
+		newF, err := expression.RewriteMySQLMatchAgainst(er.sctx, sf)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
+		er.ctxStackAppend(newF, types.EmptyName)
+		er.planCtx.builder.ctx.SetHasFTSFunc()
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false

@@ -2238,7 +2238,8 @@ type CreateIndexRequest struct {
 	TableInfo    []byte `protobuf:"bytes,2,opt,name=table_info,json=tableInfo,proto3" json:"table_info,omitempty"`
 	IndexId      int64  `protobuf:"varint,3,opt,name=index_id,json=indexId,proto3" json:"index_id,omitempty"`
 	// Keyspace ID
-	KeyspaceId uint32 `protobuf:"varint,4,opt,name=keyspace_id,json=keyspaceId,proto3" json:"keyspace_id,omitempty"`
+	KeyspaceId uint32      `protobuf:"varint,4,opt,name=keyspace_id,json=keyspaceId,proto3" json:"keyspace_id,omitempty"`
+	ParserInfo *ParserInfo `protobuf:"bytes,5,opt,name=parser_info,json=parserInfo,proto3" json:"parser_info,omitempty"`
 }
 
 func (m *CreateIndexRequest) Reset()      { *m = CreateIndexRequest{} }
@@ -2299,6 +2300,13 @@ func (m *CreateIndexRequest) GetKeyspaceId() uint32 {
 		return m.KeyspaceId
 	}
 	return 0
+}
+
+func (m *CreateIndexRequest) GetParserInfo() *ParserInfo {
+	if m != nil {
+		return m.ParserInfo
+	}
+	return nil
 }
 
 // CreateIndexResponse is a response to the index creation request
@@ -2816,6 +2824,8 @@ type ParserInfo struct {
 	ParserType ParserType `protobuf:"varint,1,opt,name=parser_type,json=parserType,proto3,enum=tici.ParserType" json:"parser_type,omitempty"`
 	// Parser parameters
 	ParserParams map[string]string `protobuf:"bytes,2,rep,name=parser_params,json=parserParams,proto3" json:"parser_params,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	// Stop words list. Only used when stopwords are enabled at index creation time.
+	StopWords []string `protobuf:"bytes,3,rep,name=stop_words,json=stopWords,proto3" json:"stop_words,omitempty"`
 }
 
 func (m *ParserInfo) Reset()      { *m = ParserInfo{} }
@@ -2860,6 +2870,13 @@ func (m *ParserInfo) GetParserType() ParserType {
 func (m *ParserInfo) GetParserParams() map[string]string {
 	if m != nil {
 		return m.ParserParams
+	}
+	return nil
+}
+
+func (m *ParserInfo) GetStopWords() []string {
+	if m != nil {
+		return m.StopWords
 	}
 	return nil
 }
@@ -4858,6 +4875,9 @@ func (this *CreateIndexRequest) Equal(that any) bool {
 	if this.KeyspaceId != that1.KeyspaceId {
 		return false
 	}
+	if !this.ParserInfo.Equal(that1.ParserInfo) {
+		return false
+	}
 	return true
 }
 func (this *CreateIndexResponse) Equal(that any) bool {
@@ -5132,6 +5152,14 @@ func (this *ParserInfo) Equal(that any) bool {
 	}
 	for i := range this.ParserParams {
 		if this.ParserParams[i] != that1.ParserParams[i] {
+			return false
+		}
+	}
+	if len(this.StopWords) != len(that1.StopWords) {
+		return false
+	}
+	for i := range this.StopWords {
+		if this.StopWords[i] != that1.StopWords[i] {
 			return false
 		}
 	}
@@ -8492,6 +8520,18 @@ func (m *CreateIndexRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.ParserInfo != nil {
+		{
+			size, err := m.ParserInfo.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintTici(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x2a
+	}
 	if m.KeyspaceId != 0 {
 		i = encodeVarintTici(dAtA, i, uint64(m.KeyspaceId))
 		i--
@@ -8921,6 +8961,15 @@ func (m *ParserInfo) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.StopWords) > 0 {
+		for iNdEx := len(m.StopWords) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.StopWords[iNdEx])
+			copy(dAtA[i:], m.StopWords[iNdEx])
+			i = encodeVarintTici(dAtA, i, uint64(len(m.StopWords[iNdEx])))
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
 	if len(m.ParserParams) > 0 {
 		for k := range m.ParserParams {
 			v := m.ParserParams[k]
@@ -10100,6 +10149,10 @@ func (m *CreateIndexRequest) Size() (n int) {
 	if m.KeyspaceId != 0 {
 		n += 1 + sovTici(uint64(m.KeyspaceId))
 	}
+	if m.ParserInfo != nil {
+		l = m.ParserInfo.Size()
+		n += 1 + l + sovTici(uint64(l))
+	}
 	return n
 }
 
@@ -10294,6 +10347,12 @@ func (m *ParserInfo) Size() (n int) {
 			_ = v
 			mapEntrySize := 1 + len(k) + sovTici(uint64(len(k))) + 1 + len(v) + sovTici(uint64(len(v)))
 			n += mapEntrySize + 1 + sovTici(uint64(mapEntrySize))
+		}
+	}
+	if len(m.StopWords) > 0 {
+		for _, e := range m.StopWords {
+			l = len(e)
+			n += 1 + l + sovTici(uint64(l))
 		}
 	}
 	return n
@@ -10971,6 +11030,7 @@ func (this *CreateIndexRequest) String() string {
 		`TableInfo:` + fmt.Sprintf("%v", this.TableInfo) + `,`,
 		`IndexId:` + fmt.Sprintf("%v", this.IndexId) + `,`,
 		`KeyspaceId:` + fmt.Sprintf("%v", this.KeyspaceId) + `,`,
+		`ParserInfo:` + strings.Replace(this.ParserInfo.String(), "ParserInfo", "ParserInfo", 1) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -11086,6 +11146,11 @@ func (this *ParserInfo) String() string {
 	if this == nil {
 		return "nil"
 	}
+	repeatedStringForStopWords := "[]string{"
+	for _, f := range this.StopWords {
+		repeatedStringForStopWords += fmt.Sprintf("%v", f) + ","
+	}
+	repeatedStringForStopWords += "}"
 	keysForParserParams := make([]string, 0, len(this.ParserParams))
 	for k := range this.ParserParams {
 		keysForParserParams = append(keysForParserParams, k)
@@ -11099,6 +11164,7 @@ func (this *ParserInfo) String() string {
 	s := strings.Join([]string{`&ParserInfo{`,
 		`ParserType:` + fmt.Sprintf("%v", this.ParserType) + `,`,
 		`ParserParams:` + mapStringForParserParams + `,`,
+		`StopWords:` + repeatedStringForStopWords + `,`,
 		`}`,
 	}, "")
 	return s
@@ -15981,6 +16047,42 @@ func (m *CreateIndexRequest) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ParserInfo", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTici
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTici
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTici
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.ParserInfo == nil {
+				m.ParserInfo = &ParserInfo{}
+			}
+			if err := m.ParserInfo.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTici(dAtA[iNdEx:])
@@ -17381,6 +17483,38 @@ func (m *ParserInfo) Unmarshal(dAtA []byte) error {
 				}
 			}
 			m.ParserParams[mapkey] = mapvalue
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field StopWords", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTici
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTici
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTici
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.StopWords = append(m.StopWords, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

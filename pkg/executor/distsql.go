@@ -1956,6 +1956,19 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				obtainedHandlesMap.Set(handle, true)
 			}
 			missHds := GetLackHandles(task.handles, obtainedHandlesMap)
+			if w.idxLookup.index.IsTiCIIndex() {
+				warn := consistency.ErrLookupInconsistent.GenWithStackByArgs(
+					w.idxLookup.table.Meta().Name.O,
+					w.idxLookup.index.Name.O,
+					handleCnt,
+					len(task.rows),
+				)
+				if w.idxLookup.dctx != nil {
+					w.idxLookup.dctx.AppendWarning(warn)
+					return nil
+				}
+				return warn
+			}
 			return (&consistency.Reporter{
 				HandleEncode: func(hd kv.Handle) kv.Key {
 					return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), hd)

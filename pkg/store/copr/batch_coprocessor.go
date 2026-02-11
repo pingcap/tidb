@@ -1407,6 +1407,11 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
+	// FullText batch cop tasks contain TableShardInfos only. They don't have regionInfos/PartitionTableRegions, so we
+	// cannot retry by rebuilding tasks with regions; return an error instead of silently producing an empty task set.
+	if batchTask.TableShardInfos != nil {
+		return nil, errors.New("tiflash_fts node is unavailable")
+	}
 	if batchTask.regionInfos != nil {
 		var ranges []kv.KeyRange
 		for _, ri := range batchTask.regionInfos {

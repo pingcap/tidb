@@ -44,6 +44,27 @@ var (
 	newManagerCtxFunc = NewManagerCtx
 )
 
+var mockTiCICreateIndexRequest atomic.Value // stores []byte of CreateIndexRequest for tests.
+
+// GetMockTiCICreateIndexRequest returns the marshaled CreateIndexRequest bytes captured by the
+// `MockCreateTiCIIndexRequest` failpoint. It returns nil if nothing was captured.
+func GetMockTiCICreateIndexRequest() []byte {
+	v := mockTiCICreateIndexRequest.Load()
+	if v == nil {
+		return nil
+	}
+	b, ok := v.([]byte)
+	if !ok || len(b) == 0 {
+		return nil
+	}
+	return append([]byte(nil), b...)
+}
+
+// ResetMockTiCICreateIndexRequest clears the captured request for tests.
+func ResetMockTiCICreateIndexRequest() {
+	mockTiCICreateIndexRequest.Store([]byte{})
+}
+
 type metaClient struct {
 	conn   *grpc.ClientConn
 	client MetaServiceClient
@@ -204,18 +225,21 @@ func (t *ManagerCtx) getKeyspaceID() uint32 {
 	return t.keyspaceID.Load()
 }
 
-// CreateFulltextIndex creates fulltext index on TiCI.
-func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+func buildCreateFulltextIndexRequest(tblInfo *model.TableInfo, indexID int64, schemaName string, keyspaceID uint32, parserInfo *ParserInfo) (*CreateIndexRequest, error) {
 	tableInfoJSON, err := cloneAndMarshalTableInfo(tblInfo)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	req := &CreateIndexRequest{
+	return &CreateIndexRequest{
 		DatabaseName: schemaName,
 		TableInfo:    tableInfoJSON,
-		IndexId:      indexInfo.ID,
-		KeyspaceId:   t.getKeyspaceID(),
-	}
+		IndexId:      indexID,
+		KeyspaceId:   keyspaceID,
+		ParserInfo:   parserInfo,
+	}, nil
+}
+
+func (t *ManagerCtx) createIndex(ctx context.Context, req *CreateIndexRequest) error {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	if err := t.checkMetaClient(); err != nil {
@@ -226,11 +250,20 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
 	if resp.Status != ErrorCode_SUCCESS {
-		logutil.BgLogger().Error("create fulltext index failed", zap.String("indexID", resp.IndexId), zap.String("errorMessage", resp.ErrorMessage))
+		logutil.BgLogger().Error("create index failed", zap.String("indexID", resp.IndexId), zap.String("errorMessage", resp.ErrorMessage))
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("create fulltext index success", zap.String("indexID", resp.IndexId))
+	logutil.BgLogger().Info("create index success", zap.String("indexID", resp.IndexId))
 	return nil
+}
+
+// CreateFulltextIndex creates fulltext index on TiCI.
+func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string, parserInfo *ParserInfo) error {
+	req, err := buildCreateFulltextIndexRequest(tblInfo, indexInfo.ID, schemaName, t.getKeyspaceID(), parserInfo)
+	if err != nil {
+		return err
+	}
+	return t.createIndex(ctx, req)
 }
 
 // DropFullTextIndex drop fulltext index on TiCI.
@@ -625,7 +658,40 @@ func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableI
 }
 
 // CreateFulltextIndex create fulltext index on TiCI.
-func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string, parserInfo *ParserInfo) error {
+	keyspaceID := uint32(0)
+	if store != nil {
+		keyspaceID = uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+	}
+
+	req, err := buildCreateFulltextIndexRequest(tblInfo, indexInfo.ID, schemaName, keyspaceID, parserInfo)
+	if err != nil {
+		return err
+	}
+
+	failpoint.Inject("MockCreateTiCIIndexRequest", func(val failpoint.Value) {
+		v, _ := val.(int)
+		switch v {
+		case 1:
+			data, err := req.Marshal()
+			if err != nil {
+				failpoint.Return(errors.Trace(err))
+			}
+			mockTiCICreateIndexRequest.Store(data)
+			failpoint.Return(nil)
+		case 2:
+			data, err := req.Marshal()
+			if err != nil {
+				failpoint.Return(errors.Trace(err))
+			}
+			failpoint.Return(errors.Errorf("mock tici create index request: %s", hex.EncodeToString(data)))
+		}
+	})
+
 	failpoint.Inject("MockCreateTiCIIndexSuccess", func(val failpoint.Value) {
 		if x := val.(bool); x {
 			logutil.BgLogger().Info("MockCreateTiCIIndexSuccess failpoint triggered", zap.Bool("success", true))
@@ -645,14 +711,9 @@ func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.T
 	}
 	defer ticiManager.Close()
 	if store != nil {
-		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
-		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
-		if keyspaceID == constants.NullKeyspaceID {
-			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
-		}
 		ticiManager.SetKeyspaceID(keyspaceID)
 	}
-	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
+	return ticiManager.createIndex(ctx, req)
 }
 
 // DropFullTextIndex drop fulltext index on TiCI.

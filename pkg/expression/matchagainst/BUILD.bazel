@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "matchagainst",
+    srcs = [
+        "standard_ast.go",
+        "standard_boolean_parser.go",
+        "standard_boolean_tokenizer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/expression/matchagainst",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "matchagainst_test",
+    timeout = "short",
+    srcs = ["standard_boolean_parser_test.go"],
+    embed = [":matchagainst"],
+    flaky = False,
+    deps = [
+        "@com_github_stretchr_testify//require",
+    ],
+)

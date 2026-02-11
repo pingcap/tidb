@@ -102,7 +102,10 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 	}
 
 	argTps := make([]types.EvalType, 0, len(args))
-	argTps = append(argTps, types.ETString, types.ETString)
+	argTps = append(argTps, types.ETString)
+	for range argsMatch {
+		argTps = append(argTps, types.ETString)
+	}
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
 	if err != nil {
