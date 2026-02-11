@@ -335,6 +335,8 @@ func (c *AdminCheckIndexInconsistentCollector) recordInconsistent(
 		return
 	}
 
+	// Deduplicate by (handle, mismatch_type) so one handle can still appear
+	// multiple times when different mismatch types are detected.
 	rowKey := handle + "\x00" + string(mismatchType)
 	c.mu.Lock()
 	if _, exists := c.rowSet[rowKey]; exists {
@@ -452,6 +454,8 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return nil
 	}
 	defer func() { e.done = true }()
+	// Collector is injected by HTTP /admin/check/index to collect all mismatches.
+	// Nil means regular SQL path and keeps original fail-fast behavior.
 	e.collector = adminCheckIndexCollectorFromContext(ctx)
 
 	// Here we need check all indexes, includes invisible index
@@ -540,9 +544,12 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			return false
 		}
 		if w.e.collector == nil {
+			// Normal SQL path: stop at first inconsistency/error.
 			trySaveErr(err)
 			return true
 		}
+		// HTTP collector path: keep the first error but continue to collect
+		// mismatched handles from other buckets.
 		w.e.collector.first.CompareAndSwap(nil, &err)
 		trySaveErr(err)
 		return true
@@ -847,6 +854,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		return false
 	}
 
+	// Breadth-first refinement over checksum buckets: narrow down mismatched
+	// buckets first, then perform row-level comparison only on suspect buckets.
 	queue := make([]checksumBucketTask, 0, 16)
 	queue = append(queue, checksumBucketTask{offset: 0, mod: 1, depth: 0})
 	const maxRefineDepth = 10
@@ -915,12 +924,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 				}
 				continue
 			}
+			// Fail-fast mode: stop refining early once one candidate bucket is small enough.
 			if w.e.collector == nil && (mismatch.count <= lookupCheckThreshold || nextTask.depth >= maxRefineDepth) {
 				if checkLeafBucket(nextTask) {
 					return
 				}
 				break
 			}
+			// Collector mode: continue refining until row-level scan can enumerate
+			// all inconsistent handles deterministically.
 			if w.e.collector != nil && (mismatch.count <= 1 || nextTask.depth >= maxRefineDepth) {
 				if checkLeafBucket(nextTask) {
 					return
