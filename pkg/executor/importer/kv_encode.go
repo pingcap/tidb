@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
@@ -42,6 +43,8 @@ type TableKVEncoder struct {
 	insertColumnRowCache []types.Datum
 	rowCache             []types.Datum
 	hasValueCache        []bool
+
+	insertColumnSkipCastInfos []mydump.ParquetColumnSkipCastInfo
 }
 
 // NewTableKVEncoder creates a new TableKVEncoder.
@@ -83,6 +86,32 @@ func newTableKVEncoderInner(
 		fieldMappings:     fieldMappings,
 		insertColumns:     insertColumns,
 	}, nil
+}
+
+// SetParquetSkipCastInfos sets per-input-column parquet precheck results.
+// The input infos are in file-column order and will be remapped into
+// insert-column order so getRow can decide cast-or-skip quickly.
+func (en *TableKVEncoder) SetParquetSkipCastInfos(infos []mydump.ParquetColumnSkipCastInfo) {
+	if len(infos) == 0 {
+		en.insertColumnSkipCastInfos = nil
+		return
+	}
+
+	mapped := make([]mydump.ParquetColumnSkipCastInfo, 0, len(en.fieldMappings))
+	for i, mapping := range en.fieldMappings {
+		if mapping == nil || mapping.Column == nil {
+			continue
+		}
+		if i < len(infos) {
+			mapped = append(mapped, infos[i])
+		} else {
+			mapped = append(mapped, mydump.ParquetColumnSkipCastInfo{})
+		}
+	}
+
+	plans := make([]mydump.ParquetColumnSkipCastInfo, len(en.insertColumns))
+	copy(plans, mapped)
+	en.insertColumnSkipCastInfos = plans
 }
 
 // Encode table row into KVs.
