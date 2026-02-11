@@ -40,6 +40,9 @@ type TableKVEncoder struct {
 	columnAssignments []expression.Expression
 	fieldMappings     []*FieldMapping
 	insertColumns     []*table.Column
+	normalColIdxs     []int
+	specialColIdxs    []int
+
 	// Following cache use to avoid `runtime.makeslice`.
 	insertColumnRowCache []types.Datum
 	rowCache             []types.Datum
@@ -81,12 +84,27 @@ func newTableKVEncoderInner(
 		return nil, err
 	}
 
-	return &TableKVEncoder{
+	encoder := &TableKVEncoder{
 		BaseKVEncoder:     baseKVEncoder,
 		columnAssignments: colAssignExprs,
 		fieldMappings:     fieldMappings,
 		insertColumns:     insertColumns,
-	}, nil
+	}
+	encoder.initFillRowColumnMetadata()
+	return encoder, nil
+}
+
+func (en *TableKVEncoder) initFillRowColumnMetadata() {
+	en.normalColIdxs = en.normalColIdxs[:0]
+	en.specialColIdxs = en.specialColIdxs[:0]
+	for i, col := range en.Columns {
+		colInfo := col.ToInfo()
+		if kv.IsAutoIncCol(colInfo) || en.IsAutoRandomCol(colInfo) || colInfo.IsGenerated() {
+			en.specialColIdxs = append(en.specialColIdxs, i)
+		} else {
+			en.normalColIdxs = append(en.normalColIdxs, i)
+		}
+	}
 }
 
 // SetSkipCastInfos sets per-input-column precheck results.
@@ -289,8 +307,31 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	var value types.Datum
 	var err error
 
-	record := en.GetOrCreateRecord()
-	for i, col := range en.Columns {
+	record := en.GetOrCreateRecord()[:len(en.Columns)]
+
+	exprCtx := en.SessionCtx.GetExprCtx()
+	errCtx := exprCtx.GetEvalCtx().ErrCtx()
+	for _, i := range en.normalColIdxs {
+		col := en.Columns[i]
+		if hasValue[i] {
+			value = row[i]
+		} else {
+			value, err = table.GetColDefaultValue(exprCtx, col.ToInfo())
+			if err != nil {
+				return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
+			}
+		}
+		if value.IsNull() && (mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag())) {
+			err := col.HandleBadNull(errCtx, &value, 0)
+			if err != nil {
+				return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
+			}
+		}
+		record[i] = value
+	}
+
+	for _, i := range en.specialColIdxs {
+		col := en.Columns[i]
 		var theDatum *types.Datum
 		doCast := true
 		if hasValue[i] {
@@ -302,7 +343,7 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 			return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
 		}
 
-		record = append(record, value)
+		record[i] = value
 	}
 
 	if common.TableHasAutoRowID(en.TableMeta()) {
