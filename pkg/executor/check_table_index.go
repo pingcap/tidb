@@ -454,9 +454,18 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return nil
 	}
 	defer func() { e.done = true }()
-	// Collector is injected by HTTP /admin/check/index to collect all mismatches.
-	// Nil means regular SQL path and keeps original fail-fast behavior.
-	e.collector = adminCheckIndexCollectorFromContext(ctx)
+	collectAll := e.Ctx().GetSessionVars().FastCheckTableCollectInconsistent
+	if collectAll {
+		// Collector mode is opened by session variable. HTTP API injects its own
+		// collector via context to receive all mismatched handles in response.
+		e.collector = adminCheckIndexCollectorFromContext(ctx)
+		if e.collector == nil {
+			e.collector = NewAdminCheckIndexInconsistentCollector()
+		}
+	} else {
+		// Keep original fail-fast path untouched when switch is disabled.
+		e.collector = nil
+	}
 
 	// Here we need check all indexes, includes invisible index
 	e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = true
