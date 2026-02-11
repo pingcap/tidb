@@ -526,13 +526,13 @@ func testLoadDataForSoftDeleteTable1(t *testing.T, tk *testkit.TestKit) {
 		{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
 	}
 	expectedMsgs := []string{
-		"Records: 6  Deleted: 4  Skipped: 0  Warnings: 0",
-		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
-		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
+		"Records: 6  Deleted: 2  Skipped: 0  Warnings: 0",
+		"Records: 6  Deleted: 0  Skipped: 2  Warnings: 2",
+		"Records: 6  Deleted: 0  Skipped: 2  Warnings: 2",
 
-		"Records: 6  Deleted: 6  Skipped: 0  Warnings: 0",
-		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
-		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
+		"Records: 6  Deleted: 2  Skipped: 0  Warnings: 0",
+		"Records: 6  Deleted: 0  Skipped: 2  Warnings: 2",
+		"Records: 6  Deleted: 0  Skipped: 2  Warnings: 2",
 	}
 
 	for i, loadSQL := range loadSQLs {

@@ -77,6 +77,7 @@ type InsertValues struct {
 	insertColumns []*table.Column
 
 	activeActive      ActiveActiveTableInfo
+	softDelete        SoftDeleteTableInfo
 	activeActiveStats ActiveActiveStats
 	softDeleteStats   SoftDeleteStats
 
@@ -1352,6 +1353,15 @@ func (e *InsertValues) batchCheckAndInsert(
 	return nil
 }
 
+func (e *InsertValues) isRowSoftDeleted(row []types.Datum) bool {
+	rowOffset := e.softDelete.softDeleteColOffset
+	intest.Assert(rowOffset < len(row))
+	if rowOffset < 0 || rowOffset >= len(row) {
+		return false
+	}
+	return !row[rowOffset].IsNull()
+}
+
 // removeRow removes the duplicate row and cleanup its keys in the key-value map.
 // But if the to-be-removed row equals to the to-be-added row, no remove or add
 // things to do and return (true, nil).
@@ -1392,8 +1402,15 @@ func (e *InsertValues) removeOldRow(
 	if err != nil {
 		return false, err
 	}
+
+	// isRemoveSoftDeleteRow indicates whether we are removing an old soft-deleted row.
+	// This condition may affect whether we should add affected rows count or not to make sure the soft-delete
+	// should behave the same as normal delete in terms of affected rows count.
+	// If `SoftDeleteRewrite` is false, we should also recognize the old row as an exist-row because in this mode,
+	// the soft-delete row should be regarded as a normal one.
+	isRemoveSoftDeleteRow := e.isRowSoftDeleted(oldRow) && e.Ctx().GetSessionVars().SoftDeleteRewrite
 	if identical {
-		if inReplace {
+		if inReplace && !isRemoveSoftDeleteRow {
 			e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(1)
 		}
 		keySet := lockRowKey
@@ -1418,6 +1435,12 @@ func (e *InsertValues) removeOldRow(
 	if err != nil {
 		return false, err
 	}
+
+	if isRemoveSoftDeleteRow {
+		// When removing a soft-deleted row, we should regard it as non-exist and does not affect the row count.
+		return false, nil
+	}
+
 	if inReplace {
 		e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(1)
 	} else {
@@ -1689,6 +1712,11 @@ type ActiveActiveTableInfo struct {
 	originTSColOffset int
 }
 
+// SoftDeleteTableInfo is the basic info for softdelete table.
+type SoftDeleteTableInfo struct {
+	softDeleteColOffset int
+}
+
 // newActiveActiveTableInfo creates a new ActiveActiveTableInfo
 func newActiveActiveTableInfo(tbl *model.TableInfo) ActiveActiveTableInfo {
 	info := ActiveActiveTableInfo{
@@ -1707,6 +1735,27 @@ func newActiveActiveTableInfo(tbl *model.TableInfo) ActiveActiveTableInfo {
 	}
 
 	intest.Assert(info.originTSColOffset >= 0)
+	return info
+}
+
+// newSoftDeleteTableInfo creates a new SoftDeleteTableInfo.
+func newSoftDeleteTableInfo(tbl *model.TableInfo) SoftDeleteTableInfo {
+	info := SoftDeleteTableInfo{
+		softDeleteColOffset: -1,
+	}
+
+	if tbl.SoftdeleteInfo == nil {
+		return info
+	}
+
+	for _, col := range tbl.Cols() {
+		if col.Name.L == model.ExtraSoftDeleteTimeName.L {
+			info.softDeleteColOffset = col.Offset
+			break
+		}
+	}
+
+	intest.Assert(info.softDeleteColOffset >= 0)
 	return info
 }
 

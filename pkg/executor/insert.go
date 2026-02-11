@@ -307,6 +307,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	}
 
 	var removeOldRows []removeOldRow
+	var copiedRows uint64
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -392,8 +393,12 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			if err != nil {
 				return err
 			}
+			copiedRows++
 		}
 		removeOldRows = removeOldRows[:0]
+	}
+	if copiedRows > 0 {
+		e.Ctx().GetSessionVars().StmtCtx.AddCopiedRows(copiedRows)
 	}
 	if e.stats != nil {
 		e.stats.CheckInsertTime += time.Since(start)
