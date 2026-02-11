@@ -338,6 +338,10 @@ const (
 	// inner-join with aggregation (equivalent to SEMI_JOIN_REWRITE() hint).
 	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
 
+	// TiDBOptEnableCorrelateSubquery controls conversion of non-correlated semi-joins
+	// back to correlated Apply (reverse of decorrelation).
+	TiDBOptEnableCorrelateSubquery = "tidb_opt_enable_correlate_subquery"
+
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
@@ -1451,6 +1455,7 @@ const (
 	DefOptPreferRangeScan                   = true
 	DefOptEnableNoDecorrelateInSelect       = false
 	DefOptEnableSemiJoinRewrite             = false
+	DefOptEnableCorrelateSubquery          = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false

@@ -1,0 +1,9 @@
+[
+  {
+    "name": "TestCorrelate",
+    "cases": [
+      "select * from t1 where exists (select 1 from t2 where t2.a = t1.a)",
+      "select * from t1 where not exists (select 1 from t2 where t2.a = t1.a)"
+    ]
+  }
+]

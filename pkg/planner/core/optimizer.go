@@ -110,6 +110,7 @@ var optRuleList = []base.LogicalOptRule{
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
 	&ResolveExpand{},
+	&CorrelateSolver{},
 }
 
 // Interaction Rule List
@@ -362,6 +363,9 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	}
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
+	}
+	if logic.SCtx().GetSessionVars().EnableCorrelateSubquery {
+		flag |= rule.FlagCorrelate
 	}
 	return flag
 }

@@ -45,6 +45,7 @@ const (
 	FlagEliminateUnionAllDualItem
 	FlagEmptySelectionEliminator
 	FlagResolveExpand
+	FlagCorrelate
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {

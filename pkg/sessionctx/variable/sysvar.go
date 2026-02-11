@@ -342,6 +342,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableSemiJoinRewrite = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableCorrelateSubquery, Value: BoolToOnOff(vardef.DefOptEnableCorrelateSubquery), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableCorrelateSubquery = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBDDLReorgPriority, Value: "PRIORITY_LOW", Type: vardef.TypeEnum, skipInit: true, PossibleValues: []string{"PRIORITY_LOW", "PRIORITY_NORMAL", "PRIORITY_HIGH"}, SetSession: func(s *SessionVars, val string) error {
 		s.setDDLReorgPriority(val)
 		return nil
