@@ -6,11 +6,12 @@ This doc explains the *execution skeleton* of TiDB DDL and the responsibility bo
 
 Entry: `pkg/executor/ddl.go` (`type DDLExec`, `(*DDLExec).Next`)
 
+This is the SQL-layer wrapper for end-user DDL execution on the connected TiDB node: it maps DDL AST nodes to the DDL module and handles statement/transaction boundaries.
+
 Responsibilities:
 
 - End the previous transaction and start a new internal DDL transaction context.
-- Perform statement-level branching (AST switch) and call `ddl.Executor` methods.
-- Convert “schema outdated” errors into `ErrInfoSchemaChanged` so the caller can retry safely (`(*DDLExec).toErr`).
+- Perform statement-level branching (AST switch) and call into the DDL module (`pkg/ddl/executor.go`).
 
 Non-responsibilities (avoid putting logic here):
 
@@ -20,6 +21,8 @@ Non-responsibilities (avoid putting logic here):
 ## 2) DDL executor (DDL module): statement → job(s) → wait
 
 Entry: `pkg/ddl/executor.go` (`type Executor`, `(*executor).DoDDLJobWrapper`)
+
+Think of this as the DDL framework client on the connected TiDB node: it validates/serializes statements into durable jobs, submits them, and blocks the session until completion.
 
 The DDL module has its own “executor” (different from `pkg/executor/`). Its job is:
 
@@ -49,7 +52,7 @@ Key ideas:
 
 ## 4) Owner election: only the owner runs scheduler + workers
 
-Entry: `pkg/ddl/job_scheduler.go` (`ownerListener.OnBecomeOwner`)
+Entry: `pkg/ddl/job_scheduler.go:OnBecomeOwner`
 
 - DDL uses an owner manager (`owner.Manager`, etcd-backed) to elect exactly one owner.
 - When a node becomes owner, it starts `jobScheduler` and worker pools.
