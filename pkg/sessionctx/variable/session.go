@@ -1711,6 +1711,14 @@ type SessionVars struct {
 	// should continue collecting all inconsistencies instead of fail-fast.
 	FastCheckTableCollectInconsistent bool
 
+	// FastCheckTableInconsistentLimit limits collected inconsistency rows
+	// in fast check table/index. 0 means no limit.
+	FastCheckTableInconsistentLimit int
+
+	// FastCheckTableInconsistentSummary stores fast check inconsistency summary
+	// for the last executed statement in current session.
+	FastCheckTableInconsistentSummary any
+
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
 

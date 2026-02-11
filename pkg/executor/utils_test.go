@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"context"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -265,13 +264,14 @@ func TestAdminCheckIndexInconsistentCollectorIgnoreEmptyHandle(t *testing.T) {
 	require.EqualError(t, collector.firstErr(), "first")
 }
 
-func TestAdminCheckIndexInconsistentCollectorContextHelper(t *testing.T) {
-	baseCtx := context.Background()
-
-	require.Nil(t, adminCheckIndexCollectorFromContext(baseCtx))
-	require.Equal(t, baseCtx, WithAdminCheckIndexInconsistentCollector(baseCtx, nil))
-
+func TestAdminCheckIndexInconsistentCollectorRecordErr(t *testing.T) {
 	collector := NewAdminCheckIndexInconsistentCollector()
-	ctx := WithAdminCheckIndexInconsistentCollector(baseCtx, collector)
-	require.Same(t, collector, adminCheckIndexCollectorFromContext(ctx))
+
+	collector.recordErr(errors.New("first"))
+	collector.recordErr(errors.New("second"))
+
+	require.EqualError(t, collector.firstErr(), "first")
+	summary := collector.Summary()
+	require.Equal(t, uint64(0), summary.InconsistentRowCount)
+	require.Empty(t, summary.Rows)
 }

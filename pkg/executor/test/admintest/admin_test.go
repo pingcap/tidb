@@ -2198,10 +2198,15 @@ func TestAdminCheckIndexCollectInconsistentBySessionVar(t *testing.T) {
 			tk.MustExec("set @@tidb_fast_check_table_collect_inconsistent = OFF")
 		}
 
-		collector := executor.NewAdminCheckIndexInconsistentCollector()
-		checkCtx := executor.WithAdminCheckIndexInconsistentCollector(context.Background(), collector)
-		_, execErr := tk.ExecWithContext(checkCtx, "admin check index admin_collect_test idx_a")
-		return collector.Summary(), execErr
+		sessVars := tk.Session().GetSessionVars()
+		sessVars.FastCheckTableInconsistentLimit = 0
+		sessVars.FastCheckTableInconsistentSummary = nil
+		_, execErr := tk.ExecWithContext(context.Background(), "admin check index admin_collect_test idx_a")
+		summary, _ := sessVars.FastCheckTableInconsistentSummary.(*executor.AdminCheckIndexInconsistentSummary)
+		if summary == nil {
+			summary = &executor.AdminCheckIndexInconsistentSummary{}
+		}
+		return summary, execErr
 	}
 
 	// Default path (variable OFF) keeps fail-fast behavior and does not fill collector.
@@ -2258,13 +2263,15 @@ func TestAdminCheckIndexCollectInconsistentMultiLayerLocate(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_fast_table_check = ON")
 	tk.MustExec("set @@tidb_fast_check_table_collect_inconsistent = ON")
 
-	collector := executor.NewAdminCheckIndexInconsistentCollector()
-	checkCtx := executor.WithAdminCheckIndexInconsistentCollector(context.Background(), collector)
-	_, err = tk.ExecWithContext(checkCtx, "admin check index admin_collect_deep idx_a")
+	sessVars := tk.Session().GetSessionVars()
+	sessVars.FastCheckTableInconsistentLimit = 0
+	sessVars.FastCheckTableInconsistentSummary = nil
+	_, err = tk.ExecWithContext(context.Background(), "admin check index admin_collect_deep idx_a")
 	require.Error(t, err)
 	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 
-	summary := collector.Summary()
+	summary, _ := sessVars.FastCheckTableInconsistentSummary.(*executor.AdminCheckIndexInconsistentSummary)
+	require.NotNil(t, summary)
 	require.Equal(t, uint64(1), summary.InconsistentRowCount)
 	require.Equal(t, []executor.AdminCheckIndexInconsistentRow{
 		{Handle: "512", MismatchType: executor.AdminCheckIndexRowWithoutIndex},
