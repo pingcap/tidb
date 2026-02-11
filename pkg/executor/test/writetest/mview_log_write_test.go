@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
-func TestMLogWriteInsert(t *testing.T) {
+func TestMLogInsert(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -41,12 +41,11 @@ func TestMLogWriteInsert(t *testing.T) {
 	))
 }
 
-func TestMLogWriteMultiRowInsert(t *testing.T) {
+func TestMLogMultiRowInsert(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
@@ -61,12 +60,11 @@ func TestMLogWriteMultiRowInsert(t *testing.T) {
 	))
 }
 
-func TestMLogWriteUpdate(t *testing.T) {
+func TestMLogUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	tk.MustExec("insert into t values (1,10,100)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
@@ -80,12 +78,11 @@ func TestMLogWriteUpdate(t *testing.T) {
 	))
 }
 
-func TestMLogWriteDelete(t *testing.T) {
+func TestMLogDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	tk.MustExec("insert into t values (1,10,100)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
@@ -98,12 +95,11 @@ func TestMLogWriteDelete(t *testing.T) {
 	))
 }
 
-func TestMLogWriteUpdatePK(t *testing.T) {
+func TestMLogUpdatePK(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("insert into t values (1, 100)")
 	tk.MustExec("create materialized view log on t (a, b)")
@@ -123,12 +119,11 @@ func TestMLogWriteUpdatePK(t *testing.T) {
 	))
 }
 
-func TestMLogWriteReplaceIdenticalRow(t *testing.T) {
+func TestMLogReplaceIdenticalRow(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("insert into t values (1, 100)")
 	tk.MustExec("create materialized view log on t (a, b)")
@@ -140,12 +135,11 @@ func TestMLogWriteReplaceIdenticalRow(t *testing.T) {
 	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
 }
 
-func TestMLogWriteReplacePKAndUKConflict(t *testing.T) {
+func TestMLogReplacePKAndUKConflict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	// Seed rows before creating mlog so that seed inserts won't be logged.
 	tk.MustExec("insert into t values (1,10,100), (2,20,200)")
@@ -167,17 +161,16 @@ func TestMLogWriteReplacePKAndUKConflict(t *testing.T) {
 	))
 }
 
-func TestMLogWriteInsertIgnore(t *testing.T) {
+func TestMLogInsertIgnore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	tk.MustExec("insert into t values (1,10,100)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
-	// (1,11,111) conflicts on PK, (2,10,222) conflicts on unique index, only the last row is inserted.
+	// (1,11,111) conflicts on PK, (2,10,222) conflicts on unique index, only the last is inserted.
 	tk.MustExec("insert ignore into t values (1,11,111), (2,10,222), (3,30,333)")
 
 	tk.MustQuery("select a, b, c from t order by a").Check(
@@ -190,12 +183,11 @@ func TestMLogWriteInsertIgnore(t *testing.T) {
 	))
 }
 
-func TestMLogWriteIODKU(t *testing.T) {
+func TestMLogIODKU(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	tk.MustExec("insert into t values (1,10,100)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
@@ -213,18 +205,17 @@ func TestMLogWriteIODKU(t *testing.T) {
 	))
 }
 
-func TestMLogWriteIODKUChangePK(t *testing.T) {
+func TestMLogIODKUChangePK(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	tk.MustExec("insert into t values (1, 10, 100)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
-	// IODKU that changes the primary key triggers handle-changed path:
-	// RemoveRecord(old) + AddRecord(new, IsUpdate), all under MLogDMLTypeInsert.
+	// IODKU that changes the primary key triggers the handle-changed path:
+	// the old row is removed and the new row is added, both logged as U (update).
 	tk.MustExec("insert into t values (1, 10, 200) on duplicate key update a = 3, c = values(c)")
 
 	tk.MustQuery("select a, b, c from t order by a").Check(
@@ -238,12 +229,11 @@ func TestMLogWriteIODKUChangePK(t *testing.T) {
 	))
 }
 
-func TestMLogWriteMultiRowIODKU(t *testing.T) {
+func TestMLogMultiRowIODKU(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("insert into t values (1,10), (2,20)")
 	tk.MustExec("create materialized view log on t (a, b)")
@@ -263,12 +253,11 @@ func TestMLogWriteMultiRowIODKU(t *testing.T) {
 	))
 }
 
-func TestMLogWriteIODKUPKAndUKConflictDiffRows(t *testing.T) {
+func TestMLogIODKUPKAndUKConflictDiffRows(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	// Row A: a=1, b=10; Row B: a=2, b=20.
 	tk.MustExec("insert into t values (1,10,100), (2,20,200)")
@@ -277,7 +266,7 @@ func TestMLogWriteIODKUPKAndUKConflictDiffRows(t *testing.T) {
 	// Insert (1,20,999): PK conflicts with row A (a=1), UK conflicts with row B (b=20).
 	// Unlike REPLACE (which deletes conflicting rows first), IODKU finds the PK conflict
 	// and tries to update that row, but the update itself violates the UK constraint on
-	// another row. TiDB correctly returns a duplicate key error.
+	// another row.
 	tk.MustGetErrCode(
 		"insert into t values (1,20,999) on duplicate key update b=values(b), c=values(c)",
 		mysql.ErrDupEntry,
@@ -298,12 +287,11 @@ func setLoadDataReader(tk *testkit.TestKit, data string) {
 	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 }
 
-func TestMLogWriteLoadDataIgnore(t *testing.T) {
+func TestMLogLoadDataIgnore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	// Seed rows before creating mlog so that seed inserts won't be logged.
 	tk.MustExec("insert into t values (1,10,100)")
@@ -323,12 +311,11 @@ func TestMLogWriteLoadDataIgnore(t *testing.T) {
 	))
 }
 
-func TestMLogWriteLoadDataReplacePKAndUKConflict(t *testing.T) {
+func TestMLogLoadDataReplacePKAndUKConflict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	tk.MustExec("insert into t values (1,10,100), (2,20,200)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
@@ -349,22 +336,17 @@ func TestMLogWriteLoadDataReplacePKAndUKConflict(t *testing.T) {
 	))
 }
 
-func TestMLogWriteLoadDataReplaceConflictAddFailureNoLeak(t *testing.T) {
+func TestMLogLoadDataReplaceConflictAddFailureNoLeak(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int unique, c int, constraint chk_c check (c > 0))")
 	tk.MustExec("insert into t values (1,10,1), (2,20,1)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
-	data := "1,20,-1\n3,30,1\n"
-	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (r io.ReadCloser, err error) {
-		return mydump.NewStringReader(data), nil
-	}
-	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	setLoadDataReader(tk, "1,20,-1\n3,30,1\n")
 
 	// First row removes old rows due to REPLACE conflicts but add fails with check constraint.
 	// The second row is a plain insert and must still be marked as I (not leaked U).
@@ -382,12 +364,11 @@ func TestMLogWriteLoadDataReplaceConflictAddFailureNoLeak(t *testing.T) {
 	))
 }
 
-func TestMLogWriteMultiTableUpdate(t *testing.T) {
+func TestMLogMultiTableUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (a int primary key, b int)")
 	tk.MustExec("create table t2 (a int primary key, b int)")
 	tk.MustExec("insert into t1 values (1,10)")
@@ -411,12 +392,11 @@ func TestMLogWriteMultiTableUpdate(t *testing.T) {
 	))
 }
 
-func TestMLogWriteMultiTableDelete(t *testing.T) {
+func TestMLogMultiTableDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int)")
 	tk.MustExec("create table t2 (a int primary key, b int, c int)")
 	tk.MustExec("insert into t1 values (1,10,100), (2,20,200)")
@@ -443,20 +423,21 @@ func TestMLogWriteMultiTableDelete(t *testing.T) {
 	))
 }
 
-func TestMLogWriteSkipUntrackedColumns(t *testing.T) {
+func TestMLogSkipUntrackedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int)")
 	tk.MustExec("insert into t values (1,100,1000)")
 	// mlog tracks (a, b); c is untracked.
 	tk.MustExec("create materialized view log on t (a, b)")
 
+	// Updating an untracked column should not produce any mlog entry.
 	tk.MustExec("update t set c=2000 where a=1")
 	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
 
+	// Updating a tracked column should produce mlog entries.
 	tk.MustExec("update t set b=101 where a=1")
 	tk.MustQuery(
 		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
@@ -466,12 +447,11 @@ func TestMLogWriteSkipUntrackedColumns(t *testing.T) {
 	))
 }
 
-func TestMLogWritePartialColumnsMapping(t *testing.T) {
+func TestMLogPartialColumnsMapping(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int)")
 	// Track columns in a different order to verify mapping by column name.
 	tk.MustExec("create materialized view log on t (d, b)")
@@ -505,7 +485,7 @@ func TestMLogWritePartialColumnsMapping(t *testing.T) {
 	))
 }
 
-func TestMLogWritePrunedColumns(t *testing.T) {
+func TestMLogPrunedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -552,12 +532,11 @@ func TestMLogWritePrunedColumns(t *testing.T) {
 	})
 }
 
-func TestMLogWriteGeneratedColumn(t *testing.T) {
+func TestMLogGeneratedColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int as (b+c) stored)")
 	// Track the stored generated column in the mlog.
 	tk.MustExec("create materialized view log on t (a, b, d)")
@@ -579,12 +558,11 @@ func TestMLogWriteGeneratedColumn(t *testing.T) {
 	))
 }
 
-func TestMLogWriteAutoIncrement(t *testing.T) {
+func TestMLogAutoIncrement(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int auto_increment primary key, b int)")
 	// Track the auto-increment PK in the mlog.
 	tk.MustExec("create materialized view log on t (a, b)")
@@ -607,12 +585,11 @@ func TestMLogWriteAutoIncrement(t *testing.T) {
 	))
 }
 
-func TestMLogWritePartitionedTableNotSupported(t *testing.T) {
+func TestMLogPartitionedTableNotSupported(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec(
 		"create table t (a int, b int) " +
 			"partition by range (a) (" +
@@ -625,12 +602,11 @@ func TestMLogWritePartitionedTableNotSupported(t *testing.T) {
 	tk.MustGetErrCode("insert into t values (1,100)", mysql.ErrNotSupportedYet)
 }
 
-func TestMLogWriteImportIntoNotSupported(t *testing.T) {
+func TestMLogImportIntoNotSupported(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("create materialized view log on t (a, b)")
 
