@@ -83,6 +83,11 @@ type Common interface {
 type PlanContext interface {
 	Common
 	tablelock.TableLockReadContext
+	// UnwrapAsInternalSctx returns the underlying internal session context as `any`.
+	//
+	// NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
+	// (sessionctx -> planctx). Callers can type-assert the returned value when needed.
+	UnwrapAsInternalSctx() any
 	// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
 	GetNullRejectCheckExprCtx() exprctx.ExprContext
 	// AdviseTxnWarmup advises the txn to warm up.
@@ -93,14 +98,6 @@ type PlanContext interface {
 	GetReadonlyUserVarMap() map[string]struct{}
 	// Reset reset the local context.
 	Reset()
-}
-
-// InternalSctxUnwrapper is an optional capability for PlanContext-like wrappers to expose
-// their underlying internal session context.
-//
-// Implementers should return the wrapped value as `any` to avoid introducing dependency cycles.
-type InternalSctxUnwrapper interface {
-	UnwrapAsInternalSctx() any
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
@@ -169,11 +166,7 @@ type planCtxExprOverrideWrapper struct {
 // NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
 // (sessionctx -> planctx). Callers can type-assert the returned value when needed.
 func (c *planCtxExprOverrideWrapper) UnwrapAsInternalSctx() any {
-	// Delegate if the wrapped PlanContext is itself a wrapper that knows how to unwrap further.
-	if u, ok := c.PlanContext.(InternalSctxUnwrapper); ok {
-		return u.UnwrapAsInternalSctx()
-	}
-	return c.PlanContext
+	return c.PlanContext.UnwrapAsInternalSctx()
 }
 
 func (c *planCtxExprOverrideWrapper) GetExprCtx() exprctx.ExprContext {

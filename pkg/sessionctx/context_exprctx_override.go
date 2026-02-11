@@ -34,10 +34,7 @@ type exprCtxOverrideSessionWrapper struct {
 
 // UnwrapAsInternalSctx returns the underlying internal session context as `any`.
 func (c *exprCtxOverrideSessionWrapper) UnwrapAsInternalSctx() any {
-	if u, ok := c.Context.(planctx.InternalSctxUnwrapper); ok {
-		return u.UnwrapAsInternalSctx()
-	}
-	return c.Context
+	return c.Context.GetPlanCtx().UnwrapAsInternalSctx()
 }
 
 func (c *exprCtxOverrideSessionWrapper) GetExprCtx() exprctx.ExprContext {

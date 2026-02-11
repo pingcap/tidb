@@ -308,7 +308,6 @@ go_test(
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/hint",
-        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mock",
         "//pkg/util/plancodec",
