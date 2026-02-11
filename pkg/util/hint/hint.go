@@ -223,12 +223,7 @@ type StmtHints struct {
 	// -1 for disable.
 	ForceNthPlan  int64
 	ResourceGroup string
-<<<<<<< HEAD
-=======
-	// Do not store plan in either plan cache.
-	IgnorePlanCache bool
-	WriteSlowLog    bool
->>>>>>> 72d3468d10e (*: add SQL hint to force slow log output (#63262))
+	WriteSlowLog  bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -277,11 +272,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
-<<<<<<< HEAD
-=======
-		IgnorePlanCache:                sh.IgnorePlanCache,
 		WriteSlowLog:                   sh.WriteSlowLog,
->>>>>>> 72d3468d10e (*: add SQL hint to force slow log output (#63262))
 		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
@@ -349,6 +340,8 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 		case "straight_join":
 			hintOffs[hint.HintName.L] = i
 			straightJoinHintCnt++
+		case HintWriteSlowLog:
+			stmtHints.WriteSlowLog = true
 		case "hypo_index":
 			// to make it simpler, use Tables[0] as table, Tables[1] as index name, and Tables[2:] as column name.
 			if len(hint.Tables) < 3 {
@@ -409,13 +402,6 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			}
 			setVars[setVarHint.VarName] = setVarHint.Value
 			setVarsOffs = append(setVarsOffs, i)
-<<<<<<< HEAD
-=======
-		case HintIgnorePlanCache:
-			stmtHints.IgnorePlanCache = true
-		case HintWriteSlowLog:
-			stmtHints.WriteSlowLog = true
->>>>>>> 72d3468d10e (*: add SQL hint to force slow log output (#63262))
 		}
 	}
 	stmtHints.OriginalTableHints = hints

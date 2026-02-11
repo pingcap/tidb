@@ -352,7 +352,7 @@ TableOptimizerHintOpt:
 |	"WRITE_SLOW_LOG"
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: ast.NewCIStr($1),
+			HintName: model.NewCIStr($1),
 		}
 	}
 |	"QUERY_TYPE" '(' QueryBlockOpt HintQueryType ')'

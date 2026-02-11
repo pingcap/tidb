@@ -309,10 +309,10 @@ func TestParseHint(t *testing.T) {
 			input: "WRITE_SLOW_LOG, WRITE_SLOW_LOG",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: ast.NewCIStr("WRITE_SLOW_LOG"),
+					HintName: model.NewCIStr("WRITE_SLOW_LOG"),
 				},
 				{
-					HintName: ast.NewCIStr("WRITE_SLOW_LOG"),
+					HintName: model.NewCIStr("WRITE_SLOW_LOG"),
 				},
 			},
 		},
