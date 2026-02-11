@@ -50,7 +50,14 @@ go_test(
     ],
     embed = [":runaway"],
     flaky = True,
+<<<<<<< HEAD
     deps = [
+=======
+    shard_count = 15,
+    deps = [
+        "//pkg/metrics",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+>>>>>>> 1f6f9eb5883 (refactor(runaway): make active watch counting lock-free (#66171))
         "@com_github_stretchr_testify//assert",
         "@com_github_tikv_client_go_v2//util",
     ],
