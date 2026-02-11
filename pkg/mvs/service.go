@@ -68,8 +68,8 @@ const (
 	defaultMVTaskTimeout        = 60 * time.Second
 	defaultMVFetchInterval      = 30 * time.Second
 	defaultMVMetricInterval     = time.Second
-	defaultMVTaskRetryBase      = 5 * time.Second
-	defaultMVTaskRetryMax       = 5 * time.Minute
+	defaultMVTaskRetryBase      = 10 * time.Second
+	defaultMVTaskRetryMax       = 120 * time.Second
 	maxNextScheduleTs           = 9e18
 
 	defaultServerConsistentHashReplicas = 10
@@ -350,14 +350,14 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 		t.executor.Submit("mvlog-purge/"+l.ID, func() error {
 			t.metrics.runningMVLogPurgeCount.Add(1)
 			defer t.metrics.runningMVLogPurgeCount.Add(-1)
-			nextPurge, deleted, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
+			nextPurge, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
 			if err != nil {
 				retryCount := l.retryCount.Add(1)
 				t.rescheduleMVLog(l, mvsNow().Add(retryDelay(int(retryCount))).UnixMilli())
 				t.notifier.Wake()
 				return err
 			}
-			if deleted {
+			if nextPurge.IsZero() {
 				l.retryCount.Store(0)
 				t.removeMVLogTask(l)
 				t.notifier.Wake()

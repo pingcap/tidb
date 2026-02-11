@@ -10,7 +10,10 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	meta "github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -97,7 +100,6 @@ type mockMVServiceHelper struct {
 	refreshNext    time.Time
 	refreshDeleted bool
 	purgeNext      time.Time
-	purgeDeleted   bool
 	refreshErr     error
 	purgeErr       error
 	fetchLogs      map[string]*mvLog
@@ -116,9 +118,9 @@ func (m *mockMVServiceHelper) RefreshMV(_ context.Context, _ basic.SessionPool, 
 	return m.refreshNext, m.refreshDeleted, m.refreshErr
 }
 
-func (m *mockMVServiceHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool, mvLogID string) (nextPurge time.Time, deleted bool, err error) {
+func (m *mockMVServiceHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool, mvLogID string) (nextPurge time.Time, err error) {
 	m.lastPurgeID = mvLogID
-	return m.purgeNext, m.purgeDeleted, m.purgeErr
+	return m.purgeNext, m.purgeErr
 }
 
 func (m *mockMVServiceHelper) fetchAllTiDBMLogPurge(context.Context, basic.SessionPool) (map[string]*mvLog, error) {
@@ -150,7 +152,7 @@ func TestMVServiceDefaultTaskHandler(t *testing.T) {
 	_, _, err := svc.mh.RefreshMV(context.Background(), mockSessionPool{}, "mv-1")
 	require.ErrorIs(t, err, ErrMVRefreshHandlerNotRegistered)
 
-	_, _, err = svc.mh.PurgeMVLog(context.Background(), mockSessionPool{}, "mlog-1")
+	_, err = svc.mh.PurgeMVLog(context.Background(), mockSessionPool{}, "mlog-1")
 	require.ErrorIs(t, err, ErrMVLogPurgeHandlerNotRegistered)
 }
 
@@ -170,9 +172,8 @@ func TestMVServiceUseInjectedTaskHandler(t *testing.T) {
 	require.True(t, nextRefresh.Equal(gotNextRefresh))
 	require.Equal(t, "mv-2", helper.lastRefreshID)
 
-	gotNextPurge, deleted, err := svc.mh.PurgeMVLog(context.Background(), mockSessionPool{}, "mlog-2")
+	gotNextPurge, err := svc.mh.PurgeMVLog(context.Background(), mockSessionPool{}, "mlog-2")
 	require.NoError(t, err)
-	require.False(t, deleted)
 	require.True(t, nextPurge.Equal(gotNextPurge))
 	require.Equal(t, "mlog-2", helper.lastPurgeID)
 }
@@ -210,9 +211,7 @@ func TestMVServiceNotifyDDLChangeTriggersFetch(t *testing.T) {
 
 func TestMVServicePurgeMVLogRemoveOnDeleted(t *testing.T) {
 	installMockTimeForTest(t)
-	helper := &mockMVServiceHelper{
-		purgeDeleted: true,
-	}
+	helper := &mockMVServiceHelper{}
 	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, helper)
 	svc.executor.Run()
 	defer svc.executor.Close()
@@ -638,67 +637,88 @@ func TestServerHelperPurgeMVLogDeletedWhenMetaNotFound(t *testing.T) {
 	se := newRecordingSessionContext()
 	pool := recordingSessionPool{se: se}
 
-	nextPurge, deleted, err := (&serverHelper{}).PurgeMVLog(context.Background(), pool, "200")
+	nextPurge, err := (&serverHelper{}).PurgeMVLog(context.Background(), pool, "200")
 	require.NoError(t, err)
-	require.True(t, deleted)
 	require.True(t, nextPurge.IsZero())
-	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
-	require.Equal(t, []string{
-		`SELECT TABLE_SCHEMA, MLOG_NAME, RELATED_MV, UNIX_TIMESTAMP(PURGE_START), PURGE_INTERVAL, PURGE_METHOD FROM mysql.tidb_mlogs WHERE MLOG_ID = %?`,
-	}, se.executedRestrictedSQL)
+	require.Empty(t, se.executedSQL)
+	require.Empty(t, se.executedRestrictedSQL)
 }
 
 func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 	installMockTimeForTest(t)
 	const (
-		findMLogSQL    = `SELECT TABLE_SCHEMA, MLOG_NAME, RELATED_MV, UNIX_TIMESTAMP(PURGE_START), PURGE_INTERVAL, PURGE_METHOD FROM mysql.tidb_mlogs WHERE MLOG_ID = %?`
-		lockPurgeSQL   = `SELECT 1 FROM mysql.tidb_mlog_purge WHERE MLOG_ID = %? FOR UPDATE`
-		deleteMLogSQL  = `DELETE FROM %n.%n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
-		updatePurgeSQL = `UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = %?, LAST_PURGE_ROWS = %?, LAST_PURGE_DURATION = %? WHERE MLOG_ID = %?`
-		clearNewestSQL = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
-		insertHistSQL  = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
+		findMinRefreshReadTSO   = `SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
+		lockPurgeInfoSQL        = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
+		deleteMLogSQL           = `DELETE FROM %n.%n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
+		updatePurgeInfoSQL      = `UPDATE mysql.tidb_mlog_purge_info SET PURGE_TIME = %?, PURGE_ENDTIME = %?, PURGE_ROWS = %?, PURGE_STATUS = 'SUCCESS', NEXT_TIME = %? WHERE MLOG_ID = %?`
+		clearNewestPurgeHistSQL = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
+		insertPurgeHistSQL      = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
 	)
 
 	se := newRecordingSessionContext()
-	se.restrictedRows[findMLogSQL] = []chunk.Row{
+	se.restrictedRows[findMinRefreshReadTSO] = []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{
-			types.NewStringDatum("test"),
-			types.NewStringDatum("mlog1"),
-			types.NewDatum(nil),
-			types.NewIntDatum(0),
-			types.NewIntDatum(60),
-			types.NewStringDatum("TIME_WINDOW"),
+			types.NewIntDatum(100),
 		}).ToRow(),
 	}
-	se.restrictedRows[lockPurgeSQL] = []chunk.Row{
+	se.restrictedRows[lockPurgeInfoSQL] = []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(1),
+			types.NewIntDatum(mvsNow().Add(-time.Minute).Unix()),
 		}).ToRow(),
 	}
+	mvInfo := &meta.MaterializedViewBaseInfo{
+		MLogID:   201,
+		MViewIDs: []int64{101, 102},
+	}
+	mvTable := &meta.TableInfo{
+		ID:                   101,
+		Name:                 pmodel.NewCIStr("mv_base"),
+		State:                meta.StatePublic,
+		MaterializedViewBase: mvInfo,
+	}
+	mvlogTable := &meta.TableInfo{
+		ID:   201,
+		Name: pmodel.NewCIStr("mlog1"),
+		MaterializedViewLog: &meta.MaterializedViewLogInfo{
+			BaseTableID:    101,
+			PurgeMethod:    "TIME_WINDOW",
+			PurgeStartWith: "'2026-01-02 03:04:05'",
+			PurgeNext:      "60",
+		},
+		State: meta.StatePublic,
+	}
+	oldMockInfoSchema := mock.MockInfoschema
+	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
+		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable, mvlogTable})
+	}
+	t.Cleanup(func() {
+		mock.MockInfoschema = oldMockInfoSchema
+	})
+
 	pool := recordingSessionPool{se: se}
 
-	nextPurge, deleted, err := (&serverHelper{}).PurgeMVLog(context.Background(), pool, "201")
+	nextPurge, err := (&serverHelper{}).PurgeMVLog(context.Background(), pool, "201")
 	require.NoError(t, err)
-	require.False(t, deleted)
+	require.False(t, nextPurge.IsZero())
 	require.True(t, nextPurge.After(mvsNow().Add(-2*time.Second)))
 	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
 	require.Equal(t, []string{
-		findMLogSQL,
-		lockPurgeSQL,
+		findMinRefreshReadTSO,
+		lockPurgeInfoSQL,
 		deleteMLogSQL,
-		updatePurgeSQL,
-		clearNewestSQL,
-		insertHistSQL,
+		updatePurgeInfoSQL,
+		clearNewestPurgeHistSQL,
+		insertPurgeHistSQL,
 	}, se.executedRestrictedSQL)
 }
 
-func TestPurgeMVLogImplSuccess(t *testing.T) {
+func TestPurgeMVLogSuccess(t *testing.T) {
 	installMockTimeForTest(t)
 	const (
 		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
-		lockPurgeSQL             = `SELECT 1 FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-		deleteMLogSQL            = `DELETE FROM %n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
-		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = %?, LAST_PURGE_ROWS = %?, LAST_PURGE_DURATION = %? WHERE MLOG_ID = %?`
+		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
+		deleteMLogSQL            = `DELETE FROM %n.%n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
+		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge_info SET PURGE_TIME = %?, PURGE_ENDTIME = %?, PURGE_ROWS = %?, PURGE_STATUS = 'SUCCESS', NEXT_TIME = %? WHERE MLOG_ID = %?`
 		clearNewestSQL           = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
 		insertHistSQL            = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
 	)
@@ -711,16 +731,49 @@ func TestPurgeMVLogImplSuccess(t *testing.T) {
 	}
 	se.restrictedRows[lockPurgeSQL] = []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(1),
+			types.NewIntDatum(mvsNow().Add(time.Minute).Unix()),
 		}).ToRow(),
 	}
 	mvInfo := &meta.MaterializedViewBaseInfo{
 		MLogID:   201,
 		MViewIDs: []int64{101, 102},
 	}
+	mvTable := &meta.TableInfo{
+		ID:                   101,
+		Name:                 pmodel.NewCIStr("mv_base"),
+		State:                meta.StatePublic,
+		MaterializedViewBase: mvInfo,
+	}
+	mvlogTable := &meta.TableInfo{
+		ID:   201,
+		Name: pmodel.NewCIStr("mlog1"),
+		MaterializedViewLog: &meta.MaterializedViewLogInfo{
+			PurgeMethod:    "TIME_WINDOW",
+			PurgeStartWith: "'2026-01-02 03:04:05'",
+			PurgeNext:      "60",
+		},
+		State: meta.StatePublic,
+	}
+	oldMockInfoSchema := mock.MockInfoschema
+	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
+		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable, mvlogTable})
+	}
+	t.Cleanup(func() {
+		mock.MockInfoschema = oldMockInfoSchema
+	})
 
-	err := purgeMVLogImpl(context.Background(), se, mvInfo, "mlog1")
+	loc := time.Local
+	if vars := se.GetSessionVars(); vars != nil && vars.Location() != nil {
+		loc = vars.Location()
+	}
+	expectedNextPurge, parseErr := time.ParseInLocation("2006-01-02 15:04:05", "2026-01-02 03:04:05", loc)
+	require.NoError(t, parseErr)
+	infoSchema := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	baseTable, err := infoSchema.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_base"))
 	require.NoError(t, err)
+	nextPurge, err := PurgeMVLog(context.Background(), se, baseTable, false)
+	require.NoError(t, err)
+	require.Equal(t, expectedNextPurge.Unix(), nextPurge.Unix())
 	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
 	require.Equal(t, []string{
 		findMinRefreshReadTSOSQL,
@@ -729,5 +782,124 @@ func TestPurgeMVLogImplSuccess(t *testing.T) {
 		updatePurgeSQL,
 		clearNewestSQL,
 		insertHistSQL,
+	}, se.executedRestrictedSQL)
+}
+
+func TestPurgeMVLogSkipWhenNotForceAndNextTimeNull(t *testing.T) {
+	installMockTimeForTest(t)
+	const (
+		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
+		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
+	)
+
+	se := newRecordingSessionContext()
+	se.restrictedRows[findMinRefreshReadTSOSQL] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(100),
+		}).ToRow(),
+	}
+	se.restrictedRows[lockPurgeSQL] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewDatum(nil),
+		}).ToRow(),
+	}
+	mvInfo := &meta.MaterializedViewBaseInfo{
+		MLogID:   201,
+		MViewIDs: []int64{101, 102},
+	}
+	mvTable := &meta.TableInfo{
+		ID:                   101,
+		Name:                 pmodel.NewCIStr("mv_base"),
+		State:                meta.StatePublic,
+		MaterializedViewBase: mvInfo,
+	}
+	mvlogTable := &meta.TableInfo{
+		ID:   201,
+		Name: pmodel.NewCIStr("mlog1"),
+		MaterializedViewLog: &meta.MaterializedViewLogInfo{
+			PurgeMethod:    "TIME_WINDOW",
+			PurgeStartWith: "'2026-01-02 03:04:05'",
+			PurgeNext:      "60",
+		},
+		State: meta.StatePublic,
+	}
+	oldMockInfoSchema := mock.MockInfoschema
+	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
+		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable, mvlogTable})
+	}
+	t.Cleanup(func() {
+		mock.MockInfoschema = oldMockInfoSchema
+	})
+
+	infoSchema := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	baseTable, err := infoSchema.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_base"))
+	require.NoError(t, err)
+	nextPurge, err := PurgeMVLog(context.Background(), se, baseTable, true)
+	require.NoError(t, err)
+	require.True(t, nextPurge.IsZero())
+	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+	require.Equal(t, []string{
+		findMinRefreshReadTSOSQL,
+		lockPurgeSQL,
+	}, se.executedRestrictedSQL)
+}
+
+func TestPurgeMVLogSkipWhenNotForceAndNextTimeFuture(t *testing.T) {
+	installMockTimeForTest(t)
+	const (
+		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
+		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
+	)
+
+	se := newRecordingSessionContext()
+	se.restrictedRows[findMinRefreshReadTSOSQL] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(100),
+		}).ToRow(),
+	}
+	se.restrictedRows[lockPurgeSQL] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(mvsNow().Add(time.Minute).Unix()),
+		}).ToRow(),
+	}
+	mvInfo := &meta.MaterializedViewBaseInfo{
+		MLogID:   201,
+		MViewIDs: []int64{101, 102},
+	}
+	mvTable := &meta.TableInfo{
+		ID:                   101,
+		Name:                 pmodel.NewCIStr("mv_base"),
+		State:                meta.StatePublic,
+		MaterializedViewBase: mvInfo,
+	}
+	mvlogTable := &meta.TableInfo{
+		ID:   201,
+		Name: pmodel.NewCIStr("mlog1"),
+		MaterializedViewLog: &meta.MaterializedViewLogInfo{
+			PurgeMethod:    "TIME_WINDOW",
+			PurgeStartWith: "'2026-01-02 03:04:05'",
+			PurgeNext:      "60",
+		},
+		State: meta.StatePublic,
+	}
+	oldMockInfoSchema := mock.MockInfoschema
+	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
+		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable, mvlogTable})
+	}
+	t.Cleanup(func() {
+		mock.MockInfoschema = oldMockInfoSchema
+	})
+
+	expectNextPurge := mvsUnix(mvsNow().Add(time.Minute).Unix(), 0)
+	infoSchema := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	baseTable, err := infoSchema.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_base"))
+	require.NoError(t, err)
+	nextPurge, err := PurgeMVLog(context.Background(), se, baseTable, true)
+	require.NoError(t, err)
+	require.Equal(t, expectNextPurge, nextPurge)
+	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+	require.Equal(t, []string{
+		findMinRefreshReadTSOSQL,
+		lockPurgeSQL,
 	}, se.executedRestrictedSQL)
 }
