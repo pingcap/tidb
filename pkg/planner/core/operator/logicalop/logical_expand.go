@@ -134,7 +134,15 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column) (base.
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
-// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+// PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
+func (p *LogicalExpand) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	if len(childrenProperties) == 0 || childrenProperties[0] == nil {
+		p.hasTiflash = false
+		return &base.PossiblePropertiesInfo{}
+	}
+	p.hasTiflash = childrenProperties[0].HasTiflash
+	return &base.PossiblePropertiesInfo{HasTiflash: p.hasTiflash}
+}
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (p *LogicalExpand) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
