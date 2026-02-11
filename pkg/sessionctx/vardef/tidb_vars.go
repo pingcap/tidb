@@ -1455,7 +1455,7 @@ const (
 	DefOptPreferRangeScan                   = true
 	DefOptEnableNoDecorrelateInSelect       = false
 	DefOptEnableSemiJoinRewrite             = false
-	DefOptEnableCorrelateSubquery          = false
+	DefOptEnableCorrelateSubquery           = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false

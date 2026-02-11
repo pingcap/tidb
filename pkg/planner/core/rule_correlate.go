@@ -77,8 +77,8 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	leftSchema := join.Children()[0].Schema()
 	rightSchema := join.Children()[1].Schema()
 
-	var selConds []expression.Expression
-	var corCols []*expression.CorrelatedColumn
+	selConds := make([]expression.Expression, 0, len(join.EqualConditions)+len(join.RightConditions))
+	corCols := make([]*expression.CorrelatedColumn, 0, len(join.EqualConditions))
 
 	// Convert EqualConditions to correlated conditions.
 	for _, eqCond := range join.EqualConditions {
@@ -99,11 +99,21 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	sel := logicalop.LogicalSelection{Conditions: selConds}.Init(join.SCtx(), join.QueryBlockOffset())
 	sel.SetChildren(innerChild)
 
+	// Run predicate push-down on the inner subtree so the new correlated
+	// predicates reach the DataSource (for index access path selection).
+	// PPD has already finished by the time this rule runs, so without this
+	// local pass the predicates would stay in the Selection and the inner
+	// side could only do full scans.
+	_, innerPlan, err := sel.PredicatePushDown(nil)
+	if err != nil {
+		return nil, false, err
+	}
+
 	// Build the LogicalApply.
 	ap := logicalop.LogicalApply{}.Init(join.SCtx(), join.QueryBlockOffset())
 	ap.JoinType = join.JoinType
 	ap.CorCols = corCols
-	ap.SetChildren(join.Children()[0], sel)
+	ap.SetChildren(join.Children()[0], innerPlan)
 	ap.SetSchema(join.Schema().Clone())
 	ap.SetOutputNames(join.OutputNames())
 

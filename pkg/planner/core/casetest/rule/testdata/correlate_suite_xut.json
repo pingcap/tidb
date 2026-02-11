@@ -9,9 +9,8 @@
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─Selection(Probe) 79840080.00 root  eq(test.t2.a, test.t1.a)",
-          "  └─IndexReader 99800100.00 root  index:IndexFullScan",
-          "    └─IndexFullScan 99800100.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+          "└─IndexReader(Probe) 99900.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 99900.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1",
@@ -24,9 +23,8 @@
           "Apply 10000.00 root  CARTESIAN anti semi join, left side:TableReader",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─Selection(Probe) 80000000.00 root  eq(test.t2.a, test.t1.a)",
-          "  └─IndexReader 100000000.00 root  index:IndexFullScan",
-          "    └─IndexFullScan 100000000.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+          "└─IndexReader(Probe) 100000.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 100000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "3 3"
