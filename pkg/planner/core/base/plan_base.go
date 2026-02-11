@@ -407,34 +407,3 @@ func (info *PossiblePropertiesInfo) Hash64(h base.Hasher) {
 	}
 	h.HashBool(info.HasTiflash)
 }
-
-// Equals implements the HashEquals interface.
-func (info *PossiblePropertiesInfo) Equals(other any) bool {
-	otherInfo, ok := other.(*PossiblePropertiesInfo)
-	if !ok {
-		return false
-	}
-	if info == nil {
-		return otherInfo == nil
-	}
-	if otherInfo == nil {
-		return false
-	}
-	if info.HasTiflash != otherInfo.HasTiflash {
-		return false
-	}
-	if (info.Order == nil && otherInfo.Order != nil) || (info.Order != nil && otherInfo.Order == nil) || len(info.Order) != len(otherInfo.Order) {
-		return false
-	}
-	for i, one := range info.Order {
-		if (one == nil && otherInfo.Order[i] != nil) || (one != nil && otherInfo.Order[i] == nil) || len(one) != len(otherInfo.Order[i]) {
-			return false
-		}
-		for j, col := range one {
-			if !col.Equals(otherInfo.Order[i][j]) {
-				return false
-			}
-		}
-	}
-	return true
-}
