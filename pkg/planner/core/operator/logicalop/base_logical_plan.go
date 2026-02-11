@@ -264,7 +264,7 @@ func (p *BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, info .
 		hasTiflash = hasTiflash && childInfo.HasTiflash
 	}
 	p.hasTiflash = hasTiflash
-	return nil
+	return &base.PossiblePropertiesInfo{HasTiflash: p.hasTiflash}
 }
 
 // ExtractCorrelatedCols implements LogicalPlan.<15th> interface.
