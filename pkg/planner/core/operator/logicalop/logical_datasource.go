@@ -770,6 +770,8 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
 		return path.Index == nil || path.Index.ID != index.ID
 	})
+	copy(ds.AllPossibleAccessPaths, ds.PossibleAccessPaths)
+	ds.AllPossibleAccessPaths = ds.AllPossibleAccessPaths[:len(ds.PossibleAccessPaths)]
 	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
