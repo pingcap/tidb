@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -41,18 +40,12 @@ func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 
 	// Some PlanContext implementations are wrappers (e.g. planctx.WithExprCtx). Unwrap them to recover
 	// the underlying session-backed context when needed.
-	u, ok := pctx.(planctx.InternalSctxUnwrapper)
-	if !ok {
-		intest.Assert(false, "PlanContext %T is not session-backed and does not implement planctx.InternalSctxUnwrapper", pctx)
-		return nil, errors.Errorf("the current PlanContext (%T) cannot be converted to sessionctx.Context: missing planctx.InternalSctxUnwrapper", pctx)
-	}
-
-	unwrapped := u.UnwrapAsInternalSctx()
+	unwrapped := pctx.UnwrapAsInternalSctx()
 	if sctx, ok := unwrapped.(sessionctx.Context); ok {
 		return sctx, nil
 	}
 
-	intest.Assert(false, "planctx.InternalSctxUnwrapper returned non-session value %T from %T", unwrapped, pctx)
+	intest.Assert(false, "PlanContext %T unwrapped to non-session value %T", pctx, unwrapped)
 	return nil, errors.Errorf("the current PlanContext (%T) cannot be converted to sessionctx.Context: unwrapped value type is %T", pctx, unwrapped)
 }
 
