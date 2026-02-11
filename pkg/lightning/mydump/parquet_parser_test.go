@@ -52,7 +52,7 @@ func newParquetParserForTest(
 	r, err := store.Open(ctx, fileName, nil)
 	require.NoError(t, err)
 
-	parser, err := NewParquetParser(ctx, store, r, fileName, meta)
+	parser, err := NewParquetParser(ctx, store, r, fileName, meta, nil)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {

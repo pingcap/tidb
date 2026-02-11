@@ -23,6 +23,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -83,6 +84,41 @@ func extractColumnTypes(
 		}
 	}
 	return colTypes, colNames, nil
+}
+
+func temporalTargetType(target *model.ColumnInfo, defaultType byte) byte {
+	if target == nil {
+		return defaultType
+	}
+	switch target.GetType() {
+	case mysql.TypeDate:
+		return mysql.TypeDate
+	case mysql.TypeDatetime:
+		return mysql.TypeDatetime
+	default:
+		return defaultType
+	}
+}
+
+func temporalTargetFSP(target *model.ColumnInfo, defaultFSP int) int {
+	if target == nil {
+		return defaultFSP
+	}
+	switch target.GetType() {
+	case mysql.TypeDate:
+		return 0
+	case mysql.TypeDatetime:
+		if target.GetDecimal() < 0 {
+			return defaultFSP
+		}
+		return min(target.GetDecimal(), types.MaxFsp)
+	default:
+		return defaultFSP
+	}
+}
+
+func setTemporalDatum(t time.Time, d *types.Datum, tp byte, fsp int) {
+	d.SetMysqlTime(types.NewTime(types.FromGoTime(t), tp, fsp))
 }
 
 func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
@@ -232,7 +268,13 @@ func getBoolDataSetter(val bool, d *types.Datum) error {
 	return nil
 }
 
-func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] {
+func getInt32Setter(converted *convertedType, loc *time.Location, target *model.ColumnInfo) setter[int32] {
+	temporalType := temporalTargetType(target, mysql.TypeTimestamp)
+	temporalFSP := temporalTargetFSP(target, 6)
+	if temporalType == mysql.TypeDate {
+		temporalFSP = 0
+	}
+
 	switch converted.converted {
 	case schema.ConvertedTypes.Decimal:
 		return func(val int32, d *types.Datum) error {
@@ -254,8 +296,7 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-			d.SetMysqlTime(mysqlTime)
+			setTemporalDatum(t, d, temporalType, temporalFSP)
 			return nil
 		}
 	case schema.ConvertedTypes.Int32, schema.ConvertedTypes.Uint32,
@@ -271,7 +312,13 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 	return nil
 }
 
-func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] {
+func getInt64Setter(converted *convertedType, loc *time.Location, target *model.ColumnInfo) setter[int64] {
+	temporalType := temporalTargetType(target, mysql.TypeTimestamp)
+	temporalFSP := temporalTargetFSP(target, 6)
+	if temporalType == mysql.TypeDate {
+		temporalFSP = 0
+	}
+
 	switch converted.converted {
 	case schema.ConvertedTypes.Uint64,
 		schema.ConvertedTypes.Uint32, schema.ConvertedTypes.Int32,
@@ -293,8 +340,7 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-			d.SetMysqlTime(mysqlTime)
+			setTemporalDatum(t, d, temporalType, temporalFSP)
 			return nil
 		}
 	case schema.ConvertedTypes.TimestampMillis:
@@ -304,8 +350,7 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-			d.SetMysqlTime(mysqlTime)
+			setTemporalDatum(t, d, temporalType, temporalFSP)
 			return nil
 		}
 	case schema.ConvertedTypes.TimestampMicros:
@@ -315,8 +360,7 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-			d.SetMysqlTime(mysqlTime)
+			setTemporalDatum(t, d, temporalType, temporalFSP)
 			return nil
 		}
 	case schema.ConvertedTypes.Decimal:
@@ -340,7 +384,14 @@ func newInt96(microseconds int64) parquet.Int96 {
 	return parquet.Int96(b)
 }
 
-func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustToUTC bool) {
+func setInt96Data(
+	val parquet.Int96,
+	d *types.Datum,
+	loc *time.Location,
+	adjustToUTC bool,
+	targetType byte,
+	targetFSP int,
+) {
 	// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 	// INT96 timestamp layout
 	// --------------------------
@@ -359,13 +410,18 @@ func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustT
 	if adjustToUTC {
 		t = t.In(loc)
 	}
-	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-	d.SetMysqlTime(mysqlTime)
+	setTemporalDatum(t, d, targetType, targetFSP)
 }
 
-func getInt96Setter(converted *convertedType, loc *time.Location) setter[parquet.Int96] {
+func getInt96Setter(converted *convertedType, loc *time.Location, target *model.ColumnInfo) setter[parquet.Int96] {
+	temporalType := temporalTargetType(target, mysql.TypeTimestamp)
+	temporalFSP := temporalTargetFSP(target, 6)
+	if temporalType == mysql.TypeDate {
+		temporalFSP = 0
+	}
+
 	return func(val parquet.Int96, d *types.Datum) error {
-		setInt96Data(val, d, loc, converted.IsAdjustedToUTC)
+		setInt96Data(val, d, loc, converted.IsAdjustedToUTC, temporalType, temporalFSP)
 		return nil
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -159,20 +160,26 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 	return it.setter(value, d)
 }
 
-func createColumnIterator(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) iterator {
+func createColumnIterator(
+	tp parquet.Type,
+	converted *convertedType,
+	loc *time.Location,
+	target *model.ColumnInfo,
+	batchSize int,
+) iterator {
 	switch tp {
 	case parquet.Types.Boolean:
 		return newColumnIterator[bool, *file.BooleanColumnChunkReader](batchSize, getBoolDataSetter)
 	case parquet.Types.Int32:
-		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(converted, loc))
+		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(converted, loc, target))
 	case parquet.Types.Int64:
-		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(converted, loc))
+		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(converted, loc, target))
 	case parquet.Types.Float:
 		return newColumnIterator[float32, *file.Float32ColumnChunkReader](batchSize, setFloat32Data)
 	case parquet.Types.Double:
 		return newColumnIterator[float64, *file.Float64ColumnChunkReader](batchSize, setFloat64Data)
 	case parquet.Types.Int96:
-		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(converted, loc))
+		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(converted, loc, target))
 	case parquet.Types.ByteArray:
 		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(converted))
 	case parquet.Types.FixedLenByteArray:
@@ -203,13 +210,17 @@ type rowGroupParser struct {
 }
 
 // init creates column iterators for each column.
-func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location) error {
+func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location, targets []*model.ColumnInfo) error {
 	meta := rgp.readers[0].MetaData()
 	numCols := meta.Schema.NumColumns()
 	rgp.iterators = make([]iterator, numCols)
 	for col := range numCols {
 		tp := meta.Schema.Column(col).PhysicalType()
-		iter := createColumnIterator(tp, &colTypes[col], loc, readBatchSize)
+		var target *model.ColumnInfo
+		if col < len(targets) {
+			target = targets[col]
+		}
+		iter := createColumnIterator(tp, &colTypes[col], loc, target, readBatchSize)
 		if iter == nil {
 			return errors.Errorf("unsupported parquet type %s", tp.String())
 		}
@@ -265,6 +276,8 @@ type ParquetParser struct {
 	fileMeta *metadata.FileMetaData
 	colTypes []convertedType
 	colNames []string
+
+	targetCols []*model.ColumnInfo
 
 	ctx   context.Context
 	store storeapi.Storage
@@ -353,7 +366,7 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 		rowGroup: pp.curRowGroup,
 		readers:  readers,
 	}
-	if err := rgp.init(pp.colTypes, pp.loc); err != nil {
+	if err := rgp.init(pp.colTypes, pp.loc, pp.targetCols); err != nil {
 		return errors.Trace(err)
 	}
 	pp.rowGroup = rgp
@@ -549,6 +562,7 @@ func NewParquetParser(
 	r storeapi.ReadSeekCloser,
 	path string,
 	meta ParquetFileMeta,
+	targetColumns []*model.ColumnInfo,
 ) (*ParquetParser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
 	wrapper := &parquetWrapper{ReadSeekCloser: r}
@@ -581,13 +595,15 @@ func NewParquetParser(
 		fileMeta: fileMeta,
 		colTypes: colTypes,
 		colNames: colNames,
-		ctx:      ctx,
-		store:    store,
-		path:     path,
-		prop:     prop,
-		alloc:    allocator,
-		logger:   logger,
-		rowPool:  &pool,
+
+		targetCols: targetColumns,
+		ctx:        ctx,
+		store:      store,
+		path:       path,
+		prop:       prop,
+		alloc:      allocator,
+		logger:     logger,
+		rowPool:    &pool,
 	}
 	if err := parser.Init(meta.Loc); err != nil {
 		return nil, errors.Trace(err)
@@ -611,7 +627,7 @@ func SampleStatisticsFromParquet(
 		return 0, 0, err
 	}
 
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
+	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{}, nil)
 	if err != nil {
 		return 0, 0, err
 	}
