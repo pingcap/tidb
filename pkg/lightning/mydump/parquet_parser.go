@@ -396,17 +396,20 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
 		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		return func(c int) (readerAtSeekerCloser, error) {
 			return &inMemoryParquetWrapper{
 				base:     base,
 				pos:      ranges.columnStarts[c],
 				fileSize: pp.fileMeta.GetSourceFileSize(),
-			}, err
+			}, nil
 		}, nil
 	}
 
@@ -496,13 +499,15 @@ func (pp *ParquetParser) Close() error {
 		}
 	}()
 
+	var onceErr common.OnceError
 	if pp.rowGroup != nil {
 		if err := pp.rowGroup.Close(); err != nil {
+			onceErr.Set(err)
 			pp.logger.Warn("Close parquet parser get error", zap.Error(err))
 		}
 		pp.rowGroup = nil
 	}
-	return nil
+	return onceErr.Get()
 }
 
 // ReadRow reads a row in the parquet file by the parser.

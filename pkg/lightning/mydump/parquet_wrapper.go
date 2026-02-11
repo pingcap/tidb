@@ -246,7 +246,10 @@ func rowGroupRangeFromMeta(fileMeta *metadata.FileMetaData, idx int) (rowGroupRa
 	rg := fileMeta.RowGroup(idx)
 	ranges := rowGroupRange{start: math.MaxInt64}
 	for i := range rg.NumColumns() {
-		col, _ := rg.ColumnChunk(i)
+		col, err := rg.ColumnChunk(i)
+		if err != nil {
+			return ranges, fmt.Errorf("cannot get column chunk %d metadata: %v", i, err)
+		}
 		colStart := col.DataPageOffset()
 		if col.HasDictionaryPage() && col.DictionaryPageOffset() > 0 {
 			colStart = min(colStart, col.DictionaryPageOffset())
