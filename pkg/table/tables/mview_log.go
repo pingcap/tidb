@@ -24,12 +24,11 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-// MLogDMLType indicates which SQL statement is mutating the base table, used to decide the
-// `_MLOG$_DML_TYPE` value written into the materialized view log (MLog) table.
+// MLogDMLType indicates the logical row change kind written to `_MLOG$_DML_TYPE` in mlog.
 //
-// Note: `INSERT ... ON DUPLICATE KEY UPDATE` is built as an Insert statement, but its internal
-// update path calls `table.Table.UpdateRecord` (and/or `RemoveRecord` + `AddRecord` with
-// `table.IsUpdate`). The wrapper handles it specially and emits `U` instead of `I`.
+// For INSERT-typed statements (`INSERT`, `REPLACE`, `LOAD DATA`), the wrapper emits `I` by
+// default and upgrades to `U` when the write path includes old-row removal before insertion
+// (for example conflict resolution in REPLACE / LOAD DATA REPLACE, or IODKU handle-changed path).
 type MLogDMLType string
 
 const (
@@ -39,10 +38,6 @@ const (
 	MLogDMLTypeUpdate MLogDMLType = "U"
 	// MLogDMLTypeDelete writes DML type "D".
 	MLogDMLTypeDelete MLogDMLType = "D"
-	// MLogDMLTypeReplace writes DML type "R".
-	MLogDMLTypeReplace MLogDMLType = "R"
-	// MLogDMLTypeLoadData writes DML type "L".
-	MLogDMLTypeLoadData MLogDMLType = "L"
 )
 
 const (
@@ -150,6 +145,9 @@ type mlogTable struct {
 
 	// Base table column offsets recorded in mlog (user-specified columns).
 	trackedBaseOffsets []int
+	// removedConflict marks that RemoveRecord happened under INSERT-typed statement.
+	// The next AddRecord should be classified as logical update (`U`) rather than insert (`I`).
+	removedConflict bool
 }
 
 // AddRecord implements table.Table.
@@ -164,13 +162,21 @@ func (t *mlogTable) AddRecord(
 	r []types.Datum,
 	opts ...table.AddRecordOption,
 ) (recordID kv.Handle, err error) {
+	opt := table.NewAddRecordOpt(opts...)
+
+	// Consume the one-shot marker up front to avoid leaking it on AddRecord failure.
+	hadRemovedConflict := false
+	if t.tp == MLogDMLTypeInsert {
+		hadRemovedConflict = t.removedConflict
+		t.removedConflict = false
+	}
+
 	recordID, err = t.Table.AddRecord(ctx, txn, r, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	opt := table.NewAddRecordOpt(opts...)
-	dmlType := t.addRecordDMLType(opt)
+	dmlType := t.addRecordDMLType(opt, hadRemovedConflict)
 	mlogOpts := []table.AddRecordOption{
 		table.DupKeyCheckSkip,
 		opt.PessimisticLazyDupKeyCheck(),
@@ -233,6 +239,9 @@ func (t *mlogTable) RemoveRecord(
 	}
 
 	dmlType := t.removeRecordDMLType()
+	if t.tp == MLogDMLTypeInsert {
+		t.removedConflict = true
+	}
 	return t.writeMLogRow(ctx, txn, r, dmlType, mlogOldRowMarker, table.DupKeyCheckSkip)
 }
 
@@ -256,8 +265,8 @@ func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
 	return false
 }
 
-func (t *mlogTable) addRecordDMLType(opt *table.AddRecordOpt) MLogDMLType {
-	if t.tp == MLogDMLTypeInsert && opt.IsUpdate() {
+func (t *mlogTable) addRecordDMLType(opt *table.AddRecordOpt, hadRemovedConflict bool) MLogDMLType {
+	if t.tp == MLogDMLTypeInsert && (opt.IsUpdate() || hadRemovedConflict) {
 		return MLogDMLTypeUpdate
 	}
 	return t.tp
@@ -268,7 +277,7 @@ func (t *mlogTable) updateRecordDMLType() MLogDMLType {
 	if t.tp == MLogDMLTypeInsert {
 		return MLogDMLTypeUpdate
 	}
-	// For normal UPDATE, use "U". For other statements, fallback to statement kind.
+	// Normal UPDATE uses "U".
 	if t.tp == MLogDMLTypeUpdate {
 		return MLogDMLTypeUpdate
 	}
@@ -276,12 +285,12 @@ func (t *mlogTable) updateRecordDMLType() MLogDMLType {
 }
 
 func (t *mlogTable) removeRecordDMLType() MLogDMLType {
-	// RemoveRecord called in INSERT statement is expected to be the "handle changed" update path,
-	// for example `INSERT ... ON DUPLICATE KEY UPDATE pk = ...`.
+	// RemoveRecord called under INSERT-typed statement covers REPLACE/LOAD DATA conflict
+	// removal and IODKU handle-changed update path.
 	if t.tp == MLogDMLTypeInsert {
 		return MLogDMLTypeUpdate
 	}
-	// Delete/Replace/LoadData/Update follow the statement kind.
+	// DELETE and UPDATE follow the statement kind.
 	return t.tp
 }
 

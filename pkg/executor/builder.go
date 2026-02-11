@@ -1009,11 +1009,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	baseExec := exec.NewBaseExecutor(b.ctx, nil, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
-	mlogDMLType := tables.MLogDMLTypeInsert
-	if v.IsReplace {
-		mlogDMLType = tables.MLogDMLTypeReplace
-	}
-	insertTable := b.wrapTableWithMLogIfExists(v.Table, mlogDMLType)
+	insertTable := b.wrapTableWithMLogIfExists(v.Table, tables.MLogDMLTypeInsert)
 	if b.err != nil {
 		return nil
 	}
@@ -1098,7 +1094,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
 		return nil
 	}
-	tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogDMLTypeLoadData)
+	tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogDMLTypeInsert)
 	if b.err != nil {
 		return nil
 	}

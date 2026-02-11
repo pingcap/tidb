@@ -46,9 +46,9 @@ func TestMLogWriteReplacePKAndUKConflict(t *testing.T) {
 	tk.MustQuery(
 		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Sort().Check(testkit.Rows(
-		"1 10 100 R -1",
-		"1 20 999 R 1",
-		"2 20 200 R -1",
+		"1 10 100 U -1",
+		"1 20 999 U 1",
+		"2 20 200 U -1",
 	))
 }
 
@@ -126,7 +126,7 @@ func TestMLogWriteLoadDataIgnore(t *testing.T) {
 	tk.MustQuery(
 		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Check(testkit.Rows(
-		"3 30 333 L 1",
+		"3 30 333 I 1",
 	))
 }
 
@@ -150,9 +150,9 @@ func TestMLogWriteLoadDataReplacePKAndUKConflict(t *testing.T) {
 	tk.MustQuery(
 		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Sort().Check(testkit.Rows(
-		"1 10 100 L -1",
-		"1 20 999 L 1",
-		"2 20 200 L -1",
+		"1 10 100 U -1",
+		"1 20 999 U 1",
+		"2 20 200 U -1",
 	))
 }
 
@@ -564,5 +564,38 @@ func TestMLogWriteAutoIncrement(t *testing.T) {
 		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
 	).Check(testkit.Rows(
 		"1 10 D -1",
+	))
+}
+
+func TestMLogWriteLoadDataReplaceConflictAddFailureNoLeak(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int unique, c int, constraint chk_c check (c > 0))")
+	tk.MustExec("insert into t values (1,10,1), (2,20,1)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+
+	data := "1,20,-1\n3,30,1\n"
+	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (r io.ReadCloser, err error) {
+		return mydump.NewStringReader(data), nil
+	}
+	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+
+	// First row removes old rows due to REPLACE conflicts but add fails with check constraint.
+	// The second row is a plain insert and must still be marked as I (not leaked U).
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' replace into table t fields terminated by ',' (a, b, c)")
+
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("3 30 1"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 1 U -1",
+		"2 20 1 U -1",
+		"3 30 1 I 1",
 	))
 }
