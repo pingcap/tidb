@@ -246,11 +246,6 @@ func (t *mlogTable) RemoveRecord(
 func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
 	// shouldLogUpdate is only called from UpdateRecord — the handle-unchanged update path.
 	// The handle-changed path (RemoveRecord + AddRecord) always logs unconditionally;
-	//
-	// Note: `touched` is built from executor's column mapping. It can be shorter than the
-	// column offsets recorded in `trackedBaseOffsets` (e.g. column pruning or DDL intermediate
-	// states). In that case we cannot reliably decide whether tracked columns changed. To avoid
-	// missing logs, fall back to logging conservatively.
 	for _, offset := range t.trackedBaseOffsets {
 		if offset < 0 || offset >= len(touched) {
 			return true
