@@ -109,6 +109,8 @@ func testQ3(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, cal
 		tk.MustExec("begin;")
 		tk.MustExec("set @@session.tidb_isolation_read_engines=\"tidb,tiflash\"")
 	}
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 
