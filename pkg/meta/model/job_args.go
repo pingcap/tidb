@@ -1616,6 +1616,8 @@ func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
 
 	if err := job.decodeArgs(
 		&indexName, &indexPartSpecifications, &indexOption); err != nil {
+		// Backward compatibility: older jobs persisted a single index part spec instead
+		// of a slice.
 		if err = job.decodeArgs(
 			&indexName, &indexPartSpecification, &indexOption); err != nil {
 			return errors.Trace(err)
@@ -1641,6 +1643,8 @@ func (a *ModifyIndexArgs) decodeAddHybridIndexV1(job *Job) error {
 
 	if err := job.decodeArgs(
 		&indexName, &indexPartSpecifications, &indexOption); err != nil {
+		// Backward compatibility: older jobs persisted a single index part spec instead
+		// of a slice.
 		if err = job.decodeArgs(
 			&indexName, &indexPartSpecification, &indexOption); err != nil {
 			return errors.Trace(err)

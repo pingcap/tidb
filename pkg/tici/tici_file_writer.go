@@ -17,11 +17,14 @@ package tici
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
+	fmt "fmt"
 	"net/url"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -99,6 +102,24 @@ func (w *FileWriter) URI() (string, error) {
 
 // WriteRow writes a key-value pair to the S3 file.
 func (w *FileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+	failpoint.Inject("MockTiCIWriteRowLogOnly", func(val failpoint.Value) {
+		logEnabled := true
+		if v, ok := val.(bool); ok {
+			logEnabled = v
+		}
+		if logEnabled {
+			w.logger.Info("MockTiCIWriteRowLogOnly failpoint triggered",
+				zap.Int("keyLength", len(idxKey)),
+				zap.Int("valueLength", len(idxVal)),
+				zap.String("key_hex", hex.EncodeToString(idxKey)),
+				zap.String("value_hex", hex.EncodeToString(idxVal)),
+				zap.String("value_q", fmt.Sprintf("%q", idxVal)),
+			)
+		}
+		w.totalCnt++
+		w.totalSize += uint64(len(idxKey) + len(idxVal))
+		failpoint.Return(nil)
+	})
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if buf == nil {
@@ -154,6 +175,21 @@ func (w *FileWriter) WriteHeader(
 	tblInBytes []byte,
 	commitTS uint64,
 ) error {
+	failpoint.Inject("MockTiCIWriteHeaderLogOnly", func(val failpoint.Value) {
+		logEnabled := true
+		if v, ok := val.(bool); ok {
+			logEnabled = v
+		}
+		if logEnabled {
+			w.logger.Info("MockTiCIWriteHeaderLogOnly failpoint triggered",
+				zap.Uint8("formatVersion", ticiFileFormatVersion),
+				zap.Int("tableInfoLength", len(tblInBytes)),
+				zap.Uint64("commitTS", commitTS),
+				zap.ByteString("tableInfo", tblInBytes))
+		}
+		w.headerWritten = true
+		failpoint.Return(nil)
+	})
 	if w.headerWritten {
 		return errors.New("TICIFileWriter header already written")
 	}

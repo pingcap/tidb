@@ -93,6 +93,11 @@ type LocalWriterConfig struct {
 type EngineConfig struct {
 	// TableInfo is the corresponding tidb table info
 	TableInfo *checkpoints.TidbTableInfo
+	// TiCIWriteEnabled indicates whether this engine should write TiCI data.
+	TiCIWriteEnabled bool
+	// TiCIHeaderCommitTS overrides the commit ts used for TiCI header.
+	// When it is 0, TiCI header uses the ingest data TS.
+	TiCIHeaderCommitTS uint64
 	// local backend specified configuration
 	Local LocalEngineConfig
 	// local backend external engine specified configuration
@@ -210,7 +215,7 @@ type Backend interface {
 	// ImportEngine imports engine data to the backend. If it returns ErrDuplicateDetected,
 	// it means there is duplicate detected. For this situation, all data in the engine must be imported.
 	// It's safe to reset or cleanup this engine.
-	ImportEngine(ctx context.Context, engineUUID uuid.UUID, engineID int32, regionSplitSize, regionSplitKeys int64) error
+	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error
 
 	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -400,7 +405,7 @@ func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionS
 
 	for i := range importMaxRetryTimes {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
-		err = engine.backend.ImportEngine(ctx, engine.uuid, engine.id, regionSplitSize, regionSplitKeys)
+		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				task.End(zap.WarnLevel, err)

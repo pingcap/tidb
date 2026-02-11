@@ -57,7 +57,8 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
 	tk.MustExec("insert into tp1 values (1, 0), (11, 0), (101, 0), (1001, 0);")
-	task, server := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false)
+	scanSnapshotTS := uint64(100)
+	task, server := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false, scanSnapshotTS)
 	require.Nil(t, server)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp1"))
 	require.NoError(t, err)
@@ -75,6 +76,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		var subTask ddl.BackfillSubTaskMeta
 		require.NoError(t, json.Unmarshal(metas[i], &subTask))
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
+		require.Equal(t, scanSnapshotTS, subTask.ScanSnapshotTS)
 	}
 
 	// 1.2 test partition table OnNextSubtasksBatch after BackfillStepReadIndex
@@ -92,7 +94,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	/// 2. test non partition table.
 	// 2.1 empty table
 	tk.MustExec("create table t1(id int primary key, v int)")
-	task, server = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
+	task, server = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false, scanSnapshotTS)
 	require.Nil(t, server)
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
 	require.NoError(t, err)
@@ -103,7 +105,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
-	task, server = createAddIndexTask(t, dom, "test", "t2", proto.Backfill, false)
+	task, server = createAddIndexTask(t, dom, "test", "t2", proto.Backfill, false, scanSnapshotTS)
 	require.Nil(t, server)
 	// 2.2.1 stepInit
 	task.Step = sch.GetNextStep(&task.TaskBase)
@@ -111,6 +113,9 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
+	var subTask ddl.BackfillSubTaskMeta
+	require.NoError(t, json.Unmarshal(metas[0], &subTask))
+	require.Equal(t, scanSnapshotTS, subTask.ScanSnapshotTS)
 	// 2.2.2 BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(&task.TaskBase)
@@ -164,7 +169,8 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
-	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
+	scanSnapshotTS := uint64(200)
+	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true, scanSnapshotTS)
 	require.NotNil(t, server)
 
 	sch := schManager.MockScheduler(task)
@@ -182,6 +188,9 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
+	var subTask ddl.BackfillSubTaskMeta
+	require.NoError(t, json.Unmarshal(subtaskMetas[0], &subTask))
+	require.Equal(t, scanSnapshotTS, subTask.ScanSnapshotTS)
 	nextStep := ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepReadIndex, nextStep)
 	// update task/subtask, and finish subtask, so we can go to next stage
@@ -223,6 +232,8 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
+	require.NoError(t, json.Unmarshal(subtaskMetas[0], &subTask))
+	require.Equal(t, scanSnapshotTS, subTask.ScanSnapshotTS)
 	nextStep = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepMergeSort, nextStep)
 
@@ -308,7 +319,8 @@ func createAddIndexTask(t *testing.T,
 	dbName,
 	tblName string,
 	taskType proto.TaskType,
-	useGlobalSort bool) (*proto.Task, *fakestorage.Server) {
+	useGlobalSort bool,
+	scanSnapshotTS uint64) (*proto.Task, *fakestorage.Server) {
 	var (
 		gcsHost = "127.0.0.1"
 		gcsPort = uint16(4447)
@@ -340,8 +352,9 @@ func createAddIndexTask(t *testing.T,
 			},
 			Version: model.JobVersion2,
 		},
-		EleIDs:     []int64{10},
-		EleTypeKey: meta.IndexElementKey,
+		EleIDs:         []int64{10},
+		EleTypeKey:     meta.IndexElementKey,
+		ScanSnapshotTS: scanSnapshotTS,
 	}
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{

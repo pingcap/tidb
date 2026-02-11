@@ -82,6 +82,7 @@ go_library(
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/config/kerneltype",
+        "//pkg/distsql",
         "//pkg/domain",
         "//pkg/errctx",
         "//pkg/executor/join/joinversion",

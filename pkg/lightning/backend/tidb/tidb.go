@@ -713,7 +713,7 @@ func (*tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (*tidbBackend) ImportEngine(context.Context, uuid.UUID, int32, int64, int64) error {
+func (*tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error {
 	return nil
 }
 

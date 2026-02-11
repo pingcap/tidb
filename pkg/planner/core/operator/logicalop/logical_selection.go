@@ -126,7 +126,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	child := p.Children()[0]
-	parentUsedCols = append(parentUsedCols, expression.ExtractColumnsFromExpressions(p.Conditions, nil)...)
+	parentUsedCols = append(parentUsedCols, expression.ExtractColumnsFromExpressions(p.Conditions, nil, false)...)
 	var err error
 	p.Children()[0], err = child.PruneColumns(parentUsedCols)
 	if err != nil {

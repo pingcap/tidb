@@ -136,6 +136,7 @@ go_test(
         "main_test.go",
         "rate_limiter_test.go",
         "region_job_test.go",
+        "tici_writegroup_test.go",
     ],
     embed = [":local"],
     flaky = True,
@@ -175,6 +176,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
+        "//pkg/tici",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/codec",
@@ -213,5 +215,7 @@ go_test(
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

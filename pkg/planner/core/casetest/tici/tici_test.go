@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -29,13 +30,16 @@ import (
 
 func TestTiCISearchExplain(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
 		require.NoError(t, err)
 	}()
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
-
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 
 	tiflash := infosync.NewMockTiFlash()
@@ -72,6 +76,22 @@ func TestTiCISearchExplain(t *testing.T) {
 		"sort": {
 			"columns": ["i", "ts", "d"],
 			"order": ["asc", "desc", "asc"]
+		},
+		"sharding_key": {
+			"columns": ["i", "ts"]
+		}
+	}'`)
+	tk.MustExec("create table t5(i bigint, ts timestamp(5), d datetime(3), t text, primary key(i))")
+	tk.MustExec(`create hybrid index idx1 on t5(ts, d, t) parameter '{
+		"inverted": {
+			"columns": ["ts", "d", "t"]
+		},
+		"sort": {
+			"columns": ["ts", "d"],
+			"order": ["asc", "desc"]
+		},
+		"sharding_key": {
+			"columns": ["ts"]
 		}
 	}'`)
 
@@ -96,13 +116,16 @@ func TestTiCISearchExplain(t *testing.T) {
 
 func TestTiCIWithIndexHintCases(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
 		require.NoError(t, err)
 	}()
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
-
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 
 	tiflash := infosync.NewMockTiFlash()
@@ -127,6 +150,9 @@ func TestTiCIWithIndexHintCases(t *testing.T) {
 		"sort": {
 			"columns": ["i", "ts", "d"],
 			"order": ["asc", "desc", "asc"]
+		},
+		"sharding_key": {
+			"columns": ["i", "ts"]
 		}
 	}'`)
 	dom := domain.GetDomain(tk.Session())
@@ -151,13 +177,71 @@ func TestTiCIWithIndexHintCases(t *testing.T) {
 	}
 }
 
-func TestTiCIWithDirtyWrites(t *testing.T) {
+func TestTiCIMatchAgainstValidation(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
 		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
 	}()
 
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1(
+		id INT PRIMARY KEY, title TEXT, body TEXT, field1 int,
+		FULLTEXT INDEX idx_title (title),
+		index idx_field1 (field1)
+	)`)
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+
+	// Non-BOOLEAN MODE is rejected.
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t1 where match(title) against ('hello')",
+		"Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST",
+	)
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t1 where match(title) against ('hello' IN NATURAL LANGUAGE MODE)",
+		"Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST",
+	)
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t1 where match(title) against ('hello' WITH QUERY EXPANSION)",
+		"Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST",
+	)
+
+	// BOOLEAN MODE query limitations from RewriteMySQLMatchAgainstRecursively.
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t1 where match(title) against ('hello world' IN BOOLEAN MODE)",
+		"TiDB only supports multiple terms with +/- modifiers",
+	)
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t1 where match(title) against ('+hello world' IN BOOLEAN MODE)",
+		"TiDB only supports multiple terms with +/- modifiers",
+	)
+}
+
+func TestTiCIWithDirtyWrites(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
+	}()
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
 
 	tk := testkit.NewTestKit(t, store)

@@ -95,23 +95,25 @@ type CheckpointOperator interface {
 
 // litBackendCtx implements BackendCtx.
 type litBackendCtx struct {
-	engines map[int64]*engineInfo
-	memRoot MemRoot
-	jobID   int64
-	tbl     table.Table
+	engines    map[int64]*engineInfo
+	memRoot    MemRoot
+	jobID      int64
+	tbl        table.Table
+	schemaName string
 	// litBackendCtx doesn't manage the lifecycle of backend, caller should do it.
 	backend *local.Backend
 	ctx     context.Context
 	cfg     *local.BackendConfig
 	sysVars map[string]string
 
-	flushing        atomic.Bool
-	timeOfLastFlush atomicutil.Time
-	updateInterval  time.Duration
-	checkpointMgr   CheckpointOperator
-	etcdClient      *clientv3.Client
-	initTS          uint64
-	importTS        uint64
+	flushing                   atomic.Bool
+	timeOfLastFlush            atomicutil.Time
+	updateInterval             time.Duration
+	checkpointMgr              CheckpointOperator
+	etcdClient                 *clientv3.Client
+	initTS                     uint64
+	importTS                   uint64
+	ticiWriterGroupInitialized bool
 
 	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.

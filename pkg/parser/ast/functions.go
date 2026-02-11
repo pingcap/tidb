@@ -362,8 +362,10 @@ const (
 	VecAsText               = "vec_as_text"
 
 	// FTS functions (tidb extension)
-	FTSMatchWord   = "fts_match_word"
-	FTSMatchPrefix = "fts_match_prefix"
+	FTSMatchWord         = "fts_match_word"
+	FTSMatchPrefix       = "fts_match_prefix"
+	FTSMatchPhrase       = "fts_match_phrase"
+	FTSMysqlMatchAgainst = "match_against"
 
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"

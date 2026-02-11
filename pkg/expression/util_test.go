@@ -532,6 +532,186 @@ func BenchmarkExprFromSchema(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func TestRewriteMySQLMatchAgainst(t *testing.T) {
+	ctx := mock.NewContext()
+	titleCol := &Column{
+		RetType:  types.NewFieldType(mysql.TypeString),
+		OrigName: "title",
+	}
+	bodyCol := &Column{
+		RetType:  types.NewFieldType(mysql.TypeString),
+		OrigName: "body",
+	}
+
+	buildMatchAgainstWithCols := func(pattern string, cols ...*Column) *ScalarFunction {
+		args := make([]Expression, 0, 1+len(cols))
+		args = append(args,
+			&Constant{
+				Value:   types.NewStringDatum(pattern),
+				RetType: types.NewFieldType(mysql.TypeString),
+			},
+		)
+		for _, col := range cols {
+			args = append(args, col)
+		}
+		expr, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), args...)
+		require.NoError(t, err)
+
+		sf, ok := expr.(*ScalarFunction)
+		require.True(t, ok)
+		require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+		return sf
+	}
+	buildMatchAgainst := func(pattern string) *ScalarFunction {
+		return buildMatchAgainstWithCols(pattern, titleCol)
+	}
+
+	type ftsLeaf struct {
+		funcName string
+		query    string
+		underNot bool
+	}
+	collectFTSLeaves := func(expr Expression) []ftsLeaf {
+		var leaves []ftsLeaf
+		var visit func(Expression, bool)
+		visit = func(e Expression, underNot bool) {
+			sf, ok := e.(*ScalarFunction)
+			if !ok {
+				return
+			}
+			switch sf.FuncName.L {
+			case ast.UnaryNot:
+				if len(sf.GetArgs()) > 0 {
+					visit(sf.GetArgs()[0], !underNot)
+				}
+				return
+			case ast.IsTruthWithNull, ast.IsTruthWithoutNull:
+				if len(sf.GetArgs()) > 0 {
+					visit(sf.GetArgs()[0], underNot)
+				}
+				return
+			}
+			switch sf.FuncName.L {
+			case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
+				leaf := ftsLeaf{funcName: sf.FuncName.L, underNot: underNot}
+				if len(sf.GetArgs()) > 0 {
+					if c, ok := sf.GetArgs()[0].(*Constant); ok {
+						leaf.query = c.Value.GetString()
+					}
+				}
+				leaves = append(leaves, leaf)
+				return
+			}
+			for _, arg := range sf.GetArgs() {
+				visit(arg, underNot)
+			}
+		}
+		visit(expr, false)
+		return leaves
+	}
+	assertFTSLeafArgCols := func(expr Expression, colCount int) {
+		var visit func(Expression)
+		visit = func(e Expression) {
+			sf, ok := e.(*ScalarFunction)
+			if !ok {
+				return
+			}
+			switch sf.FuncName.L {
+			case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
+				require.Len(t, sf.GetArgs(), colCount+1)
+				for i := 1; i < len(sf.GetArgs()); i++ {
+					_, ok := sf.GetArgs()[i].(*Column)
+					require.True(t, ok)
+				}
+				return
+			}
+			for _, arg := range sf.GetArgs() {
+				visit(arg)
+			}
+		}
+		visit(expr)
+	}
+
+	hasMySQLMatchAgainst := func(expr Expression) bool {
+		var found bool
+		var visit func(Expression)
+		visit = func(e Expression) {
+			if found {
+				return
+			}
+			sf, ok := e.(*ScalarFunction)
+			if !ok {
+				return
+			}
+			if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
+				found = true
+				return
+			}
+			for _, arg := range sf.GetArgs() {
+				visit(arg)
+			}
+		}
+		visit(expr)
+		return found
+	}
+
+	matchAgainst := buildMatchAgainst("hello")
+	require.True(t, ContainsFullTextSearchFn(matchAgainst))
+
+	expr, err := RewriteMySQLMatchAgainst(ctx, matchAgainst)
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchWord, query: "hello"},
+	}, collectFTSLeaves(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("hello*"))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchPrefix, query: "hello"},
+	}, collectFTSLeaves(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("\"hello world\""))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchPhrase, query: "hello world"},
+	}, collectFTSLeaves(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("+apple -banana"))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchWord, query: "apple"},
+		{funcName: ast.FTSMatchWord, query: "banana", underNot: true},
+	}, collectFTSLeaves(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainstWithCols("apple", titleCol, bodyCol))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchWord, query: "apple"},
+	}, collectFTSLeaves(expr))
+	assertFTSLeafArgCols(expr, 2)
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("-banana"))
+	require.NoError(t, err)
+	c, ok := expr.(*Constant)
+	require.True(t, ok)
+	require.Equal(t, int64(0), c.Value.GetInt64())
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("hello world"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "TiDB only supports multiple terms with +/- modifiers")
+	require.True(t, hasMySQLMatchAgainst(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("+hello world"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "TiDB only supports multiple terms with +/- modifiers")
+	require.True(t, hasMySQLMatchAgainst(expr))
+}
+
 // MockExpr is mainly for test.
 type MockExpr struct {
 	err error

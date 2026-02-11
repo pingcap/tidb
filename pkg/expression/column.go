@@ -808,6 +808,44 @@ func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.I
 	return indexInfo2ColsImpl(colInfos, cols, index, false)
 }
 
+// TiCIIndexInfo2ShardCols gets the sharding columns for a TiCDC sharded index.
+// It's a special case for IndexInfo2PrefixCols.
+func TiCIIndexInfo2ShardCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo, pkInfo *model.IndexInfo) ([]*Column, []int) {
+	// Master branch has refactored IndexInfo2PrefixCols. So we copy its logic here first.
+	// When merging the two branches, we may consider to unify them.
+	if index.HybridInfo != nil && index.HybridInfo.Sharding != nil {
+		retCols := make([]*Column, 0, len(index.Columns))
+		lens := make([]int, 0, len(index.HybridInfo.Sharding.Columns))
+		for _, c := range index.HybridInfo.Sharding.Columns {
+			col := IndexCol2Col(colInfos, cols, c)
+			if col == nil {
+				return retCols, lens
+			}
+			retCols = append(retCols, col)
+			if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
+				lens = append(lens, types.UnspecifiedLength)
+			} else {
+				lens = append(lens, c.Length)
+			}
+		}
+		return retCols, lens
+	}
+	// Common Handle case.
+	if pkInfo != nil {
+		return IndexInfo2PrefixCols(colInfos, cols, pkInfo)
+	}
+	// Int Handle as PK case, i.e. TableInfo.PKIsHandle is true.
+	for _, colInfo := range colInfos {
+		if mysql.HasPriKeyFlag(colInfo.GetFlag()) {
+			col := ColInfo2Col(cols, colInfo)
+			if col != nil {
+				return []*Column{col}, []int{types.UnspecifiedLength}
+			}
+		}
+	}
+	return nil, nil
+}
+
 // FindPrefixOfIndex will find columns in index by checking the unique id.
 // So it will return at once no matching column is found.
 func FindPrefixOfIndex(cols []*Column, idxColIDs []int64) []*Column {

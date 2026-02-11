@@ -162,14 +162,7 @@ func TestFTSParser(t *testing.T) {
 	))
 	tk.MustExec("drop table tx")
 
-	tk.MustExec("create table tx (a TEXT, FULLTEXT (a) WITH PARSER multilingual)")
-	tk.MustQuery("show create table tx").Check(testkit.Rows(
-		"tx CREATE TABLE `tx` (\n" +
-			"  `a` text DEFAULT NULL,\n" +
-			"  FULLTEXT INDEX `a`(`a`) WITH PARSER MULTILINGUAL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	tk.MustExec("drop table tx")
+	tk.MustContainErrMsg("create table tx (a TEXT, FULLTEXT (a) WITH PARSER multilingual)", "Unsupported parser 'multilingual'")
 
 	tk.MustContainErrMsg("create table tx (a TEXT, FULLTEXT (a) WITH PARSER abc)", "Unsupported parser 'abc'")
 }
@@ -205,7 +198,7 @@ func TestFTSSyntax(t *testing.T) {
 	// tk.MustContainErrMsg("select * from t where (fts_match_word('hello', title)) > 0", "Currently 'FTS_MATCH_WORD()' must be used alone")
 	// tk.MustContainErrMsg("select (fts_match_word('hello', title)) AS score from t where fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields")
 	tk.MustContainErrMsg("select * from t where match() against ('hello')", `You have an error in your SQL syntax`)
-	tk.MustContainErrMsg("select * from t where match(title) against ('hello' in boolean mode)", `UnknownType: *ast.MatchAgainst`)
+	tk.MustContainErrMsg("select * from t where match(title) against ('hello' in boolean mode)", `cannot use 'MATCH ... AGAINST' outside of fulltext index`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(title, body)", `match against a non-constant string`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(45.67, body)", `match against a non-constant string`)
 	tk.MustContainErrMsg("select * from t where fts_match_word('hello', title, body)", `Incorrect parameter count in the call to native function`)
@@ -260,9 +253,7 @@ func TestFTSIndexSyntax(t *testing.T) {
 	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER ngram;")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`) WITH PARSER NGRAM\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t1 drop index FTSIdx")
-	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER 	MULTILINGUAL;")
-	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`) WITH PARSER MULTILINGUAL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("alter table t1 drop index FTSIdx")
+	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER 	MULTILINGUAL;", "Unsupported parser 'MULTILINGUAL'")
 	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER STANDARD;")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx2(title) WITH PARSER ngram;", "fulltext index 'FTSIdx' already exist on column title")

@@ -95,6 +95,7 @@ type DDLReorgMeta struct {
 	MaxNodeCount      int                              `json:"max_node_count"`
 	AnalyzeState      int8                             `json:"analyze_state"`
 	Stage             ReorgStage                       `json:"stage"`
+	TiCIIndexCreated  bool                             `json:"tici_index_created"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.

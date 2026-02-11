@@ -134,7 +134,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	}
 	selfUsedCols := make([]*expression.Column, 0, 5)
 	for _, aggrFunc := range la.AggFuncs {
-		selfUsedCols = append(selfUsedCols, expression.ExtractColumnsFromExpressions(aggrFunc.Args, nil)...)
+		selfUsedCols = append(selfUsedCols, expression.ExtractColumnsFromExpressions(aggrFunc.Args, nil, false)...)
 		var cols []*expression.Column
 		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems)
 		selfUsedCols = append(selfUsedCols, cols...)

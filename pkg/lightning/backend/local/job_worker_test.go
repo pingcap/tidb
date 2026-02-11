@@ -48,7 +48,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 			},
 			regenerateJobsFn: func(
 				ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
-				regionSplitSize, regionSplitKeys int64,
+				regionSplitSize, regionSplitKeys int64, ticiWriteEnabled bool, ticiHeaderCommitTS uint64,
 			) ([]*regionJob, error) {
 				return []*regionJob{
 					{}, {}, {},
@@ -301,4 +301,33 @@ func TestCloudRegionJobWorker(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ctrl.Satisfied())
 	})
+}
+
+func TestCloudRegionJobWorkerTiCIOnly(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockIngestCli := ingestclimock.NewMockClient(ctrl)
+
+	cloudW := &objStoreRegionJobWorker{
+		regionJobBaseWorker: &regionJobBaseWorker{},
+		ingestCli:           mockIngestCli,
+		writeBatchSize:      8,
+		bufPool:             nil,
+		ticiWriteGroup:      &mockTiCIWriteGroup{},
+	}
+	cloudW.regionJobBaseWorker.writeFn = cloudW.write
+	cloudW.regionJobBaseWorker.ingestFn = cloudW.ingest
+	cloudW.regionJobBaseWorker.preRunJobFn = cloudW.preRunJob
+
+	job := &regionJob{
+		keyRange:         engineapi.Range{Start: []byte("a"), End: []byte("z")},
+		stage:            regionScanned,
+		ingestData:       mockIngestData{{[]byte("a"), []byte("a")}},
+		ticiWriteEnabled: true,
+	}
+
+	writeRes, err := cloudW.write(context.Background(), job)
+	require.NoError(t, err)
+	require.True(t, writeRes.skipIngest)
+	require.True(t, ctrl.Satisfied())
 }
