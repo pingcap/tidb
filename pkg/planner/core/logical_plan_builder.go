@@ -6984,7 +6984,7 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 
 	if isRecursive {
 		origCtx := b.ctx
-		// Recursive CTE materializes rows into an internal worktable. In strict SQL mode, truncation should be an error
+		// Recursive CTE materializes rows into an internal work table. In strict SQL mode, truncation should be an error
 		// (INSERT semantics). Use a stricter ExprCtx while building the seed/recursive sub-plan to scope the behavior.
 		if b.ctx.GetSessionVars().SQLMode.HasStrictMode() {
 			b.ctx = planctx.WithTruncateErrLevel(origCtx, errctx.LevelError)

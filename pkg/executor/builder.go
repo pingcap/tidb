@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
@@ -5939,10 +5940,10 @@ func (b *executorBuilder) buildCTE(v *physicalop.PhysicalCTE) exec.Executor {
 		}
 		origCtx := b.ctx
 		buildSubPlan := b.build
-		// MySQL evaluates a recursive CTE by writing rows into an internal worktable, so truncation is handled like INSERT.
+		// MySQL evaluates a recursive CTE by writing rows into an internal work table, so truncation is handled like INSERT.
 		// In strict SQL mode, build the seed/recursive sub-plans with a strict ExprCtx only.
 		if v.RecurPlan != nil && origCtx.GetSessionVars().SQLMode.HasStrictMode() {
-			buildCtx := wrapSessionCtxForCTEStrictTruncateErr(origCtx)
+			buildCtx := sessionctx.WithTruncateErrLevel(origCtx, errctx.LevelError)
 			buildSubPlan = func(plan base.Plan) exec.Executor {
 				prevCtx := b.ctx
 				b.ctx = buildCtx
