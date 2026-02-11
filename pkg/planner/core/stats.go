@@ -201,7 +201,12 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 		} else {
 			ticiType = distsql.TiCIShardIntHandle
 			// Int Handle's range is a special one.
-			path.Ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(ds.TableInfo.GetPkColInfo().GetFlag()))
+			unsignedFlag := false
+			// We will not get the column for the _tidb_rowid case.
+			if intHandle := ds.TableInfo.GetPkColInfo(); intHandle != nil {
+				unsignedFlag = mysql.HasUnsignedFlag(intHandle.GetFlag())
+			}
+			path.Ranges = ranger.FullIntRange(unsignedFlag)
 		}
 		path.IdxCols, path.IdxColLens = expression.TiCIIndexInfo2ShardCols(ds.Columns, ds.Schema().Columns, path.Index, possiblePK)
 	} else {
