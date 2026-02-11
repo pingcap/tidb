@@ -81,7 +81,7 @@ func (*gbkChineseCICollator) Clone() Collator {
 // ImmutablePrefixKey implements Collator interface
 func (g *gbkChineseCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
 	truncatedStr := truncateTailingSpace(str)
-	return g.ImmutableKey(truncatedStr[:stringutil.GetCharsByteCount(truncatedStr, prefixCharCount)])
+	return g.ImmutableKey(truncatedStr[:min(stringutil.GetCharsByteCount(truncatedStr, prefixCharCount), len(truncatedStr))])
 }
 
 type gbkChineseCIPattern struct {

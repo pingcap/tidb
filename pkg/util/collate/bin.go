@@ -62,7 +62,8 @@ func (*binCollator) Clone() Collator {
 
 // ImmutablePrefixKey implements Collator interface
 func (*binCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	return hack.Slice(str)[:prefixCharCount]
+	bytes := hack.Slice(str)
+	return bytes[:min(prefixCharCount, len(bytes))]
 }
 
 type derivedBinCollator struct {
@@ -76,7 +77,8 @@ func (*derivedBinCollator) Pattern() WildcardPattern {
 
 // ImmutablePrefixKey implements Collator interface
 func (*derivedBinCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	return hack.Slice(str)[:stringutil.GetCharsByteCount(str, prefixCharCount)]
+	bytes := hack.Slice(str)
+	return bytes[:min(stringutil.GetCharsByteCount(str, prefixCharCount), len(bytes))]
 }
 
 type binPaddingCollator struct {
@@ -118,7 +120,8 @@ func (*binPaddingCollator) Clone() Collator {
 
 // ImmutablePrefixKey implements Collator interface
 func (*binPaddingCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	return hack.Slice(truncateTailingSpace(str))[:prefixCharCount]
+	bytes := hack.Slice(truncateTailingSpace(str))
+	return bytes[:min(prefixCharCount, len(bytes))]
 }
 
 type derivedBinPattern struct {
@@ -158,5 +161,6 @@ type utf8BinPaddingCollator struct {
 // ImmutablePrefixKey implements Collator interface
 func (*utf8BinPaddingCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
 	truncatedStr := truncateTailingSpace(str)
-	return hack.Slice(truncatedStr)[:stringutil.GetCharsByteCount(truncatedStr, prefixCharCount)]
+	bytes := hack.Slice(truncatedStr)
+	return bytes[:min(stringutil.GetCharsByteCount(truncatedStr, prefixCharCount), len(bytes))]
 }

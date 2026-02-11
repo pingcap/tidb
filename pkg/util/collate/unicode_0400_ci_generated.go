@@ -154,7 +154,7 @@ func (uc *unicodeCICollator) Pattern() WildcardPattern {
 
 // ImmutablePrefixKey implements Collator interface
 func (uc *unicodeCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	prefixStr := str[:stringutil.GetCharsByteCount(str, prefixCharCount)]
+	prefixStr := str[:min(stringutil.GetCharsByteCount(str, prefixCharCount), len(str))]
 	return uc.ImmutableKey(uc.impl.Preprocess(prefixStr))
 }
 

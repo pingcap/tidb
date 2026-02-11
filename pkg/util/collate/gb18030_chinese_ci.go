@@ -97,7 +97,7 @@ func (*gb18030ChineseCICollator) Pattern() WildcardPattern {
 // ImmutablePrefixKey implements Collator interface
 func (g *gb18030ChineseCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
 	truncatedStr := truncateTailingSpace(str)
-	return g.ImmutableKey(truncatedStr[:stringutil.GetCharsByteCount(truncatedStr, prefixCharCount)])
+	return g.ImmutableKey(truncatedStr[:min(stringutil.GetCharsByteCount(truncatedStr, prefixCharCount), len(truncatedStr))])
 }
 
 type gb18030ChineseCIPattern struct {
