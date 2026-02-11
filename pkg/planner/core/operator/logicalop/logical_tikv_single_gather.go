@@ -86,13 +86,15 @@ func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (*TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+func (sg *TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	if len(childrenProperties) == 0 || childrenProperties[0] == nil {
+		sg.hasTiflash = false
 		return &base.PossiblePropertiesInfo{}
 	}
+	sg.hasTiflash = childrenProperties[0].HasTiflash
 	return &base.PossiblePropertiesInfo{
 		Order:      childrenProperties[0].Order,
-		HasTiflash: childrenProperties[0].HasTiflash,
+		HasTiflash: sg.hasTiflash,
 	}
 }
 
