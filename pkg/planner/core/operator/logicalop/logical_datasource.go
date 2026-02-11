@@ -618,7 +618,7 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 		return nil
 	}
 	if hasFTSFunc && hasDirtyWrite {
-		return errors.Errorf("Fulltext search currently can not be used in transaction with uncommitted data.")
+		return errors.Errorf("Fulltext search currently can not be used in transaction with uncommitted data")
 	}
 	var matchedIdx *model.IndexInfo
 	tmpMatchedExprSet := intset.NewFastIntSet()
@@ -738,7 +738,6 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
-	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI Index currently doesn't accept plan cache.")
 
 	remainedFilters := make([]expression.Expression, len(ds.PushedDownConds))
 	copy(remainedFilters, ds.PushedDownConds)
