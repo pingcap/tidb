@@ -290,9 +290,9 @@ func TestGlobalIndexTruncateAndDropPartition(t *testing.T) {
 	)`)
 
 	// Insert data into all 3 partitions.
-	tk.MustExec("INSERT INTO tp_trunc VALUES (1, 10), (2, 20), (3, 30)")     // p0
-	tk.MustExec("INSERT INTO tp_trunc VALUES (101, 110), (102, 120)")         // p1
-	tk.MustExec("INSERT INTO tp_trunc VALUES (201, 210), (202, 220)")         // p2
+	tk.MustExec("INSERT INTO tp_trunc VALUES (1, 10), (2, 20), (3, 30)") // p0
+	tk.MustExec("INSERT INTO tp_trunc VALUES (101, 110), (102, 120)")    // p1
+	tk.MustExec("INSERT INTO tp_trunc VALUES (201, 210), (202, 220)")    // p2
 
 	// Create a V2 global index (default for non-unique non-clustered).
 	tk.MustExec("CREATE INDEX idx_b ON tp_trunc(b) GLOBAL")
@@ -328,10 +328,10 @@ func TestGlobalIndexTruncateAndDropPartition(t *testing.T) {
 		PARTITION pmax VALUES LESS THAN MAXVALUE
 	)`)
 
-	tk.MustExec("INSERT INTO tp_drop VALUES (1, 10), (2, 20), (3, 30)")   // p0
-	tk.MustExec("INSERT INTO tp_drop VALUES (101, 110), (102, 120)")       // p1
-	tk.MustExec("INSERT INTO tp_drop VALUES (201, 210)")                   // p2
-	tk.MustExec("INSERT INTO tp_drop VALUES (301, 310)")                   // pmax
+	tk.MustExec("INSERT INTO tp_drop VALUES (1, 10), (2, 20), (3, 30)") // p0
+	tk.MustExec("INSERT INTO tp_drop VALUES (101, 110), (102, 120)")    // p1
+	tk.MustExec("INSERT INTO tp_drop VALUES (201, 210)")                // p2
+	tk.MustExec("INSERT INTO tp_drop VALUES (301, 310)")                // pmax
 
 	tk.MustExec("CREATE INDEX idx_b ON tp_drop(b) GLOBAL")
 
@@ -368,7 +368,7 @@ func TestGlobalIndexTruncateAndDropPartition(t *testing.T) {
 	)`)
 
 	tk.MustExec(`CREATE TABLE t_plain (a INT, b INT, PRIMARY KEY (a) NONCLUSTERED)`)
-	tk.MustExec("INSERT INTO tp_exch VALUES (1, 10), (2, 20)")    // p0, rowid 1,2
+	tk.MustExec("INSERT INTO tp_exch VALUES (1, 10), (2, 20)")       // p0, rowid 1,2
 	tk.MustExec("INSERT INTO t_plain VALUES (101, 110), (102, 120)") // rowid 1,2
 
 	// Exchange: p1 gets t_plain's data (rowid 1,2 — same as p0's rowids!)
@@ -403,9 +403,9 @@ func TestGlobalIndexTruncateAndDropPartition(t *testing.T) {
 		PARTITION p2 VALUES LESS THAN (300)
 	)`)
 
-	tk.MustExec("INSERT INTO tp_reorg VALUES (1, 10), (50, 50)")       // p0
-	tk.MustExec("INSERT INTO tp_reorg VALUES (101, 110), (150, 150)")   // p1
-	tk.MustExec("INSERT INTO tp_reorg VALUES (201, 210)")               // p2
+	tk.MustExec("INSERT INTO tp_reorg VALUES (1, 10), (50, 50)")      // p0
+	tk.MustExec("INSERT INTO tp_reorg VALUES (101, 110), (150, 150)") // p1
+	tk.MustExec("INSERT INTO tp_reorg VALUES (201, 210)")             // p2
 
 	tk.MustExec("CREATE INDEX idx_b ON tp_reorg(b) GLOBAL")
 	tk.MustQuery("SELECT count(*) FROM tp_reorg USE INDEX(idx_b)").Check(testkit.Rows("5"))
@@ -436,7 +436,7 @@ func TestGlobalIndexTruncateAndDropPartition(t *testing.T) {
 
 	// Insert rows with NULL values in the unique column — should be allowed.
 	tk.MustExec("INSERT INTO tp_null VALUES (1, 10, NULL)")
-	tk.MustExec("INSERT INTO tp_null VALUES (101, 110, NULL)")  // Same NULL in different partition.
+	tk.MustExec("INSERT INTO tp_null VALUES (101, 110, NULL)") // Same NULL in different partition.
 	tk.MustExec("INSERT INTO tp_null VALUES (2, 20, 100)")
 	tk.MustExec("INSERT INTO tp_null VALUES (102, 120, 200)")
 
