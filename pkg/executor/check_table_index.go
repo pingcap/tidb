@@ -539,7 +539,7 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
-	bucketSize := int(CheckTableFastBucketSize.Load())
+	bucketSize := int(CheckTableFastBucketSize.Load()) * 10
 
 	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
 
@@ -871,16 +871,16 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		queue = queue[1:]
 
 		tblQuery, idxQuery := buildChecksumQueries(task, task.depth == 0)
-		logutil.BgLogger().Info(
-			"fast check table by group",
+		logger := logutil.BgLogger().With(
 			zap.String("table name", tblMeta.Name.String()),
 			zap.String("index name", idxInfo.Name.String()),
 			zap.Int("depth", task.depth),
 			zap.Int("current offset", task.offset),
 			zap.Int("current mod", task.mod),
-			zap.String("table sql", tblQuery),
-			zap.String("index sql", idxQuery),
+			zap.Int("bucket size", bucketSize),
 		)
+		logger.Info("fast check table by group",
+			zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
 
 		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
 		if err != nil {
@@ -911,6 +911,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		mismatches := compareChecksumBuckets(tableChecksum, indexChecksum)
 		if len(mismatches) == 0 {
 			continue
+		}
+		for _, mismatch := range mismatches {
+			logger.Info("found checksum mismatch bucket",
+				zap.Uint64("bucket", mismatch.bucket),
+				zap.Int64("count", mismatch.count))
 		}
 		// Fast path keeps original fail-fast behavior; collector mode keeps all mismatches.
 		if w.e.collector == nil {
@@ -974,6 +979,10 @@ type groupByChecksum struct {
 	bucket   uint64
 	checksum uint64
 	count    int64
+}
+
+func (c groupByChecksum) String() string {
+	return fmt.Sprintf("{bkt:%d,sum:%d,cnt:%d}", c.bucket, c.checksum, c.count)
 }
 
 func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {

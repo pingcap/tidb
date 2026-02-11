@@ -167,9 +167,19 @@ type DDLResignOwnerHandler struct {
 	store kv.Storage
 }
 
+// DDLCheckHandler is the handler for triggering admin check index.
+type DDLCheckHandler struct {
+	*handler.TikvHandlerTool
+}
+
 // NewDDLResignOwnerHandler creates a new DDLResignOwnerHandler.
 func NewDDLResignOwnerHandler(store kv.Storage) *DDLResignOwnerHandler {
 	return &DDLResignOwnerHandler{store}
+}
+
+// NewDDLCheckHandler creates a new DDLCheckHandler.
+func NewDDLCheckHandler(tool *handler.TikvHandlerTool) *DDLCheckHandler {
+	return &DDLCheckHandler{tool}
 }
 
 // ServerInfoHandler is the handler for getting statistics.
@@ -1184,6 +1194,83 @@ func (h DDLResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	}
 
 	handler.WriteData(w, "success!")
+}
+
+// ServeHTTP handles request of triggering admin check index.
+// This endpoint is used for online diagnosis and relies on fast check table mode.
+func (h DDLCheckHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	params := mux.Vars(req)
+	dbName := params[handler.DBName]
+	tableName := params[handler.TableName]
+	indexName := params[handler.IndexName]
+	if dbName == "" || tableName == "" || indexName == "" {
+		handler.WriteError(w, errors.Errorf("db, table and index are required"))
+		return
+	}
+
+	sctx, err := session.CreateSession(h.Store)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	defer sctx.Close()
+
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	quotedTableName := executor.TableName(dbName, tableName)
+	quotedIndexName := "`" + strings.ReplaceAll(indexName, "`", "``") + "`"
+	checkSQL := fmt.Sprintf("admin check index %s %s", quotedTableName, quotedIndexName)
+
+	rs, err := sctx.Execute(req.Context(), checkSQL)
+	rows, rowsErr := collectRecordSetRows(req.Context(), sctx, rs)
+	if rowsErr != nil {
+		handler.WriteError(w, rowsErr)
+		return
+	}
+
+	result := map[string]any{
+		"db":        dbName,
+		"table":     tableName,
+		"index":     indexName,
+		"check_sql": checkSQL,
+	}
+	if len(rows) > 0 {
+		result["rows"] = rows
+	}
+
+	if err != nil {
+		result["result"] = "failed"
+		result["error"] = err.Error()
+		handler.WriteData(w, result)
+		return
+	}
+
+	result["result"] = "success"
+	handler.WriteData(w, result)
+}
+
+func collectRecordSetRows(ctx context.Context, se sessionapi.Session, rss []sqlexec.RecordSet) ([][]string, error) {
+	rows := make([][]string, 0)
+	for _, one := range rss {
+		if one == nil {
+			continue
+		}
+		sRows, err := session.ResultSetToStringSlice(ctx, se, one)
+		if err != nil {
+			terror.Call(one.Close)
+			return nil, err
+		}
+		rows = append(rows, sRows...)
+	}
+	return rows, nil
 }
 
 func (h AdminCheckIndexHandler) checkIndexByName(dbName, tableName, indexName string, limit int) (*executor.AdminCheckIndexInconsistentSummary, error) {
