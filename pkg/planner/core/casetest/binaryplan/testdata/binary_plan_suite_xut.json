@@ -296,7 +296,7 @@
         "SQL": "explain analyze format = 'binary' WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte",
         "BinaryPlan": {
           "main": {
-            "name": "CTEFullScan_23",
+            "name": "CTEFullScan_17",
             "cost": 0.8982000000000001,
             "est_rows": 1.8,
             "act_rows": 5,
@@ -312,7 +312,7 @@
                   "name": "Projection_11",
                   "children": [
                     {
-                      "name": "TableDual_13",
+                      "name": "TableDual_12",
                       "est_rows": 1,
                       "act_rows": 1,
                       "task_type": 1,
@@ -331,13 +331,13 @@
                   "operator_info": "1->Column#2"
                 },
                 {
-                  "name": "Projection_15",
+                  "name": "Projection_13",
                   "children": [
                     {
-                      "name": "Selection_17",
+                      "name": "Selection_14",
                       "children": [
                         {
-                          "name": "CTETable_18",
+                          "name": "CTETable_15",
                           "est_rows": 1,
                           "act_rows": 5,
                           "task_type": 1,
