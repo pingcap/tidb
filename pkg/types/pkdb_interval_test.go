@@ -31,7 +31,7 @@ func TestConvertToIntervalYearToMonthInt(t *testing.T) {
 
 	ctx := NewContext(StrictFlags, time.UTC, contextutil.NewStaticWarnHandler(0))
 	ft := NewFieldType(mysql.TypeLong)
-	ft.SetFlen(3 + 4)
+	ft.SetFlen(7)
 	ft.SetSubType(mysql.SubTypeIntervalYearToMonth)
 
 	d := NewStringDatum("2-11")
@@ -57,7 +57,7 @@ func TestConvertToIntervalDayToSecondInt(t *testing.T) {
 
 	ctx := NewContext(StrictFlags, time.UTC, contextutil.NewStaticWarnHandler(0))
 	ft := NewFieldType(mysql.TypeLong)
-	ft.SetFlen(3 + 10)
+	ft.SetFlen(9)
 	ft.SetSubType(mysql.SubTypeIntervalDayToSecond)
 
 	d := NewStringDatum("2 03:04:05")

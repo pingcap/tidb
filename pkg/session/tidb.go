@@ -402,12 +402,10 @@ func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.Rec
 				d := row.GetDatum(j, ft)
 				switch ft.GetSubType() {
 				case mysql.SubTypeIntervalYearToMonth:
-					out := tidbtypes.FormatIntervalYearToMonth(d.GetInt64())
-					iRow[j] = string(out)
+					iRow[j] = tidbtypes.FormatIntervalYearToMonth(d.GetInt64())
 					continue
 				case mysql.SubTypeIntervalDayToSecond:
-					out := tidbtypes.FormatIntervalDayToSecond(d.GetInt64())
-					iRow[j] = string(out)
+					iRow[j] = tidbtypes.FormatIntervalDayToSecond(d.GetInt64())
 					continue
 				default:
 					// fall through to base type output.

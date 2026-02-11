@@ -232,12 +232,10 @@ func (tk *AsyncTestKit) resultSetToResult(ctx context.Context, rs sqlexec.Record
 				d := row.GetDatum(j, ft)
 				switch ft.GetSubType() {
 				case mysql.SubTypeIntervalYearToMonth:
-					out := tidbtypes.FormatIntervalYearToMonth(d.GetInt64())
-					resultRow[j] = string(out)
+					resultRow[j] = tidbtypes.FormatIntervalYearToMonth(d.GetInt64())
 					continue
 				case mysql.SubTypeIntervalDayToSecond:
-					out := tidbtypes.FormatIntervalDayToSecond(d.GetInt64())
-					resultRow[j] = string(out)
+					resultRow[j] = tidbtypes.FormatIntervalDayToSecond(d.GetInt64())
 					continue
 				default:
 					// fall through to base type

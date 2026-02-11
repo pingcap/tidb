@@ -38,7 +38,7 @@ func ConvertIntervalStringToInt(s string, subType byte, flen int) (int64, error)
 	case mysql.SubTypeIntervalDayToSecond:
 		return convertIntervalDayToSecondStringToInt(s, flen)
 	default:
-		panic("unexpected subType: " + strconv.Itoa(int(subType)))
+		return 0, errors.New("unexpected subType: " + strconv.Itoa(int(subType)))
 	}
 }
 
