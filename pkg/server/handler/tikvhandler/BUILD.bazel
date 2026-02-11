@@ -63,11 +63,16 @@ go_library(
 go_test(
     name = "tikvhandler_test",
     timeout = "short",
-    srcs = ["dxf_test.go"],
+    srcs = [
+        "dxf_test.go",
+        "tikv_handler_test.go",
+    ],
     embed = [":tikvhandler"],
     flaky = True,
     deps = [
         "//pkg/disttask/framework/schstatus",
+        "//pkg/executor",
+        "//pkg/server/handler",
         "@com_github_stretchr_testify//require",
     ],
 )
