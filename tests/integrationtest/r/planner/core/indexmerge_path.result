@@ -1208,8 +1208,8 @@ explain format = brief select /*+ use_index_merge(t) */ * from t where a = 1 and
 id	estRows	task	access object	operator info
 IndexMerge	0.00	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:iab(b, a)	range:[2 1,2 1], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:iad(a, d)	range:[1 5,1 5], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:iac(c, a, d)	range:[3 1 4,3 1 4], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:iad(a, d)	range:[1 5,1 5], keep order:false, stats:pseudo
 └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), or(eq(planner__core__indexmerge_path.t.b, 2), or(and(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, 4)), eq(planner__core__indexmerge_path.t.d, 5)))
   └─TableRowIDScan	8.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
