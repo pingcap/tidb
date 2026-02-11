@@ -197,7 +197,7 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 			path.Ranges = ranger.FullRange()
 		} else if ds.TableInfo.IsCommonHandle {
 			ticiType = distsql.TiCIShardCommonHandle
-			path.Ranges = ranger.FullRange()
+			path.Ranges = ranger.FullNotNullRange()
 		} else {
 			ticiType = distsql.TiCIShardIntHandle
 			// Int Handle's range is a special one.
