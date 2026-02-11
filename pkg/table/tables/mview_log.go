@@ -242,7 +242,7 @@ func (t *mlogTable) RemoveRecord(
 
 func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
 	// shouldLogUpdate is only called from UpdateRecord — the handle-unchanged update path.
-	// The handle-changed path (RemoveRecord + AddRecord) always logs unconditionally;
+	// The handle-changed path (RemoveRecord + AddRecord) always logs unconditionally.
 	for _, offset := range t.trackedBaseOffsets {
 		if offset < 0 || offset >= len(touched) {
 			return true

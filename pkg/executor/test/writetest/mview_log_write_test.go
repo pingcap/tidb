@@ -703,6 +703,7 @@ func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {
 	))
 }
 
+// TODO: DDL should reject dropping a tracked column
 func TestMLogOnlineDDLDropTrackedColumnCurrentBehavior(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -729,7 +730,7 @@ func TestMLogOnlineDDLDropTrackedColumnCurrentBehavior(t *testing.T) {
 	// While online DDL is paused in an intermediate state, tracked column offsets in mlog metadata
 	// can no longer match the partial insert row layout, so mlog writing fails in the DML path.
 	err := tk.ExecToErr("insert into t (id, untracked) values (2, 200)")
-	require.ErrorContains(t, err, "write mlog row: base row too short")
+	require.ErrorContains(t, err, "write mlog row: column at offset")
 
 	ctrl.releaseAndWaitFinish(t)
 
@@ -739,6 +740,7 @@ func TestMLogOnlineDDLDropTrackedColumnCurrentBehavior(t *testing.T) {
 	require.ErrorContains(t, err, "wrap table with mlog: base column tracked not found")
 }
 
+// TODO: DDL should reject dropping a tracked column
 func TestMLogDropTrackedColumnCurrentBehavior(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
