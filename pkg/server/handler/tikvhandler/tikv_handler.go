@@ -1193,6 +1193,9 @@ func (h AdminCheckIndexHandler) checkIndexByName(dbName, tableName, indexName st
 	if err = se.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
 		return nil, err
 	}
+	if err = se.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTableCollectInconsistent, vardef.On); err != nil {
+		return nil, err
+	}
 
 	collector := executor.NewAdminCheckIndexInconsistentCollector()
 	// Attach collector to execution context so fast admin check can collect
