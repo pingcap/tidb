@@ -140,10 +140,10 @@
         "Plan": [
           "HashJoin_23 3.00 32781.07 root  CARTESIAN left outer semi join, left side:IndexReader_27",
           "├─Selection_40(Build) 0.80 31149.25 root  eq(2, Column#23)",
-          "│ └─StreamAgg_46 1.00 31099.35 root  funcs:count(1)->Column#23",
-          "│   └─TableReader_58 3.00 30949.65 root  MppVersion: 3, data:ExchangeSender_57",
-          "│     └─ExchangeSender_57 3.00 464139.20 mpp[tiflash]  ExchangeType: PassThrough",
-          "│       └─TableFullScan_56 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
+          "│ └─StreamAgg_47 1.00 31099.35 root  funcs:count(1)->Column#23",
+          "│   └─TableReader_59 3.00 30949.65 root  MppVersion: 3, data:ExchangeSender_58",
+          "│     └─ExchangeSender_58 3.00 464139.20 mpp[tiflash]  ExchangeType: PassThrough",
+          "│       └─TableFullScan_57 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
           "└─IndexReader_27(Probe) 3.00 53.37 root  index:IndexFullScan_26",
           "  └─IndexFullScan_26 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false"
         ]
