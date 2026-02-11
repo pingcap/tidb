@@ -1,0 +1,42 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mvmerge",
+    srcs = ["mvmerge.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/mvmerge",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/parser/opcode",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/resolve",
+        "//pkg/sessionctx",
+        "//pkg/util/hint",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "mvmerge_test",
+    timeout = "short",
+    srcs = ["mvmerge_test.go"],
+    embed = [":mvmerge"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core",
+        "//pkg/session",
+        "//pkg/types",
+        "@com_github_stretchr_testify//require",
+    ],
+)
