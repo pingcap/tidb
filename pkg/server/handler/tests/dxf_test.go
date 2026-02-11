@@ -118,13 +118,13 @@ func TestDXFAPI(t *testing.T) {
 			return ts.FetchStatus("/dxf/task/active")
 		})
 		out := struct {
-			TotalActiveTasks int64            `json:"total_active_tasks"`
-			TasksPerKeyspace map[string]int64 `json:"tasks_per_keyspace"`
+			Total       int64            `json:"total"`
+			PerKeyspace map[string]int64 `json:"per_keyspace"`
 		}{}
 		require.NoError(t, json.Unmarshal(body, &out))
-		require.EqualValues(t, 3, out.TotalActiveTasks)
-		require.EqualValues(t, 1, out.TasksPerKeyspace["SYSTEM"])
-		require.EqualValues(t, 2, out.TasksPerKeyspace["ks1"])
+		require.EqualValues(t, 3, out.Total)
+		require.EqualValues(t, 1, out.PerKeyspace["SYSTEM"])
+		require.EqualValues(t, 2, out.PerKeyspace["ks1"])
 	})
 
 	t.Run("task max_runtime_slots api", func(t *testing.T) {
