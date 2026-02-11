@@ -253,6 +253,7 @@ func (ds *DataSource) HasTiflash() bool {
 		ds.TableInfo.TiFlashReplica.Count > 0) ||
 		UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)
 }
+
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.PKOrUK = nil
