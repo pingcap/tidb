@@ -1560,7 +1560,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				// If the index can match partial order requirement and user use "use/force index" in hint.
 				// If the index can't match partial order requirement and use use "use/force index" and enable partial order optimization together,
 				// the behavior will degenerate into normal index use behavior without considering partial order optimization.
-				if path.Forced {
+				// If path is force but it use the hint /no_order_index/ which ForceNoKeepOrder is true,
+				// we won't consider it for partial order optimization, and it will be treated as normal forced index.
+				if path.Forced && !path.ForceNoKeepOrder {
 					path.ForcePartialOrder = true
 				}
 			}
