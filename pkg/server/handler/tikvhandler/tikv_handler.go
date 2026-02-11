@@ -1195,6 +1195,8 @@ func (h AdminCheckIndexHandler) checkIndexByName(dbName, tableName, indexName st
 	}
 
 	collector := executor.NewAdminCheckIndexInconsistentCollector()
+	// Attach collector to execution context so fast admin check can collect
+	// all mismatched handles instead of stopping at the first error.
 	checkCtx := executor.WithAdminCheckIndexInconsistentCollector(context.Background(), collector)
 	checkSQL := fmt.Sprintf("admin check index %s %s", quoteTable(dbName, tableName), quoteName(indexName))
 
@@ -1206,6 +1208,8 @@ func (h AdminCheckIndexHandler) checkIndexByName(dbName, tableName, indexName st
 	}
 
 	summary := collector.Summary()
+	// Return SQL error only when no inconsistency rows were collected.
+	// If rows are collected, ServeHTTP still returns the summary payload.
 	if execErr != nil && summary.InconsistentRowCount == 0 {
 		return nil, execErr
 	}
