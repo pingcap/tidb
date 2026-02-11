@@ -32,8 +32,11 @@ import (
 type MLogDMLType string
 
 const (
+	// MLogDMLTypeInsert represents a logical INSERT DML operation.
 	MLogDMLTypeInsert MLogDMLType = "I"
+	// MLogDMLTypeUpdate represents a logical UPDATE DML operation.
 	MLogDMLTypeUpdate MLogDMLType = "U"
+	// MLogDMLTypeDelete represents a logical DELETE DML operation.
 	MLogDMLTypeDelete MLogDMLType = "D"
 )
 
