@@ -17,6 +17,7 @@ type TaskExecutor struct {
 	maxConcurrency atomic.Int64
 	timeoutNanos   atomic.Int64
 	lifecycleState atomic.Int32
+	backpressure   atomic.Pointer[taskBackpressureHolder]
 
 	metrics struct {
 		submittedCount atomic.Int64
@@ -51,6 +52,10 @@ const (
 type taskRequest struct {
 	name string
 	task func() error
+}
+
+type taskBackpressureHolder struct {
+	controller TaskBackpressureController
 }
 
 type taskQueue struct {
@@ -177,6 +182,19 @@ func (e *TaskExecutor) setTimeout(timeout time.Duration) {
 	e.UpdateConfig(0, timeout)
 }
 
+// SetBackpressureController sets a task backpressure controller.
+// Passing nil disables backpressure.
+func (e *TaskExecutor) SetBackpressureController(controller TaskBackpressureController) {
+	if e == nil {
+		return
+	}
+	if controller == nil {
+		e.backpressure.Store(nil)
+		return
+	}
+	e.backpressure.Store(&taskBackpressureHolder{controller: controller})
+}
+
 func (e *TaskExecutor) Submit(name string, task func() error) {
 	if e == nil || task == nil {
 		return
@@ -239,29 +257,50 @@ func (e *TaskExecutor) workerLoop() {
 }
 
 func (e *TaskExecutor) nextTask() (taskRequest, bool) {
-	e.queue.mu.Lock()
-	for e.lifecycleState.Load() != taskExecutorStateClosed && e.queue.tasks.length() == 0 {
+	for {
+		e.queue.mu.Lock()
+		for e.lifecycleState.Load() != taskExecutorStateClosed && e.queue.tasks.length() == 0 {
+			if e.tryExitWorkerWithLock() {
+				e.queue.mu.Unlock()
+				return taskRequest{}, false
+			}
+			e.queue.cond.Wait()
+		}
+		if e.lifecycleState.Load() == taskExecutorStateClosed && e.queue.tasks.length() == 0 {
+			e.queue.mu.Unlock()
+			e.workers.count.Add(-1)
+			return taskRequest{}, false
+		}
 		if e.tryExitWorkerWithLock() {
 			e.queue.mu.Unlock()
 			return taskRequest{}, false
 		}
-		e.queue.cond.Wait()
-	}
-	if e.lifecycleState.Load() == taskExecutorStateClosed && e.queue.tasks.length() == 0 {
+		if blocked, delay := e.shouldBackpressure(); blocked {
+			e.queue.mu.Unlock()
+			mvsSleep(delay)
+			continue
+		}
+		req, _ := e.queue.tasks.pop()
 		e.queue.mu.Unlock()
-		e.workers.count.Add(-1)
-		return taskRequest{}, false
-	}
-	if e.tryExitWorkerWithLock() {
-		e.queue.mu.Unlock()
-		return taskRequest{}, false
-	}
-	req, _ := e.queue.tasks.pop()
-	e.queue.mu.Unlock()
 
-	e.metrics.waitingCount.Add(-1)
+		e.metrics.waitingCount.Add(-1)
+		return req, true
+	}
+}
 
-	return req, true
+func (e *TaskExecutor) shouldBackpressure() (bool, time.Duration) {
+	holder := e.backpressure.Load()
+	if holder == nil || holder.controller == nil {
+		return false, 0
+	}
+	blocked, delay := holder.controller.ShouldBackpressure()
+	if !blocked {
+		return false, 0
+	}
+	if delay <= 0 {
+		delay = defaultTaskBackpressureDelay
+	}
+	return true, delay
 }
 
 func (e *TaskExecutor) tryExitWorkerWithLock() bool {

@@ -505,6 +505,7 @@ func RegisterMVS(
 
 	mvs := NewMVJobsManager(ctx, se, &serverHelper{})
 	mvs.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
+	mvs.SetTaskBackpressureController(NewCPUMemBackpressureController(defaultMVTaskBackpressureCPUThreshold, defaultMVTaskBackpressureMemThreshold, defaultTaskBackpressureDelay))
 
 	// callback for DDL events only will be triggered on the DDL owner
 	// other nodes will get notified through the NotifyDDLChange method from the domain service registry

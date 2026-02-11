@@ -3,6 +3,7 @@ package mvs
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -215,6 +216,84 @@ func TestTaskExecutorRejectAfterClose(t *testing.T) {
 	require.Equal(t, int64(0), exec.metrics.completedCount.Load())
 	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
 	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
+}
+
+type toggleBackpressureController struct {
+	blocked atomic.Bool
+	delay   time.Duration
+}
+
+func (c *toggleBackpressureController) ShouldBackpressure() (bool, time.Duration) {
+	if c.blocked.Load() {
+		return true, c.delay
+	}
+	return false, 0
+}
+
+func TestTaskExecutorBackpressure(t *testing.T) {
+	module := installMockTimeForTest(t)
+	exec := NewTaskExecutor(context.Background(), 1, 0)
+	exec.Run()
+	defer exec.Close()
+
+	controller := &toggleBackpressureController{
+		delay: time.Second,
+	}
+	controller.blocked.Store(true)
+	exec.SetBackpressureController(controller)
+
+	started := make(chan struct{}, 1)
+	done := make(chan struct{}, 1)
+
+	exec.Submit("blocked", func() error {
+		started <- struct{}{}
+		done <- struct{}{}
+		return nil
+	})
+
+	select {
+	case <-started:
+		t.Fatalf("task should not start under backpressure")
+	default:
+	}
+
+	module.Advance(5 * time.Second)
+	select {
+	case <-started:
+		t.Fatalf("task should still be blocked")
+	default:
+	}
+
+	controller.blocked.Store(false)
+	module.Advance(time.Second)
+	waitForSignal(t, done, time.Hour)
+}
+
+func TestCPUMemBackpressureController(t *testing.T) {
+	controller := NewCPUMemBackpressureController(0.7, 0.8, 0)
+	controller.getCPUUsage = func() (float64, bool) {
+		return 0.9, false
+	}
+	controller.getMemTotal = func() uint64 { return 100 }
+	controller.getMemUsed = func() (uint64, error) { return 20, nil }
+
+	blocked, delay := controller.ShouldBackpressure()
+	require.True(t, blocked)
+	require.Equal(t, defaultTaskBackpressureDelay, delay)
+
+	controller.getCPUUsage = func() (float64, bool) {
+		return 0.1, false
+	}
+	controller.getMemUsed = func() (uint64, error) { return 90, nil }
+	controller.Delay = 200 * time.Millisecond
+	blocked, delay = controller.ShouldBackpressure()
+	require.True(t, blocked)
+	require.Equal(t, 200*time.Millisecond, delay)
+
+	controller.getMemUsed = func() (uint64, error) { return 10, nil }
+	blocked, delay = controller.ShouldBackpressure()
+	require.False(t, blocked)
+	require.Equal(t, time.Duration(0), delay)
 }
 
 func TestTaskQueueRingBufferFIFO(t *testing.T) {

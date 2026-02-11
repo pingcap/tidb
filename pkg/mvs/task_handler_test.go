@@ -137,6 +137,8 @@ func (m *mockMVServiceHelper) fetchAllTiDBMViews(context.Context, basic.SessionP
 	return m.fetchViews, nil
 }
 
+func (*mockMVServiceHelper) reportMetrics(*MVService) {}
+
 func TestMVServiceDefaultTaskHandler(t *testing.T) {
 	installMockTimeForTest(t)
 	helper := &mockMVServiceHelper{

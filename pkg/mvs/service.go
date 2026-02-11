@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -15,9 +14,14 @@ import (
 type mvLogItem Item[*mvLog]
 type mvItem Item[*mv]
 
+type MVMetricsReporter interface {
+	reportMetrics(*MVService)
+}
+
 type MVServiceHelper interface {
 	ServerHelper
 	MVTaskHandler
+	MVMetricsReporter
 }
 
 type MVService struct {
@@ -91,6 +95,11 @@ func NewMVJobsManager(ctx context.Context, se basic.SessionPool, helper MVServic
 // SetTaskExecConfig sets the execution config for MV tasks.
 func (t *MVService) SetTaskExecConfig(maxConcurrency int, timeout time.Duration) {
 	t.executor.UpdateConfig(maxConcurrency, timeout)
+}
+
+// SetTaskBackpressureController sets the task backpressure controller.
+func (t *MVService) SetTaskBackpressureController(controller TaskBackpressureController) {
+	t.executor.SetBackpressureController(controller)
 }
 
 // NotifyDDLChange marks MV metadata as dirty and wakes the service loop.
@@ -173,7 +182,7 @@ func (t *MVService) Run() {
 		timer.Stop()
 		metricTimer.Stop()
 		t.executor.Close()
-		t.reportMetrics()
+		t.mh.reportMetrics(t)
 	}()
 
 	for {
@@ -181,7 +190,7 @@ func (t *MVService) Run() {
 		select {
 		case <-timer.C:
 		case <-metricTimer.C:
-			t.reportMetrics()
+			t.mh.reportMetrics(t)
 			resetTimer(metricTimer, defaultMVMetricInterval)
 		case <-t.notifier.C:
 			t.notifier.clear()
@@ -207,32 +216,6 @@ func (t *MVService) Run() {
 		next := t.nextScheduleTime(now)
 		resetTimer(timer, mvsUntil(next))
 	}
-}
-
-func (t *MVService) reportCounterDelta(counter interface{ Add(float64) }, last *int64, current int64) {
-	switch {
-	case current > *last:
-		counter.Add(float64(current - *last))
-	case current < *last:
-		counter.Add(float64(current))
-	}
-	*last = current
-}
-
-func (t *MVService) reportMetrics() {
-	// Executor metrics
-	t.reportCounterDelta(tidbmetrics.MVTaskExecutorSubmittedCounter, &t.reportCache.submittedCount, t.executor.metrics.submittedCount.Load())
-	t.reportCounterDelta(tidbmetrics.MVTaskExecutorCompletedCounter, &t.reportCache.completedCount, t.executor.metrics.completedCount.Load())
-	t.reportCounterDelta(tidbmetrics.MVTaskExecutorFailedCounter, &t.reportCache.failedCount, t.executor.metrics.failedCount.Load())
-	t.reportCounterDelta(tidbmetrics.MVTaskExecutorTimeoutCounter, &t.reportCache.timeoutCount, t.executor.metrics.timeoutCount.Load())
-	t.reportCounterDelta(tidbmetrics.MVTaskExecutorRejectedCounter, &t.reportCache.rejectedCount, t.executor.metrics.rejectedCount.Load())
-	tidbmetrics.MVTaskExecutorRunningTaskGauge.Set(float64(t.executor.metrics.runningCount.Load()))
-	tidbmetrics.MVTaskExecutorWaitingTaskGauge.Set(float64(t.executor.metrics.waitingCount.Load()))
-	// MVService metrics
-	tidbmetrics.MVServiceMVRefreshPendingGauge.Set(float64(t.metrics.mvCount.Load()))
-	tidbmetrics.MVServiceMVLogPurgePendingGauge.Set(float64(t.metrics.mvLogCount.Load()))
-	tidbmetrics.MVServiceMVRefreshRunningGauge.Set(float64(t.metrics.runningMVRefreshCount.Load()))
-	tidbmetrics.MVServiceMVLogPurgeRunningGauge.Set(float64(t.metrics.runningMVLogPurgeCount.Load()))
 }
 
 func (t *MVService) shouldFetch(now time.Time) bool {
