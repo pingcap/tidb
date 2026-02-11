@@ -139,9 +139,26 @@ type edge struct {
 	rightVertexes intset.FastIntSet
 }
 
-// TryCreateCartesianCheckResult creates a CheckConnectionResult representing a cartesian product between left and right nodes.
-// This is used when we still want to make a cartesian join even there is no join condition between two nodes.
-// This usually happens when there is a leading hint forcing the join order.
+// TryCreateCartesianCheckResult creates a CheckConnectionResult representing a
+// cartesian product between left and right nodes.
+//
+// When checkResult.Connected() returns false, there are actually two situations:
+//  1. The two nodes are truly invalid to join (e.g. conflict rules forbid it).
+//  2. The two nodes have no shared edge, but a cartesian join is still legal.
+//
+// checkResult.Connected() itself does not distinguish them — both return false.
+// We can handle case 2 by adding a fallback "cross edge" when building the ConflictDetector,
+// so that Connected() returns true.
+// But for now, we take a simpler approach: checkResult.Connected() return false for above both situations,
+// and let the caller explicitly call TryCreateCartesianCheckResult to construct a
+// cartesian edge when the join group is all-inner-join.
+//
+// The cartesian edge is created in two situations (callers that pass allowNoEQ=true
+// to checkConnectionAndMakeJoin):
+//  1. A leading hint forces the connection (e.g. LEADING(R1, R3) when there is no
+//     predicate between R1 and R3).
+//  2. The greedy enumerator's second pass, where allowing cartesian joins may find
+//     a better plan. See https://github.com/pingcap/tidb/issues/63290.
 func (d *ConflictDetector) TryCreateCartesianCheckResult(left, right *Node) *CheckConnectionResult {
 	if !d.allInnerJoin {
 		return nil
@@ -346,8 +363,12 @@ func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftV
 	return e, nil
 }
 
+// makeEdge basically implements the pseudocode for CD-C in paper(Figure-11).
 func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.Expression, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) *edge {
 	e := &edge{
+		// Each new edge is appended to either d.innerEdges or d.nonInnerEdges
+		// (see below), so their combined length before the append is the next
+		// available unique index.
 		idx:           uint64(len(d.innerEdges) + len(d.nonInnerEdges)),
 		joinType:      joinType,
 		leftVertexes:  leftVertexes,
