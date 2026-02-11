@@ -269,3 +269,186 @@ func TestGlobalIndexVersionConstants(t *testing.T) {
 	require.Equal(t, uint8(1), model.GlobalIndexVersionV1)
 	require.Equal(t, uint8(2), model.GlobalIndexVersionV2)
 }
+
+// TestGlobalIndexTruncateAndDropPartition verifies that TRUNCATE PARTITION and
+// DROP PARTITION correctly clean up only the affected partition's global index entries
+// without corrupting entries belonging to other partitions.
+func TestGlobalIndexTruncateAndDropPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// --- TRUNCATE PARTITION ---
+	tk.MustExec(`CREATE TABLE tp_trunc (
+		a INT,
+		b INT,
+		PRIMARY KEY (a) NONCLUSTERED
+	) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200),
+		PARTITION p2 VALUES LESS THAN (300)
+	)`)
+
+	// Insert data into all 3 partitions.
+	tk.MustExec("INSERT INTO tp_trunc VALUES (1, 10), (2, 20), (3, 30)")     // p0
+	tk.MustExec("INSERT INTO tp_trunc VALUES (101, 110), (102, 120)")         // p1
+	tk.MustExec("INSERT INTO tp_trunc VALUES (201, 210), (202, 220)")         // p2
+
+	// Create a V2 global index (default for non-unique non-clustered).
+	tk.MustExec("CREATE INDEX idx_b ON tp_trunc(b) GLOBAL")
+
+	// Verify all data is accessible via the global index.
+	tk.MustQuery("SELECT count(*) FROM tp_trunc USE INDEX(idx_b)").Check(testkit.Rows("7"))
+	tk.MustExec("ADMIN CHECK TABLE tp_trunc")
+
+	// Truncate partition p1.
+	tk.MustExec("ALTER TABLE tp_trunc TRUNCATE PARTITION p1")
+
+	// Verify: p0 and p2 data should still be accessible, p1 data gone.
+	tk.MustQuery("SELECT count(*) FROM tp_trunc USE INDEX(idx_b)").Check(testkit.Rows("5"))
+	tk.MustQuery("SELECT count(*) FROM tp_trunc IGNORE INDEX(idx_b)").Check(testkit.Rows("5"))
+	tk.MustQuery("SELECT a, b FROM tp_trunc USE INDEX(idx_b) ORDER BY b").Check(testkit.Rows(
+		"1 10", "2 20", "3 30", "201 210", "202 220"))
+	tk.MustExec("ADMIN CHECK TABLE tp_trunc")
+
+	// Insert new data into the truncated partition.
+	tk.MustExec("INSERT INTO tp_trunc VALUES (111, 1110), (112, 1120)")
+	tk.MustQuery("SELECT count(*) FROM tp_trunc USE INDEX(idx_b)").Check(testkit.Rows("7"))
+	tk.MustExec("ADMIN CHECK TABLE tp_trunc")
+
+	// --- DROP PARTITION ---
+	tk.MustExec(`CREATE TABLE tp_drop (
+		a INT,
+		b INT,
+		PRIMARY KEY (a) NONCLUSTERED
+	) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200),
+		PARTITION p2 VALUES LESS THAN (300),
+		PARTITION pmax VALUES LESS THAN MAXVALUE
+	)`)
+
+	tk.MustExec("INSERT INTO tp_drop VALUES (1, 10), (2, 20), (3, 30)")   // p0
+	tk.MustExec("INSERT INTO tp_drop VALUES (101, 110), (102, 120)")       // p1
+	tk.MustExec("INSERT INTO tp_drop VALUES (201, 210)")                   // p2
+	tk.MustExec("INSERT INTO tp_drop VALUES (301, 310)")                   // pmax
+
+	tk.MustExec("CREATE INDEX idx_b ON tp_drop(b) GLOBAL")
+
+	tk.MustQuery("SELECT count(*) FROM tp_drop USE INDEX(idx_b)").Check(testkit.Rows("7"))
+	tk.MustExec("ADMIN CHECK TABLE tp_drop")
+
+	// Drop partition p1.
+	tk.MustExec("ALTER TABLE tp_drop DROP PARTITION p1")
+
+	// Verify: p0, p2, pmax data should still be accessible.
+	tk.MustQuery("SELECT count(*) FROM tp_drop USE INDEX(idx_b)").Check(testkit.Rows("5"))
+	tk.MustQuery("SELECT count(*) FROM tp_drop IGNORE INDEX(idx_b)").Check(testkit.Rows("5"))
+	tk.MustQuery("SELECT a, b FROM tp_drop USE INDEX(idx_b) ORDER BY b").Check(testkit.Rows(
+		"1 10", "2 20", "3 30", "201 210", "301 310"))
+	tk.MustExec("ADMIN CHECK TABLE tp_drop")
+
+	// Drop another partition (p2).
+	tk.MustExec("ALTER TABLE tp_drop DROP PARTITION p2")
+	tk.MustQuery("SELECT count(*) FROM tp_drop USE INDEX(idx_b)").Check(testkit.Rows("4"))
+	tk.MustQuery("SELECT a, b FROM tp_drop USE INDEX(idx_b) ORDER BY b").Check(testkit.Rows(
+		"1 10", "2 20", "3 30", "301 310"))
+	tk.MustExec("ADMIN CHECK TABLE tp_drop")
+
+	// --- EXCHANGE PARTITION with duplicate _tidb_rowid + DROP ---
+	// This is the core scenario: after EXCHANGE PARTITION, different partitions
+	// can have rows with the same _tidb_rowid. V2 global index must handle this.
+	tk.MustExec(`CREATE TABLE tp_exch (
+		a INT,
+		b INT,
+		PRIMARY KEY (a) NONCLUSTERED
+	) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+
+	tk.MustExec(`CREATE TABLE t_plain (a INT, b INT, PRIMARY KEY (a) NONCLUSTERED)`)
+	tk.MustExec("INSERT INTO tp_exch VALUES (1, 10), (2, 20)")    // p0, rowid 1,2
+	tk.MustExec("INSERT INTO t_plain VALUES (101, 110), (102, 120)") // rowid 1,2
+
+	// Exchange: p1 gets t_plain's data (rowid 1,2 — same as p0's rowids!)
+	tk.MustExec("ALTER TABLE tp_exch EXCHANGE PARTITION p1 WITH TABLE t_plain")
+
+	// Now create the V2 global index — this must handle duplicate rowids across partitions.
+	tk.MustExec("CREATE INDEX idx_b ON tp_exch(b) GLOBAL")
+
+	// Both partitions' data should be accessible.
+	tk.MustQuery("SELECT count(*) FROM tp_exch USE INDEX(idx_b)").Check(testkit.Rows("4"))
+	tk.MustQuery("SELECT a, b FROM tp_exch USE INDEX(idx_b) ORDER BY b").Check(testkit.Rows(
+		"1 10", "2 20", "101 110", "102 120"))
+	tk.MustExec("ADMIN CHECK TABLE tp_exch")
+
+	// Now truncate p1 (the exchanged partition with duplicate rowids).
+	tk.MustExec("ALTER TABLE tp_exch TRUNCATE PARTITION p1")
+
+	// p0 data should remain intact.
+	tk.MustQuery("SELECT count(*) FROM tp_exch USE INDEX(idx_b)").Check(testkit.Rows("2"))
+	tk.MustQuery("SELECT a, b FROM tp_exch USE INDEX(idx_b) ORDER BY b").Check(testkit.Rows(
+		"1 10", "2 20"))
+	tk.MustExec("ADMIN CHECK TABLE tp_exch")
+
+	// --- REORGANIZE PARTITION ---
+	tk.MustExec(`CREATE TABLE tp_reorg (
+		a INT,
+		b INT,
+		PRIMARY KEY (a) NONCLUSTERED
+	) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200),
+		PARTITION p2 VALUES LESS THAN (300)
+	)`)
+
+	tk.MustExec("INSERT INTO tp_reorg VALUES (1, 10), (50, 50)")       // p0
+	tk.MustExec("INSERT INTO tp_reorg VALUES (101, 110), (150, 150)")   // p1
+	tk.MustExec("INSERT INTO tp_reorg VALUES (201, 210)")               // p2
+
+	tk.MustExec("CREATE INDEX idx_b ON tp_reorg(b) GLOBAL")
+	tk.MustQuery("SELECT count(*) FROM tp_reorg USE INDEX(idx_b)").Check(testkit.Rows("5"))
+	tk.MustExec("ADMIN CHECK TABLE tp_reorg")
+
+	// Reorganize: merge p0 and p1 into a single partition.
+	tk.MustExec("ALTER TABLE tp_reorg REORGANIZE PARTITION p0, p1 INTO (PARTITION p01 VALUES LESS THAN (200))")
+
+	// All data should still be accessible, including p2's row which was not reorganized.
+	tk.MustQuery("SELECT count(*) FROM tp_reorg USE INDEX(idx_b)").Check(testkit.Rows("5"))
+	tk.MustQuery("SELECT count(*) FROM tp_reorg IGNORE INDEX(idx_b)").Check(testkit.Rows("5"))
+	tk.MustQuery("SELECT a, b FROM tp_reorg USE INDEX(idx_b) ORDER BY b").Check(testkit.Rows(
+		"1 10", "50 50", "101 110", "150 150", "201 210"))
+	tk.MustExec("ADMIN CHECK TABLE tp_reorg")
+
+	// --- UNIQUE GLOBAL INDEX WITH NULLs (V2) ---
+	// Unique indexes with nullable columns get V2, which puts partition ID in the key.
+	tk.MustExec(`CREATE TABLE tp_null (
+		a INT,
+		b INT,
+		c INT,
+		PRIMARY KEY (a) NONCLUSTERED,
+		UNIQUE INDEX idx_c(c) GLOBAL
+	) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+
+	// Insert rows with NULL values in the unique column — should be allowed.
+	tk.MustExec("INSERT INTO tp_null VALUES (1, 10, NULL)")
+	tk.MustExec("INSERT INTO tp_null VALUES (101, 110, NULL)")  // Same NULL in different partition.
+	tk.MustExec("INSERT INTO tp_null VALUES (2, 20, 100)")
+	tk.MustExec("INSERT INTO tp_null VALUES (102, 120, 200)")
+
+	// Verify all data accessible via global index.
+	tk.MustQuery("SELECT count(*) FROM tp_null USE INDEX(idx_c)").Check(testkit.Rows("4"))
+	tk.MustQuery("SELECT a, c FROM tp_null USE INDEX(idx_c) WHERE c IS NOT NULL ORDER BY c").Check(testkit.Rows(
+		"2 100", "102 200"))
+	tk.MustExec("ADMIN CHECK TABLE tp_null")
+
+	// Truncate one partition with NULL entries.
+	tk.MustExec("ALTER TABLE tp_null TRUNCATE PARTITION p0")
+	tk.MustQuery("SELECT count(*) FROM tp_null USE INDEX(idx_c)").Check(testkit.Rows("2"))
+	tk.MustQuery("SELECT count(*) FROM tp_null IGNORE INDEX(idx_c)").Check(testkit.Rows("2"))
+	tk.MustExec("ADMIN CHECK TABLE tp_null")
+}
