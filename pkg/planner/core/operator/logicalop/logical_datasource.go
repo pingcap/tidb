@@ -16,10 +16,10 @@ package logicalop
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -609,12 +609,16 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 // analyzeTiCIIndex checks whether FTS function is used and is a valid one.
 // Then convert the function to index call because it can not be executed without the index.
 func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
-	if !hasFTSFunc && ds.SCtx().HasDirtyContent(ds.TableInfo.ID) {
+	hasDirtyWrite := ds.SCtx().HasDirtyContent(ds.TableInfo.ID)
+	if !hasFTSFunc && hasDirtyWrite {
 		// If there is no FTS function, and there're dirty writes on the table,
 		// we should not use any TiCI index.
 		// Because the TiCI index may be not consistent with the table data.
 		// This TiCI indexes will be removed by CleanUpUnusedTiCIIndexes later.
 		return nil
+	}
+	if hasFTSFunc && hasDirtyWrite {
+		return errors.Errorf("Fulltext search currently can not be used in transaction with uncommitted data.")
 	}
 	var matchedIdx *model.IndexInfo
 	tmpMatchedExprSet := intset.NewFastIntSet()

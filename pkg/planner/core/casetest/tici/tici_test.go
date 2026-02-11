@@ -263,6 +263,9 @@ func TestTiCIWithDirtyWrites(t *testing.T) {
 		"sort": {
 			"columns": ["i", "ts", "d"],
 			"order": ["asc", "desc", "asc"]
+		},
+		"sharding_key": {
+			"columns": ["i", "ts"]
 		}
 	}'`)
 	dom := domain.GetDomain(tk.Session())
@@ -275,5 +278,15 @@ func TestTiCIWithDirtyWrites(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values(1, '2026-01-01 10:10:10', '2026-01-01 10:10:10', 'text1')")
 	tk.MustQuery("explain format='brief' select * from t1 use index(idx1) where d between '2026-01-01' and '2026-01-03'").CheckNotContain("idx1")
+	tk.MustExec("rollback")
+
+	tk.MustExec("create table t2(a int primary key, b int, c longtext)")
+	tk.MustExec(`create fulltext index idx_c on t2(c)`)
+	testkit.SetTiFlashReplica(t, dom, "test", "t2")
+
+	// With dirty write, TiCI index cannot be used.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t2 values(1, 1, 'text1')")
+	tk.MustExecToErr("explain select * from t2 where fts_match_word('apple', c)")
 	tk.MustExec("rollback")
 }
