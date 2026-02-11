@@ -8821,6 +8821,76 @@ func TestIssue53175(t *testing.T) {
 	tk.MustQuery(`select * from v`)
 }
 
+func TestIssue54213(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE tb (
+  object_id bigint(20),
+  a bigint(20),
+  b bigint(20),
+  c bigint(20),
+  PRIMARY KEY (object_id),
+  KEY ab (a,b)
+)`)
+	rows := tk.MustQuery(`explain format='brief' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) x`).Rows()
+	planText := make([]string, 0, len(rows))
+	foundIdxRange := false
+	for _, row := range rows {
+		line := row[0].(string)
+		planText = append(planText, line)
+		if strings.Contains(line, "IndexRangeScan") {
+			foundIdxRange = true
+		}
+		require.False(t, strings.Contains(line, "TableRowIDScan"), "unexpected table side access, full plan: %v", planText)
+		require.False(t, strings.Contains(line, "IndexLookUp"), "unexpected index lookup, full plan: %v", planText)
+	}
+	require.True(t, foundIdxRange, "expect index range scan in plan, full plan: %v", planText)
+}
+
+func TestMPPRowNumberCountAfterColumnPruning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("create table users(id bigint primary key, username varchar(64), key uk_username(username))")
+	tk.MustExec("create table orders(id bigint primary key, buyer_name varchar(64), key uk_buyer_name(buyer_name))")
+	tk.MustExec("insert into users values(1,'Alice'),(2,'Bob')")
+	tk.MustExec("insert into orders values(1,'Alice'),(2,'Bob')")
+	SetTiFlashReplica(t, dom, "test", "users")
+	SetTiFlashReplica(t, dom, "test", "orders")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb'")
+
+	countSQL := `SELECT COUNT(*) FROM (
+  SELECT *
+  FROM (
+    SELECT row_number() OVER () AS rn
+    FROM (
+      SELECT 1
+      FROM users u
+      JOIN orders o ON u.username = o.buyer_name
+    ) v
+  ) x
+  WHERE rn BETWEEN 1 AND 3
+) ct`
+	explainRows := tk.MustQuery("explain format='brief' " + countSQL).Rows()
+	hasMPP := false
+	for _, row := range explainRows {
+		for _, col := range row {
+			if strings.Contains(fmt.Sprint(col), "mpp[tiflash]") {
+				hasMPP = true
+				break
+			}
+		}
+	}
+	require.True(t, hasMPP, "expected MPP TiFlash plan, full plan: %v", explainRows)
+	// MockStore has no real TiFlash node, so execute this query on TiDB path only.
+	tk.MustExec("set @@tidb_enforce_mpp=0; set @@tidb_isolation_read_engines='tikv,tidb'")
+	tk.MustQuery(countSQL).Check(testkit.Rows("2"))
+}
+
 func TestCastBitAsString(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

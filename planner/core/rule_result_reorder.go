@@ -49,6 +49,9 @@ func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalO
 
 func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
 	if rs.isInputOrderKeeper(lp) {
+		if len(lp.Children()) == 0 {
+			return true
+		}
 		return rs.completeSort(lp.Children()[0])
 	} else if sort, ok := lp.(*LogicalSort); ok {
 		cols := sort.Schema().Columns // sort results by all output columns
@@ -95,7 +98,7 @@ func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 
 func (rs *resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
 	switch lp.(type) {
-	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
+	case *LogicalSelection, *LogicalProjection, *LogicalLimit, *LogicalTableDual:
 		return true
 	}
 	return false
