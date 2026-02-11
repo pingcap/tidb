@@ -519,7 +519,6 @@ CTE_0	root		Recursive CTE
 show warnings;
 Level	Code	Message
 Warning	1815	Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte.
-Warning	1105	Scalar function 'cast'(signature: CastIntAsInt, return type: int) is not supported to push down to tiflash now.
 explain format='plan_tree' with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1';
 id	task	access object	operator info
 CTEFullScan	root	CTE:cte2	data:CTE_2
@@ -575,7 +574,6 @@ CTE_0	root		Recursive CTE
     └─CTETable	root		Scan on CTE_0
 show warnings;
 Level	Code	Message
-Warning	1105	Scalar function 'cast'(signature: CastIntAsInt, return type: int) is not supported to push down to tiflash now.
 explain format='plan_tree' with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1';
 id	task	access object	operator info
 CTEFullScan	root	CTE:cte2	data:CTE_2
