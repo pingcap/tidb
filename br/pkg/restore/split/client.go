@@ -58,7 +58,7 @@ var (
 // SplitClient is an external client used by RegionSplitter.
 type SplitClient interface {
 	// GetStore gets a store by a store id.
-	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
+	GetStore(ctx context.Context, storeID uint64, opts ...opt.GetStoreOption) (*metapb.Store, error)
 	// GetRegion gets a region which includes a specified key.
 	GetRegion(ctx context.Context, key []byte) (*RegionInfo, error)
 	// GetRegionByID gets a region by a region id.
@@ -257,14 +257,14 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 	return nil, nil
 }
 
-func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+func (c *pdClient) GetStore(ctx context.Context, storeID uint64, opts ...opt.GetStoreOption) (*metapb.Store, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	store, ok := c.storeCache[storeID]
 	if ok {
 		return store, nil
 	}
-	store, err := c.client.GetStore(ctx, storeID)
+	store, err := c.client.GetStore(ctx, storeID, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
