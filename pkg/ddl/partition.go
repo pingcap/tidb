@@ -626,10 +626,10 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 			dupCheck[strings.ToLower(idxUpdate.Name)] = struct{}{}
 			if idxUpdate.Option != nil && idxUpdate.Option.Global {
 				tbInfo.Indices[idxOffset].Global = true
-				setGlobalIndexVersion(tbInfo, tbInfo.Indices[idxOffset])
 			} else {
 				tbInfo.Indices[idxOffset].Global = false
 			}
+			setGlobalIndexVersion(tbInfo, tbInfo.Indices[idxOffset])
 			updateIndexes = append(updateIndexes, model.UpdateIndexInfo{IndexName: idxUpdate.Name, Global: tbInfo.Indices[idxOffset].Global})
 			tbInfo.Partition.DDLUpdateIndexes = updateIndexes
 		}

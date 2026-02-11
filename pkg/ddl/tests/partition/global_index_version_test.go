@@ -452,3 +452,46 @@ func TestGlobalIndexTruncateAndDropPartition(t *testing.T) {
 	tk.MustQuery("SELECT count(*) FROM tp_null IGNORE INDEX(idx_c)").Check(testkit.Rows("2"))
 	tk.MustExec("ADMIN CHECK TABLE tp_null")
 }
+
+// TestUpdateIndexesResetsGlobalIndexVersion verifies that UPDATE INDEXES resets
+// GlobalIndexVersion to 0 when switching an index from GLOBAL to local.
+// Without this fix, the stale GlobalIndexVersion=V1 on a local index causes
+// GenIndexKey to expect a PartitionHandle, triggering DML errors.
+func TestUpdateIndexesResetsGlobalIndexVersion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// CREATE TABLE with a non-unique GLOBAL index, but UPDATE INDEXES flips it to LOCAL.
+	// buildTablePartitionInfo must reset GlobalIndexVersion to 0 for the local index,
+	// otherwise the persisted metadata will have Global=false, GlobalIndexVersion=V1.
+	tk.MustExec(`CREATE TABLE t_upd_idx (
+		a INT,
+		b INT,
+		KEY idx_b(b) GLOBAL
+	) PARTITION BY HASH (a) PARTITIONS 3 UPDATE INDEXES (idx_b LOCAL)`)
+
+	// Verify metadata: Global=false and GlobalIndexVersion=0.
+	dom := domain.GetDomain(tk.Session())
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_upd_idx"))
+	require.NoError(t, err)
+	var idxB *model.IndexInfo
+	for _, idx := range tbl.Meta().Indices {
+		if idx.Name.O == "idx_b" {
+			idxB = idx
+			break
+		}
+	}
+	require.NotNil(t, idxB)
+	require.False(t, idxB.Global, "Index should be local after UPDATE INDEXES")
+	require.Equal(t, uint8(0), idxB.GlobalIndexVersion,
+		"GlobalIndexVersion should be reset to 0 for local index")
+
+	// DML should work without "handle is not a PartitionHandle" errors.
+	tk.MustExec("INSERT INTO t_upd_idx VALUES (1, 10), (2, 20), (3, 30)")
+	tk.MustExec("UPDATE t_upd_idx SET b = 99 WHERE a = 1")
+	tk.MustExec("DELETE FROM t_upd_idx WHERE a = 2")
+	tk.MustQuery("SELECT a, b FROM t_upd_idx ORDER BY a").Check(testkit.Rows(
+		"1 99", "3 30"))
+	tk.MustExec("ADMIN CHECK TABLE t_upd_idx")
+}
