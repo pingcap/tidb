@@ -32,11 +32,8 @@ import (
 type MLogDMLType string
 
 const (
-	// MLogDMLTypeInsert writes DML type "I".
 	MLogDMLTypeInsert MLogDMLType = "I"
-	// MLogDMLTypeUpdate writes DML type "U".
 	MLogDMLTypeUpdate MLogDMLType = "U"
-	// MLogDMLTypeDelete writes DML type "D".
 	MLogDMLTypeDelete MLogDMLType = "D"
 )
 
@@ -141,7 +138,9 @@ type mlogTable struct {
 	table.Table
 
 	mlog table.Table
-	tp   MLogDMLType
+	// tp is the statement-level DML type set at wrap time (I/U/D).
+	// Per-row types may differ — see addRecordDMLType / removeRecordDMLType.
+	tp MLogDMLType
 
 	// Base table column offsets recorded in mlog (user-specified columns).
 	trackedBaseOffsets []int
@@ -224,9 +223,8 @@ func (t *mlogTable) UpdateRecord(
 
 // RemoveRecord implements table.Table.
 //
-// For handle-changed updates (e.g. UPDATE that modifies PK, or IODKU that changes PK), the
-// executor calls RemoveRecord(old) + AddRecord(new, IsUpdate). Like AddRecord, we do NOT
-// check shouldLogUpdate here — we always log (conservative strategy; see AddRecord comment).
+// Like AddRecord, it always logs unconditionally — see AddRecord comment for
+// the conservative-strategy rationale.
 func (t *mlogTable) RemoveRecord(
 	ctx table.MutateContext,
 	txn kv.Transaction,
@@ -247,8 +245,7 @@ func (t *mlogTable) RemoveRecord(
 
 func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
 	// shouldLogUpdate is only called from UpdateRecord — the handle-unchanged update path.
-	// The handle-changed path (RemoveRecord + AddRecord) always logs unconditionally; see
-	// the comments on AddRecord and RemoveRecord.
+	// The handle-changed path (RemoveRecord + AddRecord) always logs unconditionally;
 	//
 	// Note: `touched` is built from executor's column mapping. It can be shorter than the
 	// column offsets recorded in `trackedBaseOffsets` (e.g. column pruning or DDL intermediate
@@ -262,6 +259,8 @@ func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
 			return true
 		}
 	}
+
+	// No tracked column was touched, no mlog row is needed.
 	return false
 }
 
@@ -275,10 +274,6 @@ func (t *mlogTable) addRecordDMLType(opt *table.AddRecordOpt, hadRemovedConflict
 func (t *mlogTable) updateRecordDMLType() MLogDMLType {
 	// UpdateRecord called in INSERT statement means "ON DUPLICATE KEY UPDATE".
 	if t.tp == MLogDMLTypeInsert {
-		return MLogDMLTypeUpdate
-	}
-	// Normal UPDATE uses "U".
-	if t.tp == MLogDMLTypeUpdate {
 		return MLogDMLTypeUpdate
 	}
 	return t.tp
