@@ -3284,6 +3284,10 @@ var defaultSysVars = []*SysVar{
 		s.FastCheckTable = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBFastCheckTableCollectInconsistent, Value: BoolToOnOff(vardef.DefTiDBFastCheckTableCollectInconsistent), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.FastCheckTableCollectInconsistent = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSkipMissingPartitionStats, Value: BoolToOnOff(vardef.DefTiDBSkipMissingPartitionStats), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.SkipMissingPartitionStats = TiDBOptOn(val)
 		return nil
