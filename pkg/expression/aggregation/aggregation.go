@@ -236,6 +236,10 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
 		return false
 	}
+	// max_count/min_count are currently implemented only in TiDB.
+	if aggFunc.Name == ast.AggFuncMaxCount || aggFunc.Name == ast.AggFuncMinCount {
+		return false
+	}
 	if aggFunc.Name == ast.AggFuncApproxPercentile {
 		return false
 	}

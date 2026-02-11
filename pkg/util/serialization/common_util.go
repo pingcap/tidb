@@ -32,6 +32,13 @@ const (
 	OpaqueType
 	TimeType
 	DurationType
+	Float32Type
+	BytesType
+	MyDecimalType
+	EnumType
+	SetType
+	BinaryLiteralType
+	VectorFloat32Type
 
 	InterfaceTypeCodeLen = int64(1)
 	JSONTypeCodeLen      = int64(types.JSONTypeCode(1))

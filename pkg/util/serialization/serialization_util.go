@@ -184,12 +184,33 @@ func SerializeInterface(value any, buf []byte) []byte {
 	case uint64:
 		buf = append(buf, Uint64Type)
 		return SerializeUint64(v, buf)
+	case float32:
+		buf = append(buf, Float32Type)
+		return SerializeFloat32(v, buf)
 	case float64:
 		buf = append(buf, FloatType)
 		return SerializeFloat64(v, buf)
 	case string:
 		buf = append(buf, StringType)
 		return SerializeString(v, buf)
+	case []byte:
+		buf = append(buf, BytesType)
+		return serializeBuffer(v, buf)
+	case *types.MyDecimal:
+		buf = append(buf, MyDecimalType)
+		return SerializeMyDecimal(v, buf)
+	case types.MyDecimal:
+		buf = append(buf, MyDecimalType)
+		return SerializeMyDecimal(&v, buf)
+	case types.Enum:
+		buf = append(buf, EnumType)
+		return SerializeEnum(&v, buf)
+	case types.Set:
+		buf = append(buf, SetType)
+		return SerializeSet(&v, buf)
+	case types.BinaryLiteral:
+		buf = append(buf, BinaryLiteralType)
+		return serializeBuffer(v, buf)
 	case types.BinaryJSON:
 		buf = append(buf, BinaryJSONType)
 		return SerializeBinaryJSON(&v, buf)
@@ -202,6 +223,9 @@ func SerializeInterface(value any, buf []byte) []byte {
 	case types.Duration:
 		buf = append(buf, DurationType)
 		return SerializeTypesDuration(v, buf)
+	case types.VectorFloat32:
+		buf = append(buf, VectorFloat32Type)
+		return serializeBuffer(v.ZeroCopySerialize(), buf)
 	default:
 		panic("Agg spill encounters an unexpected interface type!")
 	}

@@ -48,6 +48,10 @@ func Build(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordina
 		return buildMaxMin(aggFuncDesc, ordinal, true)
 	case ast.AggFuncMin:
 		return buildMaxMin(aggFuncDesc, ordinal, false)
+	case ast.AggFuncMaxCount:
+		return buildMaxMinCount(ctx.GetEvalCtx(), aggFuncDesc, ordinal, true)
+	case ast.AggFuncMinCount:
+		return buildMaxMinCount(ctx.GetEvalCtx(), aggFuncDesc, ordinal, false)
 	case ast.AggFuncGroupConcat:
 		return buildGroupConcat(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncBitOr:
