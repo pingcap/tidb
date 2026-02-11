@@ -254,7 +254,7 @@ CREATE TABLE A (
 ) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 900006;`)
 		tk.MustExec(`set tidb_opt_index_join_build_v2=off`)
 		r := tk.MustQuery(`
-explain SELECT /* issue:61669 */ *
+explain format='brief' SELECT /* issue:61669 */ *
 FROM A A
 JOIN
     (SELECT CASH_RPLC_AMT,
