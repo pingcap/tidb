@@ -32,9 +32,9 @@
         "Plan": [
           "StreamAgg root  funcs:max(test.t.a)->Column",
           "└─TopN root  test.t.a:desc, offset:0, count:1",
-          "  └─TableReader root  data:TopN",
-          "    └─TopN batchCop[tiflash]  test.t.a:desc, offset:0, count:1",
-          "      └─TableFullScan batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -42,9 +42,9 @@
         "Plan": [
           "StreamAgg root  funcs:min(test.t.a)->Column",
           "└─TopN root  test.t.a, offset:0, count:1",
-          "  └─TableReader root  data:TopN",
-          "    └─TopN batchCop[tiflash]  test.t.a, offset:0, count:1",
-          "      └─TableFullScan batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
