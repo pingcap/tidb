@@ -167,7 +167,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 
 func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan) (base.LogicalPlan, []expression.Expression, bool) {
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
-	isCartesian := len(usedEdges) == 0 && !s.hasOtherJoinCondition(leftPlan, rightPlan)
+	isCartesian := len(usedEdges) == 0 && !s.hasOtherJoinCondition(leftPlan, rightPlan, s.collectNullExtendedCols())
 	if isCartesian && // cartesian join
 		(!s.allInnerJoin || // not all joins are inner joins
 			s.ctx.GetSessionVars().CartesianJoinOrderThreshold <= 0) { // cartesian join is disabled

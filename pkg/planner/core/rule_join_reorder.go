@@ -454,31 +454,57 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 
 // connectJoinNodes handles joining two subplans, performing connection checks
 // and enforcing the outer join constraint.
+// This function is only used by the leading hint processing path.
 func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, nextNode base.LogicalPlan,
 	hasOuterJoin bool,
 ) (base.LogicalPlan, bool) {
 	lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nextNode)
-
-	// If there is an outer join but no join conditions (equality or other)
-	// connecting the two nodes, the leading hint is inapplicable because
-	// it would require a cartesian product, which we want to avoid.
-	// However, if there is a non-equijoin condition (e.g., OR conditions)
-	// connecting the two sides in otherConds, the join is not truly
-	// cartesian and should be allowed. This handles cases like:
-	// t1 join t2 on (t1.a = t2.a or t1.a = t2.b) left join t3 ...
-	// where the OR condition prevents the join from being an equijoin but
-	// there is still a meaningful join condition. See
-	// https://github.com/pingcap/tidb/issues/56513
-	hasJoinCond := len(usedEdges) > 0 || s.hasOtherJoinCondition(lNode, rNode)
-	if hasOuterJoin && !hasJoinCond {
+	if hasOuterJoin && usedEdges == nil {
 		// If the joinGroups contain an outer join, we disable cartesian product.
-		return nil, false
+		// However, if there is a non-equijoin condition (e.g., OR conditions)
+		// connecting the two sides in otherConds, the join is not truly
+		// cartesian and should be allowed, provided the condition does not
+		// reference any null-extended column from an outer join in the group.
+		// This handles cases like: t1 join t2 on (t1.a = t2.a or t1.a = t2.b) left join t3 ...
+		// See https://github.com/pingcap/tidb/issues/56513
+		nullExtended := s.collectNullExtendedCols()
+		if !s.hasOtherJoinCondition(lNode, rNode, nullExtended) {
+			return nil, false
+		}
 	}
 	var rem []expression.Expression
 	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
 	s.otherConds = rem
 	return currentJoin, true
+}
+
+// collectNullExtendedCols returns a schema containing all columns that are on
+// the null-extended side of an outer join in the current join group.
+// For LeftOuterJoin, the right-side columns are null-extended.
+// For RightOuterJoin, the left-side columns are null-extended.
+func (s *baseSingleGroupJoinOrderSolver) collectNullExtendedCols() *expression.Schema {
+	cols := make([]*expression.Column, 0)
+	for idx, edge := range s.eqEdges {
+		jt := s.joinTypes[idx]
+		lCol, rCol := expression.ExtractColumnsFromColOpCol(edge)
+		switch jt.JoinType {
+		case base.LeftOuterJoin:
+			// Right side is null-extended
+			if rCol != nil {
+				cols = append(cols, rCol)
+			}
+		case base.RightOuterJoin:
+			// Left side is null-extended
+			if lCol != nil {
+				cols = append(cols, lCol)
+			}
+		}
+	}
+	if len(cols) == 0 {
+		return nil
+	}
+	return expression.NewSchema(cols...)
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
@@ -549,7 +575,9 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 
 // hasOtherJoinCondition checks whether there are non-equality join conditions
 // connecting the two plans (i.e. conditions referencing columns from both sides).
-func (s *baseSingleGroupJoinOrderSolver) hasOtherJoinCondition(leftPlan, rightPlan base.LogicalPlan) bool {
+// When nullExtendedCols is non-nil, conditions referencing any null-extended column
+// are excluded since reordering could change query semantics.
+func (s *baseSingleGroupJoinOrderSolver) hasOtherJoinCondition(leftPlan, rightPlan base.LogicalPlan, nullExtendedCols ...*expression.Schema) bool {
 	if len(s.otherConds) == 0 {
 		return false
 	}
@@ -560,6 +588,16 @@ func (s *baseSingleGroupJoinOrderSolver) hasOtherJoinCondition(leftPlan, rightPl
 		}
 		if expression.ExprFromSchema(cond, leftPlan.Schema()) || expression.ExprFromSchema(cond, rightPlan.Schema()) {
 			continue
+		}
+		// If we have null-extended columns to check, skip conditions that reference them
+		// since reordering might change the null-extension semantics.
+		if len(nullExtendedCols) > 0 && nullExtendedCols[0] != nil {
+			cols := expression.ExtractColumns(cond)
+			if slices.ContainsFunc(cols, func(col *expression.Column) bool {
+				return nullExtendedCols[0].Contains(col)
+			}) {
+				continue
+			}
 		}
 		return true
 	}
