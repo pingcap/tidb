@@ -163,6 +163,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
 	path.Ranges = ranger.FullRange()
+	path.IsFullRange = true
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.MinCountAfterAccess = 0
 	path.MaxCountAfterAccess = 0
@@ -280,10 +281,12 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	}
 	if pkCol == nil {
 		path.Ranges = ranger.FullIntRange(isUnsigned)
+		path.IsFullRange = true
 		return nil
 	}
 
 	path.Ranges = ranger.FullIntRange(isUnsigned)
+	path.IsFullRange = true
 	if len(conds) == 0 {
 		return nil
 	}
@@ -323,6 +326,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		}
 	}
 	if corColInAccessConds {
+		path.IsFullRange = false
 		path.CountAfterAccess = 1
 		return nil
 	}
@@ -340,6 +344,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	if lenAccessConds == 0 && ds.Table.GetPartitionedTable() == nil {
 		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	} else {
+		path.IsFullRange = false
 		var countEst statistics.RowEstimate
 		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges, true)
 		path.CountAfterAccess = countEst.Est
@@ -354,6 +359,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.Ranges = ranger.FullNotNullRange()
+	path.IsFullRange = true
 	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
 		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if len(conds) == 0 {
@@ -414,6 +420,9 @@ func detachCondAndBuildRangeForPath(
 		for i := range path.ConstCols {
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
+	}
+	if len(res.AccessConds) > 0 {
+		path.IsFullRange = false
 	}
 	indexCols := path.IdxCols
 	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols

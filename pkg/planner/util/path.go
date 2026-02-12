@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -52,6 +51,9 @@ type AccessPath struct {
 	// ConstCols indicates whether the column is constant under the given conditions for all index columns.
 	ConstCols []bool
 	Ranges    []*ranger.Range
+	// IsFullRange indicates that Ranges has not been narrowed from the initial full range.
+	// When true, CountAfterAccess == RealtimeCount and selectivity == 1.0 for the range access.
+	IsFullRange bool
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	// For index merge path, CountAfterAccess is the row count after partial paths and before we apply table filters.
 	CountAfterAccess float64
@@ -177,6 +179,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		IdxColLens:                   slices.Clone(path.IdxColLens),
 		ConstCols:                    slices.Clone(path.ConstCols),
 		Ranges:                       sliceutil.DeepClone(path.Ranges),
+		IsFullRange:                  path.IsFullRange,
 		CountAfterAccess:             path.CountAfterAccess,
 		MinCountAfterAccess:          path.MinCountAfterAccess,
 		MaxCountAfterAccess:          path.MaxCountAfterAccess,
@@ -471,17 +474,8 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 
 // IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
 // the table scan.
-func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
-	var unsignedIntHandle bool
-	if path.IsIntHandlePath && tableInfo.PKIsHandle {
-		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
-			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-		}
-	}
-	if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
-		return true
-	}
-	return false
+func (path *AccessPath) IsFullScanRange(_ *model.TableInfo) bool {
+	return path.IsFullRange
 }
 
 // IsUndetermined checks if the path is undetermined.
