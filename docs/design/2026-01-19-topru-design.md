@@ -110,8 +110,13 @@ TopRU is controlled in a **subscription-driven, reference-counted** way.
 
 | Config Item | Type | Default | Description |
 |-------------|------|---------|-------------|
-| `enable_top_ru` | bool | false | **Derived state**: enabled iff `ruConsumerCount > 0` (reference-counted) |
-| `report_interval` | enum | 60s | Reporting interval, options: 15s/30s/60s |
+| `subscriptors` includes `COLLECTOR_TYPE_TOPRU` | enum | empty | TopRU toggle via subscription; enabled when `ruConsumerCount > 0`, controlling RU collection and sending. |
+| `item_interval_seconds`                        | enum | 60s | TopRURecordItem aggregation interval, options: 15s/30s/60s |
+
+**`item_interval_seconds` Semantics**:
+- Only one effective interval is supported globally.
+- Different intervals set concurrently by multiple subscribers are treated as a configuration conflict (invalid usage).
+- When conflicts occur, the most recently applied interval takes effect (last update wins).
 
 **Design Considerations**:
 - Independent feature (decoupled from TopSQL semantics).
