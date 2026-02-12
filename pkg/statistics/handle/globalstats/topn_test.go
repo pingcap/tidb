@@ -925,9 +925,9 @@ func TestMergeTopNV1V2AccuracyWithBuildStats(t *testing.T) {
 		}
 	}
 
-	const perPartTopN = 2  // TopN size used during per-partition stats building
-	const globalTopN = 2   // TopN size for global merge
-	const numBuckets = 10  // histogram buckets
+	const perPartTopN = 2 // TopN size used during per-partition stats building
+	const globalTopN = 2  // TopN size for global merge
+	const numBuckets = 10 // histogram buckets
 
 	// Build partition stats using the real BuildHistAndTopN pipeline.
 	buildPartitionStats := func() ([]*statistics.TopN, []*statistics.Histogram) {
