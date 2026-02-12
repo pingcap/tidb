@@ -3068,6 +3068,9 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	}
 	topNSize := new(int32)
 	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+	if isSingleColNonPrefixUniqueIndex(task.IndexInfo) {
+		*topNSize = 0
+	}
 	statsVersion := new(int32)
 	*statsVersion = int32(task.StatsVersion)
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
@@ -3314,6 +3317,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 	}
 	e := &AnalyzeColumnsExec{
 		baseAnalyzeExec: base,
+		tableInfo:       task.TblInfo,
 		colsInfo:        task.ColsInfo,
 		handleCols:      task.HandleCols,
 		AnalyzeInfo:     task.AnalyzeInfo,

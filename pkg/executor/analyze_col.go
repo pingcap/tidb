@@ -64,6 +64,26 @@ type AnalyzeColumnsExec struct {
 	memTracker *memory.Tracker
 }
 
+// isColumnCoveredBySingleColUniqueIndex returns true if there exists a public, non-prefix,
+// single-column unique index whose only column has the given offset.
+func isColumnCoveredBySingleColUniqueIndex(tblInfo *model.TableInfo, colOffset int) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if isSingleColNonPrefixUniqueIndex(idx) && idx.Columns[0].Offset == colOffset {
+			return true
+		}
+	}
+	return false
+}
+
+// isSingleColNonPrefixUniqueIndex returns true if the index is unique,
+// has exactly one column, and does not use a prefix.
+func isSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
+	return idx.Unique && len(idx.Columns) == 1 && !idx.HasPrefixIndex()
+}
+
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
 		return e.toV2().analyzeColumnsPushDownV2(gp)
@@ -245,9 +265,14 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		fms = append(fms, nil)
 	}
 	for i, col := range e.colsInfo {
+		skipTopN := e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, col.Offset)
 		if e.StatsVersion < 2 {
 			// In analyze version 2, we don't collect TopN this way. We will collect TopN from samples in `BuildColumnHistAndTopN()` below.
-			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
+			numTopN := uint32(e.opts[ast.AnalyzeOptNumTopN])
+			if skipTopN {
+				numTopN = 0
+			}
+			err := collectors[i].ExtractTopN(numTopN, e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
@@ -272,7 +297,11 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if e.StatsVersion < 2 {
 			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		} else {
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true, nil, true)
+			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
+			if skipTopN {
+				numTopN = 0
+			}
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, col.ID, collectors[i], &col.FieldType, true, nil, true)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {
