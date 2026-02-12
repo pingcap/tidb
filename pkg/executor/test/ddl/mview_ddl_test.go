@@ -423,6 +423,35 @@ func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
 
+func TestCreateMaterializedViewRetryWithResidualBuildRowsRollback(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (null, 7), (null, 3)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewPostBuildRetryableErr", "1*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewPostBuildRetryableErr"))
+	}()
+
+	err := tk.ExecToErr("create materialized view mv_retry_residual (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "detected residual build rows on retry")
+	require.NotContains(t, err.Error(), "Duplicate entry")
+
+	tk.MustQuery("show tables like 'mv_retry_residual'").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
+	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
+}
+
 func TestCreateMaterializedViewRetryAfterUpsertFailure(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -364,10 +364,19 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 
 	case model.StateWriteReorganization:
 		// Phase-2: run initial build and persist refresh result in mysql.tidb_mview_refresh.
-		// Initialize build tso when reorg starts to avoid capturing an overly old value in StateNone.
-		// It will be replaced by the actual build statement start_ts after build success.
-		if job.SnapshotVer == 0 {
-			job.SnapshotVer = jobCtx.metaMut.StartTS
+		// CREATE MATERIALIZED VIEW build is non-resumable in this stage. For normal retry/recovery
+		// paths, if this step restarts without an active reorg context and MV table already has
+		// rows, fail fast and roll back the whole job to avoid duplicate build writes.
+		if w.getReorgCtx(job.ID) == nil && job.AdminOperator == model.AdminCommandByNotKnown {
+			hasRows, checkErr := w.hasCreateMaterializedViewBuildRows(jobCtx.stepCtx, job.SchemaName, mvTblInfo.Name.O)
+			if checkErr != nil {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(checkErr)
+			}
+			if hasRows {
+				job.State = model.JobStateRollingback
+				return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: detected residual build rows on retry")
+			}
 		}
 		reorg := &reorgInfo{Job: job, jobCtx: jobCtx}
 		storeName := ""
@@ -394,6 +403,12 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
+
+		failpoint.Inject("mockCreateMaterializedViewPostBuildRetryableErr", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(ver, dbterror.ErrWaitReorgTimeout)
+			}
+		})
 
 		if job.SnapshotVer == 0 {
 			job.State = model.JobStateRollingback
@@ -521,6 +536,18 @@ func buildCreateMaterializedViewInsertSQL(schemaName string, mvTblInfo *model.Ta
 	}
 	prefix := sqlescape.MustEscapeSQL("REPLACE INTO %n.%n ", schemaName, mvTblInfo.Name.O)
 	return prefix + mvTblInfo.MaterializedView.SQLContent, nil
+}
+
+func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaName, mvTableName string) (bool, error) {
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+	checkSQL := sqlescape.MustEscapeSQL("SELECT 1 FROM %n.%n LIMIT 1", schemaName, mvTableName)
+	rows, err := w.sess.Execute(ctx, checkSQL, "create-materialized-view-check-build-rows")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return len(rows) > 0, nil
 }
 
 func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) (func(), error) {
