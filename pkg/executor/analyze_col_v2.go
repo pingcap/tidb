@@ -225,10 +225,18 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	}()
 
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
+	colGroups := buildColumnGroupOffsets(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for range l {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
+	nodeNDVSketches := make([][]*statistics.FMSketch, 0, samplingStatsConcurrency)
+	nodeF1Sketches := make([][]*statistics.FMSketch, 0, samplingStatsConcurrency)
+	nodeSampleSizes := make([]int, 0, samplingStatsConcurrency)
+	defer func() {
+		destroySketchCopies(nodeNDVSketches)
+		destroySketchCopies(nodeF1Sketches)
+	}()
 
 	sc := e.ctx.GetSessionVars().StmtCtx
 
@@ -250,7 +258,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(mergeResultCh, mergeTaskCh, l, id)
+			e.subMergeWorker(mergeResultCh, mergeTaskCh, l, id, colGroups)
 		})
 	}
 	// Merge the result from collectors.
@@ -282,6 +290,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
 				mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
 				"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
+			nodeNDVSketches = append(nodeNDVSketches, copySketches(mergeResult.collector.Base().FMSketches))
+			nodeF1Sketches = append(nodeF1Sketches, copySketches(mergeResult.collector.Base().F1Sketches))
+			nodeSampleSizes = append(nodeSampleSizes, mergeResult.collector.Base().Samples.Len())
 			e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 			mergeResult.collector.DestroyAndPutToPool()
 		}
@@ -300,6 +311,24 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
+
+	colLen := len(e.colsInfo)
+	indexPushedDownResult := <-idxNDVPushDownCh
+	if indexPushedDownResult.err != nil {
+		return 0, nil, nil, nil, nil, indexPushedDownResult.err
+	}
+	for _, offset := range indexesWithVirtualColOffsets {
+		ret := indexPushedDownResult.results[e.indexes[offset].ID]
+		rootRowCollector.Base().NullCount[colLen+offset] = ret.Count
+		rootRowCollector.Base().FMSketches[colLen+offset] = ret.Ars[0].Fms[0]
+	}
+	isSpecialIndex := make([]bool, len(e.indexes))
+	for _, offset := range indexesWithVirtualColOffsets {
+		if offset >= 0 && offset < len(isSpecialIndex) {
+			isSpecialIndex[offset] = true
+		}
+	}
+	estimateNDVs := estimateNDVsBySketch(rootRowCollector, nodeNDVSketches, nodeF1Sketches, nodeSampleSizes, colLen, isSpecialIndex)
 
 	// Decode the data from sample collectors.
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
@@ -332,7 +361,6 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			return 0, nil, nil, nil, nil, err
 		}
 	}
-	colLen := len(e.colsInfo)
 	// The order of the samples are broken when merging samples from sub-collectors.
 	// So now we need to sort the samples according to the handle in order to calculate correlation.
 	slices.SortFunc(rootRowCollector.Base().Samples, func(i, j *statistics.ReservoirRowSampleItem) int {
@@ -356,7 +384,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	// Start workers to build stats.
 	for range samplingStatsConcurrency {
 		e.samplingBuilderWg.Run(func() {
-			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
+			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, estimateNDVs, exitCh)
 		})
 	}
 	// Generate tasks for building stats.
@@ -369,18 +397,6 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			slicePos:         i,
 		}
 		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[i])
-	}
-
-	indexPushedDownResult := <-idxNDVPushDownCh
-	if indexPushedDownResult.err != nil {
-		close(exitCh)
-		e.samplingBuilderWg.Wait()
-		return 0, nil, nil, nil, nil, indexPushedDownResult.err
-	}
-	for _, offset := range indexesWithVirtualColOffsets {
-		ret := indexPushedDownResult.results[e.indexes[offset].ID]
-		rootRowCollector.Base().NullCount[colLen+offset] = ret.Count
-		rootRowCollector.Base().FMSketches[colLen+offset] = ret.Ars[0].Fms[0]
 	}
 
 	// Generate tasks for building stats for indexes.
@@ -589,7 +605,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	return tasks
 }
 
-func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
+func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int, colGroups [][]int64) {
 	// Only close the resultCh in the first worker.
 	closeTheResultCh := index == 0
 	defer func() {
@@ -669,7 +685,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
-func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, estimateNDVs []int64, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -833,6 +849,9 @@ workLoop:
 				releaseCollectorMemory()
 				continue
 			}
+			if hist != nil && task.slicePos < len(estimateNDVs) && estimateNDVs[task.slicePos] > hist.NDV {
+				hist.NDV = estimateNDVs[task.slicePos]
+			}
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
 			e.memTracker.Consume(finalMemSize)
 			hists[task.slicePos] = hist
@@ -861,6 +880,103 @@ type samplingBuildTask struct {
 	tp               *types.FieldType
 	isColumn         bool
 	slicePos         int
+}
+
+func buildColumnGroupOffsets(groups []*tipb.AnalyzeColumnGroup) [][]int64 {
+	if len(groups) == 0 {
+		return nil
+	}
+	res := make([][]int64, 0, len(groups))
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		res = append(res, group.ColumnOffsets)
+	}
+	return res
+}
+
+func copySketches(src []*statistics.FMSketch) []*statistics.FMSketch {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]*statistics.FMSketch, len(src))
+	for i, sketch := range src {
+		if sketch != nil {
+			dst[i] = sketch.Copy()
+		}
+	}
+	return dst
+}
+
+func destroySketchCopies(nodes [][]*statistics.FMSketch) {
+	for _, sketches := range nodes {
+		for _, sketch := range sketches {
+			if sketch != nil {
+				sketch.DestroyAndPutToPool()
+			}
+		}
+	}
+}
+
+func estimateNDVsBySketch(
+	rootCollector statistics.RowSampleCollector,
+	nodeNDVSketches [][]*statistics.FMSketch,
+	nodeF1Sketches [][]*statistics.FMSketch,
+	nodeSampleSizes []int,
+	colLen int,
+	isSpecialIndex []bool,
+) []int64 {
+	totalLen := len(rootCollector.Base().FMSketches)
+	estimateNDVs := make([]int64, totalLen)
+	if totalLen == 0 || len(nodeNDVSketches) == 0 || len(nodeNDVSketches) != len(nodeF1Sketches) {
+		return estimateNDVs
+	}
+	var sampleSize uint64
+	for _, size := range nodeSampleSizes {
+		sampleSize += uint64(size)
+	}
+	if sampleSize == 0 {
+		return estimateNDVs
+	}
+	for i := 0; i < totalLen; i++ {
+		if i >= colLen {
+			idxOffset := i - colLen
+			if idxOffset >= 0 && idxOffset < len(isSpecialIndex) && isSpecialIndex[idxOffset] {
+				continue
+			}
+		}
+		sketch := rootCollector.Base().FMSketches[i]
+		if sketch == nil {
+			continue
+		}
+		sampleNDV := uint64(sketch.NDV())
+		if sampleNDV == 0 {
+			continue
+		}
+		ndvSketches := make([]*statistics.FMSketch, len(nodeNDVSketches))
+		f1Sketches := make([]*statistics.FMSketch, len(nodeF1Sketches))
+		for nodeIdx := range nodeNDVSketches {
+			if i < len(nodeNDVSketches[nodeIdx]) {
+				ndvSketches[nodeIdx] = nodeNDVSketches[nodeIdx][i]
+			}
+			if i < len(nodeF1Sketches[nodeIdx]) {
+				f1Sketches[nodeIdx] = nodeF1Sketches[nodeIdx][i]
+			}
+		}
+		f1 := statistics.EstimateF1BySketches(ndvSketches, f1Sketches)
+		rowCount := uint64(0)
+		if i < len(rootCollector.Base().NullCount) {
+			count := rootCollector.Base().Count - rootCollector.Base().NullCount[i]
+			if count > 0 {
+				rowCount = uint64(count)
+			}
+		} else if rootCollector.Base().Count > 0 {
+			rowCount = uint64(rootCollector.Base().Count)
+		}
+		estimateNDVs[i] = int64(statistics.EstimateNDVByChao3(sampleNDV, f1, sampleSize, rowCount))
+	}
+	return estimateNDVs
 }
 
 func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {

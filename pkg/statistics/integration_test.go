@@ -333,6 +333,57 @@ func TestAnalyzeSnapshot(t *testing.T) {
 	require.True(t, s2 > s1)
 }
 
+func TestAnalyzeV2Chao3(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("drop table if exists t_chao3")
+	tk.MustExec("create table t_chao3(a int)")
+	tk.MustExec("insert into t_chao3 values (1), (1), (2), (3)")
+	tk.MustExec("analyze table t_chao3 with 1 samplerate, 0 topn")
+
+	var (
+		input  []string
+		output [][]string
+	)
+	integrationSuiteData := statistics.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	var sqlNDV int64
+	for i := range input {
+		res := tk.MustQuery(input[i])
+		rows := res.Rows()
+		testdata.OnRecord(func() {
+			output[i] = testdata.ConvertRowsToStrings(rows)
+		})
+		res.Check(testkit.Rows(output[i]...))
+		if i == 0 && len(rows) > 0 && len(rows[0]) > 0 {
+			val, ok := rows[0][0].(string)
+			require.True(t, ok)
+			ndv, err := strconv.ParseInt(val, 10, 64)
+			require.NoError(t, err)
+			sqlNDV = ndv
+		}
+	}
+
+	is := dom.InfoSchema()
+	tblT, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_chao3"))
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(context.Background(), is))
+	statsTblT := h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
+	var statsNDV int64
+	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		if col.Info != nil && col.Info.Name.L == "a" {
+			statsNDV = col.Histogram.NDV
+			return true
+		}
+		return false
+	})
+	require.Equal(t, int64(4), statsNDV)
+	require.Equal(t, statsNDV, sqlNDV)
+}
+
 func TestOutdatedStatsCheck(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

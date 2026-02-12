@@ -16,5 +16,11 @@
       "show stats_topn",
       "show stats_buckets"
     ]
+  },
+  {
+    "name": "TestAnalyzeV2Chao3",
+    "cases": [
+      "select distinct_count from mysql.stats_histograms where table_id = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't_chao3') and is_index = 0"
+    ]
   }
 ]
