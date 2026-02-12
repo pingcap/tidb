@@ -1864,6 +1864,10 @@ func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
 	return false
 }
 
+func isMVTableAlterTiFlashReplica(tblInfo *model.TableInfo, specs []*ast.AlterTableSpec) bool {
+	return tblInfo.MaterializedView != nil && len(specs) == 1 && specs[0].Tp == ast.AlterTableSetTiFlashReplica
+}
+
 func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	return e.alterTable(ctx, sctx, stmt, false)
 }
@@ -1883,9 +1887,16 @@ func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt
 	if tb.Meta().IsView() || tb.Meta().IsSequence() {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
+	allowMVSetTiFlashReplica := isMVTableAlterTiFlashReplica(tb.Meta(), validSpecs)
 	if !allowMaterializedViewRelated {
-		if err := checkTableMaterializedViewConstraints(tb.Meta(), "ALTER TABLE"); err != nil {
-			return errors.Trace(err)
+		if allowMVSetTiFlashReplica {
+			if err := checkTableMaterializedViewConstraintsAllowMVTable(tb.Meta(), "ALTER TABLE"); err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			if err := checkTableMaterializedViewConstraints(tb.Meta(), "ALTER TABLE"); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
@@ -4501,7 +4512,15 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 }
 
 func checkTableMaterializedViewConstraints(tblInfo *model.TableInfo, op string) error {
-	if tblInfo.MaterializedView != nil {
+	return checkTableMaterializedViewConstraintsWithOptions(tblInfo, op, false)
+}
+
+func checkTableMaterializedViewConstraintsAllowMVTable(tblInfo *model.TableInfo, op string) error {
+	return checkTableMaterializedViewConstraintsWithOptions(tblInfo, op, true)
+}
+
+func checkTableMaterializedViewConstraintsWithOptions(tblInfo *model.TableInfo, op string, allowMVTable bool) error {
+	if !allowMVTable && tblInfo.MaterializedView != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 	if tblInfo.MaterializedViewLog != nil {
@@ -5064,6 +5083,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := checkTableMaterializedViewConstraintsAllowMVTable(t.Meta(), "CREATE INDEX"); err != nil {
+		return errors.Trace(err)
+	}
 
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
@@ -5512,6 +5534,9 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	t, err := is.TableByName(context.Background(), ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+	if err := checkTableMaterializedViewConstraintsAllowMVTable(t.Meta(), "DROP INDEX"); err != nil {
+		return errors.Trace(err)
 	}
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))

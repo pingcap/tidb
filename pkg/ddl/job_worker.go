@@ -367,6 +367,10 @@ func JobNeedGC(job *model.Job) bool {
 			model.ActionReorganizePartition, model.ActionRemovePartitioning,
 			model.ActionAlterTablePartitioning:
 			return true
+		case model.ActionCreateMaterializedView:
+			// CREATE MATERIALIZED VIEW may create and then roll back a physical table.
+			// Only rollback-done jobs with valid table IDs need delete-range GC.
+			return job.IsRollbackDone() && job.TableID != 0
 		case model.ActionDropIndex:
 			args, err := model.GetFinishedModifyIndexArgs(job)
 			if err != nil {

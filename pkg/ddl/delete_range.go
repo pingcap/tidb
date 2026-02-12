@@ -312,6 +312,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
+	case model.ActionCreateMaterializedView:
+		if !job.IsRollbackDone() || job.TableID == 0 {
+			return nil
+		}
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{job.TableID}, ea, "create materialized view rollback: table ID"))
 	case model.ActionTruncateTable:
 		tableID := job.TableID
 		args, err := model.GetFinishedTruncateTableArgs(job)

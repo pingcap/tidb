@@ -223,6 +223,12 @@ func TestJobNeedGC(t *testing.T) {
 	require.True(t, ddl.JobNeedGC(job))
 	job = &model.Job{Type: model.ActionAddPrimaryKey, State: model.JobStateRollbackDone}
 	require.True(t, ddl.JobNeedGC(job))
+	job = &model.Job{Type: model.ActionCreateMaterializedView, State: model.JobStateDone, TableID: 123}
+	require.False(t, ddl.JobNeedGC(job))
+	job = &model.Job{Type: model.ActionCreateMaterializedView, State: model.JobStateRollbackDone}
+	require.False(t, ddl.JobNeedGC(job))
+	job = &model.Job{Type: model.ActionCreateMaterializedView, State: model.JobStateRollbackDone, TableID: 123}
+	require.True(t, ddl.JobNeedGC(job))
 
 	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{
 		SubJobs: []*model.SubJob{

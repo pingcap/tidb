@@ -126,6 +126,26 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Contains(t, showCreate, "UNIQUE KEY")
 	require.False(t, strings.Contains(showCreate, "PRIMARY KEY (`a`)"))
 
+	// Index DDL on MV-related tables: base/mlog remain forbidden, MV table is allowed.
+	err = tk.ExecToErr("create index idx_forbidden_base on t (b)")
+	require.ErrorContains(t, err, "CREATE INDEX on base table with materialized view dependencies")
+	err = tk.ExecToErr("drop index idx_bac on t_minmax_ok")
+	require.ErrorContains(t, err, "DROP INDEX on base table with materialized view dependencies")
+	tk.MustExec("create index idx_mv_s on mv (s)")
+	tk.MustExec("drop index idx_mv_s on mv")
+	err = tk.ExecToErr("create index idx_forbidden_mlog on `$mlog$t` (a)")
+	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")
+
+	// ALTER TABLE ... SET TIFLASH REPLICA is allowed on MV table, but still forbidden on base/mlog.
+	err = tk.ExecToErr("alter table t set tiflash replica 1")
+	require.ErrorContains(t, err, "ALTER TABLE on base table with materialized view dependencies")
+	err = tk.ExecToErr("alter table `$mlog$t` set tiflash replica 1")
+	require.ErrorContains(t, err, "ALTER TABLE on materialized view log table")
+	err = tk.ExecToErr("alter table mv set tiflash replica 1")
+	if err != nil {
+		require.NotContains(t, err.Error(), "ALTER TABLE on materialized view table")
+	}
+
 	// MV LOG cannot be dropped while dependent MVs exist.
 	err = tk.ExecToErr("drop materialized view log on t")
 	require.ErrorContains(t, err, "dependent materialized views exist")
@@ -277,6 +297,69 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
 
+func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	pauseBuildFailpoint := "github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild"
+	require.NoError(t, failpoint.Enable(pauseBuildFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+		}
+	}()
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_pause (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	}()
+
+	tkCtl := testkit.NewTestKit(t, store)
+	tkCtl.MustExec("use test")
+	jobID := ""
+	require.Eventually(t, func() bool {
+		rows := tkCtl.MustQuery("admin show ddl jobs where JOB_TYPE='create materialized view'").Rows()
+		if len(rows) == 0 {
+			return false
+		}
+		if len(rows[0]) < 5 || strings.ToLower(fmt.Sprint(rows[0][4])) != "write reorganization" {
+			return false
+		}
+		jobID = fmt.Sprint(rows[0][0])
+		return jobID != ""
+	}, 30*time.Second, 100*time.Millisecond)
+
+	tkCtl.MustExec("admin pause ddl jobs " + jobID)
+	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+	enabled = false
+
+	require.Eventually(t, func() bool {
+		rows := tkCtl.MustQuery("admin show ddl jobs where JOB_ID=" + jobID).Rows()
+		if len(rows) == 0 {
+			return false
+		}
+		state := strings.ToLower(fmt.Sprint(rows[0][len(rows[0])-2]))
+		return state == "paused" || state == "pausing"
+	}, 30*time.Second, 100*time.Millisecond)
+
+	tkCtl.MustExec("admin resume ddl jobs " + jobID)
+	select {
+	case err := <-ddlDone:
+		require.NoError(t, err)
+	case <-time.After(60 * time.Second):
+		t.Fatalf("timed out waiting CREATE MATERIALIZED VIEW to finish after resume")
+	}
+
+	tk.MustQuery("select a, s, cnt from mv_pause order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+}
+
 func TestCreateMaterializedViewRollbackIgnoreMissingRefreshInfoTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -327,6 +410,10 @@ func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 
 	tk.MustQuery("show tables like 'mv_upsert_fail'").Check(testkit.Rows())
 	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+	rows := tk.MustQuery("admin show ddl jobs where JOB_TYPE='create materialized view'").Rows()
+	require.NotEmpty(t, rows)
+	jobID := fmt.Sprint(rows[0][0])
+	tk.MustQuery("select ((select count(*) from mysql.gc_delete_range where job_id=" + jobID + ") + (select count(*) from mysql.gc_delete_range_done where job_id=" + jobID + ")) > 0").Check(testkit.Rows("1"))
 
 	is := dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))

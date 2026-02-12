@@ -378,7 +378,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return w.buildCreateMaterializedViewData(jobCtx.stepCtx, storeName, job, mvTblInfo)
 		})
 		if err != nil {
-			if dbterror.ErrPausedDDLJob.Equal(err) || dbterror.ErrWaitReorgTimeout.Equal(err) {
+			if dbterror.ErrPausedDDLJob.Equal(err) || isCreateMaterializedViewPausedErr(jobCtx, err) || dbterror.ErrWaitReorgTimeout.Equal(err) {
 				return ver, nil
 			}
 			if isCreateMaterializedViewCancelledErr(jobCtx, err) {
@@ -393,6 +393,11 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			}
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
+		}
+
+		if job.SnapshotVer == 0 {
+			job.State = model.JobStateRollingback
+			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 		}
 
 		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID, job.SnapshotVer, true, ""); err != nil {
@@ -423,6 +428,16 @@ func isCreateMaterializedViewCancelledErr(jobCtx *jobContext, err error) bool {
 		return false
 	}
 	return dbterror.ErrCancelledDDLJob.Equal(context.Cause(jobCtx.stepCtx))
+}
+
+func isCreateMaterializedViewPausedErr(jobCtx *jobContext, err error) bool {
+	if dbterror.ErrPausedDDLJob.Equal(err) {
+		return true
+	}
+	if errors.Cause(err) != context.Canceled || jobCtx.stepCtx == nil {
+		return false
+	}
+	return dbterror.ErrPausedDDLJob.Equal(context.Cause(jobCtx.stepCtx))
 }
 
 func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.Job, mvTblInfo *model.TableInfo) (ver int64, _ error) {
@@ -504,7 +519,7 @@ func buildCreateMaterializedViewInsertSQL(schemaName string, mvTblInfo *model.Ta
 	if mvTblInfo.MaterializedView == nil || len(mvTblInfo.MaterializedView.SQLContent) == 0 {
 		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid select sql")
 	}
-	prefix := sqlescape.MustEscapeSQL("INSERT INTO %n.%n ", schemaName, mvTblInfo.Name.O)
+	prefix := sqlescape.MustEscapeSQL("REPLACE INTO %n.%n ", schemaName, mvTblInfo.Name.O)
 	return prefix + mvTblInfo.MaterializedView.SQLContent, nil
 }
 
@@ -519,6 +534,15 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMet
 	return func() {
 		restore(sessCtx)
 	}, nil
+}
+
+func (w *worker) setCreateMaterializedViewBuildReadTSInReorgCtx(jobID int64, readTS uint64) error {
+	rc := w.getReorgCtx(jobID)
+	if rc == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: reorg context missing")
+	}
+	rc.setSnapshotVer(readTS)
+	return nil
 }
 
 func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {
@@ -549,8 +573,7 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	job.SnapshotVer = readTS
-	return nil
+	return errors.Trace(w.setCreateMaterializedViewBuildReadTSInReorgCtx(job.ID, readTS))
 }
 
 func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {
@@ -581,8 +604,7 @@ func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	job.SnapshotVer = readTS
-	return nil
+	return errors.Trace(w.setCreateMaterializedViewBuildReadTSInReorgCtx(job.ID, readTS))
 }
 
 func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName string, job *model.Job, mvTblInfo *model.TableInfo) error {
