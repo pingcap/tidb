@@ -162,55 +162,55 @@
       {
         "SQL": "explain format = 'plan_tree' select avg(a) from t",
         "Plan": [
-          "HashAgg root  funcs:avg(Column)->Column",
-          "└─Projection root  cast(test.t.a, decimal(10,0) BINARY)->Column",
-          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg root  funcs:avg(Column, Column)->Column",
+          "└─TableReader root  data:HashAgg",
+          "  └─HashAgg batchCop[tiflash]  funcs:count(Column)->Column, funcs:sum(Column)->Column",
+          "    └─Projection batchCop[tiflash]  test.t.a->Column, cast(test.t.a, decimal(10,0) BINARY)->Column",
+          "      └─TableFullScan batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
         "Plan": [
-          "HashAgg root  funcs:avg(Column)->Column",
-          "└─Projection root  cast(test.t.a, decimal(10,0) BINARY)->Column",
-          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg root  funcs:avg(Column, Column)->Column",
+          "└─TableReader root  data:HashAgg",
+          "  └─HashAgg batchCop[tiflash]  funcs:count(Column)->Column, funcs:sum(Column)->Column",
+          "    └─Projection batchCop[tiflash]  test.t.a->Column, cast(test.t.a, decimal(10,0) BINARY)->Column",
+          "      └─TableFullScan batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
         "Plan": [
-          "HashAgg root  funcs:sum(Column)->Column",
-          "└─Projection root  cast(test.t.a, decimal(10,0) BINARY)->Column",
-          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  data:StreamAgg",
+          "  └─StreamAgg batchCop[tiflash]  funcs:sum(Column)->Column",
+          "    └─Projection batchCop[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column",
+          "      └─TableFullScan batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
         "Plan": [
-          "HashAgg root  funcs:sum(Column)->Column",
-          "└─Projection root  cast(plus(test.t.a, 1), decimal(20,0) BINARY)->Column",
-          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  data:StreamAgg",
+          "  └─StreamAgg batchCop[tiflash]  funcs:sum(Column)->Column",
+          "    └─Projection batchCop[tiflash]  cast(plus(test.t.a, 1), decimal(20,0) BINARY)->Column",
+          "      └─TableFullScan batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
         "Plan": [
-          "HashAgg root  funcs:sum(Column)->Column",
-          "└─Projection root  cast(isnull(test.t.a), decimal(20,0) BINARY)->Column",
-          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  data:StreamAgg",
+          "  └─StreamAgg batchCop[tiflash]  funcs:sum(Column)->Column",
+          "    └─Projection batchCop[tiflash]  cast(isnull(test.t.a), decimal(20,0) BINARY)->Column",
+          "      └─TableFullScan batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -231,10 +231,9 @@
         "SQL": "explain format = 'plan_tree' select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
         "Plan": [
           "HashJoin root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─Selection mpp[tiflash]  not(isnull(test.t.a))",
-          "│     └─TableFullScan mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tiflash]  not(isnull(test.t.a))",
+          "│   └─TableFullScan cop[tiflash] table:t2 keep order:false, stats:pseudo",
           "└─TableReader(Probe) root  data:Selection",
           "  └─Selection cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
@@ -252,9 +251,8 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─TableRangeScan mpp[tiflash] table:tt range:(1,20), [30,55), keep order:false, stats:pseudo"
+          "TableReader root  data:TableRangeScan",
+          "└─TableRangeScan cop[tiflash] table:tt range:(1,20), [30,55), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -270,18 +268,16 @@
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
         "Plan": [
           "Sort root  test.ttt.a:desc",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan mpp[tiflash] table:ttt keep order:false, stats:pseudo"
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tiflash] table:ttt keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─TableFullScan mpp[tiflash] table:ttt keep order:true, stats:pseudo"
+          "TableReader root  data:TableFullScan",
+          "└─TableFullScan cop[tiflash] table:ttt keep order:true, stats:pseudo"
         ],
         "Warn": null
       },
@@ -298,9 +294,8 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[t, ttt], tikv[tt]) */ * from ttt",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─TableFullScan mpp[tiflash] table:ttt keep order:false, stats:pseudo"
+          "TableReader root  data:TableFullScan",
+          "└─TableFullScan cop[tiflash] table:ttt keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]There are no matching table names for (t, tt) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t, ttt], tikv[tt]) */. Maybe you can use the table alias name"
