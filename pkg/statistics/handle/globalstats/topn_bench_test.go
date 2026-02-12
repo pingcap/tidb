@@ -160,3 +160,26 @@ func BenchmarkMergePartTopN2GlobalTopNV2(b *testing.B) {
 		})
 	}
 }
+
+func benchmarkMergePartTopNAndHistToGlobal(partitions int, b *testing.B) {
+	loc := time.UTC
+	killer := sqlkiller.SQLKiller{}
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
+	topNs, hists := prepareTopNsAndHists(b, partitions, loc)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = statistics.MergePartTopNAndHistToGlobal(
+			topNs, hists, 100, 256, false, &killer, sc, 1,
+		)
+	}
+}
+
+// cmd: go test -run=^$ -bench=BenchmarkMergePartTopNAndHistToGlobal -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
+func BenchmarkMergePartTopNAndHistToGlobal(b *testing.B) {
+	for _, size := range benchmarkSizes {
+		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
+			benchmarkMergePartTopNAndHistToGlobal(size, b)
+		})
+	}
+}

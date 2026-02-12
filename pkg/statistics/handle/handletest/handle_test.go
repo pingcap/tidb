@@ -418,11 +418,13 @@ func TestMergeGlobalTopN(t *testing.T) {
 	// The top2 values in global are 1(count = 4) and 3(count = 5).
 	// Notice: The value 3 does not appear in the topN structure of partition one.
 	// But we can still use the histogram to calculate its accurate value.
+	// V1 (mergeConcurrency=1) looks up b=3 in p1's histogram and finds count=2,
+	// giving global count = 3 (p0 TopN) + 2 (p1 histogram) = 5.
 	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'b' and partition_name = 'global';").Check(testkit.Rows(
 		("test t global b 0 1 4"),
-		("test t global b 0 3 3"), // TODO: Histogram parts are ignored, is it OK?
+		("test t global b 0 3 5"),
 		("test t global b 1 1 4"),
-		("test t global b 1 3 3"))) // TODO: Histogram parts are ignored, is it OK?
+		("test t global b 1 3 5")))
 }
 
 func TestExtendedStatsOps(t *testing.T) {

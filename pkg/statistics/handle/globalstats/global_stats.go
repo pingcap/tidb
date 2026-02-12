@@ -329,23 +329,39 @@ func blockingMergePartitionStats2GlobalStats(
 			}
 		}
 
-		// Merge topN.
-		// Note: We need to merge TopN before merging the histogram.
-		// Because after merging TopN, some numbers will be left.
-		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
-		var poppedTopN []statistics.TopNMeta
-		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
-		globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(gpool, sc, wrapper,
-			sc.GetSessionVars().StmtCtx.TimeZone(), sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
-		if err != nil {
-			return
-		}
+		// Merge topN and histogram.
+		mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
+		if mergeConcurrency == 0 {
+			// V2+hybrid: combined TopN + histogram merge that extracts
+			// histogram upper-bound Repeat counts into the TopN counter.
+			killer := &sc.GetSessionVars().SQLKiller
+			globalStats.TopN[i], globalStats.Hg[i], err = statistics.MergePartTopNAndHistToGlobal(
+				allTopN[i], allHg[i],
+				uint32(opts[ast.AnalyzeOptNumTopN]),
+				int64(opts[ast.AnalyzeOptNumBuckets]),
+				isIndex, killer, sc.GetSessionVars().StmtCtx,
+				sc.GetSessionVars().AnalyzeVersion,
+			)
+			if err != nil {
+				return
+			}
+		} else {
+			// V1 / concurrent flow: merge TopN first (some counts become leftover),
+			// then merge histograms with the leftover TopN entries as extra buckets.
+			var poppedTopN []statistics.TopNMeta
+			wrapper := NewStatsWrapper(allHg[i], allTopN[i])
+			globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(gpool, sc, wrapper,
+				sc.GetSessionVars().StmtCtx.TimeZone(), sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+			if err != nil {
+				return
+			}
 
-		// Merge histogram.
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, sc.GetSessionVars().AnalyzeVersion)
-		if err != nil {
-			return
+			// Merge histogram.
+			globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
+				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, sc.GetSessionVars().AnalyzeVersion)
+			if err != nil {
+				return
+			}
 		}
 
 		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.

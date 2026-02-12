@@ -509,29 +509,46 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 				return nil
 			}
 			var err error
-			var poppedTopN []statistics.TopNMeta
-			var allhg []*statistics.Histogram
-			wrapper := item.item
-			a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.statsHandle.GPool(), sctx, wrapper,
-				tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
-			if err != nil {
-				return err
-			}
+			mergeConcurrency := sctx.GetSessionVars().AnalyzePartitionMergeConcurrency
+			if mergeConcurrency == 0 {
+				// V2+hybrid: combined TopN + histogram merge.
+				killer := &sctx.GetSessionVars().SQLKiller
+				wrapper := item.item
+				a.globalStats.TopN[item.idx], a.globalStats.Hg[item.idx], err = statistics.MergePartTopNAndHistToGlobal(
+					wrapper.AllTopN, wrapper.AllHg,
+					uint32(opts[ast.AnalyzeOptNumTopN]),
+					int64(opts[ast.AnalyzeOptNumBuckets]),
+					isIndex, killer, stmtCtx,
+					analyzeVersion,
+				)
+				if err != nil {
+					return err
+				}
+			} else {
+				var poppedTopN []statistics.TopNMeta
+				var allhg []*statistics.Histogram
+				wrapper := item.item
+				a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.statsHandle.GPool(), sctx, wrapper,
+					tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+				if err != nil {
+					return err
+				}
 
-			// Merge histogram.
-			globalHg := &(a.globalStats.Hg[item.idx])
-			*globalHg, err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
-				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, analyzeVersion)
-			if err != nil {
-				return err
+				// Merge histogram.
+				globalHg := &(a.globalStats.Hg[item.idx])
+				*globalHg, err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
+					int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, analyzeVersion)
+				if err != nil {
+					return err
+				}
 			}
 
 			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-			if *globalHg != nil {
-				for j := range (*globalHg).Buckets {
-					(*globalHg).Buckets[j].NDV = 0
+			if a.globalStats.Hg[item.idx] != nil {
+				for j := range a.globalStats.Hg[item.idx].Buckets {
+					a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
 				}
-				(*globalHg).NDV = a.globalStatsNDV[item.idx]
+				a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
 			}
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil

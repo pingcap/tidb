@@ -36,13 +36,6 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
 	killer := &sc.GetSessionVars().SQLKiller
 
-	// When mergeConcurrency is 0, use the V2 TopN-only merge which avoids
-	// O(P^2) histogram lookups and histogram mutations.
-	if mergeConcurrency == 0 {
-		globalTopN, leftTopN, err := MergePartTopN2GlobalTopNV2(wrapper.AllTopN, n, killer)
-		return globalTopN, leftTopN, wrapper.AllHg, err
-	}
-
 	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
 		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
