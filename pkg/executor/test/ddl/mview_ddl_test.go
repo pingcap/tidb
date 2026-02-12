@@ -121,6 +121,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view mv_nullable")
 	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop materialized view log on t_nullable")
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
 
 	// Reverse mapping cleared.
 	is = dom.InfoSchema()

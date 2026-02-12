@@ -44,6 +44,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -507,12 +508,33 @@ func buildCreateMaterializedViewInsertSQL(schemaName string, mvTblInfo *model.Ta
 	return prefix + mvTblInfo.MaterializedView.SQLContent, nil
 }
 
+func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) (func(), error) {
+	restore := restoreSessCtx(sessCtx)
+	if reorgMeta == nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
+	}
+	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return func() {
+		restore(sessCtx)
+	}, nil
+}
+
 func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {
 	sessCtx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.Put(sessCtx)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta)
+	if err != nil {
+		w.sessPool.Put(sessCtx)
+		return errors.Trace(err)
+	}
+	defer func() {
+		restoreSess()
+		w.sessPool.Put(sessCtx)
+	}()
 
 	ddlSess := sess.NewSession(sessCtx)
 	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo)
@@ -536,7 +558,15 @@ func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.Put(sessCtx)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta)
+	if err != nil {
+		w.sessPool.Put(sessCtx)
+		return errors.Trace(err)
+	}
+	defer func() {
+		restoreSess()
+		w.sessPool.Put(sessCtx)
+	}()
 
 	buildSQL, err := buildCreateMaterializedViewInsertSQL(job.SchemaName, mvTblInfo)
 	if err != nil {
