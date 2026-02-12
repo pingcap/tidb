@@ -82,10 +82,10 @@
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_19 1.00 193.81 root  funcs:count(Column#7)->Column#5",
-          "└─IndexReader_20 1.00 143.91 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan_18 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_17 1.00 193.81 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader_18 1.00 143.91 root  index:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan_16 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -118,10 +118,10 @@
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_19 1.00 193.81 root  funcs:count(Column#7)->Column#5",
-          "└─IndexReader_20 1.00 143.91 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan_18 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_17 1.00 193.81 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader_18 1.00 143.91 root  index:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan_16 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -154,10 +154,10 @@
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_19 1.00 193.81 root  funcs:count(Column#7)->Column#5",
-          "└─IndexReader_20 1.00 143.91 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan_18 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_17 1.00 193.81 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader_18 1.00 143.91 root  index:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan_16 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have set a hint to read table `t` from TiKV."
@@ -180,8 +180,8 @@
           "TableReader_17 1.00 root  MppVersion: 3, data:ExchangeSender_16",
           "└─ExchangeSender_16 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_14 1.00 mpp[tiflash]  test.s.a",
-          "    └─Selection_11 1.00 mpp[tiflash]  eq(test.s.a, 10)",
-          "      └─TableFullScan_10 10.00 mpp[tiflash] table:s pushed down filter:isnull(test.s.b), keep order:false, stats:pseudo"
+          "    └─Selection_11 1.00 mpp[tiflash]  isnull(test.s.b)",
+          "      └─TableFullScan_10 10.00 mpp[tiflash] table:s pushed down filter:eq(test.s.a, 10), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
