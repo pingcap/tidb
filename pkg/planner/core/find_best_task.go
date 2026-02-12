@@ -2577,7 +2577,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not support keep order in TableScan
 		return base.InvalidTask, nil
 	}
-	if (hasTiflashForMPP && prop.TaskTp == property.MppTaskType) || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
+	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if ts.KeepOrder {
 			return base.InvalidTask, nil
 		}
@@ -2600,7 +2600,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 
 	// MPP task
-	useMPP := hasTiflashForMPP && (isTiFlashPath || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned)
+	useMPP := prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned
 	if useMPP {
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
 			// Only the corresponding index can generate a valid task.
@@ -2639,9 +2639,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// as its schema, so when we resolve indices later, the virtual column 'a' itself couldn't resolve itself anymore.
 		//
 		if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash && !canMppConvertToRootForWhenTiFlashCopIsBanned {
-			// MPP cannot safely convert to root when virtual columns are involved.
-			// TiFlash cop is still allowed in this case, so fall back to cop instead of returning InvalidTask.
-			useMPP = false
+			return base.InvalidTask, nil
 		}
 		// ********************************** future deprecated end **************************/
 		if useMPP {
