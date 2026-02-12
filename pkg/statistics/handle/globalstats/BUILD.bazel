@@ -64,6 +64,7 @@ go_test(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",
+        "//pkg/util/mock",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
