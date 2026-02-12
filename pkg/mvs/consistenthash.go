@@ -8,7 +8,7 @@ import (
 )
 
 // ConsistentHash is a consistent hashing ring.
-// not thread-safe, caller should ensure external synchronization if needed.
+// It is not thread-safe; callers must provide external synchronization if needed.
 type ConsistentHash struct {
 	ring     []virtualNode
 	data     map[string][]virtualNode
@@ -24,7 +24,7 @@ type virtualNodeImpl struct {
 }
 
 // NewConsistentHash creates a consistent hash instance.
-// replicas: number of virtual nodes per real node, suggested 150-300.
+// replicas is the number of virtual nodes per real node and is clamped to [1, 200].
 func NewConsistentHash(replicas int) *ConsistentHash {
 	replicas = min(max(1, replicas), 200)
 	return &ConsistentHash{

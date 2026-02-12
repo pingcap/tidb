@@ -20,6 +20,7 @@ import (
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 )
 
+// reportCounterDelta reports only the positive delta since last flush.
 func reportCounterDelta(counter interface{ Add(float64) }, last *int64, current int64) {
 	if current > *last {
 		counter.Add(float64(current - *last))
@@ -27,6 +28,7 @@ func reportCounterDelta(counter interface{ Add(float64) }, last *int64, current 
 	*last = current
 }
 
+// reportMetrics flushes MVService runtime metrics into the metrics module.
 func (h *serverHelper) reportMetrics(s *MVService) {
 	// Executor metrics
 	reportCounterDelta(tidbmetrics.MVTaskExecutorSubmittedCounter, &h.reportCache.submittedCount, s.executor.metrics.counters.submittedCount.Load())
@@ -45,6 +47,7 @@ func (h *serverHelper) reportMetrics(s *MVService) {
 	tidbmetrics.MVServiceMVLogPurgeRunningGauge.Set(float64(s.metrics.runningMVLogPurgeCount.Load()))
 }
 
+// observeTaskDuration reports one task execution duration sample.
 func (h *serverHelper) observeTaskDuration(taskType, result string, duration time.Duration) {
 	if duration < 0 {
 		return
@@ -52,6 +55,7 @@ func (h *serverHelper) observeTaskDuration(taskType, result string, duration tim
 	h.getDurationObserver(taskType, result).Observe(duration.Seconds())
 }
 
+// observeFetchDuration reports one metadata fetch duration sample.
 func (h *serverHelper) observeFetchDuration(fetchType, result string, duration time.Duration) {
 	if duration < 0 {
 		return
@@ -59,6 +63,7 @@ func (h *serverHelper) observeFetchDuration(fetchType, result string, duration t
 	h.getDurationObserver(fetchType, result).Observe(duration.Seconds())
 }
 
+// observeRunEvent increments one run-loop event counter.
 func (h *serverHelper) observeRunEvent(eventType string) {
 	if eventType == "" {
 		return
@@ -66,6 +71,7 @@ func (h *serverHelper) observeRunEvent(eventType string) {
 	h.getRunEventCounter(eventType).Inc()
 }
 
+// getDurationObserver returns a cached observer for (type, result) labels.
 func (h *serverHelper) getDurationObserver(metricType, result string) mvMetricObserver {
 	if h == nil {
 		return tidbmetrics.MVServiceMetaFetchDurationHistogramVec.WithLabelValues(metricType, result)
@@ -76,6 +82,7 @@ func (h *serverHelper) getDurationObserver(metricType, result string) mvMetricOb
 	})
 }
 
+// getRunEventCounter returns a cached counter for eventType label.
 func (h *serverHelper) getRunEventCounter(eventType string) mvMetricCounter {
 	if h == nil {
 		return tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(eventType)

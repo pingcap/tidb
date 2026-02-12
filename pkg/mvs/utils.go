@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 )
 
-// Notifier works as the multiple producer & single consumer mode.
+// Notifier provides a multi-producer, single-consumer wake-up primitive.
 type Notifier struct {
 	C     chan struct{}
 	awake int32
@@ -18,18 +18,18 @@ func NewNotifier() Notifier {
 	}
 }
 
-// return previous awake status
+// clear resets awake flag and returns the previous awake state.
 func (n *Notifier) clear() bool {
 	return atomic.SwapInt32(&n.awake, 0) != 0
 }
 
-// Wait for signal synchronously (consumer)
+// Wait blocks until a wake signal is received.
 func (n *Notifier) Wait() {
 	<-n.C
 	n.clear()
 }
 
-// Wake the consumer
+// Wake notifies the consumer.
 func (n *Notifier) Wake() {
 	n.wake()
 }
@@ -46,7 +46,8 @@ func (n *Notifier) isAwake() bool {
 	return atomic.LoadInt32(&n.awake) != 0
 }
 
-// WeakWake wakes the consumer if it is not awake (may loose signal under concurrent scenarios).
+// WeakWake wakes the consumer only when it is currently not awake.
+// It may lose signals under concurrent races.
 func (n *Notifier) WeakWake() {
 	if n.isAwake() {
 		return
@@ -62,7 +63,7 @@ type Lessable[T any] interface {
 // ItemImpl is an element in the queue.
 type ItemImpl[V Lessable[V]] struct {
 	Value V
-	index int // Index in the heap (optional, but useful for value updates).
+	index int // Heap index, used for Update/Remove.
 }
 
 type Item[V Lessable[V]] = *ItemImpl[V]
@@ -134,7 +135,7 @@ func (p priorityQueueImpl[V]) Swap(i, j int) {
 	p[j].index = j
 }
 
-// Push/Pop use type any (Go 1.18+).
+// Push/Pop use type any as required by heap.Interface.
 func (p *priorityQueueImpl[V]) Push(x any) {
 	item := x.(Item[V])
 	item.index = len(*p)
@@ -145,7 +146,7 @@ func (p *priorityQueueImpl[V]) Pop() any {
 	old := *p
 	n := len(old)
 	item := old[n-1]
-	item.index = -1 // Mark removed.
+	item.index = -1 // Mark as removed.
 	*p = old[:n-1]
 	return item
 }

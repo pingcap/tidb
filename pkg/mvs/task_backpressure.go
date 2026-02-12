@@ -69,6 +69,7 @@ func (c *CPUMemBackpressureController) ShouldBackpressure() (bool, time.Duration
 	return false, 0
 }
 
+// backpressureDelay returns configured delay or a package default.
 func (c *CPUMemBackpressureController) backpressureDelay() time.Duration {
 	if c.Delay > 0 {
 		return c.Delay

@@ -41,6 +41,7 @@ func DefaultMVServiceConfig() MVServiceConfig {
 	}
 }
 
+// normalizeMVServiceConfig clamps invalid values to safe defaults.
 func normalizeMVServiceConfig(cfg MVServiceConfig) MVServiceConfig {
 	def := DefaultMVServiceConfig()
 	if cfg.TaskMaxConcurrency <= 0 {
@@ -198,6 +199,7 @@ func (t *MVService) SetTaskBackpressureController(controller TaskBackpressureCon
 	t.executor.SetBackpressureController(controller)
 }
 
+// calcRetryDelay computes exponential backoff with an upper bound.
 func calcRetryDelay(retryCount int64, base, max time.Duration) time.Duration {
 	if retryCount <= 0 {
 		return base
@@ -213,6 +215,7 @@ func calcRetryDelay(retryCount int64, base, max time.Duration) time.Duration {
 	return delay
 }
 
+// retryDelay computes the current retry delay using runtime config.
 func (t *MVService) retryDelay(retryCount int64) time.Duration {
 	base, max := t.GetRetryDelayConfig()
 	return calcRetryDelay(retryCount, base, max)

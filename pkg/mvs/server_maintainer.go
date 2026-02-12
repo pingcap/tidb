@@ -13,12 +13,14 @@ type serverInfo struct {
 	ID string
 }
 
+// ServerHelper provides server discovery for building the consistent-hash view.
 type ServerHelper interface {
 	serverFilter(serverInfo) bool
 	getServerInfo() (serverInfo, error)
 	getAllServerInfo(ctx context.Context) (map[string]serverInfo, error)
 }
 
+// ServerConsistentHash maintains TiDB server membership and ownership mapping.
 type ServerConsistentHash struct {
 	ctx     context.Context
 	servers map[string]serverInfo
@@ -28,6 +30,7 @@ type ServerConsistentHash struct {
 	helper  ServerHelper
 }
 
+// NewServerConsistentHash creates a server ownership helper backed by consistent hash.
 func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerHelper) *ServerConsistentHash {
 	if ctx == nil || helper == nil {
 		panic("context and helper cannot be nil")
@@ -40,10 +43,13 @@ func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerHel
 	}
 }
 
+// init loads local server info with retry and initializes local server ID.
 func (sch *ServerConsistentHash) init() bool {
 	backoff := time.Second
 	for {
-		info, err := sch.helper.getServerInfo() // get local server info, if failed, retry until success, otherwise the server will never be added to the hash ring and won't receive any task
+		// Retry until local server identity is available; otherwise this node
+		// cannot be part of the hash ring and will receive no tasks.
+		info, err := sch.helper.getServerInfo()
 		if err == nil {
 			sch.mu.Lock()
 
@@ -64,6 +70,7 @@ func (sch *ServerConsistentHash) init() bool {
 	}
 }
 
+// addServer inserts one server into the member map and hash ring.
 func (sch *ServerConsistentHash) addServer(srv serverInfo) {
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
@@ -71,6 +78,7 @@ func (sch *ServerConsistentHash) addServer(srv serverInfo) {
 	sch.chash.AddNode(srv.ID)
 }
 
+// removeServer removes one server from the member map and hash ring.
 func (sch *ServerConsistentHash) removeServer(srvID string) {
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
@@ -78,20 +86,21 @@ func (sch *ServerConsistentHash) removeServer(srvID string) {
 	sch.chash.RemoveNode(srvID)
 }
 
+// refresh reloads server membership and rebuilds the hash ring when changed.
 func (sch *ServerConsistentHash) refresh() error {
 	newServerInfos, err := sch.helper.getAllServerInfo(sch.ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("get available TiDB nodes failed", zap.Error(err))
 		return err
 	}
-	// filter servers by the given filter function
+	// Filter servers by helper policy.
 	for k, v := range newServerInfos {
 		if !sch.helper.serverFilter(v) {
 			delete(newServerInfos, k)
 		}
 	}
 
-	{ // if no change, return directly
+	{ // Return early when there is no membership change.
 		sch.mu.RLock()
 
 		noChanged := len(sch.servers) == len(newServerInfos)
@@ -111,16 +120,17 @@ func (sch *ServerConsistentHash) refresh() error {
 		}
 	}
 	{
-		sch.mu.Lock() // guard server map and hash ring rebuild
+		sch.mu.Lock() // Guard server map and hash-ring rebuild.
 
 		sch.servers = newServerInfos
 		RebuildFromMap(&sch.chash, sch.servers)
 
-		sch.mu.Unlock() // release guard after rebuild
+		sch.mu.Unlock() // Release guard after rebuild.
 	}
 	return nil
 }
 
+// ToServerID returns the owner server ID for key.
 func (sch *ServerConsistentHash) ToServerID(key string) string {
 	sch.mu.RLock()
 	defer sch.mu.RUnlock()

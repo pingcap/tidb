@@ -4,10 +4,10 @@
 
 ### Code Organization
 
-非 test 文件中的 time 相关函数换成 time_proxy 的实现
-每个 test case 需要使用 InstallMockTimeModuleForTest 来设置 mock time 模块
-代码逻辑上需要把函数内的 const 定义放到函数最前面
+In non-test files, replace time-related functions with `time_proxy` implementations.
+Each test case must use `InstallMockTimeModuleForTest` to set up the mock time module.
+Place function-local `const` definitions at the beginning of each function.
 
 ## Testing
 
-模拟注入代码时可考虑 intest.InTest 框架，详见 pkg/util/intest
+For mock/injected test code, consider using the `intest.InTest` framework. See `pkg/util/intest`.

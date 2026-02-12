@@ -69,10 +69,12 @@ type taskQueue struct {
 	size int
 }
 
+// length returns current queued task count.
 func (q *taskQueue) length() int {
 	return q.size
 }
 
+// push appends one task request to the ring buffer.
 func (q *taskQueue) push(req taskRequest) {
 	if q.size == len(q.buf) {
 		q.grow()
@@ -82,6 +84,7 @@ func (q *taskQueue) push(req taskRequest) {
 	q.size++
 }
 
+// pop removes one task request from the ring buffer.
 func (q *taskQueue) pop() (taskRequest, bool) {
 	if q.size == 0 {
 		return taskRequest{}, false
@@ -96,6 +99,7 @@ func (q *taskQueue) pop() (taskRequest, bool) {
 	return req, true
 }
 
+// clear drops all queued tasks and returns how many were removed.
 func (q *taskQueue) clear() int {
 	pending := q.size
 	q.buf = nil
@@ -104,6 +108,7 @@ func (q *taskQueue) clear() int {
 	return pending
 }
 
+// grow expands the ring buffer capacity while preserving element order.
 func (q *taskQueue) grow() {
 	newCap := len(q.buf) * 2
 	if newCap == 0 {
@@ -122,6 +127,7 @@ func (q *taskQueue) grow() {
 	q.head = 0
 }
 
+// NewTaskExecutor creates a task executor with dynamic concurrency/timeout controls.
 func NewTaskExecutor(ctx context.Context, maxConcurrency int, timeout time.Duration) *TaskExecutor {
 	if maxConcurrency <= 0 {
 		maxConcurrency = 1
@@ -210,6 +216,7 @@ func (e *TaskExecutor) SetBackpressureController(controller TaskBackpressureCont
 	e.backpressure.Store(&taskBackpressureHolder{controller: controller})
 }
 
+// Submit enqueues one named task if the executor is still accepting work.
 func (e *TaskExecutor) Submit(name string, task func() error) {
 	if e == nil || task == nil {
 		return
@@ -229,7 +236,7 @@ func (e *TaskExecutor) Submit(name string, task func() error) {
 }
 
 // Close closes the executor.
-// It returns true when this call performs close and all workers/tasks finish within timeout.
+// It returns true when this call performs close and waits for all workers/tasks to finish.
 func (e *TaskExecutor) Close() bool {
 	if e == nil {
 		return false
@@ -260,6 +267,7 @@ func (e *TaskExecutor) startWorkers(n int) {
 	}
 }
 
+// workerLoop repeatedly fetches and executes tasks until the worker exits.
 func (e *TaskExecutor) workerLoop() {
 	defer e.workers.wg.Done()
 	for {
@@ -271,6 +279,8 @@ func (e *TaskExecutor) workerLoop() {
 	}
 }
 
+// nextTask picks the next executable task.
+// It waits when the queue is empty, respects worker down-scaling, and applies backpressure.
 func (e *TaskExecutor) nextTask() (taskRequest, bool) {
 	for {
 		e.queue.mu.Lock()
@@ -308,6 +318,7 @@ func (e *TaskExecutor) nextTask() (taskRequest, bool) {
 	}
 }
 
+// shouldExitWorkerWithLock checks whether this worker should exit under lock.
 func (e *TaskExecutor) shouldExitWorkerWithLock() bool {
 	if e.lifecycleState.Load() == taskExecutorStateClosed && e.queue.tasks.length() == 0 {
 		e.workers.count.Add(-1)
@@ -316,6 +327,7 @@ func (e *TaskExecutor) shouldExitWorkerWithLock() bool {
 	return e.tryExitWorkerWithLock()
 }
 
+// shouldBackpressure checks whether task fetching should be delayed.
 func (e *TaskExecutor) shouldBackpressure() (bool, time.Duration) {
 	holder := e.backpressure.Load()
 	if holder == nil || holder.controller == nil {
@@ -331,6 +343,7 @@ func (e *TaskExecutor) shouldBackpressure() (bool, time.Duration) {
 	return true, delay
 }
 
+// tryExitWorkerWithLock exits one worker when current worker count exceeds configured max.
 func (e *TaskExecutor) tryExitWorkerWithLock() bool {
 	for {
 		cur := e.workers.count.Load()
@@ -344,6 +357,7 @@ func (e *TaskExecutor) tryExitWorkerWithLock() bool {
 	}
 }
 
+// runTask executes one task with timeout handling and metrics reporting.
 func (e *TaskExecutor) runTask(name string, task func() error) {
 	e.metrics.gauges.runningCount.Add(1)
 
@@ -383,6 +397,7 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 	}
 }
 
+// logResult updates completion/failure counters and emits warning logs on failures.
 func (e *TaskExecutor) logResult(name string, err error) {
 	if err == nil {
 		e.metrics.counters.completedCount.Add(1)
@@ -393,6 +408,7 @@ func (e *TaskExecutor) logResult(name string, err error) {
 	logutil.BgLogger().Warn("mv task failed", zap.String("task", name), zap.Error(err))
 }
 
+// safeExecute runs task and converts panics into errors.
 func (e *TaskExecutor) safeExecute(_ string, task func() error) (err error) {
 	defer func() {
 		if r := recover(); r != nil {

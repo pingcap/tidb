@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// resetTimer safely resets timer to delay, draining the channel when needed.
 func resetTimer(timer *mvsTimer, delay time.Duration) {
 	if delay < 0 {
 		delay = 0
@@ -26,6 +27,8 @@ func (t *MVService) NotifyDDLChange() {
 	t.notifier.Wake()
 }
 
+// Run is the main scheduler loop for MVService.
+// It refreshes server topology, fetches metadata, dispatches due tasks, and reports metrics.
 func (t *MVService) Run() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -83,9 +86,9 @@ func (t *MVService) Run() {
 			if shouldFetch {
 				t.mh.observeRunEvent(mvRunEventFetchByInterval)
 			}
-			// if server info is stale, wait for the next refresh cycle to fetch server info
+			// Fetch metadata on demand; errors are throttled via lastRefresh update below.
 			if err := t.fetchAllMVMeta(); err != nil {
-				// avoid tight retries on fetch failures
+				// Avoid tight retries when metadata fetch keeps failing.
 				t.lastRefresh.Store(now.UnixMilli())
 			}
 		}
@@ -99,6 +102,7 @@ func (t *MVService) Run() {
 	}
 }
 
+// shouldFetchMVMeta reports whether a periodic metadata refresh is due.
 func (t *MVService) shouldFetchMVMeta(now time.Time) bool {
 	last := t.lastRefresh.Load()
 	if last == 0 {
@@ -107,6 +111,7 @@ func (t *MVService) shouldFetchMVMeta(now time.Time) bool {
 	return now.Sub(mvsUnixMilli(last)) >= t.fetchInterval
 }
 
+// nextFetchTime returns the next periodic metadata refresh time.
 func (t *MVService) nextFetchTime(now time.Time) time.Time {
 	last := t.lastRefresh.Load()
 	if last == 0 {
@@ -119,6 +124,7 @@ func (t *MVService) nextFetchTime(now time.Time) time.Time {
 	return next
 }
 
+// nextDueTime returns the earliest due time among refresh and purge task queues.
 func (t *MVService) nextDueTime() (time.Time, bool) {
 	next := time.Time{}
 	has := false
@@ -145,6 +151,7 @@ func (t *MVService) nextDueTime() (time.Time, bool) {
 	return next, has
 }
 
+// nextScheduleTime returns the next wake-up time for the scheduler loop.
 func (t *MVService) nextScheduleTime(now time.Time) time.Time {
 	next := t.nextFetchTime(now)
 	if due, ok := t.nextDueTime(); ok && due.Before(next) {

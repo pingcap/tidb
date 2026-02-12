@@ -12,6 +12,7 @@ import (
 type mvLogItem Item[*mvLog]
 type mvItem Item[*mv]
 
+// MVMetricsReporter reports MV service runtime metrics.
 type MVMetricsReporter interface {
 	reportMetrics(*MVService)
 	observeTaskDuration(taskType, result string, duration time.Duration)
@@ -19,12 +20,14 @@ type MVMetricsReporter interface {
 	observeRunEvent(eventType string)
 }
 
+// MVServiceHelper provides all external dependencies required by MVService.
 type MVServiceHelper interface {
 	ServerHelper
 	MVTaskHandler
 	MVMetricsReporter
 }
 
+// MVService is the in-memory scheduler and executor for MV refresh/purge tasks.
 type MVService struct {
 	sysSessionPool basic.SessionPool
 	lastRefresh    atomic.Int64
@@ -109,6 +112,7 @@ type mv struct {
 	retryCount atomic.Int64
 }
 
+// mvLog tracks scheduling state for one MV log purge task.
 type mvLog struct {
 	ID            string
 	baseTableID   string
@@ -136,6 +140,7 @@ func (m *mvLog) Less(other *mvLog) bool {
 	return m.orderTs < other.orderTs
 }
 
+// fetchExecTasks collects due tasks from both queues and marks them as running.
 func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRefresh []*mv) {
 	{
 		t.mvLogPurgeMu.Lock() // guard mvlog purge queue
@@ -209,6 +214,7 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 	}
 }
 
+// purgeMVLog submits purge jobs to the task executor.
 func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 	if len(mvLogToPurge) == 0 {
 		return
@@ -244,6 +250,7 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 	}
 }
 
+// removeMVLogTask removes a purge task from the scheduler after completion.
 func (t *MVService) removeMVLogTask(l *mvLog) {
 	t.mvLogPurgeMu.Lock() // guard mvlog purge queue
 	if it, ok := t.mvLogPurgeMu.pending[l.ID]; ok && it.Value == l {
@@ -254,6 +261,7 @@ func (t *MVService) removeMVLogTask(l *mvLog) {
 	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 }
 
+// removeMVTask removes a refresh task from the scheduler after completion.
 func (t *MVService) removeMVTask(m *mv) {
 	t.mvRefreshMu.Lock() // guard mv refresh queue
 	if it, ok := t.mvRefreshMu.pending[m.ID]; ok && it.Value == m {
@@ -264,6 +272,7 @@ func (t *MVService) removeMVTask(m *mv) {
 	t.mvRefreshMu.Unlock() // release mv refresh queue guard
 }
 
+// rescheduleMV reschedules a refresh task using a millisecond unix timestamp.
 func (t *MVService) rescheduleMV(m *mv, next int64) {
 	t.mvRefreshMu.Lock() // guard mv refresh queue
 	if it, ok := t.mvRefreshMu.pending[m.ID]; ok && it.Value == m {
@@ -273,6 +282,7 @@ func (t *MVService) rescheduleMV(m *mv, next int64) {
 	t.mvRefreshMu.Unlock() // release mv refresh queue guard
 }
 
+// rescheduleMVSuccess applies the next refresh time from a successful execution.
 func (t *MVService) rescheduleMVSuccess(m *mv, nextRefresh time.Time) {
 	orderTs := nextRefresh.UnixMilli()
 
@@ -285,6 +295,7 @@ func (t *MVService) rescheduleMVSuccess(m *mv, nextRefresh time.Time) {
 	t.mvRefreshMu.Unlock() // release mv refresh queue guard
 }
 
+// rescheduleMVLog reschedules a purge task using a millisecond unix timestamp.
 func (t *MVService) rescheduleMVLog(l *mvLog, next int64) {
 	t.mvLogPurgeMu.Lock() // guard mvlog purge queue
 	if it, ok := t.mvLogPurgeMu.pending[l.ID]; ok && it.Value == l {
@@ -294,6 +305,7 @@ func (t *MVService) rescheduleMVLog(l *mvLog, next int64) {
 	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 }
 
+// rescheduleMVLogSuccess applies the next purge time from a successful execution.
 func (t *MVService) rescheduleMVLogSuccess(l *mvLog, nextPurge time.Time) {
 	orderTs := nextPurge.UnixMilli()
 
@@ -306,14 +318,12 @@ func (t *MVService) rescheduleMVLogSuccess(l *mvLog, nextPurge time.Time) {
 	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 }
 
-/*
-对于 newPending 中每条记录：
-
-	更新 purgeInterval 和 nextPurge 字段
-	如果 nextPurge 字段发生变化, 表示核心元信息变动
-		如果正在执行任务（orderTs == maxNextScheduleTs）, 则等待任务执行完毕后根据最新的 nextPurge 更新 orderTs 并调整优先级队列中的位置
-		如果未在执行任务, 则根据 nextPurge 更新 orderTs 并调整优先级队列中的位置
-*/
+// buildMLogPurgeTasks rebuilds purge task states from fetched metadata.
+//
+// For each item in newPending:
+// 1. Update mutable metadata fields (purgeInterval, nextPurge).
+// 2. If nextPurge changed and the task is not currently running, update orderTs and heap position.
+// 3. If the task is currently running (orderTs == maxNextScheduleTs), defer heap adjustment until task completion.
 func (t *MVService) buildMLogPurgeTasks(newPending map[string]*mvLog) error {
 	t.mvLogPurgeMu.Lock()         // guard mvlog purge queue
 	defer t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
@@ -349,6 +359,7 @@ func (t *MVService) buildMLogPurgeTasks(newPending map[string]*mvLog) error {
 	return nil
 }
 
+// buildMVRefreshTasks rebuilds refresh task states from fetched metadata.
 func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
 	t.mvRefreshMu.Lock()         // guard mv refresh queue
 	defer t.mvRefreshMu.Unlock() // release mv refresh queue guard
@@ -384,6 +395,7 @@ func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
 	return nil
 }
 
+// fetchAllTiDBMLogPurge fetches purge metadata and filters out tasks not owned by this node.
 func (t *MVService) fetchAllTiDBMLogPurge() (map[string]*mvLog, error) {
 	start := mvsNow()
 	result := mvFetchDurationResultOK
@@ -406,6 +418,7 @@ func (t *MVService) fetchAllTiDBMLogPurge() (map[string]*mvLog, error) {
 	return newPending, nil
 }
 
+// fetchAllTiDBMViews fetches refresh metadata and filters out tasks not owned by this node.
 func (t *MVService) fetchAllTiDBMViews() (map[string]*mv, error) {
 	start := mvsNow()
 	result := mvFetchDurationResultOK
@@ -428,6 +441,7 @@ func (t *MVService) fetchAllTiDBMViews() (map[string]*mv, error) {
 	return newPending, nil
 }
 
+// fetchAllMVMeta refreshes both purge and refresh task queues from metadata tables.
 func (t *MVService) fetchAllMVMeta() error {
 	newMLogPending, err := t.fetchAllTiDBMLogPurge()
 	if err != nil {

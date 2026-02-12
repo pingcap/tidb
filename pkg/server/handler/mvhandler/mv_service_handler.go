@@ -72,6 +72,7 @@ type mvServiceRuntimeSettings struct {
 
 type settingsFieldUpdater func(form url.Values, settings *mvServiceRuntimeSettings) (changed bool, err error)
 
+// mvServiceSettingsFieldUpdaters defines how each form field is parsed, validated, and applied.
 var mvServiceSettingsFieldUpdaters = []settingsFieldUpdater{
 	newSettingsFieldUpdater(mvServiceTaskMaxConcurrencyFormField, strconv.Atoi, func(v int) bool { return v > 0 }, func(settings *mvServiceRuntimeSettings, v int) {
 		settings.maxConcurrency = v
@@ -133,6 +134,7 @@ func (h MVServiceSettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	}
 }
 
+// getMVService loads the MV service from the domain and verifies that it is enabled.
 func (h MVServiceSettingsHandler) getMVService() (mvServiceRuntimeSettingsAccessor, error) {
 	do, err := session.GetDomain(h.Store)
 	if err != nil {
@@ -145,16 +147,19 @@ func (h MVServiceSettingsHandler) getMVService() (mvServiceRuntimeSettingsAccess
 	return mvService, nil
 }
 
+// serveGet returns the current runtime settings.
 func (h MVServiceSettingsHandler) serveGet(w http.ResponseWriter, mvService mvServiceRuntimeSettingsAccessor) {
 	writeMVServiceSettingsResponse(w, loadMVServiceRuntimeSettings(mvService))
 }
 
+// servePost parses form values, applies valid updates, and returns the latest runtime settings.
 func (h MVServiceSettingsHandler) servePost(w http.ResponseWriter, req *http.Request, mvService mvServiceRuntimeSettingsAccessor) {
 	if err := req.ParseForm(); err != nil {
 		handler.WriteError(w, err)
 		return
 	}
 
+	// Parse updates against current settings so unspecified fields are preserved.
 	current := loadMVServiceRuntimeSettings(mvService)
 	updated, changed, err := parseMVServiceSettingsUpdateFromForm(req.Form, current)
 	if err != nil {
@@ -166,6 +171,7 @@ func (h MVServiceSettingsHandler) servePost(w http.ResponseWriter, req *http.Req
 		return
 	}
 
+	// Apply settings through service setters, which perform final validation.
 	if err := applyMVServiceSettings(mvService, updated); err != nil {
 		handler.WriteError(w, err)
 		return
@@ -174,6 +180,7 @@ func (h MVServiceSettingsHandler) servePost(w http.ResponseWriter, req *http.Req
 	writeMVServiceSettingsResponse(w, loadMVServiceRuntimeSettings(mvService))
 }
 
+// loadMVServiceRuntimeSettings reads all mutable runtime settings from the service.
 func loadMVServiceRuntimeSettings(mvService mvServiceRuntimeSettingsAccessor) mvServiceRuntimeSettings {
 	maxConcurrency, timeout := mvService.GetTaskExecConfig()
 	backpressureCfg := mvService.GetTaskBackpressureConfig()
@@ -187,6 +194,7 @@ func loadMVServiceRuntimeSettings(mvService mvServiceRuntimeSettingsAccessor) mv
 	}
 }
 
+// writeMVServiceSettingsResponse writes runtime settings in API response format.
 func writeMVServiceSettingsResponse(w http.ResponseWriter, settings mvServiceRuntimeSettings) {
 	handler.WriteData(w, MVServiceSettingsResponse{
 		TaskMaxConcurrency:           settings.maxConcurrency,
@@ -204,6 +212,8 @@ func writeMVServiceSettingsResponse(w http.ResponseWriter, settings mvServiceRun
 	})
 }
 
+// parseMVServiceSettingsUpdateFromForm parses and validates form updates.
+// It returns the merged settings and whether at least one field was changed.
 func parseMVServiceSettingsUpdateFromForm(form url.Values, current mvServiceRuntimeSettings) (mvServiceRuntimeSettings, bool, error) {
 	updated := current
 	changed := false
@@ -219,6 +229,7 @@ func parseMVServiceSettingsUpdateFromForm(form url.Values, current mvServiceRunt
 	return updated, changed, nil
 }
 
+// newSettingsFieldUpdater builds a reusable updater for one form field.
 func newSettingsFieldUpdater[T any](
 	field string,
 	parse func(string) (T, error),
@@ -241,6 +252,7 @@ func newSettingsFieldUpdater[T any](
 	}
 }
 
+// parseOptionalFieldValue parses a field only when it is provided.
 func parseOptionalFieldValue[T any](form url.Values, field string, parse func(string) (T, error)) (value T, ok bool, err error) {
 	text := form.Get(field)
 	if text == "" {
@@ -253,14 +265,17 @@ func parseOptionalFieldValue[T any](form url.Values, field string, parse func(st
 	return value, true, nil
 }
 
+// parseFloat64FieldValue parses a float64 from text.
 func parseFloat64FieldValue(text string) (float64, error) {
 	return strconv.ParseFloat(text, 64)
 }
 
+// newIllegalMVServiceSettingsFieldError builds a uniform field validation error.
 func newIllegalMVServiceSettingsFieldError(field string) error {
 	return errors.New("illegal " + field)
 }
 
+// applyMVServiceSettings writes merged runtime settings back to the service.
 func applyMVServiceSettings(mvService mvServiceRuntimeSettingsAccessor, settings mvServiceRuntimeSettings) error {
 	mvService.SetTaskExecConfig(settings.maxConcurrency, settings.timeout)
 	if err := mvService.SetTaskBackpressureConfig(settings.backpressureCfg); err != nil {
