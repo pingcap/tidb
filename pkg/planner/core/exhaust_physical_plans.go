@@ -1303,12 +1303,7 @@ func constructDS2TableScanTask(
 		TblColHists:       ds.TblColHists,
 		KeepOrder:         ts.KeepOrder,
 	}
-	copTask.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	copTask.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	ts.PlanPartInfo = copTask.PhysPlanPartInfo
 	selStats := ts.StatsInfo().Scale(ds.SCtx().GetSessionVars(), selectivity)
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, selStats, ds.AstIndexHints)
@@ -1498,12 +1493,7 @@ func constructDS2IndexScanTask(
 		TblCols:     ds.TblCols,
 		KeepOrder:   is.KeepOrder,
 	}
-	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	if !path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := physicalop.PhysicalTableScan{

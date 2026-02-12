@@ -85,6 +85,21 @@ type enumerateState struct {
 	limitCopExist bool
 }
 
+func buildPhysPlanPartInfo(ds *logicalop.DataSource) *physicalop.PhysPlanPartInfo {
+	columnNames, err := rule.ReconstructTableColNames(ds)
+	if err != nil {
+		// Keep planning resilient. If reconstructing names fails, fall back to output
+		// names to avoid aborting optimization.
+		columnNames = ds.OutputNames()
+	}
+	return &physicalop.PhysPlanPartInfo{
+		PruningConds:   ds.AllConds,
+		PartitionNames: ds.PartitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    columnNames,
+	}
+}
+
 // The reason the physical plan is a slice of slices is to allow preferring a specific type of plan within a slice,
 // while still performing cost comparison between slices.
 // There are three types of task in the following code: hintTask, normalPreferTask, and normalIterTask.
@@ -2129,12 +2144,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		IndexPlanFinished: false,
 		TblColHists:       ds.TblColHists,
 	}
-	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	// Add sort items for index scan for merge-sort operation between partitions.
 	byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 	for _, si := range prop.SortItems {
@@ -2333,12 +2343,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if candidate.partialOrderMatchResult.Matched {
 		cop.PartialOrderMatchResult = &candidate.partialOrderMatchResult
 	}
-	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
@@ -2557,20 +2562,22 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	hasTiflash := ds.HasTiflash()
+	mppAllowed := ds.SCtx().GetSessionVars().IsMPPAllowed()
+	hasTiflashForMPP := hasTiflash && mppAllowed
 	ts, _ := physicalop.GetOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.matchPropResult.Matched())
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
 	isTiFlashPath := hasTiflash && ts.StoreType == kv.TiFlash
-	canMppConvertToRoot := hasTiflash && prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
-	canMppConvertToRootForDisaggregatedTiFlash := hasTiflash && config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
-	canMppConvertToRootForWhenTiFlashCopIsBanned := hasTiflash && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
+	canMppConvertToRoot := hasTiflashForMPP && prop.TaskTp == property.RootTaskType && isTiFlashPath
+	canMppConvertToRootForDisaggregatedTiFlash := hasTiflashForMPP && config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
+	canMppConvertToRootForWhenTiFlashCopIsBanned := hasTiflashForMPP && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
 
 	// Fast checks
 	if isTiFlashPath && ts.KeepOrder && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not support keep order in TableScan
 		return base.InvalidTask, nil
 	}
-	if (hasTiflash && prop.TaskTp == property.MppTaskType) || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
+	if (hasTiflashForMPP && prop.TaskTp == property.MppTaskType) || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if ts.KeepOrder {
 			return base.InvalidTask, nil
 		}
@@ -2593,7 +2600,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 
 	// MPP task
-	useMPP := isTiFlashPath || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned
+	useMPP := hasTiflashForMPP && (isTiFlashPath || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned)
 	if useMPP {
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
 			// Only the corresponding index can generate a valid task.
@@ -2639,12 +2646,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// ********************************** future deprecated end **************************/
 		if useMPP {
 			mppTask := physicalop.NewMppTask(ts, property.AnyType, nil, ds.TblColHists, nil)
-			ts.PlanPartInfo = &physicalop.PhysPlanPartInfo{
-				PruningConds:   ds.AllConds,
-				PartitionNames: ds.PartitionNames,
-				Columns:        ds.TblCols,
-				ColumnNames:    ds.OutputNames(),
-			}
+			ts.PlanPartInfo = buildPhysPlanPartInfo(ds)
 			mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
 			var task base.Task = mppTask
 			if !mppTask.Invalid() {
@@ -2671,12 +2673,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		IndexPlanFinished: true,
 		TblColHists:       ds.TblColHists,
 	}
-	copTask.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	copTask.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	ts.PlanPartInfo = copTask.PhysPlanPartInfo
 	var task base.Task = copTask
 	if candidate.matchPropResult.Matched() {

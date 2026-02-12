@@ -315,6 +315,14 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
 	collectPartitionInfosFromMPPPlan(p, t.p)
+	// Preserve partition pruning metadata for single-table readers.
+	// The metadata is produced on the DataSource side and already aligned with
+	// ds.TblCols, so it can be reused by root-task fallback paths.
+	if len(p.TableScanAndPartitionInfos) == 1 {
+		if pi := p.TableScanAndPartitionInfos[0].PhysPlanPartInfo; pi != nil {
+			p.PlanPartInfo = pi.CloneForPlanCache()
+		}
+	}
 	rt = &RootTask{}
 	rt.SetPlan(p)
 
