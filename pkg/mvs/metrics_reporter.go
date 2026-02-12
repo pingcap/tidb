@@ -27,15 +27,16 @@ func reportCounterDelta(counter interface{ Add(float64) }, last *int64, current 
 	*last = current
 }
 
-func (*serverHelper) reportMetrics(s *MVService) {
+func (h *serverHelper) reportMetrics(s *MVService) {
 	// Executor metrics
-	reportCounterDelta(tidbmetrics.MVTaskExecutorSubmittedCounter, &s.reportCache.submittedCount, s.executor.metrics.submittedCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorCompletedCounter, &s.reportCache.completedCount, s.executor.metrics.completedCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorFailedCounter, &s.reportCache.failedCount, s.executor.metrics.failedCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorTimeoutCounter, &s.reportCache.timeoutCount, s.executor.metrics.timeoutCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorRejectedCounter, &s.reportCache.rejectedCount, s.executor.metrics.rejectedCount.Load())
-	tidbmetrics.MVTaskExecutorRunningTaskGauge.Set(float64(s.executor.metrics.runningCount.Load()))
-	tidbmetrics.MVTaskExecutorWaitingTaskGauge.Set(float64(s.executor.metrics.waitingCount.Load()))
+	reportCounterDelta(tidbmetrics.MVTaskExecutorSubmittedCounter, &h.reportCache.submittedCount, s.executor.metrics.counters.submittedCount.Load())
+	reportCounterDelta(tidbmetrics.MVTaskExecutorCompletedCounter, &h.reportCache.completedCount, s.executor.metrics.counters.completedCount.Load())
+	reportCounterDelta(tidbmetrics.MVTaskExecutorFailedCounter, &h.reportCache.failedCount, s.executor.metrics.counters.failedCount.Load())
+	reportCounterDelta(tidbmetrics.MVTaskExecutorTimeoutCounter, &h.reportCache.timeoutCount, s.executor.metrics.counters.timeoutCount.Load())
+	reportCounterDelta(tidbmetrics.MVTaskExecutorRejectedCounter, &h.reportCache.rejectedCount, s.executor.metrics.counters.rejectedCount.Load())
+	tidbmetrics.MVTaskExecutorRunningTaskGauge.Set(float64(s.executor.metrics.gauges.runningCount.Load()))
+	tidbmetrics.MVTaskExecutorWaitingTaskGauge.Set(float64(s.executor.metrics.gauges.waitingCount.Load()))
+	tidbmetrics.MVTaskExecutorTimedOutRunningTaskGauge.Set(float64(s.executor.metrics.gauges.timedOutRunningCount.Load()))
 
 	// MVService metrics
 	tidbmetrics.MVServiceMVRefreshTotalGauge.Set(float64(s.metrics.mvCount.Load()))

@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
 type serverHelper struct {
 	durationObserverCache metricCache[mvMetricTypeResultKey, mvMetricObserver]
 	runEventCounterCache  metricCache[string, mvMetricCounter]
+
+	reportCache struct {
+		submittedCount int64
+		completedCount int64
+		failedCount    int64
+		timeoutCount   int64
+		rejectedCount  int64
+	}
 }
 
 type mvMetricTypeResultKey struct {

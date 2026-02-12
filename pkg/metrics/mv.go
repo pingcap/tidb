@@ -32,8 +32,9 @@ var (
 	MVTaskExecutorTimeoutCounter   prometheus.Counter
 	MVTaskExecutorRejectedCounter  prometheus.Counter
 
-	MVTaskExecutorRunningTaskGauge prometheus.Gauge
-	MVTaskExecutorWaitingTaskGauge prometheus.Gauge
+	MVTaskExecutorRunningTaskGauge         prometheus.Gauge
+	MVTaskExecutorWaitingTaskGauge         prometheus.Gauge
+	MVTaskExecutorTimedOutRunningTaskGauge prometheus.Gauge
 
 	MVServiceMVRefreshTotalGauge    prometheus.Gauge
 	MVServiceMVLogPurgeTotalGauge   prometheus.Gauge
@@ -75,6 +76,7 @@ func InitMVMetrics() {
 	MVTaskExecutorRejectedCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_rejected")
 	MVTaskExecutorRunningTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("running")
 	MVTaskExecutorWaitingTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("waiting")
+	MVTaskExecutorTimedOutRunningTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("timed_out_running")
 
 	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mv_total")
 	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mvlog_total")

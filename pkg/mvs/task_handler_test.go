@@ -359,9 +359,9 @@ func TestMVServicePurgeMVLogRemoveOnDeleted(t *testing.T) {
 	svc.purgeMVLog([]*mvLog{l})
 
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.completedCount.Load() == 1
+		return svc.executor.metrics.counters.completedCount.Load() == 1
 	}, time.Second, 10*time.Millisecond)
-	require.Equal(t, int64(0), svc.executor.metrics.failedCount.Load())
+	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	require.Eventually(t, func() bool {
 		svc.mvLogPurgeMu.Lock()
@@ -392,9 +392,9 @@ func TestMVServicePurgeMVLogSuccessUpdatesNextPurgeAndOrderTS(t *testing.T) {
 	svc.purgeMVLog([]*mvLog{l})
 
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.completedCount.Load() == 1
+		return svc.executor.metrics.counters.completedCount.Load() == 1
 	}, time.Second, 10*time.Millisecond)
-	require.Equal(t, int64(0), svc.executor.metrics.failedCount.Load())
+	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	svc.mvLogPurgeMu.Lock()
 	item, ok := svc.mvLogPurgeMu.pending[l.ID]
@@ -420,9 +420,9 @@ func TestMVServiceRefreshMVRemoveOnZeroNextRefresh(t *testing.T) {
 	svc.refreshMV([]*mv{m})
 
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.completedCount.Load() == 1
+		return svc.executor.metrics.counters.completedCount.Load() == 1
 	}, time.Second, 10*time.Millisecond)
-	require.Equal(t, int64(0), svc.executor.metrics.failedCount.Load())
+	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	require.Eventually(t, func() bool {
 		svc.mvRefreshMu.Lock()
@@ -453,9 +453,9 @@ func TestMVServiceRefreshMVSuccessUpdatesNextRefreshAndOrderTS(t *testing.T) {
 	svc.refreshMV([]*mv{m})
 
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.completedCount.Load() == 1
+		return svc.executor.metrics.counters.completedCount.Load() == 1
 	}, time.Second, 10*time.Millisecond)
-	require.Equal(t, int64(0), svc.executor.metrics.failedCount.Load())
+	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	svc.mvRefreshMu.Lock()
 	item, ok := svc.mvRefreshMu.pending[m.ID]
@@ -492,7 +492,7 @@ func TestMVServiceTaskExecutionReportsDuration(t *testing.T) {
 	svc.purgeMVLog([]*mvLog{l})
 
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.completedCount.Load() == 2
+		return svc.executor.metrics.counters.completedCount.Load() == 2
 	}, time.Second, 10*time.Millisecond)
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultOK))
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultOK))
@@ -525,7 +525,7 @@ func TestMVServiceTaskExecutionReportsDurationFailed(t *testing.T) {
 	svc.purgeMVLog([]*mvLog{l})
 
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.completedCount.Load() == 2
+		return svc.executor.metrics.counters.completedCount.Load() == 2
 	}, time.Second, 10*time.Millisecond)
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultErr))
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultErr))

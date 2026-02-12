@@ -20,13 +20,18 @@ type TaskExecutor struct {
 	backpressure   atomic.Pointer[taskBackpressureHolder]
 
 	metrics struct {
-		submittedCount atomic.Int64
-		runningCount   atomic.Int64
-		waitingCount   atomic.Int64
-		completedCount atomic.Int64
-		failedCount    atomic.Int64
-		timeoutCount   atomic.Int64
-		rejectedCount  atomic.Int64
+		counters struct {
+			submittedCount atomic.Int64
+			completedCount atomic.Int64
+			failedCount    atomic.Int64
+			timeoutCount   atomic.Int64
+			rejectedCount  atomic.Int64
+		}
+		gauges struct {
+			runningCount         atomic.Int64
+			waitingCount         atomic.Int64
+			timedOutRunningCount atomic.Int64
+		}
 	}
 
 	queue struct {
@@ -213,11 +218,11 @@ func (e *TaskExecutor) Submit(name string, task func() error) {
 	defer e.queue.mu.Unlock()
 
 	if e.lifecycleState.Load() == taskExecutorStateClosed || e.ctx.Err() != nil {
-		e.metrics.rejectedCount.Add(1)
+		e.metrics.counters.rejectedCount.Add(1)
 		return
 	}
-	e.metrics.submittedCount.Add(1)
-	e.metrics.waitingCount.Add(1)
+	e.metrics.counters.submittedCount.Add(1)
+	e.metrics.gauges.waitingCount.Add(1)
 	e.tasksWG.Add(1)
 	e.queue.tasks.push(taskRequest{name: name, task: task})
 	e.queue.cond.Signal()
@@ -237,7 +242,7 @@ func (e *TaskExecutor) Close() bool {
 	e.queue.cond.Broadcast()
 	e.queue.mu.Unlock()
 	if pending > 0 {
-		e.metrics.waitingCount.Add(-int64(pending))
+		e.metrics.gauges.waitingCount.Add(-int64(pending))
 		for range pending {
 			e.tasksWG.Done()
 		}
@@ -297,7 +302,7 @@ func (e *TaskExecutor) nextTask() (taskRequest, bool) {
 		e.queue.mu.Unlock()
 
 		if ok {
-			e.metrics.waitingCount.Add(-1)
+			e.metrics.gauges.waitingCount.Add(-1)
 			return req, true
 		}
 	}
@@ -340,12 +345,12 @@ func (e *TaskExecutor) tryExitWorkerWithLock() bool {
 }
 
 func (e *TaskExecutor) runTask(name string, task func() error) {
-	e.metrics.runningCount.Add(1)
+	e.metrics.gauges.runningCount.Add(1)
 
 	timeout := time.Duration(e.timeoutNanos.Load())
 	if timeout <= 0 {
 		err := e.safeExecute(name, task)
-		e.metrics.runningCount.Add(-1)
+		e.metrics.gauges.runningCount.Add(-1)
 		e.tasksWG.Done()
 		e.logResult(name, err)
 		return
@@ -361,15 +366,17 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 
 	select {
 	case err := <-done:
-		e.metrics.runningCount.Add(-1)
+		e.metrics.gauges.runningCount.Add(-1)
 		e.tasksWG.Done()
 		e.logResult(name, err)
 	case <-timer.C:
-		e.metrics.timeoutCount.Add(1)
-		e.metrics.runningCount.Add(-1)
+		e.metrics.counters.timeoutCount.Add(1)
+		e.metrics.gauges.runningCount.Add(-1)
+		e.metrics.gauges.timedOutRunningCount.Add(1)
 		logutil.BgLogger().Warn("mv task timed out, continue in background", zap.String("task", name), zap.Duration("timeout", timeout))
 		go func() {
 			err := <-done
+			e.metrics.gauges.timedOutRunningCount.Add(-1)
 			e.tasksWG.Done()
 			e.logResult(name, err)
 		}()
@@ -378,11 +385,11 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 
 func (e *TaskExecutor) logResult(name string, err error) {
 	if err == nil {
-		e.metrics.completedCount.Add(1)
+		e.metrics.counters.completedCount.Add(1)
 		return
 	}
-	e.metrics.completedCount.Add(1)
-	e.metrics.failedCount.Add(1)
+	e.metrics.counters.completedCount.Add(1)
+	e.metrics.counters.failedCount.Add(1)
 	logutil.BgLogger().Warn("mv task failed", zap.String("task", name), zap.Error(err))
 }
 

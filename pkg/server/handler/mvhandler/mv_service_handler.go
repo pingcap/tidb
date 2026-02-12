@@ -16,6 +16,7 @@ package mvhandler
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -26,16 +27,16 @@ import (
 )
 
 const (
-	mvServiceTaskMaxConcurrencyKey = "task_max_concurrency"
-	mvServiceTaskTimeoutKey        = "task_timeout"
+	mvServiceTaskMaxConcurrencyFormField = "task_max_concurrency"
+	mvServiceTaskTimeoutFormField        = "task_timeout"
 
-	mvServiceTaskBackpressureEnabledKey      = "task_backpressure_enabled"
-	mvServiceTaskBackpressureCPUThresholdKey = "task_backpressure_cpu_threshold"
-	mvServiceTaskBackpressureMemThresholdKey = "task_backpressure_mem_threshold"
-	mvServiceTaskBackpressureDelayKey        = "task_backpressure_delay"
+	mvServiceBackpressureEnabledFormField      = "backpressure_enabled"
+	mvServiceBackpressureCPUThresholdFormField = "backpressure_cpu_threshold"
+	mvServiceBackpressureMemThresholdFormField = "backpressure_mem_threshold"
+	mvServiceBackpressureDelayFormField        = "backpressure_delay"
 
-	mvServiceRetryBaseDelayKey = "retry_base_delay"
-	mvServiceRetryMaxDelayKey  = "retry_max_delay"
+	mvServiceTaskFailRetryBaseDelayFormField = "task_fail_retry_base_delay"
+	mvServiceTaskFailRetryMaxDelayFormField  = "task_fail_retry_max_delay"
 )
 
 // MVServiceSettingsHandler is the handler for runtime MV service settings.
@@ -48,8 +49,58 @@ func NewMVServiceSettingsHandler(tool *handler.TikvHandlerTool) *MVServiceSettin
 	return &MVServiceSettingsHandler{TikvHandlerTool: tool}
 }
 
-// MVServiceTaskExecConfig is MV service task execution config.
-type MVServiceTaskExecConfig struct {
+type mvServiceRuntimeSettingsAccessor interface {
+	GetTaskExecConfig() (maxConcurrency int, timeout time.Duration)
+	SetTaskExecConfig(maxConcurrency int, timeout time.Duration)
+
+	GetTaskBackpressureConfig() mvs.TaskBackpressureConfig
+	SetTaskBackpressureConfig(cfg mvs.TaskBackpressureConfig) error
+
+	GetRetryDelayConfig() (base, max time.Duration)
+	SetRetryDelayConfig(base, max time.Duration) error
+}
+
+type mvServiceRuntimeSettings struct {
+	maxConcurrency int
+	timeout        time.Duration
+
+	backpressureCfg mvs.TaskBackpressureConfig
+
+	retryBase time.Duration
+	retryMax  time.Duration
+}
+
+type settingsFieldUpdater func(form url.Values, settings *mvServiceRuntimeSettings) (changed bool, err error)
+
+var mvServiceSettingsFieldUpdaters = []settingsFieldUpdater{
+	newSettingsFieldUpdater(mvServiceTaskMaxConcurrencyFormField, strconv.Atoi, func(v int) bool { return v > 0 }, func(settings *mvServiceRuntimeSettings, v int) {
+		settings.maxConcurrency = v
+	}),
+	newSettingsFieldUpdater(mvServiceTaskTimeoutFormField, time.ParseDuration, func(v time.Duration) bool { return v >= 0 }, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+		settings.timeout = v
+	}),
+	newSettingsFieldUpdater(mvServiceBackpressureEnabledFormField, strconv.ParseBool, nil, func(settings *mvServiceRuntimeSettings, v bool) {
+		settings.backpressureCfg.Enabled = v
+	}),
+	newSettingsFieldUpdater(mvServiceBackpressureCPUThresholdFormField, parseFloat64FieldValue, nil, func(settings *mvServiceRuntimeSettings, v float64) {
+		settings.backpressureCfg.CPUThreshold = v
+	}),
+	newSettingsFieldUpdater(mvServiceBackpressureMemThresholdFormField, parseFloat64FieldValue, nil, func(settings *mvServiceRuntimeSettings, v float64) {
+		settings.backpressureCfg.MemThreshold = v
+	}),
+	newSettingsFieldUpdater(mvServiceBackpressureDelayFormField, time.ParseDuration, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+		settings.backpressureCfg.Delay = v
+	}),
+	newSettingsFieldUpdater(mvServiceTaskFailRetryBaseDelayFormField, time.ParseDuration, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+		settings.retryBase = v
+	}),
+	newSettingsFieldUpdater(mvServiceTaskFailRetryMaxDelayFormField, time.ParseDuration, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+		settings.retryMax = v
+	}),
+}
+
+// MVServiceSettingsResponse is MV service runtime settings response.
+type MVServiceSettingsResponse struct {
 	TaskMaxConcurrency           int     `json:"task_max_concurrency"`
 	TaskTimeout                  string  `json:"task_timeout"`
 	TaskTimeoutNanos             int64   `json:"task_timeout_nanos"`
@@ -64,161 +115,159 @@ type MVServiceTaskExecConfig struct {
 	RetryMaxDelayNanos           int64   `json:"retry_max_delay_nanos"`
 }
 
-func writeMVServiceTaskExecConfig(
-	w http.ResponseWriter,
-	maxConcurrency int,
-	timeout time.Duration,
-	backpressureCfg mvs.TaskBackpressureConfig,
-	retryBase time.Duration,
-	retryMax time.Duration,
-) {
-	handler.WriteData(w, MVServiceTaskExecConfig{
-		TaskMaxConcurrency:           maxConcurrency,
-		TaskTimeout:                  timeout.String(),
-		TaskTimeoutNanos:             int64(timeout),
-		TaskBackpressureEnabled:      backpressureCfg.Enabled,
-		TaskBackpressureCPUThreshold: backpressureCfg.CPUThreshold,
-		TaskBackpressureMemThreshold: backpressureCfg.MemThreshold,
-		TaskBackpressureDelay:        backpressureCfg.Delay.String(),
-		TaskBackpressureDelayNanos:   int64(backpressureCfg.Delay),
-		RetryBaseDelay:               retryBase.String(),
-		RetryBaseDelayNanos:          int64(retryBase),
-		RetryMaxDelay:                retryMax.String(),
-		RetryMaxDelayNanos:           int64(retryMax),
-	})
-}
-
 // ServeHTTP handles request of get/update MV service settings.
 func (h MVServiceSettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	do, err := session.GetDomain(h.Store)
+	mvService, err := h.getMVService()
 	if err != nil {
 		handler.WriteError(w, err)
-		return
-	}
-	mvService := do.GetMVService()
-	if mvService == nil {
-		handler.WriteError(w, errors.New("mv service is not enabled"))
 		return
 	}
 
 	switch req.Method {
 	case http.MethodGet:
-		maxConcurrency, timeout := mvService.GetTaskExecConfig()
-		backpressureCfg := mvService.GetTaskBackpressureConfig()
-		retryBase, retryMax := mvService.GetRetryDelayConfig()
-		writeMVServiceTaskExecConfig(w, maxConcurrency, timeout, backpressureCfg, retryBase, retryMax)
+		h.serveGet(w, mvService)
 	case http.MethodPost:
-		err = req.ParseForm()
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-
-		changed := false
-		maxConcurrency, timeout := mvService.GetTaskExecConfig()
-		backpressureCfg := mvService.GetTaskBackpressureConfig()
-		retryBase, retryMax := mvService.GetRetryDelayConfig()
-
-		maxConcurrencyText := req.Form.Get(mvServiceTaskMaxConcurrencyKey)
-		if maxConcurrencyText != "" {
-			maxConcurrency, err = strconv.Atoi(maxConcurrencyText)
-			if err != nil || maxConcurrency <= 0 {
-				handler.WriteError(w, errors.New("illegal task_max_concurrency"))
-				return
-			}
-			changed = true
-		}
-
-		timeoutText := req.Form.Get(mvServiceTaskTimeoutKey)
-		if timeoutText != "" {
-			timeout, err = time.ParseDuration(timeoutText)
-			if err != nil || timeout < 0 {
-				handler.WriteError(w, errors.New("illegal task_timeout"))
-				return
-			}
-			changed = true
-		}
-
-		backpressureEnabledText := req.Form.Get(mvServiceTaskBackpressureEnabledKey)
-		if backpressureEnabledText != "" {
-			backpressureCfg.Enabled, err = strconv.ParseBool(backpressureEnabledText)
-			if err != nil {
-				handler.WriteError(w, errors.New("illegal task_backpressure_enabled"))
-				return
-			}
-			changed = true
-		}
-
-		backpressureCPUThresholdText := req.Form.Get(mvServiceTaskBackpressureCPUThresholdKey)
-		if backpressureCPUThresholdText != "" {
-			backpressureCfg.CPUThreshold, err = strconv.ParseFloat(backpressureCPUThresholdText, 64)
-			if err != nil {
-				handler.WriteError(w, errors.New("illegal task_backpressure_cpu_threshold"))
-				return
-			}
-			changed = true
-		}
-
-		backpressureMemThresholdText := req.Form.Get(mvServiceTaskBackpressureMemThresholdKey)
-		if backpressureMemThresholdText != "" {
-			backpressureCfg.MemThreshold, err = strconv.ParseFloat(backpressureMemThresholdText, 64)
-			if err != nil {
-				handler.WriteError(w, errors.New("illegal task_backpressure_mem_threshold"))
-				return
-			}
-			changed = true
-		}
-
-		backpressureDelayText := req.Form.Get(mvServiceTaskBackpressureDelayKey)
-		if backpressureDelayText != "" {
-			backpressureCfg.Delay, err = time.ParseDuration(backpressureDelayText)
-			if err != nil || backpressureCfg.Delay < 0 {
-				handler.WriteError(w, errors.New("illegal task_backpressure_delay"))
-				return
-			}
-			changed = true
-		}
-
-		retryBaseDelayText := req.Form.Get(mvServiceRetryBaseDelayKey)
-		if retryBaseDelayText != "" {
-			retryBase, err = time.ParseDuration(retryBaseDelayText)
-			if err != nil || retryBase <= 0 {
-				handler.WriteError(w, errors.New("illegal retry_base_delay"))
-				return
-			}
-			changed = true
-		}
-
-		retryMaxDelayText := req.Form.Get(mvServiceRetryMaxDelayKey)
-		if retryMaxDelayText != "" {
-			retryMax, err = time.ParseDuration(retryMaxDelayText)
-			if err != nil || retryMax <= 0 {
-				handler.WriteError(w, errors.New("illegal retry_max_delay"))
-				return
-			}
-			changed = true
-		}
-
-		if !changed {
-			handler.WriteError(w, errors.New("at least one setting field must be provided"))
-			return
-		}
-
-		mvService.SetTaskExecConfig(maxConcurrency, timeout)
-		if err = mvService.SetTaskBackpressureConfig(backpressureCfg); err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		if err = mvService.SetRetryDelayConfig(retryBase, retryMax); err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-
-		maxConcurrency, timeout = mvService.GetTaskExecConfig()
-		backpressureCfg = mvService.GetTaskBackpressureConfig()
-		retryBase, retryMax = mvService.GetRetryDelayConfig()
-		writeMVServiceTaskExecConfig(w, maxConcurrency, timeout, backpressureCfg, retryBase, retryMax)
+		h.servePost(w, req, mvService)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func (h MVServiceSettingsHandler) getMVService() (mvServiceRuntimeSettingsAccessor, error) {
+	do, err := session.GetDomain(h.Store)
+	if err != nil {
+		return nil, err
+	}
+	mvService := do.GetMVService()
+	if mvService == nil {
+		return nil, errors.New("mv service is not enabled")
+	}
+	return mvService, nil
+}
+
+func (h MVServiceSettingsHandler) serveGet(w http.ResponseWriter, mvService mvServiceRuntimeSettingsAccessor) {
+	writeMVServiceSettingsResponse(w, loadMVServiceRuntimeSettings(mvService))
+}
+
+func (h MVServiceSettingsHandler) servePost(w http.ResponseWriter, req *http.Request, mvService mvServiceRuntimeSettingsAccessor) {
+	if err := req.ParseForm(); err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	current := loadMVServiceRuntimeSettings(mvService)
+	updated, changed, err := parseMVServiceSettingsUpdateFromForm(req.Form, current)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	if !changed {
+		handler.WriteError(w, errors.New("at least one setting field must be provided"))
+		return
+	}
+
+	if err := applyMVServiceSettings(mvService, updated); err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	writeMVServiceSettingsResponse(w, loadMVServiceRuntimeSettings(mvService))
+}
+
+func loadMVServiceRuntimeSettings(mvService mvServiceRuntimeSettingsAccessor) mvServiceRuntimeSettings {
+	maxConcurrency, timeout := mvService.GetTaskExecConfig()
+	backpressureCfg := mvService.GetTaskBackpressureConfig()
+	retryBase, retryMax := mvService.GetRetryDelayConfig()
+	return mvServiceRuntimeSettings{
+		maxConcurrency:  maxConcurrency,
+		timeout:         timeout,
+		backpressureCfg: backpressureCfg,
+		retryBase:       retryBase,
+		retryMax:        retryMax,
+	}
+}
+
+func writeMVServiceSettingsResponse(w http.ResponseWriter, settings mvServiceRuntimeSettings) {
+	handler.WriteData(w, MVServiceSettingsResponse{
+		TaskMaxConcurrency:           settings.maxConcurrency,
+		TaskTimeout:                  settings.timeout.String(),
+		TaskTimeoutNanos:             int64(settings.timeout),
+		TaskBackpressureEnabled:      settings.backpressureCfg.Enabled,
+		TaskBackpressureCPUThreshold: settings.backpressureCfg.CPUThreshold,
+		TaskBackpressureMemThreshold: settings.backpressureCfg.MemThreshold,
+		TaskBackpressureDelay:        settings.backpressureCfg.Delay.String(),
+		TaskBackpressureDelayNanos:   int64(settings.backpressureCfg.Delay),
+		RetryBaseDelay:               settings.retryBase.String(),
+		RetryBaseDelayNanos:          int64(settings.retryBase),
+		RetryMaxDelay:                settings.retryMax.String(),
+		RetryMaxDelayNanos:           int64(settings.retryMax),
+	})
+}
+
+func parseMVServiceSettingsUpdateFromForm(form url.Values, current mvServiceRuntimeSettings) (mvServiceRuntimeSettings, bool, error) {
+	updated := current
+	changed := false
+
+	for _, updater := range mvServiceSettingsFieldUpdaters {
+		fieldChanged, err := updater(form, &updated)
+		if err != nil {
+			return mvServiceRuntimeSettings{}, false, err
+		}
+		changed = changed || fieldChanged
+	}
+
+	return updated, changed, nil
+}
+
+func newSettingsFieldUpdater[T any](
+	field string,
+	parse func(string) (T, error),
+	validate func(T) bool,
+	assign func(settings *mvServiceRuntimeSettings, value T),
+) settingsFieldUpdater {
+	return func(form url.Values, settings *mvServiceRuntimeSettings) (changed bool, err error) {
+		value, ok, err := parseOptionalFieldValue(form, field, parse)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+		if validate != nil && !validate(value) {
+			return false, newIllegalMVServiceSettingsFieldError(field)
+		}
+		assign(settings, value)
+		return true, nil
+	}
+}
+
+func parseOptionalFieldValue[T any](form url.Values, field string, parse func(string) (T, error)) (value T, ok bool, err error) {
+	text := form.Get(field)
+	if text == "" {
+		return value, false, nil
+	}
+	value, err = parse(text)
+	if err != nil {
+		return value, false, newIllegalMVServiceSettingsFieldError(field)
+	}
+	return value, true, nil
+}
+
+func parseFloat64FieldValue(text string) (float64, error) {
+	return strconv.ParseFloat(text, 64)
+}
+
+func newIllegalMVServiceSettingsFieldError(field string) error {
+	return errors.New("illegal " + field)
+}
+
+func applyMVServiceSettings(mvService mvServiceRuntimeSettingsAccessor, settings mvServiceRuntimeSettings) error {
+	mvService.SetTaskExecConfig(settings.maxConcurrency, settings.timeout)
+	if err := mvService.SetTaskBackpressureConfig(settings.backpressureCfg); err != nil {
+		return err
+	}
+	if err := mvService.SetRetryDelayConfig(settings.retryBase, settings.retryMax); err != nil {
+		return err
+	}
+	return nil
 }

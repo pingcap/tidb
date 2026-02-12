@@ -40,25 +40,25 @@ func TestTaskExecutorMaxConcurrency(t *testing.T) {
 	default:
 	}
 
-	require.Equal(t, int64(2), exec.metrics.submittedCount.Load())
-	require.Equal(t, int64(1), exec.metrics.runningCount.Load())
-	require.Equal(t, int64(1), exec.metrics.waitingCount.Load())
-	require.Equal(t, int64(0), exec.metrics.completedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
-	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
+	require.Equal(t, int64(2), exec.metrics.counters.submittedCount.Load())
+	require.Equal(t, int64(1), exec.metrics.gauges.runningCount.Load())
+	require.Equal(t, int64(1), exec.metrics.gauges.waitingCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.completedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.failedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.timeoutCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.rejectedCount.Load())
 
 	close(block)
 
 	second := waitForStart(t, started, time.Hour)
 	require.NotEqual(t, first, second)
 
-	waitForCount(t, exec.metrics.completedCount.Load, 2)
-	require.Equal(t, int64(0), exec.metrics.runningCount.Load())
-	require.Equal(t, int64(0), exec.metrics.waitingCount.Load())
-	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
-	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
+	waitForCount(t, exec.metrics.counters.completedCount.Load, 2)
+	require.Equal(t, int64(0), exec.metrics.gauges.runningCount.Load())
+	require.Equal(t, int64(0), exec.metrics.gauges.waitingCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.failedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.timeoutCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.rejectedCount.Load())
 }
 
 func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
@@ -87,29 +87,29 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 	default:
 	}
 
-	require.Equal(t, int64(2), exec.metrics.submittedCount.Load())
-	require.Equal(t, int64(1), exec.metrics.runningCount.Load())
-	require.Equal(t, int64(1), exec.metrics.waitingCount.Load())
-	require.Equal(t, int64(0), exec.metrics.completedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
-	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
+	require.Equal(t, int64(2), exec.metrics.counters.submittedCount.Load())
+	require.Equal(t, int64(1), exec.metrics.gauges.runningCount.Load())
+	require.Equal(t, int64(1), exec.metrics.gauges.waitingCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.completedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.failedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.timeoutCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.rejectedCount.Load())
 
 	exec.setMaxConcurrency(2)
 
 	waitForSignal(t, started, time.Hour)
 
-	require.Equal(t, int64(2), exec.metrics.runningCount.Load())
-	require.Equal(t, int64(0), exec.metrics.waitingCount.Load())
+	require.Equal(t, int64(2), exec.metrics.gauges.runningCount.Load())
+	require.Equal(t, int64(0), exec.metrics.gauges.waitingCount.Load())
 
 	close(block)
 
-	waitForCount(t, exec.metrics.completedCount.Load, 2)
-	require.Equal(t, int64(0), exec.metrics.runningCount.Load())
-	require.Equal(t, int64(0), exec.metrics.waitingCount.Load())
-	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
-	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
+	waitForCount(t, exec.metrics.counters.completedCount.Load, 2)
+	require.Equal(t, int64(0), exec.metrics.gauges.runningCount.Load())
+	require.Equal(t, int64(0), exec.metrics.gauges.waitingCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.failedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.timeoutCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.rejectedCount.Load())
 }
 
 func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
@@ -131,18 +131,19 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 
 	waitForSignal(t, longStarted, time.Hour)
 
-	require.Equal(t, int64(1), exec.metrics.submittedCount.Load())
-	require.Equal(t, int64(1), exec.metrics.runningCount.Load())
-	require.Equal(t, int64(0), exec.metrics.waitingCount.Load())
-	require.Equal(t, int64(0), exec.metrics.completedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
-	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
+	require.Equal(t, int64(1), exec.metrics.counters.submittedCount.Load())
+	require.Equal(t, int64(1), exec.metrics.gauges.runningCount.Load())
+	require.Equal(t, int64(0), exec.metrics.gauges.waitingCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.completedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.failedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.timeoutCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.rejectedCount.Load())
 
 	module.Advance(500 * time.Millisecond)
 
-	waitForCount(t, exec.metrics.timeoutCount.Load, 1)
-	waitForCount(t, exec.metrics.runningCount.Load, 0)
+	waitForCount(t, exec.metrics.counters.timeoutCount.Load, 1)
+	waitForCount(t, exec.metrics.gauges.runningCount.Load, 0)
+	waitForCount(t, exec.metrics.gauges.timedOutRunningCount.Load, 1)
 
 	exec.Submit("short", func() error {
 		started <- "short"
@@ -153,10 +154,11 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 
 	close(block)
 
-	waitForCount(t, exec.metrics.completedCount.Load, 2)
-	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
-	require.Equal(t, int64(1), exec.metrics.timeoutCount.Load())
-	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
+	waitForCount(t, exec.metrics.counters.completedCount.Load, 2)
+	require.Equal(t, int64(0), exec.metrics.counters.failedCount.Load())
+	require.Equal(t, int64(1), exec.metrics.counters.timeoutCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.rejectedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.gauges.timedOutRunningCount.Load())
 }
 
 func TestTaskExecutorUpdateTimeout(t *testing.T) {
@@ -180,10 +182,10 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 
 	waitForSignal(t, longStarted, time.Hour)
 
-	require.Equal(t, int64(1), exec.metrics.submittedCount.Load())
-	require.Equal(t, int64(1), exec.metrics.runningCount.Load())
-	require.Equal(t, int64(0), exec.metrics.waitingCount.Load())
-	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
+	require.Equal(t, int64(1), exec.metrics.counters.submittedCount.Load())
+	require.Equal(t, int64(1), exec.metrics.gauges.runningCount.Load())
+	require.Equal(t, int64(0), exec.metrics.gauges.waitingCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.timeoutCount.Load())
 
 	exec.Submit("short", func() error {
 		started <- "short"
@@ -192,13 +194,15 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 
 	module.Advance(40 * time.Millisecond)
 	waitForNamedStart(t, started, "short", 300*time.Millisecond)
+	waitForCount(t, exec.metrics.gauges.timedOutRunningCount.Load, 1)
 
 	close(block)
 
-	waitForCount(t, exec.metrics.timeoutCount.Load, 1)
-	waitForCount(t, exec.metrics.completedCount.Load, 2)
-	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
+	waitForCount(t, exec.metrics.counters.timeoutCount.Load, 1)
+	waitForCount(t, exec.metrics.counters.completedCount.Load, 2)
+	require.Equal(t, int64(0), exec.metrics.counters.failedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.rejectedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.gauges.timedOutRunningCount.Load())
 }
 
 func TestTaskExecutorRejectAfterClose(t *testing.T) {
@@ -209,13 +213,13 @@ func TestTaskExecutorRejectAfterClose(t *testing.T) {
 
 	exec.Submit("rejected", func() error { return nil })
 
-	require.Equal(t, int64(1), exec.metrics.rejectedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.submittedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.waitingCount.Load())
-	require.Equal(t, int64(0), exec.metrics.runningCount.Load())
-	require.Equal(t, int64(0), exec.metrics.completedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.failedCount.Load())
-	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
+	require.Equal(t, int64(1), exec.metrics.counters.rejectedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.submittedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.gauges.waitingCount.Load())
+	require.Equal(t, int64(0), exec.metrics.gauges.runningCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.completedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.failedCount.Load())
+	require.Equal(t, int64(0), exec.metrics.counters.timeoutCount.Load())
 }
 
 type toggleBackpressureController struct {
@@ -326,7 +330,7 @@ func TestTaskExecutorBackpressureCheckDoesNotBlockSubmit(t *testing.T) {
 
 	waitForNamedStart(t, started, "t1", time.Hour)
 	waitForNamedStart(t, started, "t2", time.Hour)
-	waitForCount(t, exec.metrics.completedCount.Load, 2)
+	waitForCount(t, exec.metrics.counters.completedCount.Load, 2)
 }
 
 func TestCPUMemBackpressureController(t *testing.T) {
