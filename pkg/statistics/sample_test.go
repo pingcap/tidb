@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -26,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func recordSetForWeightSamplingTest(size int) *recordSet {
@@ -256,6 +259,44 @@ func TestBuildSampleFullNDV(t *testing.T) {
 	// Verify that the condition ndv > sampleNDV is properly handled
 	// The TopN should be trimmed to sampleNDV-1 items when ndv > sampleNDV
 	require.Equal(t, 2, len(topN.TopN), "TopN should be trimmed to sampleNDV-1 items when ndv > sampleNDV")
+}
+
+func TestEstimateNDVByChao3AvoidsUint64Underflow(t *testing.T) {
+	core, observedLogs := observer.New(zap.InfoLevel)
+	restoreGlobal := log.ReplaceGlobals(zap.New(core), nil)
+	defer restoreGlobal()
+
+	// f1 is sketch-estimated and can overshoot sampleNDV. The estimator should
+	// fall back instead of subtracting unsigned integers and underflowing.
+	const sampleNDV = uint64(49_836_032)
+	const onlyOnceItems = uint64(49_991_680)
+	const sampleSize = uint64(60_000_000)
+	const rowCount = uint64(1_000_000_000)
+
+	ndv := EstimateNDVByChao3(sampleNDV, onlyOnceItems, sampleSize, rowCount)
+	require.Equal(t, sampleNDV, ndv)
+
+	logEntries := observedLogs.FilterMessage("chao3 ndv estimation detail").All()
+	require.Len(t, logEntries, 1)
+	require.Equal(t, "non_positive_denom", logEntries[0].ContextMap()["branch"])
+}
+
+func TestEstimateNDVByChao3TreatsNearAllSingletonsAsAllSingletons(t *testing.T) {
+	core, observedLogs := observer.New(zap.InfoLevel)
+	restoreGlobal := log.ReplaceGlobals(zap.New(core), nil)
+	defer restoreGlobal()
+
+	const sampleNDV = uint64(49_836_032)
+	const onlyOnceItems = uint64(49_991_680)
+	const sampleSize = uint64(49_999_078)
+	const rowCount = uint64(1_000_000_000)
+
+	ndv := EstimateNDVByChao3(sampleNDV, onlyOnceItems, sampleSize, rowCount)
+	require.Equal(t, rowCount, ndv)
+
+	logEntries := observedLogs.FilterMessage("chao3 ndv estimation detail").All()
+	require.Len(t, logEntries, 1)
+	require.Equal(t, "all_singletons", logEntries[0].ContextMap()["branch"])
 }
 
 type testSampleSuite struct {

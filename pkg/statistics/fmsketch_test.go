@@ -128,3 +128,32 @@ func SubTestFMSketchCoding() func(*testing.T) {
 		require.Equal(t, fmsketch.NDV(), pkSketch.NDV())
 	}
 }
+
+func buildHashedFMSketch(start, end, maxSize int) *FMSketch {
+	sketch := NewFMSketch(maxSize)
+	for i := start; i < end; i++ {
+		// Use a deterministic multiplicative mix so the inserted values behave like
+		// uniformly distributed hashes.
+		sketch.insertHashValue(uint64(i) * 11400714819323198485)
+	}
+	return sketch
+}
+
+func SubTestSketchProtoMergePreservesMaxSize() func(*testing.T) {
+	return func(t *testing.T) {
+		left := buildHashedFMSketch(0, MaxSketchSize*2, MaxSketchSize)
+		right := buildHashedFMSketch(MaxSketchSize*2, MaxSketchSize*4, MaxSketchSize)
+
+		directMerged := left.Copy()
+		directMerged.MergeFMSketch(right)
+
+		leftFromProto := FMSketchFromProto(FMSketchToProto(left))
+		rightFromProto := FMSketchFromProto(FMSketchToProto(right))
+
+		require.Equal(t, MaxSketchSize, leftFromProto.maxSize)
+		require.Equal(t, MaxSketchSize, rightFromProto.maxSize)
+
+		leftFromProto.MergeFMSketch(rightFromProto)
+		require.Equal(t, directMerged.NDV(), leftFromProto.NDV())
+	}
+}

@@ -215,6 +215,7 @@ func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 	}
 	sketch := fmSketchPool.Get().(*FMSketch)
 	sketch.mask = protoSketch.Mask
+	sketch.maxSize = MaxSketchSize
 	for _, val := range protoSketch.Hashset {
 		sketch.hashset.Put(val, true)
 	}
@@ -242,7 +243,6 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 		return nil, errors.Trace(err)
 	}
 	fm := FMSketchFromProto(p)
-	fm.maxSize = MaxSketchSize
 	return fm, nil
 }
 

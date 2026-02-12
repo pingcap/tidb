@@ -16,5 +16,9 @@
       "show stats_topn",
       "show stats_buckets"
     ]
+  },
+  {
+    "name": "TestAnalyzeV2Chao3",
+    "cases": []
   }
 ]
