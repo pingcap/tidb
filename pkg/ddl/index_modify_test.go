@@ -1945,6 +1945,7 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexRequest", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 
 	tk.MustExec("create table sw (value varchar(20))")
 	tk.MustExec("insert into sw values ('a'), ('the'), ('foo'), ('foo')")
