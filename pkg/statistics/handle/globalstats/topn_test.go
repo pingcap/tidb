@@ -413,6 +413,135 @@ func TestMergeTopNV1V2ComparisonHistValueAtUpperBound(t *testing.T) {
 		"V2 histogram should have higher total count because V1 subtracted repeat counts from histograms")
 }
 
+// TestMergeTopNV1V2ManyPartitionsInflation demonstrates V1's key weakness:
+// when a value is in TopN of a few partitions but falls inside histogram
+// buckets of many others, V1 accumulates NotNullCount/NDV uniform estimates
+// from each partition, producing a massively inflated count.
+//
+// Setup (20 partitions, column histogram, isIndex=false, globalTopN=1):
+//
+//	Partitions 0-1: TopN = {val_rare: 60, val_common: 10}
+//	                val_rare is dominant in these two partitions only.
+//	Partitions 2-19: TopN = {val_common: 10}
+//	                val_rare is NOT in TopN but falls inside histogram range.
+//	                Histogram: NDV=5, NotNullCount=500
+//	                → EqualRowCount(val_rare) = 500/5 = 100 per partition
+//
+// True global counts:
+//
+//	val_rare:   60*2           = 120
+//	val_common: 10*20          = 200
+//
+// V1: val_rare  = 60*2 + 100*18 = 1920 (16x overestimate!)
+//
+//	val_common = 10*20         = 200
+//	→ V1 picks val_rare (1920) — WRONG choice, massively inflated
+//
+// V2: val_rare  = 60*2          = 120
+//
+//	val_common = 10*20         = 200
+//	→ V2 picks val_common (200) — correct choice, exact count
+func TestMergeTopNV1V2ManyPartitionsInflation(t *testing.T) {
+	loc := time.UTC
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
+	killer := sqlkiller.SQLKiller{}
+
+	encodeInt := func(v int64) []byte {
+		key, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(v))
+		require.NoError(t, err)
+		return key
+	}
+	keyRare := encodeInt(50)   // val_rare = 50, falls inside histogram range [1,100]
+	keyCommon := encodeInt(200) // val_common = 200, always in TopN
+
+	const nPartitions = 20
+
+	// Histogram for partitions 2-19: val_rare falls inside a bucket but is not
+	// at the upper bound, so EqualRowCount returns NotNullCount/NDV = 500/5 = 100.
+	makeHist := func() *statistics.Histogram {
+		d1 := types.NewIntDatum(1)
+		d100 := types.NewIntDatum(100)
+		h := statistics.NewHistogram(1, 5, 0, 0,
+			types.NewFieldType(mysql.TypeLong), chunk.InitialCapacity, 0)
+		h.AppendBucket(&d1, &d100, 500, 10)
+		return h
+	}
+
+	makeInputs := func() ([]*statistics.TopN, []*statistics.Histogram) {
+		topNs := make([]*statistics.TopN, nPartitions)
+		hists := make([]*statistics.Histogram, nPartitions)
+		for i := range nPartitions {
+			topN := statistics.NewTopN(2)
+			if i < 2 {
+				topN.AppendTopN(keyRare, 60)
+			}
+			topN.AppendTopN(keyCommon, 10)
+			topNs[i] = topN
+			hists[i] = makeHist()
+		}
+		return topNs, hists
+	}
+
+	// --- V1 merge ---
+	v1TopNs, v1Hists := makeInputs()
+	v1TopN, v1Left, v1Hists, err := MergePartTopN2GlobalTopN(
+		loc, 1, v1TopNs, 1, v1Hists, false, &killer,
+	)
+	require.NoError(t, err)
+	require.Len(t, v1TopN.TopN, 1)
+
+	// V1 picks val_rare with massively inflated count: 60*2 + 100*18 = 1920.
+	v1RareCount := findTopNCountByEncoded(v1TopN, keyRare)
+	require.Equal(t, uint64(1920), v1RareCount)
+	require.Equal(t, uint64(0), findTopNCountByEncoded(v1TopN, keyCommon),
+		"V1 wrongly excluded val_common from global TopN")
+
+	// V1 histogram merge: histograms were mutated by BinarySearchRemoveVal.
+	v1GlobalHist, err := statistics.MergePartitionHist2GlobalHist(
+		sc, v1Hists, v1Left, 100, false, 1,
+	)
+	require.NoError(t, err)
+
+	// --- V2 merge ---
+	v2TopNs, v2Hists := makeInputs()
+	v2TopN, v2Left, err := MergePartTopN2GlobalTopNV2(v2TopNs, 1, &killer)
+	require.NoError(t, err)
+	require.Len(t, v2TopN.TopN, 1)
+
+	// V2 correctly picks val_common with exact count: 10*20 = 200.
+	v2CommonCount := findTopNCountByEncoded(v2TopN, keyCommon)
+	require.Equal(t, uint64(200), v2CommonCount)
+	require.Equal(t, uint64(0), findTopNCountByEncoded(v2TopN, keyRare),
+		"V2 correctly excluded val_rare from global TopN")
+
+	// V2 histogram merge: histograms are pristine (unmodified).
+	v2GlobalHist, err := statistics.MergePartitionHist2GlobalHist(
+		sc, v2Hists, v2Left, 100, false, 1,
+	)
+	require.NoError(t, err)
+
+	// --- Accuracy comparison ---
+	const trueRare = 120  // 60*2
+	const trueCommon = 200 // 10*20
+
+	// V1 TopN error: claims val_rare=1920, true=120 → error=+1800 (16x overestimate).
+	v1TopNError := math.Abs(float64(v1RareCount) - trueRare)
+	require.Equal(t, float64(1800), v1TopNError)
+
+	// V2 TopN error: claims val_common=200, true=200 → error=0 (exact).
+	v2TopNError := math.Abs(float64(v2CommonCount) - trueCommon)
+	require.Equal(t, float64(0), v2TopNError)
+
+	// V2 is strictly more accurate for the global TopN value.
+	require.Less(t, v2TopNError, v1TopNError,
+		"V2 should have lower TopN error than V1")
+
+	// V2 also preserves higher histogram totals because it doesn't subtract
+	// phantom counts from partition histograms.
+	require.Greater(t, v2GlobalHist.NotNullCount(), v1GlobalHist.NotNullCount(),
+		"V2 histogram should retain more rows because V1 subtracted inflated estimates")
+}
+
 func TestMergePartTopN2GlobalTopNV2EmptyTopNs(t *testing.T) {
 	killer := sqlkiller.SQLKiller{}
 	topNs := make([]*statistics.TopN, 5)
