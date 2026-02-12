@@ -797,6 +797,82 @@ func TestMergePartTopN2GlobalTopNV2SinglePartitionValues(t *testing.T) {
 	require.Len(t, globalTopN.TopN, 3)
 	require.Len(t, leftTopN, 2)
 	require.Equal(t, uint64(300), globalTopN.TotalCount())
+
+	// Verify total count is preserved: globalTopN + leftTopN == input total.
+	var leftTotal uint64
+	for _, m := range leftTopN {
+		leftTotal += m.Count
+	}
+	require.Equal(t, uint64(500), globalTopN.TotalCount()+leftTotal)
+}
+
+// TestMergePartTopN2GlobalTopNV2PreservesTotalCount verifies that
+// MergePartTopN2GlobalTopNV2 never loses or creates counts: the sum of
+// globalTopN counts + leftover TopN counts must equal the sum of all
+// input TopN counts.
+func TestMergePartTopN2GlobalTopNV2PreservesTotalCount(t *testing.T) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	killer := sqlkiller.SQLKiller{}
+
+	encodeInt := func(v int64) []byte {
+		key, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(v))
+		require.NoError(t, err)
+		return key
+	}
+
+	// 6 partitions with overlapping TopN values and varying counts.
+	// 5 distinct values across partitions, some shared, some unique.
+	topNs := make([]*statistics.TopN, 6)
+
+	// P0: val1=200, val2=150
+	topNs[0] = statistics.NewTopN(2)
+	topNs[0].AppendTopN(encodeInt(1), 200)
+	topNs[0].AppendTopN(encodeInt(2), 150)
+
+	// P1: val1=180, val3=120
+	topNs[1] = statistics.NewTopN(2)
+	topNs[1].AppendTopN(encodeInt(1), 180)
+	topNs[1].AppendTopN(encodeInt(3), 120)
+
+	// P2: val2=90, val4=80
+	topNs[2] = statistics.NewTopN(2)
+	topNs[2].AppendTopN(encodeInt(2), 90)
+	topNs[2].AppendTopN(encodeInt(4), 80)
+
+	// P3: val3=110, val5=70
+	topNs[3] = statistics.NewTopN(2)
+	topNs[3].AppendTopN(encodeInt(3), 110)
+	topNs[3].AppendTopN(encodeInt(5), 70)
+
+	// P4: val1=50, val4=60
+	topNs[4] = statistics.NewTopN(2)
+	topNs[4].AppendTopN(encodeInt(1), 50)
+	topNs[4].AppendTopN(encodeInt(4), 60)
+
+	// P5: val2=40, val5=30
+	topNs[5] = statistics.NewTopN(2)
+	topNs[5].AppendTopN(encodeInt(2), 40)
+	topNs[5].AppendTopN(encodeInt(5), 30)
+
+	// Input total: 200+150 + 180+120 + 90+80 + 110+70 + 50+60 + 40+30 = 1180
+	var inputTotal uint64
+	for _, topN := range topNs {
+		inputTotal += topN.TotalCount()
+	}
+	require.Equal(t, uint64(1180), inputTotal)
+
+	// globalTopN=2: only top 2 values kept, rest go to leftover.
+	globalTopN, leftTopN, err := MergePartTopN2GlobalTopNV2(topNs, 2, &killer)
+	require.NoError(t, err)
+
+	var outputTotal uint64
+	outputTotal += globalTopN.TotalCount()
+	for _, m := range leftTopN {
+		outputTotal += m.Count
+	}
+	require.Equal(t, inputTotal, outputTotal,
+		"total count must be preserved: globalTopN(%d) + leftover(%d) = %d, want %d",
+		globalTopN.TotalCount(), outputTotal-globalTopN.TotalCount(), outputTotal, inputTotal)
 }
 
 // TestMergeTopNV1V2AccuracyWithBuildStats builds partition-level statistics
