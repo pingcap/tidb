@@ -362,7 +362,7 @@ b	1	6040	400	60
 B	2	5050	500	50
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
 id	estRows	task	access object	operator info
-TopN_10	4.00	root		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
+TopN_13	4.00	root		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
 └─IndexLookUp_20	4.00	root		
   ├─LocalIndexLookUp_22(Build)	4.00	cop[tikv]		index handle offsets:[]
   │ ├─TopN_19(Build)	4.00	cop[tikv]		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
