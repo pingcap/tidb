@@ -153,6 +153,9 @@ func TestLeadingHintInapplicableKeepsOtherConds(t *testing.T) {
 
 // TestLeadingHintWithNonEqJoinUnderOuterJoin tests that the leading hint works
 // correctly when combining a non-equijoin (OR condition) with an outer join.
+// The query has an outer join so the greedy solver is used (useGreedy=true).
+// The leading hint is processed through connectJoinNodes, then the greedy
+// solver's checkConnectionAndMakeJoin handles remaining tables.
 // Regression test for https://github.com/pingcap/tidb/issues/56513
 func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
@@ -163,19 +166,33 @@ func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 		testKit.MustExec("create table t2_56513(a int, b int, c int);")
 		testKit.MustExec("create table t3_56513(a int, b int, c int);")
 
-		// With leading(t1, t3, t2): t1 joins t3 first (via left join), then t2
+		orCond := "or(eq(test.t1_56513.a, test.t2_56513.a), eq(test.t1_56513.a, test.t2_56513.b))"
+
+		// No leading hint: greedy solver (checkConnectionAndMakeJoin) picks the
+		// join order autonomously. The OR condition must be preserved.
+		testKit.MustQuery("explain format = 'brief' " +
+			"select * from t1_56513 " +
+			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
+			"left join t3_56513 on t1_56513.a = t3_56513.b;").
+			CheckContain(orCond)
+
+		// With leading(t1, t3, t2): the leading hint path (connectJoinNodes)
+		// joins t1 with t3 first via the left join eq edge, then the greedy
+		// solver joins the result with t2 via the OR condition.
 		plan132 := testKit.MustQuery("explain format = 'brief' " +
 			"select /*+ leading(t1_56513, t3_56513, t2_56513) */ * from t1_56513 " +
 			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
 			"left join t3_56513 on t1_56513.a = t3_56513.b;")
-		// The hint should be applicable (no "inapplicable" warning)
+		plan132.CheckContain(orCond)
 		testKit.MustQuery("show warnings").CheckNotContain("leading hint is inapplicable")
 
-		// With leading(t1, t2, t3): t1 joins t2 first, then t3
+		// With leading(t1, t2, t3): connectJoinNodes joins t1 with t2 via the
+		// OR condition (non-equijoin bypass), then joins with t3 via the eq edge.
 		plan123 := testKit.MustQuery("explain format = 'brief' " +
 			"select /*+ leading(t1_56513, t2_56513, t3_56513) */ * from t1_56513 " +
 			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
 			"left join t3_56513 on t1_56513.a = t3_56513.b;")
+		plan123.CheckContain(orCond)
 		testKit.MustQuery("show warnings").CheckNotContain("leading hint is inapplicable")
 
 		// The two plans should be different since different join orders are specified
