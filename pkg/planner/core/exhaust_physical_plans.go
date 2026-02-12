@@ -2721,7 +2721,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
-	if util.ShouldCheckTiFlashPushDown(p.SCtx(), logicalop.GetHasTiFlash(super)) && p.SCtx().GetSessionVars().IsMPPAllowed() {
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
 		if hasMPPJoinHints(p.PreferJoinType) {
 			// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.
