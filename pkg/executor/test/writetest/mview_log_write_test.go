@@ -633,7 +633,7 @@ func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
 		t,
 		tkDDL,
 		addColumnStateWriteReorgFailpoint,
-		"alter table t add column c_new int default 0",
+		"alter table t add column c_new int default 0 after id",
 	)
 	defer ctrl.releaseAndWaitFinish(t)
 
@@ -653,9 +653,9 @@ func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
 
 	ctrl.releaseAndWaitFinish(t)
 
-	tk.MustQuery("select id, tracked, untracked, c_new from t order by id").Check(testkit.Rows(
-		"1 10 101 0",
-		"2 20 200 0",
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
+		"1 0 10 101",
+		"2 0 20 200",
 	))
 }
 
@@ -665,9 +665,9 @@ func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
 
-	tk.MustExec("create table t (id int primary key, tracked int, to_drop int)")
+	tk.MustExec("create table t (id int primary key, to_drop int, tracked int)")
 	tk.MustExec("create materialized view log on t (id, tracked)")
-	tk.MustExec("insert into t values (1, 10, 100)")
+	tk.MustExec("insert into t values (1, 100, 10)")
 	tk.MustExec("delete from `$mlog$t`")
 
 	tkDDL := testkit.NewTestKit(t, store)
