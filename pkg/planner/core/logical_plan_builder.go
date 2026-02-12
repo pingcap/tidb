@@ -5970,6 +5970,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
+	// A special check for soft-delete tables (updating primary key columns is not allowed) is also handled here.
 	virtualAssignments := make([]*ast.Assignment, 0)
 	for _, tn := range tableList {
 		tnW := b.resolveCtx.GetTableName(tn)
@@ -5983,23 +5984,31 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			return nil, nil, false, infoschema.ErrTableNotExists.FastGenByArgs(tnW.DBInfo.Name.O, tableInfo.Name.O)
 		}
 		for i, colInfo := range tableVal.Cols() {
-			if !colInfo.IsGenerated() {
+			if !colInfo.IsGenerated() && tableInfo.SoftdeleteInfo == nil {
 				continue
 			}
 			columnKey := fullColumnName{tnW.DBInfo.Name.L, tn.Name.L, colInfo.Name.L}
 			isDefault, ok := modifyColumns[columnKey]
-			if ok && colInfo.Hidden {
-				return nil, nil, false, plannererrors.ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
+			if colInfo.IsGenerated() {
+				if ok && colInfo.Hidden {
+					return nil, nil, false, plannererrors.ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
+				}
+				// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+				// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+				if ok && !isDefault {
+					return nil, nil, false, plannererrors.ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
+				}
+				virtualAssignments = append(virtualAssignments, &ast.Assignment{
+					Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
+					Expr:   tableVal.Cols()[i].GeneratedExpr.Clone(),
+				})
 			}
-			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
-			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
-			if ok && !isDefault {
-				return nil, nil, false, plannererrors.ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
+			// If columns in set list contains primary key columns on soft-delete tables, raise error.
+			// It's because if updating PK meets a conflict row, we need to delete the conflict row if that row is
+			// already soft-deleted. And this behavior is not implemented yet. So we forbid this kind of update now.
+			if tableInfo.SoftdeleteInfo != nil && mysql.HasPriKeyFlag(colInfo.GetFlag()) && ok {
+				return nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
 			}
-			virtualAssignments = append(virtualAssignments, &ast.Assignment{
-				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
-				Expr:   tableVal.Cols()[i].GeneratedExpr.Clone(),
-			})
 		}
 	}
 
