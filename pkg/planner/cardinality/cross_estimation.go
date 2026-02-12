@@ -185,7 +185,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 		rangeCount = tempResult.Est
 	} else {
 		var rangeCountEst statistics.RowEstimate
-		rangeCountEst, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
+		rangeCountEst, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges, false)
 		rangeCount = rangeCountEst.Est
 	}
 	if err != nil {
@@ -219,7 +219,7 @@ func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*range
 				return nil, 0, 0, false
 			}
 			var countEst statistics.RowEstimate
-			countEst, err = GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran})
+			countEst, err = GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran}, false)
 			count = countEst.Est
 		}
 		if err != nil {

@@ -37,7 +37,7 @@ func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 		return 0, err
 	}
 
-	intVal, err := strconv.ParseInt(string(val), 10, 64)
+	intVal, err := strconv.ParseInt(string(val.Value), 10, 64)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -59,7 +59,7 @@ func GetInt64(ctx context.Context, r Retriever, k Key) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	intVal, err := strconv.ParseInt(string(val), 10, 64)
+	intVal, err := strconv.ParseInt(string(val.Value), 10, 64)
 	if err != nil {
 		return intVal, errors.Trace(err)
 	}

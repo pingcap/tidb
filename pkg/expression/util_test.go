@@ -144,7 +144,7 @@ func TestClone(t *testing.T) {
 		&builtinToSecondsSig{}, &builtinUTCTimeWithArgSig{}, &builtinUTCTimeWithoutArgSig{}, &builtinTimestamp1ArgSig{}, &builtinTimestamp2ArgsSig{},
 		&builtinTimestampLiteralSig{}, &builtinLastDaySig{}, &builtinStrToDateDateSig{}, &builtinStrToDateDatetimeSig{}, &builtinStrToDateDurationSig{},
 		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddSubDateAsStringSig{},
-		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{},
+		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{}, &builtinUUIDv4Sig{}, &builtinUUIDv7Sig{}, &builtinUUIDVersionSig{}, &builtinUUIDTimestampSig{},
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
@@ -286,6 +286,13 @@ func TestPushDownNot(t *testing.T) {
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
 
+	// (not not (a=1)) should be optimized to (a=1)
+	eqFunc = newFunctionWithMockCtx(ast.EQ, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, eqFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, eqFunc))
+
 	// (not not (a+1)) should be optimized to (a+1 is true)
 	plusFunc := newFunctionWithMockCtx(ast.Plus, col, NewOne())
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, plusFunc)
@@ -298,6 +305,13 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsTruthWithNull, col))))
+	// (not not not (a > 1)) should be optimized to (a <= 1)
+	gtFunc := newFunctionWithMockCtx(ast.GT, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, gtFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.LE, col, NewOne())))
 	// (not not not not a) should be optimized to (a is true)
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
@@ -305,6 +319,15 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
+
+	// (not not not not (a <= 1)) should be optimized to (a <= 1)
+	leFunc := newFunctionWithMockCtx(ast.LE, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, leFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, leFunc))
 }
 
 func TestFilter(t *testing.T) {
@@ -530,6 +553,186 @@ func BenchmarkExprFromSchema(b *testing.B) {
 		ExprFromSchema(expr, schema)
 	}
 	b.ReportAllocs()
+}
+
+func TestRewriteMySQLMatchAgainst(t *testing.T) {
+	ctx := mock.NewContext()
+	titleCol := &Column{
+		RetType:  types.NewFieldType(mysql.TypeString),
+		OrigName: "title",
+	}
+	bodyCol := &Column{
+		RetType:  types.NewFieldType(mysql.TypeString),
+		OrigName: "body",
+	}
+
+	buildMatchAgainstWithCols := func(pattern string, cols ...*Column) *ScalarFunction {
+		args := make([]Expression, 0, 1+len(cols))
+		args = append(args,
+			&Constant{
+				Value:   types.NewStringDatum(pattern),
+				RetType: types.NewFieldType(mysql.TypeString),
+			},
+		)
+		for _, col := range cols {
+			args = append(args, col)
+		}
+		expr, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), args...)
+		require.NoError(t, err)
+
+		sf, ok := expr.(*ScalarFunction)
+		require.True(t, ok)
+		require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+		return sf
+	}
+	buildMatchAgainst := func(pattern string) *ScalarFunction {
+		return buildMatchAgainstWithCols(pattern, titleCol)
+	}
+
+	type ftsLeaf struct {
+		funcName string
+		query    string
+		underNot bool
+	}
+	collectFTSLeaves := func(expr Expression) []ftsLeaf {
+		var leaves []ftsLeaf
+		var visit func(Expression, bool)
+		visit = func(e Expression, underNot bool) {
+			sf, ok := e.(*ScalarFunction)
+			if !ok {
+				return
+			}
+			switch sf.FuncName.L {
+			case ast.UnaryNot:
+				if len(sf.GetArgs()) > 0 {
+					visit(sf.GetArgs()[0], !underNot)
+				}
+				return
+			case ast.IsTruthWithNull, ast.IsTruthWithoutNull:
+				if len(sf.GetArgs()) > 0 {
+					visit(sf.GetArgs()[0], underNot)
+				}
+				return
+			}
+			switch sf.FuncName.L {
+			case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
+				leaf := ftsLeaf{funcName: sf.FuncName.L, underNot: underNot}
+				if len(sf.GetArgs()) > 0 {
+					if c, ok := sf.GetArgs()[0].(*Constant); ok {
+						leaf.query = c.Value.GetString()
+					}
+				}
+				leaves = append(leaves, leaf)
+				return
+			}
+			for _, arg := range sf.GetArgs() {
+				visit(arg, underNot)
+			}
+		}
+		visit(expr, false)
+		return leaves
+	}
+	assertFTSLeafArgCols := func(expr Expression, colCount int) {
+		var visit func(Expression)
+		visit = func(e Expression) {
+			sf, ok := e.(*ScalarFunction)
+			if !ok {
+				return
+			}
+			switch sf.FuncName.L {
+			case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
+				require.Len(t, sf.GetArgs(), colCount+1)
+				for i := 1; i < len(sf.GetArgs()); i++ {
+					_, ok := sf.GetArgs()[i].(*Column)
+					require.True(t, ok)
+				}
+				return
+			}
+			for _, arg := range sf.GetArgs() {
+				visit(arg)
+			}
+		}
+		visit(expr)
+	}
+
+	hasMySQLMatchAgainst := func(expr Expression) bool {
+		var found bool
+		var visit func(Expression)
+		visit = func(e Expression) {
+			if found {
+				return
+			}
+			sf, ok := e.(*ScalarFunction)
+			if !ok {
+				return
+			}
+			if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
+				found = true
+				return
+			}
+			for _, arg := range sf.GetArgs() {
+				visit(arg)
+			}
+		}
+		visit(expr)
+		return found
+	}
+
+	matchAgainst := buildMatchAgainst("hello")
+	require.True(t, ContainsFullTextSearchFn(matchAgainst))
+
+	expr, err := RewriteMySQLMatchAgainst(ctx, matchAgainst)
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchWord, query: "hello"},
+	}, collectFTSLeaves(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("hello*"))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchPrefix, query: "hello"},
+	}, collectFTSLeaves(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("\"hello world\""))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchPhrase, query: "hello world"},
+	}, collectFTSLeaves(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("+apple -banana"))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchWord, query: "apple"},
+		{funcName: ast.FTSMatchWord, query: "banana", underNot: true},
+	}, collectFTSLeaves(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainstWithCols("apple", titleCol, bodyCol))
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchWord, query: "apple"},
+	}, collectFTSLeaves(expr))
+	assertFTSLeafArgCols(expr, 2)
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("-banana"))
+	require.NoError(t, err)
+	c, ok := expr.(*Constant)
+	require.True(t, ok)
+	require.Equal(t, int64(0), c.Value.GetInt64())
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("hello world"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "TiDB only supports multiple terms with +/- modifiers")
+	require.True(t, hasMySQLMatchAgainst(expr))
+
+	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("+hello world"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "TiDB only supports multiple terms with +/- modifiers")
+	require.True(t, hasMySQLMatchAgainst(expr))
 }
 
 // MockExpr is mainly for test.

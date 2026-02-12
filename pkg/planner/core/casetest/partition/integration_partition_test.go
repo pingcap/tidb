@@ -303,10 +303,10 @@ AND char(tla842d94a.col_2, tla842d94a.col_2 using utf8mb4) IN ('9eQ)6nzji', 'bF!
 AND NOT (tla842d94a.col_2 <> 3496.9237290113774)
 ORDER BY char(tla842d94a.col_2, tla842d94a.col_2 using utf8mb4), tla842d94a.col_2;
 `).Check(testkit.Rows(
-			`Projection 0.00 root  Column#4, Column#5, test.tla842d94a.col_2`,
-			`└─Sort 0.00 root  Column#6, test.tla842d94a.col_2`,
-			`  └─Projection 0.00 root  Column#4, Column#5, test.tla842d94a.col_2, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#6`,
-			`    └─Projection 0.00 root  1->Column#4, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#5, test.tla842d94a.col_2`,
+			`Projection 0.00 root  Column#5, Column#6, test.tla842d94a.col_2`,
+			`└─Sort 0.00 root  Column#7, test.tla842d94a.col_2`,
+			`  └─Projection 0.00 root  Column#5, Column#6, test.tla842d94a.col_2, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#7`,
+			`    └─Projection 0.00 root  1->Column#5, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#6, test.tla842d94a.col_2`,
 			`      └─TableDual 0.00 root  rows:0`))
 		testKit.MustQuery(`explain format='brief' SELECT
     1,
@@ -318,10 +318,10 @@ AND char(tla842d94a.col_2, tla842d94a.col_2 using utf8mb4) IN ('9eQ)6nzji', 'bF!
 AND NOT (tla842d94a.col_2 <> 3496.9237290113774)
 ORDER BY char(tla842d94a.col_2, tla842d94a.col_2 using utf8mb4), tla842d94a.col_2;
 `).Check(testkit.Rows(
-			`Projection 0.00 root  Column#4, Column#5, test.tla842d94a.col_2`,
-			`└─Sort 0.00 root  Column#6, test.tla842d94a.col_2`,
-			`  └─Projection 0.00 root  Column#4, Column#5, test.tla842d94a.col_2, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#6`,
-			`    └─Projection 0.00 root  1->Column#4, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#5, test.tla842d94a.col_2`,
+			`Projection 0.00 root  Column#5, Column#6, test.tla842d94a.col_2`,
+			`└─Sort 0.00 root  Column#7, test.tla842d94a.col_2`,
+			`  └─Projection 0.00 root  Column#5, Column#6, test.tla842d94a.col_2, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#7`,
+			`    └─Projection 0.00 root  1->Column#5, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#6, test.tla842d94a.col_2`,
 			`      └─TableDual 0.00 root  rows:0`))
 	})
 }

@@ -4,11 +4,14 @@ package kms
 
 import (
 	"context"
+	"errors"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/kms"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/aws/aws-sdk-go-v2/service/kms/types"
+	"github.com/aws/smithy-go"
 	pErrors "github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 )
@@ -19,36 +22,38 @@ const (
 )
 
 type AwsKms struct {
-	client       *kms.KMS
+	client       *kms.Client
 	currentKeyID string
 	region       string
 	endpoint     string
 }
 
 func NewAwsKms(masterKeyConfig *encryptionpb.MasterKeyKms) (*AwsKms, error) {
-	config := &aws.Config{
-		Region:   aws.String(masterKeyConfig.Region),
-		Endpoint: aws.String(masterKeyConfig.Endpoint),
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithRegion(masterKeyConfig.Region),
+	)
+	if err != nil {
+		return nil, pErrors.Annotate(err, "failed to load AWS config")
 	}
 
-	// Only use static credentials if both access key and secret key are provided
+	// set custom endpoint if provided
+	if masterKeyConfig.Endpoint != "" {
+		cfg.BaseEndpoint = aws.String(masterKeyConfig.Endpoint)
+	}
+
+	// only use static credentials if both access key and secret key are provided
 	if masterKeyConfig.AwsKms != nil &&
 		masterKeyConfig.AwsKms.AccessKey != "" &&
 		masterKeyConfig.AwsKms.SecretAccessKey != "" {
-		config.Credentials = credentials.NewStaticCredentials(
+		cfg.Credentials = credentials.NewStaticCredentialsProvider(
 			masterKeyConfig.AwsKms.AccessKey,
 			masterKeyConfig.AwsKms.SecretAccessKey,
 			"",
 		)
 	}
 
-	sess, err := session.NewSession(config)
-	if err != nil {
-		return nil, pErrors.Annotate(err, "failed to create AWS session")
-	}
-
 	return &AwsKms{
-		client:       kms.New(sess),
+		client:       kms.NewFromConfig(cfg),
 		currentKeyID: masterKeyConfig.KeyId,
 		region:       masterKeyConfig.Region,
 		endpoint:     masterKeyConfig.Endpoint,
@@ -65,7 +70,7 @@ func (a *AwsKms) DecryptDataKey(ctx context.Context, dataKey []byte) ([]byte, er
 		KeyId:          aws.String(a.currentKeyID),
 	}
 
-	result, err := a.client.DecryptWithContext(ctx, input)
+	result, err := a.client.Decrypt(ctx, input)
 	if err != nil {
 		return nil, classifyDecryptError(err)
 	}
@@ -77,14 +82,34 @@ func (a *AwsKms) Close() {
 	// don't need to do manual close
 }
 
-// Update classifyDecryptError to use v1 SDK error types
+// classifyDecryptError uses v2 SDK error types
 func classifyDecryptError(err error) error {
-	switch err := err.(type) {
-	case *kms.NotFoundException, *kms.InvalidKeyUsageException:
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "NotFoundException":
+			return pErrors.Annotate(err, "wrong master key")
+		case "InvalidKeyUsageException":
+			return pErrors.Annotate(err, "wrong master key")
+		case "DependencyTimeoutException":
+			return pErrors.Annotate(err, "API timeout")
+		case "KMSInternalException":
+			return pErrors.Annotate(err, "API internal error")
+		}
+	}
+
+	// also check for specific v2 error types
+	var notFoundErr *types.NotFoundException
+	var invalidKeyErr *types.InvalidKeyUsageException
+	var timeoutErr *types.DependencyTimeoutException
+	var internalErr *types.KMSInternalException
+
+	switch {
+	case errors.As(err, &notFoundErr), errors.As(err, &invalidKeyErr):
 		return pErrors.Annotate(err, "wrong master key")
-	case *kms.DependencyTimeoutException:
+	case errors.As(err, &timeoutErr):
 		return pErrors.Annotate(err, "API timeout")
-	case *kms.InternalException:
+	case errors.As(err, &internalErr):
 		return pErrors.Annotate(err, "API internal error")
 	default:
 		return pErrors.Annotate(err, "KMS error")

@@ -296,6 +296,14 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	txnFuture := p.sctx.GetPreparedTxnFuture()
+
+	// Inject delay before TSO wait for testing maxExecutionTime
+	failpoint.Inject("injectTSOWaitDelay", func(val failpoint.Value) {
+		if delayMs, ok := val.(int); ok {
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		}
+	})
+
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err

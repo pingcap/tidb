@@ -1,0 +1,31 @@
+name: TiDB Build
+description: Common steps to run TiDB Bazel build cross-platform
+inputs:
+  go-version:
+    description: Go version to setup
+    required: false
+    default: "1.25"
+  bazelrc:
+    description: Bazelrc content from secrets
+    required: true
+  gcp_sa_key:
+    description: GCP service account key JSON content
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Set up bazelisk
+      uses: bazel-contrib/setup-bazel@0.16.0
+      with:
+        bazelisk-cache: true
+        repository-cache: true
+        external-cache: false
+        disk-cache: ${{ github.workflow }}}
+        google-credentials: ${{ inputs.gcp_sa_key }}
+        bazelrc: ${{ inputs.bazelrc }}
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: false

@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -31,7 +31,7 @@ func TestConcurrentRead(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	rand.Seed(uint64(seed))
 
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	data := make([]byte, 256)
 	for i := range data {
 		data[i] = byte(i)

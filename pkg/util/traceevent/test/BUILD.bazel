@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["integration_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/keyspace",
+        "//pkg/kv",
+        "//pkg/session",
+        "//pkg/testkit",
+        "//pkg/util/logutil",
+        "//pkg/util/traceevent",
+        "//pkg/util/tracing",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//trace",
+    ],
+)

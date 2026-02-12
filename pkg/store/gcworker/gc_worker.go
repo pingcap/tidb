@@ -1208,7 +1208,11 @@ func (w *GCWorker) resolveLocks(
 		failpoint.Inject("lowScanLockLimit", func() {
 			scanLimit = 3
 		})
-		return tikv.ResolveLocksForRange(ctx, w.regionLockResolver, txnSafePoint, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
+		// ResolveLocksForRange accepts a `max_version`, instead of the txn safe point, which means the maximum
+		// (inclusive) start ts of locks that should be resolved. But in our current definition, GC at some txn safe
+		// point should guarantee transactions with start ts >= txn safe point to be valid. Therefore we pass
+		// txnSafePoint - 1 to ResolveLocksForRange.
+		return tikv.ResolveLocksForRange(ctx, w.regionLockResolver, txnSafePoint-1, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
 	}
 
 	runnerName := "resolve-locks-runner"

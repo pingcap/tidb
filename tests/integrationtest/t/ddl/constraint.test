@@ -694,3 +694,22 @@ drop table if exists t1;
 create table t1(a timestamp, constraint check((a = FROM_UNIXTIME(1))));
 insert into t1 values(FROM_UNIXTIME(1));
 set @@global.tidb_enable_check_constraint = 0;
+
+# TestDropCheckConstraintWhenDisabled - Issue #64891
+# Test that users can drop CHECK constraints even when tidb_enable_check_constraint is OFF
+drop table if exists t1;
+set @@global.tidb_enable_check_constraint = 1;
+create table t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
+show create table t1;
+# Disable check constraint feature
+set @@global.tidb_enable_check_constraint = 0;
+# Should be able to drop check constraint even when feature is disabled
+alter table t1 drop check c2_positive_for_t1;
+show create table t1;
+alter table t1 drop check t1_chk_1;
+show create table t1;
+alter table t1 drop check t1_chk_2;
+show create table t1;
+# Clean up
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t1;

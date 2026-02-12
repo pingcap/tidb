@@ -173,14 +173,22 @@ l_for:
 	for len(data) > 0 {
 		switch data[0] {
 		case flagShortValuePrefix:
+			// Need at least 2 bytes: flag + vlen
+			if len(data) < 2 {
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"insufficient data for short value prefix, need at least 2 bytes but only have %d",
+					len(data))
+			}
 			vlen := data[1]
-			if len(data) < int(vlen)+2 {
+			// Need: flag (1 byte) + vlen (1 byte) + value (vlen bytes)
+			requiredLen := int(vlen) + 2
+			if len(data) < requiredLen {
 				return errors.Annotatef(berrors.ErrInvalidArgument,
 					"insufficient data for short value, need %d bytes but only have %d",
-					int(vlen)+2, len(data))
+					requiredLen, len(data))
 			}
-			v.shortValue = data[2 : int(vlen)+2]
-			data = data[int(vlen)+2:]
+			v.shortValue = data[2:requiredLen]
+			data = data[requiredLen:]
 		case flagOverlappedRollback:
 			v.hasOverlappedRollback = true
 			data = data[1:]

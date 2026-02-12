@@ -50,6 +50,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -146,14 +147,17 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		if tbInfo.Affinity != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tbInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return tbInfo, errors.Wrapf(err, "failed to create table affinity groups in PD")
+			}
+		}
+
 		// Updating auto id meta kv is done in a separate txn.
 		// It's ok as these data are bind with table ID, and we won't use these
 		// table IDs until info schema version is updated.
 		if err := handleAutoIncID(r, job, tbInfo); err != nil {
-			return tbInfo, errors.Trace(err)
-		}
-
-		if err := createTiCIIndexes(jobCtx, job.SchemaName, tbInfo); err != nil {
 			return tbInfo, errors.Trace(err)
 		}
 
@@ -204,7 +208,7 @@ func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableIn
 	return nil
 }
 
-func createTiCIIndexes(jobCtx *jobContext, schemaName string, tblInfo *model.TableInfo) error {
+func (w *worker) createTiCIIndexes(jobCtx *jobContext, job *model.Job, schemaName string, tblInfo *model.TableInfo) error {
 	if tblInfo == nil {
 		return nil
 	}
@@ -218,7 +222,15 @@ func createTiCIIndexes(jobCtx *jobContext, schemaName string, tblInfo *model.Tab
 		if !index.IsTiCIIndex() {
 			continue
 		}
-		if err := tici.CreateFulltextIndex(ctx, jobCtx.store, tblInfo, index, schemaName); err != nil {
+		var parserInfo *tici.ParserInfo
+		if index.FullTextInfo != nil {
+			info, err := w.buildTiCIFulltextParserInfo(jobCtx, job, index)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			parserInfo = info
+		}
+		if err := tici.CreateFulltextIndex(ctx, jobCtx.store, tblInfo, index, schemaName, parserInfo); err != nil {
 			return err
 		}
 	}
@@ -262,6 +274,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		}
 	})
 
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.onCreateTable")
+	defer r.End()
+
 	args, err := model.GetCreateTableArgs(job)
 	if err != nil {
 		// Invalid arguments, cancel this job.
@@ -281,6 +296,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		autoidCli: w.autoidCli,
 	}, args)
 	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err := w.createTiCIIndexes(jobCtx, job, job.SchemaName, tbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -312,6 +330,9 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 			autoidCli: w.autoidCli,
 		}, args)
 		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err := w.createTiCIIndexes(jobCtx, job, job.SchemaName, tbInfo); err != nil {
 			return ver, errors.Trace(err)
 		}
 		tbInfo.State = model.StateDeleteOnly
@@ -380,6 +401,10 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 				autoidCli: w.autoidCli,
 			}, tblArgs)
 			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			if err := w.createTiCIIndexes(jobCtx, stubJob, stubJob.SchemaName, tbInfo); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
@@ -814,9 +839,19 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbCharset, dbCollate, placementPolicyRef)
+		tbInfo, err = BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	}
-	return tbInfo, err
+
+	if err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, s.Table.Schema, tbInfo); err != nil {
+		return nil, err
+	}
+	return tbInfo, nil
 }
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
@@ -879,6 +914,11 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 	// After handleTableOptions, so the partitions can get defaults from Table level
 	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
 	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// validateTableAffinity settings, this should be after buildTablePartitionInfo for some partition checks
+	if err = validateTableAffinity(tbInfo, tbInfo.Affinity); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1021,6 +1061,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionAffinity:
+			affinity, err := model.NewTableAffinityInfoWithLevel(op.StrValue)
+			if err != nil {
+				return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", op.StrValue)))
+			}
+			tbInfo.Affinity = affinity
 		case ast.TableOptionEngineAttribute:
 			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
@@ -1302,9 +1348,20 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 		tblInfo.Partition = &pi
 	}
 
-	if referTblInfo.TTLInfo != nil {
+	// for issue #64948, temporary table does not support TLL, we should remove it
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		tblInfo.TTLInfo = nil
+	} else if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
+
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		// temporary table does not support affinity, we should remove it
+		tblInfo.Affinity = nil
+	} else if referTblInfo.Affinity != nil {
+		tblInfo.Affinity = referTblInfo.Affinity.Clone()
+	}
+
 	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil
 }

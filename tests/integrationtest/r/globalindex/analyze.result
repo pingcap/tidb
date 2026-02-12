@@ -55,16 +55,26 @@ analyze table t partition p0, p1 index;
 Error 1105 (HY000): Analyze global index 'idx' can't work with analyze specified partitions
 show stats_histograms where table_name='t' and Db_name='globalindex__analyze';
 Db_name	Table_name	Partition_name	Column_name	Is_index	Update_time	Distinct_count	Null_count	Avg_col_size	Correlation	Load_status	Total_mem_usage	Hist_mem_usage	Topn_mem_usage	Cms_mem_usage
+globalindex__analyze	t	global	a	0	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	b	0	<update_time>	5	2	<avg_col_size>	0	allLoaded	237	0	237	0
 globalindex__analyze	t	global	c	0	<update_time>	5	2	<avg_col_size>	0	allLoaded	237	0	237	0
 globalindex__analyze	t	global	idx	1	<update_time>	5	2	<avg_col_size>	0	allLoaded	237	0	237	0
 globalindex__analyze	t	global	idx1	1	<update_time>	5	2	<avg_col_size>	0	allLoaded	237	0	237	0
 globalindex__analyze	t	global	idx2	1	<update_time>	5	2	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	p0	a	0	<update_time>	3	0	<avg_col_size>	-0.5	allLoaded	155	0	155	0
+globalindex__analyze	t	p0	b	0	<update_time>	1	2	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p0	c	0	<update_time>	1	2	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p0	idx1	1	<update_time>	1	2	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p1	a	0	<update_time>	2	0	<avg_col_size>	1	allLoaded	114	0	114	0
+globalindex__analyze	t	p1	b	0	<update_time>	2	0	<avg_col_size>	1	allLoaded	114	0	114	0
 globalindex__analyze	t	p1	c	0	<update_time>	2	0	<avg_col_size>	1	allLoaded	114	0	114	0
 globalindex__analyze	t	p1	idx1	1	<update_time>	2	0	<avg_col_size>	0	allLoaded	114	0	114	0
+globalindex__analyze	t	p2	a	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p2	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p2	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p2	idx1	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p3	a	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p3	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p3	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p3	idx1	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
 #Test global index + primary key + prefix index
@@ -133,23 +143,35 @@ IndexLookUp_10	2.00	root	partition:all
   └─TableRowIDScan_7	2.00	cop[tikv]	table:t	keep order:false
 show stats_histograms where table_name='t' and Db_name='globalindex__analyze';
 Db_name	Table_name	Partition_name	Column_name	Is_index	Update_time	Distinct_count	Null_count	Avg_col_size	Correlation	Load_status	Total_mem_usage	Hist_mem_usage	Topn_mem_usage	Cms_mem_usage
+globalindex__analyze	t	global	a	0	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
 globalindex__analyze	t	global	b	0	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
 globalindex__analyze	t	global	b	1	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
 globalindex__analyze	t	global	b_s	1	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	c	0	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
 globalindex__analyze	t	global	d	0	<update_time>	5	0	<avg_col_size>	0	allLoaded	242	0	242	0
 globalindex__analyze	t	global	d_s	1	<update_time>	5	0	<avg_col_size>	0	allLoaded	242	0	242	0
+globalindex__analyze	t	p0	a	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p0	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p0	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p0	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p0	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p1	a	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p1	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p1	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p1	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p1	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p2	a	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p2	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p2	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p2	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p2	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p3	a	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p3	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p3	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p3	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p3	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p4	a	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p4	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p4	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p4	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p4	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0

@@ -25,9 +25,10 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -59,9 +60,9 @@ const (
 
 // FileWriter writes data to a fixed S3 location.
 type FileWriter struct {
-	store         storage.ExternalStorage
+	store         storeapi.Storage
 	dataFile      string
-	dataWriter    storage.ExternalFileWriter
+	dataWriter    objectio.Writer
 	kvBuffer      *membuf.Buffer
 	totalSize     uint64
 	totalCnt      uint64
@@ -73,8 +74,8 @@ type FileWriter struct {
 
 // NewTICIFileWriter creates a new TICIFileWriter.
 // dataFile is the file name we are writing into.
-func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataFile string, partSize int64, logger *zap.Logger) (*FileWriter, error) {
-	dataWriter, err := store.Create(ctx, dataFile, &storage.WriterOption{
+func NewTICIFileWriter(ctx context.Context, store storeapi.Storage, dataFile string, partSize int64, logger *zap.Logger) (*FileWriter, error) {
+	dataWriter, err := store.Create(ctx, dataFile, &storeapi.WriterOption{
 		// TODO: maxUploadWorkersPerThread is subject to change up to the test results and performance tuning with TiCI worker.
 		// For now, we set it to maxUploadWorkersPerThread by default.
 		Concurrency: maxUploadWorkersPerThread,

@@ -59,6 +59,11 @@ cd tests/integrationtest
 ./run-tests.sh -r [casename]
 ```
 
+## TiCI integration tests
+
+Tests under `t/tici/` start TiCI meta/worker processes plus MinIO and create a TiCDC changefeed to an S3/MinIO sink.
+Set these environment variables before running the tests if the defaults do not match your setup: Please refer to tici/README.md
+
 ## How to debug integration test
 
 ### Visual Studio Code

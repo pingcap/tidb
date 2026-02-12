@@ -130,3 +130,9 @@ select id1 from t3 where id2 > '3' or id8 < 10 union (select id2 from t3 where i
 select @@last_sql_use_alloc;
 set tidb_enable_clustered_index = default;
 
+# TestPointGetReuseChunk
+drop table if exists t;
+create table t(id int primary key, col int);
+insert into t values (1, 1);
+select * from t where id = 1;
+select @@last_sql_use_alloc;

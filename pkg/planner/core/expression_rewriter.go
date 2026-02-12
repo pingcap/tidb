@@ -1696,6 +1696,47 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType(er.sctx.GetEvalCtx()).GetCharset(), arg.GetType(er.sctx.GetEvalCtx()).GetCollate())
+	case *ast.MatchAgainst:
+		numCols := len(v.ColumnNames)
+		// The stack order is: col1, col2, ... colN, against
+		stackLen := len(er.ctxStack)
+		if stackLen < numCols+1 {
+			er.err = errors.Errorf("Unexpected stack length for MatchAgainst: %d", stackLen)
+			return retNode, false
+		}
+		against := er.ctxStack[stackLen-1]
+		cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
+
+		args := make([]expression.Expression, 0, 1+numCols)
+		args = append(args, against)
+		args = append(args, cols...)
+
+		er.ctxStackPop(numCols + 1)
+		fn, err := er.newFunction(ast.FTSMysqlMatchAgainst, &v.Type, args...)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
+		sf, ok := fn.(*expression.ScalarFunction)
+		if !ok {
+			er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
+			return retNode, false
+		}
+		if v.Modifier != ast.FulltextSearchModifierBooleanMode {
+			er.err = errors.Errorf("Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
+			return retNode, false
+		}
+		if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
+			er.err = err
+			return retNode, false
+		}
+		newF, err := expression.RewriteMySQLMatchAgainst(er.sctx, sf)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
+		er.ctxStackAppend(newF, types.EmptyName)
+		er.planCtx.builder.ctx.SetHasFTSFunc()
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -2560,8 +2601,12 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
-		er.ctxStackAppend(&expression.Column{RetType: &colInfo.FieldType, ID: colInfo.ID, UniqueID: colInfo.ID},
-			&types.FieldName{ColName: v.Name})
+		er.ctxStackAppend(&expression.Column{
+			RetType:  &colInfo.FieldType,
+			ID:       colInfo.ID,
+			UniqueID: colInfo.ID,
+			OrigName: fmt.Sprintf("%s.%s", er.sourceTable.Name.L, colInfo.Name.L),
+		}, &types.FieldName{ColName: v.Name})
 		return
 	}
 

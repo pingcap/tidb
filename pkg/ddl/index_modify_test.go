@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -943,7 +945,7 @@ func checkGlobalIndexRow(
 	require.NoError(t, err)
 	var value []byte
 	if indexInfo.Unique {
-		value, err = txn.Get(context.Background(), key)
+		value, err = kv.GetValue(context.Background(), txn, key)
 	} else {
 		var iter kv.Iterator
 		iter, err = txn.Iter(key, key.PrefixNext())
@@ -970,7 +972,7 @@ func checkGlobalIndexRow(
 	require.NoError(t, err)
 	h := kv.IntHandle(d.GetInt64())
 	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
-	rowValue, err := txn.Get(context.Background(), rowKey)
+	rowValue, err := kv.GetValue(context.Background(), txn, rowKey)
 	require.NoError(t, err)
 	rowValueDatums, err := tablecodec.DecodeRowToDatumMap(rowValue, tblColMap, time.UTC)
 	require.NoError(t, err)
@@ -1401,7 +1403,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	require.Equal(t, idColStatsVer, idColStatsVer2)
 
 	// modify column for partitioned table.
-	tk.MustGetErrMsg("ALTER TABLE pt modify column id varchar(10)", "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.MustExec("ALTER TABLE pt modify column id varchar(10)")
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1( id int, a int, b int, index idx(id, a));")
@@ -1918,6 +1920,77 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	require.Equal(t, false, tbl.Meta().Indices[2].InvertedInfo == nil)
 }
 
+func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t_create, sw;")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	limit := vardef.GetDDLErrorCountLimit()
+	vardef.SetDDLErrorCountLimit(1)
+	defer func() {
+		vardef.SetDDLErrorCountLimit(limit)
+	}()
+	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(10 * time.Millisecond)
+	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexRequest", `return(1)`)
+
+	tk.MustExec("create table sw (value varchar(20))")
+	tk.MustExec("insert into sw values ('a'), ('the'), ('foo'), ('foo')")
+
+	tk.MustExec("set @@global.innodb_ft_min_token_size=1")
+	tk.MustExec("set @@global.innodb_ft_max_token_size=10")
+	tk.MustExec("set @@innodb_ft_enable_stopword=on")
+	tk.MustExec("set @@innodb_ft_user_stopword_table='test/sw'")
+
+	// CREATE TABLE with FULLTEXT INDEX should also pass sysvars + stopwords.
+	tici.ResetMockTiCICreateIndexRequest()
+	tk.MustExec("create table t_create (id int, c text, fulltext index fts_idx(c))")
+	raw := tici.GetMockTiCICreateIndexRequest()
+	require.NotEmpty(t, raw)
+	assertTiCIFulltextParserInfo(t, raw)
+
+	tk.MustExec("create table t (id int, c text)")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+
+	tici.ResetMockTiCICreateIndexRequest()
+	tk.MustExec("alter table t add fulltext index fts_idx(c)")
+
+	raw = tici.GetMockTiCICreateIndexRequest()
+	require.NotEmpty(t, raw)
+	assertTiCIFulltextParserInfo(t, raw)
+}
+
+func assertTiCIFulltextParserInfo(t *testing.T, raw []byte) {
+	t.Helper()
+
+	var req tici.CreateIndexRequest
+	require.NoError(t, req.Unmarshal(raw))
+	require.NotNil(t, req.ParserInfo)
+
+	parserParams := req.ParserInfo.ParserParams
+	require.Equal(t, "standard", parserParams["parser_name"])
+	require.Equal(t, "1", parserParams["innodb_ft_min_token_size"])
+	require.Equal(t, "10", parserParams["innodb_ft_max_token_size"])
+	require.Equal(t, "ON", parserParams["innodb_ft_enable_stopword"])
+	require.Equal(t, "test/sw", parserParams["innodb_ft_user_stopword_table"])
+
+	stopwords := append([]string(nil), req.ParserInfo.StopWords...)
+	sort.Strings(stopwords)
+	require.Equal(t, []string{"a", "foo", "the"}, stopwords)
+}
+
 func testAddColumnarIndexRollback(prepareSQL []string, addIdxSQL string, t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -2109,4 +2182,17 @@ func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 		"sort": {"columns": ["col1"]},
 		"sharding_key": {"columns": ["col1", "col4"]}
 	}'`)
+}
+
+func TestUniqueTiCIHybridIndexRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 int, c2 varchar(255))")
+
+	tk.MustContainErrMsg(`create unique index idx_h on t(c1, c2) using hybrid parameter '{
+		"inverted": {"columns": ["c2"]},
+		"sort": {"columns": ["c1"]},
+		"sharding_key": {"columns": ["c1"]}
+	}'`, "HYBRID index does not support UNIQUE")
 }

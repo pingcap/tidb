@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
@@ -72,7 +73,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -81,9 +84,6 @@ import (
 
 const (
 	expressionIndexPrefix = "_V$"
-	changingColumnPrefix  = "_Col$_"
-	removingObjPrefix     = "_Tombstone$_"
-	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
 	blobMaxLength         = 65535
@@ -765,6 +765,9 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
+	if isReservedSchemaObjInNextGen(old.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop '%s' database", old.Name.L))
+	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
 	err = checkDatabaseHasForeignKeyReferred(e.ctx, is, old.Name, fkCheck)
 	if err != nil {
@@ -1143,6 +1146,9 @@ func (e *executor) createTableWithInfoJob(
 		SessionVars:         make(map[string]string),
 	}
 	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	if err := e.captureFullTextIndexSysvarsToJobFromTableInfo(ctx, job, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1231,6 +1237,11 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		SessionVars:    make(map[string]string),
 	}
 	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	for _, info := range infos {
+		if err := e.captureFullTextIndexSysvarsToJobFromTableInfo(ctx, job, info); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	var err error
 
@@ -1888,6 +1899,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = e.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable, ttlJobInterval)
 
 					ttlOptionsHandled = true
+				case ast.TableOptionAffinity:
+					err = e.AlterTableAffinity(sctx, ident, opt.StrValue)
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -1913,11 +1926,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				err = e.AlterCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
-			if !vardef.EnableCheckConstraint.Load() {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
-			} else {
-				err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
-			}
+			err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
@@ -2017,7 +2026,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
-	setNeedAnalyze(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -2222,6 +2230,11 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
+
+	if meta.Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of a table with AFFINITY option")
+	}
+
 	if pi.Type == ast.PartitionTypeHash || pi.Type == ast.PartitionTypeKey {
 		// Add partition for hash/key is actually a reorganize partition
 		// operation and not a metadata only change!
@@ -2399,6 +2412,13 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
+	if isReservedSchemaObjInNextGen(meta.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change system table '%s.%s' to partitioned table", schema.Name.L, meta.Name.L))
+	}
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER TABLE PARTITIONING of a table with AFFINITY option")
+	}
+
 	piOld := meta.GetPartitionInfo()
 	var partNames []string
 	if piOld != nil {
@@ -2469,6 +2489,11 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	if pi == nil {
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REORGANIZE PARTITION of a table with AFFINITY option")
+	}
+
 	switch pi.Type {
 	case ast.PartitionTypeRange, ast.PartitionTypeList:
 	case ast.PartitionTypeHash, ast.PartitionTypeKey:
@@ -2539,6 +2564,11 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	if pi == nil {
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REMOVE PARTITIONING of a table with AFFINITY option")
+	}
+
 	// TODO: Optimize for remove partitioning with a single partition
 	// TODO: Add the support for this in onReorganizePartition
 	// skip if only one partition
@@ -2676,6 +2706,10 @@ func (e *executor) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, 
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("COALESCE PARTITION of a table with AFFINITY option")
 	}
 
 	switch pi.Type {
@@ -3049,6 +3083,10 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 		return errors.Trace(dbterror.ErrPartitionExchangePartTable.GenWithStackByArgs(nt.Name))
 	}
 
+	if nt.Affinity != nil || pt.Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("EXCHANGE PARTITION of a table with AFFINITY option")
+	}
+
 	if len(nt.ForeignKeys) > 0 {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
@@ -3078,7 +3116,9 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-
+	if isReservedSchemaObjInNextGen(ntMeta.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
+	}
 	err = checkExchangePartition(ptMeta, ntMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -3794,6 +3834,43 @@ func (e *executor) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) 
 	return nil
 }
 
+func (e *executor) AlterTableAffinity(ctx sessionctx.Context, ident ast.Ident, affinityLevel string) error {
+	is := e.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	affinity, err := model.NewTableAffinityInfoWithLevel(affinityLevel)
+	if err != nil {
+		return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", affinityLevel)))
+	}
+
+	tblInfo := tb.Meta()
+	if err = validateTableAffinity(tblInfo, affinity); err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionAlterTableAffinity,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = e.doDDLJob2(ctx, job, &model.AlterTableAffinityArgs{Affinity: affinity})
+	return errors.Trace(err)
+}
+
 func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 	// Memory tables and system tables are not supported by TiFlash
 	if metadef.IsMemOrSysDB(dbName.L) {
@@ -4080,7 +4157,10 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func isUndroppableTable(schema, table string) bool {
+func isUndroppableTable(schema, table string, tableInfo *model.TableInfo) bool {
+	if isReservedSchemaObjInNextGen(tableInfo.ID) {
+		return true
+	}
 	if schema == mysql.WorkloadSchema {
 		return true
 	}
@@ -4165,8 +4245,8 @@ func (e *executor) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
-			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
+		if isUndroppableTable(tn.Schema.L, tn.Name.L, tableInfo.Meta()) {
+			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
 		case tableObject:
@@ -4305,6 +4385,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
+	if isReservedSchemaObjInNextGen(tblInfo.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Truncate system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
+	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
 	referredFK := checkTableHasForeignKeyReferred(e.infoCache.GetLatest(), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
 	if referredFK != nil {
@@ -4384,6 +4467,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
 			return err
 		}
+		if isReservedSchemaObjInNextGen(tbl.Meta().ID) {
+			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdent.Name.L))
+		}
 	}
 
 	job := &model.Job{
@@ -4433,6 +4519,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			}
 			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
+			}
+			if isReservedSchemaObjInNextGen(t.Meta().ID) {
+				return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdents[i].Name.L))
 			}
 		}
 
@@ -4775,6 +4864,10 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	job.Type = model.ActionAddFullTextIndex
 	indexPartSpecifications[0].Expr = nil
 
+	if err := e.captureFullTextIndexSysvarsToJob(ctx, job, indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			IndexName:               indexName,
@@ -5003,6 +5096,132 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		return nil
 	}
 	return errors.Trace(err)
+}
+
+func (e *executor) captureFullTextIndexSysvarsToJob(sctx sessionctx.Context, job *model.Job, indexOption *ast.IndexOption) error {
+	parser := model.FullTextParserTypeStandardV1
+	if indexOption != nil && indexOption.ParserName.L != "" {
+		parser = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
+	}
+
+	sessVars := sctx.GetSessionVars()
+	getVar := func(name string) (string, error) {
+		val, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		return val, errors.Trace(err)
+	}
+
+	maxTokenSize, err := getVar(vardef.InnodbFtMaxTokenSize)
+	if err != nil {
+		return err
+	}
+	minTokenSize, err := getVar(vardef.InnodbFtMinTokenSize)
+	if err != nil {
+		return err
+	}
+	ngramTokenSize, err := getVar(vardef.NgramTokenSize)
+	if err != nil {
+		return err
+	}
+	enableStopword, err := getVar(vardef.InnodbFtEnableStopword)
+	if err != nil {
+		return err
+	}
+	serverStopwordTable, err := getVar(vardef.InnodbFtServerStopwordTable)
+	if err != nil {
+		return err
+	}
+	userStopwordTable, err := getVar(vardef.InnodbFtUserStopwordTable)
+	if err != nil {
+		return err
+	}
+
+	// Validate token size constraints early.
+	if parser == model.FullTextParserTypeStandardV1 {
+		minVal, err := strconv.ParseInt(minTokenSize, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		maxVal, err := strconv.ParseInt(maxTokenSize, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if minVal > maxVal {
+			return variable.ErrWrongValueForVar.GenWithStackByArgs(vardef.InnodbFtMinTokenSize, minTokenSize)
+		}
+	}
+
+	// Validate stopword table schema if it will be used by standard parser.
+	if parser == model.FullTextParserTypeStandardV1 && variable.TiDBOptOn(enableStopword) {
+		stopwordTable := strings.TrimSpace(userStopwordTable)
+		stopwordTableVar := vardef.InnodbFtUserStopwordTable
+		if stopwordTable == "" {
+			stopwordTable = strings.TrimSpace(serverStopwordTable)
+			stopwordTableVar = vardef.InnodbFtServerStopwordTable
+		}
+		if stopwordTable != "" {
+			dbName, tblName, ok := splitFullTextStopwordTableName(stopwordTable)
+			if !ok {
+				return variable.ErrWrongValueForVar.GenWithStackByArgs(stopwordTableVar, stopwordTable)
+			}
+			is := e.infoCache.GetLatest()
+			tbl, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblInfo := tbl.Meta()
+			// TiDB row-store tables are treated as InnoDB-compatible. TiFlash-only tables are not.
+			if tblInfo.IsColumnar {
+				return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("stopword table must be an InnoDB table")
+			}
+			if len(tblInfo.Columns) != 1 || tblInfo.Columns[0].Name.L != "value" || tblInfo.Columns[0].FieldType.GetType() != mysql.TypeVarchar {
+				return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("stopword table must contain a single VARCHAR column named value")
+			}
+		}
+	}
+
+	job.AddSystemVars(vardef.InnodbFtMaxTokenSize, maxTokenSize)
+	job.AddSystemVars(vardef.InnodbFtMinTokenSize, minTokenSize)
+	job.AddSystemVars(vardef.NgramTokenSize, ngramTokenSize)
+	job.AddSystemVars(vardef.InnodbFtEnableStopword, enableStopword)
+	job.AddSystemVars(vardef.InnodbFtServerStopwordTable, serverStopwordTable)
+	job.AddSystemVars(vardef.InnodbFtUserStopwordTable, userStopwordTable)
+	return nil
+}
+
+func (e *executor) captureFullTextIndexSysvarsToJobFromTableInfo(sctx sessionctx.Context, job *model.Job, tblInfo *model.TableInfo) error {
+	if tblInfo == nil {
+		return nil
+	}
+	for _, index := range tblInfo.Indices {
+		if index == nil || index.FullTextInfo == nil {
+			continue
+		}
+		indexOption := &ast.IndexOption{ParserName: ast.NewCIStr(index.FullTextInfo.ParserType.SQLName())}
+		if err := e.captureFullTextIndexSysvarsToJob(sctx, job, indexOption); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func splitFullTextStopwordTableName(raw string) (dbName string, tblName string, ok bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", false
+	}
+	parts := strings.Split(raw, "/")
+	if len(parts) != 2 {
+		parts = strings.Split(raw, ".")
+	}
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	dbName = strings.TrimSpace(parts[0])
+	tblName = strings.TrimSpace(parts[1])
+	if dbName == "" || tblName == "" {
+		return "", "", false
+	}
+	return dbName, tblName, true
 }
 
 func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
@@ -5621,6 +5840,42 @@ func validateGlobalIndexWithGeneratedColumns(ec errctx.Context, tblInfo *model.T
 	}
 }
 
+func validateTableAffinity(tblInfo *model.TableInfo, affinity *model.TableAffinityInfo) error {
+	if affinity == nil {
+		return nil
+	}
+
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrCannotSetAffinityOnTable.FastGenByArgs("AFFINITY", "temporary table")
+	}
+
+	level := affinity.Level
+	isPartitionTable := tblInfo.Partition != nil
+
+	switch affinity.Level {
+	case ast.TableAffinityLevelTable:
+		if isPartitionTable {
+			return dbterror.ErrCannotSetAffinityOnTable.FastGenByArgs(
+				fmt.Sprintf("AFFINITY='%s'", level),
+				"partition table",
+			)
+		}
+	case ast.TableAffinityLevelPartition:
+		if !isPartitionTable {
+			return dbterror.ErrCannotSetAffinityOnTable.FastGenByArgs(
+				fmt.Sprintf("AFFINITY='%s'", level),
+				"non-partition table",
+			)
+		}
+	default:
+		// this should not happen, the affinity level should have been normalized and checked in the parser stage.
+		intest.Assert(false)
+		return errors.Errorf("invalid affinity level: %s for table %s (ID: %d)", level, tblInfo.Name.O, tblInfo.ID)
+	}
+
+	return nil
+}
+
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	numParts := uint64(0)
@@ -5828,7 +6083,8 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 
 	table, ok := is.TableByID(e.ctx, args.TableID)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(
+			schema.Name, fmt.Sprintf("TableID: %d", args.TableID))
 	}
 
 	ok = validateTableMode(table.Meta().Mode, args.TableMode)
@@ -6842,19 +7098,33 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
+		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
+		defer r.End()
+	}
+
 	job := jobW.Job
 	job.TraceInfo = &tracing.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
 		SessionAlias: ctx.GetSessionVars().SessionAlias,
+		TraceID:      traceevent.TraceIDFromContext(ctx.GetTraceCtx()),
 	}
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
-	e.checkInvolvingSchemaInfoInTest(job)
+	if err := job.CheckInvolvingSchemaInfo(); err != nil {
+		return err
+	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
+
+	if traceevent.IsEnabled(tracing.DDLJob) && ctx.GetTraceCtx() != nil {
+		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",
+			zap.Uint64("ConnID", job.TraceInfo.ConnectionID),
+			zap.String("SessionAlias", job.TraceInfo.SessionAlias))
+	}
 	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
@@ -7209,4 +7479,11 @@ func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIS
 	}
 
 	return nil
+}
+
+func isReservedSchemaObjInNextGen(id int64) bool {
+	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
+		failpoint.Return(false)
+	})
+	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
 }

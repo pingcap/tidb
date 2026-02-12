@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -84,8 +84,8 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 	if len(is.AccessConds) == 0 {
 		is.Ranges = ranger.FullRange()
 	}
-	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, selfSchema.Columns, is.Index)
-	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
+	is.IdxCols, is.IdxColLens, is.FullIdxCols, is.FullIdxColLens =
+		util.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
 	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
 		handleCol := is.GetPKIsHandleCol(selfSchema)
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
@@ -119,10 +119,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		ds.SetStats(ds.TableStats.Scale(lp.SCtx().GetSessionVars(), selectivity))
 		return ds.StatsInfo(), false, nil
 	}
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 	// two preprocess here.
 	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
@@ -130,6 +126,9 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
+	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
+	// Fill index paths for all paths
+	ds.CheckPartialIndexes()
 	// Cleanup the unused TiCI indexes.
 	// They are not suitable for normal read.
 	ds.CleanUnusedTiCIIndexes()
@@ -172,9 +171,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		return nil, false, err
 	}
 
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugTraceAccessPaths(ds.SCtx(), ds.PossibleAccessPaths)
-	}
 	indexForce := false
 	ds.AccessPathMinSelectivity, indexForce = getGeneralAttributesFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
 	if indexForce {
@@ -185,22 +181,35 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 }
 
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, possiblePK *model.IndexInfo) error {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
-	isTiCIIndex := path.Index.IsTiCIIndex()
-	if isTiCIIndex {
+	ticiType := distsql.NotTiCIIndex
+	if path.Index.IsTiCIIndex() {
+		if path.Index.HybridInfo != nil && path.Index.HybridInfo.Sharding != nil {
+			ticiType = distsql.TiCIShardExtraShardingKey
+			path.Ranges = ranger.FullRange()
+		} else if ds.TableInfo.IsCommonHandle {
+			ticiType = distsql.TiCIShardCommonHandle
+			path.Ranges = ranger.FullNotNullRange()
+		} else {
+			ticiType = distsql.TiCIShardIntHandle
+			// Int Handle's range is a special one.
+			unsignedFlag := false
+			// We will not get the column for the _tidb_rowid case.
+			if intHandle := ds.TableInfo.GetPkColInfo(); intHandle != nil {
+				unsignedFlag = mysql.HasUnsignedFlag(intHandle.GetFlag())
+			}
+			path.Ranges = ranger.FullIntRange(unsignedFlag)
+		}
 		path.IdxCols, path.IdxColLens = expression.TiCIIndexInfo2ShardCols(ds.Columns, ds.Schema().Columns, path.Index, possiblePK)
+		path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	} else {
-		path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+		path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+			util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+		path.Ranges = ranger.FullRange()
 	}
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.MinCountAfterAccess = 0
 	path.MaxCountAfterAccess = 0
-	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) && !isTiCIIndex {
+	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) && ticiType == distsql.NotTiCIIndex {
 		handleCol := ds.GetPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
 			alreadyHandle := false
@@ -222,15 +231,11 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 			}
 		}
 	}
-	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, isTiCIIndex)
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, ticiType)
 	return err
 }
 
 func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
 	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
 }
@@ -258,10 +263,6 @@ func adjustCountAfterAccess(ds *logicalop.DataSource, path *util.AccessPath) {
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []expression.Expression, isIm bool) {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
@@ -289,7 +290,7 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		adjustCountAfterAccess(ds, path)
 	}
 	if path.IndexFilters != nil {
-		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
@@ -307,10 +308,6 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 // deriveTablePathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 	if path.IsCommonHandlePath {
 		return deriveCommonHandleTablePathStats(ds, path, conds, isIm)
 	}
@@ -375,15 +372,24 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		path.CountAfterAccess = 1
 		return nil
 	}
+	lenAccessConds := len(path.AccessConds)
 	var remainedConds []expression.Expression
 	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.SCtx().GetRangerCtx(), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
 	path.TableFilters = append(path.TableFilters, remainedConds...)
 	if err != nil {
 		return err
 	}
-	var countEst statistics.RowEstimate
-	countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
-	path.CountAfterAccess = countEst.Est
+	// Optimization: If there are no AccessConds, the ranges will be full range and the count will be the full table count.
+	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
+	// Current code will exclude partitioned tables from this optimization.
+	// TODO: Enhance this optimization to support partitioned tables.
+	if lenAccessConds == 0 && ds.Table.GetPartitionedTable() == nil {
+		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	} else {
+		var countEst statistics.RowEstimate
+		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges, true)
+		path.CountAfterAccess = countEst.Est
+	}
 	if !isIm {
 		// Check if we need to apply a lower bound to CountAfterAccess
 		adjustCountAfterAccess(ds, path)
@@ -394,12 +400,12 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.Ranges = ranger.FullNotNullRange()
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if len(conds) == 0 {
 		return nil
 	}
-	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, false); err != nil {
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, distsql.NotTiCIIndex); err != nil {
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
@@ -433,10 +439,10 @@ func detachCondAndBuildRangeForPath(
 	path *util.AccessPath,
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
-	isTiCIIndex bool,
+	ticiType distsql.TiCIShardType,
 ) error {
 	if len(path.IdxCols) == 0 {
-		if !isTiCIIndex {
+		if ticiType == distsql.NotTiCIIndex {
 			path.TableFilters = conds
 		}
 		return nil
@@ -446,7 +452,10 @@ func detachCondAndBuildRangeForPath(
 		return err
 	}
 	path.Ranges = res.Ranges
-	if isTiCIIndex {
+	if ticiType != distsql.NotTiCIIndex {
+		if ticiType == distsql.TiCIShardIntHandle {
+			path.Ranges = fixTiCIIndexRangesForIntHandle(path.Ranges, path.IdxCols[0].RetType.GetFlag()&mysql.UnsignedFlag > 0)
+		}
 		return nil
 	}
 	path.AccessConds = res.AccessConds
@@ -468,6 +477,42 @@ func detachCondAndBuildRangeForPath(
 	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
 	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
 	return err
+}
+
+// fixTiCIIndexRangesForIntHandle fixes the TiCI index ranges for int handle.
+// For normal index range, its min value is NULL or the MinNotNull, and max value is MaxValue.
+// But for TiCI index range which directly uses table's int pk range, we should set the min value to the min int value and max value to max int value.
+// And unlike the normal index, the code converting the int pk's range to the final kv.KeyRange doesn't handle the NULL.
+// So after calling the function of extract normal index ranges, we need to fix the ranges for TiCI index with int handle.
+func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) []*ranger.Range {
+	var minDatum, maxDatum types.Datum
+	// isUnsigned indicates whether the handle is unsigned.
+	// Now we just cast the unsigned int to int and then store the int value inside the Datum.
+	// We wrap the uint64/int64 with Datum here to keep us untouched with Datum's internal representation.
+	if isUnsigned {
+		minDatum = types.NewUintDatum(0)
+		maxDatum = types.NewUintDatum(math.MaxUint64)
+	} else {
+		minDatum = types.NewIntDatum(math.MinInt64)
+		maxDatum = types.NewIntDatum(math.MaxInt64)
+	}
+	for i := len(ranges) - 1; i >= 0; i-- {
+		ran := ranges[i]
+		// Remove the [NULL, NULL] which is invalid when generating int handle's kv.KeyRange.
+		if ran.HighVal[0].IsNull() {
+			ranges = slices.Delete(ranges, i, i+1)
+			continue
+		}
+		// Convert the min and max value to the int min/max value.
+		if ran.LowVal[0].IsNull() || ran.LowVal[0].Kind() == types.KindMinNotNull {
+			ran.LowVal[0].SetInt64(minDatum.GetInt64())
+			ran.LowExclude = false
+		}
+		if ran.HighVal[0].Kind() == types.KindMaxValue {
+			ran.HighVal[0].SetInt64(maxDatum.GetInt64())
+		}
+	}
+	return ranges
 }
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
@@ -576,11 +621,7 @@ func initStats(ds *logicalop.DataSource) {
 }
 
 func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
-	selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, filledPaths)
+	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = cost.SelectionFactor
@@ -596,10 +637,6 @@ func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, fi
 // We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
 // to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
 func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.AllPossibleAccessPaths))
 	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.AllPossibleAccessPaths))
 	var (
@@ -608,7 +645,8 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	)
 	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
 	var tiflashPath *util.AccessPath
-	if ds.PreferStoreType&h.PreferTiFlash != 0 {
+	isMPPEnforced := ds.SCtx().GetSessionVars().IsMPPEnforced()
+	if ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
@@ -634,6 +672,8 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = ds.IsTiCISingleScan(path.FullIdxCols, path.FullIdxColLens, path)
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
+			// Reevaluate path.IsSingleScan because it may have been set incorrectly
+			// in the pruning logic.
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3
@@ -723,7 +763,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		ds.PossibleAccessPaths[0] = selected
 		ds.PossibleAccessPaths = ds.PossibleAccessPaths[:1]
 		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
-		keep := ds.PreferStoreType&h.PreferTiFlash != 0 && selected.StoreType != kv.TiFlash
+		keep := (ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced) && selected.StoreType != kv.TiFlash
 		if keep {
 			// also keep tiflash path as well.
 			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, tiflashPath)

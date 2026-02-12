@@ -293,6 +293,10 @@ const (
 	ReleaseAllLocks = "release_all_locks"
 	Sleep           = "sleep"
 	UUID            = "uuid"
+	UUIDv4          = "uuid_v4"
+	UUIDv7          = "uuid_v7"
+	UUIDVersion     = "uuid_version"
+	UUIDTimestamp   = "uuid_timestamp"
 	UUIDShort       = "uuid_short"
 	UUIDToBin       = "uuid_to_bin"
 	BinToUUID       = "bin_to_uuid"
@@ -362,8 +366,10 @@ const (
 	VecAsText               = "vec_as_text"
 
 	// FTS functions (tidb extension)
-	FTSMatchWord   = "fts_match_word"
-	FTSMatchPrefix = "fts_match_prefix"
+	FTSMatchWord         = "fts_match_word"
+	FTSMatchPrefix       = "fts_match_prefix"
+	FTSMatchPhrase       = "fts_match_phrase"
+	FTSMysqlMatchAgainst = "match_against"
 
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"

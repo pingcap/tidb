@@ -255,10 +255,11 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 		for j, s := range collectors[i].Samples {
 			s.Ordinal = j
-			s.Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
+			tmp, err := tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
+			s.Value = &tmp
 			// When collation is enabled, we store the Key representation of the sampling data. So we set it to kind `Bytes` here
 			// to avoid to convert it to its Key representation once more.
 			if s.Value.Kind() == types.KindString {
@@ -399,13 +400,21 @@ func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 	if len(cols) == 0 {
 		return
 	}
-	if len(cols) < len(e.tableInfo.Columns) {
+
+	filteredCols := make([]*model.ColumnInfo, 0, len(cols))
+	for _, col := range cols {
+		if !col.IsChanging() && !col.IsRemoving() {
+			filteredCols = append(filteredCols, col)
+		}
+	}
+
+	if len(filteredCols) < len(e.tableInfo.GetNonTempColumns()) {
 		if len(cols) > 1 {
 			b.WriteString(" columns ")
 		} else {
 			b.WriteString(" column ")
 		}
-		for i, col := range cols {
+		for i, col := range filteredCols {
 			if i > 0 {
 				b.WriteString(", ")
 			}

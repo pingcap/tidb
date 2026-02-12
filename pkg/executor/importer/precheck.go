@@ -19,12 +19,15 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -62,6 +65,9 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionct
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
 	}
+	if e.IsLocalSort() && hasTiCIIndexForImport(e.Plan.TableInfo, e.Table) {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(ticiLocalSortUnsupportedErrMsg)
+	}
 	if !e.DisablePrecheck {
 		if err := e.checkCDCPiTRTasks(ctx, se); err != nil {
 			return err
@@ -71,6 +77,23 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionct
 		return e.checkGlobalSortStorePrivilege(ctx)
 	}
 	return nil
+}
+
+const ticiLocalSortUnsupportedErrMsg = "local sort import does not support TiCI indexes"
+
+func hasTiCIIndexForImport(tblInfo *model.TableInfo, tbl table.Table) bool {
+	if tblInfo == nil && tbl != nil {
+		tblInfo = tbl.Meta()
+	}
+	if tblInfo == nil {
+		return false
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.IsTiCIIndex() {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *LoadDataController) checkTotalFileSize() error {
@@ -135,11 +158,11 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 	// we need read/put/delete/list privileges on global sort store.
 	// only support S3 now.
 	target := "cloud storage"
-	cloudStorageURL, err3 := storage.ParseRawURL(e.Plan.CloudStorageURI)
+	cloudStorageURL, err3 := objstore.ParseRawURL(e.Plan.CloudStorageURI)
 	if err3 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err3.Error())
 	}
-	b, err2 := storage.ParseBackendFromURL(cloudStorageURL, nil)
+	b, err2 := objstore.ParseBackendFromURL(cloudStorageURL, nil)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
@@ -149,17 +172,17 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("unsupported cloud storage uri scheme: " + cloudStorageURL.Scheme)
 	}
 
-	opt := &storage.ExternalStorageOptions{
-		CheckPermissions: []storage.Permission{
-			storage.GetObject,
-			storage.ListObjects,
-			storage.PutAndDeleteObject,
+	opt := &storeapi.Options{
+		CheckPermissions: []storeapi.Permission{
+			storeapi.GetObject,
+			storeapi.ListObjects,
+			storeapi.PutAndDeleteObject,
 		},
 	}
 	if intest.InTest {
 		opt.NoCredentials = true
 	}
-	_, err := storage.New(ctx, b, opt)
+	_, err := objstore.New(ctx, b, opt)
 	if err != nil {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("check cloud storage uri access: " + err.Error())
 	}
