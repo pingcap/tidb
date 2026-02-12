@@ -2720,8 +2720,14 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		return nil, false, nil
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
-	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+	canTryMPPJoin := false
+	if len(p.Children()) == 2 {
+		hasTiFlashChildren := logicalop.GetHasTiFlash(p.Children()[0]) && logicalop.GetHasTiFlash(p.Children()[1])
+		canTryMPPJoin = util.ShouldCheckTiFlashPushDown(p.SCtx(), hasTiFlashChildren)
+	}
+	// Enumerate MPP join plans only when the subtree has TiFlash path and TiFlash is enabled.
+	// This avoids spurious TiFlash pushdown warnings on pure TiKV plans.
+	if canTryMPPJoin {
 		// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
 		if hasMPPJoinHints(p.PreferJoinType) {
 			// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.
@@ -2735,20 +2741,6 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 			} else {
 				joins = append(joins, tryToGetMppHashJoin(super, prop, false)...)
 			}
-		}
-	} else {
-		hasMppHints := false
-		var errMsg string
-		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
-			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
-			hasMppHints = true
-		}
-		if (p.PreferJoinType & h.PreferBCJoin) > 0 {
-			errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
-			hasMppHints = true
-		}
-		if hasMppHints {
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 		}
 	}
 	if prop.IsFlashProp() {
