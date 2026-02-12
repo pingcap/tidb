@@ -139,6 +139,13 @@ type DataSource struct {
 	// plan exists that dominates on other skyline dimensions (match, risk, scan).
 	// The concrete type is *skylineCrossCache from the planner/core package.
 	CrossSkylineCache any
+
+	// SkylineBaseCache caches property-independent column maps (accessCondsColMap,
+	// indexCondsColMap) computed during skyline pruning, keyed by *AccessPath pointer.
+	// These maps depend only on the path's conditions/columns and are identical across
+	// all skylinePruning calls with different physical properties.
+	// The concrete type is *skylineBaseCache from the planner/core package.
+	SkylineBaseCache any
 }
 
 // Init initializes DataSource.

@@ -1469,14 +1469,18 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 	return property.PropMatched
 }
 
-func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty, cached *skylineBaseCandidate) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
-	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
+	if cached != nil {
+		candidate.accessCondsColMap = cached.accessCondsColMap
+	} else {
+		candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
+	}
 	return candidate
 }
 
-func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty, cached *skylineBaseCandidate) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
 	// Because the skyline pruning already prune the indexes that cannot provide partial order
@@ -1486,8 +1490,13 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	if ds.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() && prop.PartialOrderInfo != nil {
 		candidate.partialOrderMatchResult = matchPartialOrderProperty(path, prop.PartialOrderInfo)
 	}
-	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
-	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	if cached != nil {
+		candidate.accessCondsColMap = cached.accessCondsColMap
+		candidate.indexCondsColMap = cached.indexCondsColMap
+	} else {
+		candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+		candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	}
 	return candidate
 }
 
@@ -1520,6 +1529,19 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = isMatchPropForIndexMerge(ds, path, prop)
 	return candidate
+}
+
+// skylineBaseCandidate caches the property-independent column maps for a single AccessPath.
+// These maps depend only on the path's conditions and columns, not on the physical property.
+type skylineBaseCandidate struct {
+	accessCondsColMap util.Col2Len
+	indexCondsColMap  util.Col2Len
+}
+
+// skylineBaseCache stores cached skylineBaseCandidate entries keyed by AccessPath pointer.
+// It is stored on DataSource.SkylineBaseCache and reused across skylinePruning calls.
+type skylineBaseCache struct {
+	entries map[*util.AccessPath]*skylineBaseCandidate
 }
 
 // skylineCrossCacheEntry stores skyline pruning candidates from a single sort-property
@@ -1654,14 +1676,6 @@ func crossSkylinePrune(ds *logicalop.DataSource, currentCandidates []*candidateP
 			if pruned {
 				break
 			}
-			// Only cross-prune against cache entries from a LIMIT/TopN parent
-			// (ExpectedCnt < MaxFloat64). Cross-pruning protects against row count
-			// underestimation that makes non-ordered plans look cheaper under a LIMIT.
-			// Without a LIMIT (e.g., MergeJoin exploration), both plans scan all rows
-			// and cost comparison is straightforward — cross-pruning should not apply.
-			if entry.sortProp.ExpectedCnt >= math.MaxFloat64 {
-				continue
-			}
 			// Create a shallow copy with matchPropResult recomputed for this entry's
 			// sort property, so compareCandidates can use matchResult as a real dimension.
 			// Uses matchPropertyReadOnly to avoid mutating the shared AccessPath.
@@ -1701,6 +1715,16 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	idxMissingStats := false
 	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
+
+	// Retrieve or create the base cache for property-independent column maps.
+	var baseCache *skylineBaseCache
+	if cached, ok := ds.SkylineBaseCache.(*skylineBaseCache); ok {
+		baseCache = cached
+	} else {
+		baseCache = &skylineBaseCache{entries: make(map[*util.AccessPath]*skylineBaseCandidate)}
+		ds.SkylineBaseCache = baseCache
+	}
+
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
@@ -1722,6 +1746,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}
 		}
+		// Look up cached column maps for this path.
+		cached := baseCache.entries[path]
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
 			if prop.PartialOrderInfo != nil {
@@ -1729,7 +1755,13 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				// TODO: support it in the future after we support prefix column as partial order.
 				continue
 			}
-			currentCandidate = getTableCandidate(ds, path, prop)
+			currentCandidate = getTableCandidate(ds, path, prop, cached)
+			// Store in cache after first computation.
+			if cached == nil {
+				baseCache.entries[path] = &skylineBaseCandidate{
+					accessCondsColMap: currentCandidate.accessCondsColMap,
+				}
+			}
 		} else {
 			// Check if this path can be used for partial order optimization
 			var matchPartialOrderIndex bool
@@ -1763,7 +1795,14 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 
 			// After passing the check, generate the candidate
-			currentCandidate = getIndexCandidate(ds, path, prop)
+			currentCandidate = getIndexCandidate(ds, path, prop, cached)
+			// Store in cache after first computation.
+			if cached == nil {
+				baseCache.entries[path] = &skylineBaseCandidate{
+					accessCondsColMap: currentCandidate.accessCondsColMap,
+					indexCondsColMap:  currentCandidate.indexCondsColMap,
+				}
+			}
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
