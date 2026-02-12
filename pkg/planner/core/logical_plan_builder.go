@@ -5863,6 +5863,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			return nil, nil, false, infoschema.ErrTableNotExists.FastGenByArgs(tnW.DBInfo.Name.O, tableInfo.Name.O)
 		}
 		for i, colInfo := range tableVal.Cols() {
+			if !colInfo.IsGenerated() && tableInfo.SoftdeleteInfo == nil {
+				continue
+			}
 			columnKey := fullColumnName{tnW.DBInfo.Name.L, tn.Name.L, colInfo.Name.L}
 			isDefault, ok := modifyColumns[columnKey]
 			if colInfo.IsGenerated() {
