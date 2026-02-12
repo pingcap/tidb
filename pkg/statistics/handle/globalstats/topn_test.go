@@ -222,24 +222,26 @@ func findTopNMetaCountByEncoded(metas []statistics.TopNMeta, encoded []byte) uin
 // TopN value's count using the uniform histogram estimate (NotNullCount/NDV)
 // when the value falls inside a histogram bucket but is NOT at the upper bound.
 //
-// Setup (4 partitions, column histogram, isIndex=false):
+// Setup (4 partitions, perTopN=2, 4 histogram buckets, globalTopN=2):
 //
-//	Partitions 0-1: TopN = {val10: 50, val20: 30}
-//	Partitions 2-3: TopN = {val20: 30}; val10 is NOT in TopN
-//	                Histogram: buckets [1,5] cnt=200 rep=40, [6,15] cnt=500 rep=60
-//	                NDV=20, so EqualRowCount(val10) = NotNullCount/NDV = 500/20 = 25
+//	Partitions 0-1: TopN = {val50: 50, val200: 30}
+//	                Histogram (4 buckets, excludes val50 and val200):
+//	                  [1,25] cnt=60 rep=8, [26,49] cnt=120 rep=6,
+//	                  [51,100] cnt=200 rep=10, [101,199] cnt=280 rep=12
+//	Partitions 2-3: TopN = {val200: 30, val300: 28}
+//	                Histogram (4 buckets, NDV=20, NotNullCount=500):
+//	                  [1,25] cnt=100 rep=10, [26,55] cnt=250 rep=20,
+//	                  [56,80] cnt=380 rep=15, [81,100] cnt=500 rep=12
+//	                val50 is INSIDE [26,55] but NOT at upper bound (55)
+//	                → EqualRowCount(val50) = NotNullCount/NDV = 500/20 = 25
 //
-//	Global TopN size = 1
+// V1: val50 = 50*2 + 25*2 = 150, val200 = 30*4 = 120
 //
-// V1: val10 = 50*2(TopN) + 25*2(hist estimate from p2,p3) = 150
+//	→ V1 TopN = {val50: 150, val200: 120} — val50 inflated to #1
 //
-//	val20 = 30*4(TopN, present in all partitions) = 120
-//	→ V1 picks val10 (150)
+// V2: val50 = 50*2 = 100, val200 = 30*4 = 120
 //
-// V2: val10 = 50*2 = 100 (TopN only)
-//
-//	val20 = 30*4 = 120 (TopN only)
-//	→ V2 picks val20 (120)
+//	→ V2 TopN = {val200: 120, val50: 100} — val200 correctly ranked #1
 func TestMergeTopNV1V2ComparisonHistValueNotAtUpperBound(t *testing.T) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
@@ -250,69 +252,83 @@ func TestMergeTopNV1V2ComparisonHistValueNotAtUpperBound(t *testing.T) {
 		require.NoError(t, err)
 		return key
 	}
-	keyVal10 := encodeInt(10)
-	keyVal20 := encodeInt(20)
+	keyVal50 := encodeInt(50)
+	keyVal200 := encodeInt(200)
+	keyVal300 := encodeInt(300)
 
-	makeHist := func() *statistics.Histogram {
-		d1 := types.NewIntDatum(1)
-		d5 := types.NewIntDatum(5)
-		d6 := types.NewIntDatum(6)
-		d15 := types.NewIntDatum(15)
-		h := statistics.NewHistogram(1, 20, 0, 0, types.NewFieldType(mysql.TypeLong), chunk.InitialCapacity, 0)
-		h.AppendBucket(&d1, &d5, 200, 40)
-		h.AppendBucket(&d6, &d15, 500, 60)
-		return h
-	}
+	d := func(v int64) types.Datum { return types.NewIntDatum(v) }
 
 	makeInputs := func() ([]*statistics.TopN, []*statistics.Histogram) {
 		topNs := make([]*statistics.TopN, 4)
 		hists := make([]*statistics.Histogram, 4)
+		tp := types.NewFieldType(mysql.TypeLong)
 		for i := range 4 {
-			topN := statistics.NewTopN(2)
 			if i < 2 {
-				topN.AppendTopN(keyVal10, 50)
+				topN := statistics.NewTopN(2)
+				topN.AppendTopN(keyVal50, 50)
+				topN.AppendTopN(keyVal200, 30)
+				topNs[i] = topN
+				// 4 buckets (excludes val50 and val200).
+				h := statistics.NewHistogram(1, 20, 0, 0, tp, chunk.InitialCapacity, 0)
+				d1, d25 := d(1), d(25)
+				h.AppendBucket(&d1, &d25, 60, 8)
+				d26, d49 := d(26), d(49)
+				h.AppendBucket(&d26, &d49, 120, 6)
+				d51, d100 := d(51), d(100)
+				h.AppendBucket(&d51, &d100, 200, 10)
+				d101, d199 := d(101), d(199)
+				h.AppendBucket(&d101, &d199, 280, 12)
+				hists[i] = h
+			} else {
+				topN := statistics.NewTopN(2)
+				topN.AppendTopN(keyVal200, 30)
+				topN.AppendTopN(keyVal300, 28)
+				topNs[i] = topN
+				// 4 buckets, NDV=20, NotNullCount=500.
+				// val50 INSIDE [26,55], NOT at upper bound → EqualRowCount = 500/20 = 25.
+				h := statistics.NewHistogram(1, 20, 0, 0, tp, chunk.InitialCapacity, 0)
+				d1, d25 := d(1), d(25)
+				h.AppendBucket(&d1, &d25, 100, 10)
+				d26, d55 := d(26), d(55)
+				h.AppendBucket(&d26, &d55, 250, 20)
+				d56, d80 := d(56), d(80)
+				h.AppendBucket(&d56, &d80, 380, 15)
+				d81, d100 := d(81), d(100)
+				h.AppendBucket(&d81, &d100, 500, 12)
+				hists[i] = h
 			}
-			topN.AppendTopN(keyVal20, 30)
-			topNs[i] = topN
-			hists[i] = makeHist()
 		}
 		return topNs, hists
 	}
 
 	// --- V1 merge ---
 	v1TopNs, v1Hists := makeInputs()
-	// V1 mutates histograms (BinarySearchRemoveVal), so it needs its own copy.
-	v1TopN, v1Left, v1Hists, err := MergePartTopN2GlobalTopN(loc, 1, v1TopNs, 1, v1Hists, false, &killer)
+	v1TopN, v1Left, v1Hists, err := MergePartTopN2GlobalTopN(loc, 1, v1TopNs, 2, v1Hists, false, &killer)
 	require.NoError(t, err)
-	require.Len(t, v1TopN.TopN, 1)
-	// V1 picks val10: 50*2 (TopN) + 25*2 (hist estimate) = 150
-	require.Equal(t, uint64(150), findTopNCountByEncoded(v1TopN, keyVal10))
-	require.Equal(t, uint64(0), findTopNCountByEncoded(v1TopN, keyVal20))
-	require.Equal(t, uint64(120), findTopNMetaCountByEncoded(v1Left, keyVal20))
+	require.Len(t, v1TopN.TopN, 2)
+	// V1 inflates val50: 50*2 + 25*2 = 150, making it #1.
+	require.Equal(t, uint64(150), findTopNCountByEncoded(v1TopN, keyVal50))
+	require.Equal(t, uint64(120), findTopNCountByEncoded(v1TopN, keyVal200))
 
-	// Merge histograms with V1 leftovers.
 	v1GlobalHist, err := statistics.MergePartitionHist2GlobalHist(sc, v1Hists, v1Left, 100, false, 1)
 	require.NoError(t, err)
 	require.NotNil(t, v1GlobalHist)
 
 	// --- V2 merge ---
 	v2TopNs, v2Hists := makeInputs()
-	v2TopN, v2Left, err := MergePartTopN2GlobalTopNV2(v2TopNs, 1, &killer)
+	v2TopN, v2Left, err := MergePartTopN2GlobalTopNV2(v2TopNs, 2, &killer)
 	require.NoError(t, err)
-	require.Len(t, v2TopN.TopN, 1)
-	// V2 picks val20: 30*4 = 120 > val10: 50*2 = 100
-	require.Equal(t, uint64(120), findTopNCountByEncoded(v2TopN, keyVal20))
-	require.Equal(t, uint64(0), findTopNCountByEncoded(v2TopN, keyVal10))
-	require.Equal(t, uint64(100), findTopNMetaCountByEncoded(v2Left, keyVal10))
+	require.Len(t, v2TopN.TopN, 2)
+	// V2: val200 = 120 is #1 (no inflation), val50 = 100 is #2.
+	require.Equal(t, uint64(120), findTopNCountByEncoded(v2TopN, keyVal200))
+	require.Equal(t, uint64(100), findTopNCountByEncoded(v2TopN, keyVal50))
 
-	// Merge histograms with V2 leftovers. Histograms are unmodified by V2.
 	v2GlobalHist, err := statistics.MergePartitionHist2GlobalHist(sc, v2Hists, v2Left, 100, false, 1)
 	require.NoError(t, err)
 	require.NotNil(t, v2GlobalHist)
 
-	// V2 folds val10 (count=100) back into the histogram as an extra bucket,
-	// preserving accurate counts. V1 already subtracted estimated counts from
-	// histograms via BinarySearchRemoveVal, so its histogram totals are lower.
+	// V1 subtracted estimated counts from histograms via BinarySearchRemoveVal,
+	// so its histogram totals are lower.
 	require.Greater(t, v2GlobalHist.NotNullCount(), v1GlobalHist.NotNullCount(),
 		"V2 histogram should have higher total count because V1 subtracted histogram estimates")
 }
@@ -321,24 +337,25 @@ func TestMergeTopNV1V2ComparisonHistValueNotAtUpperBound(t *testing.T) {
 // accurate Repeat count when a TopN value happens to be at a histogram bucket's
 // upper bound. This is the one scenario where V1's histogram lookup is precise.
 //
-// Setup (4 partitions, column histogram, isIndex=false):
+// Setup (4 partitions, perTopN=2, 4 histogram buckets, globalTopN=2):
 //
-//	Partitions 0-1: TopN = {val15: 50, val20: 35}
-//	Partitions 2-3: TopN = {val20: 35}; val15 is NOT in TopN
-//	                Histogram: buckets [1,5] cnt=100 rep=10, [6,15] cnt=300 rep=80
-//	                val15 IS at upper bound → EqualRowCount(val15) = Repeat = 80
+//	Partitions 0-1: TopN = {val50: 50, val200: 35}
+//	                Histogram (4 buckets, excludes val50 and val200):
+//	                  [1,25] cnt=60 rep=8, [26,49] cnt=120 rep=6,
+//	                  [51,100] cnt=200 rep=10, [101,199] cnt=280 rep=12
+//	Partitions 2-3: TopN = {val200: 35, val300: 30}
+//	                Histogram (4 buckets):
+//	                  [1,25] cnt=80 rep=10, [26,50] cnt=200 rep=80,
+//	                  [51,80] cnt=280 rep=15, [81,100] cnt=350 rep=12
+//	                val50 IS at upper bound of [26,50] → EqualRowCount = Repeat = 80
 //
-//	Global TopN size = 1
+// V1: val50 = 50*2 + 80*2 = 260, val200 = 35*4 = 140
 //
-// V1: val15 = 50*2(TopN) + 80*2(exact repeat from p2,p3) = 260
+//	→ V1 TopN = {val50: 260, val200: 140} — val50 boosted with exact Repeat
 //
-//	val20 = 35*4(TopN) = 140
-//	→ V1 picks val15 (260)
+// V2: val50 = 50*2 = 100, val200 = 35*4 = 140
 //
-// V2: val15 = 50*2 = 100 (TopN only)
-//
-//	val20 = 35*4 = 140 (TopN only)
-//	→ V2 picks val20 (140)
+//	→ V2 TopN = {val200: 140, val50: 100} — val200 ranked #1
 func TestMergeTopNV1V2ComparisonHistValueAtUpperBound(t *testing.T) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
@@ -349,99 +366,124 @@ func TestMergeTopNV1V2ComparisonHistValueAtUpperBound(t *testing.T) {
 		require.NoError(t, err)
 		return key
 	}
-	keyVal15 := encodeInt(15)
-	keyVal20 := encodeInt(20)
+	keyVal50 := encodeInt(50)
+	keyVal200 := encodeInt(200)
+	keyVal300 := encodeInt(300)
 
-	makeHist := func() *statistics.Histogram {
-		d1 := types.NewIntDatum(1)
-		d5 := types.NewIntDatum(5)
-		d6 := types.NewIntDatum(6)
-		d15 := types.NewIntDatum(15)
-		h := statistics.NewHistogram(1, 20, 0, 0, types.NewFieldType(mysql.TypeLong), chunk.InitialCapacity, 0)
-		h.AppendBucket(&d1, &d5, 100, 10)
-		h.AppendBucket(&d6, &d15, 300, 80)
-		return h
-	}
+	d := func(v int64) types.Datum { return types.NewIntDatum(v) }
 
 	makeInputs := func() ([]*statistics.TopN, []*statistics.Histogram) {
 		topNs := make([]*statistics.TopN, 4)
 		hists := make([]*statistics.Histogram, 4)
+		tp := types.NewFieldType(mysql.TypeLong)
 		for i := range 4 {
-			topN := statistics.NewTopN(2)
 			if i < 2 {
-				topN.AppendTopN(keyVal15, 50)
+				topN := statistics.NewTopN(2)
+				topN.AppendTopN(keyVal50, 50)
+				topN.AppendTopN(keyVal200, 35)
+				topNs[i] = topN
+				// 4 buckets (excludes val50 and val200).
+				h := statistics.NewHistogram(1, 20, 0, 0, tp, chunk.InitialCapacity, 0)
+				d1, d25 := d(1), d(25)
+				h.AppendBucket(&d1, &d25, 60, 8)
+				d26, d49 := d(26), d(49)
+				h.AppendBucket(&d26, &d49, 120, 6)
+				d51, d100 := d(51), d(100)
+				h.AppendBucket(&d51, &d100, 200, 10)
+				d101, d199 := d(101), d(199)
+				h.AppendBucket(&d101, &d199, 280, 12)
+				hists[i] = h
+			} else {
+				topN := statistics.NewTopN(2)
+				topN.AppendTopN(keyVal200, 35)
+				topN.AppendTopN(keyVal300, 30)
+				topNs[i] = topN
+				// 4 buckets; val50 IS at upper bound of [26,50] → Repeat=80.
+				h := statistics.NewHistogram(1, 20, 0, 0, tp, chunk.InitialCapacity, 0)
+				d1, d25 := d(1), d(25)
+				h.AppendBucket(&d1, &d25, 80, 10)
+				d26, d50 := d(26), d(50)
+				h.AppendBucket(&d26, &d50, 200, 80) // val50 at upper bound!
+				d51, d80 := d(51), d(80)
+				h.AppendBucket(&d51, &d80, 280, 15)
+				d81, d100 := d(81), d(100)
+				h.AppendBucket(&d81, &d100, 350, 12)
+				hists[i] = h
 			}
-			topN.AppendTopN(keyVal20, 35)
-			topNs[i] = topN
-			hists[i] = makeHist()
 		}
 		return topNs, hists
 	}
 
 	// --- V1 merge ---
 	v1TopNs, v1Hists := makeInputs()
-	v1TopN, v1Left, v1Hists, err := MergePartTopN2GlobalTopN(loc, 1, v1TopNs, 1, v1Hists, false, &killer)
+	v1TopN, v1Left, v1Hists, err := MergePartTopN2GlobalTopN(loc, 1, v1TopNs, 2, v1Hists, false, &killer)
 	require.NoError(t, err)
-	require.Len(t, v1TopN.TopN, 1)
-	// V1 picks val15: 50*2 (TopN) + 80*2 (exact repeat) = 260
-	require.Equal(t, uint64(260), findTopNCountByEncoded(v1TopN, keyVal15))
-	require.Equal(t, uint64(140), findTopNMetaCountByEncoded(v1Left, keyVal20))
+	require.Len(t, v1TopN.TopN, 2)
+	// V1 picks val50 as #1: 50*2 + 80*2 (exact Repeat) = 260.
+	require.Equal(t, uint64(260), findTopNCountByEncoded(v1TopN, keyVal50))
+	require.Equal(t, uint64(140), findTopNCountByEncoded(v1TopN, keyVal200))
 
-	// Merge histograms with V1 leftovers.
 	v1GlobalHist, err := statistics.MergePartitionHist2GlobalHist(sc, v1Hists, v1Left, 100, false, 1)
 	require.NoError(t, err)
 	require.NotNil(t, v1GlobalHist)
 
 	// --- V2 merge ---
 	v2TopNs, v2Hists := makeInputs()
-	v2TopN, v2Left, err := MergePartTopN2GlobalTopNV2(v2TopNs, 1, &killer)
+	v2TopN, v2Left, err := MergePartTopN2GlobalTopNV2(v2TopNs, 2, &killer)
 	require.NoError(t, err)
-	require.Len(t, v2TopN.TopN, 1)
-	// V2 picks val20: 35*4 = 140 > val15: 50*2 = 100
-	require.Equal(t, uint64(140), findTopNCountByEncoded(v2TopN, keyVal20))
-	require.Equal(t, uint64(100), findTopNMetaCountByEncoded(v2Left, keyVal15))
+	require.Len(t, v2TopN.TopN, 2)
+	// V2: val200 = 140 is #1, val50 = 100 is #2 (misses Repeat from p2-3).
+	require.Equal(t, uint64(140), findTopNCountByEncoded(v2TopN, keyVal200))
+	require.Equal(t, uint64(100), findTopNCountByEncoded(v2TopN, keyVal50))
 
-	// Merge histograms with V2 leftovers. Histograms are unmodified by V2.
 	v2GlobalHist, err := statistics.MergePartitionHist2GlobalHist(sc, v2Hists, v2Left, 100, false, 1)
 	require.NoError(t, err)
 	require.NotNil(t, v2GlobalHist)
 
-	// V1 removed exact repeat counts (80 per partition for val15) from histograms
-	// via BinarySearchRemoveVal before the histogram merge. V2 leaves histograms
-	// intact and folds val15 (count=100) back as a leftover bucket instead.
+	// V1 removed exact repeat counts (80 per partition for val50) from histograms
+	// via BinarySearchRemoveVal. V2 leaves histograms intact.
 	require.Greater(t, v2GlobalHist.NotNullCount(), v1GlobalHist.NotNullCount(),
 		"V2 histogram should have higher total count because V1 subtracted repeat counts from histograms")
 }
 
-// TestMergeTopNV1V2ManyPartitionsInflation demonstrates V1's key weakness:
-// when a value is in TopN of a few partitions but falls inside histogram
-// buckets of many others, V1 accumulates NotNullCount/NDV uniform estimates
-// from each partition, producing a massively inflated count.
+// TestMergeTopNV2BetterThanV1ManyPartitionsInflation demonstrates V1's key
+// weakness: when a value is in TopN of a few partitions but falls inside
+// histogram buckets (not at upper bound) of many others, V1 accumulates the
+// uniform estimate NotNullCount/NDV from each partition. With many partitions
+// this inflates the count so much that V1 picks the wrong global TopN.
 //
-// Setup (20 partitions, column histogram, isIndex=false, globalTopN=1):
+// Setup (20 partitions, perTopN=2, 4 histogram buckets, globalTopN=2):
 //
-//	Partitions 0-1: TopN = {val_rare: 60, val_common: 10}
-//	                val_rare is dominant in these two partitions only.
-//	Partitions 2-19: TopN = {val_common: 10}
-//	                val_rare is NOT in TopN but falls inside histogram range.
-//	                Histogram: NDV=5, NotNullCount=500
-//	                → EqualRowCount(val_rare) = 500/5 = 100 per partition
+//	Partitions 0-1:  TopN = {val_rare(=50): 60, val_common(=200): 40}
+//	                 Histogram (4 buckets, excludes TopN values):
+//	                   [1,25] cnt=50 rep=5, [26,49] cnt=100 rep=6,
+//	                   [51,100] cnt=180 rep=10, [101,199] cnt=250 rep=12
+//
+//	Partitions 2-19: TopN = {val_common(=200): 40, val_filler(=300): 35}
+//	                 Histogram (4 buckets, NDV=5, NotNullCount=500):
+//	                   [1,25] cnt=100 rep=10, [26,55] cnt=250 rep=20,
+//	                   [56,80] cnt=380 rep=15, [81,100] cnt=500 rep=12
+//	                 val_rare(=50) is INSIDE [26,55] but NOT at upper bound
+//	                 → EqualRowCount(val_rare) = NotNullCount/NDV = 500/5 = 100
 //
 // True global counts:
 //
-//	val_rare:   60*2           = 120
-//	val_common: 10*20          = 200
+//	val_rare:   60*2              = 120
+//	val_common: 40*20             = 800
+//	val_filler: 35*18             = 630
 //
 // V1: val_rare  = 60*2 + 100*18 = 1920 (16x overestimate!)
 //
-//	val_common = 10*20         = 200
-//	→ V1 picks val_rare (1920) — WRONG choice, massively inflated
+//	val_common = 40*20           = 800
+//	val_filler = 35*18           = 630
+//	→ V1 TopN = {val_rare: 1920, val_common: 800} — WRONG, val_rare inflated
 //
-// V2: val_rare  = 60*2          = 120
+// V2: val_rare  = 60*2           = 120
 //
-//	val_common = 10*20         = 200
-//	→ V2 picks val_common (200) — correct choice, exact count
-func TestMergeTopNV1V2ManyPartitionsInflation(t *testing.T) {
+//	val_common = 40*20           = 800
+//	val_filler = 35*18           = 630
+//	→ V2 TopN = {val_common: 800, val_filler: 630} — correct top 2
+func TestMergeTopNV2BetterThanV1ManyPartitionsInflation(t *testing.T) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	killer := sqlkiller.SQLKiller{}
@@ -451,33 +493,57 @@ func TestMergeTopNV1V2ManyPartitionsInflation(t *testing.T) {
 		require.NoError(t, err)
 		return key
 	}
-	keyRare := encodeInt(50)   // val_rare = 50, falls inside histogram range [1,100]
-	keyCommon := encodeInt(200) // val_common = 200, always in TopN
+	keyRare := encodeInt(50)    // in TopN of p0-1, inside histogram of p2-19
+	keyCommon := encodeInt(200) // in TopN of all 20 partitions
+	keyFiller := encodeInt(300) // in TopN of p2-19 only
 
 	const nPartitions = 20
-
-	// Histogram for partitions 2-19: val_rare falls inside a bucket but is not
-	// at the upper bound, so EqualRowCount returns NotNullCount/NDV = 500/5 = 100.
-	makeHist := func() *statistics.Histogram {
-		d1 := types.NewIntDatum(1)
-		d100 := types.NewIntDatum(100)
-		h := statistics.NewHistogram(1, 5, 0, 0,
-			types.NewFieldType(mysql.TypeLong), chunk.InitialCapacity, 0)
-		h.AppendBucket(&d1, &d100, 500, 10)
-		return h
-	}
+	const globalTopNSize = 2
 
 	makeInputs := func() ([]*statistics.TopN, []*statistics.Histogram) {
 		topNs := make([]*statistics.TopN, nPartitions)
 		hists := make([]*statistics.Histogram, nPartitions)
+
+		d := func(v int64) types.Datum { return types.NewIntDatum(v) }
 		for i := range nPartitions {
-			topN := statistics.NewTopN(2)
+			tp := types.NewFieldType(mysql.TypeLong)
 			if i < 2 {
+				// P0-1: val_rare and val_common in TopN.
+				topN := statistics.NewTopN(2)
 				topN.AppendTopN(keyRare, 60)
+				topN.AppendTopN(keyCommon, 40)
+				topNs[i] = topN
+				// 4 buckets (excludes val_rare=50 and val_common=200).
+				h := statistics.NewHistogram(1, 20, 0, 0, tp, chunk.InitialCapacity, 0)
+				d1, d25 := d(1), d(25)
+				h.AppendBucket(&d1, &d25, 50, 5)
+				d26, d49 := d(26), d(49)
+				h.AppendBucket(&d26, &d49, 100, 6)
+				d51, d100 := d(51), d(100)
+				h.AppendBucket(&d51, &d100, 180, 10)
+				d101, d199 := d(101), d(199)
+				h.AppendBucket(&d101, &d199, 250, 12)
+				hists[i] = h
+			} else {
+				// P2-19: val_common and val_filler in TopN.
+				topN := statistics.NewTopN(2)
+				topN.AppendTopN(keyCommon, 40)
+				topN.AppendTopN(keyFiller, 35)
+				topNs[i] = topN
+				// 4 buckets, NDV=5, NotNullCount=500.
+				// val_rare(=50) falls INSIDE [26,55] but is NOT at upper bound (55).
+				// EqualRowCount(val_rare) = 500/5 = 100.
+				h := statistics.NewHistogram(1, 5, 0, 0, tp, chunk.InitialCapacity, 0)
+				d1, d25 := d(1), d(25)
+				h.AppendBucket(&d1, &d25, 100, 10)
+				d26, d55 := d(26), d(55)
+				h.AppendBucket(&d26, &d55, 250, 20)
+				d56, d80 := d(56), d(80)
+				h.AppendBucket(&d56, &d80, 380, 15)
+				d81, d100 := d(81), d(100)
+				h.AppendBucket(&d81, &d100, 500, 12)
+				hists[i] = h
 			}
-			topN.AppendTopN(keyCommon, 10)
-			topNs[i] = topN
-			hists[i] = makeHist()
 		}
 		return topNs, hists
 	}
@@ -485,18 +551,17 @@ func TestMergeTopNV1V2ManyPartitionsInflation(t *testing.T) {
 	// --- V1 merge ---
 	v1TopNs, v1Hists := makeInputs()
 	v1TopN, v1Left, v1Hists, err := MergePartTopN2GlobalTopN(
-		loc, 1, v1TopNs, 1, v1Hists, false, &killer,
+		loc, 1, v1TopNs, globalTopNSize, v1Hists, false, &killer,
 	)
 	require.NoError(t, err)
-	require.Len(t, v1TopN.TopN, 1)
+	require.Len(t, v1TopN.TopN, globalTopNSize)
 
-	// V1 picks val_rare with massively inflated count: 60*2 + 100*18 = 1920.
+	// V1 inflates val_rare: 60*2 + 100*18 = 1920. Picks it over val_filler (630).
 	v1RareCount := findTopNCountByEncoded(v1TopN, keyRare)
-	require.Equal(t, uint64(1920), v1RareCount)
-	require.Equal(t, uint64(0), findTopNCountByEncoded(v1TopN, keyCommon),
-		"V1 wrongly excluded val_common from global TopN")
+	require.Equal(t, uint64(1920), v1RareCount,
+		"V1 should inflate val_rare via uniform histogram estimates")
+	require.Equal(t, uint64(800), findTopNCountByEncoded(v1TopN, keyCommon))
 
-	// V1 histogram merge: histograms were mutated by BinarySearchRemoveVal.
 	v1GlobalHist, err := statistics.MergePartitionHist2GlobalHist(
 		sc, v1Hists, v1Left, 100, false, 1,
 	)
@@ -504,35 +569,37 @@ func TestMergeTopNV1V2ManyPartitionsInflation(t *testing.T) {
 
 	// --- V2 merge ---
 	v2TopNs, v2Hists := makeInputs()
-	v2TopN, v2Left, err := MergePartTopN2GlobalTopNV2(v2TopNs, 1, &killer)
+	v2TopN, v2Left, err := MergePartTopN2GlobalTopNV2(v2TopNs, globalTopNSize, &killer)
 	require.NoError(t, err)
-	require.Len(t, v2TopN.TopN, 1)
+	require.Len(t, v2TopN.TopN, globalTopNSize)
 
-	// V2 correctly picks val_common with exact count: 10*20 = 200.
-	v2CommonCount := findTopNCountByEncoded(v2TopN, keyCommon)
-	require.Equal(t, uint64(200), v2CommonCount)
+	// V2 correctly picks {val_common: 800, val_filler: 630}.
+	require.Equal(t, uint64(800), findTopNCountByEncoded(v2TopN, keyCommon))
+	require.Equal(t, uint64(630), findTopNCountByEncoded(v2TopN, keyFiller))
 	require.Equal(t, uint64(0), findTopNCountByEncoded(v2TopN, keyRare),
 		"V2 correctly excluded val_rare from global TopN")
 
-	// V2 histogram merge: histograms are pristine (unmodified).
 	v2GlobalHist, err := statistics.MergePartitionHist2GlobalHist(
 		sc, v2Hists, v2Left, 100, false, 1,
 	)
 	require.NoError(t, err)
 
 	// --- Accuracy comparison ---
-	const trueRare = 120  // 60*2
-	const trueCommon = 200 // 10*20
+	const trueRare = 120   // 60*2
+	const trueCommon = 800 // 40*20
+	const trueFiller = 630 // 35*18
 
-	// V1 TopN error: claims val_rare=1920, true=120 → error=+1800 (16x overestimate).
-	v1TopNError := math.Abs(float64(v1RareCount) - trueRare)
+	// V1 TopN error: val_rare claimed 1920, true=120 → +1800 (16x overestimate).
+	v1TopNError := math.Abs(float64(v1RareCount)-trueRare) +
+		math.Abs(float64(findTopNCountByEncoded(v1TopN, keyCommon))-trueCommon)
 	require.Equal(t, float64(1800), v1TopNError)
 
-	// V2 TopN error: claims val_common=200, true=200 → error=0 (exact).
-	v2TopNError := math.Abs(float64(v2CommonCount) - trueCommon)
+	// V2 TopN error: val_common=800 (exact), val_filler=630 (exact) → 0.
+	v2TopNError := math.Abs(float64(findTopNCountByEncoded(v2TopN, keyCommon))-trueCommon) +
+		math.Abs(float64(findTopNCountByEncoded(v2TopN, keyFiller))-trueFiller)
 	require.Equal(t, float64(0), v2TopNError)
 
-	// V2 is strictly more accurate for the global TopN value.
+	// V2 is strictly more accurate.
 	require.Less(t, v2TopNError, v1TopNError,
 		"V2 should have lower TopN error than V1")
 
@@ -540,6 +607,163 @@ func TestMergeTopNV1V2ManyPartitionsInflation(t *testing.T) {
 	// phantom counts from partition histograms.
 	require.Greater(t, v2GlobalHist.NotNullCount(), v1GlobalHist.NotNullCount(),
 		"V2 histogram should retain more rows because V1 subtracted inflated estimates")
+}
+
+// TestMergeTopNV1BetterThanV2SpreadValue shows the scenario where V1 is much
+// more accurate than V2: a value that is globally #1 but only appears in two
+// partitions' TopN, while being at a histogram bucket upper bound in 18 others.
+// V1 picks up the exact Repeat count from each histogram; V2 only sees the two
+// TopN entries and badly underestimates the value.
+//
+// Setup (20 partitions, perTopN=2, globalTopN=2):
+//
+//	All partitions: 4 histogram buckets, 2 TopN entries
+//
+//	Partitions 0-1:  TopN = {val_spread(=50): 500, val_common(=200): 100}
+//	                 Histogram (excludes TopN values):
+//	                   [1,20] cnt=60 rep=8, [21,49] cnt=120 rep=6,
+//	                   [51,100] cnt=200 rep=10, [101,199] cnt=280 rep=12
+//
+//	Partitions 2-19: TopN = {val_X(=300): 90, val_common(=200): 85}
+//	                 Histogram (excludes TopN values):
+//	                   [1,20] cnt=80 rep=10, [21,50] cnt=200 rep=80,
+//	                   [51,80] cnt=280 rep=15, [81,100] cnt=350 rep=12
+//	                 val_spread(=50) IS at bucket upper bound → Repeat=80
+//
+// True global counts:
+//
+//	val_spread: 500*2 + 80*18      = 2440  (true #1)
+//	val_common: 100*2 + 85*18      = 1730  (true #2)
+//	val_X:      90*18              = 1620  (true #3)
+//
+// V1: val_spread = 500*2 + 80*18 = 2440, val_common = 100*2 + 85*18 = 1730
+//
+//	→ V1 TopN = {val_spread: 2440, val_common: 1730} — correct top 2
+//
+// V2: val_spread = 500*2 = 1000, val_common = 1730, val_X = 1620
+//
+//	→ V2 TopN = {val_common: 1730, val_X: 1620} — misses true #1
+func TestMergeTopNV1BetterThanV2SpreadValue(t *testing.T) {
+	loc := time.UTC
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
+	killer := sqlkiller.SQLKiller{}
+
+	encodeInt := func(v int64) []byte {
+		key, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(v))
+		require.NoError(t, err)
+		return key
+	}
+	keySpread := encodeInt(50)  // in TopN of p0-1, at histogram upper bound in p2-19
+	keyCommon := encodeInt(200) // in TopN of all 20 partitions
+	keyX := encodeInt(300)      // in TopN of p2-19 only
+
+	const nPartitions = 20
+	const globalTopNSize = 2
+
+	makeInputs := func() ([]*statistics.TopN, []*statistics.Histogram) {
+		topNs := make([]*statistics.TopN, nPartitions)
+		hists := make([]*statistics.Histogram, nPartitions)
+
+		d := func(v int64) types.Datum { return types.NewIntDatum(v) }
+		for i := range nPartitions {
+			tp := types.NewFieldType(mysql.TypeLong)
+			if i < 2 {
+				// P0-1: val_spread and val_common in TopN.
+				topN := statistics.NewTopN(2)
+				topN.AppendTopN(keySpread, 500)
+				topN.AppendTopN(keyCommon, 100)
+				topNs[i] = topN
+				// 4 buckets covering ranges that exclude val_spread(50) and val_common(200).
+				h := statistics.NewHistogram(1, 20, 0, 0, tp, chunk.InitialCapacity, 0)
+				d1, d20 := d(1), d(20)
+				h.AppendBucket(&d1, &d20, 60, 8)
+				d21, d49 := d(21), d(49)
+				h.AppendBucket(&d21, &d49, 120, 6)
+				d51, d100 := d(51), d(100)
+				h.AppendBucket(&d51, &d100, 200, 10)
+				d101, d199 := d(101), d(199)
+				h.AppendBucket(&d101, &d199, 280, 12)
+				hists[i] = h
+			} else {
+				// P2-19: val_X and val_common in TopN.
+				topN := statistics.NewTopN(2)
+				topN.AppendTopN(keyX, 90)
+				topN.AppendTopN(keyCommon, 85)
+				topNs[i] = topN
+				// 4 buckets; val_spread(50) at upper bound of [21,50] with Repeat=80.
+				h := statistics.NewHistogram(1, 20, 0, 0, tp, chunk.InitialCapacity, 0)
+				d1, d20 := d(1), d(20)
+				h.AppendBucket(&d1, &d20, 80, 10)
+				d21, d50 := d(21), d(50)
+				h.AppendBucket(&d21, &d50, 200, 80) // val_spread at upper bound!
+				d51, d80 := d(51), d(80)
+				h.AppendBucket(&d51, &d80, 280, 15)
+				d81, d100 := d(81), d(100)
+				h.AppendBucket(&d81, &d100, 350, 12)
+				hists[i] = h
+			}
+		}
+		return topNs, hists
+	}
+
+	// --- V1 merge ---
+	v1TopNs, v1Hists := makeInputs()
+	v1TopN, v1Left, v1Hists, err := MergePartTopN2GlobalTopN(
+		loc, 1, v1TopNs, globalTopNSize, v1Hists, false, &killer,
+	)
+	require.NoError(t, err)
+	require.Len(t, v1TopN.TopN, globalTopNSize)
+
+	// V1 correctly identifies the top 2: val_spread=2440, val_common=1730.
+	v1SpreadCount := findTopNCountByEncoded(v1TopN, keySpread)
+	require.Equal(t, uint64(2440), v1SpreadCount,
+		"V1 should find exact count for val_spread via histogram Repeat lookups")
+	require.Equal(t, uint64(1730), findTopNCountByEncoded(v1TopN, keyCommon),
+		"V1 should have exact count for val_common (in all partitions' TopN)")
+
+	v1GlobalHist, err := statistics.MergePartitionHist2GlobalHist(
+		sc, v1Hists, v1Left, 100, false, 1,
+	)
+	require.NoError(t, err)
+
+	// --- V2 merge ---
+	v2TopNs, v2Hists := makeInputs()
+	v2TopN, v2Left, err := MergePartTopN2GlobalTopNV2(v2TopNs, globalTopNSize, &killer)
+	require.NoError(t, err)
+	require.Len(t, v2TopN.TopN, globalTopNSize)
+
+	// V2 sees: val_spread=1000, val_common=1730, val_X=1620.
+	// Picks {val_common: 1730, val_X: 1620} — misses the true #1.
+	require.Equal(t, uint64(1730), findTopNCountByEncoded(v2TopN, keyCommon))
+	require.Equal(t, uint64(1620), findTopNCountByEncoded(v2TopN, keyX))
+	require.Equal(t, uint64(0), findTopNCountByEncoded(v2TopN, keySpread),
+		"V2 misses val_spread from global TopN")
+
+	// val_spread falls into V2's leftovers with only 1000 (true: 2440).
+	v2SpreadLeftover := findTopNMetaCountByEncoded(v2Left, keySpread)
+	require.Equal(t, uint64(1000), v2SpreadLeftover)
+
+	v2GlobalHist, err := statistics.MergePartitionHist2GlobalHist(
+		sc, v2Hists, v2Left, 100, false, 1,
+	)
+	require.NoError(t, err)
+
+	// --- Accuracy comparison ---
+	const trueSpread = 2440 // 500*2 + 80*18
+
+	// V1 picks the correct #1 with exact count.
+	require.Equal(t, uint64(trueSpread), v1SpreadCount,
+		"V1 TopN count for val_spread should be exact")
+
+	// V2's TopN-only count for val_spread (1000) underestimates by 1440 —
+	// the 80*18 hidden in partition histograms that V2 never consults.
+	v2SpreadError := float64(trueSpread) - float64(v2SpreadLeftover)
+	require.Equal(t, float64(1440), v2SpreadError,
+		"V2 underestimates val_spread by 80*18 = 1440")
+
+	// V2's histogram retains higher totals because histograms are unmodified.
+	require.Greater(t, v2GlobalHist.NotNullCount(), v1GlobalHist.NotNullCount(),
+		"V2 histogram retains more rows since V1 subtracted from partitions")
 }
 
 func TestMergePartTopN2GlobalTopNV2EmptyTopNs(t *testing.T) {
