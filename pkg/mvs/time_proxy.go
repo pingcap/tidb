@@ -18,16 +18,6 @@ package mvs
 
 import "time"
 
-type MockTimeModule struct{}
-
-func NewMockTimeModule(time.Time) *MockTimeModule {
-	return &MockTimeModule{}
-}
-
-func InstallMockTimeModuleForTest(*MockTimeModule) (restore func()) {
-	return func() {}
-}
-
 func mvsNow() time.Time {
 	return time.Now()
 }
@@ -44,33 +34,14 @@ func mvsUntil(t time.Time) time.Duration {
 	return time.Until(t)
 }
 
-type mvsTimer struct {
-	time.Timer
-}
+type mvsTimer = time.Timer
 
 func newRealMVSTimer(d time.Duration) *mvsTimer {
-	rt := time.NewTimer(d)
-	return &mvsTimer{
-		Timer: *rt,
-	}
+	return time.NewTimer(d)
 }
 
 func mvsNewTimer(d time.Duration) *mvsTimer {
 	return newRealMVSTimer(d)
-}
-
-func (t *mvsTimer) Stop() bool {
-	if t == nil {
-		return false
-	}
-	return t.Timer.Stop()
-}
-
-func (t *mvsTimer) Reset(d time.Duration) bool {
-	if t == nil {
-		return false
-	}
-	return t.Timer.Reset(d)
 }
 
 func mvsSleep(d time.Duration) {
