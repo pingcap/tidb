@@ -229,11 +229,16 @@ func TestMLogReplacePKAndUKConflict(t *testing.T) {
 	tk.MustExec("insert into t values (1,10,100), (2,20,200)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
-	// This row conflicts with (1,10,100) on PK and with (2,20,200) on unique index.
-	tk.MustExec("replace into t values (1,20,999)")
+	// The first row conflicts with (1,10,100) on PK and with (2,20,200) on unique index.
+	// The second row is new and should be inserted as is, even though its primary key value
+	// conflicts with the old row that the first row removes.
+	tk.MustExec("replace into t values (1,20,999), (2,30,100)")
 
 	tk.MustQuery("select a, b, c from t order by a").Check(
-		testkit.Rows("1 20 999"),
+		testkit.Rows(
+			"1 20 999",
+			"2 30 100",
+		),
 	)
 
 	tk.MustQuery(
@@ -242,6 +247,7 @@ func TestMLogReplacePKAndUKConflict(t *testing.T) {
 		"1 10 100 U -1",
 		"1 20 999 U 1",
 		"2 20 200 U -1",
+		"2 30 100 I 1",
 	))
 }
 
@@ -768,6 +774,32 @@ func TestMLogGeneratedColumn(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int primary key, b int, c int, d int as (b+c) stored)")
+	// Track the stored generated column in the mlog.
+	tk.MustExec("create materialized view log on t (a, b, d)")
+
+	tk.MustExec("insert into t (a, b, c) values (1, 10, 20)")
+	tk.MustQuery(
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"1 10 30 I 1",
+	))
+
+	tk.MustExec("delete from `$mlog$t`")
+	tk.MustExec("update t set b=11 where a=1")
+	tk.MustQuery(
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 30 U -1",
+		"1 11 31 U 1",
+	))
+}
+
+func TestMLogVirtualGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int primary key, b int, c int, d int as (b+c) virtual)")
 	// Track the stored generated column in the mlog.
 	tk.MustExec("create materialized view log on t (a, b, d)")
 
