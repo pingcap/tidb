@@ -2593,7 +2593,8 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 
 	// MPP task
-	if isTiFlashPath || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
+	useMPP := isTiFlashPath || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned
+	if useMPP {
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
 			// Only the corresponding index can generate a valid task.
 			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
@@ -2631,34 +2632,38 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// as its schema, so when we resolve indices later, the virtual column 'a' itself couldn't resolve itself anymore.
 		//
 		if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash && !canMppConvertToRootForWhenTiFlashCopIsBanned {
-			return base.InvalidTask, nil
+			// MPP cannot safely convert to root when virtual columns are involved.
+			// TiFlash cop is still allowed in this case, so fall back to cop instead of returning InvalidTask.
+			useMPP = false
 		}
 		// ********************************** future deprecated end **************************/
-		mppTask := physicalop.NewMppTask(ts, property.AnyType, nil, ds.TblColHists, nil)
-		ts.PlanPartInfo = &physicalop.PhysPlanPartInfo{
-			PruningConds:   ds.AllConds,
-			PartitionNames: ds.PartitionNames,
-			Columns:        ds.TblCols,
-			ColumnNames:    ds.OutputNames(),
-		}
-		mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
-		var task base.Task = mppTask
-		if !mppTask.Invalid() {
-			if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
-				// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
-				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
-				task = base.InvalidTask
-			} else if prop.TaskTp == property.RootTaskType {
-				// When got here, canMppConvertToRootX is true.
-				// This is for situations like cannot generate mppTask for some operators.
-				// Such as when the build side of HashJoin is Projection,
-				// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
-				// So HashJoin cannot pushdown to tiflash. But we still want TableScan to run on tiflash.
-				task = mppTask
-				task = task.ConvertToRootTask(ds.SCtx())
+		if useMPP {
+			mppTask := physicalop.NewMppTask(ts, property.AnyType, nil, ds.TblColHists, nil)
+			ts.PlanPartInfo = &physicalop.PhysPlanPartInfo{
+				PruningConds:   ds.AllConds,
+				PartitionNames: ds.PartitionNames,
+				Columns:        ds.TblCols,
+				ColumnNames:    ds.OutputNames(),
 			}
+			mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
+			var task base.Task = mppTask
+			if !mppTask.Invalid() {
+				if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
+					// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
+					// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
+					task = base.InvalidTask
+				} else if prop.TaskTp == property.RootTaskType {
+					// When got here, canMppConvertToRootX is true.
+					// This is for situations like cannot generate mppTask for some operators.
+					// Such as when the build side of HashJoin is Projection,
+					// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
+					// So HashJoin cannot pushdown to tiflash. But we still want TableScan to run on tiflash.
+					task = mppTask
+					task = task.ConvertToRootTask(ds.SCtx())
+				}
+			}
+			return task, nil
 		}
-		return task, nil
 	}
 	// Cop task
 	copTask := &physicalop.CopTask{
