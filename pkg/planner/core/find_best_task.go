@@ -1654,20 +1654,19 @@ func crossSkylinePrune(ds *logicalop.DataSource, currentCandidates []*candidateP
 			if pruned {
 				break
 			}
+			// Only cross-prune against cache entries from a LIMIT/TopN parent
+			// (ExpectedCnt < MaxFloat64). Cross-pruning protects against row count
+			// underestimation that makes non-ordered plans look cheaper under a LIMIT.
+			// Without a LIMIT (e.g., MergeJoin exploration), both plans scan all rows
+			// and cost comparison is straightforward — cross-pruning should not apply.
+			if entry.sortProp.ExpectedCnt >= math.MaxFloat64 {
+				continue
+			}
 			// Create a shallow copy with matchPropResult recomputed for this entry's
 			// sort property, so compareCandidates can use matchResult as a real dimension.
 			// Uses matchPropertyReadOnly to avoid mutating the shared AccessPath.
 			recomputed := *current
 			recomputed.matchPropResult = matchPropertyReadOnly(ds, current.path, entry.sortProp)
-
-			// If the current candidate is a table scan that doesn't match the cached
-			// sort property (keep order:false), don't let cross-pruning eliminate it.
-			// Table scans have sequential I/O advantages over index scans, and when
-			// both would run as keep order:false, the sort-match dimension from the
-			// cached entry should not give the index an unfair advantage.
-			if current.path.IsTablePath() && !recomputed.matchPropResult.Matched() {
-				continue
-			}
 
 			for _, cached := range entry.candidates {
 				if cached.path.StoreType == kv.TiFlash {
