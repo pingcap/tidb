@@ -233,6 +233,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	nodeNDVSketches := make([][]*statistics.FMSketch, 0, samplingStatsConcurrency)
 	nodeF1Sketches := make([][]*statistics.FMSketch, 0, samplingStatsConcurrency)
 	nodeSampleSizes := make([]int, 0, samplingStatsConcurrency)
+	nodeSketchSampleSizes := make([]int, 0, samplingStatsConcurrency)
 	defer func() {
 		destroySketchCopies(nodeNDVSketches)
 		destroySketchCopies(nodeF1Sketches)
@@ -293,6 +294,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			nodeNDVSketches = append(nodeNDVSketches, copySketches(mergeResult.collector.Base().FMSketches))
 			nodeF1Sketches = append(nodeF1Sketches, copySketches(mergeResult.collector.Base().F1Sketches))
 			nodeSampleSizes = append(nodeSampleSizes, mergeResult.collector.Base().Samples.Len())
+			nodeSketchSampleSizes = append(nodeSketchSampleSizes, int(mergeResult.collector.Base().SketchSampleCount))
 			e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 			mergeResult.collector.DestroyAndPutToPool()
 		}
@@ -328,7 +330,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			isSpecialIndex[offset] = true
 		}
 	}
-	estimateNDVs := estimateNDVsBySketch(rootRowCollector, nodeNDVSketches, nodeF1Sketches, nodeSampleSizes, colLen, isSpecialIndex)
+	estimateNDVs := estimateNDVsBySketch(rootRowCollector, nodeNDVSketches, nodeF1Sketches, nodeSampleSizes, nodeSketchSampleSizes, colLen, isSpecialIndex)
 
 	// Decode the data from sample collectors.
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
@@ -924,6 +926,7 @@ func estimateNDVsBySketch(
 	nodeNDVSketches [][]*statistics.FMSketch,
 	nodeF1Sketches [][]*statistics.FMSketch,
 	nodeSampleSizes []int,
+	nodeSketchSampleSizes []int,
 	colLen int,
 	isSpecialIndex []bool,
 ) []int64 {
@@ -933,8 +936,13 @@ func estimateNDVsBySketch(
 		return estimateNDVs
 	}
 	var sampleSize uint64
-	for _, size := range nodeSampleSizes {
+	for _, size := range nodeSketchSampleSizes {
 		sampleSize += uint64(size)
+	}
+	if sampleSize == 0 {
+		for _, size := range nodeSampleSizes {
+			sampleSize += uint64(size)
+		}
 	}
 	if sampleSize == 0 {
 		return estimateNDVs

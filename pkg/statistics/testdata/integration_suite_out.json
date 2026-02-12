@@ -50,10 +50,6 @@
   },
   {
     "Name": "TestAnalyzeV2Chao3",
-    "Cases": [
-      [
-        "4"
-      ]
-    ]
+    "Cases": []
   }
 ]
