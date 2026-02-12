@@ -707,7 +707,11 @@ func TestFulltextIndexEncoding(t *testing.T) {
 
 	valuesBytes, handleBytes, err := CutIndexKeyNew(key, 1)
 	require.NoError(t, err)
-	require.Empty(t, handleBytes)
+	require.NotEmpty(t, handleBytes)
+	decodedHandle, err := decodeHandleInIndexKey(handleBytes)
+	require.NoError(t, err)
+	require.True(t, decodedHandle.IsInt())
+	require.Equal(t, handle.IntValue(), decodedHandle.IntValue())
 	_, decodedID, err := codec.DecodeOne(valuesBytes[0])
 	require.NoError(t, err)
 	require.Equal(t, types.NewIntDatum(handle.IntValue()), decodedID)
@@ -774,7 +778,11 @@ func TestFulltextIndexEncodingCommonHandleCompositePK(t *testing.T) {
 
 	valuesBytes, handleBytes, err := CutIndexKeyNew(key, len(pkIdx.Columns))
 	require.NoError(t, err)
-	require.Empty(t, handleBytes)
+	require.NotEmpty(t, handleBytes)
+	decodedHandle, err := decodeHandleInIndexKey(handleBytes)
+	require.NoError(t, err)
+	require.False(t, decodedHandle.IsInt())
+	require.Equal(t, handle.Encoded(), decodedHandle.Encoded())
 
 	_, decodedPKStr, err := codec.DecodeOne(valuesBytes[0])
 	require.NoError(t, err)
@@ -915,7 +923,11 @@ func TestFulltextIndexEncodingIntHandleFallback(t *testing.T) {
 
 	valuesBytes, handleBytes, err := CutIndexKeyNew(key, 1)
 	require.NoError(t, err)
-	require.Empty(t, handleBytes)
+	require.NotEmpty(t, handleBytes)
+	decodedHandle, err := decodeHandleInIndexKey(handleBytes)
+	require.NoError(t, err)
+	require.True(t, decodedHandle.IsInt())
+	require.Equal(t, int64(77), decodedHandle.IntValue())
 	_, decodedID, err := codec.DecodeOne(valuesBytes[0])
 	require.NoError(t, err)
 	require.Equal(t, types.NewIntDatum(77), decodedID)

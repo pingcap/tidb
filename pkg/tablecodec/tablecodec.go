@@ -1286,11 +1286,10 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	// using col_name(length) syntax to specify an index prefix length.
 	TruncateIndexValues(tblInfo, idxInfo, indexedValues)
 	keyValues := indexedValues
-	fulltextKeyed := false
 	if idxInfo.FullTextInfo != nil {
 		// TiCi requires fulltext index keys to be PK-derived, so we switch key payload
 		// from fulltext document values to handle/PK values here for global-sort ordering.
-		keyValues, fulltextKeyed, err = fulltextIndexKeyValues(tblInfo, h)
+		keyValues, _, err = fulltextIndexKeyValues(tblInfo, h)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1308,7 +1307,11 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	if err != nil {
 		return nil, false, err
 	}
-	if !distinct && h != nil && !fulltextKeyed {
+	if !distinct && h != nil {
+		// For non-distinct indexes, we always append the handle suffix to the key.
+		// This also applies to fulltext indexes: their encoded key columns are PK-derived
+		// for TiCI global-sort ordering, while the trailing handle keeps the non-distinct
+		// index key layout consistent as requested by TiCI.
 		if h.IsInt() {
 			// We choose the efficient path here instead of calling `codec.EncodeKey`
 			// because the int handle must be an int64, and it must be comparable.

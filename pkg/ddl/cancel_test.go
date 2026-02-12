@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -241,6 +242,7 @@ func TestCancelVariousJobs(t *testing.T) {
 		}, 10*time.Second, 10*time.Millisecond)
 	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -277,6 +279,8 @@ func TestCancelVariousJobs(t *testing.T) {
 	}
 
 	// Change some configurations.
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 8")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)
