@@ -334,7 +334,17 @@ func (coll *HistColl) ColHasSingleColUniqueIdx(colUniqueID int64) bool {
 		if idx == nil || idx.Info == nil {
 			continue
 		}
-		if idx.Info.Unique && len(idx.Info.Columns) == 1 && !idx.Info.HasPrefixIndex() {
+		// Only consider public indexes — during DDL transitions (e.g. DROP INDEX)
+		// uniqueness may no longer be enforced.
+		if idx.Info.State != model.StatePublic {
+			continue
+		}
+		// Exclude partial indexes (they only enforce uniqueness for rows matching
+		// the condition, not globally) and prefix indexes.
+		if idx.Info.HasCondition() || idx.Info.HasPrefixIndex() {
+			continue
+		}
+		if (idx.Info.Unique || idx.Info.Primary) && len(idx.Info.Columns) == 1 {
 			return true
 		}
 	}

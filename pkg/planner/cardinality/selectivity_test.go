@@ -709,6 +709,67 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	require.Equal(t, 1.0, count)
 }
 
+func TestUniqueColumnEstimation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Create a table where column b has a unique index.
+	// Insert enough rows so that stats v2 may place all values in TopN
+	// (testing the case where histogram is empty but TopN is non-empty).
+	tk.MustExec("create table t(a int, b int, c int, unique key(b))")
+	// Include 3 null rows in column b to ensure NullCount > 1.
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,null,6),(7,null,7),(8,null,8)")
+	tk.MustExec("analyze table t all columns with 10 topn")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+
+	// Trigger full loading of column b's histogram (lazy-loaded by default).
+	h := dom.StatsHandle()
+	tk.MustExec("explain select * from t where b is null")
+	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	statsTbl = h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+
+	// Build ColUniqueID2IdxIDs using column Info.ID (matching how columns are
+	// keyed in the HistColl from GetPhysicalTableStats).
+	bColInfoID := tbl.Meta().Columns[1].ID
+	idxInfo := tbl.Meta().Indices[0]
+	statsTbl.ColUniqueID2IdxIDs = map[int64][]int64{
+		bColInfoID: {idxInfo.ID},
+	}
+
+	sctx := mock.NewContext()
+
+	// Point query on unique column: non-null value should estimate 1.
+	countEst, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, bColInfoID, getRange(3, 3), false)
+	require.NoError(t, err)
+	require.Equal(t, 1.0, countEst.Est, "point query on unique col b=3")
+
+	// Range query on unique column: should return a non-zero estimate even when
+	// stats v2 stores all values in TopN and the histogram is empty.
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, bColInfoID, getRange(2, 4), false)
+	require.NoError(t, err)
+	require.Greater(t, countEst.Est, 0.0, "range query on unique col b in [2,4] should not be zero")
+
+	// NULL point query: should return the null count, not 1.
+	nullRange := &ranger.Range{
+		LowVal:    []types.Datum{{}},
+		HighVal:   []types.Datum{{}},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	nullRange.LowVal[0].SetNull()
+	nullRange.HighVal[0].SetNull()
+	bCol := statsTbl.HistColl.GetCol(bColInfoID)
+	require.NotNil(t, bCol)
+	require.Equal(t, int64(3), bCol.NullCount, "column b should have 3 nulls")
+
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, bColInfoID, []*ranger.Range{nullRange}, false)
+	require.NoError(t, err)
+	require.Equal(t, 3.0, countEst.Est, "NULL query on unique col should return null count, not 1")
+}
+
 func TestColumnIndexNullEstimation(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

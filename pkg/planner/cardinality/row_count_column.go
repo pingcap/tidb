@@ -250,9 +250,11 @@ func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, 
 	if c.StatsVer <= statistics.Version1 {
 		return histBetweenCnt
 	}
-	// For unique columns, skip TopN — every value has count=1, so the histogram
-	// estimate alone is sufficient.
-	if colIsUnique {
+	// For unique columns every value has count=1, so TopN is normally
+	// redundant. However, in stats v2 the histogram may be empty when all
+	// values fit in TopN; in that case we must still consult TopN to avoid
+	// returning 0.
+	if colIsUnique && c.TopN.Num() == 0 {
 		return histBetweenCnt
 	}
 	topNCnt := float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded))
