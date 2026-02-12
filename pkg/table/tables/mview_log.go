@@ -24,11 +24,26 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-// MLogDMLType indicates the logical row change kind written to `_MLOG$_DML_TYPE` in mlog.
+// MLogSourceStmt indicates which statement kind writes the mlog.
 //
-// For INSERT-typed statements (`INSERT`, `REPLACE`, `LOAD DATA`), the wrapper emits `I` by
-// default and upgrades to `U` when the write path includes old-row removal before insertion
-// (for example conflict resolution in REPLACE / LOAD DATA REPLACE, or IODKU handle-changed path).
+// It intentionally keeps the source statement type (INSERT/UPDATE/DELETE/REPLACE/LOAD DATA)
+// separate from the `_MLOG$_DML_TYPE` column value (I/U/D).
+type MLogSourceStmt int
+
+const (
+	// MLogSourceInsert marks rows produced by INSERT statements
+	MLogSourceInsert MLogSourceStmt = iota
+	// MLogSourceUpdate marks rows produced by UPDATE statements.
+	MLogSourceUpdate
+	// MLogSourceDelete marks rows produced by DELETE statements.
+	MLogSourceDelete
+	// MLogSourceReplace marks rows produced by REPLACE statements.
+	MLogSourceReplace
+	// MLogSourceLoadData marks rows produced by LOAD DATA statements.
+	MLogSourceLoadData
+)
+
+// MLogDMLType indicates the logical row change kind written to `_MLOG$_DML_TYPE`.
 type MLogDMLType string
 
 const (
@@ -83,7 +98,7 @@ func validateMLogMetaColumn(mlogMeta *model.TableInfo) error {
 func WrapTableWithMaterializedViewLog(
 	base table.Table,
 	mlog table.Table,
-	tp MLogDMLType,
+	sourceStmt MLogSourceStmt,
 ) (table.Table, error) {
 	if base == nil || mlog == nil {
 		return nil, errors.New("wrap table with mlog: base or mlog is nil")
@@ -136,7 +151,7 @@ func WrapTableWithMaterializedViewLog(
 	return &mlogTable{
 		Table:              base,
 		mlog:               mlog,
-		tp:                 tp,
+		sourceStmt:         sourceStmt,
 		trackedBaseOffsets: trackedOffsets,
 	}, nil
 }
@@ -149,13 +164,13 @@ type mlogTable struct {
 	table.Table
 
 	mlog table.Table
-	// tp is the statement-level DML type set at wrap time (I/U/D).
-	// Per-row types may differ — see addRecordDMLType / removeRecordDMLType.
-	tp MLogDMLType
+	// sourceStmt records the original statement kind at wrap time.
+	// It is mapped to row-level `_MLOG$_DML_TYPE` (I/U/D) per operation.
+	sourceStmt MLogSourceStmt
 
 	// Base table column offsets recorded in mlog (user-specified columns).
 	trackedBaseOffsets []int
-	// removedConflict marks that RemoveRecord happened under INSERT-typed statement.
+	// removedConflict marks that RemoveRecord happened under INSERT/REPLACE/LOAD DATA source statement.
 	// The next AddRecord should be classified as logical update (`U`) rather than insert (`I`).
 	removedConflict bool
 }
@@ -175,11 +190,8 @@ func (t *mlogTable) AddRecord(
 	opt := table.NewAddRecordOpt(opts...)
 
 	// Consume the one-shot marker up front to avoid leaking it on AddRecord failure.
-	hadRemovedConflict := false
-	if t.tp == MLogDMLTypeInsert {
-		hadRemovedConflict = t.removedConflict
-		t.removedConflict = false
-	}
+	hadRemovedConflict := t.removedConflict
+	t.removedConflict = false
 
 	recordID, err = t.Table.AddRecord(ctx, txn, r, opts...)
 	if err != nil {
@@ -247,10 +259,13 @@ func (t *mlogTable) RemoveRecord(
 		return err
 	}
 
-	dmlType := t.removeRecordDMLType()
-	if t.tp == MLogDMLTypeInsert {
+	if t.sourceStmt == MLogSourceInsert ||
+		t.sourceStmt == MLogSourceReplace ||
+		t.sourceStmt == MLogSourceLoadData {
 		t.removedConflict = true
 	}
+
+	dmlType := t.removeRecordDMLType()
 	return t.writeMLogRow(ctx, txn, r, dmlType, mlogOldRowMarker, table.DupKeyCheckSkip)
 }
 
@@ -271,28 +286,44 @@ func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
 }
 
 func (t *mlogTable) addRecordDMLType(opt *table.AddRecordOpt, hadRemovedConflict bool) MLogDMLType {
-	if t.tp == MLogDMLTypeInsert && (opt.IsUpdate() || hadRemovedConflict) {
+	switch t.sourceStmt {
+	case MLogSourceUpdate:
 		return MLogDMLTypeUpdate
+	case MLogSourceInsert, MLogSourceReplace, MLogSourceLoadData:
+		// opt.IsUpdate() is true when AddRecord is the "insert half" of a logical update.
+		// For INSERT statements, this happens in IODKU handle-changed path
+		//
+		// hadRemovedConflict indicates a preceding RemoveRecord was seen for the same row
+		// in this wrapper, then consumed by this AddRecord.
+		if opt.IsUpdate() || hadRemovedConflict {
+			return MLogDMLTypeUpdate
+		}
+		return MLogDMLTypeInsert
+	default:
+		return MLogDMLTypeInsert
 	}
-	return t.tp
 }
 
 func (t *mlogTable) updateRecordDMLType() MLogDMLType {
-	// UpdateRecord called in INSERT statement means "ON DUPLICATE KEY UPDATE".
-	if t.tp == MLogDMLTypeInsert {
-		return MLogDMLTypeUpdate
-	}
-	return t.tp
+	// In all known UpdateRecord paths, `_MLOG$_DML_TYPE` should be U.
+	return MLogDMLTypeUpdate
 }
 
 func (t *mlogTable) removeRecordDMLType() MLogDMLType {
-	// RemoveRecord called under INSERT-typed statement covers REPLACE/LOAD DATA conflict
-	// removal and IODKU handle-changed update path.
-	if t.tp == MLogDMLTypeInsert {
+	switch t.sourceStmt {
+	case MLogSourceDelete:
+		return MLogDMLTypeDelete
+	case MLogSourceInsert, MLogSourceUpdate, MLogSourceReplace, MLogSourceLoadData:
+		// For non-DELETE source statements, RemoveRecord is the old-row side of a logical update,
+		// so `_MLOG$_DML_TYPE` should be U:
+		//   - MLogSourceInsert: IODKU handle-changed path removes old row before adding new row.
+		//   - MLogSourceUpdate: UPDATE handle-changed path removes old row.
+		//   - MLogSourceReplace: REPLACE removes conflicting rows before insert.
+		//   - MLogSourceLoadData: LOAD DATA ... REPLACE removes conflicting rows before insert.
+		return MLogDMLTypeUpdate
+	default:
 		return MLogDMLTypeUpdate
 	}
-	// DELETE and UPDATE follow the statement kind.
-	return t.tp
 }
 
 func (t *mlogTable) writeMLogRow(

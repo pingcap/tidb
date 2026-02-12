@@ -1009,7 +1009,11 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	baseExec := exec.NewBaseExecutor(b.ctx, nil, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
-	insertTable := b.wrapTableWithMLogIfExists(v.Table, tables.MLogDMLTypeInsert)
+	sourceStmt := tables.MLogSourceInsert
+	if v.IsReplace {
+		sourceStmt = tables.MLogSourceReplace
+	}
+	insertTable := b.wrapTableWithMLogIfExists(v.Table, sourceStmt)
 	if b.err != nil {
 		return nil
 	}
@@ -1101,7 +1105,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
 		return nil
 	}
-	tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogDMLTypeInsert)
+	tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceLoadData)
 	if b.err != nil {
 		return nil
 	}
@@ -2778,7 +2782,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 				}
 			}
 		}
-		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogDMLTypeUpdate)
+		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceUpdate)
 		if b.err != nil {
 			return nil
 		}
@@ -2849,7 +2853,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
-		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogDMLTypeDelete)
+		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceDelete)
 		if b.err != nil {
 			return nil
 		}
@@ -2886,7 +2890,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 
 // wrapTableWithMLogIfExists wraps tbl with its materialized view log table if one exists.
 // It returns the original table unchanged when there is no associated MLog.
-func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, tp tables.MLogDMLType) table.Table {
+func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, sourceStmt tables.MLogSourceStmt) table.Table {
 	if tbl == nil {
 		return nil
 	}
@@ -2915,7 +2919,7 @@ func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, tp tables.M
 		return nil
 	}
 
-	wrapped, err := tables.WrapTableWithMaterializedViewLog(tbl, mlogTbl, tp)
+	wrapped, err := tables.WrapTableWithMaterializedViewLog(tbl, mlogTbl, sourceStmt)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3958,7 +3962,8 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 }
 
 func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, physPlanPartInfo *plannercore.PhysPlanPartInfo,
-	lookUpContent []*join.IndexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
+	lookUpContent []*join.IndexJoinLookUpContent,
+) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
 
 	// In index join, this is called by multiple goroutines simultaneously, but partitionPruning is not thread-safe.
@@ -5089,7 +5094,8 @@ func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*jo
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.RangerContext, tableID, indexID int64, lookUpContents []*join.IndexJoinLookUpContent,
-	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (_ []kv.KeyRange, err error) {
+	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (_ []kv.KeyRange, err error) {
 	kvRanges := make([]kv.KeyRange, 0, len(ranges)*len(lookUpContents))
 	if len(ranges) == 0 {
 		return []kv.KeyRange{}, nil
