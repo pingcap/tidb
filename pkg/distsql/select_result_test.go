@@ -43,7 +43,7 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	sr.rootPlanID = 1234
 	backOffSleep := make(map[string]time.Duration, 1)
 	backOffSleep["RegionMiss"] = time.Duration(100)
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "a", BackoffSleep: backOffSleep}}, 0)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "a", BackoffSleep: backOffSleep}}, 0, false)
 	// RuntimeStatsColl is nil, so the update doesn't take efffect
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(0))
 
@@ -60,7 +60,7 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.NotEqual(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
 	backOffSleep["RegionMiss"] = time.Duration(200)
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
 	require.False(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234))
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(200))
 
@@ -69,7 +69,7 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.Equal(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
 	backOffSleep["RegionMiss"] = time.Duration(300)
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(500))
 }

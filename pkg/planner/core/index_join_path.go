@@ -489,6 +489,39 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 	return buffer.String()
 }
 
+// indexJoinPathGetRangeInfoAndMaxOneRow computes the range information string and determines
+// whether the index join can guarantee at most one row will be returned per probe.
+// This happens when:
+// 1. The chosen index is unique AND
+// 2. All index columns are used for the join (usedColsLen == len(FullIdxCols)) AND
+// 3. Either there are no access conditions, or the last access condition is an equality condition
+//
+// Parameters:
+//   - sctx: the plan context
+//   - outerJoinKeys: the outer join keys used to generate range info string
+//   - indexJoinResult: the index join path result containing the chosen path and access conditions
+//
+// Returns:
+//   - rangeInfo: a string representation of the range information for explain output
+//   - maxOneRow: true if the index join guarantees at most one row per probe
+func indexJoinPathGetRangeInfoAndMaxOneRow(
+	sctx planctx.PlanContext,
+	outerJoinKeys []*expression.Column,
+	indexJoinResult *indexJoinPathResult) (rangeInfo string, maxOneRow bool) {
+	rangeInfo = indexJoinPathRangeInfo(sctx, outerJoinKeys, indexJoinResult)
+	maxOneRow = false
+	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
+		l := len(indexJoinResult.chosenAccess)
+		if l == 0 {
+			maxOneRow = true
+		} else {
+			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
+			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
+		}
+	}
+	return rangeInfo, maxOneRow
+}
+
 // Reset the 'curIdxOff2KeyOff', 'curNotUsedIndexCols' and 'curNotUsedColLens' by innerKeys and idxCols
 /*
 For each idxCols,
@@ -710,6 +743,7 @@ func getBestIndexJoinPathResultByProp(
 	if bestResult == nil || bestResult.chosenPath == nil {
 		return nil, nil
 	}
+
 	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
@@ -757,6 +791,7 @@ func getBestIndexJoinPathResult(
 	if bestResult == nil || bestResult.chosenPath == nil {
 		return nil, nil
 	}
+
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1

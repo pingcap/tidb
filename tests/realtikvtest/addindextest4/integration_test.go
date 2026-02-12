@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -348,7 +348,6 @@ func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("set @@tidb_stats_update_during_ddl = true;")
-	tk1.MustExec("set @@sql_mode = '';")
 	dbCnt := 0
 
 	checkFn := func(sql, containRes string) {
@@ -358,26 +357,36 @@ func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 		tk1.MustExec("create database " + dbName)
 		defer tk1.MustExec("drop database " + dbName)
 		tk1.MustExec("use " + dbName)
-		tk1.MustExec("create table t (a int, b int, c char(6), key i_a(a), key i_b(b), key i_c(c));")
-		tk1.MustExec("insert into t values (1, 1, '111111');")
+		tk1.MustExec("create table t (a bigint, b bigint, c bigint, d bigint, key i_a(a), key i_b(b), key i_c(c));")
+		tk1.MustExec("insert into t values (1, 1, 11111, 1);")
 		beginRs := tk1.MustQuery("select now();").Rows()
 		begin := beginRs[0][0].(string)
 		tk1.MustExec(sql)
 		analyzeStatusRs := tk1.MustQuery(
 			fmt.Sprintf("show analyze status where start_time >= '%s' and table_schema = '%s';", begin, dbName)).Rows()
-		if containRes == "" {
+		if len(containRes) == 0 {
 			require.Len(t, analyzeStatusRs, 0)
 			return
 		}
 		require.Len(t, analyzeStatusRs, 1)
-		require.Contains(t, analyzeStatusRs[0][3].(string), containRes)
+		analyzeStr := analyzeStatusRs[0][3].(string)
+		require.Contains(t, analyzeStr, containRes)
 	}
 
-	checkFn("alter table t add index i_a_2(a), add index i_b_2(b), modify column c char(5);", "all columns")
-	checkFn("alter table t modify column c char(5), modify column a smallint;", "all columns")
-	checkFn("alter table t modify column c char(5), modify column a bigint, modify column b bigint;", "all columns")
-	checkFn("alter table t modify column a bigint, modify column c char(5), modify column b bigint;", "all columns")
-	checkFn("alter table t modify column a bigint, modify column b bigint;", "") // no lossy change
+	// Index reorg.
+	checkFn("alter table t modify column a int unsigned", "a")
+	checkFn("alter table t add index i_a_2(a), add index i_b_2(b), modify column c char(5), modify column d char(5)", "all columns")
+	checkFn("alter table t modify column c int, modify column a char(5), add index i_d_1(d)", "all columns")
+	checkFn("alter table t modify column c char(5), modify column a int, modify column b int", "all columns")
+	checkFn("alter table t modify column a bigint, modify column c char(5), modify column b int unsigned", "all columns")
+	checkFn("alter table t modify column a char(5), modify column d char(5)", "all columns")
+	checkFn("alter table t modify column a int, modify column b int unsigned", "all columns")
+
+	// No index reorg.
+	checkFn("alter table t modify column a int", "")
+	checkFn("alter table t modify column a bigint", "")
+	checkFn("alter table t modify column a int, modify column d char(5)", "")
+	checkFn("alter table t modify column a int, modify column d int unsigned", "")
 }
 
 func TestCancelAfterReorgTimeout(t *testing.T) {
@@ -409,7 +418,7 @@ func TestCancelAfterReorgTimeout(t *testing.T) {
 	})
 	afterTimeout := false
 	timeout := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterDXFTaskSubmitted", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterDXFTaskSubmitted", func() {
 		<-meetErr
 		<-timeout
 		tk1 := testkit.NewTestKit(t, store)
@@ -450,10 +459,6 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 			}
 		}
 		ingest.ForceSyncFlagForTest.Store(true)
-
-		tk.Session().Close()
-		tk = testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
 
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a bigint primary key, b bigint)")

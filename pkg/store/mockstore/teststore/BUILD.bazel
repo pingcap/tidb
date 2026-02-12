@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
-        "//pkg/disttask/framework/handle",
+        "//pkg/dxf/framework/handle",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/store",

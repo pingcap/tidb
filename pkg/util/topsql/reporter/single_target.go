@@ -111,6 +111,7 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 	}()
 
 	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	for {
 		var targetRPCAddr string
 		select {
@@ -137,7 +138,7 @@ func (ds *SingleTargetDataSink) trySwitchRegistration(addr string) error {
 		return nil
 	}
 
-	// register if `add` is not empty and not registered before
+	// register if `addr` is not empty and not registered before
 	if addr != "" && !ds.registered.Load() {
 		if err := ds.registerer.Register(ds); err != nil {
 			logutil.BgLogger().Warn("failed to register the single target datasink", zap.Error(err))
@@ -151,8 +152,8 @@ func (ds *SingleTargetDataSink) trySwitchRegistration(addr string) error {
 var _ DataSink = &SingleTargetDataSink{}
 
 // TrySend implements the DataSink interface.
-// Currently the implementation will establish a new connection every time,
-// which is suitable for a per-minute sending period
+// The gRPC connection will be established (or reused) in doSend via tryEstablishConnection.
+// This is suitable for a per-minute sending period.
 func (ds *SingleTargetDataSink) TrySend(data *ReportData, deadline time.Time) error {
 	select {
 	case ds.sendTaskCh <- sendTask{data: data, deadline: deadline}:
@@ -297,7 +298,7 @@ func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas [
 	return
 }
 
-// sendBatchPlanMeta sends a batch of SQL metas by stream.
+// sendBatchPlanMeta sends a batch of plan metas by stream.
 func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMetas []tipb.PlanMeta) (err error) {
 	if len(planMetas) == 0 {
 		return nil

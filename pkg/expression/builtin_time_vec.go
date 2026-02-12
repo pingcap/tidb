@@ -99,10 +99,19 @@ func (b *builtinDateSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result
 				return err
 			}
 			result.SetNull(i, true)
-		} else {
-			times[i].SetCoreTime(types.FromDate(times[i].Year(), times[i].Month(), times[i].Day(), 0, 0, 0, 0))
-			times[i].SetType(mysql.TypeDate)
+			continue
 		}
+		// for issue 59417, should return NULL when month or day is zero and sql_mode contains NO_ZERO_IN_DATE
+		if !times[i].IsZero() && times[i].InvalidZero() && sqlMode(ctx).HasNoZeroInDateMode() {
+			if err := handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+
+		times[i].SetCoreTime(types.FromDate(times[i].Year(), times[i].Month(), times[i].Day(), 0, 0, 0, 0))
+		times[i].SetType(mysql.TypeDate)
 	}
 	return nil
 }
@@ -609,6 +618,9 @@ func (b *builtinGetFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 }
 
 func (b *builtinGetFormatSig) getFormat(format, location string) string {
+	// for Issue 59420, location should be case insensitive
+	location = strings.ToUpper(location)
+
 	res := ""
 	switch format {
 	case dateFormat:

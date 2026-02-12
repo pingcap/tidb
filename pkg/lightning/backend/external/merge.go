@@ -21,12 +21,12 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -96,7 +96,7 @@ type MergeOperator struct {
 // NewMergeOperator creates a new MergeOperator instance.
 func NewMergeOperator(
 	ctx *workerpool.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	partSize int64,
 	newFilePrefix string,
 	blockSize int,
@@ -145,7 +145,7 @@ func (*MergeOperator) String() string {
 type mergeWorker struct {
 	ctx context.Context
 
-	store         storage.ExternalStorage
+	store         storeapi.Storage
 	partSize      int64
 	newFilePrefix string
 	blockSize     int
@@ -248,7 +248,7 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // memory usage of this function is:
 //
 //	defaultOneWriterMemSizeLimit
-//	+ MaxMergingFilesPerThread * (X + defaultReadBufferSize)
+//	+ MaxMergingFilesPerThread * (X + DefaultReadBufferSize)
 //	+ maxUploadWorkersPerThread * (data-part-size + 5MiB(stat-part-size))
 //	+ memory taken by concurrent reading if check-hotspot is enabled
 //
@@ -265,7 +265,7 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 func mergeOverlappingFilesInternal(
 	ctx context.Context,
 	paths []string,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	partSize int64,
 	newFilePrefix string,
 	writerID string,
@@ -300,7 +300,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, fileGroupNum)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, DefaultReadBufferSize, checkHotspot, fileGroupNum)
 	if err != nil {
 		return err
 	}

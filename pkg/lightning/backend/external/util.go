@@ -30,9 +30,10 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -57,7 +58,7 @@ func seekPropsOffsets(
 	ctx context.Context,
 	starts []kv.Key,
 	paths []string,
-	exStorage storage.ExternalStorage,
+	exStorage storeapi.Storage,
 ) (_ [][]uint64, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
@@ -142,13 +143,13 @@ func seekPropsOffsets(
 //   - p00000000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195/one-file
 func GetAllFileNames(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	nonPartitionedDir string,
 ) ([]string, error) {
 	var data []string
 
 	err := store.WalkDir(ctx,
-		&storage.WalkOption{},
+		&storeapi.WalkOption{},
 		func(path string, size int64) error {
 			// extract the first dir
 			bs := hack.Slice(path)
@@ -187,7 +188,7 @@ func GetAllFileNames(
 
 // CleanUpFiles delete all data and stat files under the same non-partitioned dir.
 // see randPartitionedPrefix for how we partition the files.
-func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartitionedDir string) error {
+func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDir string) error {
 	failpoint.Inject("skipCleanUpFiles", func() {
 		failpoint.Return(nil)
 	})
@@ -200,7 +201,7 @@ func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartiti
 
 // MockExternalEngine generates an external engine with the given keys and values.
 func MockExternalEngine(
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	keys [][]byte,
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
@@ -279,11 +280,12 @@ func GetMaxOverlapping(points []Endpoint) int64 {
 
 // SortedKVMeta is the meta of sorted kv.
 type SortedKVMeta struct {
-	StartKey           []byte              `json:"start-key"`
-	EndKey             []byte              `json:"end-key"` // exclusive
-	TotalKVSize        uint64              `json:"total-kv-size"`
-	TotalKVCnt         uint64              `json:"total-kv-cnt"`
-	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
+	StartKey           []byte                 `json:"start-key"`
+	EndKey             []byte                 `json:"end-key"` // exclusive
+	TotalKVSize        uint64                 `json:"total-kv-size"`
+	TotalKVCnt         uint64                 `json:"total-kv-cnt"`
+	MultipleFilesStats []MultipleFilesStat    `json:"multiple-files-stats"`
+	ConflictInfo       engineapi.ConflictInfo `json:"conflict-info"`
 }
 
 // NewSortedKVMeta creates a SortedKVMeta from a WriterSummary. If the summary
@@ -298,6 +300,7 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 		TotalKVSize:        summary.TotalSize,
 		TotalKVCnt:         summary.TotalCnt,
 		MultipleFilesStats: summary.MultipleFilesStats,
+		ConflictInfo:       summary.ConflictInfo,
 	}
 }
 
@@ -317,6 +320,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 	m.TotalKVCnt += other.TotalKVCnt
 
 	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
+	m.ConflictInfo.Merge(&other.ConflictInfo)
 }
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.
@@ -448,7 +452,7 @@ func (m BaseExternalMeta) Marshal(alias any) ([]byte, error) {
 
 // WriteJSONToExternalStorage writes the serialized external meta JSON to external storage.
 // Usage: Store external meta after appropriate modifications.
-func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store storeapi.Storage, a any) error {
 	if m.ExternalPath == "" {
 		return nil
 	}
@@ -461,7 +465,7 @@ func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store 
 
 // ReadJSONFromExternalStorage reads and unmarshals JSON from external storage into the provided alias.
 // Usage: Retrieve external meta for further processing.
-func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storeapi.Storage, a any) error {
 	if m.ExternalPath == "" {
 		return nil
 	}

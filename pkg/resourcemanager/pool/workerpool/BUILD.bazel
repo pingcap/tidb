@@ -11,6 +11,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],

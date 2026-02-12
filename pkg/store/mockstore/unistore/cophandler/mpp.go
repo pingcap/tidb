@@ -64,6 +64,9 @@ type mppExecBuilder struct {
 	ndvs       []int64
 	paging     *coprocessor.KeyRange
 	pagingSize uint64
+
+	// is building the index lookup
+	inBuildIndexLookUp bool
 }
 
 func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, error) {
@@ -86,10 +89,10 @@ func (b *mppExecBuilder) buildMPPTableScanWithReader(pb *tipb.TableScan, reader 
 		startTS:     b.dagCtx.startTS,
 		kvRanges:    ranges,
 		dbReader:    reader,
-		//counts:      b.counts,
-		//ndvs:        b.ndvs,
-		desc:   pb.Desc,
-		paging: b.paging,
+		counts:      b.counts,
+		ndvs:        b.ndvs,
+		desc:        pb.Desc,
+		paging:      b.paging,
 	}
 	if b.dagCtx != nil {
 		ts.lockStore = b.dagCtx.lockStore
@@ -174,31 +177,45 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		})
 	}
 
+	var commonHandleKeyIdx *int
+	if b.inBuildIndexLookUp && len(pb.PrimaryColumnIds) > 0 {
+		// For index scan in index lookup, if the table has common handle, we need to
+		// return the common handle key to indexLookUpExec
+		idx := len(fieldTypes)
+		commonHandleKeyIdx = &idx
+		fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
+	}
+
 	var prevVals [][]byte
 	if b.dagReq.GetCollectRangeCounts() {
 		prevVals = make([][]byte, numIdxCols)
 	}
 	idxScan := &indexScanExec{
-		baseMPPExec:     baseMPPExec{sctx: b.sctx, fieldTypes: fieldTypes},
-		startTS:         b.dagCtx.startTS,
-		kvRanges:        ranges,
-		dbReader:        b.dbReader,
-		lockStore:       b.dagCtx.lockStore,
-		resolvedLocks:   b.dagCtx.resolvedLocks,
-		counts:          b.counts,
-		ndvs:            b.ndvs,
-		prevVals:        prevVals,
-		colInfos:        colInfos,
-		numIdxCols:      numIdxCols,
-		hdlStatus:       hdlStatus,
-		desc:            pb.Desc,
-		physTblIDColIdx: physTblIDColIdx,
-		paging:          b.paging,
+		baseMPPExec:        baseMPPExec{sctx: b.sctx, fieldTypes: fieldTypes},
+		startTS:            b.dagCtx.startTS,
+		kvRanges:           ranges,
+		dbReader:           b.dbReader,
+		lockStore:          b.dagCtx.lockStore,
+		resolvedLocks:      b.dagCtx.resolvedLocks,
+		counts:             b.counts,
+		ndvs:               b.ndvs,
+		prevVals:           prevVals,
+		colInfos:           colInfos,
+		numIdxCols:         numIdxCols,
+		hdlStatus:          hdlStatus,
+		desc:               pb.Desc,
+		physTblIDColIdx:    physTblIDColIdx,
+		commonHandleKeyIdx: commonHandleKeyIdx,
+		paging:             b.paging,
 	}
 	return idxScan, nil
 }
 
 func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExec, error) {
+	b.inBuildIndexLookUp = true
+	defer func() {
+		b.inBuildIndexLookUp = false
+	}()
 	if len(pb.Children) != 2 {
 		return nil, errors.New("IndexLookUp should have two children")
 	}
@@ -212,10 +229,6 @@ func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExe
 	}
 
 	tblScanPB := pb.Children[1].TblScan
-	if len(tblScanPB.PrimaryColumnIds) > 0 {
-		return nil, errors.New("common handle not supported")
-	}
-
 	indexScanChild, err := b.buildMPPExecutor(pb.Children[0])
 	if err != nil {
 		return nil, err
@@ -241,9 +254,10 @@ func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExe
 				},
 			},
 		},
+		keyspaceID:          b.dagCtx.keyspaceID,
 		indexHandleOffsets:  pb.IndexHandleOffsets,
 		tblScanPB:           tblScanPB,
-		isCommonHandle:      false,
+		isCommonHandle:      len(tblScanPB.PrimaryColumnIds) > 0,
 		extraReaderProvider: b.dbReader.ExtraDbReaderProvider,
 		buildTableScan: func(reader *dbreader.DBReader, ranges []kv.KeyRange) (*tableScanExec, error) {
 			copRanges := make([]*coprocessor.KeyRange, len(ranges))
@@ -654,6 +668,9 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 		dbReader:  dbReader,
 		startTS:   req.StartTs,
 		keyRanges: req.Ranges,
+	}
+	if reqCtx := req.Context; reqCtx != nil {
+		dagCtx.keyspaceID = reqCtx.KeyspaceId
 	}
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	builder := mppExecBuilder{

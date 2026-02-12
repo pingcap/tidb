@@ -319,7 +319,7 @@ CAST(IFNULL(cnull, '1') AS DATE)	CAST(IFNULL(cnotnull, '1') AS DATE)
 NULL	NULL
 explain format="plan_tree" select IFNULL(cnotnull, '1') from t1;
 id	task	access object	operator info
-Projection	root		cast(planner__core__expression_rewriter.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)->Column#4
+Projection	root		cast(planner__core__expression_rewriter.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 DROP TABLE if exists t0;
@@ -439,10 +439,10 @@ select 1 as col from tb0 where ((true not in (select 1)) not in (tb0.c0));
 col
 explain format='plan_tree' select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));
 id	task	access object	operator info
-Projection	root		1->Column#5
-└─Selection	root		ne(Column#4, planner__core__expression_rewriter.tb0.c0)
+Projection	root		1->Column
+└─Selection	root		ne(Column, planner__core__expression_rewriter.tb0.c0)
   └─HashJoin	root		CARTESIAN anti left outer semi join, left side:TableReader
-    ├─Projection(Build)	root		0->Column#9
+    ├─Projection(Build)	root		0->Column
     │ └─TableDual	root		rows:1
     └─TableReader(Probe)	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:tb0	keep order:false, stats:pseudo
