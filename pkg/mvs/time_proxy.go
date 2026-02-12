@@ -36,12 +36,8 @@ func mvsUntil(t time.Time) time.Duration {
 
 type mvsTimer = time.Timer
 
-func newRealMVSTimer(d time.Duration) *mvsTimer {
-	return time.NewTimer(d)
-}
-
 func mvsNewTimer(d time.Duration) *mvsTimer {
-	return newRealMVSTimer(d)
+	return time.NewTimer(d)
 }
 
 func mvsSleep(d time.Duration) {

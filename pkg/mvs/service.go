@@ -70,13 +70,14 @@ type MVService struct {
 }
 
 const (
-	defaultMVTaskMaxConcurrency = 10
-	defaultMVTaskTimeout        = 60 * time.Second
-	defaultMVFetchInterval      = 30 * time.Second
-	defaultMVMetricInterval     = time.Second
-	defaultMVTaskRetryBase      = 10 * time.Second
-	defaultMVTaskRetryMax       = 120 * time.Second
-	maxNextScheduleTs           = 9e18
+	defaultMVTaskMaxConcurrency      = 10
+	defaultMVTaskTimeout             = 60 * time.Second
+	defaultMVFetchInterval           = 30 * time.Second
+	defaultMVBasicInterval           = time.Second
+	defaultTiDBServerRefreshInterval = 5 * time.Second
+	defaultMVTaskRetryBase           = 10 * time.Second
+	defaultMVTaskRetryMax            = 120 * time.Second
+	maxNextScheduleTs                = 9e18
 
 	defaultServerConsistentHashReplicas = 10
 )
@@ -271,7 +272,7 @@ func (t *MVService) Run() {
 	}
 	t.executor.Run()
 	timer := mvsNewTimer(0)
-	metricTimer := mvsNewTimer(defaultMVMetricInterval)
+	metricTimer := mvsNewTimer(defaultMVBasicInterval)
 
 	defer func() {
 		timer.Stop()
@@ -280,24 +281,32 @@ func (t *MVService) Run() {
 		t.mh.reportMetrics(t)
 	}()
 
+	lastServerRefresh := time.Time{}
 	for {
-		forceFetch := false
+		ddlDirty := false
 		select {
 		case <-timer.C:
 		case <-metricTimer.C:
 			t.mh.reportMetrics(t)
-			resetTimer(metricTimer, defaultMVMetricInterval)
+			resetTimer(metricTimer, defaultMVBasicInterval)
 		case <-t.notifier.C:
 			t.notifier.clear()
-			forceFetch = t.ddlDirty.Swap(false)
+			ddlDirty = t.ddlDirty.Swap(false)
 		case <-t.ctx.Done():
 			return
 		}
 
 		now := mvsNow()
 
-		if forceFetch || t.shouldFetch(now) {
-			t.sch.refresh()
+		if now.Sub(lastServerRefresh) >= defaultTiDBServerRefreshInterval {
+			if err := t.sch.refresh(); err != nil {
+				logutil.BgLogger().Warn("refresh all TiDB server info failed", zap.Error(err))
+			}
+			lastServerRefresh = now
+		}
+
+		if ddlDirty || t.shouldFetchMVMeta(now) {
+			// if server info is stale, wait for the next refresh cycle to fetch server info
 			if err := t.fetchAllMVMeta(); err != nil {
 				// avoid tight retries on fetch failures
 				t.lastRefresh.Store(now.UnixMilli())
@@ -313,7 +322,7 @@ func (t *MVService) Run() {
 	}
 }
 
-func (t *MVService) shouldFetch(now time.Time) bool {
+func (t *MVService) shouldFetchMVMeta(now time.Time) bool {
 	last := t.lastRefresh.Load()
 	if last == 0 {
 		return true
