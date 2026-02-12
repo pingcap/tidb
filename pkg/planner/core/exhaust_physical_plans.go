@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -2720,11 +2721,12 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		return nil, false, nil
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
-	canTryMPPJoin := false
-	if len(p.Children()) == 2 {
-		hasTiFlashChildren := logicalop.GetHasTiFlash(p.Children()[0]) && logicalop.GetHasTiFlash(p.Children()[1])
-		canTryMPPJoin = util.ShouldCheckTiFlashPushDown(p.SCtx(), hasTiFlashChildren)
-	}
+	intest.Assert(len(p.Children()) == 2, "LogicalJoin should have exactly 2 children")
+	hasTiFlashChildren := logicalop.GetHasTiFlash(p.Children()[0]) && logicalop.GetHasTiFlash(p.Children()[1])
+	intest.Assert(logicalop.GetHasTiFlash(p) == hasTiFlashChildren,
+		"LogicalJoin hasTiflash should be conjunction of children hasTiflash")
+	// `hasTiflash` has been propagated in `PreparePossibleProperties` before task enumeration.
+	canTryMPPJoin := util.ShouldCheckTiFlashPushDown(p.SCtx(), logicalop.GetHasTiFlash(p))
 	// Enumerate MPP join plans only when the subtree has TiFlash path and TiFlash is enabled.
 	// This avoids spurious TiFlash pushdown warnings on pure TiKV plans.
 	if canTryMPPJoin {
