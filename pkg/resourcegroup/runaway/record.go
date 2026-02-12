@@ -158,27 +158,21 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	return builder.String(), params
 }
 
-// genInsertionDoneStmt is used to generate insertion sql for runaway watch done record.
-func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
+// genInsertSelectDoneStmt generates an INSERT ... SELECT statement that copies the watch record
+// into the done table. The SELECT ensures the insert is conditional on the watch row existing,
+// which prevents duplicate done rows under concurrent removes and optimistic transaction retries.
+func (r *QuarantineRecord) genInsertSelectDoneStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]any, 0, 11)
-	writeInsert(&builder, getRunawayWatchDoneTableName())
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
-	params = append(params, r.ID)
-	params = append(params, r.ResourceGroupName)
-	params = append(params, r.StartTime)
-	if r.EndTime.Equal(NullTime) {
-		params = append(params, nil)
-	} else {
-		params = append(params, r.EndTime)
-	}
-	params = append(params, r.Watch)
-	params = append(params, r.WatchText)
-	params = append(params, r.Source)
-	params = append(params, r.Action)
-	params = append(params, r.getSwitchGroupName())
-	params = append(params, r.ExceedCause)
+	params := make([]any, 0, 2)
+	builder.WriteString("insert into ")
+	builder.WriteString(getRunawayWatchDoneTableName())
+	builder.WriteString(" (record_id, resource_group_name, start_time, end_time, watch, watch_text, source, action, switch_group_name, rule, done_time)")
+	builder.WriteString(" SELECT id, resource_group_name, start_time, end_time, watch, watch_text, source, action, switch_group_name, rule, %?")
+	builder.WriteString(" FROM ")
+	builder.WriteString(getRunawayWatchTableName())
+	builder.WriteString(" WHERE id = %?")
 	params = append(params, time.Now().UTC())
+	params = append(params, r.ID)
 	return builder.String(), params
 }
 
@@ -352,8 +346,7 @@ func handleRunawayWatchDone(sysSessionPool util.SessionPool, record *QuarantineR
 	if err != nil {
 		return errors.Annotate(err, "get session failed")
 	}
-	sctx := se.(sessionctx.Context)
-	exec := sctx.GetSQLExecutor()
+	exec := se.(sessionctx.Context).GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
@@ -370,7 +363,11 @@ func handleRunawayWatchDone(sysSessionPool util.SessionPool, record *QuarantineR
 			return
 		}
 	}()
-	sql, params := record.genInsertionDoneStmt()
+	// Use INSERT ... SELECT so that the done record is only created if the watch row
+	// still exists. This is safe under optimistic transaction retries and concurrent
+	// QUERY WATCH REMOVE: on replay, if the watch row was already deleted, the SELECT
+	// returns nothing and no duplicate done row is inserted.
+	sql, params := record.genInsertSelectDoneStmt()
 	_, err = exec.ExecuteInternal(ctx, sql, params...)
 	if err != nil {
 		return err

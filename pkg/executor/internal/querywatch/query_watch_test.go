@@ -17,6 +17,7 @@ package querywatch_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -202,6 +203,42 @@ func TestQueryWatch(t *testing.T) {
 		}
 		return true
 	}, 10*time.Second, tryInterval, "expected quarantine error (%d), last observed: %v", mysql.ErrResourceGroupQueryRunawayQuarantine, lastObservedErr)
+}
+
+func TestConcurrentQueryWatchRemove(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Set up resource group with runaway settings.
+	tk.MustExec("alter resource group default QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
+
+	// Add a watch record (ID = 1).
+	tk.MustQuery("query watch add sql text exact to 'select 1'").Check(testkit.Rows("1"))
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch where id = 1").Check(testkit.Rows("1"))
+
+	// Concurrently remove the same watch from multiple sessions.
+	const concurrency = 5
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for range concurrency {
+		go func() {
+			defer wg.Done()
+			tkc := testkit.NewTestKit(t, store)
+			// Ignore error: concurrent removes will race; some may find the record already deleted.
+			_, _ = tkc.Exec("query watch remove 1")
+		}()
+	}
+	wg.Wait()
+
+	// The watch record should be deleted.
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch where id = 1").Check(testkit.Rows("0"))
+	// Verify: exactly 1 done record for record_id = 1 (no duplicates from concurrent removes).
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch_done where record_id = 1").Check(testkit.Rows("1"))
 }
 
 func TestQueryWatchIssue56897(t *testing.T) {

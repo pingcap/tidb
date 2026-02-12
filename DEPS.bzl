@@ -4576,13 +4576,13 @@ def go_deps():
         name = "com_github_jellydator_ttlcache_v3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/jellydator/ttlcache/v3",
-        sha256 = "75cabcc118414bc9e42cef6769fffc0c500954f2ef1988a3797aee0f4351f306",
-        strip_prefix = "github.com/jellydator/ttlcache/v3@v3.0.1",
+        sha256 = "b3f31d5c4ea68698f1de6f85dbaacb176b2fadeaa6d426a38f48f4f752f974fb",
+        strip_prefix = "github.com/jellydator/ttlcache/v3@v3.4.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jellydator/ttlcache/v3/com_github_jellydator_ttlcache_v3-v3.0.1.zip",
-            "http://ats.apps.svc/gomod/github.com/jellydator/ttlcache/v3/com_github_jellydator_ttlcache_v3-v3.0.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/jellydator/ttlcache/v3/com_github_jellydator_ttlcache_v3-v3.0.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jellydator/ttlcache/v3/com_github_jellydator_ttlcache_v3-v3.0.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jellydator/ttlcache/v3/com_github_jellydator_ttlcache_v3-v3.4.0.zip",
+            "http://ats.apps.svc/gomod/github.com/jellydator/ttlcache/v3/com_github_jellydator_ttlcache_v3-v3.4.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/jellydator/ttlcache/v3/com_github_jellydator_ttlcache_v3-v3.4.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jellydator/ttlcache/v3/com_github_jellydator_ttlcache_v3-v3.4.0.zip",
         ],
     )
     go_repository(
@@ -10913,13 +10913,13 @@ def go_deps():
         name = "org_golang_x_lint",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/lint",
-        sha256 = "4620205ccd1fd5c5ced7ccbc264217f407c53924e847f4219e48c04c7480b294",
-        strip_prefix = "golang.org/x/lint@v0.0.0-20201208152925-83fdc39ff7b5",
+        sha256 = "8bffecf110daa2ee6302f692052293b779926200327af2118e034c9c4d1aa1c2",
+        strip_prefix = "golang.org/x/lint@v0.0.0-20200302205851-738671d3881b",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/lint/org_golang_x_lint-v0.0.0-20201208152925-83fdc39ff7b5.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/lint/org_golang_x_lint-v0.0.0-20201208152925-83fdc39ff7b5.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/lint/org_golang_x_lint-v0.0.0-20201208152925-83fdc39ff7b5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/lint/org_golang_x_lint-v0.0.0-20201208152925-83fdc39ff7b5.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/lint/org_golang_x_lint-v0.0.0-20200302205851-738671d3881b.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/lint/org_golang_x_lint-v0.0.0-20200302205851-738671d3881b.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/lint/org_golang_x_lint-v0.0.0-20200302205851-738671d3881b.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/lint/org_golang_x_lint-v0.0.0-20200302205851-738671d3881b.zip",
         ],
     )
     go_repository(
