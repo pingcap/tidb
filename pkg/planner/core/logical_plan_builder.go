@@ -6012,21 +6012,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		}
 	}
 
-	// If columns in set list contains primary key columns on soft-delete tables, raise error.
-	for name := range modifyColumns {
-		for _, tn := range tableList {
-			tnW := b.resolveCtx.GetTableName(tn)
-			if tnW.DBInfo.Name.L != name.db || tn.Name.L != name.tbl || tnW.TableInfo.SoftdeleteInfo == nil {
-				continue
-			}
-			for _, colInfo := range tnW.TableInfo.Columns {
-				if colInfo.Name.L == name.col && mysql.HasPriKeyFlag(colInfo.GetFlag()) {
-					return nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
-				}
-			}
-		}
-	}
-
 	allAssignmentsAreConstant = true
 	newList = make([]*expression.Assignment, 0, p.Schema().Len())
 	tblDbMap := make(map[string]string, len(tableList))
