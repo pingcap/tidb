@@ -1028,20 +1028,137 @@ func TestGlobalStatsV3(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(` create table t (
-	a int primary key,
-	b int not null,
+	a int primary key auto_increment,
+	b int not null default 1,
 	c int,
-	d varchar(255) not null,
+	d varchar(255) not null default '',
 	e varchar(255),
-	key(a,b),
-	key(e,c),
-	key(d)
+	key idx_ab(a,b),
+	key idx_be(b,e),
+	unique key uidx_cd(c,d) global,
+	key idx_d(d),
+	unique key uidx_e(e) global,
+	key idx_ec(e,c)
 )
 partition by hash (a) partitions 7`)
-	tk.MustExec(`insert into t values (1,1,1,1,1),(2,2,1,1,1),(3,3,3,3,3),(4,4,1,1,1)`)
-	tk.MustExec(`insert into t select a + 4, b + 4, b + 4, b + 4, b + 4 from t`)
-	tk.MustExec(`insert into t select a + 8, b + 8, b + 8, b + 8, b + 8 from t`)
-	tk.MustExec(`insert into t select a + 16, b + 16, b + 16, b + 16, b + 16 from t`)
-	tk.MustExec(`insert into t select a + 32, b + 32, b + 32, b + 32, b + 32 from t`)
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`insert into t (a) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)`)
+	// increase by 10 ^ 5 rows
+	tk.MustExec(`insert into t (a) select null from t, t t2, t t3, t t4, t t5`)
+	tk.MustExec("set global tidb_merge_partition_stats_concurrency=1")
+	tk.MustExec(`analyze table t with 1 topn, 3 buckets`)
+	tk.MustQuery(`show stats_topn where table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"test t global a 0 1 1", // TODO: Remove, since useless!
+	"test t global b 0 1 100010",
+	"test t global d 0  100010",
+	"test t global idx_ab 1 (1, 1) 1", // TODO: Also useless, since contains PK!
+	"test t global idx_be 1 (1, NULL) 100010", // TODO: Should this be saved, since it includes NULL?
+	"test t global idx_d 1  100010",
+	"test t global idx_ec 1 (NULL, NULL) 100010", // TODO: Should this be saved, since it includes NULL?
+	"test t global uidx_cd 1 (NULL, ) 100010", // TODO: Should this be saved, since it includes NULL?
+	// TODO: Where is uidx_e / e ? Empty since NULL?
+	"test t p0 a 0 7 1",
+	"test t p0 b 0 1 14287",
+	"test t p0 d 0  14287",
+	"test t p0 idx_ab 1 (7, 1) 1",
+	"test t p0 idx_be 1 (1, NULL) 14287",
+	"test t p0 idx_d 1  14287",
+	"test t p0 idx_ec 1 (NULL, NULL) 14287",
+	"test t p0 uidx_cd 1 (NULL, ) 14287",
+	"test t p1 a 0 1 1",
+	"test t p1 b 0 1 14288",
+	"test t p1 d 0  14288",
+	"test t p1 idx_ab 1 (1, 1) 1",
+	"test t p1 idx_be 1 (1, NULL) 14288",
+	"test t p1 idx_d 1  14288",
+	"test t p1 idx_ec 1 (NULL, NULL) 14288",
+	"test t p1 uidx_cd 1 (NULL, ) 14288",
+	"test t p2 a 0 2 1",
+	"test t p2 b 0 1 14287",
+	"test t p2 d 0  14287",
+	"test t p2 idx_ab 1 (2, 1) 1",
+	"test t p2 idx_be 1 (1, NULL) 14287",
+	"test t p2 idx_d 1  14287",
+	"test t p2 idx_ec 1 (NULL, NULL) 14287",
+	"test t p2 uidx_cd 1 (NULL, ) 14287",
+	"test t p3 a 0 3 1",
+	"test t p3 b 0 1 14287",
+	"test t p3 d 0  14287",
+	"test t p3 idx_ab 1 (3, 1) 1",
+	"test t p3 idx_be 1 (1, NULL) 14287",
+	"test t p3 idx_d 1  14287",
+	"test t p3 idx_ec 1 (NULL, NULL) 14287",
+	"test t p3 uidx_cd 1 (NULL, ) 14287",
+	"test t p4 a 0 4 1",
+	"test t p4 b 0 1 14287",
+	"test t p4 d 0  14287",
+	"test t p4 idx_ab 1 (4, 1) 1",
+	"test t p4 idx_be 1 (1, NULL) 14287",
+	"test t p4 idx_d 1  14287",
+	"test t p4 idx_ec 1 (NULL, NULL) 14287",
+	"test t p4 uidx_cd 1 (NULL, ) 14287",
+	"test t p5 a 0 5 1",
+	"test t p5 b 0 1 14287",
+	"test t p5 d 0  14287",
+	"test t p5 idx_ab 1 (5, 1) 1",
+	"test t p5 idx_be 1 (1, NULL) 14287",
+	"test t p5 idx_d 1  14287",
+	"test t p5 idx_ec 1 (NULL, NULL) 14287",
+	"test t p5 uidx_cd 1 (NULL, ) 14287",
+	"test t p6 a 0 6 1",
+	"test t p6 b 0 1 14287",
+	"test t p6 d 0  14287",
+	"test t p6 idx_ab 1 (6, 1) 1",
+	"test t p6 idx_be 1 (1, NULL) 14287",
+	"test t p6 idx_d 1  14287",
+	"test t p6 idx_ec 1 (NULL, NULL) 14287",
+	"test t p6 uidx_cd 1 (NULL, ) 14287"))
+	tk.MustQuery(`show stats_buckets where table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"test t global a 0 0 7 2 2 9 0", // TODO: Should it not be 7 1 2 9 0 ? Or even 8 1 1 9 0 and no TopN? (Repeats should be 1)
+	"test t global a 0 1 33353 7 9 33355 0", // TODO: Repeats should be 1 here too?!?
+	"test t global a 0 2 100009 1 33355 100010 0", // Repeats is correct here!
+	"test t global idx_ab 1 0 7 1 (2, 1) (9, 1) 0",
+	"test t global idx_ab 1 1 33353 7 (9, 1) (33355, 1) 0",
+	"test t global idx_ab 1 2 100009 1 (33355, 1) (100010, 1) 0",
+	"test t p0 a 0 0 4763 1 14 33348 0",
+	"test t p0 a 0 1 9526 1 33355 66689 0",
+	"test t p0 a 0 2 14286 1 66696 100009 0",
+	"test t p0 idx_ab 1 0 4763 1 (14, 1) (33348, 1) 0",
+	"test t p0 idx_ab 1 1 9526 1 (33355, 1) (66689, 1) 0",
+	"test t p0 idx_ab 1 2 14286 1 (66696, 1) (100009, 1) 0",
+	"test t p1 a 0 0 4763 1 8 33342 0",
+	"test t p1 a 0 1 9526 1 33349 66683 0",
+	"test t p1 a 0 2 14287 1 66690 100010 0",
+	"test t p1 idx_ab 1 0 4763 1 (8, 1) (33342, 1) 0",
+	"test t p1 idx_ab 1 1 9526 1 (33349, 1) (66683, 1) 0",
+	"test t p1 idx_ab 1 2 14287 1 (66690, 1) (100010, 1) 0",
+	"test t p2 a 0 0 4763 1 9 33343 0",
+	"test t p2 a 0 1 9526 1 33350 66684 0",
+	"test t p2 a 0 2 14286 1 66691 100004 0",
+	"test t p2 idx_ab 1 0 4763 1 (9, 1) (33343, 1) 0",
+	"test t p2 idx_ab 1 1 9526 1 (33350, 1) (66684, 1) 0",
+	"test t p2 idx_ab 1 2 14286 1 (66691, 1) (100004, 1) 0",
+	"test t p3 a 0 0 4763 1 10 33344 0",
+	"test t p3 a 0 1 9526 1 33351 66685 0",
+	"test t p3 a 0 2 14286 1 66692 100005 0",
+	"test t p3 idx_ab 1 0 4763 1 (10, 1) (33344, 1) 0",
+	"test t p3 idx_ab 1 1 9526 1 (33351, 1) (66685, 1) 0",
+	"test t p3 idx_ab 1 2 14286 1 (66692, 1) (100005, 1) 0",
+	"test t p4 a 0 0 4763 1 11 33345 0",
+	"test t p4 a 0 1 9526 1 33352 66686 0",
+	"test t p4 a 0 2 14286 1 66693 100006 0",
+	"test t p4 idx_ab 1 0 4763 1 (11, 1) (33345, 1) 0",
+	"test t p4 idx_ab 1 1 9526 1 (33352, 1) (66686, 1) 0",
+	"test t p4 idx_ab 1 2 14286 1 (66693, 1) (100006, 1) 0",
+	"test t p5 a 0 0 4763 1 12 33346 0",
+	"test t p5 a 0 1 9526 1 33353 66687 0",
+	"test t p5 a 0 2 14286 1 66694 100007 0",
+	"test t p5 idx_ab 1 0 4763 1 (12, 1) (33346, 1) 0",
+	"test t p5 idx_ab 1 1 9526 1 (33353, 1) (66687, 1) 0",
+	"test t p5 idx_ab 1 2 14286 1 (66694, 1) (100007, 1) 0",
+	"test t p6 a 0 0 4763 1 13 33347 0",
+	"test t p6 a 0 1 9526 1 33354 66688 0",
+	"test t p6 a 0 2 14286 1 66695 100008 0",
+	"test t p6 idx_ab 1 0 4763 1 (13, 1) (33347, 1) 0",
+	"test t p6 idx_ab 1 1 9526 1 (33354, 1) (66688, 1) 0",
+	"test t p6 idx_ab 1 2 14286 1 (66695, 1) (100008, 1) 0"))
 }
