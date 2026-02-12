@@ -300,8 +300,10 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]
 }
 
 // makeInnerEdge splits an inner join into one edge per conjunct (eq-cond or
-// non-eq-cond). This follows the approach from CockroachDB: splitting enlarges
-// the search space by allowing each predicate to be applied independently.
+// non-eq-cond). We can enlarges the search space by allowing each predicate
+// to be applied independently.
+// For example: (R1 INNER JOIN R2 on P12) INNER JOIN R3 on P13 and P23
+// By spliting the CNF join condition of INNER JOIN, R2 and R3 can also be connected using P23.
 func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) (res []*edge, err error) {
 	if len(joinop.NAEQConditions) > 0 {
 		return nil, errors.New("NAEQConditions not supported in conflict detector yet")
