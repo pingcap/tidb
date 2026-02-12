@@ -34,3 +34,8 @@ insert into message values (1, 'new'), (2, '24h');
 update message set id = 3 where text = '24h';
 Error 1235 (42000): This version of TiDB doesn't yet support 'updating primary key column on soft-delete table'
 drop table message;
+create table message (id int, text varchar(10), primary key (id) nonclustered) softdelete retention 7 day;;
+insert into message values (1, 'new'), (2, '24h');
+update message set id = 3 where text = '24h';
+Error 1235 (42000): This version of TiDB doesn't yet support 'updating primary key column on soft-delete table'
+drop table message;

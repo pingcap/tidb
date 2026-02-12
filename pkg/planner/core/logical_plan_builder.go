@@ -5849,6 +5849,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
+	// A special check for soft-delete tables (updating primary key columns is not allowed) is also handled here.
 	virtualAssignments := make([]*ast.Assignment, 0)
 	for _, tn := range tableList {
 		tnW := b.resolveCtx.GetTableName(tn)
@@ -5857,6 +5858,20 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		}
 
 		tableInfo := tnW.TableInfo
+
+		// If columns in set list contains primary key columns on soft-delete tables, raise error.
+		if tableInfo.SoftdeleteInfo != nil {
+			for _, colInfo := range tableInfo.Columns {
+				if !mysql.HasPriKeyFlag(colInfo.GetFlag()) {
+					continue
+				}
+				columnKey := fullColumnName{tnW.DBInfo.Name.L, tn.Name.L, colInfo.Name.L}
+				if _, ok := modifyColumns[columnKey]; ok {
+					return nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
+				}
+			}
+		}
+
 		tableVal, found := b.is.TableByID(ctx, tableInfo.ID)
 		if !found {
 			return nil, nil, false, infoschema.ErrTableNotExists.FastGenByArgs(tnW.DBInfo.Name.O, tableInfo.Name.O)
@@ -5879,22 +5894,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
 				Expr:   tableVal.Cols()[i].GeneratedExpr.Clone(),
 			})
-		}
-	}
-
-	// If columns in set list contains primary key columns on soft-delete tables, raise error.
-	for name := range modifyColumns {
-		for _, tn := range tableList {
-			tnW := b.resolveCtx.GetTableName(tn)
-			if isCTE(tnW) || tnW.TableInfo.IsView() || tnW.TableInfo.IsSequence() ||
-				tnW.DBInfo.Name.L != name.db || tn.Name.L != name.tbl || tnW.TableInfo.SoftdeleteInfo == nil {
-				continue
-			}
-			for _, colInfo := range tnW.TableInfo.Columns {
-				if colInfo.Name.L == name.col && mysql.HasPriKeyFlag(colInfo.GetFlag()) {
-					return nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
-				}
-			}
 		}
 	}
 

@@ -37,3 +37,9 @@ insert into message values (1, 'new'), (2, '24h');
 -- error 1235
 update message set id = 3 where text = '24h';
 drop table message;
+
+create table message (id int, text varchar(10), primary key (id) nonclustered) softdelete retention 7 day;;
+insert into message values (1, 'new'), (2, '24h');
+-- error 1235
+update message set id = 3 where text = '24h';
+drop table message;
