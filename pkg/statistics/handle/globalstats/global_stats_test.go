@@ -938,24 +938,27 @@ func TestIssues24349(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_analyze_version=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=1")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	testIssues24349(t, testKit, store)
+	testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
+	testIssues24349Part1(t, testKit, store)
+	testIssues24349Part2(t, testKit, store)
 }
 
 func TestIssues24349WithConcurrency(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("set global tidb_merge_partition_stats_concurrency=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=1")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	defer testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
-	testIssues24349(t, testKit, store)
+	testIssues24349Part1(t, testKit, store)
+	testIssues24349Part2(t, testKit, store)
+}
+
+func TestIssues24349V2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set global tidb_merge_partition_stats_concurrency=0")
+	testIssues24349Part1(t, testKit, store)
+	testIssues24349Part2V2(t, testKit, store)
 }
 
 func TestGlobalStatsAndSQLBinding(t *testing.T) {
