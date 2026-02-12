@@ -428,6 +428,7 @@ func validateCreateMaterializedViewQuery(
 	}
 
 	groupBySet := make(map[string]struct{}, len(sel.GroupBy.Items))
+	groupByCols := make([]string, 0, len(sel.GroupBy.Items))
 	groupByNotNull := make(map[string]bool, len(sel.GroupBy.Items))
 	usedCols := make(map[string]struct{}, 8)
 
@@ -445,6 +446,7 @@ func validateCreateMaterializedViewQuery(
 		}
 		baseCol := baseColMap[colName]
 		groupBySet[colName] = struct{}{}
+		groupByCols = append(groupByCols, colName)
 		groupByNotNull[colName] = mysql.HasNotNullFlag(baseCol.GetFlag())
 		usedCols[colName] = struct{}{}
 	}
@@ -468,6 +470,7 @@ func validateCreateMaterializedViewQuery(
 
 	selectColIdx := make(map[string]int, len(sel.Fields.Fields))
 	hasCountStarOrOne := false
+	hasMinOrMax := false
 	for i, f := range sel.Fields.Fields {
 		if f.WildCard != nil {
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support wildcard select field")
@@ -521,6 +524,12 @@ func validateCreateMaterializedViewQuery(
 				if err != nil {
 					return nil, err
 				}
+				if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
+					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports SUM/MIN/MAX on NOT NULL column")
+				}
+				if expr.F == ast.AggFuncMin || expr.F == ast.AggFuncMax {
+					hasMinOrMax = true
+				}
 				usedCols[colName] = struct{}{}
 			default:
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW")
@@ -545,6 +554,10 @@ func validateCreateMaterializedViewQuery(
 			return nil, errors.Errorf("GROUP BY column %s must appear in SELECT list", colExpr.Name.Name.O)
 		}
 		groupByInfos = append(groupByInfos, mviewGroupByInfo{SelectIdx: idx, NotNull: groupByNotNull[colName]})
+	}
+
+	if hasMinOrMax && !hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo, groupByCols) {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
 	}
 
 	for colName := range usedCols {
@@ -633,6 +646,55 @@ func (*columnNameCollector) Leave(n ast.Node) (ast.Node, bool) { return n, true 
 func isCountStarOrOne(arg ast.ExprNode) bool {
 	v, ok := arg.(*driver.ValueExpr)
 	return ok && v.Kind() == types.KindInt64 && v.GetInt64() == 1
+}
+
+func hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
+	prefixLen := len(groupByCols)
+	if prefixLen == 0 {
+		return false
+	}
+	groupBySet := make(map[string]struct{}, prefixLen)
+	for _, col := range groupByCols {
+		groupBySet[col] = struct{}{}
+	}
+
+	if baseTableInfo.PKIsHandle && prefixLen == 1 {
+		if pkCol := baseTableInfo.GetPkColInfo(); pkCol != nil {
+			_, ok := groupBySet[pkCol.Name.L]
+			if ok {
+				return true
+			}
+		}
+	}
+
+	for _, idx := range baseTableInfo.Indices {
+		if idx == nil || len(idx.Columns) < prefixLen {
+			continue
+		}
+		matched := make(map[string]struct{}, prefixLen)
+		ok := true
+		for i := 0; i < prefixLen; i++ {
+			idxCol := idx.Columns[i]
+			if idxCol.Length > 0 {
+				ok = false
+				break
+			}
+			name := idxCol.Name.L
+			if _, exists := groupBySet[name]; !exists {
+				ok = false
+				break
+			}
+			if _, exists := matched[name]; exists {
+				ok = false
+				break
+			}
+			matched[name] = struct{}{}
+		}
+		if ok && len(matched) == prefixLen {
+			return true
+		}
+	}
+	return false
 }
 
 func hasMaterializedViewDependsOnBaseTable(ctx context.Context, is infoschema.InfoSchema, schema pmodel.CIStr, baseTableID int64) (bool, error) {

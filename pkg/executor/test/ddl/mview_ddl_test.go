@@ -31,7 +31,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("create table t (a int not null, b int not null)")
 
 	// Base table must have MV LOG first.
 	err := tk.ExecToErr("create materialized view mv_no_log (a, cnt) as select a, count(1) from t group by a")
@@ -81,6 +81,21 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	err = tk.ExecToErr("create materialized view mv_bad_where (a, c) as select a, count(1) from t where rand() > 0 group by a")
 	require.ErrorContains(t, err, "WHERE clause must be deterministic")
 
+	// SUM/MIN/MAX currently require NOT NULL argument columns.
+	tk.MustExec("create table t_sum_nullable (a int not null, b int)")
+	tk.MustExec("create materialized view log on t_sum_nullable (a, b) purge immediate")
+	err = tk.ExecToErr("create materialized view mv_bad_sum_nullable (a, s, c) as select a, sum(b), count(1) from t_sum_nullable group by a")
+	require.ErrorContains(t, err, "only supports SUM/MIN/MAX on NOT NULL column")
+
+	// MIN/MAX requires a base-table index whose leading columns cover all GROUP BY columns.
+	tk.MustExec("create table t_minmax_bad (a int not null, b int not null, c int not null, index idx_cab(c, a, b))")
+	tk.MustExec("create materialized view log on t_minmax_bad (a, b, c) purge immediate")
+	err = tk.ExecToErr("create materialized view mv_bad_minmax_index (a, b, minc, c1) as select a, b, min(c), count(1) from t_minmax_bad group by a, b")
+	require.ErrorContains(t, err, "requires base table index whose leading columns cover all GROUP BY columns")
+	tk.MustExec("create table t_minmax_ok (a int not null, b int not null, c int not null, index idx_bac(b, a, c))")
+	tk.MustExec("create materialized view log on t_minmax_ok (a, b, c) purge immediate")
+	tk.MustExec("create materialized view mv_minmax_ok (a, b, minc, c1) as select a, b, min(c), count(1) from t_minmax_ok group by a, b")
+
 	// SELECT clauses outside Stage-1 scope should be rejected.
 	err = tk.ExecToErr("create materialized view mv_bad_distinct (a, c) as select distinct a, count(1) from t group by a")
 	require.ErrorContains(t, err, "does not support SELECT DISTINCT")
@@ -98,7 +113,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustQuery("select a, c from mv_alias order by a").Check(testkit.Rows("1 2", "2 1"))
 
 	// MV LOG must contain all referenced columns.
-	tk.MustExec("create table t_mlog_missing (a int not null, b int)")
+	tk.MustExec("create table t_mlog_missing (a int not null, b int not null)")
 	tk.MustExec("create materialized view log on t_mlog_missing (a) purge immediate")
 	err = tk.ExecToErr("create materialized view mv_bad_mlog_cols (a, s, c) as select a, sum(b), count(1) from t_mlog_missing group by a")
 	require.ErrorContains(t, err, "does not contain column b")
@@ -119,8 +134,12 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view mv")
 	tk.MustExec("drop materialized view mv_alias")
 	tk.MustExec("drop materialized view mv_nullable")
+	tk.MustExec("drop materialized view mv_minmax_ok")
 	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop materialized view log on t_nullable")
+	tk.MustExec("drop materialized view log on t_sum_nullable")
+	tk.MustExec("drop materialized view log on t_minmax_bad")
+	tk.MustExec("drop materialized view log on t_minmax_ok")
 	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
 
 	// Reverse mapping cleared.
@@ -134,7 +153,7 @@ func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
 
@@ -161,7 +180,7 @@ func TestCreateMaterializedViewBuildContextCanceledRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
 
@@ -200,7 +219,7 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
 
@@ -262,7 +281,7 @@ func TestCreateMaterializedViewRollbackIgnoreMissingRefreshInfoTable(t *testing.
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
 
@@ -291,7 +310,7 @@ func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
 
@@ -321,7 +340,7 @@ func TestCreateMaterializedViewRetryAfterUpsertFailure(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
 
@@ -344,7 +363,7 @@ func TestCreateTableLikeShouldNotCarryMaterializedViewMetadata(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
 	tk.MustExec("create materialized view mv_src (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
