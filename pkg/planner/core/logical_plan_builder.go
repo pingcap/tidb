@@ -5880,12 +5880,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				})
 			}
 			// If columns in set list contains primary key columns on soft-delete tables, raise error.
-			// It's because if updating PK meets a conflict row, we need to delete the conflict row silently that row
-			// is soft-deleted. And this behavior is not implemented yet. So we just forbid this kind of update now.
-			if tableInfo.SoftdeleteInfo != nil && mysql.HasPriKeyFlag(colInfo.GetFlag()) {
-				if ok {
-					return nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
-				}
+			// It's because if updating PK meets a conflict row, we need to delete the conflict row if that row is
+			// already soft-deleted. And this behavior is not implemented yet. So we forbid this kind of update now.
+			if tableInfo.SoftdeleteInfo != nil && mysql.HasPriKeyFlag(colInfo.GetFlag()) && ok {
+				return nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
 			}
 		}
 	}
