@@ -132,6 +132,13 @@ type DataSource struct {
 	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
 	// index pruning early in the planning phase - which is an approximate heuristic.
 	InterestingColumns []*expression.Column
+
+	// CrossSkylineCache stores skyline pruning candidates from a sort-property call for
+	// cross-comparison with subsequent empty-property calls. This prevents non-ordered plans
+	// from being selected purely on cost when the cost may be underestimated and a sort-ordered
+	// plan exists that dominates on other skyline dimensions (match, risk, scan).
+	// The concrete type is *skylineCrossCache from the planner/core package.
+	CrossSkylineCache any
 }
 
 // Init initializes DataSource.

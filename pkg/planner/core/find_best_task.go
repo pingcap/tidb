@@ -934,6 +934,17 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	if rightDidNotLose && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
+	// match property result + limit is a winner
+	if totalSum > 0 && matchResult > 0 && prop.ExpectedCnt > 0 &&
+		lhs.path.CountAfterAccess <= prop.ExpectedCnt &&
+		rhs.path.CountAfterAccess+rhs.path.MaxCountAfterAccess > prop.ExpectedCnt {
+		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
+	}
+	if totalSum < 0 && matchResult < 0 && prop.ExpectedCnt > 0 &&
+		rhs.path.CountAfterAccess <= prop.ExpectedCnt &&
+		lhs.path.CountAfterAccess+lhs.path.MaxCountAfterAccess > prop.ExpectedCnt {
+		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+	}
 	return 0, false // No winner (0). Do not return the pseudo result
 }
 
@@ -1511,6 +1522,77 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	return candidate
 }
 
+// skylineCrossCache stores skyline pruning candidates from a sort-property call for
+// cross-comparison with subsequent empty-property calls. When the optimizer evaluates
+// both ordered (Limit) and unordered (TopN) plans for the same DataSource, this cache
+// enables cross-skyline pruning: candidates from the empty-property call that would be
+// dominated in the sort-aware skyline are pruned, preventing non-ordered plans from
+// winning purely on underestimated cost.
+type skylineCrossCache struct {
+	candidates []*candidatePath
+	sortProp   *property.PhysicalProperty
+}
+
+// crossSkylinePrune compares candidates from an empty-property skyline call against
+// cached candidates from a sort-property call. For each current candidate, matchPropResult
+// is recomputed using the cached sort property, then compareCandidates is run against
+// each cached candidate. If any cached candidate dominates the current one (considering
+// the sort match dimension), the current candidate is pruned.
+//
+// This addresses a fundamental issue in the optimizer: when skylinePruning runs with an
+// empty property, matchResult is always 0, so a non-ordered index can dominate an
+// ordered index purely on access conditions. The subsequent cost comparison between
+// the TopN task (using the non-ordered index) and the Limit task (using the ordered
+// index) is purely cost-based with no risk protection. Cross-pruning ensures that
+// candidates which are dominated in a sort-aware comparison don't produce tasks that
+// win on potentially underestimated cost.
+func crossSkylinePrune(ds *logicalop.DataSource, currentCandidates []*candidatePath, cache *skylineCrossCache) []*candidatePath {
+	if cache == nil || len(cache.candidates) == 0 || len(currentCandidates) == 0 {
+		return currentCandidates
+	}
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
+	result := make([]*candidatePath, 0, len(currentCandidates))
+	for _, current := range currentCandidates {
+		if current.path.StoreType == kv.TiFlash {
+			result = append(result, current)
+			continue
+		}
+		// Index merge paths are handled separately and should not be cross-pruned.
+		if current.path.PartialIndexPaths != nil || len(current.path.PartialAlternativeIndexPaths) > 0 {
+			result = append(result, current)
+			continue
+		}
+		// Create a shallow copy with matchPropResult recomputed for the sort property,
+		// so that compareCandidates can use matchResult as a real discriminating dimension.
+		recomputed := *current
+		recomputed.matchPropResult = matchProperty(ds, current.path, cache.sortProp)
+
+		pruned := false
+		for _, cached := range cache.candidates {
+			if cached.path.StoreType == kv.TiFlash {
+				continue
+			}
+			if cached.path.PartialIndexPaths != nil || len(cached.path.PartialAlternativeIndexPaths) > 0 {
+				continue
+			}
+			cmpResult, _ := compareCandidates(ds.SCtx(), ds.StatisticTable, cache.sortProp, cached, &recomputed, preferRange)
+			if cmpResult == 1 {
+				// Cached sort-aware candidate dominates current candidate
+				pruned = true
+				break
+			}
+		}
+		if !pruned {
+			result = append(result, current)
+		}
+	}
+	if len(result) == 0 {
+		// Safety: never prune everything — fall back to the original set.
+		return currentCandidates
+	}
+	return result
+}
+
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
 func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) []*candidatePath {
@@ -1888,6 +1970,25 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 
 	t = base.InvalidTask
 	candidates := skylinePruning(ds, prop)
+
+	// Cross-skyline pruning: when a sort-property skyline has already been computed for
+	// this DataSource, use it to cross-prune the current empty-property candidates.
+	// This prevents a non-ordered candidate from surviving the empty-property skyline
+	// (where matchResult is dead) and producing a task that beats an ordered plan on
+	// potentially underestimated cost.
+	if prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil {
+		if cache, ok := ds.CrossSkylineCache.(*skylineCrossCache); ok {
+			candidates = crossSkylinePrune(ds, candidates, cache)
+		}
+	}
+	// Cache sort-aware candidates for future cross-pruning by empty-property calls.
+	if !prop.IsSortItemEmpty() && prop.PartialOrderInfo == nil {
+		ds.CrossSkylineCache = &skylineCrossCache{
+			candidates: candidates,
+			sortProp:   prop.CloneEssentialFields(),
+		}
+	}
+
 	pruningInfo := getPruningInfo(ds, candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.Invalid() && pruningInfo != "" {

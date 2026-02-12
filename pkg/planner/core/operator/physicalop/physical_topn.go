@@ -59,7 +59,10 @@ func ExhaustPhysicalPlans4LogicalTopN(lt *logicalop.LogicalTopN, prop *property.
 		// so we can support preferring a specific LIMIT or TopN within one slice.
 		// For example, among all LIMIT tasks, we prefer the one pushed down to TiKV.
 		// Then we compare the preferred task from each slice by their actual cost.
-		return [][]base.PhysicalPlan{getPhysTopN(lt, prop), getPhysLimits(lt, prop)}, true, nil
+		// PhysicalLimit (sorted) is enumerated before PhysicalTopN (unsorted) so that
+		// the DataSource's sort-aware skyline candidates are cached before the empty-
+		// property call, enabling cross-skyline pruning of dominated candidates.
+		return [][]base.PhysicalPlan{getPhysLimits(lt, prop), getPhysTopN(lt, prop)}, true, nil
 	}
 	return nil, true, nil
 }
