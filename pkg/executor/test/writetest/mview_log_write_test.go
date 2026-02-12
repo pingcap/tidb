@@ -118,6 +118,68 @@ func TestMLogInsert(t *testing.T) {
 		"3 30 300 I 1",
 		"4 40 400 I 1",
 	))
+
+	// Partial-column insert with DEFAULT value.
+	tk.MustExec("drop table if exists `$mlog$t`")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int, c int default 99)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+	tk.MustExec("insert into t (a, b) values (5, 50)")
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"5 50 99 I 1",
+	))
+}
+
+func TestMLogInsertSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table src (a int primary key, b int, c int)")
+	tk.MustExec("create table t (a int primary key, b int, c int)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+
+	// (a) Basic INSERT ... SELECT with no conflicts — all rows logged as I.
+	tk.MustExec("insert into src values (1,10,100), (2,20,200)")
+	tk.MustExec("insert into t select * from src")
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a",
+	).Check(testkit.Rows(
+		"1 10 100 I 1",
+		"2 20 200 I 1",
+	))
+
+	// (b) INSERT IGNORE ... SELECT — conflicting rows are skipped.
+	tk.MustExec("delete from `$mlog$t`")
+	tk.MustExec("delete from src")
+	tk.MustExec("insert into src values (1,11,111), (3,30,300)")
+	tk.MustExec("insert ignore into t select * from src")
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("1 10 100", "2 20 200", "3 30 300"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"3 30 300 I 1",
+	))
+
+	// (c) INSERT ... SELECT ... ON DUPLICATE KEY UPDATE — conflicting row updated, new row inserted.
+	tk.MustExec("delete from `$mlog$t`")
+	tk.MustExec("delete from src")
+	tk.MustExec("insert into src values (1,11,111), (4,40,400)")
+	tk.MustExec("insert into t select * from src on duplicate key update b=values(b), c=values(c)")
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("1 11 111", "2 20 200", "3 30 300", "4 40 400"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 100 U -1",
+		"1 11 111 U 1",
+		"4 40 400 I 1",
+	))
 }
 
 func TestMLogUpdate(t *testing.T) {
@@ -219,6 +281,74 @@ func TestMLogReplaceIdenticalRow(t *testing.T) {
 	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
 }
 
+func TestMLogReplacePKConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 100)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	// PK-only conflict: old row removed, new row added → U -1, U 1.
+	tk.MustExec("replace into t values (1, 200)")
+
+	tk.MustQuery("select a, b from t order by a").Check(
+		testkit.Rows("1 200"),
+	)
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 100 U -1",
+		"1 200 U 1",
+	))
+}
+
+func TestMLogReplaceUKConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int primary key, b int unique, c int)")
+	tk.MustExec("insert into t values (1, 10, 100)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+
+	// UK-only conflict (no PK conflict): old row (1,10,100) removed, new row (99,10,200) added.
+	tk.MustExec("replace into t values (99, 10, 200)")
+
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("99 10 200"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 100 U -1",
+		"99 10 200 U 1",
+	))
+}
+
+func TestMLogReplaceNoConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	// Multi-row REPLACE with no conflicts → all logged as I 1.
+	tk.MustExec("replace into t values (1, 10), (2, 20)")
+
+	tk.MustQuery("select a, b from t order by a").Check(
+		testkit.Rows("1 10", "2 20"),
+	)
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a",
+	).Check(testkit.Rows(
+		"1 10 I 1",
+		"2 20 I 1",
+	))
+}
+
 func TestMLogReplacePKAndUKConflict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -248,6 +378,32 @@ func TestMLogReplacePKAndUKConflict(t *testing.T) {
 		"1 20 999 U 1",
 		"2 20 200 U -1",
 		"2 30 100 I 1",
+	))
+}
+
+func TestMLogReplaceSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table src (a int primary key, b int)")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	// REPLACE ... SELECT: row (1,...) conflicts on PK → U; row (2,...) is new → I.
+	tk.MustExec("insert into src values (1, 11), (2, 20)")
+	tk.MustExec("replace into t select * from src")
+
+	tk.MustQuery("select a, b from t order by a").Check(
+		testkit.Rows("1 11", "2 20"),
+	)
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 U -1",
+		"1 11 U 1",
+		"2 20 I 1",
 	))
 }
 
@@ -343,6 +499,23 @@ func TestMLogMultiRowIODKU(t *testing.T) {
 	))
 }
 
+func TestMLogIODKUNoOp(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	// IODKU hits a duplicate key but the update is a no-op (b = b, no column touched).
+	// Because no tracked column actually changes, mlog should be empty.
+	tk.MustExec("insert into t values (1, 10) on duplicate key update b = b")
+
+	tk.MustQuery("select a, b from t").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+}
+
 func TestMLogIODKUPKAndUKConflictDiffRows(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -375,6 +548,29 @@ func setLoadDataReader(tk *testkit.TestKit, data string) {
 		return mydump.NewStringReader(data), nil
 	}
 	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+}
+
+func TestMLogLoadData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int primary key, b int, c int)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+
+	// Basic LOAD DATA with no conflicts — all rows logged as I.
+	setLoadDataReader(tk, "1,10,100\n2,20,200\n")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table t fields terminated by ',' (a, b, c)")
+
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("1 10 100", "2 20 200"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a",
+	).Check(testkit.Rows(
+		"1 10 100 I 1",
+		"2 20 200 I 1",
+	))
 }
 
 func TestMLogLoadDataIgnore(t *testing.T) {
@@ -410,12 +606,18 @@ func TestMLogLoadDataReplacePKAndUKConflict(t *testing.T) {
 	tk.MustExec("insert into t values (1,10,100), (2,20,200)")
 	tk.MustExec("create materialized view log on t (a, b, c)")
 
-	setLoadDataReader(tk, "1,20,999\n")
+	// The first row conflicts with (1,10,100) on PK and with (2,20,200) on unique index.
+	// The second row is new and should be inserted as is, even though its primary key value
+	// conflicts with the old row that the first row removes.
+	setLoadDataReader(tk, "1,20,999\n2,30,100\n")
 
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' replace into table t fields terminated by ',' (a, b, c)")
 
 	tk.MustQuery("select a, b, c from t order by a").Check(
-		testkit.Rows("1 20 999"),
+		testkit.Rows(
+			"1 20 999",
+			"2 30 100",
+		),
 	)
 	tk.MustQuery(
 		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
@@ -423,6 +625,7 @@ func TestMLogLoadDataReplacePKAndUKConflict(t *testing.T) {
 		"1 10 100 U -1",
 		"1 20 999 U 1",
 		"2 20 200 U -1",
+		"2 30 100 I 1",
 	))
 }
 
@@ -845,6 +1048,25 @@ func TestMLogAutoIncrement(t *testing.T) {
 	).Check(testkit.Rows(
 		"1 10 D -1",
 	))
+
+	// REPLACE with auto-increment PK conflict.
+	tk.MustExec("delete from `$mlog$t`")
+	tk.MustExec("replace into t values (2, 21)")
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"2 20 U -1",
+		"2 21 U 1",
+	))
+
+	// REPLACE with new auto-increment allocation.
+	tk.MustExec("delete from `$mlog$t`")
+	tk.MustExec("replace into t (b) values (30)")
+	tk.MustQuery(
+		"select b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"30 I 1",
+	))
 }
 
 func TestMLogPartitionedTableNotSupported(t *testing.T) {
@@ -862,6 +1084,28 @@ func TestMLogPartitionedTableNotSupported(t *testing.T) {
 	tk.MustExec("create materialized view log on t (a, b)")
 
 	tk.MustGetErrCode("insert into t values (1,100)", mysql.ErrNotSupportedYet)
+}
+
+func TestMLogTransactionRollback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	// BEGIN; INSERT; verify mlog has rows; ROLLBACK; mlog should be empty.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"1 10 I 1",
+	))
+	tk.MustExec("rollback")
+
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
 }
 
 func TestMLogImportIntoNotSupported(t *testing.T) {
