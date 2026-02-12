@@ -341,10 +341,10 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...*base
 			copy(result[len(result)-1], path.IdxCols[i+1:])
 		}
 	}
-	if _, ok := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiFlash]; ok {
-		hasTiFlashReplica := ds.HasTiflash()
-		ds.hasTiflash = hasTiFlashReplica && ds.SCtx().GetSessionVars().IsMPPAllowed()
-	}
+	_, tiflashInIsolationRead := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiFlash]
+	preferTiKVOnly := ds.PreferStoreType&h.PreferTiKV != 0 && ds.PreferStoreType&h.PreferTiFlash == 0
+	hasTiFlashReplica := ds.HasTiflash()
+	ds.hasTiflash = tiflashInIsolationRead && !preferTiKVOnly && hasTiFlashReplica && ds.SCtx().GetSessionVars().IsMPPAllowed()
 	return &base.PossiblePropertiesInfo{
 		Order:      result,
 		HasTiflash: ds.hasTiflash,
