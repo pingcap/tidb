@@ -1408,7 +1408,14 @@ func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
 		}
 	}
 	if len(handleOffset) == 0 {
-		handleOffset = []int{numColsWithoutPid - 1}
+		// In version-aware TiCI lookup, the last output column is `_tidb_mvcc_version`.
+		// When handleCols is empty (e.g. not keep-order int handle path), use the
+		// column right before version as the handle column.
+		if w.idxLookup.isVersionAware {
+			handleOffset = []int{numColsWithoutPid - 2}
+		} else {
+			handleOffset = []int{numColsWithoutPid - 1}
+		}
 	}
 	return handleOffset, nil
 }
