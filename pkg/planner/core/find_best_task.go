@@ -1660,6 +1660,15 @@ func crossSkylinePrune(ds *logicalop.DataSource, currentCandidates []*candidateP
 			recomputed := *current
 			recomputed.matchPropResult = matchPropertyReadOnly(ds, current.path, entry.sortProp)
 
+			// If the current candidate is a table scan that doesn't match the cached
+			// sort property (keep order:false), don't let cross-pruning eliminate it.
+			// Table scans have sequential I/O advantages over index scans, and when
+			// both would run as keep order:false, the sort-match dimension from the
+			// cached entry should not give the index an unfair advantage.
+			if current.path.IsTablePath() && !recomputed.matchPropResult.Matched() {
+				continue
+			}
+
 			for _, cached := range entry.candidates {
 				if cached.path.StoreType == kv.TiFlash {
 					continue
