@@ -47,9 +47,20 @@ const (
 
 func validateMLogMetaColumn(mlogMeta *model.TableInfo) error {
 	cols := mlogMeta.Columns
-	expectedLen := len(mlogMeta.MaterializedViewLog.Columns) + 2
+	trackedCols := mlogMeta.MaterializedViewLog.Columns
+	expectedLen := len(trackedCols) + 2
 	if len(cols) != expectedLen {
 		return errors.Errorf("invalid mlog meta columns, expect %d, got %d", expectedLen, len(cols))
+	}
+	for i, trackedCol := range trackedCols {
+		if cols[i].Name.L != trackedCol.L {
+			return errors.Errorf(
+				"invalid mlog tracked columns order at position %d, expect %s, got %s",
+				i,
+				trackedCol.O,
+				cols[i].Name.O,
+			)
+		}
 	}
 
 	if cols[len(cols)-2].Name.L != strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) ||
