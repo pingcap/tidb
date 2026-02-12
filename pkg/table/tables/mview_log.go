@@ -161,16 +161,21 @@ func WrapTableWithMaterializedViewLog(
 // It intentionally keeps a minimal surface area: only DML methods are overridden; other methods
 // are promoted from the embedded base `table.Table`.
 type mlogTable struct {
+	// The base table to mutate. All non-DML methods are promoted to this embedded field.
 	table.Table
 
+	// The materialized view log table to write to.
+	// It is guaranteed to have the expected schema validated at wrap time.
 	mlog table.Table
+
 	// sourceStmt records the original statement kind at wrap time.
 	// It is mapped to row-level `_MLOG$_DML_TYPE` (I/U/D) per operation.
 	sourceStmt MLogSourceStmt
 
 	// Base table column offsets recorded in mlog (user-specified columns).
 	trackedBaseOffsets []int
-	// removedConflict marks that RemoveRecord happened under INSERT/REPLACE/LOAD DATA source statement.
+
+	// Marks that RemoveRecord happened under INSERT/REPLACE/LOAD DATA source statement.
 	// The next AddRecord should be classified as logical update (`U`) rather than insert (`I`).
 	removedConflict bool
 }
