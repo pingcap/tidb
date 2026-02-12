@@ -132,7 +132,7 @@ func TestTimeProxyMockModuleTimer(t *testing.T) {
 	module.Advance(time.Second)
 	_ = waitValueNoTime(t, timer.C, 10000)
 
-	timer.Reset(3 * time.Second)
+	require.False(t, timer.Reset(3*time.Second))
 	module.Advance(2 * time.Second)
 	select {
 	case <-timer.C:
@@ -143,6 +143,8 @@ func TestTimeProxyMockModuleTimer(t *testing.T) {
 	module.Advance(time.Second)
 	_ = waitValueNoTime(t, timer.C, 10000)
 
+	require.False(t, timer.Stop())
+	require.False(t, timer.Reset(5*time.Second))
 	require.True(t, timer.Reset(5*time.Second))
 	require.True(t, timer.Stop())
 	module.Advance(10 * time.Second)
@@ -151,4 +153,22 @@ func TestTimeProxyMockModuleTimer(t *testing.T) {
 		t.Fatal("timer should not fire after stop")
 	default:
 	}
+}
+
+func TestTimeProxyPanicWhenModuleNotInstalled(t *testing.T) {
+	prev := activeMockTimeModule.Load()
+	activeMockTimeModule.Store(nil)
+	t.Cleanup(func() {
+		activeMockTimeModule.Store(prev)
+	})
+
+	require.PanicsWithValue(t, "mock time module is not installed", func() {
+		_ = mvsNow()
+	})
+}
+
+func TestTimeProxyInstallPanicWhenModuleNil(t *testing.T) {
+	require.PanicsWithValue(t, "mock time module is nil", func() {
+		_ = InstallMockTimeModuleForTest(nil)
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -113,6 +114,11 @@ type mockMVServiceHelper struct {
 
 	lastRefreshID string
 	lastPurgeID   string
+
+	metricsMu              sync.Mutex
+	taskDurationCounts     map[string]int
+	metaFetchDurationCount map[string]int
+	runEventCounts         map[string]int
 }
 
 func (m *mockMVServiceHelper) RefreshMV(_ context.Context, _ basic.SessionPool, mvID string) (nextRefresh time.Time, err error) {
@@ -143,13 +149,67 @@ func (m *mockMVServiceHelper) fetchAllTiDBMViews(context.Context, basic.SessionP
 
 func (*mockMVServiceHelper) reportMetrics(*MVService) {}
 
+func (m *mockMVServiceHelper) observeTaskDuration(taskType, result string, duration time.Duration) {
+	if duration < 0 {
+		return
+	}
+	m.metricsMu.Lock()
+	if m.taskDurationCounts == nil {
+		m.taskDurationCounts = make(map[string]int)
+	}
+	m.taskDurationCounts[taskType+"/"+result]++
+	m.metricsMu.Unlock()
+}
+
+func (m *mockMVServiceHelper) observeFetchDuration(fetchType, result string, duration time.Duration) {
+	if duration < 0 {
+		return
+	}
+	m.metricsMu.Lock()
+	if m.metaFetchDurationCount == nil {
+		m.metaFetchDurationCount = make(map[string]int)
+	}
+	m.metaFetchDurationCount[fetchType+"/"+result]++
+	m.metricsMu.Unlock()
+}
+
+func (m *mockMVServiceHelper) taskDurationCount(taskType, result string) int {
+	m.metricsMu.Lock()
+	defer m.metricsMu.Unlock()
+	return m.taskDurationCounts[taskType+"/"+result]
+}
+
+func (m *mockMVServiceHelper) fetchDurationCount(fetchType, result string) int {
+	m.metricsMu.Lock()
+	defer m.metricsMu.Unlock()
+	return m.metaFetchDurationCount[fetchType+"/"+result]
+}
+
+func (m *mockMVServiceHelper) observeRunEvent(eventType string) {
+	if eventType == "" {
+		return
+	}
+	m.metricsMu.Lock()
+	if m.runEventCounts == nil {
+		m.runEventCounts = make(map[string]int)
+	}
+	m.runEventCounts[eventType]++
+	m.metricsMu.Unlock()
+}
+
+func (m *mockMVServiceHelper) runEventCount(eventType string) int {
+	m.metricsMu.Lock()
+	defer m.metricsMu.Unlock()
+	return m.runEventCounts[eventType]
+}
+
 func TestMVServiceDefaultTaskHandler(t *testing.T) {
 	installMockTimeForTest(t)
 	helper := &mockMVServiceHelper{
 		refreshErr: ErrMVRefreshHandlerNotRegistered,
 		purgeErr:   ErrMVLogPurgeHandlerNotRegistered,
 	}
-	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, helper)
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 
 	_, err := svc.mh.RefreshMV(context.Background(), mockSessionPool{}, "mv-1")
 	require.ErrorIs(t, err, ErrMVRefreshHandlerNotRegistered)
@@ -166,7 +226,7 @@ func TestMVServiceUseInjectedTaskHandler(t *testing.T) {
 		refreshNext: nextRefresh,
 		purgeNext:   nextPurge,
 	}
-	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, helper)
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 
 	gotNextRefresh, err := svc.mh.RefreshMV(context.Background(), mockSessionPool{}, "mv-2")
 	require.NoError(t, err)
@@ -188,7 +248,7 @@ func TestMVServiceNotifyDDLChangeTriggersFetch(t *testing.T) {
 		fetchLogs:  map[string]*mvLog{},
 		fetchViews: map[string]*mv{},
 	}
-	svc := NewMVJobsManager(ctx, mockSessionPool{}, helper)
+	svc := NewMVService(ctx, mockSessionPool{}, helper, DefaultMVServiceConfig())
 	svc.lastRefresh.Store(mvsNow().UnixMilli())
 
 	done := make(chan struct{})
@@ -208,12 +268,85 @@ func TestMVServiceNotifyDDLChangeTriggersFetch(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return helper.fetchLogsCalls.Load() > 0 && helper.fetchViewCalls.Load() > 0
 	}, time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return helper.runEventCount(mvRunEventFetchByDDL) > 0 &&
+			helper.runEventCount(mvRunEventFetchMLogOK) > 0 &&
+			helper.runEventCount(mvRunEventFetchMViewsOK) > 0
+	}, time.Second, 20*time.Millisecond)
+}
+
+func TestMVServiceFetchAllMVMetaReportsDuration(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		fetchLogs:  map[string]*mvLog{},
+		fetchViews: map[string]*mv{},
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+
+	require.NoError(t, svc.fetchAllMVMeta())
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMLogPurge, mvFetchDurationResultOK))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMViews, mvFetchDurationResultOK))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMLogPurge, mvFetchDurationResultErr))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMViews, mvFetchDurationResultErr))
+}
+
+func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		fetchLogs: map[string]*mvLog{
+			"new-mlog": {
+				ID:        "new-mlog",
+				nextPurge: mvsNow().Add(time.Minute),
+				orderTs:   mvsNow().Add(time.Minute).UnixMilli(),
+			},
+		},
+		fetchViewsErr: errors.New("fetch views failed"),
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+
+	oldMLog := &mvLog{
+		ID:        "old-mlog",
+		nextPurge: mvsNow().Add(2 * time.Minute),
+	}
+	oldMLog.orderTs = oldMLog.nextPurge.UnixMilli()
+	require.NoError(t, svc.buildMLogPurgeTasks(map[string]*mvLog{oldMLog.ID: oldMLog}))
+
+	oldMV := &mv{
+		ID:          "old-mv",
+		nextRefresh: mvsNow().Add(3 * time.Minute),
+	}
+	oldMV.orderTs = oldMV.nextRefresh.UnixMilli()
+	require.NoError(t, svc.buildMVRefreshTasks(map[string]*mv{oldMV.ID: oldMV}))
+
+	err := svc.fetchAllMVMeta()
+	require.Error(t, err)
+	require.Equal(t, int64(0), svc.lastRefresh.Load())
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMLogPurge, mvFetchDurationResultOK))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMViews, mvFetchDurationResultErr))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMLogPurge, mvFetchDurationResultErr))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMViews, mvFetchDurationResultOK))
+	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMLogOK))
+	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMViewsError))
+	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMLogError))
+	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMViewsOK))
+
+	svc.mvLogPurgeMu.Lock()
+	_, hasOldMLog := svc.mvLogPurgeMu.pending["old-mlog"]
+	_, hasNewMLog := svc.mvLogPurgeMu.pending["new-mlog"]
+	svc.mvLogPurgeMu.Unlock()
+	require.True(t, hasOldMLog)
+	require.False(t, hasNewMLog)
+
+	svc.mvRefreshMu.Lock()
+	_, hasOldMV := svc.mvRefreshMu.pending["old-mv"]
+	svc.mvRefreshMu.Unlock()
+	require.True(t, hasOldMV)
 }
 
 func TestMVServicePurgeMVLogRemoveOnDeleted(t *testing.T) {
 	installMockTimeForTest(t)
 	helper := &mockMVServiceHelper{}
-	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, helper)
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 	svc.executor.Run()
 	defer svc.executor.Close()
 
@@ -246,7 +379,7 @@ func TestMVServicePurgeMVLogSuccessUpdatesNextPurgeAndOrderTS(t *testing.T) {
 	helper := &mockMVServiceHelper{
 		purgeNext: nextPurge,
 	}
-	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, helper)
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 	svc.executor.Run()
 	defer svc.executor.Close()
 
@@ -274,7 +407,7 @@ func TestMVServicePurgeMVLogSuccessUpdatesNextPurgeAndOrderTS(t *testing.T) {
 func TestMVServiceRefreshMVRemoveOnZeroNextRefresh(t *testing.T) {
 	installMockTimeForTest(t)
 	helper := &mockMVServiceHelper{}
-	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, helper)
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 	svc.executor.Run()
 	defer svc.executor.Close()
 
@@ -307,7 +440,7 @@ func TestMVServiceRefreshMVSuccessUpdatesNextRefreshAndOrderTS(t *testing.T) {
 	helper := &mockMVServiceHelper{
 		refreshNext: nextRefresh,
 	}
-	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, helper)
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 	svc.executor.Run()
 	defer svc.executor.Close()
 
@@ -332,6 +465,74 @@ func TestMVServiceRefreshMVSuccessUpdatesNextRefreshAndOrderTS(t *testing.T) {
 	svc.mvRefreshMu.Unlock()
 }
 
+func TestMVServiceTaskExecutionReportsDuration(t *testing.T) {
+	installMockTimeForTest(t)
+	nextRefresh := mvsNow().Add(time.Minute).Round(0)
+	nextPurge := mvsNow().Add(2 * time.Minute).Round(0)
+	helper := &mockMVServiceHelper{
+		refreshNext: nextRefresh,
+		purgeNext:   nextPurge,
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	svc.executor.Run()
+	defer svc.executor.Close()
+
+	m := &mv{
+		ID:          "mv-duration-1",
+		nextRefresh: mvsNow().Add(-time.Minute).Round(0),
+	}
+	l := &mvLog{
+		ID:        "mlog-duration-1",
+		nextPurge: mvsNow().Add(-time.Minute).Round(0),
+	}
+	require.NoError(t, svc.buildMVRefreshTasks(map[string]*mv{m.ID: m}))
+	require.NoError(t, svc.buildMLogPurgeTasks(map[string]*mvLog{l.ID: l}))
+
+	svc.refreshMV([]*mv{m})
+	svc.purgeMVLog([]*mvLog{l})
+
+	require.Eventually(t, func() bool {
+		return svc.executor.metrics.completedCount.Load() == 2
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultOK))
+	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultOK))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultErr))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultErr))
+}
+
+func TestMVServiceTaskExecutionReportsDurationFailed(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		refreshErr: errors.New("refresh failed"),
+		purgeErr:   errors.New("purge failed"),
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	svc.executor.Run()
+	defer svc.executor.Close()
+
+	m := &mv{
+		ID:          "mv-duration-failed-1",
+		nextRefresh: mvsNow().Add(-time.Minute).Round(0),
+	}
+	l := &mvLog{
+		ID:        "mlog-duration-failed-1",
+		nextPurge: mvsNow().Add(-time.Minute).Round(0),
+	}
+	require.NoError(t, svc.buildMVRefreshTasks(map[string]*mv{m.ID: m}))
+	require.NoError(t, svc.buildMLogPurgeTasks(map[string]*mvLog{l.ID: l}))
+
+	svc.refreshMV([]*mv{m})
+	svc.purgeMVLog([]*mvLog{l})
+
+	require.Eventually(t, func() bool {
+		return svc.executor.metrics.completedCount.Load() == 2
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultErr))
+	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultErr))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultOK))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultOK))
+}
+
 func TestRegisterMVSBootstrapAndDDLHandler(t *testing.T) {
 	installMockTimeForTest(t)
 	called := atomic.Int32{}
@@ -348,7 +549,7 @@ func TestRegisterMVSBootstrapAndDDLHandler(t *testing.T) {
 	require.NotNil(t, svc)
 	require.True(t, svc.ddlDirty.Load())
 	require.True(t, svc.notifier.isAwake())
-	require.Equal(t, notifier.MVJobsHandlerID, gotHandlerID)
+	require.Equal(t, notifier.MVServiceHandlerID, gotHandlerID)
 	require.NotNil(t, gotHandler)
 
 	createTable := notifier.NewCreateTableEvent(&meta.TableInfo{ID: 1})

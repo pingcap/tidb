@@ -158,7 +158,8 @@ func (m *MockTimeModule) fireDueWaitersLocked() {
 
 func (m *MockTimeModule) newTimer(d time.Duration) *mvsTimer {
 	state := &moduleTimerState{
-		ch: make(chan time.Time, 1),
+		ch:      make(chan time.Time, 1),
+		stopped: true,
 	}
 	t := &mvsTimer{
 		C: state.ch,
@@ -195,11 +196,12 @@ func (m *MockTimeModule) resetTimer(state *moduleTimerState, d time.Duration) bo
 		firedAt := <-afterCh
 
 		state.mu.Lock()
+		defer state.mu.Unlock()
 		if state.stopped || state.seq != seq {
-			state.mu.Unlock()
 			return
 		}
-		state.mu.Unlock()
+		// Mark timer inactive once it expires, consistent with time.Timer semantics.
+		state.stopped = true
 
 		select {
 		case ch <- firedAt:
@@ -214,42 +216,40 @@ var activeMockTimeModule atomic.Pointer[MockTimeModule]
 
 // InstallMockTimeModuleForTest installs module into time proxy and returns restore func.
 func InstallMockTimeModuleForTest(module *MockTimeModule) (restore func()) {
+	if module == nil {
+		panic("mock time module is nil")
+	}
 	prev := activeMockTimeModule.Swap(module)
+	if activeMockTimeModule.Load() != module {
+		panic("failed to install mock time module")
+	}
 	return func() {
 		activeMockTimeModule.Store(prev)
 	}
 }
 
 func currentMockTimeModule() *MockTimeModule {
-	return activeMockTimeModule.Load()
+	module := activeMockTimeModule.Load()
+	if module == nil {
+		panic("mock time module is not installed")
+	}
+	return module
 }
 
 func mvsNow() time.Time {
-	if module := currentMockTimeModule(); module != nil {
-		return module.Now()
-	}
-	return time.Now()
+	return currentMockTimeModule().Now()
 }
 
 func mvsAfter(d time.Duration) <-chan time.Time {
-	if module := currentMockTimeModule(); module != nil {
-		return module.After(d)
-	}
-	return time.After(d)
+	return currentMockTimeModule().After(d)
 }
 
 func mvsSince(t time.Time) time.Duration {
-	if module := currentMockTimeModule(); module != nil {
-		return module.Since(t)
-	}
-	return time.Since(t)
+	return currentMockTimeModule().Since(t)
 }
 
 func mvsUntil(t time.Time) time.Duration {
-	if module := currentMockTimeModule(); module != nil {
-		return module.Until(t)
-	}
-	return time.Until(t)
+	return currentMockTimeModule().Until(t)
 }
 
 type mvsTimer struct {
@@ -268,10 +268,7 @@ func newRealMVSTimer(d time.Duration) *mvsTimer {
 }
 
 func mvsNewTimer(d time.Duration) *mvsTimer {
-	if module := currentMockTimeModule(); module != nil {
-		return module.newTimer(d)
-	}
-	return newRealMVSTimer(d)
+	return currentMockTimeModule().newTimer(d)
 }
 
 func (t *mvsTimer) Stop() bool {
@@ -301,11 +298,7 @@ func (t *mvsTimer) Reset(d time.Duration) bool {
 }
 
 func mvsSleep(d time.Duration) {
-	if module := currentMockTimeModule(); module != nil {
-		module.Sleep(d)
-		return
-	}
-	time.Sleep(d)
+	currentMockTimeModule().Sleep(d)
 }
 
 func mvsUnix(sec, nsec int64) time.Time {

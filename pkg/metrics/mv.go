@@ -20,11 +20,11 @@ import (
 
 // Metrics for materialized view service.
 var (
-	MVTaskExecutorEventCounter *prometheus.CounterVec
+	MVServiceTaskStatusGaugeVec *prometheus.GaugeVec
 
-	MVTaskExecutorTaskStatus *prometheus.GaugeVec
+	MVServiceMetaFetchDurationHistogramVec *prometheus.HistogramVec
 
-	MVServiceTaskStatus *prometheus.GaugeVec
+	MVServiceRunEventCounterVec *prometheus.CounterVec
 
 	MVTaskExecutorSubmittedCounter prometheus.Counter
 	MVTaskExecutorCompletedCounter prometheus.Counter
@@ -35,48 +35,49 @@ var (
 	MVTaskExecutorRunningTaskGauge prometheus.Gauge
 	MVTaskExecutorWaitingTaskGauge prometheus.Gauge
 
-	MVServiceMVRefreshPendingGauge  prometheus.Gauge
-	MVServiceMVLogPurgePendingGauge prometheus.Gauge
+	MVServiceMVRefreshTotalGauge    prometheus.Gauge
+	MVServiceMVLogPurgeTotalGauge   prometheus.Gauge
 	MVServiceMVRefreshRunningGauge  prometheus.Gauge
 	MVServiceMVLogPurgeRunningGauge prometheus.Gauge
 )
 
 // InitMVMetrics initializes metrics for materialized view service.
 func InitMVMetrics() {
-	MVTaskExecutorEventCounter = NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "mv",
-			Name:      "task_executor_event_total",
-			Help:      "Counter of MV task executor events.",
-		}, []string{LblType})
-
-	MVTaskExecutorTaskStatus = NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "mv",
-			Name:      "task_executor_task_status",
-			Help:      "Number of MV tasks in task executor by status.",
-		}, []string{LblType})
-
-	MVServiceTaskStatus = NewGaugeVec(
+	MVServiceTaskStatusGaugeVec = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "mv",
 			Name:      "service_task_status",
-			Help:      "Number of MV service tasks by status.",
+			Help:      "Number of MV service and task executor tasks by status.",
 		}, []string{LblType})
 
-	MVTaskExecutorSubmittedCounter = MVTaskExecutorEventCounter.WithLabelValues("submitted")
-	MVTaskExecutorCompletedCounter = MVTaskExecutorEventCounter.WithLabelValues("completed")
-	MVTaskExecutorFailedCounter = MVTaskExecutorEventCounter.WithLabelValues("failed")
-	MVTaskExecutorTimeoutCounter = MVTaskExecutorEventCounter.WithLabelValues("timeout")
-	MVTaskExecutorRejectedCounter = MVTaskExecutorEventCounter.WithLabelValues("rejected")
-	MVTaskExecutorRunningTaskGauge = MVTaskExecutorTaskStatus.WithLabelValues("running")
-	MVTaskExecutorWaitingTaskGauge = MVTaskExecutorTaskStatus.WithLabelValues("waiting")
+	MVServiceMetaFetchDurationHistogramVec = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "mv",
+			Name:      "service_meta_fetch_duration_seconds",
+			Help:      "Bucketed histogram of MV service metadata fetch duration.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+		}, []string{LblType, LblResult})
 
-	MVServiceMVRefreshPendingGauge = MVServiceTaskStatus.WithLabelValues("mv_refresh_pending")
-	MVServiceMVLogPurgePendingGauge = MVServiceTaskStatus.WithLabelValues("mvlog_purge_pending")
-	MVServiceMVRefreshRunningGauge = MVServiceTaskStatus.WithLabelValues("mv_refresh_running")
-	MVServiceMVLogPurgeRunningGauge = MVServiceTaskStatus.WithLabelValues("mvlog_purge_running")
+	MVServiceRunEventCounterVec = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "mv",
+			Name:      "service_run_event_total",
+			Help:      "Counter of MV service and task executor events.",
+		}, []string{LblType})
+
+	MVTaskExecutorSubmittedCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_submitted")
+	MVTaskExecutorCompletedCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_completed")
+	MVTaskExecutorFailedCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_failed")
+	MVTaskExecutorTimeoutCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_timeout")
+	MVTaskExecutorRejectedCounter = MVServiceRunEventCounterVec.WithLabelValues("task_executor_rejected")
+	MVTaskExecutorRunningTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("running")
+	MVTaskExecutorWaitingTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("waiting")
+
+	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mv_total")
+	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mvlog_total")
+	MVServiceMVRefreshRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mv_refresh_running")
+	MVServiceMVLogPurgeRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues("mvlog_purge_running")
 }

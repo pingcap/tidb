@@ -276,26 +276,39 @@ func (e *TaskExecutor) nextTask() (taskRequest, bool) {
 			}
 			e.queue.cond.Wait()
 		}
-		if e.lifecycleState.Load() == taskExecutorStateClosed && e.queue.tasks.length() == 0 {
-			e.queue.mu.Unlock()
-			e.workers.count.Add(-1)
-			return taskRequest{}, false
-		}
-		if e.tryExitWorkerWithLock() {
+		if e.shouldExitWorkerWithLock() {
 			e.queue.mu.Unlock()
 			return taskRequest{}, false
 		}
+
+		e.queue.mu.Unlock()
+
 		if blocked, delay := e.shouldBackpressure(); blocked {
-			e.queue.mu.Unlock()
 			mvsSleep(delay)
 			continue
 		}
-		req, _ := e.queue.tasks.pop()
+
+		e.queue.mu.Lock()
+		if e.shouldExitWorkerWithLock() {
+			e.queue.mu.Unlock()
+			return taskRequest{}, false
+		}
+		req, ok := e.queue.tasks.pop()
 		e.queue.mu.Unlock()
 
-		e.metrics.waitingCount.Add(-1)
-		return req, true
+		if ok {
+			e.metrics.waitingCount.Add(-1)
+			return req, true
+		}
 	}
+}
+
+func (e *TaskExecutor) shouldExitWorkerWithLock() bool {
+	if e.lifecycleState.Load() == taskExecutorStateClosed && e.queue.tasks.length() == 0 {
+		e.workers.count.Add(-1)
+		return true
+	}
+	return e.tryExitWorkerWithLock()
 }
 
 func (e *TaskExecutor) shouldBackpressure() (bool, time.Duration) {

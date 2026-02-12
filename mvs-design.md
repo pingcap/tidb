@@ -40,7 +40,7 @@ MVS 的目标：
 
 `RegisterMVS(...)`（`pkg/mvs/impl.go`）完成：
 
-1. 创建服务：`NewMVJobsManager(...)`
+1. 创建服务：`NewMVServiceManager(...)`
 2. 启动前强制拉取标记：`NotifyDDLChange()`
 3. 设置默认背压控制器：`NewCPUMemBackpressureController(0.8, 0.8, 200ms)`
 4. 注册 DDL handler（当前只处理 `meta.ActionCreateMaterializedViewLog`）

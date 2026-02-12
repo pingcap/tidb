@@ -17,6 +17,9 @@ type mvItem Item[*mv]
 
 type MVMetricsReporter interface {
 	reportMetrics(*MVService)
+	observeTaskDuration(taskType, result string, duration time.Duration)
+	observeFetchDuration(fetchType, result string, duration time.Duration)
+	observeRunEvent(eventType string)
 }
 
 type MVServiceHelper interface {
@@ -36,6 +39,10 @@ type MVService struct {
 	ddlDirty atomic.Bool
 
 	mh MVServiceHelper
+
+	fetchInterval         time.Duration
+	basicInterval         time.Duration
+	serverRefreshInterval time.Duration
 
 	retryBaseDelayNanos atomic.Int64
 	retryMaxDelayNanos  atomic.Int64
@@ -80,24 +87,114 @@ const (
 	maxNextScheduleTs                = 9e18
 
 	defaultServerConsistentHashReplicas = 10
+
+	mvTaskDurationTypeRefresh = "mv_refresh"
+	mvTaskDurationTypePurge   = "mvlog_purge"
+	mvTaskDurationResultOK    = "success"
+	mvTaskDurationResultErr   = "failed"
+
+	mvFetchDurationTypeMLogPurge = "fetch_mlog"
+	mvFetchDurationTypeMViews    = "fetch_mviews"
+	mvFetchDurationResultOK      = "success"
+	mvFetchDurationResultErr     = "failed"
+
+	mvRunEventInitFailed         = "init_failed"
+	mvRunEventRecoveredPanic     = "mv_service_panic"
+	mvRunEventServerRefreshOK    = "server_refresh_ok"
+	mvRunEventServerRefreshError = "server_refresh_error"
+	mvRunEventFetchByDDL         = "fetch_meta_trigger_ddl"
+	mvRunEventFetchByInterval    = "fetch_meta_trigger_interval"
+	mvRunEventFetchMLogOK        = "fetch_mlog_ok"
+	mvRunEventFetchMLogError     = "fetch_mlog_error"
+	mvRunEventFetchMViewsOK      = "fetch_mviews_ok"
+	mvRunEventFetchMViewsError   = "fetch_mviews_error"
 )
 
-// NewMVJobsManager creates a MVJobsManager with a SQL executor.
-func NewMVJobsManager(ctx context.Context, se basic.SessionPool, helper MVServiceHelper) *MVService {
+// MVServiceConfig is the config for constructing MVService.
+type MVServiceConfig struct {
+	TaskMaxConcurrency int
+	TaskTimeout        time.Duration
+
+	FetchInterval         time.Duration
+	BasicInterval         time.Duration
+	ServerRefreshInterval time.Duration
+
+	RetryBaseDelay time.Duration
+	RetryMaxDelay  time.Duration
+
+	ServerConsistentHashReplicas int
+
+	TaskBackpressure TaskBackpressureConfig
+}
+
+// DefaultMVServiceConfig returns the default MV service config.
+func DefaultMVServiceConfig() MVServiceConfig {
+	return MVServiceConfig{
+		TaskMaxConcurrency:           defaultMVTaskMaxConcurrency,
+		TaskTimeout:                  defaultMVTaskTimeout,
+		FetchInterval:                defaultMVFetchInterval,
+		BasicInterval:                defaultMVBasicInterval,
+		ServerRefreshInterval:        defaultTiDBServerRefreshInterval,
+		RetryBaseDelay:               defaultMVTaskRetryBase,
+		RetryMaxDelay:                defaultMVTaskRetryMax,
+		ServerConsistentHashReplicas: defaultServerConsistentHashReplicas,
+	}
+}
+
+func normalizeMVServiceConfig(cfg MVServiceConfig) MVServiceConfig {
+	def := DefaultMVServiceConfig()
+	if cfg.TaskMaxConcurrency <= 0 {
+		cfg.TaskMaxConcurrency = def.TaskMaxConcurrency
+	}
+	if cfg.TaskTimeout <= 0 {
+		cfg.TaskTimeout = def.TaskTimeout
+	}
+	if cfg.FetchInterval <= 0 {
+		cfg.FetchInterval = def.FetchInterval
+	}
+	if cfg.BasicInterval <= 0 {
+		cfg.BasicInterval = def.BasicInterval
+	}
+	if cfg.ServerRefreshInterval <= 0 {
+		cfg.ServerRefreshInterval = def.ServerRefreshInterval
+	}
+	if cfg.RetryBaseDelay <= 0 {
+		cfg.RetryBaseDelay = def.RetryBaseDelay
+	}
+	if cfg.RetryMaxDelay <= 0 {
+		cfg.RetryMaxDelay = def.RetryMaxDelay
+	}
+	if cfg.ServerConsistentHashReplicas <= 0 {
+		cfg.ServerConsistentHashReplicas = def.ServerConsistentHashReplicas
+	}
+	return cfg
+}
+
+// NewMVService creates a new MVService with the given helper and config.
+func NewMVService(ctx context.Context, se basic.SessionPool, helper MVServiceHelper, cfg MVServiceConfig) *MVService {
 	if helper == nil || se == nil {
 		panic("invalid arguments")
 	}
+	cfg = normalizeMVServiceConfig(cfg)
 	mgr := &MVService{
 		sysSessionPool: se,
-		sch:            NewServerConsistentHash(ctx, defaultServerConsistentHashReplicas, helper),
-		executor:       NewTaskExecutor(ctx, defaultMVTaskMaxConcurrency, defaultMVTaskTimeout),
+		sch:            NewServerConsistentHash(ctx, cfg.ServerConsistentHashReplicas, helper),
+		executor:       NewTaskExecutor(ctx, cfg.TaskMaxConcurrency, cfg.TaskTimeout),
 
 		notifier: NewNotifier(),
 		ctx:      ctx,
 		mh:       helper,
+
+		fetchInterval:         cfg.FetchInterval,
+		basicInterval:         cfg.BasicInterval,
+		serverRefreshInterval: cfg.ServerRefreshInterval,
 	}
-	mgr.retryBaseDelayNanos.Store(int64(defaultMVTaskRetryBase))
-	mgr.retryMaxDelayNanos.Store(int64(defaultMVTaskRetryMax))
+	if err := mgr.SetRetryDelayConfig(cfg.RetryBaseDelay, cfg.RetryMaxDelay); err != nil {
+		panic(fmt.Sprintf("invalid MV service retry config: %v", err))
+	}
+	if err := mgr.SetTaskBackpressureConfig(cfg.TaskBackpressure); err != nil {
+		panic(fmt.Sprintf("invalid MV service backpressure config: %v", err))
+	}
 	return mgr
 }
 
@@ -264,15 +361,17 @@ func resetTimer(timer *mvsTimer, delay time.Duration) {
 func (t *MVService) Run() {
 	defer func() {
 		if r := recover(); r != nil {
+			t.mh.observeRunEvent(mvRunEventRecoveredPanic)
 			logutil.BgLogger().Error("MVService panicked", zap.Any("error", r))
 		}
 	}()
 	if !t.sch.init() {
+		t.mh.observeRunEvent(mvRunEventInitFailed)
 		return
 	}
 	t.executor.Run()
 	timer := mvsNewTimer(0)
-	metricTimer := mvsNewTimer(defaultMVBasicInterval)
+	metricTimer := mvsNewTimer(t.basicInterval)
 
 	defer func() {
 		timer.Stop()
@@ -288,7 +387,7 @@ func (t *MVService) Run() {
 		case <-timer.C:
 		case <-metricTimer.C:
 			t.mh.reportMetrics(t)
-			resetTimer(metricTimer, defaultMVBasicInterval)
+			resetTimer(metricTimer, t.basicInterval)
 		case <-t.notifier.C:
 			t.notifier.clear()
 			ddlDirty = t.ddlDirty.Swap(false)
@@ -298,14 +397,24 @@ func (t *MVService) Run() {
 
 		now := mvsNow()
 
-		if now.Sub(lastServerRefresh) >= defaultTiDBServerRefreshInterval {
+		if now.Sub(lastServerRefresh) >= t.serverRefreshInterval {
 			if err := t.sch.refresh(); err != nil {
+				t.mh.observeRunEvent(mvRunEventServerRefreshError)
 				logutil.BgLogger().Warn("refresh all TiDB server info failed", zap.Error(err))
+			} else {
+				t.mh.observeRunEvent(mvRunEventServerRefreshOK)
 			}
 			lastServerRefresh = now
 		}
 
-		if ddlDirty || t.shouldFetchMVMeta(now) {
+		shouldFetch := t.shouldFetchMVMeta(now)
+		if ddlDirty || shouldFetch {
+			if ddlDirty {
+				t.mh.observeRunEvent(mvRunEventFetchByDDL)
+			}
+			if shouldFetch {
+				t.mh.observeRunEvent(mvRunEventFetchByInterval)
+			}
 			// if server info is stale, wait for the next refresh cycle to fetch server info
 			if err := t.fetchAllMVMeta(); err != nil {
 				// avoid tight retries on fetch failures
@@ -327,7 +436,7 @@ func (t *MVService) shouldFetchMVMeta(now time.Time) bool {
 	if last == 0 {
 		return true
 	}
-	return now.Sub(mvsUnixMilli(last)) >= defaultMVFetchInterval
+	return now.Sub(mvsUnixMilli(last)) >= t.fetchInterval
 }
 
 func (t *MVService) nextFetchTime(now time.Time) time.Time {
@@ -335,7 +444,7 @@ func (t *MVService) nextFetchTime(now time.Time) time.Time {
 	if last == 0 {
 		return now
 	}
-	next := mvsUnixMilli(last).Add(defaultMVFetchInterval)
+	next := mvsUnixMilli(last).Add(t.fetchInterval)
 	if next.Before(now) {
 		return now
 	}
@@ -425,7 +534,13 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 		t.executor.Submit("mv-refresh/"+m.ID, func() error {
 			t.metrics.runningMVRefreshCount.Add(1)
 			defer t.metrics.runningMVRefreshCount.Add(-1)
+			taskStart := mvsNow()
 			nextRefresh, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
+			result := mvTaskDurationResultOK
+			if err != nil {
+				result = mvTaskDurationResultErr
+			}
+			t.mh.observeTaskDuration(mvTaskDurationTypeRefresh, result, mvsSince(taskStart))
 			if err != nil {
 				retryCount := m.retryCount.Add(1)
 				t.rescheduleMV(m, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
@@ -454,7 +569,13 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 		t.executor.Submit("mvlog-purge/"+l.ID, func() error {
 			t.metrics.runningMVLogPurgeCount.Add(1)
 			defer t.metrics.runningMVLogPurgeCount.Add(-1)
+			taskStart := mvsNow()
 			nextPurge, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
+			result := mvTaskDurationResultOK
+			if err != nil {
+				result = mvTaskDurationResultErr
+			}
+			t.mh.observeTaskDuration(mvTaskDurationTypePurge, result, mvsSince(taskStart))
 			if err != nil {
 				retryCount := l.retryCount.Add(1)
 				t.rescheduleMVLog(l, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
@@ -615,37 +736,63 @@ func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
 	return nil
 }
 
-func (t *MVService) fetchAllTiDBMLogPurge() error {
+func (t *MVService) fetchAllTiDBMLogPurge() (map[string]*mvLog, error) {
+	start := mvsNow()
+	result := mvFetchDurationResultOK
+	defer func() {
+		t.mh.observeFetchDuration(mvFetchDurationTypeMLogPurge, result, mvsSince(start))
+	}()
+
 	newPending, err := t.mh.fetchAllTiDBMLogPurge(t.ctx, t.sysSessionPool)
 	if err != nil {
-		return err
+		result = mvFetchDurationResultErr
+		t.mh.observeRunEvent(mvRunEventFetchMLogError)
+		return nil, err
 	}
+	t.mh.observeRunEvent(mvRunEventFetchMLogOK)
 	for id := range newPending {
 		if id == "" || !t.sch.Available(id) {
 			delete(newPending, id)
 		}
 	}
-	return t.buildMLogPurgeTasks(newPending)
+	return newPending, nil
 }
 
-func (t *MVService) fetchAllTiDBMViews() error {
+func (t *MVService) fetchAllTiDBMViews() (map[string]*mv, error) {
+	start := mvsNow()
+	result := mvFetchDurationResultOK
+	defer func() {
+		t.mh.observeFetchDuration(mvFetchDurationTypeMViews, result, mvsSince(start))
+	}()
+
 	newPending, err := t.mh.fetchAllTiDBMViews(t.ctx, t.sysSessionPool)
 	if err != nil {
-		return err
+		result = mvFetchDurationResultErr
+		t.mh.observeRunEvent(mvRunEventFetchMViewsError)
+		return nil, err
 	}
+	t.mh.observeRunEvent(mvRunEventFetchMViewsOK)
 	for id := range newPending {
 		if id == "" || !t.sch.Available(id) {
 			delete(newPending, id)
 		}
 	}
-	return t.buildMVRefreshTasks(newPending)
+	return newPending, nil
 }
 
 func (t *MVService) fetchAllMVMeta() error {
-	if err := t.fetchAllTiDBMLogPurge(); err != nil {
+	newMLogPending, err := t.fetchAllTiDBMLogPurge()
+	if err != nil {
 		return err
 	}
-	if err := t.fetchAllTiDBMViews(); err != nil {
+	newMViewPending, err := t.fetchAllTiDBMViews()
+	if err != nil {
+		return err
+	}
+	if err = t.buildMLogPurgeTasks(newMLogPending); err != nil {
+		return err
+	}
+	if err = t.buildMVRefreshTasks(newMViewPending); err != nil {
 		return err
 	}
 

@@ -230,6 +230,20 @@ func (c *toggleBackpressureController) ShouldBackpressure() (bool, time.Duration
 	return false, 0
 }
 
+type blockingBackpressureController struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (c *blockingBackpressureController) ShouldBackpressure() (bool, time.Duration) {
+	select {
+	case c.entered <- struct{}{}:
+	default:
+	}
+	<-c.release
+	return false, 0
+}
+
 func TestTaskExecutorBackpressure(t *testing.T) {
 	module := installMockTimeForTest(t)
 	exec := NewTaskExecutor(context.Background(), 1, 0)
@@ -269,6 +283,52 @@ func TestTaskExecutorBackpressure(t *testing.T) {
 	waitForSignal(t, done, time.Hour)
 }
 
+func TestTaskExecutorBackpressureCheckDoesNotBlockSubmit(t *testing.T) {
+	installMockTimeForTest(t)
+	exec := NewTaskExecutor(context.Background(), 1, 0)
+	exec.Run()
+	defer exec.Close()
+
+	controller := &blockingBackpressureController{
+		entered: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	exec.SetBackpressureController(controller)
+
+	started := make(chan string, 2)
+	exec.Submit("t1", func() error {
+		started <- "t1"
+		return nil
+	})
+
+	select {
+	case <-controller.entered:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not reach backpressure controller")
+	}
+
+	submitDone := make(chan struct{})
+	go func() {
+		exec.Submit("t2", func() error {
+			started <- "t2"
+			return nil
+		})
+		close(submitDone)
+	}()
+
+	select {
+	case <-submitDone:
+	case <-time.After(time.Second):
+		t.Fatal("submit should not be blocked by backpressure check")
+	}
+
+	close(controller.release)
+
+	waitForNamedStart(t, started, "t1", time.Hour)
+	waitForNamedStart(t, started, "t2", time.Hour)
+	waitForCount(t, exec.metrics.completedCount.Load, 2)
+}
+
 func TestCPUMemBackpressureController(t *testing.T) {
 	controller := NewCPUMemBackpressureController(0.7, 0.8, 0)
 	controller.getCPUUsage = func() (float64, bool) {
@@ -296,9 +356,46 @@ func TestCPUMemBackpressureController(t *testing.T) {
 	require.Equal(t, time.Duration(0), delay)
 }
 
-func TestMVServiceSetTaskBackpressureConfig(t *testing.T) {
+func TestNewMVServiceConfigApplied(t *testing.T) {
 	installMockTimeForTest(t)
-	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, &mockMVServiceHelper{})
+	cfg := DefaultMVServiceConfig()
+	cfg.TaskMaxConcurrency = 3
+	cfg.TaskTimeout = 42 * time.Second
+	cfg.FetchInterval = 37 * time.Second
+	cfg.BasicInterval = 2 * time.Second
+	cfg.ServerRefreshInterval = 9 * time.Second
+	cfg.RetryBaseDelay = 3 * time.Second
+	cfg.RetryMaxDelay = 21 * time.Second
+	cfg.ServerConsistentHashReplicas = 17
+	cfg.TaskBackpressure = TaskBackpressureConfig{
+		Enabled:      true,
+		CPUThreshold: 0.7,
+		MemThreshold: 0.8,
+		Delay:        500 * time.Millisecond,
+	}
+
+	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
+	maxConcurrency, timeout := svc.GetTaskExecConfig()
+	require.Equal(t, cfg.TaskMaxConcurrency, maxConcurrency)
+	require.Equal(t, cfg.TaskTimeout, timeout)
+
+	base, max := svc.GetRetryDelayConfig()
+	require.Equal(t, cfg.RetryBaseDelay, base)
+	require.Equal(t, cfg.RetryMaxDelay, max)
+
+	backpressureCfg := svc.GetTaskBackpressureConfig()
+	require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
+	require.NotNil(t, svc.executor.backpressure.Load())
+
+	require.Equal(t, cfg.FetchInterval, svc.fetchInterval)
+	require.Equal(t, cfg.BasicInterval, svc.basicInterval)
+	require.Equal(t, cfg.ServerRefreshInterval, svc.serverRefreshInterval)
+	require.Equal(t, cfg.ServerConsistentHashReplicas, svc.sch.chash.replicas)
+}
+
+func TestMVServiceetTaskBackpressureConfig(t *testing.T) {
+	installMockTimeForTest(t)
+	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
 
 	err := svc.SetTaskBackpressureConfig(TaskBackpressureConfig{
 		Enabled:      true,
@@ -328,9 +425,9 @@ func TestMVServiceSetTaskBackpressureConfig(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestMVServiceSetRetryDelayConfig(t *testing.T) {
+func TestMVServiceetRetryDelayConfig(t *testing.T) {
 	installMockTimeForTest(t)
-	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, &mockMVServiceHelper{})
+	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
 
 	base, max := svc.GetRetryDelayConfig()
 	require.Equal(t, defaultMVTaskRetryBase, base)

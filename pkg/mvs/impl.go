@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -60,6 +61,63 @@ CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
 */
 
 type serverHelper struct {
+	durationObserverCache metricCache[mvMetricTypeResultKey, mvMetricObserver]
+	runEventCounterCache  metricCache[string, mvMetricCounter]
+}
+
+type mvMetricTypeResultKey struct {
+	typ    string
+	result string
+}
+
+type mvMetricObserver interface {
+	Observe(float64)
+}
+
+type mvMetricCounter interface {
+	Inc()
+}
+
+type metricCache[K comparable, V any] struct {
+	mu   sync.RWMutex
+	data map[K]V
+}
+
+func newMetricCache[K comparable, V any](capacity int) metricCache[K, V] {
+	if capacity < 0 {
+		capacity = 0
+	}
+	return metricCache[K, V]{
+		data: make(map[K]V, capacity),
+	}
+}
+
+func (c *metricCache[K, V]) getOrCreate(key K, create func() V) V {
+	c.mu.RLock()
+	if value, ok := c.data[key]; ok {
+		c.mu.RUnlock()
+		return value
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.data == nil {
+		c.data = make(map[K]V)
+	}
+	if value, ok := c.data[key]; ok {
+		return value
+	}
+	value := create()
+	c.data[key] = value
+	return value
+}
+
+func newServerHelper() *serverHelper {
+	return &serverHelper{
+		durationObserverCache: newMetricCache[mvMetricTypeResultKey, mvMetricObserver](8),
+		runEventCounterCache:  newMetricCache[string, mvMetricCounter](16),
+	}
 }
 
 func (m *serverHelper) serverFilter(s serverInfo) bool {
@@ -567,18 +625,19 @@ func RegisterMVS(
 		return nil
 	}
 
-	mvs := NewMVJobsManager(ctx, se, &serverHelper{})
-	mvs.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
-	_ = mvs.SetTaskBackpressureConfig(TaskBackpressureConfig{
+	cfg := DefaultMVServiceConfig()
+	cfg.TaskBackpressure = TaskBackpressureConfig{
 		Enabled:      true,
 		CPUThreshold: defaultMVTaskBackpressureCPUThreshold,
 		MemThreshold: defaultMVTaskBackpressureMemThreshold,
 		Delay:        defaultTaskBackpressureDelay,
-	})
+	}
+	mvs := NewMVService(ctx, se, newServerHelper(), cfg)
+	mvs.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
 
 	// callback for DDL events only will be triggered on the DDL owner
 	// other nodes will get notified through the NotifyDDLChange method from the domain service registry
-	registerHandler(notifier.MVJobsHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+	registerHandler(notifier.MVServiceHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 		switch event.GetType() {
 		//TODO: events related to materialized view metadata changes should also trigger refresh
 		case meta.ActionCreateMaterializedViewLog:

@@ -14,7 +14,11 @@
 
 package mvs
 
-import tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+import (
+	"time"
+
+	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+)
 
 func reportCounterDelta(counter interface{ Add(float64) }, last *int64, current int64) {
 	if current > *last {
@@ -34,8 +38,48 @@ func (*serverHelper) reportMetrics(s *MVService) {
 	tidbmetrics.MVTaskExecutorWaitingTaskGauge.Set(float64(s.executor.metrics.waitingCount.Load()))
 
 	// MVService metrics
-	tidbmetrics.MVServiceMVRefreshPendingGauge.Set(float64(s.metrics.mvCount.Load()))
-	tidbmetrics.MVServiceMVLogPurgePendingGauge.Set(float64(s.metrics.mvLogCount.Load()))
+	tidbmetrics.MVServiceMVRefreshTotalGauge.Set(float64(s.metrics.mvCount.Load()))
+	tidbmetrics.MVServiceMVLogPurgeTotalGauge.Set(float64(s.metrics.mvLogCount.Load()))
 	tidbmetrics.MVServiceMVRefreshRunningGauge.Set(float64(s.metrics.runningMVRefreshCount.Load()))
 	tidbmetrics.MVServiceMVLogPurgeRunningGauge.Set(float64(s.metrics.runningMVLogPurgeCount.Load()))
+}
+
+func (h *serverHelper) observeTaskDuration(taskType, result string, duration time.Duration) {
+	if duration < 0 {
+		return
+	}
+	h.getDurationObserver(taskType, result).Observe(duration.Seconds())
+}
+
+func (h *serverHelper) observeFetchDuration(fetchType, result string, duration time.Duration) {
+	if duration < 0 {
+		return
+	}
+	h.getDurationObserver(fetchType, result).Observe(duration.Seconds())
+}
+
+func (h *serverHelper) observeRunEvent(eventType string) {
+	if eventType == "" {
+		return
+	}
+	h.getRunEventCounter(eventType).Inc()
+}
+
+func (h *serverHelper) getDurationObserver(metricType, result string) mvMetricObserver {
+	if h == nil {
+		return tidbmetrics.MVServiceMetaFetchDurationHistogramVec.WithLabelValues(metricType, result)
+	}
+	key := mvMetricTypeResultKey{typ: metricType, result: result}
+	return h.durationObserverCache.getOrCreate(key, func() mvMetricObserver {
+		return tidbmetrics.MVServiceMetaFetchDurationHistogramVec.WithLabelValues(metricType, result)
+	})
+}
+
+func (h *serverHelper) getRunEventCounter(eventType string) mvMetricCounter {
+	if h == nil {
+		return tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(eventType)
+	}
+	return h.runEventCounterCache.getOrCreate(eventType, func() mvMetricCounter {
+		return tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(eventType)
+	})
 }

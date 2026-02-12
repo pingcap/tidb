@@ -29,11 +29,8 @@ type ServerConsistentHash struct {
 }
 
 func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerHelper) *ServerConsistentHash {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if helper == nil {
-		panic("ServerHelper cannot be nil")
+	if ctx == nil || helper == nil {
+		panic("context and helper cannot be nil")
 	}
 	return &ServerConsistentHash{
 		ctx:     ctx,
