@@ -6,6 +6,7 @@
 
 非 test 文件中的 time 相关函数换成 time_proxy 的实现
 每个 test case 需要使用 InstallMockTimeModuleForTest 来设置 mock time 模块
+代码逻辑上需要把函数内的 const 定义放到函数最前面
 
 ## Testing
 

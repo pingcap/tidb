@@ -182,6 +182,16 @@ func (e *TaskExecutor) setTimeout(timeout time.Duration) {
 	e.UpdateConfig(0, timeout)
 }
 
+// GetConfig returns the current execution config.
+func (e *TaskExecutor) GetConfig() (maxConcurrency int, timeout time.Duration) {
+	if e == nil {
+		return 0, 0
+	}
+	maxConcurrency = int(e.maxConcurrency.Load())
+	timeout = time.Duration(e.timeoutNanos.Load())
+	return maxConcurrency, timeout
+}
+
 // SetBackpressureController sets a task backpressure controller.
 // Passing nil disables backpressure.
 func (e *TaskExecutor) SetBackpressureController(controller TaskBackpressureController) {

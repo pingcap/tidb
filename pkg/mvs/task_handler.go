@@ -17,7 +17,7 @@ var (
 
 // MVRefreshHandler defines the refresh contract for one MV ID.
 type MVRefreshHandler interface {
-	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (nextRefresh time.Time, deleted bool, err error)
+	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (nextRefresh time.Time, err error)
 }
 
 // MVLogPurgeHandler defines the purge contract for one MVLog ID.

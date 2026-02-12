@@ -2,6 +2,7 @@ package mvs
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,11 @@ type MVService struct {
 	ddlDirty atomic.Bool
 
 	mh MVServiceHelper
+
+	retryBaseDelayNanos atomic.Int64
+	retryMaxDelayNanos  atomic.Int64
+	backpressureMu      sync.RWMutex
+	backpressureCfg     TaskBackpressureConfig
 
 	metrics struct {
 		mvCount                atomic.Int64
@@ -89,12 +95,93 @@ func NewMVJobsManager(ctx context.Context, se basic.SessionPool, helper MVServic
 		ctx:      ctx,
 		mh:       helper,
 	}
+	mgr.retryBaseDelayNanos.Store(int64(defaultMVTaskRetryBase))
+	mgr.retryMaxDelayNanos.Store(int64(defaultMVTaskRetryMax))
 	return mgr
 }
 
 // SetTaskExecConfig sets the execution config for MV tasks.
 func (t *MVService) SetTaskExecConfig(maxConcurrency int, timeout time.Duration) {
 	t.executor.UpdateConfig(maxConcurrency, timeout)
+}
+
+// GetTaskExecConfig returns the current execution config for MV tasks.
+func (t *MVService) GetTaskExecConfig() (maxConcurrency int, timeout time.Duration) {
+	return t.executor.GetConfig()
+}
+
+// SetRetryDelayConfig sets retry delay config.
+func (t *MVService) SetRetryDelayConfig(base, max time.Duration) error {
+	if t == nil {
+		return fmt.Errorf("mv service is nil")
+	}
+	if base <= 0 || max <= 0 {
+		return fmt.Errorf("retry delay must be positive")
+	}
+	if base > max {
+		return fmt.Errorf("retry base delay must be less than or equal to max delay")
+	}
+	t.retryBaseDelayNanos.Store(int64(base))
+	t.retryMaxDelayNanos.Store(int64(max))
+	return nil
+}
+
+// GetRetryDelayConfig returns retry delay config.
+func (t *MVService) GetRetryDelayConfig() (base, max time.Duration) {
+	if t == nil {
+		return defaultMVTaskRetryBase, defaultMVTaskRetryMax
+	}
+	base = time.Duration(t.retryBaseDelayNanos.Load())
+	max = time.Duration(t.retryMaxDelayNanos.Load())
+	if base <= 0 {
+		base = defaultMVTaskRetryBase
+	}
+	if max <= 0 {
+		max = defaultMVTaskRetryMax
+	}
+	if base > max {
+		max = base
+	}
+	return base, max
+}
+
+// SetTaskBackpressureConfig sets task backpressure config.
+func (t *MVService) SetTaskBackpressureConfig(cfg TaskBackpressureConfig) error {
+	if t == nil {
+		return fmt.Errorf("mv service is nil")
+	}
+	if cfg.Enabled {
+		if cfg.CPUThreshold < 0 || cfg.CPUThreshold > 1 {
+			return fmt.Errorf("cpu threshold out of range")
+		}
+		if cfg.MemThreshold < 0 || cfg.MemThreshold > 1 {
+			return fmt.Errorf("memory threshold out of range")
+		}
+		if cfg.CPUThreshold <= 0 && cfg.MemThreshold <= 0 {
+			return fmt.Errorf("at least one threshold must be positive when backpressure is enabled")
+		}
+		if cfg.Delay < 0 {
+			return fmt.Errorf("backpressure delay must be non-negative")
+		}
+		t.SetTaskBackpressureController(NewCPUMemBackpressureController(cfg.CPUThreshold, cfg.MemThreshold, cfg.Delay))
+	} else {
+		t.SetTaskBackpressureController(nil)
+	}
+	t.backpressureMu.Lock()
+	t.backpressureCfg = cfg
+	t.backpressureMu.Unlock()
+	return nil
+}
+
+// GetTaskBackpressureConfig returns task backpressure config.
+func (t *MVService) GetTaskBackpressureConfig() TaskBackpressureConfig {
+	if t == nil {
+		return TaskBackpressureConfig{}
+	}
+	t.backpressureMu.RLock()
+	cfg := t.backpressureCfg
+	t.backpressureMu.RUnlock()
+	return cfg
 }
 
 // SetTaskBackpressureController sets the task backpressure controller.
@@ -129,6 +216,14 @@ type mvLog struct {
 	retryCount atomic.Int64
 }
 
+// TaskBackpressureConfig is the runtime config for task backpressure.
+type TaskBackpressureConfig struct {
+	Enabled      bool
+	CPUThreshold float64
+	MemThreshold float64
+	Delay        time.Duration
+}
+
 func (m *mv) Less(other *mv) bool {
 	return m.orderTs < other.orderTs
 }
@@ -137,15 +232,15 @@ func (m *mvLog) Less(other *mvLog) bool {
 	return m.orderTs < other.orderTs
 }
 
-func retryDelay(retryCount int) time.Duration {
+func calcRetryDelay(retryCount int64, base, max time.Duration) time.Duration {
 	if retryCount <= 0 {
-		return defaultMVTaskRetryBase
+		return base
 	}
-	delay := defaultMVTaskRetryBase
-	for i := 1; i < retryCount && delay < defaultMVTaskRetryMax; i++ {
+	delay := base
+	for i := int64(1); i < retryCount && delay < max; i++ {
 		delay *= 2
-		if delay >= defaultMVTaskRetryMax {
-			delay = defaultMVTaskRetryMax
+		if delay >= max {
+			delay = max
 			break
 		}
 	}
@@ -321,14 +416,14 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 		t.executor.Submit("mv-refresh/"+m.ID, func() error {
 			t.metrics.runningMVRefreshCount.Add(1)
 			defer t.metrics.runningMVRefreshCount.Add(-1)
-			nextRefresh, deleted, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
+			nextRefresh, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
 			if err != nil {
 				retryCount := m.retryCount.Add(1)
-				t.rescheduleMV(m, mvsNow().Add(retryDelay(int(retryCount))).UnixMilli())
+				t.rescheduleMV(m, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
 				t.notifier.Wake()
 				return err
 			}
-			if deleted {
+			if nextRefresh.IsZero() {
 				m.retryCount.Store(0)
 				t.removeMVTask(m)
 				t.notifier.Wake()
@@ -353,7 +448,7 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 			nextPurge, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
 			if err != nil {
 				retryCount := l.retryCount.Add(1)
-				t.rescheduleMVLog(l, mvsNow().Add(retryDelay(int(retryCount))).UnixMilli())
+				t.rescheduleMVLog(l, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
 				t.notifier.Wake()
 				return err
 			}
@@ -437,9 +532,9 @@ func (t *MVService) rescheduleMVLogSuccess(l *mvLog, nextPurge time.Time) {
 对于 newPending 中每条记录：
 
 	更新 purgeInterval 和 nextPurge 字段
-	如果 nextPurge 字段发生变化，表示核心元信息变动
-		如果正在执行任务（orderTs == maxNextScheduleTs），则等待任务执行完毕后根据最新的 nextPurge 更新 orderTs 并调整优先级队列中的位置
-		如果未在执行任务，则根据 nextPurge 更新 orderTs 并调整优先级队列中的位置
+	如果 nextPurge 字段发生变化, 表示核心元信息变动
+		如果正在执行任务（orderTs == maxNextScheduleTs）, 则等待任务执行完毕后根据最新的 nextPurge 更新 orderTs 并调整优先级队列中的位置
+		如果未在执行任务, 则根据 nextPurge 更新 orderTs 并调整优先级队列中的位置
 */
 func (t *MVService) buildMLogPurgeTasks(newPending map[string]*mvLog) error {
 	t.mvLogPurgeMu.Lock()         // guard mvlog purge queue
@@ -547,4 +642,9 @@ func (t *MVService) fetchAllMVMeta() error {
 
 	t.lastRefresh.Store(mvsNow().UnixMilli())
 	return nil
+}
+
+func (t *MVService) retryDelay(retryCount int64) time.Duration {
+	base, max := t.GetRetryDelayConfig()
+	return calcRetryDelay(retryCount, base, max)
 }

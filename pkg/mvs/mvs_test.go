@@ -296,6 +296,61 @@ func TestCPUMemBackpressureController(t *testing.T) {
 	require.Equal(t, time.Duration(0), delay)
 }
 
+func TestMVServiceSetTaskBackpressureConfig(t *testing.T) {
+	installMockTimeForTest(t)
+	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, &mockMVServiceHelper{})
+
+	err := svc.SetTaskBackpressureConfig(TaskBackpressureConfig{
+		Enabled:      true,
+		CPUThreshold: 0.7,
+		MemThreshold: 0.8,
+		Delay:        time.Second,
+	})
+	require.NoError(t, err)
+
+	cfg := svc.GetTaskBackpressureConfig()
+	require.True(t, cfg.Enabled)
+	require.Equal(t, 0.7, cfg.CPUThreshold)
+	require.Equal(t, 0.8, cfg.MemThreshold)
+	require.Equal(t, time.Second, cfg.Delay)
+	require.NotNil(t, svc.executor.backpressure.Load())
+
+	err = svc.SetTaskBackpressureConfig(TaskBackpressureConfig{Enabled: false})
+	require.NoError(t, err)
+	require.False(t, svc.GetTaskBackpressureConfig().Enabled)
+	require.Nil(t, svc.executor.backpressure.Load())
+
+	err = svc.SetTaskBackpressureConfig(TaskBackpressureConfig{
+		Enabled:      true,
+		CPUThreshold: -1,
+		MemThreshold: 0.8,
+	})
+	require.Error(t, err)
+}
+
+func TestMVServiceSetRetryDelayConfig(t *testing.T) {
+	installMockTimeForTest(t)
+	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, &mockMVServiceHelper{})
+
+	base, max := svc.GetRetryDelayConfig()
+	require.Equal(t, defaultMVTaskRetryBase, base)
+	require.Equal(t, defaultMVTaskRetryMax, max)
+
+	err := svc.SetRetryDelayConfig(2*time.Second, 10*time.Second)
+	require.NoError(t, err)
+	base, max = svc.GetRetryDelayConfig()
+	require.Equal(t, 2*time.Second, base)
+	require.Equal(t, 10*time.Second, max)
+	require.Equal(t, 2*time.Second, svc.retryDelay(0))
+	require.Equal(t, 4*time.Second, svc.retryDelay(2))
+	require.Equal(t, 10*time.Second, svc.retryDelay(10))
+
+	err = svc.SetRetryDelayConfig(0, 10*time.Second)
+	require.Error(t, err)
+	err = svc.SetRetryDelayConfig(10*time.Second, 2*time.Second)
+	require.Error(t, err)
+}
+
 func TestTaskQueueRingBufferFIFO(t *testing.T) {
 	var q taskQueue
 	mkReq := func(i int) taskRequest {

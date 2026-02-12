@@ -1780,6 +1780,11 @@ func (do *Domain) StartMVService() error {
 	return nil
 }
 
+// GetMVService returns the MV service instance.
+func (do *Domain) GetMVService() *mvs.MVService {
+	return do.mvService
+}
+
 func (do *Domain) watchMVSMetaChange() {
 	if do.etcdClient == nil {
 		return

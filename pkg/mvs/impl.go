@@ -91,71 +91,91 @@ func (m *serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverI
 }
 
 /*
-实现 mv 增量刷新逻辑，伪代码如下：
+实现 mv 增量刷新逻辑, 函数返回 2 个值：error 仅表示刷新过程中发生了错误；nextRefresh 表示下一次刷新的时间点, 如果为零值, 表示不需要再次刷新
 
-执行 sql：SELECT TABLE_SCHEMA, MVIEW_NAME from mysql.tidb_mviews where MVIEW_ID = `mvID`
+把 session 从 session pool 里取出来, 执行完逻辑后放回去
 
-	无结果返回，说明 mv 已经被删除，返回 deleted = true
+	session 必须把 sql mod 设置为空
+
+mvID 对应 int64 类型的 MVIEW_ID 字段
+通过 MVIEW_ID 找到对应的 mv 信息（TableInfo struct）, 包括 MVIEW_NAME（TableInfo.Name）。找到 TABLE_SCHEMA（通过 TableInfo.DBID 拿到 SchemaMeta, 再拿到 SchemaName）
 
 执行 sql：REFRESH MATERIALIZED VIEW TABLE_SCHEMA.MVIEW_NAME WITH SYNC MODE FAST
 
 	该 sql 执行 select * from mysql.tidb_mview_refresh_info where MVIEW_ID = `mvID` for update
 	该 sql 执行 update mysql.tidb_mview_refresh_hist
 
-执行 sql：SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = `mvID` AND NEXT_TIME iS NOT NULL
+执行 sql：SELECT NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = `mvID` AND NEXT_TIME iS NOT NULL
 
-	无结果返回，说明 mv 已经被删除，返回 deleted = true
+	无结果返回, 说明 mv 已经被删除, nextRefresh 返回零值
 
-返回 NEXT_TIME_SEC
+返回 NEXT_TIME
 */
-func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (nextRefresh time.Time, deleted bool, err error) {
+func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (nextRefresh time.Time, err error) {
 	const (
-		findMVSQL       = `SELECT TABLE_SCHEMA, MVIEW_NAME FROM mysql.tidb_mviews WHERE MVIEW_ID = %?`
 		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
 		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
-
-	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, findMVSQL, []any{mvID})
+	mviewID, err := strconv.ParseInt(mvID, 10, 64)
 	if err != nil {
-		return time.Time{}, false, err
-	}
-	if len(rows) == 0 {
-		return time.Time{}, true, nil
+		return time.Time{}, err
 	}
 
-	row := rows[0]
-	if row.IsNull(0) || row.IsNull(1) {
-		return time.Time{}, false, errors.New("mview metadata is invalid")
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return time.Time{}, err
 	}
-	schemaName := row.GetString(0)
-	mviewName := row.GetString(1)
+	defer sysSessionPool.Put(se)
+
+	sctx := se.(sessionctx.Context)
+	originalSQLMode := sctx.GetSessionVars().SQLMode
+	sctx.GetSessionVars().SQLMode = 0
+	defer func() {
+		sctx.GetSessionVars().SQLMode = originalSQLMode
+	}()
+	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	mvTable, ok := infoSchema.TableByID(ctx, mviewID)
+	if !ok {
+		return time.Time{}, nil
+	}
+	mvMeta := mvTable.Meta()
+	if mvMeta == nil {
+		return time.Time{}, errors.New("mview metadata is invalid")
+	}
+	mviewName := mvMeta.Name.L
+	dbInfo, ok := infoSchema.SchemaByID(mvMeta.DBID)
+	if !ok || dbInfo == nil {
+		return time.Time{}, errors.New("mview metadata is invalid")
+	}
+	schemaName := dbInfo.Name.L
 	if schemaName == "" || mviewName == "" {
-		return time.Time{}, false, errors.New("mview metadata is invalid")
+		return time.Time{}, errors.New("mview metadata is invalid")
 	}
 
-	if _, err = execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, refreshMVSQL, []any{schemaName, mviewName}); err != nil {
-		return time.Time{}, false, err
+	if _, err = execRCRestrictedSQL(ctx, sctx, refreshMVSQL, []any{schemaName, mviewName}); err != nil {
+		return time.Time{}, err
 	}
 
-	rows, err = execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, findNextTimeSQL, []any{mvID})
+	rows, err := execRCRestrictedSQL(ctx, sctx, findNextTimeSQL, []any{mvID})
 	if err != nil {
-		return time.Time{}, false, err
+		return time.Time{}, err
 	}
 	if len(rows) == 0 || rows[0].IsNull(0) {
-		return time.Time{}, true, nil
+		return time.Time{}, nil
 	}
-
 	nextRefresh = mvsUnix(rows[0].GetInt64(0), 0)
-	return nextRefresh, false, nil
+	return nextRefresh, nil
 }
 
 /*
-执行 mvlog purge 逻辑，函数返回 2 个值：error 仅表示 purge 过程中发生了错误；nextPurge 表示下一次 purge 的时间点，如果为零值，表示不需要再次 purge
+执行 mvlog purge 逻辑, 函数返回 2 个值：error 仅表示 purge 过程中发生了错误；nextPurge 表示下一次 purge 的时间点, 如果为零值, 表示不需要再次 purge
 
-伪代码如下：
+把 session 从 session pool 里取出来, 执行完逻辑后放回去
 
-如果 autoPurge 为 false，表示当前 purge 是由用户手动触发的；如果 autoPurge 为 true，表示当前 purge 是自动触发的
-通过 baseTable 找到对应的 mvlog 信息（详见 MaterializedViewLogInfo struct ），包括 MLogID，关联的 MV 列表，PurgeStartWith，PurgeNext, PurgeMethod
+	session 必须把 sql mod 设置为空
+
+如果 autoPurge 为 false, 表示当前 purge 是由用户手动触发的；如果 autoPurge 为 true, 表示当前 purge 是自动触发的
+通过 baseTable 找到对应的 mvlog 信息（详见 MaterializedViewLogInfo struct ）, 包括 MLogID, 关联的 MV 列表, PurgeStartWith, PurgeNext, PurgeMethod
 
 PurgeMethod 目前有两种取值：
 - MANUALLY
@@ -166,19 +186,19 @@ PurgeMethod 目前有两种取值：
 开始 txn
 执行 sql：SELECT NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = `MLogID` FOR UPDATE
 
-如果 sql 无结果，说明该 MV LOG 已经被删除。如果手动触发 purge，直接返回错误；如果自动触发 purge，直接返回零值的 nextPurge，表示不需要再次 purge
+如果 sql 无结果, 说明该 MV LOG 已经被删除。如果手动触发 purge, 直接返回错误；如果自动触发 purge, 直接返回零值的 nextPurge, 表示不需要再次 purge
 
-如果 NEXT_TIME 为 null，说明该 MV LOG 仅支持手动 purge。如果手动触发 purge，继续执行；如果自动触发 purge，直接返回零值的 nextPurge，表示不需要再次 purge
+如果 NEXT_TIME 为 null, 说明该 MV LOG 仅支持手动 purge。如果手动触发 purge, 继续执行；如果自动触发 purge, 直接返回零值的 nextPurge, 表示不需要再次 purge
 
-如果 autoPurge 为 true，且 NEXT_TIME 为 null，或 NEXT_TIME > now()，则跳过本次 purge，直接返回 NEXT_TIME
+如果 autoPurge 为 true, 且 NEXT_TIME 为 null, 或 NEXT_TIME > now(), 则跳过本次 purge, 直接返回 NEXT_TIME
 
 执行 sql：DELETE FROM `mvlogSchemaName`.`mvlogName` WHERE COMMIT_TSO IN (0, `MIN_COMMIT_TSO`]
 
-计算新的 NEXT_TIME：从 purgeStartWith 开始，每隔 purgeNext 秒执行一次，直到下一个 NEXT_TIME > now()
-
-UPDATE mysql.tidb_mlog_purge_info 设置相关字段
+计算新的 NEXT_TIME：从 purgeStartWith 开始, 每隔 purgeNext 秒执行一次, 直到下一个 NEXT_TIME > now()
 
 执行结果记录到 mysql.tidb_mlog_purge_hist（表结构定义在 pkg/session/bootstrap.go）
+
+UPDATE mysql.tidb_mlog_purge_info 设置相关字段, 其中 PURGE_JOB_ID 设为空
 
 提交 txn
 */
@@ -187,6 +207,11 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, baseTable table.Ta
 		purgeMethodManually      = "MANUALLY"
 		purgeMethodAutomatically = "AUTOMATICALLY"
 	)
+	originalSQLMode := sctx.GetSessionVars().SQLMode
+	sctx.GetSessionVars().SQLMode = 0
+	defer func() {
+		sctx.GetSessionVars().SQLMode = originalSQLMode
+	}()
 	if baseTable == nil {
 		return time.Time{}, errors.New("base table is nil")
 	}
@@ -291,13 +316,12 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, baseTable table.Ta
 		purgeEndTime := mvsNow()
 		nextPurge = calcNextExecTime(purgeStartWith, purgeNextSec, purgeEndTime)
 
-		const updatePurgeSQL = `UPDATE mysql.tidb_mlog_purge_info SET PURGE_TIME = %?, PURGE_ENDTIME = %?, PURGE_ROWS = %?, PURGE_STATUS = 'SUCCESS', NEXT_TIME = %? WHERE MLOG_ID = %?`
-		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{purgeTime, purgeEndTime, affectedRows, nextPurge, mvBaseInfo.MLogID}); err != nil {
-			return err
-		}
-
 		mvLogID := strconv.FormatInt(mvBaseInfo.MLogID, 10)
 		if err = recordMLogPurgeHist(txnCtx, sctx, mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, affectedRows, "SUCCESS"); err != nil {
+			return err
+		}
+		const updatePurgeSQL = `UPDATE mysql.tidb_mlog_purge_info SET PURGE_TIME = %?, PURGE_ENDTIME = %?, PURGE_ROWS = %?, PURGE_STATUS = 'SUCCESS', PURGE_JOB_ID = '', NEXT_TIME = %? WHERE MLOG_ID = %?`
+		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{purgeTime, purgeEndTime, affectedRows, nextPurge, mvBaseInfo.MLogID}); err != nil {
 			return err
 		}
 
@@ -312,23 +336,20 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, baseTable table.Ta
 /*
 令 MLOG_ID = int64(mvLogID)
 获取 session 后通过 InfoSchema interface 的 TableByID 方法获取 mvlog 的表信息
-调用 func PurgeMVLog 实现具体 purge 逻辑
+调用 func PurgeMVLog 实现具体 purge 逻辑, 直接返回结果
 */
 func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, err error) {
 	mvLogTableID, err := strconv.ParseInt(mvLogID, 10, 64)
 	if err != nil {
 		return time.Time{}, err
 	}
-	purgeTime := mvsNow()
-	purgeEndTime := purgeTime
-	mlogName := mvLogID
-	purgeMethod := "AUTOMATICALLY"
 	se, err := sysSessionPool.Get()
 	if err != nil {
 		return time.Time{}, err
 	}
 	defer sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
+
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 
 	mvLogTable, ok := infoSchema.TableByID(ctx, mvLogTableID)
@@ -338,9 +359,6 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 	mvLogMeta := mvLogTable.Meta()
 	if mvLogMeta == nil {
 		return time.Time{}, errors.New("mvlog metadata is invalid")
-	}
-	if mvLogMeta.Name.L != "" {
-		mlogName = mvLogMeta.Name.L
 	}
 	mvLogInfo := mvLogMeta.MaterializedViewLog
 	if mvLogInfo == nil {
@@ -354,18 +372,7 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 		return time.Time{}, errors.New("materialized view base table not found")
 	}
 
-	nextPurge, err = PurgeMVLog(ctx, sctx, baseTable, true)
-	if err != nil {
-		purgeEndTime = mvsNow()
-		histErr := withRCRestrictedTxn(ctx, sctx, func(txnCtx context.Context, sctx sessionctx.Context) error {
-			return recordMLogPurgeHist(txnCtx, sctx, mvLogID, mlogName, purgeMethod, purgeTime, purgeEndTime, 0, "FAILED")
-		})
-		if histErr != nil {
-			return time.Time{}, histErr
-		}
-		return time.Time{}, err
-	}
-	return nextPurge, nil
+	return PurgeMVLog(ctx, sctx, baseTable, true)
 }
 
 func calcNextExecTime(start time.Time, intervalSec int64, last time.Time) time.Time {
@@ -386,7 +393,7 @@ func calcNextExecTime(start time.Time, intervalSec int64, last time.Time) time.T
 /*
 执行 sql： SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME iS NOT NULL
 
-	如果 NEXT_TIME 为空，说明该 MV 已经被删除，忽略该行数据
+	如果 NEXT_TIME 为空, 说明该 MV 已经被删除, 忽略该行数据
 
 对于每行数据：
 
@@ -421,7 +428,7 @@ func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool b
 /*
 执行 sql： SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME iS NOT NULL
 
-	如果 NEXT_TIME 为空，说明该 MV 已经被删除，忽略该行数据
+	如果 NEXT_TIME 为空, 说明该 MV 已经被删除, 忽略该行数据
 
 对于每行数据：
 
@@ -473,15 +480,6 @@ func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context
 	return r, err
 }
 
-func withRCRestrictedTxnWithSessionPool(ctx context.Context, sysSessionPool basic.SessionPool, fn func(txnCtx context.Context, sctx sessionctx.Context) error) error {
-	se, err := sysSessionPool.Get()
-	if err != nil {
-		return err
-	}
-	defer sysSessionPool.Put(se)
-	return withRCRestrictedTxn(ctx, se.(sessionctx.Context), fn)
-}
-
 func withRCRestrictedTxn(ctx context.Context, sctx sessionctx.Context, fn func(txnCtx context.Context, sctx sessionctx.Context) error) (err error) {
 	sqlExec := sctx.GetSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
@@ -503,47 +501,6 @@ func withRCRestrictedTxn(ctx context.Context, sctx sessionctx.Context, fn func(t
 
 	err = fn(ctx, sctx)
 	return err
-}
-
-func parseRelatedMVIDs(v string) []string {
-	if v == "" {
-		return nil
-	}
-	parts := strings.Split(v, ",")
-	mvIDs := make([]string, 0, len(parts))
-	for _, p := range parts {
-		id := strings.TrimSpace(p)
-		if id == "" {
-			continue
-		}
-		mvIDs = append(mvIDs, id)
-	}
-	return mvIDs
-}
-
-func getMinRefreshReadTSO(ctx context.Context, sctx sessionctx.Context, mvIDs []string) (int64, error) {
-	if len(mvIDs) == 0 {
-		return 0, nil
-	}
-	var b strings.Builder
-	params := make([]any, 0, len(mvIDs))
-	b.WriteString(`SELECT COALESCE(MIN(LAST_SUCCESSFUL_REFRESH_READ_TSO), 0) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID IN (`)
-	for i, id := range mvIDs {
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.WriteString("%?")
-		params = append(params, id)
-	}
-	b.WriteString(")")
-	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, b.String(), params)
-	if err != nil {
-		return 0, err
-	}
-	if len(rows) == 0 || rows[0].IsNull(0) {
-		return 0, nil
-	}
-	return rows[0].GetInt64(0), nil
 }
 
 func getMinRefreshReadTSOFromInfo(ctx context.Context, sctx sessionctx.Context, mvIDs []int64) (int64, error) {
@@ -612,7 +569,12 @@ func RegisterMVS(
 
 	mvs := NewMVJobsManager(ctx, se, &serverHelper{})
 	mvs.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
-	mvs.SetTaskBackpressureController(NewCPUMemBackpressureController(defaultMVTaskBackpressureCPUThreshold, defaultMVTaskBackpressureMemThreshold, defaultTaskBackpressureDelay))
+	_ = mvs.SetTaskBackpressureConfig(TaskBackpressureConfig{
+		Enabled:      true,
+		CPUThreshold: defaultMVTaskBackpressureCPUThreshold,
+		MemThreshold: defaultMVTaskBackpressureMemThreshold,
+		Delay:        defaultTaskBackpressureDelay,
+	})
 
 	// callback for DDL events only will be triggered on the DDL owner
 	// other nodes will get notified through the NotifyDDLChange method from the domain service registry
