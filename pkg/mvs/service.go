@@ -146,8 +146,8 @@ func normalizeMVServiceConfig(cfg MVServiceConfig) MVServiceConfig {
 	if cfg.TaskMaxConcurrency <= 0 {
 		cfg.TaskMaxConcurrency = def.TaskMaxConcurrency
 	}
-	if cfg.TaskTimeout <= 0 {
-		cfg.TaskTimeout = def.TaskTimeout
+	if cfg.TaskTimeout < 0 {
+		cfg.TaskTimeout = 0
 	}
 	if cfg.FetchInterval <= 0 {
 		cfg.FetchInterval = def.FetchInterval
@@ -189,11 +189,22 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper MVServiceHel
 		basicInterval:         cfg.BasicInterval,
 		serverRefreshInterval: cfg.ServerRefreshInterval,
 	}
+	def := DefaultMVServiceConfig()
 	if err := mgr.SetRetryDelayConfig(cfg.RetryBaseDelay, cfg.RetryMaxDelay); err != nil {
-		panic(fmt.Sprintf("invalid MV service retry config: %v", err))
+		logutil.BgLogger().Warn("invalid MV service retry config, fallback to defaults",
+			zap.Error(err),
+			zap.Duration("retry_base", cfg.RetryBaseDelay),
+			zap.Duration("retry_max", cfg.RetryMaxDelay))
+		_ = mgr.SetRetryDelayConfig(def.RetryBaseDelay, def.RetryMaxDelay)
 	}
 	if err := mgr.SetTaskBackpressureConfig(cfg.TaskBackpressure); err != nil {
-		panic(fmt.Sprintf("invalid MV service backpressure config: %v", err))
+		logutil.BgLogger().Warn("invalid MV service backpressure config, disable backpressure",
+			zap.Error(err),
+			zap.Bool("enabled", cfg.TaskBackpressure.Enabled),
+			zap.Float64("cpu_threshold", cfg.TaskBackpressure.CPUThreshold),
+			zap.Float64("mem_threshold", cfg.TaskBackpressure.MemThreshold),
+			zap.Duration("delay", cfg.TaskBackpressure.Delay))
+		_ = mgr.SetTaskBackpressureConfig(TaskBackpressureConfig{})
 	}
 	return mgr
 }

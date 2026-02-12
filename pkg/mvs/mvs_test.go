@@ -393,6 +393,28 @@ func TestNewMVServiceConfigApplied(t *testing.T) {
 	require.Equal(t, cfg.ServerConsistentHashReplicas, svc.sch.chash.replicas)
 }
 
+func TestNewMVServiceInvalidConfigFallback(t *testing.T) {
+	installMockTimeForTest(t)
+	cfg := DefaultMVServiceConfig()
+	cfg.RetryBaseDelay = 10 * time.Second
+	cfg.RetryMaxDelay = 2 * time.Second
+	cfg.TaskBackpressure = TaskBackpressureConfig{
+		Enabled:      true,
+		CPUThreshold: -1,
+		MemThreshold: 0.8,
+	}
+
+	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
+
+	base, max := svc.GetRetryDelayConfig()
+	require.Equal(t, defaultMVTaskRetryBase, base)
+	require.Equal(t, defaultMVTaskRetryMax, max)
+
+	backpressureCfg := svc.GetTaskBackpressureConfig()
+	require.False(t, backpressureCfg.Enabled)
+	require.Nil(t, svc.executor.backpressure.Load())
+}
+
 func TestMVServiceetTaskBackpressureConfig(t *testing.T) {
 	installMockTimeForTest(t)
 	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
