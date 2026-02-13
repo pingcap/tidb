@@ -214,8 +214,8 @@ func (sm *Manager) scheduleTaskLoop() {
 	sm.logger.Info("schedule task loop start")
 	ticker := time.NewTicker(CheckTaskRunningInterval)
 	defer ticker.Stop()
-	trace := traceevent.NewTrace()
-	ctx := tracing.WithFlightRecorder(sm.ctx, trace)
+	trace := traceevent.NewTraceBuf()
+	ctx := traceevent.WithTraceBuf(sm.ctx, trace)
 	for {
 		select {
 		case <-sm.ctx.Done():
@@ -491,8 +491,8 @@ func (sm *Manager) collectLoop() {
 	defer func() {
 		metrics.Unregister(sm.metricCollector)
 	}()
-	trace := traceevent.NewTrace()
-	ctx := tracing.WithFlightRecorder(sm.ctx, trace)
+	trace := traceevent.NewTraceBuf()
+	ctx := traceevent.WithTraceBuf(sm.ctx, trace)
 	for {
 		select {
 		case <-sm.ctx.Done():
