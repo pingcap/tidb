@@ -21,14 +21,13 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 var ignoredSystemVariablesForPlanReplayerLoad = map[string]struct{}{
-	vardef.InnodbLockWaitTimeout: {}, // It is unnecessary to load this variable for plan replayer.
+	variable.InnodbLockWaitTimeout: {}, // It is unnecessary to load this variable for plan replayer.
 }
 
 // LoadConfigForPlanReplayerLoad loads system variables from a toml reader. it is only for plan replayer and test.
@@ -52,7 +51,7 @@ func LoadConfigForPlanReplayerLoad(ctx sessionctx.Context, v io.ReadCloser) (unL
 			logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
 			continue
 		}
-		sVal, err := sysVar.Validate(vars, value, vardef.ScopeSession)
+		sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
 		if err != nil {
 			unLoadVars = append(unLoadVars, name)
 			logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))

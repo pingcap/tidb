@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -202,7 +201,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().StmtCtx.SetTimeZone(sctx.GetSessionVars().Location())
 
 	// sync innodb_lock_wait_timeout
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.InnodbLockWaitTimeout)
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.InnodbLockWaitTimeout)
 	if err != nil {
 		return err
 	}
