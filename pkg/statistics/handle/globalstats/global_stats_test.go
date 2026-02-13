@@ -1073,7 +1073,7 @@ func TestGlobalStatsMergeV2Hybrid(t *testing.T) {
 		"test t global idx_ab 1 0 7 1 (2, 1) (9, 1) 0",
 		"test t global idx_ab 1 1 33353 7 (9, 1) (33355, 1) 0",
 		"test t global idx_ab 1 2 100009 1 (33355, 1) (100010, 1) 0"))
-		tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p0'`).Sort().Check(testkit.Rows(""+
+	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p0'`).Sort().Check(testkit.Rows(""+
 		"test t p0 a 0 0 4763 1 14 33348 0",
 		"test t p0 a 0 1 9526 1 33355 66689 0",
 		"test t p0 a 0 2 14286 1 66696 100009 0",
