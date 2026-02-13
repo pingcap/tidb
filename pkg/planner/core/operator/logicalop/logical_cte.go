@@ -232,16 +232,23 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (p *LogicalCTE) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	if len(childrenProperties) > 0 {
-		hasTiflash := true
+		hasTiflash := false
+		hasValidChild := false
 		for _, child := range childrenProperties {
 			if child == nil {
-				hasTiflash = false
+				continue
+			}
+			if !hasValidChild {
+				hasTiflash = child.HasTiflash
+				hasValidChild = true
 				continue
 			}
 			hasTiflash = hasTiflash && child.HasTiflash
 		}
-		p.hasTiflash = hasTiflash
-		return &base.PossiblePropertiesInfo{HasTiflash: p.hasTiflash}
+		if hasValidChild {
+			p.hasTiflash = hasTiflash
+			return &base.PossiblePropertiesInfo{HasTiflash: p.hasTiflash}
+		}
 	}
 
 	hasTiflash := false
