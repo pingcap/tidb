@@ -26,18 +26,18 @@ import (
 const maxTableCapacity = 1024
 
 // Number of bits in the group.slot count.
-const swissMapGroupSlotsBits = 3
+const mapGroupSlotsBits = 3
 
 // Number of slots in a group.
-const swissMapGroupSlots = 1 << swissMapGroupSlotsBits // 8
+const mapGroupSlots = 1 << mapGroupSlotsBits // 8
 
 // $GOROOT/src/internal/runtime/maps/table.go:`type table struct`
-type swissMapTable struct {
+type mapTable struct {
 	// The number of filled slots (i.e. the number of elements in the table).
 	used uint16
 
 	// The total number of slots (always 2^N). Equal to
-	// `(groups.lengthMask+1)*abi.SwissMapGroupSlots`.
+	// `(groups.lengthMask+1)*abi.MapGroupSlots`.
 	capacity uint16
 
 	// The number of slots we can still fill without needing to rehash.
@@ -60,7 +60,7 @@ type swissMapTable struct {
 	// directory).
 	index int
 
-	// groups is an array of slot groups. Each group holds abi.SwissMapGroupSlots
+	// groups is an array of slot groups. Each group holds abi.MapGroupSlots
 	// key/elem slots and their control bytes. A table has a fixed size
 	// groups array. The table is replaced (in rehash) when more space is
 	// required.
@@ -86,7 +86,7 @@ type groupsReference struct {
 }
 
 // $GOROOT/src/internal/runtime/maps/map.go:`type Map struct`
-type swissMap struct {
+type mapData struct {
 	// The number of filled slots (i.e. the number of elements in all
 	// tables). Excludes deleted slots.
 	// Must be first (known by the compiler, for len() builtin).
@@ -106,7 +106,7 @@ type swissMap struct {
 	// details.
 	//
 	// Small map optimization: if the map always contained
-	// abi.SwissMapGroupSlots or fewer entries, it fits entirely in a
+	// abi.MapGroupSlots or fewer entries, it fits entirely in a
 	// single group. In that case dirPtr points directly to a single group.
 	//
 	// dirPtr *group
@@ -139,39 +139,39 @@ type swissMap struct {
 	clearSeq uint64
 }
 
-func (m *swissMap) directoryAt(i uintptr) *swissMapTable {
-	return *(**swissMapTable)(unsafe.Pointer(uintptr(m.dirPtr) + uintptr(sizeofPtr)*i))
+func (m *mapData) directoryAt(i uintptr) *mapTable {
+	return *(**mapTable)(unsafe.Pointer(uintptr(m.dirPtr) + uintptr(sizeofPtr)*i))
 }
 
-// Size returns the accurate memory size of the swissMap including all its tables.
-func (m *swissMap) Size(groupSize uint64) (sz uint64) {
-	sz += swissMapSize
+// Size returns the accurate memory size of the map including all its tables.
+func (m *mapData) Size(groupSize uint64) (sz uint64) {
+	sz += mapSize
 	sz += sizeofPtr * uint64(m.dirLen)
 	if m.dirLen == 0 {
 		sz += groupSize
 		return
 	}
 
-	var lastTab *swissMapTable
+	var lastTab *mapTable
 	for i := range m.dirLen {
 		t := m.directoryAt(uintptr(i))
 		if t == lastTab {
 			continue
 		}
 		lastTab = t
-		sz += swissTableSize
+		sz += mapTableSize
 		sz += groupSize * (t.groups.lengthMask + 1)
 	}
 	return
 }
 
-// Cap returns the total capacity of the swissMap.
-func (m *swissMap) Cap() uint64 {
+// Cap returns the total capacity of the map.
+func (m *mapData) Cap() uint64 {
 	if m.dirLen == 0 {
-		return swissMapGroupSlots
+		return mapGroupSlots
 	}
 	var capacity uint64
-	var lastTab *swissMapTable
+	var lastTab *mapTable
 	for i := range m.dirLen {
 		t := m.directoryAt(uintptr(i))
 		if t == lastTab {
@@ -189,14 +189,14 @@ func (m *SwissMapWrap) Size() uint64 {
 }
 
 const (
-	swissMapSize   = uint64(unsafe.Sizeof(swissMap{}))
-	swissTableSize = uint64(unsafe.Sizeof(swissMapTable{}))
-	sizeofPtr      = uint64(unsafe.Sizeof(uintptr(0)))
+	mapSize      = uint64(unsafe.Sizeof(mapData{}))
+	mapTableSize = uint64(unsafe.Sizeof(mapTable{}))
+	sizeofPtr    = uint64(unsafe.Sizeof(uintptr(0)))
 )
 
 // TODO: use a more accurate size calculation if necessary
 func approxSize(groupSize uint64, maxLen uint64) (size uint64) {
-	// 204 can fit the `split`/`rehash` behavior of different kinds of swisstable
+	// 204 can fit the `split`/`rehash` behavior of different kinds of map tables.
 	const ratio = 204
 	return groupSize * maxLen * ratio / 1000
 }
@@ -209,7 +209,7 @@ type groupReference struct {
 	//
 	// type group struct {
 	// 	ctrls ctrlGroup
-	// 	slots [abi.SwissMapGroupSlots]slot
+	// 	slots [abi.MapGroupSlots]slot
 	// }
 	//
 	// type slot struct {
@@ -219,7 +219,7 @@ type groupReference struct {
 	data unsafe.Pointer // data *typ.Group
 }
 
-func (g *groupsReference) group(typ *swissMapType, i uint64) groupReference {
+func (g *groupsReference) group(typ *mapType, i uint64) groupReference {
 	// TODO(prattmic): Do something here about truncation on cast to
 	// uintptr on 32-bit systems?
 	offset := uintptr(i) * typ.GroupSize
@@ -231,13 +231,13 @@ func (g *groupsReference) group(typ *swissMapType, i uint64) groupReference {
 
 // $GOROOT/src/internal/abi/type.go:`type Type struct`
 type abiType struct {
-	Size       uintptr
-	PtrBytes   uintptr // number of (prefix) bytes in the type that can contain pointers
-	Hash       uint32  // hash of type; avoids computation in hash tables
-	TFlag      uint8   // extra type information flags
-	Align      uint8   // alignment of variable with this type
-	FieldAlign uint8   // alignment of struct field with this type
-	Kind       uint8   // enumeration for C
+	Size_       uintptr
+	PtrBytes    uintptr // number of (prefix) bytes in the type that can contain pointers
+	Hash        uint32  // hash of type; avoids computation in hash tables
+	TFlag       uint8   // extra type information flags
+	Align_      uint8   // alignment of variable with this type
+	FieldAlign_ uint8   // alignment of struct field with this type
+	Kind_       uint8   // enumeration for C
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
 	Equal func(unsafe.Pointer, unsafe.Pointer) bool
@@ -257,8 +257,8 @@ type abiType struct {
 	PtrToThis int32 // type for pointer to this type, may be zero
 }
 
-// $GOROOT/src/internal/abi/map_swiss.go:`type SwissMapType struct`
-type swissMapType struct {
+// $GOROOT/src/internal/abi/map.go:`type MapType struct`
+type mapType struct {
 	abiType
 	Key   *abiType
 	Elem  *abiType
@@ -273,8 +273,8 @@ type swissMapType struct {
 
 // SwissMapWrap is a wrapper of map to access its internal structure.
 type SwissMapWrap struct {
-	Type *swissMapType
-	Data *swissMap
+	Type *mapType
+	Data *mapData
 }
 
 // ToSwissMap converts a map to SwissMapWrap.
@@ -289,7 +289,7 @@ const (
 	groupSlotsOffset = ctrlGroupsSize
 )
 
-func (g *groupReference) cap(typ *swissMapType) uint64 {
+func (g *groupReference) cap(typ *mapType) uint64 {
 	_ = g
 	return groupCap(uint64(typ.GroupSize), uint64(typ.SlotSize))
 }
@@ -299,13 +299,13 @@ func groupCap(groupSize, slotSize uint64) uint64 {
 }
 
 // key returns a pointer to the key at index i.
-func (g *groupReference) key(typ *swissMapType, i uintptr) unsafe.Pointer {
+func (g *groupReference) key(typ *mapType, i uintptr) unsafe.Pointer {
 	offset := groupSlotsOffset + i*typ.SlotSize
 	return unsafe.Pointer(uintptr(g.data) + offset)
 }
 
 // elem returns a pointer to the element at index i.
-func (g *groupReference) elem(typ *swissMapType, i uintptr) unsafe.Pointer {
+func (g *groupReference) elem(typ *mapType, i uintptr) unsafe.Pointer {
 	offset := groupSlotsOffset + i*typ.SlotSize + typ.ElemOff
 	return unsafe.Pointer(uintptr(g.data) + offset)
 }
@@ -318,13 +318,13 @@ type MemAwareMap[K comparable, V any] struct {
 	Bytes          uint64
 }
 
-// MockSeedForTest sets the seed of the swissMap inside MemAwareMap
+// MockSeedForTest sets the seed of the map internals inside MemAwareMap.
 func (m *MemAwareMap[K, V]) MockSeedForTest(seed uint64) (oriSeed uint64) {
 	return m.unwrap().MockSeedForTest(seed)
 }
 
-// MockSeedForTest sets the seed of the swissMap
-func (m *swissMap) MockSeedForTest(seed uint64) (oriSeed uint64) {
+// MockSeedForTest sets the seed of the map internals.
+func (m *mapData) MockSeedForTest(seed uint64) (oriSeed uint64) {
 	if m.Used != 0 {
 		panic("MockSeedForTest can only be called on empty map")
 	}
@@ -349,8 +349,8 @@ func (m *MemAwareMap[K, V]) Exist(val K) bool {
 	return ok
 }
 
-func (m *MemAwareMap[K, V]) unwrap() *swissMap {
-	return *(**swissMap)(unsafe.Pointer(&m.M))
+func (m *MemAwareMap[K, V]) unwrap() *mapData {
+	return *(**mapData)(unsafe.Pointer(&m.M))
 }
 
 // Set sets the value for the key in the map and returns the memory delta.
@@ -386,8 +386,8 @@ func (m *MemAwareMap[K, V]) Init(v map[K]V) int64 {
 
 	m.groupSize = uint64(ToSwissMap(m.M).Type.GroupSize)
 	m.Bytes = sm.Size(m.groupSize)
-	if sm.Used <= swissMapGroupSlots {
-		m.nextCheckpoint = swissMapGroupSlots * 2
+	if sm.Used <= mapGroupSlots {
+		m.nextCheckpoint = mapGroupSlots * 2
 	} else {
 		m.nextCheckpoint = min(sm.Used, maxTableCapacity) + sm.Used
 	}
