@@ -15,10 +15,14 @@
 package mydump
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -230,7 +234,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	expectedTypes := []byte{
 		mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeTimestamp,
 		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
-		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+		mysql.TypeNewDecimal, mysql.TypeNewDecimal, mysql.TypeNewDecimal, mysql.TypeNewDecimal,
 	}
 
 	row := reader.lastRow.Row
@@ -239,6 +243,10 @@ func TestParquetVariousTypes(t *testing.T) {
 	// Convert the expected string values to datum
 	// to check the parquet type converter output.
 	for i, s := range expectedStringValues {
+		if expectedTypes[i] == mysql.TypeNewDecimal {
+			require.Equal(t, s, row[i].GetMysqlDecimal().String())
+			continue
+		}
 		tp := types.NewFieldType(expectedTypes[i])
 		if expectedTypes[i] == mysql.TypeTimestamp {
 			tp.SetDecimal(6)
@@ -271,14 +279,9 @@ func TestParquetVariousTypes(t *testing.T) {
 		},
 	}
 
-	cases := [][]any{
-		{int32(0), "0.000"},
-		{int32(1000), "1.000"},
-		{int32(-1000), "-1.000"},
-		{int32(999), "0.999"},
-		{int32(-999), "-0.999"},
-		{int32(1), "0.001"},
-		{int32(-1), "-0.001"},
+	expectedValues := []string{
+		"0.000", "1.000", "-1.000", "0.999",
+		"-0.999", "0.001", "-0.001",
 	}
 
 	fileName := "test.02.parquet"
@@ -290,22 +293,19 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
-	for i, testCase := range cases {
+	for i, expectValue := range expectedValues {
 		assert.NoError(t, reader.ReadRow())
-		strDatum, ok := testCase[1].(string)
-		require.True(t, ok)
-		vals := []types.Datum{types.NewCollationStringDatum(strDatum, "")}
-		if i%2 == 0 {
-			vals = append(vals, vals[0])
+		require.Len(t, reader.lastRow.Row, 2)
+
+		s, err := reader.lastRow.Row[0].ToString()
+		require.NoError(t, err)
+		assert.Equal(t, expectValue, s)
+		if i%2 == 1 {
+			require.True(t, reader.lastRow.Row[1].IsNull())
 		} else {
-			vals = append(vals, types.Datum{})
-		}
-		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
-		// compare will `DeepEqual` here
-		assert.Len(t, reader.lastRow.Row, len(vals))
-		for i, val := range vals {
-			assert.Equal(t, val.Kind(), reader.lastRow.Row[i].Kind())
-			assert.Equal(t, val.GetValue(), reader.lastRow.Row[i].GetValue())
+			s, err = reader.lastRow.Row[1].ToString()
+			require.NoError(t, err)
+			assert.Equal(t, expectValue, s)
 		}
 	}
 
@@ -386,7 +386,9 @@ func TestParquetAurora(t *testing.T) {
 			case int64:
 				assert.Equal(t, row[j].GetInt64(), v)
 			case string:
-				assert.Equal(t, row[j].GetString(), v)
+				s, err := row[j].ToString()
+				require.NoError(t, err)
+				require.Equal(t, v, s)
 			default:
 				t.Fatal("unexpected value: ", expectedValues[j])
 			}
@@ -496,5 +498,139 @@ func TestBasicReadFile(t *testing.T) {
 	for i := range rowCnt {
 		require.NoError(t, reader.ReadRow())
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
+	}
+}
+
+// This is the previous implementation used to convert decimal to string.
+// We use it to generate expected results for testing.
+func parquetArrayToStr(rawBytes []byte, scale int) string {
+	negative := rawBytes[0] > 127
+	if negative {
+		for i := range rawBytes {
+			rawBytes[i] = ^rawBytes[i]
+		}
+		for i := len(rawBytes) - 1; i >= 0; i-- {
+			rawBytes[i]++
+			if rawBytes[i] != 0 {
+				break
+			}
+		}
+	}
+
+	intValue := big.NewInt(0)
+	intValue = intValue.SetBytes(rawBytes)
+	val := fmt.Sprintf("%0*d", scale, intValue)
+	dotIndex := len(val) - scale
+	var res strings.Builder
+	if negative {
+		res.WriteByte('-')
+	}
+	if dotIndex == 0 {
+		res.WriteByte('0')
+	} else {
+		res.WriteString(val[:dotIndex])
+	}
+	if scale > 0 {
+		res.WriteByte('.')
+		res.WriteString(val[dotIndex:])
+	}
+	return res.String()
+}
+
+func TestBinaryToDecimalStr(t *testing.T) {
+	type testCase struct {
+		rawBytes []byte
+		scale    int
+	}
+
+	// Small basics.
+	tcs := []testCase{
+		{[]byte{0x01}, 3},
+		{[]byte{0x05}, 0},
+		{[]byte{0xff}, 0},
+		{[]byte{0xff}, 3},
+		{[]byte{0xff, 0xff}, 0},
+		{[]byte{0x01}, 5},
+		{[]byte{0x0a}, 1},
+	}
+
+	// Longer scales and longer inputs.
+	pattern := []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}
+	makeFull := func(n int) []byte {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = pattern[i%len(pattern)]
+		}
+		return b
+	}
+	zeroN := func(n int) []byte { return make([]byte, n) }
+	oneN := func(n int) []byte { return append(make([]byte, n-1), 0x01) }
+	negOneN := func(n int) []byte { return bytes.Repeat([]byte{0xff}, n) }
+	negMinN := func(n int) []byte {
+		b := make([]byte, n)
+		b[0] = 0x80
+		return b
+	}
+
+	// Bound total digits to avoid exceeding mysql.MaxDecimalWidth.
+	appendCases := func(n int, scales []int) {
+		for _, sc := range scales {
+			tcs = append(tcs,
+				testCase{zeroN(n), sc},
+				testCase{oneN(n), sc},
+				testCase{negOneN(n), sc},
+				testCase{makeFull(n), sc},
+			)
+		}
+	}
+
+	// 16 bytes (~39 digits max) safe up to scale 32.
+	appendCases(16, []int{8, 12, 16, 32})
+
+	// Extra carry/edge patterns (kept to small scales).
+	for _, tc := range []testCase{
+		{negMinN(16), 0},
+		{negMinN(16), 8},
+	} {
+		tcs = append(tcs, tc)
+	}
+
+	for i, tc := range tcs {
+		rawCopy := append([]byte(nil), tc.rawBytes...)
+		expected := parquetArrayToStr(tc.rawBytes, tc.scale)
+
+		var dec types.MyDecimal
+		err := dec.FromParquetArray(rawCopy, tc.scale)
+		require.NoError(t, err)
+		require.Equal(t, expected, dec.String(),
+			"raw=%x scale=%d idx=%d", tc.rawBytes, tc.scale, i)
+	}
+}
+
+func TestParquetDecimalFromInt64(t *testing.T) {
+	var d types.Datum
+
+	type testCase struct {
+		value    int64
+		scale    int32
+		expected string
+	}
+
+	tcs := []testCase{
+		{123, 0, "123"},
+		{123, 3, "0.123"},
+		{-7, 0, "-7"},
+		{-7, 2, "-0.07"},
+		{1, 3, "0.001"},
+		{10, 1, "1.0"},
+		{-1, 4, "-0.0001"},
+	}
+
+	for _, tc := range tcs {
+		// No decimal meta or scale=0: stored as int64.
+		err := setParquetDecimalFromInt64(tc.value, &d,
+			schema.DecimalMetadata{IsSet: true, Scale: tc.scale})
+		require.NoError(t, err)
+		require.Equal(t, tc.expected, d.GetMysqlDecimal().String())
 	}
 }
