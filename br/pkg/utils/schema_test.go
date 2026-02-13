@@ -28,9 +28,9 @@ func TestIsSysOrTempSysDB(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "tidb_cdc system db",
+			name:     "tidb_cdc non-system db",
 			db:       mysql.TiCDCSystemDB,
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "temporary mysql db",
@@ -50,7 +50,7 @@ func TestIsSysOrTempSysDB(t *testing.T) {
 		{
 			name:     "temporary tidb_cdc db",
 			db:       "__TiDB_BR_Temporary_" + mysql.TiCDCSystemDB,
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "normal db",
