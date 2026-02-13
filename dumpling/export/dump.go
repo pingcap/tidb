@@ -1517,9 +1517,9 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 		go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
 	} else if si.ServerType == version.ServerTypeTiDB {
 		tctx.L().Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
-			"you'd better adjust the tikv_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
-			"Before dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '720h' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n" +
-			"After dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '10m' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n")
+			"you'd better adjust the tidb_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
+			"Before dumping: run sql `set global tidb_gc_life_time = '24h';` in tidb.\n" +
+			"After dumping: run sql `set global tidb_gc_life_time = '10m';` in tidb.\n")
 	}
 	return nil
 }
