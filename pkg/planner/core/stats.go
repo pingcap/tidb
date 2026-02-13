@@ -423,7 +423,7 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	if len(res.AccessConds) > 0 {
+	if len(res.AccessConds) > 0 && !ranger.HasFullRange(path.Ranges, false) {
 		path.IsFullRange = false
 	}
 	indexCols := path.IdxCols
