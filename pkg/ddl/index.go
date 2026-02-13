@@ -627,18 +627,31 @@ func ValidateRenameIndex(from, to ast.CIStr, tbl *model.TableInfo) (ignore bool,
 }
 
 func onRenameIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		// In multi-schema change, the revertible stage is used to move sub-jobs to the
+		// last revertible point. For RENAME INDEX we don't apply the actual rename in
+		// this stage.
+		//
+		// The real validation and schema change will be done in the non-revertible stage.
+		schemaID := job.SchemaID
+		tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
+		if err != nil || tblInfo == nil {
+			return ver, errors.Trace(err)
+		}
+		if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+			return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Index"))
+		}
+		job.MarkNonRevertible()
+		// Store the mark and enter the next DDL handling loop.
+		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
+	}
+
 	tblInfo, from, to, err := checkRenameIndex(jobCtx.metaMut, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Index"))
-	}
-
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
-		job.MarkNonRevertible()
-		// Store the mark and enter the next DDL handling loop.
-		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
 	renameIndexes(tblInfo, from, to)
