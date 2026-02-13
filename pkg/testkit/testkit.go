@@ -194,12 +194,12 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 		strings.Contains(sql, "TIDB_TRX") {
 		return rs1
 	}
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor", "return(true)")
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
 	if err != nil {
 		panic(err)
 	}
 	rs2 := tk.MustQueryWithContext(context.Background(), sql, args...)
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor")
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
 	if err != nil {
 		panic(err)
 	}

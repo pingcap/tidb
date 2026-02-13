@@ -645,7 +645,7 @@ func TestSmallTableAnalyzeV2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/calcSampleRateByStorageCount", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/pdhelper/calcSampleRateByStorageCount", "return(1)"))
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("create table small_table_inject_pd(a int)")
@@ -683,7 +683,7 @@ create table small_table_inject_pd_with_partition(
 		{"p2", "0", "1"},
 	}
 	tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 'small_table_inject_pd_with_partition'").Sort().CheckAt([]int{2, 4, 5}, rows)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/calcSampleRateByStorageCount"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/pdhelper/calcSampleRateByStorageCount"))
 }
 
 func TestSavedAnalyzeOptions(t *testing.T) {
