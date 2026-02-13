@@ -95,6 +95,9 @@ func validateMLogMetaColumn(mlogMeta *model.TableInfo) error {
 //
 // The returned object still implements `table.Table` and should be used in DML executors so that
 // base table mutations will synchronously append corresponding rows into the MLog table.
+//
+// Please also notice `mlogTable` is only implemented for `STATEMENT-LEVEL`,
+// and **DO NOT** use it across statements or sessions.
 func WrapTableWithMaterializedViewLog(
 	base table.Table,
 	mlog table.Table,
@@ -354,6 +357,15 @@ func (t *mlogTable) writeMLogRow(
 	}
 	mlogRow = append(mlogRow, types.NewStringDatum(string(dmlType)), types.NewIntDatum(oldNew))
 
+	if alloc, ok := ctx.GetReservedRowIDAlloc(); ok {
+		// `ReservedRowIDAlloc` does not support multiple tables.
+		// We should reset the allocator to avoid reading the reserved IDs for base table by mistake,
+		// and after writing the mlog row, we restore the allocator for the base table.
+		// TODO: optimize this by also reserving IDs for mlog table in the statement execution phase.
+		base, maxv := alloc.Current()
+		defer alloc.Reset(base, maxv)
+		alloc.Reset(0, 0)
+	}
 	_, err := t.mlog.AddRecord(ctx, txn, mlogRow, opts...)
 	return err
 }
