@@ -993,19 +993,32 @@ IndexLookUp	root
   └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
 id	task	access object	operator info
-TableReader	root		data:Selection
-└─Selection	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1), or(eq(planner__core__indexmerge_path.t.b, "2"), or(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, "4")))
-  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	root		type: union
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:["2","2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ic(c)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:id(d)	range:["4","4"], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5);
 id	task	access object	operator info
-TableReader	root		data:Selection
-└─Selection	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1), or(or(eq(planner__core__indexmerge_path.t.b, "2"), eq(planner__core__indexmerge_path.t.c, 3)), or(eq(planner__core__indexmerge_path.t.b, "4"), eq(planner__core__indexmerge_path.t.c, 5)))
-  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	root		type: union
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:["2","2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ic(c)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:["4","4"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ic(c)	range:[5,5], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5 OR b = '12' OR c = 13);
 id	task	access object	operator info
-TableReader	root		data:Selection
-└─Selection	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1), or(or(eq(planner__core__indexmerge_path.t.b, "2"), or(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.b, "4"))), or(eq(planner__core__indexmerge_path.t.c, 5), or(eq(planner__core__indexmerge_path.t.b, "12"), eq(planner__core__indexmerge_path.t.c, 13))))
-  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	root		type: union
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:["2","2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ic(c)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:["4","4"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ic(c)	range:[5,5], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ib(b)	range:["12","12"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ic(c)	range:[13,13], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
 id	task	access object	operator info
 IndexLookUp	root		
