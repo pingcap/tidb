@@ -511,7 +511,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			var err error
 			mergeConcurrency := sctx.GetSessionVars().AnalyzePartitionMergeConcurrency
 			if mergeConcurrency == 0 {
-				// V2+hybrid: combined TopN + histogram merge.
+				// Combined TopN + histogram merge.
 				killer := &sctx.GetSessionVars().SQLKiller
 				wrapper := item.item
 				a.globalStats.TopN[item.idx], a.globalStats.Hg[item.idx], err = statistics.MergePartTopNAndHistToGlobal(

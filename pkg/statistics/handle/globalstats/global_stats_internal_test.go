@@ -379,7 +379,7 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 	//   p1: TopN b=2 count=3.  Histogram: [1, 3] count=2, repeat=1. [4, 4] count=repeat=1
 	//   p2: TopN b=1 count=2.  No histogram (fully covered by TopN)
 	//
-	// Global TopN merge (both V1 and Hybrid produce same result):
+	// Global TopN merge (both separate and combined produce same result):
 	//   b=2 wins with count=4 (p1 TopN=3 + p0 hist upper-bound b=2 repeat=1)
 	//   leftTopN b=3 count=4 (p0 TopN=3 + p1 hist upper-bound b=3 repeat=1),
 	//            b=1 count=2 (p2 TopN=2), b=4 count=1 (p1 hist repeat=1)

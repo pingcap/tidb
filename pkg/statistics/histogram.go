@@ -1678,10 +1678,11 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 }
 
 // MergePartTopNAndHistToGlobal merges partition-level TopN lists and histograms
-// into a single global TopN and histogram. It combines V2's TopN-only merge with
-// extraction of significant Repeat counts from histogram bucket upper bounds,
-// catching the "spread value" scenario (values in some partitions' TopN and at
-// histogram upper bounds in others) without V1's O(P^2) histogram lookups.
+// into a single global TopN and histogram in one combined pass. It sums TopN
+// counts across partitions and extracts Repeat counts from histogram bucket
+// upper bounds into the TopN counter, catching the "spread value" scenario
+// (values in some partitions' TopN and at histogram upper bounds in others)
+// without the O(P^2) per-partition histogram lookups of the separate merge path.
 func MergePartTopNAndHistToGlobal(
 	topNs []*TopN,
 	hists []*Histogram,
@@ -1699,7 +1700,7 @@ func MergePartTopNAndHistToGlobal(
 		return nil, nil, nil
 	}
 
-	// Phase 1: Build TopN counter from partition TopN lists (same as V2).
+	// Phase 1: Build TopN counter by summing counts across partition TopN lists.
 	counter := make(map[hack.MutableString]uint64)
 	for _, topN := range topNs {
 		if err := killer.HandleSignal(); err != nil {

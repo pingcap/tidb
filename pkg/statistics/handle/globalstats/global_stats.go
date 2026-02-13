@@ -332,7 +332,7 @@ func blockingMergePartitionStats2GlobalStats(
 		// Merge topN and histogram.
 		mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
 		if mergeConcurrency == 0 {
-			// V2+hybrid: combined TopN + histogram merge that extracts
+			// Combined TopN + histogram merge that extracts
 			// histogram upper-bound Repeat counts into the TopN counter.
 			killer := &sc.GetSessionVars().SQLKiller
 			globalStats.TopN[i], globalStats.Hg[i], err = statistics.MergePartTopNAndHistToGlobal(
@@ -346,7 +346,7 @@ func blockingMergePartitionStats2GlobalStats(
 				return
 			}
 		} else {
-			// V1 / concurrent flow: merge TopN first (some counts become leftover),
+			// Separate flow: merge TopN first (some counts become leftover),
 			// then merge histograms with the leftover TopN entries as extra buckets.
 			var poppedTopN []statistics.TopNMeta
 			wrapper := NewStatsWrapper(allHg[i], allTopN[i])

@@ -126,9 +126,10 @@ func findTopNCountByEncoded(topN *statistics.TopN, encoded []byte) uint64 {
 	return 0
 }
 
-// TestMergeTopNV1InflationHistValueNotAtUpperBound shows how V1 inflates a
-// TopN value's count using the uniform histogram estimate (NotNullCount/NDV)
-// when the value falls inside a histogram bucket but is NOT at the upper bound.
+// TestMergeTopNSeparateInflationHistValueNotAtUpperBound shows how the separate
+// TopN merge (MergePartTopN2GlobalTopN) inflates a TopN value's count using the
+// uniform histogram estimate (NotNullCount/NDV) when the value falls inside a
+// histogram bucket but is NOT at the upper bound.
 //
 // Setup (4 partitions, perTopN=2, 4 histogram buckets, globalTopN=2):
 //
@@ -143,10 +144,10 @@ func findTopNCountByEncoded(topN *statistics.TopN, encoded []byte) uint64 {
 //	                val50 is INSIDE [26,55] but NOT at upper bound (55)
 //	                → EqualRowCount(val50) = NotNullCount/NDV = 500/20 = 25
 //
-// V1: val50 = 50*2 + 25*2 = 150 (inflated), val200 = 30*4 = 120
+// Separate merge: val50 = 50*2 + 25*2 = 150 (inflated), val200 = 30*4 = 120
 //
-//	→ V1 TopN = {val50: 150, val200: 120} — val50 inflated to #1
-func TestMergeTopNV1InflationHistValueNotAtUpperBound(t *testing.T) {
+//	→ TopN = {val50: 150, val200: 120} — val50 inflated to #1
+func TestMergeTopNSeparateInflationHistValueNotAtUpperBound(t *testing.T) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	killer := sqlkiller.SQLKiller{}
@@ -202,19 +203,19 @@ func TestMergeTopNV1InflationHistValueNotAtUpperBound(t *testing.T) {
 	v1TopN, _, _, err := MergePartTopN2GlobalTopN(loc, 1, topNs, 2, hists, false, &killer)
 	require.NoError(t, err)
 	require.Len(t, v1TopN.TopN, 2)
-	// V1 inflates val50: 50*2 + 25*2 = 150, making it #1.
+	// Separate merge inflates val50: 50*2 + 25*2 = 150, making it #1.
 	require.Equal(t, uint64(150), findTopNCountByEncoded(v1TopN, keyVal50))
 	require.Equal(t, uint64(120), findTopNCountByEncoded(v1TopN, keyVal200))
 	_ = sc // used by encodeInt
 }
 
-// TestMergePartTopNAndHistToGlobalSpreadValue verifies that the hybrid merge
+// TestMergePartTopNAndHistToGlobalSpreadValue verifies that the combined merge
 // correctly picks up histogram upper-bound Repeat counts for values that are
 // in some partitions' TopN and at histogram upper bounds in others.
 //
-// This is the key "spread value" scenario where V2 underestimates.
-// The hybrid should match V1's accuracy for upper-bound values while avoiding
-// V1's inflation for non-upper-bound values.
+// This is the key "spread value" scenario that the combined merge addresses.
+// It should capture exact counts for upper-bound values while avoiding
+// the separate merge's inflation for non-upper-bound values.
 //
 // Setup (20 partitions, perTopN=2, globalTopN=2):
 //
@@ -224,10 +225,9 @@ func TestMergeTopNV1InflationHistValueNotAtUpperBound(t *testing.T) {
 //	                 Histogram: [1,20] [21,50] [51,80] [81,100]
 //	                 val_spread(=50) IS at upper bound with Repeat=80
 //
-// True: val_spread=2440, val_common=1730, val_X=1620
-// V1:   val_spread=2440 (exact), val_common=1730
-// V2:   val_spread=1000 (misses 80*18=1440 from histograms)
-// Hybrid: val_spread=2440 (extracts Repeat from upper bounds), val_common=1730
+// True:     val_spread=2440, val_common=1730, val_X=1620
+// Separate: val_spread=2440 (exact), val_common=1730
+// Combined: val_spread=2440 (extracts Repeat from upper bounds), val_common=1730
 func TestMergePartTopNAndHistToGlobalSpreadValue(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	killer := sqlkiller.SQLKiller{}
@@ -291,24 +291,24 @@ func TestMergePartTopNAndHistToGlobalSpreadValue(t *testing.T) {
 	require.NotNil(t, hybridHist)
 	require.Len(t, hybridTopN.TopN, globalTopNSize)
 
-	// Hybrid should pick up val_spread via Repeat extraction:
+	// Combined merge should pick up val_spread via Repeat extraction:
 	// val_spread = 500*2 (TopN) + 80*18 (Repeat from histogram upper bounds) = 2440
 	hybridSpread := findTopNCountByEncoded(hybridTopN, keySpread)
 	require.Equal(t, uint64(2440), hybridSpread,
-		"hybrid should find exact count for val_spread via Repeat extraction")
+		"combined merge should find exact count for val_spread via Repeat extraction")
 
 	// val_common = 100*2 + 85*18 = 1730
 	hybridCommon := findTopNCountByEncoded(hybridTopN, keyCommon)
 	require.Equal(t, uint64(1730), hybridCommon,
-		"hybrid should have exact count for val_common")
+		"combined merge should have exact count for val_common")
 
 	// val_X should not be in global TopN (1620 < 1730)
 	require.Equal(t, uint64(0), findTopNCountByEncoded(hybridTopN, keyX))
 }
 
-// TestMergePartTopNAndHistToGlobalNoInflation verifies that the hybrid merge
+// TestMergePartTopNAndHistToGlobalNoInflation verifies that the combined merge
 // does NOT inflate values that fall inside histogram buckets (not at upper
-// bound), matching V2's behavior and avoiding V1's over-estimation.
+// bound), avoiding the separate merge's over-estimation.
 func TestMergePartTopNAndHistToGlobalNoInflation(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	killer := sqlkiller.SQLKiller{}
@@ -352,7 +352,7 @@ func TestMergePartTopNAndHistToGlobalNoInflation(t *testing.T) {
 			topN.AppendTopN(keyFiller, 35)
 			topNs[i] = topN
 			// val_rare(=50) is INSIDE [26,55] but NOT at upper bound (55).
-			// Hybrid should NOT pick up any inflated count for val_rare.
+			// Combined merge should NOT pick up any inflated count for val_rare.
 			h := statistics.NewHistogram(1, 5, 0, 0, tp, chunk.InitialCapacity, 0)
 			d1, d25 := d(1), d(25)
 			h.AppendBucket(&d1, &d25, 100, 10)
@@ -378,14 +378,14 @@ func TestMergePartTopNAndHistToGlobalNoInflation(t *testing.T) {
 	// val_rare = 60*2 = 120 (TopN only, no histogram upper-bound inflation).
 	// The upper-bound Repeat at [26,55] is 20 per partition (for value 55, not 50).
 	require.Equal(t, uint64(800), findTopNCountByEncoded(hybridTopN, keyCommon),
-		"hybrid should have exact count for val_common")
+		"combined merge should have exact count for val_common")
 	require.Equal(t, uint64(630), findTopNCountByEncoded(hybridTopN, keyFiller),
-		"hybrid should have exact count for val_filler")
+		"combined merge should have exact count for val_filler")
 	require.Equal(t, uint64(0), findTopNCountByEncoded(hybridTopN, keyRare),
-		"hybrid should NOT inflate val_rare (not at upper bound)")
+		"combined merge should NOT inflate val_rare (not at upper bound)")
 }
 
-// TestMergePartTopNAndHistToGlobalCountPreservation verifies that the hybrid
+// TestMergePartTopNAndHistToGlobalCountPreservation verifies that the combined
 // merge preserves total count: globalTopN + histogram total = sum of all
 // input TopN counts + input histogram counts.
 func TestMergePartTopNAndHistToGlobalCountPreservation(t *testing.T) {

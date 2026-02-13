@@ -165,29 +165,29 @@ func BenchmarkMergePartTopNAndHistToGlobal(b *testing.B) {
 }
 
 // BenchmarkFullPipeline benchmarks the full TopN + histogram merge pipeline
-// for all three approaches: V1, Concurrent (4 workers), and Hybrid.
+// for all three approaches: Separate, Concurrent (4 workers), and Combined.
 //
-// Note: V1 and Concurrent mutate input histograms via BinarySearchRemoveVal
+// Note: Separate and Concurrent mutate input histograms via BinarySearchRemoveVal
 // during the TopN merge phase. Across benchmark iterations the histograms
 // become progressively emptier, making later iterations slightly faster.
-// The Hybrid does not mutate inputs.
+// The Combined approach does not mutate inputs.
 //
 // cmd: go test -run=^$ -bench=BenchmarkFullPipeline -benchmem --tags=intest github.com/pingcap/tidb/pkg/statistics/handle/globalstats
 func BenchmarkFullPipeline(b *testing.B) {
 	for _, size := range benchmarkSizes {
-		b.Run(fmt.Sprintf("Size%d/V1", size), func(b *testing.B) {
-			benchmarkFullPipelineV1(size, b)
+		b.Run(fmt.Sprintf("Size%d/Separate", size), func(b *testing.B) {
+			benchmarkFullPipelineSeparate(size, b)
 		})
 		b.Run(fmt.Sprintf("Size%d/Concurrent", size), func(b *testing.B) {
 			benchmarkFullPipelineConcurrent(size, b)
 		})
-		b.Run(fmt.Sprintf("Size%d/Hybrid", size), func(b *testing.B) {
-			benchmarkFullPipelineHybrid(size, b)
+		b.Run(fmt.Sprintf("Size%d/Combined", size), func(b *testing.B) {
+			benchmarkFullPipelineCombined(size, b)
 		})
 	}
 }
 
-func benchmarkFullPipelineV1(partitions int, b *testing.B) {
+func benchmarkFullPipelineSeparate(partitions int, b *testing.B) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
@@ -236,7 +236,7 @@ func benchmarkFullPipelineConcurrent(partitions int, b *testing.B) {
 	}
 }
 
-func benchmarkFullPipelineHybrid(partitions int, b *testing.B) {
+func benchmarkFullPipelineCombined(partitions int, b *testing.B) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	killer := sqlkiller.SQLKiller{}

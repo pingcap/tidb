@@ -1016,7 +1016,7 @@ partitions 12;`)
 	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 }
 
-func TestGlobalStatsMergeV2Hybrid(t *testing.T) {
+func TestGlobalStatsMergeCombined(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
