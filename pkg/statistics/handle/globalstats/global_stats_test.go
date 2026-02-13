@@ -888,8 +888,8 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
 		Check(testkit.Rows("1", "2", "3", "15"))
 	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
-			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+		Check(testkit.Rows("IndexReader 5.00 root partition:all index:IndexRangeScan",
+			"└─IndexRangeScan 5.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	// analyze table t index idx
 	tk.MustExec("drop table if exists t")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
