@@ -349,6 +349,9 @@ func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
 		return state == "paused" || state == "pausing"
 	}, 30*time.Second, 100*time.Millisecond)
 
+	// Current Stage-1 semantics: MV table is visible once phase-1 finishes, even before job completion.
+	tk.MustQuery("show tables like 'mv_pause'").Check(testkit.Rows("mv_pause"))
+
 	tkCtl.MustExec("admin resume ddl jobs " + jobID)
 	select {
 	case err := <-ddlDone:
@@ -450,6 +453,51 @@ func TestCreateMaterializedViewRetryWithResidualBuildRowsRollback(t *testing.T) 
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
 	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
+}
+
+func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	const pauseDropFailpoint = "github.com/pingcap/tidb/pkg/ddl/pauseDropMaterializedViewLogAfterCheck"
+	require.NoError(t, failpoint.Enable(pauseDropFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseDropFailpoint))
+		}
+	}()
+
+	dropErrCh := make(chan error, 1)
+	go func() {
+		tkDrop := testkit.NewTestKit(t, store)
+		tkDrop.MustExec("use test")
+		dropErrCh <- tkDrop.ExecToErr("drop materialized view log on t")
+	}()
+
+	// Let the drop SQL pass executor pre-check and pause before DDL job submit.
+	time.Sleep(500 * time.Millisecond)
+
+	tk.MustExec("create materialized view mv_dep (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+
+	require.NoError(t, failpoint.Disable(pauseDropFailpoint))
+	enabled = false
+
+	err := <-dropErrCh
+	require.ErrorContains(t, err, "dependent materialized views exist")
+	tk.MustQuery("show tables like '$mlog$t'").Check(testkit.Rows("$mlog$t"))
+
+	tk.MustExec("drop materialized view mv_dep")
+	tk.MustExec("drop materialized view log on t")
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
 func TestCreateMaterializedViewRetryAfterUpsertFailure(t *testing.T) {

@@ -78,6 +78,10 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			if err != nil {
 				return ver, err
 			}
+			err = checkDropMaterializedViewLogHasNoDependentMVs(jobCtx, job, tblInfo)
+			if err != nil {
+				return ver, err
+			}
 		}
 		tblInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
@@ -1406,6 +1410,25 @@ func onRepairTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
+}
+
+func checkDropMaterializedViewLogHasNoDependentMVs(jobCtx *jobContext, job *model.Job, droppingTable *model.TableInfo) error {
+	if droppingTable.MaterializedViewLog == nil {
+		return nil
+	}
+	baseTableID := droppingTable.MaterializedViewLog.BaseTableID
+	baseTblInfo, err := getTableInfo(jobCtx.metaMut, baseTableID, job.SchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	if hasMaterializedViewDependsOnBaseTable(jobCtx.infoCache.GetLatest(), baseTblInfo) {
+		job.State = model.JobStateCancelled
+		return errDropMaterializedViewLogDependent(job.SchemaName, baseTblInfo.Name.O)
+	}
+	return nil
 }
 
 func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, droppingTable *model.TableInfo) (*schemaIDAndTableInfo, error) {

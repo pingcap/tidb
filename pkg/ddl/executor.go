@@ -4399,17 +4399,31 @@ func (e *executor) dropTableObject(
 			}
 		}
 
+		involvingSchemas := []model.InvolvingSchemaInfo{{
+			Database: schema.Name.L,
+			Table:    tableInfo.Meta().Name.L,
+		}}
+		if tableObjectType == tableObject && tableInfo.Meta().MaterializedViewLog != nil {
+			if baseTbl, ok := is.TableByID(e.ctx, tableInfo.Meta().MaterializedViewLog.BaseTableID); ok {
+				involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
+					Database: schema.Name.L,
+					Table:    baseTbl.Meta().Name.L,
+				})
+			}
+		}
+
 		job := &model.Job{
-			Version:        model.GetJobVerInUse(),
-			SchemaID:       schema.ID,
-			TableID:        tableInfo.Meta().ID,
-			SchemaName:     schema.Name.L,
-			SchemaState:    schema.State,
-			TableName:      tableInfo.Meta().Name.L,
-			Type:           jobType,
-			BinlogInfo:     &model.HistoryInfo{},
-			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-			SQLMode:        ctx.GetSessionVars().SQLMode,
+			Version:             model.GetJobVerInUse(),
+			SchemaID:            schema.ID,
+			TableID:             tableInfo.Meta().ID,
+			SchemaName:          schema.Name.L,
+			SchemaState:         schema.State,
+			TableName:           tableInfo.Meta().Name.L,
+			Type:                jobType,
+			BinlogInfo:          &model.HistoryInfo{},
+			InvolvingSchemaInfo: involvingSchemas,
+			CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+			SQLMode:             ctx.GetSessionVars().SQLMode,
 		}
 		args := &model.DropTableArgs{
 			Identifiers: objectIdents,
@@ -7136,8 +7150,10 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 		model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
-	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateSchema:
+	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
+	case model.ActionCreateMaterializedView:
+		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	default:
 		return getIntervalFromPolicy(normalDDLIntervalPolicy, i)
 	}

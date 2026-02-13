@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -178,6 +179,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	involvingSchemas := []model.InvolvingSchemaInfo{
 		{Database: schema.Name.L, Table: mvTableInfo.Name.L},
 		{Database: schema.Name.L, Table: baseTable.Meta().Name.L},
+		{Database: schema.Name.L, Table: mlogTable.Meta().Name.L},
 	}
 	job := &model.Job{
 		Version:             model.GetJobVerInUse(),
@@ -264,13 +266,13 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	}
 
 	// MV LOG cannot be dropped while any MV still depends on the base table.
-	depends, err := hasMaterializedViewDependsOnBaseTable(e.ctx, is, schemaName, baseTableID)
-	if err != nil {
-		return err
+	if hasMaterializedViewDependsOnBaseTable(is, baseTable.Meta()) {
+		return errDropMaterializedViewLogDependent(schemaName.O, s.Table.Name.O)
 	}
-	if depends {
-		return errors.Errorf("cannot drop materialized view log on %s.%s: dependent materialized views exist", schemaName.O, s.Table.Name.O)
-	}
+
+	// Re-checking in DDL worker still exists; this failpoint is used to verify that worker-side
+	// validation rejects stale executor pre-check under concurrent CREATE MATERIALIZED VIEW.
+	failpoint.Inject("pauseDropMaterializedViewLogAfterCheck", func() {})
 
 	dropStmt := &ast.DropTableStmt{Tables: []*ast.TableName{{Schema: schemaName, Name: mlogName}}}
 	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)
@@ -697,22 +699,26 @@ func hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo *model.TableInfo, gr
 	return false
 }
 
-func hasMaterializedViewDependsOnBaseTable(ctx context.Context, is infoschema.InfoSchema, schema pmodel.CIStr, baseTableID int64) (bool, error) {
-	tblInfos, err := is.SchemaTableInfos(ctx, schema)
-	if err != nil {
-		return false, err
+func hasMaterializedViewDependsOnBaseTable(is infoschema.InfoSchema, baseTableInfo *model.TableInfo) bool {
+	if baseTableInfo.MaterializedViewBase == nil || len(baseTableInfo.MaterializedViewBase.MViewIDs) == 0 {
+		return false
 	}
-	for _, tblInfo := range tblInfos {
-		if tblInfo.MaterializedView == nil {
+	for _, mviewID := range baseTableInfo.MaterializedViewBase.MViewIDs {
+		mvTbl, ok := is.TableByID(context.Background(), mviewID)
+		if !ok || mvTbl.Meta().MaterializedView == nil {
 			continue
 		}
-		for _, id := range tblInfo.MaterializedView.BaseTableIDs {
-			if id == baseTableID {
-				return true, nil
+		for _, id := range mvTbl.Meta().MaterializedView.BaseTableIDs {
+			if id == baseTableInfo.ID {
+				return true
 			}
 		}
 	}
-	return false, nil
+	return false
+}
+
+func errDropMaterializedViewLogDependent(schemaName, baseTableName string) error {
+	return errors.Errorf("cannot drop materialized view log on %s.%s: dependent materialized views exist", schemaName, baseTableName)
 }
 
 func restoreNodeToCanonicalSQL(node ast.Node) (string, error) {
