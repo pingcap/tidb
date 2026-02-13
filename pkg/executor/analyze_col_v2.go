@@ -982,7 +982,14 @@ func estimateNDVsBySketch(
 		} else if rootCollector.Base().Count > 0 {
 			rowCount = uint64(rootCollector.Base().Count)
 		}
-		estimateNDVs[i] = int64(statistics.EstimateNDVByChao3(sampleNDV, f1, sampleSize, rowCount))
+		logutil.BgLogger().Info("analyze v2 ndv estimation",
+			zap.Int("col_idx", i),
+			zap.Uint64("sample_ndv", sampleNDV),
+			zap.Uint64("f1", f1),
+			zap.Uint64("sample_size", sampleSize),
+			zap.Uint64("row_count", rowCount),
+		)
+		estimateNDVs[i] = int64(statistics.EstimateNDVByGEE(sampleNDV, f1, sampleSize, rowCount))
 	}
 	return estimateNDVs
 }

@@ -88,6 +88,45 @@ func EstimateNDVByChao3(sampleNDV, onlyOnceItems, sampleSize, rowCount uint64) u
 	return ndv
 }
 
+// EstimateNDVByGEE estimates NDV using the GEE estimator from:
+// "Towards estimation error guarantees for distinct values." (Charikar et al., 2000).
+//
+// D_hat = sqrt(N/n) * f1 + d - f1
+// d: sample NDV; f1: number of values that appear once in the sample.
+// n: sample size; N: row count.
+func EstimateNDVByGEE(sampleNDV, onlyOnceItems, sampleSize, rowCount uint64) uint64 {
+	if sampleSize == 0 || sampleNDV == 0 {
+		return 0
+	}
+	if rowCount != 0 && rowCount < sampleNDV {
+		rowCount = sampleNDV
+	}
+	if onlyOnceItems == sampleSize {
+		if rowCount > 0 {
+			return rowCount
+		}
+		return sampleNDV
+	}
+	if onlyOnceItems == 0 {
+		if rowCount > 0 {
+			return min(sampleNDV, rowCount)
+		}
+		return sampleNDV
+	}
+	f1 := float64(onlyOnceItems)
+	n := float64(sampleSize)
+	rowCountN := float64(rowCount)
+	d := float64(sampleNDV)
+
+	est := d + (math.Sqrt(rowCountN/n)-1.0)*f1
+	ndv := uint64(est + 0.5)
+	ndv = max(ndv, sampleNDV)
+	if rowCount > 0 {
+		ndv = min(ndv, rowCount)
+	}
+	return ndv
+}
+
 // EstimateF1BySketches estimates f1 (the number of values that appear once in the sample)
 // using NDVSketch and F1Sketch from multiple nodes. It follows Eq. 7-9 and Algorithm 2 in:
 // "Sampling-based Estimation of the Number of Distinct Values in Distributed Environment"
@@ -99,7 +138,7 @@ func EstimateF1BySketches(ndvSketches, f1Sketches []*FMSketch) uint64 {
 	if len(ndvSketches) == 0 || len(ndvSketches) != len(f1Sketches) {
 		return 0
 	}
-	var f1 uint64
+	var f1 int64
 	for i := range ndvSketches {
 		var other *FMSketch
 		for j, sk := range ndvSketches {
@@ -129,9 +168,7 @@ func EstimateF1BySketches(ndvSketches, f1Sketches []*FMSketch) uint64 {
 		if union != nil {
 			ndvUnion = uint64(union.NDV())
 		}
-		if ndvUnion > ndvOther {
-			f1 += ndvUnion - ndvOther
-		}
+		f1 += int64(ndvUnion) - int64(ndvOther)
 		if other != nil {
 			other.DestroyAndPutToPool()
 		}
@@ -139,5 +176,8 @@ func EstimateF1BySketches(ndvSketches, f1Sketches []*FMSketch) uint64 {
 			union.DestroyAndPutToPool()
 		}
 	}
-	return f1
+	if f1 < 0 {
+		return 0
+	}
+	return uint64(f1)
 }

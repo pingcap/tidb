@@ -71,17 +71,15 @@ type ReservoirRowSampleCollector struct {
 
 type f1Sketch struct {
 	mask    uint64
-	maxSize int
 	once    *swiss.Map[uint64, bool]
 	multi   *swiss.Map[uint64, bool]
 }
 
-func newF1Sketch(maxSize int) *f1Sketch {
+func newF1Sketch() *f1Sketch {
 	return &f1Sketch{
 		mask:    0,
-		maxSize: maxSize,
-		once:    swiss.NewMap[uint64, bool](uint32(maxSize)),
-		multi:   swiss.NewMap[uint64, bool](uint32(maxSize)),
+		once:    swiss.NewMap[uint64, bool](0),
+		multi:   swiss.NewMap[uint64, bool](0),
 	}
 }
 
@@ -97,21 +95,6 @@ func (s *f1Sketch) insertHashValue(hashVal uint64) {
 		s.multi.Put(hashVal, true)
 	} else {
 		s.once.Put(hashVal, true)
-	}
-	if s.once.Count()+s.multi.Count() > s.maxSize {
-		s.mask = s.mask*2 + 1
-		s.once.Iter(func(k uint64, _ bool) (stop bool) {
-			if (k & s.mask) != 0 {
-				s.once.Delete(k)
-			}
-			return false
-		})
-		s.multi.Iter(func(k uint64, _ bool) (stop bool) {
-			if (k & s.mask) != 0 {
-				s.multi.Delete(k)
-			}
-			return false
-		})
 	}
 }
 
@@ -133,11 +116,11 @@ func (s *f1Sketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.D
 	return nil
 }
 
-func (s *f1Sketch) toFMSketch() *FMSketch {
+func (s *f1Sketch) toFMSketch(maxSketchSize int) *FMSketch {
 	if s == nil {
 		return nil
 	}
-	sketch := NewFMSketch(s.maxSize)
+	sketch := NewFMSketch(maxSketchSize)
 	sketch.mask = s.mask
 	s.once.Iter(func(k uint64, _ bool) (stop bool) {
 		sketch.hashset.Put(k, true)
@@ -153,7 +136,6 @@ func (s *f1Sketch) reset() {
 	s.once.Clear()
 	s.multi.Clear()
 	s.mask = 0
-	s.maxSize = 0
 }
 
 // ReservoirRowSampleItem is the item for the ReservoirRowSampleCollector. The weight is needed for the sampling algorithm.
@@ -259,7 +241,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 	collector := NewRowSampleCollector(s.MaxSampleSize, s.SampleRate, len(s.ColsFieldType)+len(s.ColGroups))
 	for range len(s.ColsFieldType) + len(s.ColGroups) {
 		collector.Base().FMSketches = append(collector.Base().FMSketches, NewFMSketch(s.MaxFMSketchSize))
-		collector.Base().f1Builders = append(collector.Base().f1Builders, newF1Sketch(s.MaxFMSketchSize))
+		collector.Base().f1Builders = append(collector.Base().f1Builders, newF1Sketch())
 	}
 	ctx := context.TODO()
 	chk := s.RecordSet.NewChunk(nil)
@@ -452,7 +434,7 @@ func (s *baseCollector) BuildF1Sketches(colGroups [][]int64, maxSketchSize int) 
 	s.F1Sketches = make([]*FMSketch, totalLen)
 	for i := 0; i < colLen; i++ {
 		if i < len(s.f1Builders) && s.f1Builders[i] != nil {
-			s.F1Sketches[i] = s.f1Builders[i].toFMSketch()
+			s.F1Sketches[i] = s.f1Builders[i].toFMSketch(maxSketchSize)
 		} else {
 			s.F1Sketches[i] = NewFMSketch(maxSketchSize)
 		}
@@ -469,7 +451,7 @@ func (s *baseCollector) BuildF1Sketches(colGroups [][]int64, maxSketchSize int) 
 			continue
 		}
 		if idx < len(s.f1Builders) && s.f1Builders[idx] != nil {
-			s.F1Sketches[idx] = s.f1Builders[idx].toFMSketch()
+			s.F1Sketches[idx] = s.f1Builders[idx].toFMSketch(maxSketchSize)
 		} else {
 			s.F1Sketches[idx] = NewFMSketch(maxSketchSize)
 		}
