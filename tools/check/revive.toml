@@ -17,42 +17,30 @@ severity = "error"
 confidence = 0.8
 errorCode = -1
 warningCode = -1
+exclude = [
+    "./pkg/util/hack/...",
+    "pkg/util/hack/...",
+]
 
 [rule.blank-imports]
-Exclude = ["~pkg/util/hack/"]
 [rule.context-as-argument]
-Exclude = ["~pkg/util/hack/"]
 [rule.dot-imports]
-Exclude = ["~pkg/util/hack/"]
 [rule.error-return]
-Exclude = ["~pkg/util/hack/"]
 [rule.error-strings]
-Exclude = ["~pkg/util/hack/"]
 [rule.error-naming]
-Exclude = ["~pkg/util/hack/"]
 [rule.exported]
-Exclude = ["~pkg/util/hack/"]
 [rule.if-return]
-Exclude = ["~pkg/util/hack/"]
 [rule.var-naming]
-Exclude = ["~pkg/util/hack/"]
 [rule.package-comments]
-Exclude = ["~pkg/util/hack/"]
 [rule.range]
-Exclude = ["~pkg/util/hack/"]
 #[rule.receiver-naming]
 [rule.indent-error-flow]
-Exclude = ["~pkg/util/hack/"]
 [rule.superfluous-else]
-Exclude = ["~pkg/util/hack/"]
 [rule.modifies-parameter]
-Exclude = ["~pkg/util/hack/"]
 [rule.duplicated-imports]
-Exclude = ["~pkg/util/hack/"]
 
 # This can be checked by other tools like megacheck
 [rule.unreachable-code]
-Exclude = ["~pkg/util/hack/"]
 
 
 # Currently this makes too much noise, but should add it in
