@@ -1505,6 +1505,12 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 	}
 }
 
+func (er *expressionRewriter) adjustUTF8Collation(tp *types.FieldType) {
+	if tp.GetFlag()&mysql.UnderScoreCharsetFlag > 0 && charset.CharsetUTF8 == tp.GetCharset() {
+		tp.SetCollate(er.sctx.GetDefaultCollationForUTF8())
+	}
+}
+
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	defer func() {
@@ -1545,6 +1551,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		value := &expression.Constant{Value: v.Datum, RetType: retType}
 		initConstantRepertoire(er.sctx.GetEvalCtx(), value)
 		er.adjustUTF8MB4Collation(retType)
+		er.adjustUTF8Collation(retType)
 		if er.err != nil {
 			return retNode, false
 		}
@@ -2557,6 +2564,7 @@ func (er *expressionRewriter) toParamMarker(v *driver.ParamMarkerExpr) {
 	}
 	initConstantRepertoire(er.sctx.GetEvalCtx(), value)
 	er.adjustUTF8MB4Collation(value.RetType)
+	er.adjustUTF8Collation(value.RetType)
 	if er.err != nil {
 		return
 	}

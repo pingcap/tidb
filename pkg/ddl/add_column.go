@@ -270,7 +270,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 	tableCharset, tableCollate, err := ResolveCharsetCollation([]ast.CharsetOpt{
 		{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 		{Chs: schema.Charset, Col: schema.Collate},
-	}, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
+	}, ctx.GetSessionVars().DefaultCollationForUTF8MB4, ctx.GetSessionVars().DefaultCollationForUTF8)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -313,15 +313,15 @@ func buildColumnAndConstraint(
 	}
 
 	// specifiedCollate refers to the last collate specified in colDef.Options.
-	chs, coll, err := getCharsetAndCollateInColumnDef(colDef, ctx.GetDefaultCollationForUTF8MB4())
+	chs, coll, err := getCharsetAndCollateInColumnDef(colDef, ctx.GetDefaultCollationForUTF8MB4(), ctx.GetDefaultCollationForUTF8())
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	chs, coll, err = ResolveCharsetCollation([]ast.CharsetOpt{
 		{Chs: chs, Col: coll},
 		{Chs: tblCharset, Col: tblCollate},
-	}, ctx.GetDefaultCollationForUTF8MB4())
-	chs, coll = OverwriteCollationWithBinaryFlag(colDef, chs, coll, ctx.GetDefaultCollationForUTF8MB4())
+	}, ctx.GetDefaultCollationForUTF8MB4(), ctx.GetDefaultCollationForUTF8())
+	chs, coll = OverwriteCollationWithBinaryFlag(colDef, chs, coll, ctx.GetDefaultCollationForUTF8MB4(), ctx.GetDefaultCollationForUTF8())
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -339,11 +339,11 @@ func buildColumnAndConstraint(
 
 // getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
 // of column definition. If there's no collate in the option, the default collate of column's charset will be used.
-func getCharsetAndCollateInColumnDef(def *ast.ColumnDef, defaultUTF8MB4Coll string) (chs, coll string, err error) {
+func getCharsetAndCollateInColumnDef(def *ast.ColumnDef, defaultUTF8MB4Coll, defaultUTF8Coll string) (chs, coll string, err error) {
 	chs = def.Tp.GetCharset()
 	coll = def.Tp.GetCollate()
 	if chs != "" && coll == "" {
-		if coll, err = GetDefaultCollation(chs, defaultUTF8MB4Coll); err != nil {
+		if coll, err = GetDefaultCollation(chs, defaultUTF8MB4Coll, defaultUTF8Coll); err != nil {
 			return "", "", errors.Trace(err)
 		}
 	}
@@ -369,14 +369,14 @@ func getCharsetAndCollateInColumnDef(def *ast.ColumnDef, defaultUTF8MB4Coll stri
 //	CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
 //
 // The 'BINARY' sets the column collation to *_bin according to the table charset.
-func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string, defaultUTF8MB4Coll string) (newChs string, newColl string) {
+func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string, defaultUTF8MB4Coll, defaultUTF8Coll string) (newChs string, newColl string) {
 	ignoreBinFlag := colDef.Tp.GetCharset() != "" && (colDef.Tp.GetCollate() != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
 	if ignoreBinFlag {
 		return chs, coll
 	}
 	needOverwriteBinColl := types.IsString(colDef.Tp.GetType()) && mysql.HasBinaryFlag(colDef.Tp.GetFlag())
 	if needOverwriteBinColl {
-		newColl, err := GetDefaultCollation(chs, defaultUTF8MB4Coll)
+		newColl, err := GetDefaultCollation(chs, defaultUTF8MB4Coll, defaultUTF8Coll)
 		if err != nil {
 			return chs, coll
 		}

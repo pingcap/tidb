@@ -1886,7 +1886,7 @@ func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column,
 		chs = col.FieldType.GetCharset()
 		coll = col.FieldType.GetCollate()
 	} else {
-		chs, coll, err = getCharsetAndCollateInColumnDef(specNewColumn, ctx.GetDefaultCollationForUTF8MB4())
+		chs, coll, err = getCharsetAndCollateInColumnDef(specNewColumn, ctx.GetDefaultCollationForUTF8MB4(), ctx.GetDefaultCollationForUTF8())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1894,8 +1894,8 @@ func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column,
 			{Chs: chs, Col: coll},
 			{Chs: meta.Charset, Col: meta.Collate},
 			{Chs: schema.Charset, Col: schema.Collate},
-		}, ctx.GetDefaultCollationForUTF8MB4())
-		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll, ctx.GetDefaultCollationForUTF8MB4())
+		}, ctx.GetDefaultCollationForUTF8MB4(), ctx.GetDefaultCollationForUTF8())
+		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll, ctx.GetDefaultCollationForUTF8MB4(), ctx.GetDefaultCollationForUTF8())
 		if err != nil {
 			return errors.Trace(err)
 		}

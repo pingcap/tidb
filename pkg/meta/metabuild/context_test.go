@@ -55,6 +55,7 @@ func TestMetaBuildContext(t *testing.T) {
 				require.Equal(t, defSQLMode, ctx.GetSQLMode())
 				require.Equal(t, ctx.GetExprCtx().GetEvalCtx().SQLMode(), ctx.GetSQLMode())
 				require.Equal(t, defVars.DefaultCollationForUTF8MB4, ctx.GetDefaultCollationForUTF8MB4())
+				require.Equal(t, defVars.DefaultCollationForUTF8, ctx.GetDefaultCollationForUTF8())
 				require.Equal(t, ctx.GetExprCtx().GetDefaultCollationForUTF8MB4(), ctx.GetDefaultCollationForUTF8MB4())
 			},
 			option: func(val any) metabuild.Option {
