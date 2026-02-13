@@ -156,12 +156,6 @@ func InterpretFullTextSearchExpr(expr Expression) *FTSInfo {
 	}
 }
 
-// RewriteMySQLMatchAgainst rewrites MATCH AGAINST expressions recursively.
-func RewriteMySQLMatchAgainst(bctx BuildContext, expr Expression) (Expression, error) {
-	newExpr, _, err := RewriteMySQLMatchAgainstRecursively(bctx, expr, model.FullTextParserTypeStandardV1)
-	return newExpr, err
-}
-
 // RewriteMySQLMatchAgainstRecursively rewrites MATCH AGAINST expressions recursively.
 // parserType controls which boolean parser to use for MATCH AGAINST rewrite.
 func RewriteMySQLMatchAgainstRecursively(
@@ -222,9 +216,7 @@ func rewriteOneMySQLMatchAgainst(
 		patternGroup, err = matchagainst.ParseNgramBooleanMode(patternStr)
 	case model.FullTextParserTypeStandardV1, model.FullTextParserTypeMultilingualV1:
 		// STANDARD and MULTILINGUAL both use the standard BOOLEAN MODE parser semantics in TiDB.
-		var root matchagainst.BooleanGroup
-		root, err = matchagainst.ParseStandardBooleanMode(patternStr)
-		patternGroup = &root
+		patternGroup, err = matchagainst.ParseStandardBooleanMode(patternStr)
 	default:
 		return nil, errors.Errorf("unsupported fulltext parser type: %s", parserType)
 	}

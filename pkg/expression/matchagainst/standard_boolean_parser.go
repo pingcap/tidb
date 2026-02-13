@@ -39,10 +39,10 @@ import (
 //   - Trailing '*' after a term sets the term's wildcard flag.
 //   - Empty phrases "\"\"" are ignored.
 //   - The STANDARD parser path currently rejects operators: ()<>~@.
-func ParseStandardBooleanMode(input string) (BooleanGroup, error) {
+func ParseStandardBooleanMode(input string) (*BooleanGroup, error) {
 	tokens, err := tokenizeStandardBooleanMode(input)
 	if err != nil {
-		return BooleanGroup{}, err
+		return nil, err
 	}
 
 	p := standardBooleanParser{
@@ -50,10 +50,10 @@ func ParseStandardBooleanMode(input string) (BooleanGroup, error) {
 	}
 	g, err := p.parseGroup(false)
 	if err != nil {
-		return BooleanGroup{}, err
+		return nil, err
 	}
 	if t := p.peek(); t.kind != standardBooleanTokenEOF {
-		return BooleanGroup{}, errors.Errorf("unexpected token %s at pos %d", p.tokenDesc(t), t.pos)
+		return nil, errors.Errorf("unexpected token %s at pos %d", p.tokenDesc(t), t.pos)
 	}
 	return g, nil
 }
@@ -64,7 +64,7 @@ type standardBooleanParser struct {
 }
 
 // parseGroup reads zero or more clauses until EOF, or until it sees ')' (when stopAtRightParen is true).
-func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (BooleanGroup, error) {
+func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (*BooleanGroup, error) {
 	var g BooleanGroup
 	for {
 		t := p.peek()
@@ -75,12 +75,12 @@ func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (BooleanGroup,
 			if stopAtRightParen {
 				break
 			}
-			return BooleanGroup{}, errors.Errorf("unexpected ')' at pos %d", t.pos)
+			return nil, errors.Errorf("unexpected ')' at pos %d", t.pos)
 		}
 
 		clause, err := p.parseClause()
 		if err != nil {
-			return BooleanGroup{}, err
+			return nil, err
 		}
 		if clause == nil {
 			continue
@@ -88,7 +88,7 @@ func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (BooleanGroup,
 		g.addClause(*clause)
 	}
 
-	return g, nil
+	return &g, nil
 }
 
 // parseClause parses one boolean "clause". A clause can be:
