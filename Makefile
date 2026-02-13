@@ -378,7 +378,8 @@ tools/bin/errdoc-gen:
 .PHONY: tools/bin/golangci-lint
 tools/bin/golangci-lint:
 	$(eval GOLANGCI_LINT_VERSION := $(shell grep 'github.com/golangci/golangci-lint/v2' go.mod | awk '{print $$2}'))
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	$(eval GO_VERSION := $(shell sed -n 's/^go //p' go.mod | head -n 1))
+	GOTOOLCHAIN=go$(GO_VERSION) GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 .PHONY: tools/bin/vfsgendev
 tools/bin/vfsgendev:
