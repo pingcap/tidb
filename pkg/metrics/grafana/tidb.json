@@ -21561,7 +21561,107 @@
           "yBucketBound": "auto",
           "yBucketNumber": null,
           "yBucketSize": null
-        }
+        },
+	{
+		"aliasColors": {},
+		"bars": false,
+		"dashLength": 10,
+		"dashes": false,
+		"datasource": "${DS_TEST-CLUSTER}",
+		"description": "Txn and GC safepoint.",
+		"fieldConfig": {
+			"defaults": {},
+			"overrides": []
+		},
+		"fill": 0,
+		"fillGradient": 0,
+		"gridPos": {
+			"h": 7,
+			"w": 8,
+			"x": 16,
+			"y": 37
+		},
+		"hiddenSeries": false,
+		"id": 23763573004,
+		"legend": {
+			"avg": false,
+			"current": false,
+			"max": false,
+			"min": false,
+			"show": true,
+			"total": false,
+			"values": false
+		},
+		"lines": true,
+		"linewidth": 1,
+		"links": [],
+		"nullPointMode": "null",
+		"options": {
+			"alertThreshold": true
+		},
+		"percentage": false,
+		"pluginVersion": "7.5.11",
+		"pointradius": 5,
+		"points": false,
+		"renderer": "flot",
+		"seriesOverrides": [],
+		"spaceLength": 10,
+		"stack": false,
+		"steppedLine": false,
+		"targets": [
+		{
+			"exemplar": true,
+			"expr": "max by (type) tidb_tikvclient_safepoint{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
+			"format": "time_series",
+			"interval": "",
+			"intervalFactor": 2,
+			"legendFormat": "{{type}}-safe-point",
+			"refId": "A"
+		}
+		],
+		"thresholds": [],
+		"timeFrom": null,
+		"timeRegions": [],
+		"timeShift": null,
+		"title": "Safe Point",
+		"tooltip": {
+			"shared": true,
+			"sort": 0,
+			"value_type": "individual"
+		},
+		"type": "graph",
+		"xaxis": {
+			"buckets": null,
+			"mode": "time",
+			"name": null,
+			"show": true,
+			"values": []
+		},
+		"yaxes": [
+		{
+			"$$hashKey": "object:92",
+			"format": "dateTimeAsIso",
+			"label": null,
+			"logBase": 1,
+			"max": null,
+			"min": null,
+			"show": true
+		},
+		{
+			"$$hashKey": "object:93",
+			"format": "short",
+			"label": null,
+			"logBase": 1,
+			"max": null,
+			"min": null,
+			"show": true
+		}
+		],
+		"yaxis": {
+			"align": false,
+			"alignLevel": null
+		}
+	}
       ],
       "repeat": null,
       "title": "GC",
