@@ -336,6 +336,10 @@ linters:
           - makezero
           - rowserrcheck
         path: _test\.go
+      - linters:
+          - revive
+        path: pkg/util/hack/map_abi_go126\.go
+        text: "don't use underscores in Go names"
     paths:
       - third_party$
       - builtin$
