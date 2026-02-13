@@ -103,6 +103,9 @@ const (
 	flagMetadataDownloadBatchSize    = "metadata-download-batch-size"
 	defaultMetadataDownloadBatchSize = 128
 
+	flagMetaFileSize    = "meta-file-size"
+	defaultMetaFileSize = 128
+
 	unlimited           = 0
 	crypterAES128KeyLen = 16
 	crypterAES192KeyLen = 24
@@ -289,6 +292,9 @@ type Config struct {
 
 	// Metadata download batch size, such as metadata for log restore
 	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
+
+	// Metadata batch size
+	MetaFileSize uint `json:"meta-file-size" toml:"meta-file-size"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -341,6 +347,8 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(flagMetadataDownloadBatchSize, defaultMetadataDownloadBatchSize,
 		"the batch size of downloading metadata, such as log restore metadata for truncate or restore")
 
+	flags.Uint(flagMetaFileSize, defaultMetaFileSize,
+		"the size limit of meta file in MiB")
 	// log backup plaintext key flags
 	flags.String(flagLogBackupCipherType, "plaintext", "Encrypt/decrypt method, "+
 		"be one of plaintext|aes128-ctr|aes192-ctr|aes256-ctr case-insensitively, "+
@@ -749,6 +757,10 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	if cfg.MetaFileSize, err = flags.GetUint(flagMetaFileSize); err != nil {
+		return errors.Trace(err)
+	}
+
 	return cfg.normalizePDURLs()
 }
 
@@ -967,6 +979,9 @@ func (cfg *Config) adjust() {
 	}
 	if cfg.MetadataDownloadBatchSize == 0 {
 		cfg.MetadataDownloadBatchSize = defaultMetadataDownloadBatchSize
+	}
+	if cfg.MetaFileSize == 0 {
+		cfg.MetaFileSize = defaultMetaFileSize
 	}
 }
 
