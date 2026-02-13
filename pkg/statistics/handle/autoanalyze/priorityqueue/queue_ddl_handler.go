@@ -36,30 +36,25 @@ import (
 )
 
 // HandleDDLEvent handles DDL events for the priority queue.
-func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) (err error) {
+func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	// If the priority queue is not initialized, we should retry later.
 	if !pq.syncFields.initialized {
-		return notifier.ErrNotReadyRetryLater
+		// If auto analyze is enabled but the priority queue is not initialized,
+		// it means the priority queue initialization is not finished yet.
+		// So we should retry later.
+		if vardef.RunAutoAnalyze.Load() {
+			return notifier.ErrNotReadyRetryLater
+		}
+		// NOTE: If auto analyze is disabled and the priority queue is not initialized,
+		// we can just ignore the DDL events.
+		// SAFETY: Once auto analyze is enabled again, the priority queue will be initialized
+		// and it will recreate the jobs for all tables.
+		return nil
 	}
 
-	defer func() {
-		if err != nil {
-			intest.Assert(
-				errors.ErrorEqual(err, context.Canceled) ||
-					strings.Contains(err.Error(), "mock handleTaskOnce error") ||
-					strings.Contains(err.Error(), "session pool closed"),
-				fmt.Sprintf("handle ddl event failed, err: %+v", err),
-			)
-			actionType := event.GetType().String()
-			statslogutil.StatsErrVerboseSampleLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
-				zap.Error(err),
-				zap.String("event", event.String()),
-			)
-		}
-	}()
-
+	var err error
 	switch event.GetType() {
 	case model.ActionAddIndex:
 		err = pq.handleAddIndexEvent(sctx, event)
@@ -84,8 +79,23 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 	default:
 		// Ignore other DDL events.
 	}
-
-	return err
+	if err != nil {
+		intest.Assert(
+			errors.ErrorEqual(err, context.Canceled) ||
+				strings.Contains(err.Error(), "mock handleTaskOnce error") ||
+				strings.Contains(err.Error(), "session pool closed"),
+			fmt.Sprintf("handle ddl event failed, err: %+v", err),
+		)
+		actionType := event.GetType().String()
+		statslogutil.StatsErrVerboseSampleLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
+			zap.Error(err),
+			zap.String("event", event.String()),
+		)
+	}
+	// Ideally, we shouldn't allow any errors to be ignored, but for now, there is no retry limit mechanism.
+	// So to avoid infinite retry, we just log the error and continue.
+	// See more at: https://github.com/pingcap/tidb/issues/59474
+	return nil
 }
 
 // getAndDeleteJob tries to get a job from the priority queue and delete it if it exists.

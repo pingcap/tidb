@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -209,6 +210,70 @@ func TestPlanStatsLoad(t *testing.T) {
 			tableInfo := tbl.Meta()
 			testCase.check(p, tableInfo)
 		}
+
+		// issue:48257
+		checkTableFullScanPlan := func(rows [][]any, tableName string, expectPseudo bool) {
+			t.Helper()
+			require.Len(t, rows, 2)
+			rowToString := func(row []any) string {
+				parts := make([]string, 0, len(row))
+				for _, col := range row {
+					parts = append(parts, fmt.Sprint(col))
+				}
+				return strings.Join(parts, " ")
+			}
+			firstRow := rowToString(rows[0])
+			secondRow := rowToString(rows[1])
+			require.Contains(t, firstRow, "TableReader")
+			require.Contains(t, firstRow, "data:TableFullScan")
+			require.Contains(t, secondRow, "└─TableFullScan")
+			require.Contains(t, secondRow, "table:"+tableName)
+			if expectPseudo {
+				require.Contains(t, secondRow, "stats:pseudo")
+				return
+			}
+			require.NotContains(t, secondRow, "stats:pseudo")
+		}
+		h := dom.StatsHandle()
+		oriLeaseIssue := h.Lease()
+		h.SetLease(1)
+		defer func() {
+			h.SetLease(oriLeaseIssue)
+		}()
+
+		testKit.MustExec("create table t_issue48257(a int)")
+		testutil.HandleNextDDLEventWithTxn(h)
+		testKit.MustExec("insert into t_issue48257 value(1)")
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		testKit.MustExec("analyze table t_issue48257 all columns")
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t_issue48257").Rows(), "t_issue48257", false)
+		testKit.MustExec("insert into t_issue48257 value(1)")
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t_issue48257").Rows(), "t_issue48257", false)
+		testKit.MustExec("set tidb_opt_objective='determinate'")
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t_issue48257").Rows(), "t_issue48257", false)
+		testKit.MustExec("set tidb_opt_objective='moderate'")
+
+		// async load
+		testKit.MustExec("set tidb_stats_load_sync_wait = 0")
+		testKit.MustExec("create table t1_issue48257(a int)")
+		testutil.HandleNextDDLEventWithTxn(h)
+		testKit.MustExec("insert into t1_issue48257 value(1)")
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		testKit.MustExec("analyze table t1_issue48257 all columns")
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
+		testKit.MustExec("insert into t1_issue48257 value(1)")
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
+		testKit.MustExec("set tidb_opt_objective='determinate'")
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
+		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", false)
 	})
 }
 

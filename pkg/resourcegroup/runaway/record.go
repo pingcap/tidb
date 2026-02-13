@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,14 +38,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// watchTableName is the name of system table which save runaway watch items.
-	watchTableName = "mysql.tidb_runaway_watch"
-	// watchDoneTableName is the name of system table which save done runaway watch items.
-	watchDoneTableName = "mysql.tidb_runaway_watch_done"
-
-	maxIDRetries = 3
-)
+const maxIDRetries = 3
 
 // NullTime is a zero time.Time.
 var NullTime time.Time
@@ -161,7 +153,7 @@ func writeInsert(builder *strings.Builder, tableName string) {
 func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 9)
-	writeInsert(&builder, watchTableName)
+	writeInsert(&builder, getRunawayWatchTableName())
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -183,7 +175,7 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 11)
-	writeInsert(&builder, watchDoneTableName)
+	writeInsert(&builder, getRunawayWatchDoneTableName())
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
@@ -208,14 +200,11 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 1)
 	builder.WriteString("delete from ")
-	builder.WriteString(watchTableName)
+	builder.WriteString(getRunawayWatchTableName())
 	builder.WriteString(" where id = %?")
 	params = append(params, r.ID)
 	return builder.String(), params
 }
-
-// hasDeletedExpiredRows just test mark for delete expired rows once.
-var hasDeletedExpiredRows = atomic.Bool{}
 
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
@@ -229,20 +218,15 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	}
 	batchSize := runawayRecordGCSelectBatchSize
 	deleteSize := runawayRecordGCBatchSize
-	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Millisecond * 1
+	failpoint.Inject("FastRunawayGC", func(val failpoint.Value) {
+		expiredDurationMs := val.(int)
+		if expiredDurationMs == 0 {
+			expiredDurationMs = 1
+		}
+		expiredDuration = time.Millisecond * time.Duration(expiredDurationMs)
 		deleteSize = 2
 		batchSize = 5 * deleteSize
 	})
-
-	failpoint.Inject("deleteExpiredRows", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return()
-		}
-	})
-	if hasDeletedExpiredRows.Load() {
-		return
-	}
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
@@ -282,13 +266,18 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
+		if len(rows) == 0 {
+			return
+		}
+		logutil.BgLogger().Info("start to delete the expired rows",
+			zap.Int("rows", len(rows)),
+			zap.Int("batch-size", batchSize),
+			zap.Int("delete-size", deleteSize),
+		)
 		leftRows = make([][]types.Datum, len(rows))
 		for i, row := range rows {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
-		failpoint.Inject("deleteExpiredRows", func() {
-			hasDeletedExpiredRows.Store(true)
-		})
 		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
 			endIndex := startIndex + deleteSize
 			if endIndex > len(leftRows) {
@@ -312,6 +301,11 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 				)
 			}
 		}
+		logutil.BgLogger().Info("deleted expired rows",
+			zap.Int("rows", len(rows)),
+			zap.Int("batch-size", batchSize),
+			zap.Int("delete-size", deleteSize),
+		)
 	}
 }
 

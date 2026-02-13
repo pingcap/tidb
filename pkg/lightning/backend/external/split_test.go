@@ -28,9 +28,9 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -43,7 +43,7 @@ func TestGeneralProperties(t *testing.T) {
 	t.Logf("seed: %d", seed)
 
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	kvNum := rand.Intn(1000) + 100
 	keys := make([][]byte, kvNum)
@@ -148,7 +148,7 @@ func removePartitionPrefix(t *testing.T, in []string) []string {
 
 func TestOnlyOneGroup(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	subDir := "/mock-test"
 
 	var summary *WriterSummary
@@ -195,7 +195,7 @@ func TestOnlyOneGroup(t *testing.T) {
 
 func TestSortedData(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	kvNum := 100
 
 	keys := make([][]byte, kvNum)
@@ -232,7 +232,7 @@ notExhausted:
 
 func TestRangeSplitterStrictCase(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	subDir := "/mock-test"
 
 	var summary *WriterSummary
@@ -377,7 +377,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 
 func TestExactlyKeyNum(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	kvNum := 3
 
 	keys := make([][]byte, kvNum)
@@ -461,7 +461,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			// we don't need data files
 			err := w.dataWriter.Close(ctx)
 			require.NoError(t, err)
-			w.dataWriter = storage.NoopWriter{}
+			w.dataWriter = objstore.NoopWriter{}
 
 			kvSize := 20 * size.KB
 			keySize := size.KB

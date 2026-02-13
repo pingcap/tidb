@@ -15,16 +15,16 @@ PARTITION p20201128 VALUES LESS THAN ("20201129"),
 PARTITION p20201129 VALUES LESS THAN ("20201130"));
 explain format='plan_tree' select /*+ HASH_AGG() */ count(1) from t1 where dt in ('2020-11-27','2020-11-28');
 id	task	access object	operator info
-HashAgg	root		funcs:count(Column#5)->Column#4
+HashAgg	root		funcs:count(Column)->Column
 └─PartitionUnion	root		
-  ├─HashAgg	root		funcs:count(Column#7)->Column#5
+  ├─HashAgg	root		funcs:count(Column)->Column
   │ └─IndexReader	root		index:HashAgg
-  │   └─HashAgg	cop[tikv]		funcs:count(1)->Column#7
+  │   └─HashAgg	cop[tikv]		funcs:count(1)->Column
   │     └─Selection	cop[tikv]		in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)
   │       └─IndexFullScan	cop[tikv]	table:t1, partition:p20201127, index:PRIMARY(id, dt)	keep order:false, stats:pseudo
-  └─HashAgg	root		funcs:count(Column#10)->Column#5
+  └─HashAgg	root		funcs:count(Column)->Column
     └─IndexReader	root		index:HashAgg
-      └─HashAgg	cop[tikv]		funcs:count(1)->Column#10
+      └─HashAgg	cop[tikv]		funcs:count(1)->Column
         └─Selection	cop[tikv]		in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)
           └─IndexFullScan	cop[tikv]	table:t1, partition:p20201128, index:PRIMARY(id, dt)	keep order:false, stats:pseudo
 insert into t1 values (1, "2020-11-25");

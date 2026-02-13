@@ -23,9 +23,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"go.uber.org/zap"
 )
@@ -88,18 +88,18 @@ const (
 )
 
 // ToStorageCompressType converts Compression to storage.CompressType.
-func ToStorageCompressType(compression Compression) (storage.CompressType, error) {
+func ToStorageCompressType(compression Compression) (compressedio.CompressType, error) {
 	switch compression {
 	case CompressionGZ:
-		return storage.Gzip, nil
+		return compressedio.Gzip, nil
 	case CompressionSnappy:
-		return storage.Snappy, nil
+		return compressedio.Snappy, nil
 	case CompressionZStd:
-		return storage.Zstd, nil
+		return compressedio.Zstd, nil
 	case CompressionNone:
-		return storage.NoCompression, nil
+		return compressedio.NoCompression, nil
 	default:
-		return storage.NoCompression,
+		return compressedio.NoCompression,
 			errors.Errorf("compression %d doesn't have related storage compressType", compression)
 	}
 }

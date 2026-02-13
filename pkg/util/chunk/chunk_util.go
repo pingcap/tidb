@@ -51,7 +51,7 @@ func CopySelectedJoinRowsDirect(src *Chunk, selected []bool, dst *Chunk) (bool, 
 	oldLen := dst.columns[0].length
 	for j, srcCol := range src.columns {
 		dstCol := dst.columns[j]
-		if srcCol.isFixed() {
+		if srcCol.IsFixed() {
 			for i := range selected {
 				if !selected[i] {
 					continue
@@ -115,7 +115,7 @@ func CopySelectedRowsWithRowIDFunc(dstCol *Column, srcCol *Column, selected []bo
 
 // CopyExpectedRowsWithRowIDFunc copies the expected rows in srcCol to dstCol
 func CopyExpectedRowsWithRowIDFunc(dstCol *Column, srcCol *Column, selected []bool, expectedResult bool, start int, end int, rowIDFunc func(int) int) {
-	if srcCol.isFixed() {
+	if srcCol.IsFixed() {
 		for i := start; i < end; i++ {
 			if selected[i] != expectedResult {
 				continue
@@ -148,7 +148,7 @@ func CopyExpectedRowsWithRowIDFunc(dstCol *Column, srcCol *Column, selected []bo
 func CopyRows(dstCol *Column, srcCol *Column, selected []int) {
 	selectedLen := len(selected)
 
-	if srcCol.isFixed() {
+	if srcCol.IsFixed() {
 		for i := range selectedLen {
 			rowID := selected[i]
 			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
@@ -205,7 +205,7 @@ func copySameOuterRows(outerColOffset, outerColLen int, src *Chunk, numRows int,
 		dstCol := dst.columns[outerColOffset+i]
 		dstCol.appendMultiSameNullBitmap(!srcCol.IsNull(row.idx), numRows)
 		dstCol.length += numRows
-		if srcCol.isFixed() {
+		if srcCol.IsFixed() {
 			elemLen := len(srcCol.elemBuf)
 			start := row.idx * elemLen
 			end := start + numRows*elemLen

@@ -27,11 +27,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -612,14 +612,14 @@ func (m *mockPrivManager) RequestDynamicVerification(activeRoles []*auth.RoleIde
 	return m.Called(activeRoles, privName, grantable).Bool(0)
 }
 
-var _ storage.ExternalStorage = (*mockExternalStorage)(nil)
+var _ storeapi.Storage = (*mockExternalStorage)(nil)
 
 type mockExternalStorage struct {
-	storage.ExternalStorage
+	storeapi.Storage
 	paths []string
 }
 
-func (s *mockExternalStorage) WalkDir(ctx context.Context, _ *storage.WalkOption, fn func(string, int64) error) error {
+func (s *mockExternalStorage) WalkDir(ctx context.Context, _ *storeapi.WalkOption, fn func(string, int64) error) error {
 	for _, path := range s.paths {
 		if err := fn(path, 0); err != nil {
 			return err

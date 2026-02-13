@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -424,7 +424,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	err = os.WriteFile(filepath.Join(dir, fileName), []byte("1,2,3\r\n4,5,6\r\n7,8,9\r"), 0o644)
 	require.NoError(s.T(), err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 
@@ -498,7 +498,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	err := os.WriteFile(filepath.Join(dir, fileName), []byte("1,2\r\n4,5,6,7\r\n"), 0o644)
 	require.NoError(s.T(), err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 
 	ctx := context.Background()
@@ -597,7 +597,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	err := os.WriteFile(filepath.Join(dir, fileName), []byte(f), 0o644)
 	require.NoError(s.T(), err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 
 	ctx := context.Background()
@@ -717,7 +717,7 @@ func TestCompressChunkRestore(t *testing.T) {
 
 	// Write some sample CSV dump
 	fakeDataDir := t.TempDir()
-	store, err := storage.NewLocalStorage(fakeDataDir)
+	store, err := objstore.NewLocalStorage(fakeDataDir)
 	require.NoError(t, err)
 
 	fakeDataFiles := make([]mydump.FileInfo, 0)

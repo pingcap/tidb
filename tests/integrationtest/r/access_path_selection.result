@@ -32,14 +32,14 @@ Projection	root		access_path_selection.access_path_selection.a, access_path_sele
     └─TableFullScan	cop[tikv]	table:access_path_selection	keep order:true, stats:pseudo
 explain format = 'plan_tree' select max(_tidb_rowid) from access_path_selection;
 id	task	access object	operator info
-StreamAgg	root		funcs:max(access_path_selection.access_path_selection._tidb_rowid)->Column#4
+StreamAgg	root		funcs:max(access_path_selection.access_path_selection._tidb_rowid)->Column
 └─Limit	root		offset:0, count:1
   └─TableReader	root		data:Limit
     └─Limit	cop[tikv]		offset:0, count:1
       └─TableFullScan	cop[tikv]	table:access_path_selection	keep order:true, desc, stats:pseudo
 explain format = 'plan_tree' select count(1) from access_path_selection;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#18)->Column#4
+StreamAgg	root		funcs:count(Column)->Column
 └─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#18
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─TableFullScan	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo

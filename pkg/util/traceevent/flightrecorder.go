@@ -42,11 +42,11 @@ var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
 // TODO: rename HTTPFlightRecorder to FlightRecorder as it may sink to log now instead of just HTTP
 // TODO: remove the old global flight recorder, clean up code.
 type HTTPFlightRecorder struct {
-	ch                   chan<- []Event
-	oldEnabledCategories TraceCategory
-	counter              atomic.Int64 // used when dump trigger config is sampling
-	Config               *FlightRecorderConfig
-	dumpTriggerConfigCompiled
+	ch                chan<- []Event
+	enabledCategories TraceCategory
+	counter           atomic.Int64 // used when dump trigger config is sampling
+	Config            *FlightRecorderConfig
+	compiledDumpTriggerConfig
 }
 
 // UserCommandConfig is the configuration for DumpTriggerConfig of user command type.
@@ -61,7 +61,7 @@ type UserCommandConfig struct {
 }
 
 // compile compiles the UserCommandConfig.
-func (c *UserCommandConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled, conf *DumpTriggerConfig) (uint64, error) {
+func (c *UserCommandConfig) compile(b *strings.Builder, mapping *compiledDumpTriggerConfig, conf *DumpTriggerConfig) (uint64, error) {
 	if c == nil {
 		return 0, fmt.Errorf("dump_trigger.user_command missing")
 	}
@@ -120,10 +120,37 @@ type SuspiciousEventConfig struct {
 	// QueryFail error code?
 	// ResolveLock?
 	// RegionError
+	IsInternal bool            `json:"is_internal,omitempty"`
+	DevDebug   *DevDebugConfig `json:"dev_debug,omitempty"`
+}
+
+// DevDebugConfig is the configuration for development debugging.
+type DevDebugConfig struct {
+	Type string
+}
+
+const (
+	// DevDebugTypeExecuteInternalTraceMissing is the type for execute internal trace missing.
+	DevDebugTypeExecuteInternalTraceMissing = "execute_internal_trace_missing"
+	// DevDebugTypeSendRequestTraceIDMissing is the type for send request trace id missing.
+	DevDebugTypeSendRequestTraceIDMissing = "send_request_trace_id_missing"
+)
+
+// compile validates the development debugging configuration.
+func (c *DevDebugConfig) compile(b *strings.Builder, mapping *compiledDumpTriggerConfig, conf *DumpTriggerConfig) (uint64, error) {
+	if c == nil {
+		return 0, fmt.Errorf("dump_trigger.suspicious_event.dev_debug missing")
+	}
+	b.WriteString(".dev_debug")
+	switch c.Type {
+	case DevDebugTypeExecuteInternalTraceMissing, DevDebugTypeSendRequestTraceIDMissing:
+		return mapping.addTrigger(b.String(), conf)
+	}
+	return 0, fmt.Errorf("wrong dump_trigger.suspicious_event.dev_debug.type")
 }
 
 // compile compiles the suspicious event configuration.
-func (c *SuspiciousEventConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled, conf *DumpTriggerConfig) (uint64, error) {
+func (c *SuspiciousEventConfig) compile(b *strings.Builder, mapping *compiledDumpTriggerConfig, conf *DumpTriggerConfig) (uint64, error) {
 	if c == nil {
 		return 0, fmt.Errorf("dump_trigger.suspicious_event missing")
 	}
@@ -141,6 +168,12 @@ func (c *SuspiciousEventConfig) compile(b *strings.Builder, mapping *dumpTrigger
 	case "region_error":
 		canonicalName := b.String()
 		return mapping.addTrigger(canonicalName, conf)
+	case "is_internal":
+		b.WriteString(".is_internal")
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf)
+	case "dev_debug":
+		return c.DevDebug.compile(b, mapping, conf)
 	}
 	return 0, fmt.Errorf("wrong dump_trigger.suspicious_event.type")
 }
@@ -159,7 +192,7 @@ type DumpTriggerConfig struct {
 
 // Compile compiles the DumpTriggerConfig.
 // When compile successfully, it returns nil, strings.Builder will contain the canonical name of the trigger.
-func (c *DumpTriggerConfig) Compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled) ([]uint64, error) {
+func (c *DumpTriggerConfig) Compile(b *strings.Builder, mapping *compiledDumpTriggerConfig) ([]uint64, error) {
 	if c == nil {
 		return nil, fmt.Errorf("dump_trigger missing")
 	}
@@ -248,7 +281,7 @@ func (c *DumpTriggerConfig) Compile(b *strings.Builder, mapping *dumpTriggerConf
 // We can use bit & to check if a condition is satisfied. 1011 & 1101 => 1001, the first check fail;
 // 1011 & 1011 => 1011, the second check pass, it is an OR condition
 // So this sequence satisfies the condition.
-type dumpTriggerConfigCompiled struct {
+type compiledDumpTriggerConfig struct {
 	// nameMapping maps a dump trigger canonical name to a bit representation
 	nameMapping map[string]int
 	configRef   []*DumpTriggerConfig
@@ -256,7 +289,7 @@ type dumpTriggerConfigCompiled struct {
 	truthTable []uint64
 }
 
-func (c *dumpTriggerConfigCompiled) addTrigger(canonicalName string, config *DumpTriggerConfig) (uint64, error) {
+func (c *compiledDumpTriggerConfig) addTrigger(canonicalName string, config *DumpTriggerConfig) (uint64, error) {
 	_, ok := c.nameMapping[canonicalName]
 	if ok {
 		return 0, fmt.Errorf("duplicate trigger name: %s", canonicalName)
@@ -326,11 +359,11 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger assertion fails, sink should be a Trace object")
 		return
 	}
-	idx, ok := flightRecorder.dumpTriggerConfigCompiled.nameMapping[triggerName]
+	idx, ok := flightRecorder.compiledDumpTriggerConfig.nameMapping[triggerName]
 	if !ok {
 		return
 	}
-	conf := flightRecorder.dumpTriggerConfigCompiled.configRef[idx]
+	conf := flightRecorder.compiledDumpTriggerConfig.configRef[idx]
 	if check(conf) {
 		trace.markBits(idx)
 	}
@@ -367,18 +400,18 @@ type FlightRecorderConfig struct {
 }
 
 // Initialize initializes the default flight recorder configuration.
-// It will dump all the events, but excludes TiKV write/read details by default
+// It will dump all the events, but excludes TiKV write/read details and developer debug by default
 // to avoid excessive overhead.
 func (c *FlightRecorderConfig) Initialize() {
-	c.EnabledCategories = []string{"-", "tikv_write_details", "tikv_read_details"}
+	c.EnabledCategories = []string{"-", "tikv_write_details", "tikv_read_details", "dev_debug"}
 	c.DumpTrigger.Type = "sampling"
 	c.DumpTrigger.Sampling = 1
 }
 
 // Compile compiles the flight recorder configuration.
-func (c *FlightRecorderConfig) Compile() (dumpTriggerConfigCompiled, error) {
+func (c *FlightRecorderConfig) Compile() (compiledDumpTriggerConfig, error) {
 	var b strings.Builder
-	result := dumpTriggerConfigCompiled{
+	result := compiledDumpTriggerConfig{
 		nameMapping: make(map[string]int),
 	}
 	truthTable, err := c.DumpTrigger.Compile(&b, &result)
@@ -420,15 +453,14 @@ func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, e
 
 	categories := parseCategories(config.EnabledCategories)
 	ret := &HTTPFlightRecorder{
-		oldEnabledCategories:      tracing.GetEnabledCategories(),
+		enabledCategories:         categories,
 		Config:                    config,
-		dumpTriggerConfigCompiled: compiled,
+		compiledDumpTriggerConfig: compiled,
 	}
 	logutil.BgLogger().Info("start http flight recorder",
 		zap.Stringer("category", categories),
 		zap.Any("mapping", compiled.nameMapping),
 		zap.Uint64s("truthTable", ret.truthTable))
-	SetCategories(categories)
 	globalHTTPFlightRecorder.Store(ret)
 	return ret, nil
 }
@@ -455,8 +487,7 @@ func GetFlightRecorder() *HTTPFlightRecorder {
 }
 
 // Close closes the HTTP flight recorder.
-func (r *HTTPFlightRecorder) Close() {
-	tracing.SetCategories(r.oldEnabledCategories)
+func (*HTTPFlightRecorder) Close() {
 	globalHTTPFlightRecorder.Store(nil)
 }
 
@@ -505,7 +536,8 @@ func (r *Trace) markBits(idx int) {
 
 const maxEvents = 4096
 
-func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
+// CheckSampling checks whether the trace should be sampled.
+func (r *HTTPFlightRecorder) CheckSampling(conf *DumpTriggerConfig) bool {
 	v := r.counter.Add(1)
 	if v >= conf.Sampling {
 		r.counter.Store(0)
@@ -518,8 +550,6 @@ func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
 func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
-		CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", sink.checkSampling)
-
 		var shouldFlush bool
 		var eventsToFlush []Event
 		// Read phase: use RLock to safely read keep flag and clone events.

@@ -248,3 +248,102 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		"unsupported operator '>' in BOOLEAN MODE query",
 	)
 }
+
+func TestTiCISearchWithPrepare(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
+	}()
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1(
+		id INT PRIMARY KEY, title TEXT, body TEXT, field1 int,
+		FULLTEXT INDEX idx_title (title),
+		index idx_field1 (field1)
+	)`)
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`prepare stmt from 'explain select * from t1 where fts_match_word(?, title)'`)
+
+	tk.MustExec(`set @a = 'hello'`)
+	tk.MustQuery(`execute stmt using @a`).CheckContain(`fts_match_word("hello"`)
+
+	tk.MustExec(`set @a = 'world'`)
+	tk.MustQuery(`execute stmt using @a`).CheckContain(`fts_match_word("world"`)
+}
+
+func TestTiCIWithDirtyWrites(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
+	}()
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1(i bigint, ts timestamp(5), d datetime(3), t text, primary key(i))`)
+	tk.MustExec(`create hybrid index idx1 on t1(i, ts, d, t) parameter '{
+		"inverted": {
+			"columns": ["i", "ts", "d"]
+		},
+		"sort": {
+			"columns": ["i", "ts", "d"],
+			"order": ["asc", "desc", "asc"]
+		},
+		"sharding_key": {
+			"columns": ["i", "ts"]
+		}
+	}'`)
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+
+	// Without dirty write, TiCI index can be used.
+	tk.MustQuery("explain format='brief' select * from t1 use index(idx1) where d between '2026-01-01' and '2026-01-03'").CheckContain("idx1")
+
+	// With dirty write, TiCI index cannot be used.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(1, '2026-01-01 10:10:10', '2026-01-01 10:10:10', 'text1')")
+	tk.MustQuery("explain format='brief' select * from t1 use index(idx1) where d between '2026-01-01' and '2026-01-03'").CheckNotContain("idx1")
+	tk.MustExec("rollback")
+
+	tk.MustExec("create table t2(a int primary key, b int, c longtext)")
+	tk.MustExec(`create fulltext index idx_c on t2(c)`)
+	testkit.SetTiFlashReplica(t, dom, "test", "t2")
+
+	// With dirty write, TiCI index cannot be used.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t2 values(1, 1, 'text1')")
+	tk.MustExecToErr("explain select * from t2 where fts_match_word('apple', c)")
+	tk.MustExec("rollback")
+}

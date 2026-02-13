@@ -301,7 +301,6 @@ func TestGlobalVarAccessor(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().MaxExecutionTime)
-	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().GetMaxExecutionTime())
 	tk1.MustExec("set @@global.max_execution_time = 0")
 
 	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")

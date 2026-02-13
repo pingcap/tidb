@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
@@ -442,7 +442,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 			return
 		}
 		curTaskID = task.id
-		d.setDDLLabelForTopSQL(job.ID, job.Query)
+		d.attachTopProfilingInfo(job.ID, job.Query)
 
 		logger.Debug("backfill worker got task", zap.Int("workerID", w.GetCtx().id), zap.Stringer("task", task))
 		failpoint.Inject("mockBackfillRunErr", func() {
@@ -869,7 +869,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			}
 
 			concurrency := reorgInfo.ReorgMeta.GetConcurrency()
-			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgInfo.ReorgMeta.UseCloudStorage)
 			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
 				reader.TuneWorkerPoolSize(int32(targetReaderCnt), false)

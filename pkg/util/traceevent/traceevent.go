@@ -28,6 +28,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/trace"
@@ -111,16 +113,28 @@ func init() {
 var Enable = tracing.Enable
 
 // IsEnabled returns whether the specified category is enabled.
-var IsEnabled = tracing.IsEnabled
-
-// Disable disables trace events for the specified categories.
-var Disable = tracing.Disable
-
-// SetCategories sets the enabled categories to exactly the specified value.
-var SetCategories = tracing.SetCategories
+func IsEnabled(category tracing.TraceCategory) bool {
+	if kerneltype.IsClassic() && !intest.InTest {
+		return false
+	}
+	fr := GetFlightRecorder()
+	if fr == nil {
+		return false
+	}
+	if uint64(fr.enabledCategories)&uint64(category) == 0 {
+		return false
+	}
+	return true
+}
 
 // GetEnabledCategories returns the currently enabled categories.
-var GetEnabledCategories = tracing.GetEnabledCategories
+func GetEnabledCategories() TraceCategory {
+	fr := GetFlightRecorder()
+	if fr == nil {
+		return TraceCategory(0)
+	}
+	return fr.enabledCategories
+}
 
 // NormalizeMode converts a user-supplied tracing mode string into its canonical representation.
 func NormalizeMode(mode string) (string, error) {
@@ -229,7 +243,7 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		Name:      name,
 		Phase:     tracing.PhaseInstant,
 		Timestamp: time.Now(),
-		TraceID:   extractTraceID(ctx),
+		TraceID:   TraceIDFromContext(ctx),
 		Fields:    copyFieldsWithCapacity(fields, 3),
 	}
 
@@ -251,10 +265,16 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 	}
 }
 
-// extractTraceID returns the trace identifier from ctx if present.
+// TraceIDFromContext returns the trace identifier from ctx if present.
 // It delegates to client-go's TraceIDFromContext implementation.
-func extractTraceID(ctx context.Context) []byte {
+func TraceIDFromContext(ctx context.Context) []byte {
 	return trace.TraceIDFromContext(ctx)
+}
+
+// ContextWithTraceID returns a new context with the given trace identifier.
+// It delegates to client-go's ContextWithTraceID implementation.
+func ContextWithTraceID(ctx context.Context, traceID []byte) context.Context {
+	return trace.ContextWithTraceID(ctx, traceID)
 }
 
 // GenerateTraceID creates a trace ID from transaction start timestamp and statement count.
@@ -269,7 +289,9 @@ func GenerateTraceID(ctx context.Context, startTS uint64, stmtCount uint64) []by
 	var rand32 uint32
 	if sink := tracing.GetSink(ctx); sink != nil {
 		if t, ok := sink.(*Trace); ok {
+			t.mu.Lock()
 			rand32 = t.rand32
+			t.mu.Unlock()
 		}
 	}
 	if rand32 == 0 {
@@ -296,7 +318,7 @@ func (*LogSink) Record(ctx context.Context, event Event) {
 func logEvent(ctx context.Context, event Event) {
 	// Append to reserved capacity without allocation.
 	// Field order: [event fields] [category] [timestamp] [trace_id?]
-	fields := convertBinaryFieldsToHex(event.Fields)
+	fields := event.Fields
 	fields = append(fields, zap.String("category", event.Category.String()))
 	fields = append(fields, zap.Int64("event_ts", event.Timestamp.UnixMicro()))
 	if len(event.TraceID) > 0 {
@@ -304,44 +326,6 @@ func logEvent(ctx context.Context, event Event) {
 	}
 
 	logutil.Logger(ctx).Info("[trace-event] "+event.Name, fields...)
-}
-
-// convertBinaryFieldsToHex converts zap.Binary fields to hex-encoded strings for better readability in logs.
-//
-// IMPORTANT: This function allocates a new slice rather than modifying in-place to preserve the
-// immutability invariant of Event.Fields. The Fields array may be shared across multiple goroutines
-// (e.g., flight recorder, log sink), so in-place modification would cause data races.
-func convertBinaryFieldsToHex(fields []zap.Field) []zap.Field {
-	if len(fields) == 0 {
-		return fields
-	}
-
-	// Quick scan to see if we have any binary fields
-	hasBinary := false
-	for i := range fields {
-		if fields[i].Type == zapcore.BinaryType {
-			hasBinary = true
-			break
-		}
-	}
-
-	if !hasBinary {
-		return fields
-	}
-
-	// Convert binary fields to hex strings
-	result := make([]zap.Field, len(fields))
-	for i := range fields {
-		if fields[i].Type == zapcore.BinaryType {
-			// Extract the binary data and convert to hex
-			data := fields[i].Interface.([]byte)
-			result[i] = zap.String(fields[i].Key, strings.ToUpper(hex.EncodeToString(data)))
-		} else {
-			result[i] = fields[i]
-		}
-	}
-
-	return result
 }
 
 // copyFieldsWithCapacity copies fields with extra capacity for appending without reallocation.
@@ -496,7 +480,8 @@ func DumpFlightRecorderToLogger(reason string) {
 	// Perform full dump
 	logger.Info("dump flight recorder", zap.String("reason", reason), zap.Int("event_count", len(events)))
 	for _, ev := range events {
-		fields := make([]zap.Field, 0, len(ev.Fields)+4)
+		fields := make([]zap.Field, 0, len(ev.Fields)+5)
+		fields = append(fields, zap.String("event_name", ev.Name))
 		fields = append(fields, zap.String("category", ev.Category.String()))
 		fields = append(fields, zap.Int64("event_ts", ev.Timestamp.UnixMicro()))
 		if len(ev.TraceID) > 0 {

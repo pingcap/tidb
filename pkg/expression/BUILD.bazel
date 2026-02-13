@@ -84,6 +84,7 @@ go_library(
         "//pkg/expression/exprctx",
         "//pkg/expression/expropt",
         "//pkg/expression/matchagainst",
+        "//pkg/expression/sessionexpr",
         "//pkg/extension",
         "//pkg/infoschema/context",
         "//pkg/kv",

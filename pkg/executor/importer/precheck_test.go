@@ -16,10 +16,12 @@ package importer_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"math/rand"
+	"net"
 	"net/http/httptest"
 	"net/url"
+	"syscall"
 	"testing"
 	"time"
 
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -43,28 +46,65 @@ import (
 
 const addrFmt = "http://127.0.0.1:%d"
 
-func createMockETCD(t *testing.T) (string, *embed.Etcd) {
-	cfg := embed.NewConfig()
-	cfg.Dir = t.TempDir()
-	// rand port in [20000, 60000)
-	randPort := int(rand.Int31n(40000)) + 20000
-	clientAddr := fmt.Sprintf(addrFmt, randPort)
-	lcurl, _ := url.Parse(clientAddr)
-	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
-	lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, randPort+1))
-	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
-	cfg.InitialCluster = "default=" + lpurl.String()
-	cfg.Logger = "zap"
-	embedEtcd, err := embed.StartEtcd(cfg)
-	require.NoError(t, err)
+func getFreePort(t *testing.T) int {
+	t.Helper()
 
-	select {
-	case <-embedEtcd.Server.ReadyNotify():
-	case <-time.After(5 * time.Second):
-		embedEtcd.Server.Stop() // trigger a shutdown
-		require.False(t, true, "server took too long to start")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, listener.Close())
+	}()
+
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	return addr.Port
+}
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE)
+}
+
+func createMockETCD(t *testing.T) (string, *embed.Etcd) {
+	t.Helper()
+
+	const maxAttempts = 5
+	for attempt := range maxAttempts {
+		cfg := embed.NewConfig()
+		cfg.Dir = t.TempDir()
+
+		clientPort := getFreePort(t)
+		peerPort := getFreePort(t)
+		for peerPort == clientPort {
+			peerPort = getFreePort(t)
+		}
+
+		clientAddr := fmt.Sprintf(addrFmt, clientPort)
+		lcurl, _ := url.Parse(clientAddr)
+		cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
+		lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, peerPort))
+		cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
+		cfg.InitialCluster = "default=" + lpurl.String()
+		cfg.Logger = "zap"
+
+		embedEtcd, err := embed.StartEtcd(cfg)
+		if err != nil {
+			if isAddrInUse(err) && attempt < maxAttempts-1 {
+				continue
+			}
+			require.NoError(t, err)
+		}
+
+		select {
+		case <-embedEtcd.Server.ReadyNotify():
+		case <-time.After(5 * time.Second):
+			embedEtcd.Server.Stop() // trigger a shutdown
+			require.FailNow(t, "server took too long to start")
+		}
+		return clientAddr, embedEtcd
 	}
-	return clientAddr, embedEtcd
+
+	require.FailNow(t, "failed to start etcd after retries")
+	return "", nil
 }
 
 func TestCheckRequirements(t *testing.T) {
@@ -194,4 +234,49 @@ func TestCheckRequirements(t *testing.T) {
 	require.NoError(t, backend.CreateBucket("test-bucket"))
 	c.Plan.CloudStorageURI = fmt.Sprintf("s3://test-bucket/path?region=us-east-1&endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", ts.URL)
 	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
+}
+
+func TestCheckRequirementsWithTiCIIndexLocalSort(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
+	conn := tk.Session().GetSQLExecutor()
+
+	_, err := conn.Execute(ctx, "create table test.t(id int primary key)")
+	require.NoError(t, err)
+	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+	tableObj, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	tableInfo := tableObj.Meta().Clone()
+	tableInfo.Indices = append(tableInfo.Indices, &model.IndexInfo{
+		ID:           1,
+		Name:         ast.NewCIStr("tici_idx"),
+		FullTextInfo: &model.FullTextIndexInfo{},
+	})
+
+	c := &importer.LoadDataController{
+		Plan: &importer.Plan{
+			DBName:          "test",
+			DataSourceType:  importer.DataSourceTypeFile,
+			TableInfo:       tableInfo,
+			TotalFileSize:   1,
+			DisablePrecheck: true,
+		},
+		Table: tableObj,
+	}
+
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "local sort import does not support TiCI indexes")
+
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	c.Plan.CloudStorageURI = "s3://test-bucket/path"
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.ErrorContains(t, err, "check cloud storage uri access")
+
+	tableInfo.Indices = nil
+	c.Plan.CloudStorageURI = ""
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.NoError(t, err)
 }

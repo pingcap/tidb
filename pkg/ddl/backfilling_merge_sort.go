@@ -24,16 +24,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -41,6 +41,7 @@ import (
 
 type mergeSortExecutor struct {
 	taskexecutor.BaseStepExecutor
+	task          *proto.TaskBase
 	store         kv.Storage
 	jobID         int64
 	indexes       []*model.IndexInfo
@@ -55,6 +56,7 @@ type mergeSortExecutor struct {
 }
 
 func newMergeSortExecutor(
+	task *proto.TaskBase,
 	store kv.Storage,
 	jobID int64,
 	indexes []*model.IndexInfo,
@@ -62,6 +64,7 @@ func newMergeSortExecutor(
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
+		task:          task,
 		store:         store,
 		jobID:         jobID,
 		indexes:       indexes,
@@ -128,7 +131,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	err = external.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		subtask.Concurrency, // the concurrency used to split subtask
+		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
 		op,
 	)
 
@@ -150,7 +153,7 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storage.ExternalStorage) error {
+func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storeapi.Storage) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
 	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil

@@ -145,7 +145,7 @@ func TestClone(t *testing.T) {
 		&builtinToSecondsSig{}, &builtinUTCTimeWithArgSig{}, &builtinUTCTimeWithoutArgSig{}, &builtinTimestamp1ArgSig{}, &builtinTimestamp2ArgsSig{},
 		&builtinTimestampLiteralSig{}, &builtinLastDaySig{}, &builtinStrToDateDateSig{}, &builtinStrToDateDatetimeSig{}, &builtinStrToDateDurationSig{},
 		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddSubDateAsStringSig{},
-		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{},
+		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{}, &builtinUUIDv4Sig{}, &builtinUUIDv7Sig{}, &builtinUUIDVersionSig{}, &builtinUUIDTimestampSig{},
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
@@ -287,6 +287,13 @@ func TestPushDownNot(t *testing.T) {
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
 
+	// (not not (a=1)) should be optimized to (a=1)
+	eqFunc = newFunctionWithMockCtx(ast.EQ, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, eqFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, eqFunc))
+
 	// (not not (a+1)) should be optimized to (a+1 is true)
 	plusFunc := newFunctionWithMockCtx(ast.Plus, col, NewOne())
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, plusFunc)
@@ -299,6 +306,13 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsTruthWithNull, col))))
+	// (not not not (a > 1)) should be optimized to (a <= 1)
+	gtFunc := newFunctionWithMockCtx(ast.GT, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, gtFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.LE, col, NewOne())))
 	// (not not not not a) should be optimized to (a is true)
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
@@ -306,6 +320,15 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
+
+	// (not not not not (a <= 1)) should be optimized to (a <= 1)
+	leFunc := newFunctionWithMockCtx(ast.LE, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, leFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, leFunc))
 }
 
 func TestFilter(t *testing.T) {

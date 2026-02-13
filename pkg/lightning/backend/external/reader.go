@@ -23,10 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -34,7 +35,7 @@ import (
 
 func readAllData(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
 	smallBlockBufPool *membuf.Pool,
@@ -57,7 +58,7 @@ func readAllData(
 			output.memKVBuffers = nil
 		} else {
 			// try to fix a bug that the memory is retained in http2 package
-			if gcs, ok := store.(*storage.GCSStorage); ok {
+			if gcs, ok := store.(*objstore.GCSStorage); ok {
 				err = gcs.Reset(ctx)
 			}
 		}
@@ -128,7 +129,7 @@ func readAllData(
 
 func readOneFile(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
@@ -167,7 +168,7 @@ func readOneFile(
 	droppedSize := 0
 
 	for {
-		k, v, err := rd.nextKV()
+		k, v, err := rd.NextKV()
 		if err != nil {
 			if goerrors.Is(err, io.EOF) {
 				break
@@ -192,5 +193,50 @@ func readOneFile(
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
+	return nil
+}
+
+// ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
+// to the returned channel, the channel will be closed when finish read.
+func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
+	store storeapi.Storage, files []string) chan *KVPair {
+	pairCh := make(chan *KVPair)
+	eg.Go(func() error {
+		defer close(pairCh)
+		for _, file := range files {
+			if err := readOneKVFile2Ch(ctx, store, file, pairCh); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
+	return pairCh
+}
+
+func readOneKVFile2Ch(ctx context.Context, store storeapi.Storage, file string, outCh chan *KVPair) error {
+	reader, err := NewKVReader(ctx, file, store, 0, 3*DefaultReadBufferSize)
+	if err != nil {
+		return err
+	}
+	// if we successfully read all data, it's ok to ignore the error of Close
+	//nolint: errcheck
+	defer reader.Close()
+	for {
+		key, val, err := reader.NextKV()
+		if err != nil {
+			if goerrors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- &KVPair{
+			Key:   bytes.Clone(key),
+			Value: bytes.Clone(val),
+		}:
+		}
+	}
 	return nil
 }

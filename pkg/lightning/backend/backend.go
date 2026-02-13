@@ -22,7 +22,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -128,7 +128,7 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	ExtStore  storage.ExternalStorage
+	ExtStore  storeapi.Storage
 	DataFiles []string
 	StatFiles []string
 	StartKey  []byte
@@ -144,6 +144,8 @@ type ExternalEngineConfig struct {
 	MemCapacity int64
 	// OnDup is the action when a duplicate key is found during global sort.
 	OnDup engineapi.OnDuplicateKey
+	// this is the prefix of files recording conflicted KVs
+	FilePrefix string
 }
 
 // CheckCtx contains all parameters used in CheckRequirements

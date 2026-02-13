@@ -61,7 +61,7 @@ func TestIndexChange(t *testing.T) {
 			return
 		}
 		jobID.Store(job.ID)
-		ctx1 := testNewContext(t, store)
+		ctx1 := testkit.NewSession(t, store)
 		prevState = job.SchemaState
 		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
@@ -93,8 +93,7 @@ func TestIndexChange(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	v := getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: publicTable.Meta()})
+	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, publicTable.Meta())
 
 	prevState = model.StateNone
 	var noneTable table.Table
@@ -108,7 +107,7 @@ func TestIndexChange(t *testing.T) {
 		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
-		ctx1 := testNewContext(t, store)
+		ctx1 := testkit.NewSession(t, store)
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable = tbl
@@ -124,8 +123,7 @@ func TestIndexChange(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t drop index c2")
-	v = getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: noneTable.Meta()})
+	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, noneTable.Meta())
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {

@@ -135,6 +135,11 @@ func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
 	return txn.Transaction.GetTableInfo(id)
 }
 
+// GetTraceCtx implements sessionctx.Context GetTraceCtx interface.
+func (*Context) GetTraceCtx() context.Context {
+	return context.Background()
+}
+
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (*Context) Execute(_ context.Context, _ string) ([]sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported")
@@ -452,11 +457,11 @@ func (*fakeTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
 
 func (*fakeTxn) SetOption(_ int, _ any) {}
 
-func (*fakeTxn) Get(ctx context.Context, _ kv.Key) ([]byte, error) {
+func (*fakeTxn) Get(ctx context.Context, _ kv.Key, _ ...kv.GetOption) (kv.ValueEntry, error) {
 	// Check your implementation if you meet this error. It's dangerous if some calculation relies on the data but the
 	// read result is faked.
 	logutil.Logger(ctx).Warn("mock.Context: No store is specified but trying to access data from a transaction.")
-	return nil, nil
+	return kv.ValueEntry{}, nil
 }
 
 func (*fakeTxn) Valid() bool { return true }
