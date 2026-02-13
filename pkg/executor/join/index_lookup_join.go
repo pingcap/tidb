@@ -799,13 +799,8 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 }
 
 func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
-<<<<<<< HEAD
-	for _, ordinal := range iw.HashCols {
-		if row.IsNull(ordinal) {
-=======
 	for i, keyCol := range iw.HashCols {
 		if row.IsNull(keyCol) && !iw.HashIsNullEQ[i] {
->>>>>>> c6d1fffb98c (planner, executor: support `nulleq` for `IndexJoin` and `IndexHashJoin` (#66017))
 			return true
 		}
 	}
