@@ -501,9 +501,9 @@ func TestSoftDeleteSQLActiveActiveSafety(t *testing.T) {
 func TestActiveActiveSafetySQLExecutable(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(fmt.Sprintf("create database if not exists %s", sqlbuilder.TiCDCProgressDB))
+	tk.MustExec(fmt.Sprintf("create database if not exists %s", mysql.TiCDCSystemDB))
 	// Use smaller column sizes to avoid key length limitations in tests.
-	tk.MustExec(fmt.Sprintf("create table if not exists %s.%s (changefeed_id varchar(64), upstreamID varchar(64), database_name varchar(64), table_name varchar(64), checkpoint_ts bigint unsigned, primary key(changefeed_id, upstreamID, database_name, table_name))", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+	tk.MustExec(fmt.Sprintf("create table if not exists %s.%s (changefeed_id varchar(64), upstreamID varchar(64), database_name varchar(64), table_name varchar(64), checkpoint_ts bigint unsigned, primary key(changefeed_id, upstreamID, database_name, table_name))", mysql.TiCDCSystemDB, mysql.TiCDCProgressTable))
 
 	preparePhysicalTable := func(t *testing.T) *cache.PhysicalTable {
 		is := domain.GetDomain(tk.Session()).InfoSchema()
@@ -540,7 +540,7 @@ func TestActiveActiveSafetySQLExecutable(t *testing.T) {
 	}
 
 	t.Run("LocalTombstone", func(t *testing.T) {
-		tk.MustExec(fmt.Sprintf("delete from %s.%s", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		tk.MustExec(fmt.Sprintf("delete from %s.%s", mysql.TiCDCSystemDB, mysql.TiCDCProgressTable))
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(id int primary key, v int) active_active='on' softdelete retention 1 day softdelete_job_enable='ON'")
@@ -558,16 +558,16 @@ func TestActiveActiveSafetySQLExecutable(t *testing.T) {
 		// No progress
 		run(t, pt, expire, 0, false, false)
 		// Deleted
-		tk.MustExec(fmt.Sprintf("insert into %s.%s select 'cf','1','test','t', cast(IFNULL(_tidb_origin_ts, _tidb_commit_ts) as unsigned)+1 from test.t where id=1", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		tk.MustExec(fmt.Sprintf("insert into %s.%s select 'cf','1','test','t', cast(IFNULL(_tidb_origin_ts, _tidb_commit_ts) as unsigned)+1 from test.t where id=1", mysql.TiCDCSystemDB, mysql.TiCDCProgressTable))
 		var checkpointTS uint64
-		row := tk.MustQuery(fmt.Sprintf("select min(checkpoint_ts) from %s.%s where database_name='test' and table_name='t'", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable)).Rows()
+		row := tk.MustQuery(fmt.Sprintf("select min(checkpoint_ts) from %s.%s where database_name='test' and table_name='t'", mysql.TiCDCSystemDB, mysql.TiCDCProgressTable)).Rows()
 		checkpointTS, err := strconv.ParseUint(row[0][0].(string), 10, 64)
 		require.NoError(t, err)
 		run(t, pt, expire, checkpointTS, true, true)
 	})
 
 	t.Run("UpstreamTombstone", func(t *testing.T) {
-		tk.MustExec(fmt.Sprintf("delete from %s.%s", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		tk.MustExec(fmt.Sprintf("delete from %s.%s", mysql.TiCDCSystemDB, mysql.TiCDCProgressTable))
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(id int primary key, v int) active_active='on' softdelete retention 1 day softdelete_job_enable='ON'")
@@ -582,12 +582,12 @@ func TestActiveActiveSafetySQLExecutable(t *testing.T) {
 		expire := time.Now().UTC()
 
 		// No progress
-		tk.MustExec(fmt.Sprintf("insert into %s.%s values ('cf','1','test','t', 1)", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		tk.MustExec(fmt.Sprintf("insert into %s.%s values ('cf','1','test','t', 1)", mysql.TiCDCSystemDB, mysql.TiCDCProgressTable))
 		run(t, pt, expire, 1, false, false)
 		// Deleted
-		tk.MustExec(fmt.Sprintf("delete from %s.%s", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
-		tk.MustExec(fmt.Sprintf("insert into %s.%s select 'cf','1','test','t', cast(IFNULL(_tidb_origin_ts, _tidb_commit_ts) as unsigned)+1 from test.t where id=1", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
-		row := tk.MustQuery(fmt.Sprintf("select min(checkpoint_ts) from %s.%s where database_name='test' and table_name='t'", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable)).Rows()
+		tk.MustExec(fmt.Sprintf("delete from %s.%s", mysql.TiCDCSystemDB, mysql.TiCDCProgressTable))
+		tk.MustExec(fmt.Sprintf("insert into %s.%s select 'cf','1','test','t', cast(IFNULL(_tidb_origin_ts, _tidb_commit_ts) as unsigned)+1 from test.t where id=1", mysql.TiCDCSystemDB, mysql.TiCDCProgressTable))
+		row := tk.MustQuery(fmt.Sprintf("select min(checkpoint_ts) from %s.%s where database_name='test' and table_name='t'", mysql.TiCDCSystemDB, mysql.TiCDCProgressTable)).Rows()
 		checkpointTS, err := strconv.ParseUint(row[0][0].(string), 10, 64)
 		require.NoError(t, err)
 		run(t, pt, expire, checkpointTS, true, true)

@@ -1080,13 +1080,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col == nil || col.Hidden || col.Name == model.ExtraHandleName || col.Name == model.ExtraOriginTSName {
-			continue
-		}
-		if tableInfo.SoftdeleteInfo != nil && model.IsSoftDeleteColumn(col.Name) {
-			continue
-		}
-		if tableInfo.IsActiveActive && model.IsActiveActiveColumn(col.Name) {
+		if skipColumnInShowCreateTable(tableInfo, col) {
 			continue
 		}
 		if needAddComma {
@@ -1671,13 +1665,36 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	}
 	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
 	fmt.Fprintf(buf, "VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
-	for i, col := range tb.Columns {
-		fmt.Fprintf(buf, "%s", stringutil.Escape(col.Name.O, sqlMode))
-		if i < len(tb.Columns)-1 {
+	isFirst := true
+	for _, col := range tb.Columns {
+		if skipColumnInShowCreateTable(tb, col) {
+			continue
+		}
+		if !isFirst {
 			fmt.Fprintf(buf, ", ")
 		}
+		fmt.Fprintf(buf, "%s", stringutil.Escape(col.Name.O, sqlMode))
+		isFirst = false
 	}
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
+}
+
+func skipColumnInShowCreateTable(tableInfo *model.TableInfo, col *model.ColumnInfo) bool {
+	if col == nil || col.Hidden || col.Name == model.ExtraHandleName || col.Name == model.ExtraOriginTSName {
+		return true
+	}
+	// Keep the existing show-create-table behavior for base tables.
+	if tableInfo.SoftdeleteInfo != nil && model.IsSoftDeleteColumn(col.Name) {
+		return true
+	}
+	if tableInfo.IsActiveActive && model.IsActiveActiveColumn(col.Name) {
+		return true
+	}
+	// Views do not carry softdelete/active-active flags, but should still hide these internal columns.
+	if tableInfo.IsView() && (model.IsSoftDeleteColumn(col.Name) || model.IsActiveActiveColumn(col.Name)) {
+		return true
+	}
+	return false
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.

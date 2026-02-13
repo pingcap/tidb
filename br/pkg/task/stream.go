@@ -1396,7 +1396,9 @@ func RunStreamRestore(
 	}
 	// TODO: pitr filtered restore doesn't support restore system table yet
 	if cfg.ExplicitFilter {
-		if cfg.TableFilter.MatchSchema(mysql.SystemDB) || cfg.TableFilter.MatchSchema(mysql.SysDB) {
+		if cfg.TableFilter.MatchSchema(mysql.SystemDB) ||
+			cfg.TableFilter.MatchSchema(mysql.SysDB) ||
+			cfg.TableFilter.MatchSchema(mysql.TiCDCSystemDB) {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
 				"PiTR doesn't support custom filter to include system db, consider to exclude system db")
 		}

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -35,9 +36,6 @@ import (
 )
 
 const minActiveActiveCheckpointTSRefreshInterval = time.Minute
-
-const tiCDCProgressDB = "tidb_cdc"
-const tiCDCProgressTable = "ticdc_progress_table"
 
 // TTLJobType represents the type of TTL job
 type TTLJobType = string
@@ -244,8 +242,8 @@ func (s *session) GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, ta
 
 	sql := fmt.Sprintf(
 		"SELECT IFNULL(MIN(checkpoint_ts), 0) FROM %s.%s WHERE database_name=%%? AND table_name=%%?",
-		tiCDCProgressDB,
-		tiCDCProgressTable,
+		mysql.TiCDCSystemDB,
+		mysql.TiCDCProgressTable,
 	)
 
 	rows, err := s.ExecuteSQL(ctx,

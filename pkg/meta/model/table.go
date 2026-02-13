@@ -288,6 +288,9 @@ func (t *TableInfo) Clone() *TableInfo {
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
 	}
+	if t.SoftdeleteInfo != nil {
+		nt.SoftdeleteInfo = t.SoftdeleteInfo.Clone()
+	}
 
 	if t.Affinity != nil {
 		nt.Affinity = t.Affinity.Clone()

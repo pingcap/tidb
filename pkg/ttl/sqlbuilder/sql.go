@@ -33,12 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
-// TiCDCProgressDB is the database storing TiCDC progress table.
-const TiCDCProgressDB = "tidb_cdc"
-
-// TiCDCProgressTable is the table storing TiCDC progress checkpoints for hard-delete safety.
-const TiCDCProgressTable = "ticdc_progress_table"
-
 // SQLGenerator is the interface for SQL generators.
 type SQLGenerator interface {
 	NextSQL(continueFromResult [][]types.Datum, nextLimit int) (string, error)

@@ -203,6 +203,10 @@ const (
 	// SysDB is the name of `sys` schema, which is a set of objects to help users to interpret data collected
 	// in `information_schema`.
 	SysDB = "sys"
+	// TiCDCSystemDB is the name of TiCDC's system database.
+	TiCDCSystemDB = "tidb_cdc"
+	// TiCDCProgressTable is the table storing TiCDC progress checkpoints.
+	TiCDCProgressTable = "ticdc_progress_table"
 	// GlobalPrivTable is the table in system db contains global scope privilege info.
 	GlobalPrivTable = "global_priv"
 	// UserTable is the table in system db contains user info.

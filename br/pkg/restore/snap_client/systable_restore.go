@@ -291,7 +291,7 @@ func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(co
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
 func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter, loadSysTablePhysical bool) (rerr error) {
-	sysDBs := []string{mysql.SystemDB, mysql.SysDB}
+	sysDBs := []string{mysql.SystemDB, mysql.SysDB, mysql.TiCDCSystemDB}
 	for _, sysDB := range sysDBs {
 		err := rc.restoreSystemSchema(ctx, f, sysDB, loadSysTablePhysical)
 		if err != nil {

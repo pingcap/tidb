@@ -31,17 +31,19 @@ func EncloseDBAndTable(database, table string) string {
 	return fmt.Sprintf("%s.%s", EncloseName(database), EncloseName(table))
 }
 
-// IsTemplateSysDB checks wheterh the dbname is temporary system database(__TiDB_BR_Temporary_mysql or __TiDB_BR_Temporary_sys).
+// IsTemplateSysDB checks whether the dbname is a temporary system database.
 func IsTemplateSysDB(dbname pmodel.CIStr) bool {
-	return dbname.O == temporaryDBNamePrefix+mysql.SystemDB || dbname.O == temporaryDBNamePrefix+mysql.SysDB
+	return dbname.O == temporaryDBNamePrefix+mysql.SystemDB ||
+		dbname.O == temporaryDBNamePrefix+mysql.SysDB ||
+		dbname.O == temporaryDBNamePrefix+mysql.TiCDCSystemDB
 }
 
 // IsSysDB tests whether the database is system DB.
-// Currently, both `mysql` and `sys` are system DB.
-func IsSysDB(dbName string) bool {
-	// just in case
-	dbLowerName := strings.ToLower(dbName)
-	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
+// Currently, `mysql`, `sys` and `tidb_cdc` are treated as system DB.
+func IsSysDB(dbLowerName string) bool {
+	return dbLowerName == mysql.SystemDB ||
+		dbLowerName == mysql.SysDB ||
+		dbLowerName == mysql.TiCDCSystemDB
 }
 
 // TemporaryDBName makes a 'private' database name.
