@@ -78,10 +78,12 @@ func isColumnCoveredBySingleColUniqueIndex(tblInfo *model.TableInfo, colOffset i
 	return false
 }
 
-// isSingleColNonPrefixUniqueIndex returns true if the index is unique (or primary),
-// has exactly one column, and uses neither a prefix nor a partial-index condition.
+// isSingleColNonPrefixUniqueIndex returns true if the index is public, unique
+// (or primary), has exactly one column, and uses neither a prefix nor a
+// partial-index condition.
 func isSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
-	return (idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
+	return idx.State == model.StatePublic &&
+		(idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
 		!idx.HasPrefixIndex() && !idx.HasCondition()
 }
 
