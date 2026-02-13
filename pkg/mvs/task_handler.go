@@ -17,18 +17,18 @@ var (
 
 // MVRefreshHandler defines the refresh contract for one MV ID.
 type MVRefreshHandler interface {
-	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (nextRefresh time.Time, err error)
+	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error)
 }
 
 // MVLogPurgeHandler defines the purge contract for one MVLog ID.
 type MVLogPurgeHandler interface {
-	PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, err error)
+	PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error)
 }
 
 // MVMetaFetchHandler defines the metadata fetch contract for MV scheduler bootstrap.
 type MVMetaFetchHandler interface {
-	fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[string]*mvLog, error)
-	fetchAllTiDBMViews(ctx context.Context, sysSessionPool basic.SessionPool) (map[string]*mv, error)
+	fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error)
+	fetchAllTiDBMViews(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error)
 }
 
 // MVTaskHandler is a convenience interface that implements both refresh and purge.

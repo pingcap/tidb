@@ -66,7 +66,7 @@ type ItemImpl[V Lessable[V]] struct {
 	index int // Heap index, used for Update/Remove.
 }
 
-type Item[V Lessable[V]] = *ItemImpl[V]
+type Item[V Lessable[V]] *ItemImpl[V]
 
 func newItem[V Lessable[V]](value V) Item[V] {
 	return &ItemImpl[V]{Value: value, index: -1}

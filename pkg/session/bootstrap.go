@@ -763,22 +763,32 @@ const (
 	        primary key(module, name))`
 
 	// CreateTiDBMViewRefreshTable is a table to store current (latest) refresh state for each materialized view.
-	CreateTiDBMViewRefreshTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh (
-		MVIEW_ID bigint NOT NULL,
-		LAST_REFRESH_RESULT varchar(16) DEFAULT NULL,
-		LAST_REFRESH_TYPE varchar(16) DEFAULT NULL,
-		LAST_REFRESH_TIME datetime DEFAULT NULL,
-		LAST_SUCCESSFUL_REFRESH_READ_TSO bigint DEFAULT NULL,
-		LAST_REFRESH_FAILED_REASON longtext DEFAULT NULL,
-		PRIMARY KEY(MVIEW_ID))`
+	CreateTiDBMViewRefreshTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
+		MVIEW_ID bigint(21) NOT NULL,
+		MVIEW_NAME varchar(64) NOT NULL,
+		REFRESH_JOB_ID varchar(64) DEFAULT NULL,
+		REFRESH_METHOD varchar(32) NOT NULL,
+		REFRESH_TIME datetime DEFAULT NULL,
+		REFRESH_ENDTIME datetime DEFAULT NULL,
+		REFRESH_STATUS varchar(16) DEFAULT NULL,
+		LAST_SUCCESS_READ_TSO bigint(21) DEFAULT NULL,
+		LAST_SUCCESS_ENDTIME datetime DEFAULT NULL,
+		LAST_FAILED_REASON text DEFAULT NULL,
+		NEXT_TIME datetime DEFAULT NULL,
+		PRIMARY KEY (MVIEW_ID))`
 
 	// CreateTiDBMLogPurgeTable is a table to store current (latest) purge state for each materialized view log.
-	CreateTiDBMLogPurgeTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge (
-		MLOG_ID bigint NOT NULL,
-		LAST_PURGE_TIME datetime DEFAULT NULL,
-		LAST_PURGE_ROWS bigint DEFAULT NULL,
-		LAST_PURGE_DURATION bigint DEFAULT NULL,
-		PRIMARY KEY(MLOG_ID))`
+	CreateTiDBMLogPurgeTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
+		MLOG_ID bigint(21) NOT NULL,
+		MLOG_NAME varchar(64) NOT NULL,
+		PURGE_JOB_ID varchar(64) DEFAULT NULL,
+		PURGE_METHOD varchar(32) NOT NULL,
+		PURGE_TIME datetime DEFAULT NULL,
+		PURGE_ENDTIME datetime DEFAULT NULL,
+		PURGE_ROWS bigint NOT NULL,
+		PURGE_STATUS varchar(16) DEFAULT NULL,
+		NEXT_TIME datetime DEFAULT NULL,
+		PRIMARY KEY (MLOG_ID))`
 
 	// CreateTiDBMViewRefreshHistTable is a table to store mview refresh history.
 	// Note: REFRESH_JOB_ID is auto-increment BIGINT (internal).

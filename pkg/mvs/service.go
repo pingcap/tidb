@@ -2,6 +2,7 @@ package mvs
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -9,8 +10,8 @@ import (
 	basic "github.com/pingcap/tidb/pkg/util"
 )
 
-type mvLogItem Item[*mvLog]
-type mvItem Item[*mv]
+type mvLogItem = Item[*mvLog]
+type mvItem = Item[*mv]
 
 // MVMetricsReporter reports MV service runtime metrics.
 type MVMetricsReporter interface {
@@ -58,12 +59,12 @@ type MVService struct {
 
 	mvRefreshMu struct {
 		sync.Mutex
-		pending map[string]mvItem
+		pending map[int64]mvItem
 		prio    PriorityQueue[*mv]
 	}
 	mvLogPurgeMu struct {
 		sync.Mutex
-		pending map[string]mvLogItem
+		pending map[int64]mvLogItem
 		prio    PriorityQueue[*mvLog]
 	}
 }
@@ -103,7 +104,7 @@ const (
 )
 
 type mv struct {
-	ID              string
+	ID              int64
 	lastRefresh     time.Time
 	refreshInterval time.Duration
 	nextRefresh     time.Time
@@ -114,8 +115,8 @@ type mv struct {
 
 // mvLog tracks scheduling state for one MV log purge task.
 type mvLog struct {
-	ID            string
-	baseTableID   string
+	ID            int64
+	baseTableID   int64
 	lastPurge     time.Time
 	purgeInterval time.Duration
 	nextPurge     time.Time
@@ -184,7 +185,7 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 		return
 	}
 	for _, m := range mvToRefresh {
-		t.executor.Submit("mv-refresh/"+m.ID, func() error {
+		t.executor.Submit("mv-refresh/"+strconv.FormatInt(m.ID, 10), func() error {
 			t.metrics.runningMVRefreshCount.Add(1)
 			defer t.metrics.runningMVRefreshCount.Add(-1)
 			taskStart := mvsNow()
@@ -220,7 +221,7 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 		return
 	}
 	for _, l := range mvLogToPurge {
-		t.executor.Submit("mvlog-purge/"+l.ID, func() error {
+		t.executor.Submit("mvlog-purge/"+strconv.FormatInt(l.ID, 10), func() error {
 			t.metrics.runningMVLogPurgeCount.Add(1)
 			defer t.metrics.runningMVLogPurgeCount.Add(-1)
 			taskStart := mvsNow()
@@ -324,12 +325,12 @@ func (t *MVService) rescheduleMVLogSuccess(l *mvLog, nextPurge time.Time) {
 // 1. Update mutable metadata fields (purgeInterval, nextPurge).
 // 2. If nextPurge changed and the task is not currently running, update orderTs and heap position.
 // 3. If the task is currently running (orderTs == maxNextScheduleTs), defer heap adjustment until task completion.
-func (t *MVService) buildMLogPurgeTasks(newPending map[string]*mvLog) error {
+func (t *MVService) buildMLogPurgeTasks(newPending map[int64]*mvLog) error {
 	t.mvLogPurgeMu.Lock()         // guard mvlog purge queue
 	defer t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 
 	if t.mvLogPurgeMu.pending == nil {
-		t.mvLogPurgeMu.pending = make(map[string]mvLogItem, len(newPending))
+		t.mvLogPurgeMu.pending = make(map[int64]mvLogItem, len(newPending))
 	}
 	for id, nl := range newPending {
 		if ol, ok := t.mvLogPurgeMu.pending[id]; ok {
@@ -360,12 +361,12 @@ func (t *MVService) buildMLogPurgeTasks(newPending map[string]*mvLog) error {
 }
 
 // buildMVRefreshTasks rebuilds refresh task states from fetched metadata.
-func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
+func (t *MVService) buildMVRefreshTasks(newPending map[int64]*mv) error {
 	t.mvRefreshMu.Lock()         // guard mv refresh queue
 	defer t.mvRefreshMu.Unlock() // release mv refresh queue guard
 
 	if t.mvRefreshMu.pending == nil {
-		t.mvRefreshMu.pending = make(map[string]mvItem, len(newPending))
+		t.mvRefreshMu.pending = make(map[int64]mvItem, len(newPending))
 	}
 	for id, nm := range newPending {
 		if om, ok := t.mvRefreshMu.pending[id]; ok {
@@ -396,7 +397,7 @@ func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
 }
 
 // fetchAllTiDBMLogPurge fetches purge metadata and filters out tasks not owned by this node.
-func (t *MVService) fetchAllTiDBMLogPurge() (map[string]*mvLog, error) {
+func (t *MVService) fetchAllTiDBMLogPurge() (map[int64]*mvLog, error) {
 	start := mvsNow()
 	result := mvFetchDurationResultOK
 	defer func() {
@@ -411,7 +412,7 @@ func (t *MVService) fetchAllTiDBMLogPurge() (map[string]*mvLog, error) {
 	}
 	t.mh.observeRunEvent(mvRunEventFetchMLogOK)
 	for id := range newPending {
-		if id == "" || !t.sch.Available(id) {
+		if !t.sch.Available(id) {
 			delete(newPending, id)
 		}
 	}
@@ -419,7 +420,7 @@ func (t *MVService) fetchAllTiDBMLogPurge() (map[string]*mvLog, error) {
 }
 
 // fetchAllTiDBMViews fetches refresh metadata and filters out tasks not owned by this node.
-func (t *MVService) fetchAllTiDBMViews() (map[string]*mv, error) {
+func (t *MVService) fetchAllTiDBMViews() (map[int64]*mv, error) {
 	start := mvsNow()
 	result := mvFetchDurationResultOK
 	defer func() {
@@ -434,7 +435,7 @@ func (t *MVService) fetchAllTiDBMViews() (map[string]*mv, error) {
 	}
 	t.mh.observeRunEvent(mvRunEventFetchMViewsOK)
 	for id := range newPending {
-		if id == "" || !t.sch.Available(id) {
+		if !t.sch.Available(id) {
 			delete(newPending, id)
 		}
 	}

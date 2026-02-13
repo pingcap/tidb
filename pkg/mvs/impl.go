@@ -14,51 +14,10 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/table"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
-
-/* mysql.tidb_mview_refresh_info table definition:
-CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
-  `MVIEW_ID` bigint(21) NOT NULL,
-  `MVIEW_NAME` varchar(64) NOT NULL,
-  `REFRESH_JOB_ID` varchar(64) NOT NULL,
-  `REFRESH_METHOD` varchar(32) NOT NULL,
-
-  `REFRESH_TIME` datetime DEFAULT NULL,
-  `REFRESH_ENDTIME` datetime DEFAULT NULL,
-  `REFRESH_STATUS` varchar(16) DEFAULT NULL,
-
-  `LAST_SUCCESS_READ_TSO` bigint(21) DEFAULT NULL,
-  `LAST_SUCCESS_ENDTIME` datetime DEFAULT NULL,
-  `LAST_FAILED_REASON` text DEFAULT NULL,
-
-  `NEXT_TIME` datetime DEFAULT NULL,
-
-  PRIMARY KEY (`MVIEW_ID`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-*/
-
-/* mysql.tidb_mlog_purge_info table definition:
-CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
-  `MLOG_ID` bigint(21) NOT NULL,
-  `MLOG_NAME` varchar(64) NOT NULL,
-  `PURGE_JOB_ID` varchar(64) NOT NULL,
-  `PURGE_METHOD` varchar(32) NOT NULL,
-
-  `PURGE_TIME` datetime DEFAULT NULL,
-  `PURGE_ENDTIME` datetime DEFAULT NULL,
-
-  `PURGE_ROWS` bigint NOT NULL,
-  `PURGE_STATUS` varchar(16) DEFAULT NULL,
-
-  `NEXT_TIME` datetime DEFAULT NULL,
-
-  PRIMARY KEY (`MLOG_ID`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-*/
 
 type serverHelper struct {
 	durationObserverCache metricCache[mvMetricTypeResultKey, mvMetricObserver]
@@ -169,21 +128,18 @@ func (m *serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverI
 //
 // The returned error only represents execution failures. A zero nextRefresh means
 // no further scheduling is needed (for example, the MV metadata was removed).
-func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (nextRefresh time.Time, err error) {
+func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
 	const (
 		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
 		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
-	mviewID, err := strconv.ParseInt(mvID, 10, 64)
-	if err != nil {
-		return time.Time{}, err
-	}
 
 	se, err := sysSessionPool.Get()
 	if err != nil {
 		return time.Time{}, err
 	}
 	defer sysSessionPool.Put(se)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 
 	sctx := se.(sessionctx.Context)
 	originalSQLMode := sctx.GetSessionVars().SQLMode
@@ -192,7 +148,7 @@ func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Session
 		sctx.GetSessionVars().SQLMode = originalSQLMode
 	}()
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mvTable, ok := infoSchema.TableByID(ctx, mviewID)
+	mvTable, ok := infoSchema.TableByID(ctx, mvID)
 	if !ok {
 		return time.Time{}, nil
 	}
@@ -228,55 +184,47 @@ func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Session
 // PurgeMVLog executes one purge round for an MV log.
 //
 // Behavior overview:
-// 1. Resolve MV log metadata from baseTable and parse scheduling fields.
+// 1. Resolve MV log and base table metadata from mvLogID, then parse scheduling fields.
 // 2. Query MIN(LAST_SUCCESS_READ_TSO) across dependent MVs as purge upper bound.
 // 3. In one transaction, lock purge state row and decide whether this round should run.
 // 4. Delete eligible rows, record history, update purge state, and calculate NEXT_TIME.
 //
 // When autoPurge is true, missing/NULL NEXT_TIME is treated as "no future auto purge".
 // A zero nextPurge means no further scheduling is needed.
-func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, baseTable table.Table, autoPurge bool) (nextPurge time.Time, err error) {
+func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, autoPurge bool) (nextPurge time.Time, err error) {
 	const (
 		purgeMethodManually      = "MANUALLY"
 		purgeMethodAutomatically = "AUTOMATICALLY"
+		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
+		deleteMLogSQL            = `DELETE FROM %n.%n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
+		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge_info SET PURGE_TIME = %?, PURGE_ENDTIME = %?, PURGE_ROWS = %?, PURGE_STATUS = 'SUCCESS', PURGE_JOB_ID = '', NEXT_TIME = %? WHERE MLOG_ID = %?`
 	)
 	originalSQLMode := sctx.GetSessionVars().SQLMode
 	sctx.GetSessionVars().SQLMode = 0
 	defer func() {
 		sctx.GetSessionVars().SQLMode = originalSQLMode
 	}()
-	if baseTable == nil {
-		return time.Time{}, errors.New("base table is nil")
+	if mvLogID <= 0 {
+		return time.Time{}, errors.New("materialized view log id is invalid")
 	}
 	purgeMethod := purgeMethodManually
 	if autoPurge {
 		purgeMethod = purgeMethodAutomatically
 	}
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	baseTableMeta := baseTable.Meta()
-	if baseTableMeta == nil {
-		return time.Time{}, errors.New("base table metadata is nil")
-	}
-	mvBaseInfo := baseTableMeta.MaterializedViewBase
-	if mvBaseInfo == nil {
-		return time.Time{}, errors.New("table is not a materialized view log")
-	}
-	mvLogTable, ok := infoSchema.TableByID(ctx, mvBaseInfo.MLogID)
+	mvLogTable, ok := infoSchema.TableByID(ctx, mvLogID)
 	if !ok {
-		return time.Time{}, errors.New("materialized view log table not found")
+		return time.Time{}, nil
 	}
 	mvLogMeta := mvLogTable.Meta()
-	if mvBaseInfo.MLogID <= 0 {
-		return time.Time{}, errors.New("materialized view log id is invalid")
+	if mvLogMeta == nil {
+		return time.Time{}, errors.New("materialized view log metadata is invalid")
 	}
 	mvLogName := mvLogMeta.Name.L
 	if mvLogName == "" {
 		return time.Time{}, errors.New("materialized view log table name is empty")
 	}
 	mvLogSchemaName := ""
-	if dbInfo, ok := infoSchema.SchemaByID(baseTableMeta.DBID); ok && dbInfo != nil && dbInfo.Name.L != "" {
-		mvLogSchemaName = dbInfo.Name.L
-	}
 	if dbInfo, ok := infoSchema.SchemaByID(mvLogMeta.DBID); ok && dbInfo != nil && dbInfo.Name.L != "" {
 		mvLogSchemaName = dbInfo.Name.L
 	}
@@ -287,15 +235,33 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, baseTable table.Ta
 	if mvLogInfo == nil {
 		return time.Time{}, errors.New("materialized view log metadata is invalid")
 	}
+	if mvLogInfo.BaseTableID <= 0 {
+		return time.Time{}, errors.New("materialized view base table id is invalid")
+	}
+	baseTable, ok := infoSchema.TableByID(ctx, mvLogInfo.BaseTableID)
+	if !ok {
+		return time.Time{}, errors.New("materialized view base table not found")
+	}
+	baseTableMeta := baseTable.Meta()
+	if baseTableMeta == nil {
+		return time.Time{}, errors.New("materialized view base table metadata is invalid")
+	}
+	mvBaseInfo := baseTableMeta.MaterializedViewBase
+	if mvBaseInfo == nil {
+		return time.Time{}, errors.New("materialized view base table metadata is invalid")
+	}
+	if mvBaseInfo.MLogID != mvLogID {
+		return time.Time{}, errors.New("materialized view log metadata is inconsistent")
+	}
+	loc := time.Local
+	if vars := sctx.GetSessionVars(); vars != nil && vars.Location() != nil {
+		loc = vars.Location()
+	}
 	purgeStartWithText := strings.TrimSpace(mvLogInfo.PurgeStartWith)
 	if purgeStartWithText == "" {
 		return time.Time{}, errors.New("materialized view log purge start with is empty")
 	}
 	purgeStartWithText = strings.Trim(purgeStartWithText, "'")
-	loc := time.Local
-	if vars := sctx.GetSessionVars(); vars != nil && vars.Location() != nil {
-		loc = vars.Location()
-	}
 	purgeStartWith, err := time.ParseInLocation("2006-01-02 15:04:05", purgeStartWithText, loc)
 	if err != nil {
 		return time.Time{}, err
@@ -314,8 +280,7 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, baseTable table.Ta
 	}
 
 	err = withRCRestrictedTxn(ctx, sctx, func(txnCtx context.Context, sctx sessionctx.Context) error {
-		const lockPurgeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-		rows, err := execRCRestrictedSQLWithSession(txnCtx, sctx, lockPurgeSQL, []any{mvBaseInfo.MLogID})
+		rows, err := execRCRestrictedSQLWithSession(txnCtx, sctx, lockPurgeSQL, []any{mvLogID})
 		if err != nil {
 			return err
 		}
@@ -340,7 +305,6 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, baseTable table.Ta
 			}
 		}
 
-		const deleteMLogSQL = `DELETE FROM %n.%n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
 		purgeTime := mvsNow()
 		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, deleteMLogSQL, []any{mvLogSchemaName, mvLogName, minRefreshReadTSO}); err != nil {
 			return err
@@ -349,12 +313,10 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, baseTable table.Ta
 		purgeEndTime := mvsNow()
 		nextPurge = calcNextExecTime(purgeStartWith, purgeNextSec, purgeEndTime)
 
-		mvLogID := strconv.FormatInt(mvBaseInfo.MLogID, 10)
 		if err = recordMLogPurgeHist(txnCtx, sctx, mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, affectedRows, "SUCCESS"); err != nil {
 			return err
 		}
-		const updatePurgeSQL = `UPDATE mysql.tidb_mlog_purge_info SET PURGE_TIME = %?, PURGE_ENDTIME = %?, PURGE_ROWS = %?, PURGE_STATUS = 'SUCCESS', PURGE_JOB_ID = '', NEXT_TIME = %? WHERE MLOG_ID = %?`
-		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{purgeTime, purgeEndTime, affectedRows, nextPurge, mvBaseInfo.MLogID}); err != nil {
+		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{purgeTime, purgeEndTime, affectedRows, nextPurge, mvLogID}); err != nil {
 			return err
 		}
 
@@ -366,42 +328,16 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, baseTable table.Ta
 	return nextPurge, nil
 }
 
-// PurgeMVLog resolves mvLogID to its base table and delegates to PurgeMVLog.
-func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, err error) {
-	mvLogTableID, err := strconv.ParseInt(mvLogID, 10, 64)
-	if err != nil {
-		return time.Time{}, err
-	}
+// PurgeMVLog runs one auto-purge round for the specified mvLogID.
+func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error) {
 	se, err := sysSessionPool.Get()
 	if err != nil {
 		return time.Time{}, err
 	}
 	defer sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
-
-	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-
-	mvLogTable, ok := infoSchema.TableByID(ctx, mvLogTableID)
-	if !ok {
-		return time.Time{}, nil
-	}
-	mvLogMeta := mvLogTable.Meta()
-	if mvLogMeta == nil {
-		return time.Time{}, errors.New("mvlog metadata is invalid")
-	}
-	mvLogInfo := mvLogMeta.MaterializedViewLog
-	if mvLogInfo == nil {
-		return time.Time{}, errors.New("mvlog metadata is invalid")
-	}
-	if mvLogInfo.BaseTableID <= 0 {
-		return time.Time{}, errors.New("mvlog metadata is invalid")
-	}
-	baseTable, ok := infoSchema.TableByID(ctx, mvLogInfo.BaseTableID)
-	if !ok {
-		return time.Time{}, errors.New("materialized view base table not found")
-	}
-
-	return PurgeMVLog(ctx, sctx, baseTable, true)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	return PurgeMVLog(ctx, sctx, mvLogID, true)
 }
 
 // calcNextExecTime returns the first schedule time after last based on start+N*interval.
@@ -421,19 +357,19 @@ func calcNextExecTime(start time.Time, intervalSec int64, last time.Time) time.T
 }
 
 // fetchAllTiDBMLogPurge loads all scheduled MV log purge tasks from metadata.
-func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[string]*mvLog, error) {
+func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
 	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
 		return nil, err
 	}
-	newPending := make(map[string]*mvLog, len(rows))
+	newPending := make(map[int64]*mvLog, len(rows))
 	for _, row := range rows {
-		if row.IsNull(0) {
+		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
-		mvLogID := row.GetString(1)
-		if mvLogID == "" {
+		mvLogID := row.GetInt64(1)
+		if mvLogID <= 0 {
 			continue
 		}
 		nextPurge := mvsUnix(row.GetInt64(0), 0)
@@ -448,19 +384,19 @@ func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool b
 }
 
 // fetchAllTiDBMViews loads all scheduled MV refresh tasks from metadata.
-func (*serverHelper) fetchAllTiDBMViews(ctx context.Context, sysSessionPool basic.SessionPool) (map[string]*mv, error) {
+func (*serverHelper) fetchAllTiDBMViews(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
 	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
 		return nil, err
 	}
-	newPending := make(map[string]*mv, len(rows))
+	newPending := make(map[int64]*mv, len(rows))
 	for _, row := range rows {
-		if row.IsNull(0) {
+		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
-		mvID := row.GetString(1)
-		if mvID == "" {
+		mvID := row.GetInt64(1)
+		if mvID <= 0 {
 			continue
 		}
 		nextRefresh := mvsUnix(row.GetInt64(0), 0)
@@ -481,6 +417,7 @@ func execRCRestrictedSQLWithSessionPool(ctx context.Context, sysSessionPool basi
 		return nil, err
 	}
 	defer sysSessionPool.Put(se)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return execRCRestrictedSQL(ctx, se.(sessionctx.Context), sql, params)
 }
 
@@ -501,7 +438,6 @@ func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context
 // It commits on success and rolls back on failure or panic.
 func withRCRestrictedTxn(ctx context.Context, sctx sessionctx.Context, fn func(txnCtx context.Context, sctx sessionctx.Context) error) (err error) {
 	sqlExec := sctx.GetSQLExecutor()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 
 	if _, err = sqlExec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
@@ -552,7 +488,7 @@ func getMinRefreshReadTSOFromInfo(ctx context.Context, sctx sessionctx.Context, 
 func recordMLogPurgeHist(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	mvLogID string,
+	mvLogID int64,
 	mlogName string,
 	purgeMethod string,
 	purgeTime time.Time,
@@ -560,8 +496,9 @@ func recordMLogPurgeHist(
 	purgeRows uint64,
 	purgeStatus string,
 ) error {
+	mvLogIDText := strconv.FormatInt(mvLogID, 10)
 	if mlogName == "" {
-		mlogName = mvLogID
+		mlogName = mvLogIDText
 	}
 	if purgeMethod == "" {
 		purgeMethod = "UNKNOWN"

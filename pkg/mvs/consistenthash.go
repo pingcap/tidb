@@ -112,13 +112,13 @@ func (c *ConsistentHash) RemoveNode(node string) {
 	c.ring = c.ring[:idx]
 }
 
-// GetNode returns the real node for the given key.
-func (c *ConsistentHash) GetNode(key string) string {
+// GetNode returns the real node for the given key bytes.
+func (c *ConsistentHash) GetNode(key []byte) string {
 	if len(c.ring) == 0 {
 		return ""
 	}
 
-	hash := c.hashFunc([]byte(key))
+	hash := c.hashFunc(key)
 
 	// Binary search for the first node clockwise.
 	idx := sort.Search(len(c.ring), func(i int) bool {

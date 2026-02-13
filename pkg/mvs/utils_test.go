@@ -42,13 +42,13 @@ func TestConsistentHash_GetNodeWraps(t *testing.T) {
 	c.AddNode("nodeA")
 	c.AddNode("nodeB")
 
-	if got := c.GetNode("key-low"); got != "nodeA" {
+	if got := c.GetNode([]byte("key-low")); got != "nodeA" {
 		t.Fatalf("expected nodeA for key-low, got %q", got)
 	}
-	if got := c.GetNode("key-mid"); got != "nodeB" {
+	if got := c.GetNode([]byte("key-mid")); got != "nodeB" {
 		t.Fatalf("expected nodeB for key-mid, got %q", got)
 	}
-	if got := c.GetNode("key-high"); got != "nodeA" {
+	if got := c.GetNode([]byte("key-high")); got != "nodeA" {
 		t.Fatalf("expected nodeA for key-high (wrap), got %q", got)
 	}
 
@@ -109,7 +109,7 @@ func TestConsistentHash_EmptyState(t *testing.T) {
 	installMockTimeForTest(t)
 	c := NewConsistentHash(1)
 
-	if got := c.GetNode("any"); got != "" {
+	if got := c.GetNode([]byte("any")); got != "" {
 		t.Fatalf("expected empty node for empty ring, got %q", got)
 	}
 	if got := c.NodeCount(); got != 0 {
@@ -141,7 +141,7 @@ func TestConsistentHash_RebuildResetsRing(t *testing.T) {
 	if got := c.NodeCount(); got != 2 {
 		t.Fatalf("expected 2 nodes, got %d", got)
 	}
-	if got := c.GetNode("key"); got == "" {
+	if got := c.GetNode([]byte("key")); got == "" {
 		t.Fatalf("expected non-empty node before rebuild")
 	}
 
@@ -153,7 +153,7 @@ func TestConsistentHash_RebuildResetsRing(t *testing.T) {
 	if got := len(c.ring); got != 2 {
 		t.Fatalf("expected ring size 2 after rebuild, got %d", got)
 	}
-	if got := c.GetNode("key"); got != "nodeC" {
+	if got := c.GetNode([]byte("key")); got != "nodeC" {
 		t.Fatalf("expected key mapped to nodeC after rebuild, got %q", got)
 	}
 	if !sort.SliceIsSorted(c.ring, func(i, j int) bool { return c.ring[i].hash < c.ring[j].hash }) {
@@ -186,7 +186,7 @@ func TestConsistentHash_RebuildFromMap(t *testing.T) {
 	if got := len(c.ring); got != 4 {
 		t.Fatalf("expected ring size 4, got %d", got)
 	}
-	if got := c.GetNode("key"); got == "" {
+	if got := c.GetNode([]byte("key")); got == "" {
 		t.Fatalf("expected non-empty node for key")
 	}
 	if !sort.SliceIsSorted(c.ring, func(i, j int) bool { return c.ring[i].hash < c.ring[j].hash }) {

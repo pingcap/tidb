@@ -1,9 +1,10 @@
 package mvs
 
 import (
-	"maps"
 	"context"
+	"encoding/binary"
 	"errors"
+	"maps"
 	"sync"
 	"testing"
 )
@@ -75,10 +76,10 @@ func TestServerConsistentHashAddRemoveAndAvailable(t *testing.T) {
 	if got := sch.chash.NodeCount(); got != 2 {
 		t.Fatalf("expected ring node count 2, got %d", got)
 	}
-	if got := sch.ToServerID("key-low"); got != "nodeA" {
+	if got := sch.chash.GetNode([]byte("key-low")); got != "nodeA" {
 		t.Fatalf("expected key-low on nodeA, got %s", got)
 	}
-	if got := sch.ToServerID("key-mid"); got != "nodeB" {
+	if got := sch.chash.GetNode([]byte("key-mid")); got != "nodeB" {
 		t.Fatalf("expected key-mid on nodeB, got %s", got)
 	}
 	if sch.Available("key-low") {
@@ -96,11 +97,45 @@ func TestServerConsistentHashAddRemoveAndAvailable(t *testing.T) {
 	if got := sch.chash.NodeCount(); got != 1 {
 		t.Fatalf("expected ring node count 1, got %d", got)
 	}
-	if got := sch.ToServerID("key-mid"); got != "nodeA" {
+	if got := sch.chash.GetNode([]byte("key-mid")); got != "nodeA" {
 		t.Fatalf("expected key-mid on nodeA after remove, got %s", got)
 	}
 	if sch.Available("key-mid") {
 		t.Fatalf("expected key-mid unavailable for nodeB after remove")
+	}
+}
+
+func TestServerConsistentHashAvailableSupportsInt64Key(t *testing.T) {
+	key := int64(123456789)
+	var keyBytes [8]byte
+	binary.BigEndian.PutUint64(keyBytes[:], uint64(key))
+
+	sch := NewServerConsistentHash(context.Background(), 1, &mockServerHelper{})
+	sch.chash.hashFunc = func(data []byte) uint32 {
+		switch string(data) {
+		case "nodeA#0":
+			return 10
+		case "nodeB#0":
+			return 20
+		case "123456789":
+			t.Fatalf("int64 key should use binary bytes instead of decimal text")
+		}
+		if len(data) == len(keyBytes) && string(data) == string(keyBytes[:]) {
+			return 15
+		}
+		t.Fatalf("unexpected hash input: %v", data)
+		return 0
+	}
+	sch.addServer(serverInfo{ID: "nodeA"})
+	sch.addServer(serverInfo{ID: "nodeB"})
+
+	sch.ID = "nodeB"
+	if !sch.Available(key) {
+		t.Fatalf("expected int64 key to map to nodeB")
+	}
+	sch.ID = "nodeA"
+	if sch.Available(key) {
+		t.Fatalf("expected int64 key to be unavailable for nodeA")
 	}
 }
 
@@ -136,7 +171,7 @@ func TestServerConsistentHashFetchAppliesFilter(t *testing.T) {
 	if got := sch.chash.NodeCount(); got != 1 {
 		t.Fatalf("expected ring node count 1, got %d", got)
 	}
-	if got := sch.ToServerID("key-mid"); got != "nodeA" {
+	if got := sch.chash.GetNode([]byte("key-mid")); got != "nodeA" {
 		t.Fatalf("expected key-mid on nodeA, got %s", got)
 	}
 }
@@ -174,7 +209,7 @@ func TestServerConsistentHashFetchNoChange(t *testing.T) {
 	if got := helper.getAllInfoCalls; got != 2 {
 		t.Fatalf("expected getAllServerInfo called twice, got %d", got)
 	}
-	if got := sch.ToServerID("key-mid"); got != "nodeA" {
+	if got := sch.chash.GetNode([]byte("key-mid")); got != "nodeA" {
 		t.Fatalf("expected key-mid on nodeA, got %s", got)
 	}
 }

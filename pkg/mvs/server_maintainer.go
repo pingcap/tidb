@@ -2,6 +2,7 @@ package mvs
 
 import (
 	"context"
+	"encoding/binary"
 	"sync"
 	"time"
 
@@ -11,6 +12,12 @@ import (
 
 type serverInfo struct {
 	ID string
+}
+
+func int64KeyToBinaryBytes(key int64) []byte {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(key))
+	return buf[:]
 }
 
 // ServerHelper provides server discovery for building the consistent-hash view.
@@ -130,14 +137,18 @@ func (sch *ServerConsistentHash) refresh() error {
 	return nil
 }
 
-// ToServerID returns the owner server ID for key.
-func (sch *ServerConsistentHash) ToServerID(key string) string {
+// Available checks if the server responsible for key is available (i.e. matches current server ID).
+// Supported key types are string and int64.
+// int64 keys are hashed by their fixed-width binary encoding.
+func (sch *ServerConsistentHash) Available(key any) bool {
 	sch.mu.RLock()
 	defer sch.mu.RUnlock()
-	return sch.chash.GetNode(key)
-}
-
-// Available checks if the server responsible for the given key is available (i.e. matches current server ID).
-func (sch *ServerConsistentHash) Available(key string) bool {
-	return sch.ToServerID(key) == sch.ID
+	switch v := key.(type) {
+	case string:
+		return sch.chash.GetNode([]byte(v)) == sch.ID
+	case int64:
+		return sch.chash.GetNode(int64KeyToBinaryBytes(v)) == sch.ID
+	default:
+		return false
+	}
 }
