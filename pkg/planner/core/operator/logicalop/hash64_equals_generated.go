@@ -156,6 +156,7 @@ func (op *LogicalAggregation) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
+	op.PossibleProperties.Hash64(h)
 }
 
 // Equals implements the Hash64Equals interface, only receive *LogicalAggregation pointer.
@@ -188,6 +189,9 @@ func (op *LogicalAggregation) Equals(other any) bool {
 		if !one.Equals(op2.GroupByItems[i]) {
 			return false
 		}
+	}
+	if !op.PossibleProperties.Equals(&op2.PossibleProperties) {
+		return false
 	}
 	return true
 }

@@ -45,7 +45,7 @@ type LogicalAggregation struct {
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties base.PossiblePropertiesInfo `shallow-ref:"true"`
+	PossibleProperties base.PossiblePropertiesInfo `hash64-equals:"true" shallow-ref:"true"`
 	InputCount         float64                     // InputCount is the input count of this plan.
 
 	// Deprecated: NoCopPushDown is substituted by prop.NoCopPushDown.

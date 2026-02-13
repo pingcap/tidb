@@ -842,6 +842,15 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 	}
 	hasher2.Reset()
 	la2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, la1.Equals(la2))
+
+	la2.PossibleProperties = plannerbase.PossiblePropertiesInfo{
+		Order:      [][]*expression.Column{{col}},
+		HasTiflash: true,
+	}
+	hasher2.Reset()
+	la2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, la1.Equals(la2))
 }
