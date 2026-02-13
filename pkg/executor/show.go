@@ -730,7 +730,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
 		}
-		if skipColumnInShowCreateTable(tb.Meta(), col.ColumnInfo) {
+		if skipColumnInShowCreateTable(tb.Meta(), col.ColumnInfo, false) {
 			continue
 		}
 		desc := table.NewColDesc(col)
@@ -1083,7 +1083,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if skipColumnInShowCreateTable(tableInfo, col) {
+		if skipColumnInShowCreateTable(tableInfo, col, true) {
 			continue
 		}
 		if needAddComma {
@@ -1677,8 +1677,11 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
-func skipColumnInShowCreateTable(tableInfo *model.TableInfo, col *model.ColumnInfo) bool {
-	if col == nil || col.Hidden || col.Name == model.ExtraHandleName || col.Name == model.ExtraOriginTSName {
+func skipColumnInShowCreateTable(tableInfo *model.TableInfo, col *model.ColumnInfo, hidden bool) bool {
+	if col == nil || col.Name == model.ExtraHandleName || col.Name == model.ExtraOriginTSName {
+		return true
+	}
+	if hidden && col.Hidden {
 		return true
 	}
 	// Keep the existing show-create-table behavior for base tables.
