@@ -55,7 +55,6 @@ func TestBuildCountSum(t *testing.T) {
 			mkCol(2, "b", 1, mysql.TypeLong),
 			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
 			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
-			mkCol(5, CommitTSColumnName, 4, mysql.TypeLonglong),
 		},
 		MaterializedViewLog: &model.MaterializedViewLogInfo{
 			BaseTableID: baseID,
@@ -132,7 +131,6 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 			mkCol(2, "b", 1, mysql.TypeLong),
 			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
 			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
-			mkCol(5, CommitTSColumnName, 4, mysql.TypeLonglong),
 		},
 		MaterializedViewLog: &model.MaterializedViewLogInfo{
 			BaseTableID: baseID,
@@ -178,57 +176,6 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	require.True(t, hasMin)
 }
 
-func TestBuildMissingCommitTS(t *testing.T) {
-	sctx := core.MockContext()
-
-	baseID := int64(100)
-	mlogID := int64(200)
-	mvID := int64(300)
-
-	base := &model.TableInfo{
-		ID:    baseID,
-		Name:  pmodel.NewCIStr("t"),
-		State: model.StatePublic,
-		Columns: []*model.ColumnInfo{
-			mkCol(1, "a", 0, mysql.TypeLong),
-		},
-		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
-	}
-	mlog := &model.TableInfo{
-		ID:    mlogID,
-		Name:  pmodel.NewCIStr("$mlog$t"),
-		State: model.StatePublic,
-		Columns: []*model.ColumnInfo{
-			mkCol(1, "a", 0, mysql.TypeLong),
-			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 1, mysql.TypeVarchar),
-			mkCol(4, model.MaterializedViewLogOldNewColumnName, 2, mysql.TypeTiny),
-		},
-		MaterializedViewLog: &model.MaterializedViewLogInfo{
-			BaseTableID: baseID,
-			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a")},
-		},
-	}
-	mv := &model.TableInfo{
-		ID:    mvID,
-		Name:  pmodel.NewCIStr("mv"),
-		State: model.StatePublic,
-		Columns: []*model.ColumnInfo{
-			mkCol(1, "x", 0, mysql.TypeLong),
-			mkCol(2, "cnt", 1, mysql.TypeLonglong),
-		},
-		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs: []int64{baseID},
-			SQLContent:   "select a, count(1) from t group by a",
-		},
-	}
-
-	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
-	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
-
-	_, err := Build(context.Background(), sctx, is, mv, BuildOptions{FromTS: 1, ToTS: 2})
-	require.ErrorContains(t, err, CommitTSColumnName)
-}
-
 func TestBuildMissingOldNew(t *testing.T) {
 	sctx := core.MockContext()
 
@@ -252,7 +199,6 @@ func TestBuildMissingOldNew(t *testing.T) {
 		Columns: []*model.ColumnInfo{
 			mkCol(1, "a", 0, mysql.TypeLong),
 			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 1, mysql.TypeVarchar),
-			mkCol(5, CommitTSColumnName, 2, mysql.TypeLonglong),
 		},
 		MaterializedViewLog: &model.MaterializedViewLogInfo{
 			BaseTableID: baseID,

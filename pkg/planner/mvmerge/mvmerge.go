@@ -34,8 +34,6 @@ import (
 )
 
 const (
-	CommitTSColumnName = "_tidb_commit_ts"
-
 	deltaTableAlias = "delta"
 	mvTableAlias    = "mv"
 
@@ -133,9 +131,6 @@ func Build(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchem
 	}
 	if !hasColumn(mlogTable, model.MaterializedViewLogDMLTypeColumnName) {
 		return nil, errors.Errorf("materialized view log %s missing required column %s", mlogTable.Name.O, model.MaterializedViewLogDMLTypeColumnName)
-	}
-	if !hasColumn(mlogTable, CommitTSColumnName) {
-		return nil, errors.Errorf("materialized view log %s missing required column %s", mlogTable.Name.O, CommitTSColumnName)
 	}
 
 	mvDBName, err := dbNameByTableID(is, mv.ID)
@@ -476,7 +471,7 @@ func buildMLogDeltaSelect(
 	}}}
 
 	// WHERE commit_ts in (FromTS, ToTS] AND mv_where
-	tsCol := colExpr(CommitTSColumnName)
+	tsCol := colExpr(model.ExtraCommitTSName.L)
 	tsRange := andExpr(
 		binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", "")),
 		binary(opcode.LE, tsCol, ast.NewValueExpr(opt.ToTS, "", "")),
