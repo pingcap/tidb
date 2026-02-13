@@ -104,3 +104,18 @@ insert into t values (1, 100);
 update t set untracked = 101 where id = 1;
 --error 1105
 delete from t where id = 1;
+
+# Test for issue #66245, the mlog table should not use the base table's auto-increment id by mistake.
+drop table if exists t, `$mlog$t`;
+create table t(a int);
+create materialized view log on t (a);
+insert into t values (1);
+select _tidb_rowid, a from t;
+select _tidb_rowid, a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`;
+update t set a = a+1 where a = 1;
+insert into t values (2), (3);
+select _tidb_rowid, a from t;
+select _tidb_rowid, a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`;
+
+# clean up
+drop table if exists t, `$mlog$t`;
