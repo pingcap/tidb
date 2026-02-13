@@ -56,8 +56,13 @@ func TestTiCISearchExplain(t *testing.T) {
 		FULLTEXT INDEX idx_title (title),
 		index idx_field1 (field1)
 	)`)
+	tk.MustExec(`create table t6(
+		id INT PRIMARY KEY, title TEXT,
+		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
+	)`)
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t6")
 	tk.MustExec("create table t2(a int, col text)")
 
 	tk.MustExec(`create table t3(
@@ -205,8 +210,13 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		FULLTEXT INDEX idx_title (title),
 		index idx_field1 (field1)
 	)`)
+	tk.MustExec(`create table t6(
+		id INT PRIMARY KEY, title TEXT,
+		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
+	)`)
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t6")
 
 	// Non-BOOLEAN MODE is rejected.
 	tk.MustContainErrMsg(
@@ -230,6 +240,12 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 	tk.MustContainErrMsg(
 		"explain format='brief' select * from t1 where match(title) against ('+hello world' IN BOOLEAN MODE)",
 		"TiDB only supports multiple terms with +/- modifiers",
+	)
+
+	// Parser should follow the fulltext index parser type.
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t6 where match(title) against ('>hello' IN BOOLEAN MODE)",
+		"unsupported operator '>' in BOOLEAN MODE query",
 	)
 }
 
