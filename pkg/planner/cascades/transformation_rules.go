@@ -905,11 +905,21 @@ func (*pushDownJoin) predicatePushDown(
 		join.OtherConditions = nil
 		remainCond = make([]expression.Expression, len(predicates))
 		copy(remainCond, predicates)
+<<<<<<< HEAD:pkg/planner/cascades/transformation_rules.go
 		nullSensitive := join.JoinType == logicalop.AntiLeftOuterSemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin
 		if join.JoinType == logicalop.RightOuterJoin {
 			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
 		} else {
 			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
+=======
+		nullSensitive := join.JoinType == base.AntiLeftOuterSemiJoin || join.JoinType == base.LeftOuterSemiJoin
+		if join.JoinType == base.RightOuterJoin {
+			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema,
+				join.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, nil)
+		} else {
+			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema,
+				join.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, nil)
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404)):pkg/planner/cascades/old/transformation_rules.go
 		}
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)
