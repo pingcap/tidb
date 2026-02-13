@@ -1642,33 +1642,16 @@
         "Warn": null
       },
       {
-        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
-        "Plan": null,
-        "Warn": null
-      },
-      {
-        "SQL": "set @@session.tidb_broadcast_join_threshold_size=1073741824",
-        "Plan": null,
-        "Warn": null
-      },
-      {
-        "SQL": "set @@session.tidb_broadcast_join_threshold_count=1000000",
-        "Plan": null,
-        "Warn": null
-      },
-      {
         "SQL": "explain format = 'plan_tree' select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
           "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.b, collate: binary]",
-          "    │   └─TableFullScan mpp[tiflash] table:t2 keep order:false",
-          "    └─ExchangeReceiver(Probe) mpp[tiflash]  ",
-          "      └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
-          "        └─Selection mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
-          "          └─TableFullScan mpp[tiflash] table:t1 keep order:false"
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+          "    │     └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "    └─TableFullScan(Probe) mpp[tiflash] table:t2 keep order:false"
         ],
         "Warn": null
       },
