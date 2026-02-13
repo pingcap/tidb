@@ -1689,8 +1689,7 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 			skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
 			if !skipReorg {
 				if err := ensureFulltextIndexReorgMeta(job); err != nil {
-					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err)
+					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
 				}
 			}
 			// TiCI add-index ingest needs the add-index scan snapshot TS
@@ -1860,8 +1859,7 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 			skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
 			if !skipReorg {
 				if err := ensureHybridIndexReorgMeta(job); err != nil {
-					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err)
+					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
 				}
 			}
 			// TiCI add-index ingest needs the add-index scan snapshot TS
