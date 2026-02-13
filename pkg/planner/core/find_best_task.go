@@ -2849,6 +2849,21 @@ func (is *PhysicalIndexScan) initSchemaForTiCIIndex(possibleHandleCols, indexCol
 			columnIDs[col.ID] = struct{}{}
 		}
 	}
+	for _, col := range is.dataSourceSchema.Columns {
+		if col.ID == model.ExtraPhysTblID {
+			if _, exists := columnIDs[col.ID]; !exists {
+				rowLayout = append(rowLayout, col.Clone().(*expression.Column))
+				columnIDs[col.ID] = struct{}{}
+			}
+			break
+		}
+	}
+	rowLayout = append(rowLayout, &expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		ID:       model.ExtraVersionID,
+		UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
+		OrigName: model.ExtraVersionName.O,
+	})
 	is.SetSchema(expression.NewSchema(rowLayout...))
 }
 
@@ -3566,11 +3581,11 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		StoreType:        path.StoreType,
 		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	if is.FtsQueryInfo != nil {
+	if path.Index.IsTiCIIndex() {
 		is.StoreType = kv.TiCI
 	}
 	rowCount := path.CountAfterAccess
-	if is.FtsQueryInfo != nil {
+	if path.Index.IsTiCIIndex() {
 		is.initSchemaForTiCIIndex(ds.CommonHandleCols, path.FullIdxCols)
 	} else {
 		is.initSchemaForTiKVIndex(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)

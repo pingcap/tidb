@@ -715,8 +715,10 @@ github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9 h1:qG9BSvlWFEE5otQGa
 github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
-github.com/AilinKid/kvproto v0.0.0-20260902150107-809a4e7a7f1f h1:2pzmyoPan2cV0XWpUvwiCQrl6ceZflKfipXjFbqh8uk=
-github.com/AilinKid/kvproto v0.0.0-20260902150107-809a4e7a7f1f/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
+github.com/AilinKid/client-go/v2 v2.0.0-20260907025817-7f85179af40f h1:LSzf+nB25ev1S/6p3HSWHF3OYwVZrj2q+iKHseLqvOM=
+github.com/AilinKid/client-go/v2 v2.0.0-20260907025817-7f85179af40f/go.mod h1:RsZnUKByOXLHJ4gdBHlQ47tSoJ27gkdTFJCny2LCN7w=
+github.com/AilinKid/kvproto v0.0.0-20260907024454-fa40b23b2dfd h1:/7ct/Fx47uujMTd8qffJByNnbWpvFqgbfsw7fwVv9UM=
+github.com/AilinKid/kvproto v0.0.0-20260907024454-fa40b23b2dfd/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
 github.com/AilinKid/tipb v0.0.0-20260902090421-bb7af0def01e h1:efdyKH5WaWybZIYB77oHR/Z3lJSDgdadXMaeLlqd2M0=
 github.com/AilinKid/tipb v0.0.0-20260902090421-bb7af0def01e/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/AilinKid/tipb v0.0.0-20260903024624-c8b140052244 h1:TTE/oUlMM6S5eBjxgvWWx8FvoJeyQrRynshJlvh0cVA=

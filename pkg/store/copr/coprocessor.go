@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
@@ -122,6 +123,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// coprocessor request but type is not DAG
 		req.Paging.Enable = false
 	}
+	if req.HandleVersionMap != nil {
+		// TiCI versioned lookup does not support paging.
+		req.Paging.Enable = false
+	}
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
 			if !req.KeyRanges.IsFullySorted() {
@@ -152,6 +157,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		if tryRowHint {
 			buildOpt.rowHints = hints
 		}
+		buildOpt.handleVersionMap = req.HandleVersionMap
 		tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
 		if err != nil {
 			return err
@@ -254,10 +260,11 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	taskID     uint64
-	region     tikv.RegionVerID
-	bucketsVer uint64
-	ranges     *KeyRanges
+	taskID           uint64
+	region           tikv.RegionVerID
+	bucketsVer       uint64
+	ranges           *KeyRanges
+	handleVersionMap map[string]uint64 // used only in TiCI lookup
 
 	respChan  chan *copResponse
 	storeAddr string
@@ -299,9 +306,30 @@ func (r *copTask) String() string {
 		r.region.GetID(), r.region.GetConfVer(), r.region.GetVer(), r.ranges.Len(), r.storeAddr)
 }
 
-func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
+func versionedKeyRangesToPB(ranges *KeyRanges, handleVersionMap map[string]uint64) ([]*coprocessor.VersionedKeyRange, error) {
+	if ranges == nil || ranges.Len() == 0 || handleVersionMap == nil {
+		return nil, nil
+	}
+	pbRanges := make([]coprocessor.VersionedKeyRange, ranges.Len())
+	pbPtrs := make([]*coprocessor.VersionedKeyRange, ranges.Len())
+	for i := range ranges.Len() {
+		ran := ranges.RefAt(i)
+		readTS, ok := handleVersionMap[string(hack.String(ran.StartKey))]
+		if !ok {
+			return nil, errors.Errorf("start key not found in handleVersionMap: %v", ran.StartKey)
+		}
+		pbRanges[i] = coprocessor.VersionedKeyRange{
+			Range:  (*coprocessor.KeyRange)(unsafe.Pointer(ran)),
+			ReadTs: readTS,
+		}
+		pbPtrs[i] = &pbRanges[i]
+	}
+	return pbPtrs, nil
+}
+
+func (r *copTask) ToPBBatchTasks() ([]*coprocessor.StoreBatchTask, error) {
 	if len(r.batchTaskList) == 0 {
-		return nil
+		return nil, nil
 	}
 	pbTasks := make([]*coprocessor.StoreBatchTask, 0, len(r.batchTaskList))
 	for _, task := range r.batchTaskList {
@@ -312,9 +340,17 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 			Ranges:      task.region.GetRanges(),
 			TaskId:      task.task.taskID,
 		}
+		if task.task.handleVersionMap != nil {
+			versionedRanges, err := versionedKeyRangesToPB(task.task.ranges, task.task.handleVersionMap)
+			if err != nil {
+				return nil, err
+			}
+			storeBatchTask.VersionedRanges = versionedRanges
+			storeBatchTask.Ranges = nil
+		}
 		pbTasks = append(pbTasks, storeBatchTask)
 	}
-	return pbTasks
+	return pbTasks, nil
 }
 
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
@@ -329,6 +365,8 @@ type buildCopTaskOpt struct {
 	elapsed  *time.Duration
 	// ignoreTiKVClientReadTimeout is used to ignore tikv_client_read_timeout configuration, use default timeout instead.
 	ignoreTiKVClientReadTimeout bool
+	// handleVersionMap stores the per-range read ts for TiCI versioned lookup.
+	handleVersionMap map[string]uint64
 }
 
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
@@ -336,6 +374,9 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	start := time.Now()
 	defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
 	cmdType := tikvrpc.CmdCop
+	if opt.handleVersionMap != nil {
+		cmdType = tikvrpc.CmdVersionedCop
+	}
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
 	}
@@ -408,18 +449,27 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 					hint += hints[nextOrigRangeIdx]
 				}
 			}
+			if opt.handleVersionMap != nil {
+				for j := i; j < nextI; j++ {
+					ran := loc.Ranges.RefAt(j)
+					if !ran.IsPoint() {
+						return nil, errors.Errorf("handleVersionMap requires point range: %v", ran)
+					}
+				}
+			}
 			task := &copTask{
-				region:        loc.Location.Region,
-				bucketsVer:    loc.getBucketVersion(),
-				ranges:        loc.Ranges.Slice(i, nextI),
-				cmdType:       cmdType,
-				storeType:     req.StoreType,
-				eventCb:       eventCb,
-				paging:        req.Paging.Enable,
-				pagingSize:    pagingSize,
-				requestSource: req.RequestSource,
-				RowCountHint:  hint,
-				busyThreshold: req.StoreBusyThreshold,
+				region:           loc.Location.Region,
+				bucketsVer:       loc.getBucketVersion(),
+				ranges:           loc.Ranges.Slice(i, nextI),
+				handleVersionMap: opt.handleVersionMap,
+				cmdType:          cmdType,
+				storeType:        req.StoreType,
+				eventCb:          eventCb,
+				paging:           req.Paging.Enable,
+				pagingSize:       pagingSize,
+				requestSource:    req.RequestSource,
+				RowCountHint:     hint,
+				busyThreshold:    req.StoreBusyThreshold,
 			}
 			if !opt.ignoreTiKVClientReadTimeout {
 				task.tikvClientReadTimeout = req.TiKVClientReadTimeout
@@ -1308,16 +1358,31 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
 	}
 
+	batchTasks, err := task.ToPBBatchTasks()
+	if err != nil {
+		return nil, err
+	}
+	var ranges []*coprocessor.KeyRange
+	var versionedRanges []*coprocessor.VersionedKeyRange
+	if task.handleVersionMap != nil {
+		versionedRanges, err = versionedKeyRangesToPB(task.ranges, task.handleVersionMap)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		ranges = task.ranges.ToPBRanges()
+	}
 	copReq := coprocessor.Request{
 		Tp:              worker.req.Tp,
 		StartTs:         worker.req.StartTs,
 		Data:            worker.req.Data,
-		Ranges:          task.ranges.ToPBRanges(),
+		Ranges:          ranges,
 		SchemaVer:       worker.req.SchemaVar,
 		PagingSize:      task.pagingSize,
-		Tasks:           task.ToPBBatchTasks(),
+		Tasks:           batchTasks,
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,
+		VersionedRanges: versionedRanges,
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
@@ -1564,6 +1629,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			respChan:                    false,
 			eventCb:                     task.eventCb,
 			ignoreTiKVClientReadTimeout: true,
+			handleVersionMap:            task.handleVersionMap,
 		})
 		if err != nil {
 			return nil, err
@@ -1710,6 +1776,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				respChan:                    false,
 				eventCb:                     task.eventCb,
 				ignoreTiKVClientReadTimeout: true,
+				handleVersionMap:            task.handleVersionMap,
 			})
 			if err != nil {
 				return batchRespList, nil, err
@@ -1852,7 +1919,7 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 func (worker *copIteratorWorker) buildCacheKey(task *copTask, copReq *coprocessor.Request) (cacheKey []byte, cacheValue *coprCacheValue) {
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore requests with many ranges directly to avoid slowly building the cache key.
-	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
+	if task.handleVersionMap == nil && task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
 		cKey, err := coprCacheBuildKey(copReq)
 		if err == nil {
 			cacheKey = cKey
