@@ -215,6 +215,13 @@ func EncodeMySQLTime(loc *time.Location, t types.Time, tp byte, b []byte) (_ []b
 	return b, nil
 }
 
+func EncodeStringVec(bs [][]byte, vals []types.Datum, comparable1 bool) ([][]byte, error) {
+	for i, val := range vals {
+		bs[i] = encodeString(bs[i], val, comparable1)
+	}
+	return bs, nil
+}
+
 func encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
 	if collate.NewCollationEnabled() && comparable1 {
 		return encodeBytes(b, collate.GetCollator(val.Collation()).ImmutableKey(val.GetString()), true)
