@@ -417,6 +417,10 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
+func (b *baseBuiltinFunc) setRetTp(tp *types.FieldType) {
+	b.tp = tp
+}
+
 func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
@@ -431,15 +435,23 @@ func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 }
 
 func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
+	intest.Assert(from != nil)
+
 	b.args = make([]Expression, 0, len(from.args))
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
-	b.tp = from.tp
+	if from.tp != nil {
+		b.tp = from.tp.DeepCopy()
+	} else {
+		b.tp = nil
+	}
 	b.pbCode = from.pbCode
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
 		b.ctor = from.ctor.Clone()
+	} else {
+		b.ctor = nil
 	}
 }
 
