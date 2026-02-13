@@ -95,7 +95,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 		} else {
 			childProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
 			// mainly to fill indexJoinProp to childProp.
-			childProp = admitIndexJoinProp(childProp, prop)
+			childProp = admitIndexJoinProp(childProp, prop, true)
 			if childProp == nil {
 				continue
 			}

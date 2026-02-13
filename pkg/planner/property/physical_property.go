@@ -382,6 +382,14 @@ type IndexJoinRuntimeProp struct {
 	// and double reader cost consideration. Therefore, we introduce another bool to
 	// indicate prefer tableRangeScan or indexRangeScan each at a time.
 	TableRangeScan bool
+	// IndexJoinBatchMode indicate how to exec the index join in runtime.
+	IndexJoinBatchMode bool
+}
+
+// CloneEssentialFields clone the essential fields for IndexJoinRuntimeProp.
+func (ijr *IndexJoinRuntimeProp) CloneEssentialFields() *IndexJoinRuntimeProp {
+	new := *ijr
+	return &new
 }
 
 // NewPhysicalProperty builds property from columns.
