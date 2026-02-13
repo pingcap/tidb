@@ -19,24 +19,40 @@ errorCode = -1
 warningCode = -1
 
 [rule.blank-imports]
+exclude = ["~pkg/util/hack/"]
 [rule.context-as-argument]
+exclude = ["~pkg/util/hack/"]
 [rule.dot-imports]
+exclude = ["~pkg/util/hack/"]
 [rule.error-return]
+exclude = ["~pkg/util/hack/"]
 [rule.error-strings]
+exclude = ["~pkg/util/hack/"]
 [rule.error-naming]
+exclude = ["~pkg/util/hack/"]
 [rule.exported]
+exclude = ["~pkg/util/hack/"]
 [rule.if-return]
+exclude = ["~pkg/util/hack/"]
 [rule.var-naming]
+exclude = ["~pkg/util/hack/"]
 [rule.package-comments]
+exclude = ["~pkg/util/hack/"]
 [rule.range]
+exclude = ["~pkg/util/hack/"]
 #[rule.receiver-naming]
 [rule.indent-error-flow]
+exclude = ["~pkg/util/hack/"]
 [rule.superfluous-else]
+exclude = ["~pkg/util/hack/"]
 [rule.modifies-parameter]
+exclude = ["~pkg/util/hack/"]
 [rule.duplicated-imports]
+exclude = ["~pkg/util/hack/"]
 
 # This can be checked by other tools like megacheck
 [rule.unreachable-code]
+exclude = ["~pkg/util/hack/"]
 
 
 # Currently this makes too much noise, but should add it in
