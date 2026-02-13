@@ -387,12 +387,12 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 	//
 	// show stats_buckets format: db table partition col is_index bucket_id count repeats lower upper ndv
 	testKit.MustQuery("show stats_buckets where table_name='t'").Sort().Check(testkit.Rows(
-		"test t global a 0 0 4 4 0 0 0",   // global a bucket 0: [0, 0] count=4, repeat=4
-		"test t global a 0 1 6 2 2 2 0",   // global a bucket 1: [2, 2] cumulative=6, repeat=2
-		"test t global b 0 0 8 1 1 4 0",   // global b bucket 0: [1, 4] count=8, repeat=1 (merged from leftTopN + hist)
-		"test t p0 b 0 0 1 1 2 2 0",       // p0 hist: [2, 2] count=1, repeat=1
-		"test t p1 b 0 0 2 1 1 3 0",       // p1 hist bucket 0: [1, 3] count=2, repeat=1
-		"test t p1 b 0 1 3 1 4 4 0",       // p1 hist bucket 1: [4, 4] cumulative=3, repeat=1
+		"test t global a 0 0 4 4 0 0 0", // global a bucket 0: [0, 0] count=4, repeat=4
+		"test t global a 0 1 6 2 2 2 0", // global a bucket 1: [2, 2] cumulative=6, repeat=2
+		"test t global b 0 0 8 1 1 4 0", // global b bucket 0: [1, 4] count=8, repeat=1 (merged from leftTopN + hist)
+		"test t p0 b 0 0 1 1 2 2 0",     // p0 hist: [2, 2] count=1, repeat=1
+		"test t p1 b 0 0 2 1 1 3 0",     // p1 hist bucket 0: [1, 3] count=2, repeat=1
+		"test t p1 b 0 1 3 1 4 4 0",     // p1 hist bucket 1: [4, 4] cumulative=3, repeat=1
 	))
 }
 
