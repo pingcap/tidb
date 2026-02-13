@@ -1,3 +1,20 @@
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+insert into message values (1, '24h'), (2, '24h');
+replace into message values (1, 'new'), (3, 'new');
+select * from message order by id;
+id	text
+1	new
+2	24h
+3	new
+set @@tidb_translate_softdelete_sql = false;
+select id, text, _tidb_softdelete_time is null as ts_is_null from message order by id;
+id	text	ts_is_null
+1	new	1
+2	24h	1
+3	new	1
+set @@tidb_translate_softdelete_sql = true;
+drop table message;
 create table t (id int primary key clustered, v int) softdelete retention 7 day;
 insert into t (id, v) values (1, 1), (2, 2);
 delete from t where id = 1;

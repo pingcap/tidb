@@ -148,15 +148,15 @@ select _tidb_commit_ts, v from t use index (i_v) where v = 2;
 _tidb_commit_ts	v
 TSO	2
 drop table if exists t;
-create table t (a bigint primary key, b int, c int) softdelete retention 7 day active_active = 'on';
-insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
-insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+create table t (a bigint primary key, b bigint, c int) softdelete retention 7 day active_active = 'on';
+insert into t value (1,1,1) on duplicate key update b = _tidb_commit_ts;
+insert into t value (1,1,1) on duplicate key update b = _tidb_commit_ts;
 select * from t;
 a	b	c
-TSO	1	1
+1	TSO	1
 set @@tidb_translate_softdelete_sql = false;
 delete from t;
-insert into t (a,b,c,_tidb_softdelete_time) values (2,2,2, now()) on duplicate key update a = _tidb_commit_ts;
+insert into t (a,b,c,_tidb_softdelete_time) values (2,2,2, now()) on duplicate key update b = _tidb_commit_ts;
 set @@tidb_translate_softdelete_sql = true;
 explain format = 'brief' select * from t;
 id	estRows	task	access object	operator info

@@ -1,3 +1,12 @@
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+insert into message values (1, '24h'), (2, '24h');
+delete from message where id = 1;
+insert into message values (1, 'new');
+select * from message where id = 1;
+select * from message order by id;
+drop table message;
+
 create table t (id int primary key clustered) softdelete retention 7 day;
 insert into t(id) values (1), (2);
 delete from t where id = 1;

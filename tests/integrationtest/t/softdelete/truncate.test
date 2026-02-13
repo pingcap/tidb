@@ -1,0 +1,31 @@
+# Test TRUNCATE TABLE on soft-delete table: should hard delete all rows
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+
+insert into message values (1, '24h'), (2, '24h');
+select * from message order by id;
+
+truncate table message;
+
+# No rows should be visible
+select * from message;
+
+# Hard delete: no rows at all even with softdelete off
+set @@tidb_translate_softdelete_sql = false;
+select id, text from message;
+set @@tidb_translate_softdelete_sql = true;
+
+drop table message;
+
+# Test again with nonclustered primary key
+create table message (id int primary key nonclustered, text varchar(10)) softdelete retention 7 day;
+
+insert into message values (1, '24h'), (2, '24h');
+truncate table message;
+
+select * from message;
+set @@tidb_translate_softdelete_sql = false;
+select id, text from message;
+set @@tidb_translate_softdelete_sql = true;
+
+drop table message;

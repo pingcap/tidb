@@ -1,0 +1,25 @@
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+insert into message values (1, '24h'), (2, '24h');
+delete from message where id = 1;
+create table contact (
+id int primary key,
+address varchar(10)
+);
+insert into contact values (1, 'HangZhou'), (2, 'ShangHai');
+select m.id, c.address from message as m join contact as c on m.id = c.id;
+id	address
+2	ShangHai
+drop table message, contact;
+create table message (id int primary key nonclustered, text varchar(10)) softdelete retention 7 day;
+insert into message values (1, '24h'), (2, '24h');
+delete from message where id = 1;
+create table contact (
+id int primary key,
+address varchar(10)
+);
+insert into contact values (1, 'HangZhou'), (2, 'ShangHai');
+select m.id, c.address from message as m join contact as c on m.id = c.id;
+id	address
+2	ShangHai
+drop table message, contact;

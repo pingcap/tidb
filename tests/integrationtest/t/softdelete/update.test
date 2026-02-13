@@ -1,0 +1,45 @@
+# Test UPDATE on soft-delete table: deleted rows should not be updated
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+
+insert into message values (1, '24h'), (2, '24h'), (3, '1h'), (4, '1h');
+delete from message where id = 1;
+
+# UPDATE should only affect visible (non-deleted) rows
+update message set text = 'new' where text = '24h';
+select * from message order by id;
+
+# Verify that the soft-deleted row (id=1) was NOT updated
+set @@tidb_translate_softdelete_sql = false;
+select id, text, _tidb_softdelete_time is not null as is_deleted from message where id = 1;
+set @@tidb_translate_softdelete_sql = true;
+
+drop table message;
+
+# Test again with nonclustered primary key
+create table message (id int primary key nonclustered, text varchar(10)) softdelete retention 7 day;
+
+insert into message values (1, '24h'), (2, '24h'), (3, '1h'), (4, '1h');
+delete from message where id = 1;
+
+update message set text = 'new' where text = '24h';
+select * from message order by id;
+
+set @@tidb_translate_softdelete_sql = false;
+select id, text, _tidb_softdelete_time is not null as is_deleted from message where id = 1;
+set @@tidb_translate_softdelete_sql = true;
+
+drop table message;
+
+# Abnormal case - update primary key should fail
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+insert into message values (1, 'new'), (2, '24h');
+-- error 1235
+update message set id = 3 where text = '24h';
+drop table message;
+
+create table message (id int, text varchar(10), primary key (id) nonclustered) softdelete retention 7 day;;
+insert into message values (1, 'new'), (2, '24h');
+-- error 1235
+update message set id = 3 where text = '24h';
+drop table message;

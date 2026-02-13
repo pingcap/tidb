@@ -1,0 +1,22 @@
+# Test DROP PARTITION on soft-delete table: should hard delete partition data
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day
+partition by range (id) (
+    partition p0 values less than (3),
+    partition p1 values less than (6)
+);
+set @@tidb_translate_softdelete_sql = true;
+
+insert into message values (1, '24h'), (2, '24h'), (3, '1h'), (4, '1h');
+select * from message order by id;
+
+alter table message drop partition p1;
+
+# Only rows in p0 should remain
+select * from message order by id;
+
+# Hard delete: no records with id=3 and id=4 even with softdelete off
+set @@tidb_translate_softdelete_sql = false;
+select id, text from message order by id;
+set @@tidb_translate_softdelete_sql = true;
+
+drop table message;
