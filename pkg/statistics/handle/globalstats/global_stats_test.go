@@ -1026,6 +1026,7 @@ func TestGlobalStatsMergeV2Hybrid(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000") // Ensure stats are fully loaded before assertions
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(` create table t (
 	a int primary key auto_increment,
