@@ -927,12 +927,25 @@ func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFunc bool) error {
 		return nil
 	}
 
-	matchedFuncs := make(map[*expression.ScalarFunction]struct{}, matchedExprSetForChosenIndex.Len())
+	matchedCondIdxes := make([]int, 0, matchedExprSetForChosenIndex.Len())
 	matchedExprSetForChosenIndex.ForEach(func(i int) {
-		if matchedFunc, ok := ds.PushedDownConds[i].(*expression.ScalarFunction); ok {
-			matchedFuncs[matchedFunc] = struct{}{}
+		if _, ok := ds.PushedDownConds[i].(*expression.ScalarFunction); ok {
+			matchedCondIdxes = append(matchedCondIdxes, i)
 		}
 	})
+	slices.Sort(matchedCondIdxes)
+
+	parserType := model.FullTextParserTypeStandardV1
+	if matchedIdx.FullTextInfo != nil {
+		parserType = matchedIdx.FullTextInfo.ParserType
+	}
+	for _, idx := range matchedCondIdxes {
+		rewrittenExpr, _, err := expression.RewriteMySQLMatchAgainstRecursively(ds.SCtx().GetExprCtx(), ds.PushedDownConds[idx], parserType)
+		if err != nil {
+			return err
+		}
+		ds.PushedDownConds[idx] = rewrittenExpr
+	}
 
 	// The v8.5 planner may rebuild PossibleAccessPaths from AllPossibleAccessPaths
 	// after logical rules. Keep the TiCI-only choice in both slices so the table
@@ -940,12 +953,12 @@ func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFunc bool) error {
 	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
 		return path.Index == nil || path.Index.ID != matchedIdx.ID
 	})
-	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFuncs)
+	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedCondIdxes)
 }
 
 func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	index *model.IndexInfo,
-	matchedFuncs map[*expression.ScalarFunction]struct{},
+	matchedCondIdxes []int,
 ) error {
 	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI Index currently can not be cached")
 	// Fulltext index must be used, so prune all other access paths.
@@ -955,32 +968,32 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
-
-	remainedFilters := slices.Clone(ds.PushedDownConds)
-	// The search functions are handled by TiCI; keep the remaining predicates
-	// as filters without mutating DataSource conditions used by later phases.
-	remainedFilters = slices.DeleteFunc(remainedFilters, func(cond expression.Expression) bool {
-		sf, ok := cond.(*expression.ScalarFunction)
-		if !ok {
-			return false
+	matchedCondSet := make(map[int]struct{}, len(matchedCondIdxes))
+	for _, idx := range matchedCondIdxes {
+		matchedCondSet[idx] = struct{}{}
+	}
+	remainedFilters := make([]expression.Expression, 0, len(ds.PushedDownConds)-len(matchedCondIdxes))
+	for i, cond := range ds.PushedDownConds {
+		if _, ok := matchedCondSet[i]; ok {
+			continue
 		}
-		_, ok = matchedFuncs[sf]
-		return ok
-	})
+		remainedFilters = append(remainedFilters, cond)
+	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	client := ds.SCtx().GetBuildPBCtx().Client
 	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
-	pbExprs := make([]tipb.Expr, 0, len(matchedFuncs))
+	pbExprs := make([]tipb.Expr, 0, len(matchedCondIdxes))
 	// It represents the TiCI search functions currently.
 	ds.PossibleAccessPaths[0].AccessConds = ds.PossibleAccessPaths[0].AccessConds[:0]
-	for ftsFunc := range matchedFuncs {
-		pbExpr := pbConverter.ExprToPB(ftsFunc)
+	for _, idx := range matchedCondIdxes {
+		matchedCond := ds.PushedDownConds[idx]
+		pbExpr := pbConverter.ExprToPB(matchedCond)
 		if pbExpr == nil {
 			// If the expression is not converted to PB, we should return an error.
 			return errors.New("Failed to convert FTS function to PB expression")
 		}
 		pbExprs = append(pbExprs, *pbExpr)
-		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
+		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, matchedCond)
 	}
 
 	// Build tipb protobuf info for the matched index.

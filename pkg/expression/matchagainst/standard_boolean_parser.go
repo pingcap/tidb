@@ -39,10 +39,10 @@ import (
 //   - Trailing '*' after a term sets the term's wildcard flag.
 //   - Empty phrases "\"\"" are ignored.
 //   - The STANDARD parser path currently rejects operators: ()<>~@.
-func ParseStandardBooleanMode(input string) (StandardBooleanGroup, error) {
+func ParseStandardBooleanMode(input string) (*BooleanGroup, error) {
 	tokens, err := tokenizeStandardBooleanMode(input)
 	if err != nil {
-		return StandardBooleanGroup{}, err
+		return nil, err
 	}
 
 	p := standardBooleanParser{
@@ -50,10 +50,10 @@ func ParseStandardBooleanMode(input string) (StandardBooleanGroup, error) {
 	}
 	g, err := p.parseGroup(false)
 	if err != nil {
-		return StandardBooleanGroup{}, err
+		return nil, err
 	}
 	if t := p.peek(); t.kind != standardBooleanTokenEOF {
-		return StandardBooleanGroup{}, errors.Errorf("unexpected token %s at pos %d", p.tokenDesc(t), t.pos)
+		return nil, errors.Errorf("unexpected token %s at pos %d", p.tokenDesc(t), t.pos)
 	}
 	return g, nil
 }
@@ -64,8 +64,8 @@ type standardBooleanParser struct {
 }
 
 // parseGroup reads zero or more clauses until EOF, or until it sees ')' (when stopAtRightParen is true).
-func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (StandardBooleanGroup, error) {
-	var g StandardBooleanGroup
+func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (*BooleanGroup, error) {
+	var g BooleanGroup
 	for {
 		t := p.peek()
 		if t.kind == standardBooleanTokenEOF {
@@ -75,12 +75,12 @@ func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (StandardBoole
 			if stopAtRightParen {
 				break
 			}
-			return StandardBooleanGroup{}, errors.Errorf("unexpected ')' at pos %d", t.pos)
+			return nil, errors.Errorf("unexpected ')' at pos %d", t.pos)
 		}
 
 		clause, err := p.parseClause()
 		if err != nil {
-			return StandardBooleanGroup{}, err
+			return nil, err
 		}
 		if clause == nil {
 			continue
@@ -88,7 +88,7 @@ func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (StandardBoole
 		g.addClause(*clause)
 	}
 
-	return g, nil
+	return &g, nil
 }
 
 // parseClause parses one boolean "clause". A clause can be:
@@ -96,8 +96,8 @@ func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (StandardBoole
 //   - a phrase token ("...") (optionally prefixed by '+' or '-')
 //
 // Operators (), <, >, ~ and @ are currently rejected in the STANDARD boolean-mode path.
-func (p *standardBooleanParser) parseClause() (*StandardBooleanClause, error) {
-	mod := StandardBooleanModifierNone
+func (p *standardBooleanParser) parseClause() (*BooleanClause, error) {
+	mod := BooleanModifierNone
 	if p.peekIsPrefixOp() {
 		mod = p.consumePrefixOp()
 	}
@@ -109,7 +109,7 @@ func (p *standardBooleanParser) parseClause() (*StandardBooleanClause, error) {
 			return nil, err
 		}
 		p.applyTrailingWildcardIfPresent(term)
-		return &StandardBooleanClause{Modifier: mod, Expr: term}, nil
+		return &BooleanClause{Modifier: mod, Expr: term}, nil
 	}
 
 	switch p.peek().kind {
@@ -119,7 +119,7 @@ func (p *standardBooleanParser) parseClause() (*StandardBooleanClause, error) {
 			return nil, err
 		}
 		p.applyTrailingWildcardIfPresent(term)
-		return &StandardBooleanClause{Modifier: mod, Expr: term}, nil
+		return &BooleanClause{Modifier: mod, Expr: term}, nil
 	case standardBooleanTokenText:
 		phrase, err := p.parsePhraseExpr()
 		if err != nil {
@@ -128,7 +128,7 @@ func (p *standardBooleanParser) parseClause() (*StandardBooleanClause, error) {
 		if phrase == nil {
 			return nil, nil
 		}
-		return &StandardBooleanClause{Modifier: mod, Expr: phrase}, nil
+		return &BooleanClause{Modifier: mod, Expr: phrase}, nil
 	default:
 		t := p.peek()
 		return nil, errors.Errorf("unexpected token %s at pos %d", p.tokenDesc(t), t.pos)
@@ -137,7 +137,7 @@ func (p *standardBooleanParser) parseClause() (*StandardBooleanClause, error) {
 
 // parseGroupClause parses a parenthesized boolean sub-expression "(...)". It is currently unused because
 // '(' / ')' are rejected in the STANDARD boolean-mode path, but kept to preserve the overall parser structure.
-// func (p *standardBooleanParser) parseGroupClause(mod StandardBooleanModifier) (*StandardBooleanClause, error) {
+// func (p *standardBooleanParser) parseGroupClause(mod BooleanModifier) (*BooleanClause, error) {
 // 	if err := p.expectOp('('); err != nil {
 // 		return nil, err
 // 	}
@@ -152,19 +152,19 @@ func (p *standardBooleanParser) parseClause() (*StandardBooleanClause, error) {
 // 		return nil, nil
 // 	}
 // 	inner.Parenthesized = true
-// 	return &StandardBooleanClause{
+// 	return &BooleanClause{
 // 		Modifier: mod,
 // 		Expr:     &inner,
 // 	}, nil
 // }
 
-func (p *standardBooleanParser) parseTermExpr() (*StandardBooleanTerm, error) {
+func (p *standardBooleanParser) parseTermExpr() (*BooleanTerm, error) {
 	t := p.peek()
 	if t.kind != standardBooleanTokenTerm && t.kind != standardBooleanTokenNum {
 		return nil, errors.Errorf("expected term at pos %d, got %s", t.pos, p.tokenDesc(t))
 	}
 	p.consume()
-	return &StandardBooleanTerm{
+	return &BooleanTerm{
 		text: t.raw,
 	}, nil
 }
@@ -172,7 +172,7 @@ func (p *standardBooleanParser) parseTermExpr() (*StandardBooleanTerm, error) {
 // parsePhraseExpr parses a double-quoted phrase token.
 //
 // It returns (nil, nil) for an empty phrase "\"\"" because InnoDB treats it as invalid/ignored.
-func (p *standardBooleanParser) parsePhraseExpr() (*StandardBooleanPhrase, error) {
+func (p *standardBooleanParser) parsePhraseExpr() (*BooleanPhrase, error) {
 	t := p.peek()
 	if t.kind != standardBooleanTokenText {
 		return nil, errors.Errorf("expected quoted text at pos %d, got %s", t.pos, p.tokenDesc(t))
@@ -187,11 +187,11 @@ func (p *standardBooleanParser) parsePhraseExpr() (*StandardBooleanPhrase, error
 	if len(inner) == 0 {
 		return nil, nil
 	}
-	return &StandardBooleanPhrase{text: inner}, nil
+	return &BooleanPhrase{text: inner}, nil
 }
 
 // applyTrailingWildcardIfPresent consumes a trailing '*' after a term and marks the term as wildcard.
-func (p *standardBooleanParser) applyTrailingWildcardIfPresent(term *StandardBooleanTerm) {
+func (p *standardBooleanParser) applyTrailingWildcardIfPresent(term *BooleanTerm) {
 	if p.peekIsOp('*') {
 		p.consume()
 		term.Wildcard = true
@@ -231,15 +231,15 @@ func (p *standardBooleanParser) peekIsPrefixOp() bool {
 	}
 }
 
-func (p *standardBooleanParser) consumePrefixOp() StandardBooleanModifier {
+func (p *standardBooleanParser) consumePrefixOp() BooleanModifier {
 	t := p.consume()
 	switch t.op {
 	case '+':
-		return StandardBooleanModifierMust
+		return BooleanModifierMust
 	case '-':
-		return StandardBooleanModifierMustNot
+		return BooleanModifierMustNot
 	default:
-		return StandardBooleanModifierNone
+		return BooleanModifierNone
 	}
 }
 

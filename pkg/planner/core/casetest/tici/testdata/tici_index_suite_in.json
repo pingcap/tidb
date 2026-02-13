@@ -56,7 +56,13 @@
       "explain format='brief' select id from t1 where match(title) against ('+apple -banana' IN BOOLEAN MODE)",
       "explain format='brief' select id from t1 where match(title) against ('-banana' IN BOOLEAN MODE)",
       "explain format='brief' select id from t1 where match(title) against ('apple' IN BOOLEAN MODE) or match(title) against ('banana' IN BOOLEAN MODE)",
-      "explain format='brief' select id from t1 where match(title) against ('\"\"' IN BOOLEAN MODE)"
+      "explain format='brief' select id from t1 where match(title) against ('\"\"' IN BOOLEAN MODE)",
+      "explain format='brief' select * from t6 where match(title) against ('hello' IN BOOLEAN MODE)",
+      "explain format='brief' select * from t6 where match(title) against ('hello*' IN BOOLEAN MODE)",
+      "explain format='brief' select * from t6 where match(title) against ('\\\"hello world\\\"' IN BOOLEAN MODE)",
+      "explain format='brief' select * from t6 where match(title) against ('\\\"a>b\\\"' IN BOOLEAN MODE)",
+      "explain format='brief' select id from t6 where match(title) against ('+apple -banana' IN BOOLEAN MODE)",
+      "explain format='brief' select id from t6 where match(title) against ('\"\"' IN BOOLEAN MODE)"
     ]
   },
   {

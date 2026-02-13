@@ -3,7 +3,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "matchagainst",
     srcs = [
-        "standard_ast.go",
+        "boolean_ast.go",
+        "ngram_boolean_parser.go",
+        "ngram_boolean_tokenizer.go",
         "standard_boolean_parser.go",
         "standard_boolean_tokenizer.go",
     ],
@@ -17,9 +19,13 @@ go_library(
 go_test(
     name = "matchagainst_test",
     timeout = "short",
-    srcs = ["standard_boolean_parser_test.go"],
+    srcs = [
+        "ngram_boolean_parser_test.go",
+        "standard_boolean_parser_test.go",
+    ],
     embed = [":matchagainst"],
     flaky = False,
+    shard_count = 2,
     deps = [
         "@com_github_stretchr_testify//require",
     ],
