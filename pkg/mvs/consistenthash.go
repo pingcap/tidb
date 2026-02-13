@@ -35,20 +35,10 @@ func NewConsistentHash(replicas int) *ConsistentHash {
 }
 
 // Rebuild rebuilds the consistent hash with the given nodes.
-func (c *ConsistentHash) Rebuild(nodes []string) {
+func (c *ConsistentHash) Rebuild(nodes map[string]serverInfo) {
 	c.ring = make([]virtualNode, 0, len(nodes)*c.replicas)
 	c.data = make(map[string][]virtualNode, len(nodes))
-	for _, node := range nodes {
-		c.doInsert(node)
-	}
-	c.doResort()
-}
-
-// RebuildFromMap rebuilds the consistent hash from a template map keyed by node.
-func RebuildFromMap[T any](c *ConsistentHash, nodeMap map[string]T) {
-	c.ring = make([]virtualNode, 0, len(nodeMap)*c.replicas)
-	c.data = make(map[string][]virtualNode, len(nodeMap))
-	for node := range nodeMap {
+	for node := range nodes {
 		c.doInsert(node)
 	}
 	c.doResort()

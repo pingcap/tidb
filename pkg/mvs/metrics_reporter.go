@@ -18,6 +18,7 @@ import (
 	"time"
 
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // reportCounterDelta reports only the positive delta since last flush.
@@ -72,22 +73,46 @@ func (h *serverHelper) observeRunEvent(eventType string) {
 }
 
 // getDurationObserver returns a cached observer for (type, result) labels.
-func (h *serverHelper) getDurationObserver(metricType, result string) mvMetricObserver {
+func (h *serverHelper) getDurationObserver(metricType, result string) prometheus.Observer {
 	if h == nil {
 		return tidbmetrics.MVServiceMetaFetchDurationHistogramVec.WithLabelValues(metricType, result)
 	}
 	key := mvMetricTypeResultKey{typ: metricType, result: result}
-	return h.durationObserverCache.getOrCreate(key, func() mvMetricObserver {
-		return tidbmetrics.MVServiceMetaFetchDurationHistogramVec.WithLabelValues(metricType, result)
-	})
+	h.durationObserverCache.mu.RLock()
+	if observer, ok := h.durationObserverCache.data[key]; ok {
+		h.durationObserverCache.mu.RUnlock()
+		return observer
+	}
+	h.durationObserverCache.mu.RUnlock()
+
+	h.durationObserverCache.mu.Lock()
+	defer h.durationObserverCache.mu.Unlock()
+	if observer, ok := h.durationObserverCache.data[key]; ok {
+		return observer
+	}
+	observer := tidbmetrics.MVServiceMetaFetchDurationHistogramVec.WithLabelValues(metricType, result)
+	h.durationObserverCache.data[key] = observer
+	return observer
 }
 
 // getRunEventCounter returns a cached counter for eventType label.
-func (h *serverHelper) getRunEventCounter(eventType string) mvMetricCounter {
+func (h *serverHelper) getRunEventCounter(eventType string) prometheus.Counter {
 	if h == nil {
 		return tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(eventType)
 	}
-	return h.runEventCounterCache.getOrCreate(eventType, func() mvMetricCounter {
-		return tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(eventType)
-	})
+	h.runEventCounterCache.mu.RLock()
+	if counter, ok := h.runEventCounterCache.data[eventType]; ok {
+		h.runEventCounterCache.mu.RUnlock()
+		return counter
+	}
+	h.runEventCounterCache.mu.RUnlock()
+
+	h.runEventCounterCache.mu.Lock()
+	defer h.runEventCounterCache.mu.Unlock()
+	if counter, ok := h.runEventCounterCache.data[eventType]; ok {
+		return counter
+	}
+	counter := tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(eventType)
+	h.runEventCounterCache.data[eventType] = counter
+	return counter
 }

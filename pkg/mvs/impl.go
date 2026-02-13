@@ -17,11 +17,12 @@ import (
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type serverHelper struct {
-	durationObserverCache metricCache[mvMetricTypeResultKey, mvMetricObserver]
-	runEventCounterCache  metricCache[string, mvMetricCounter]
+	durationObserverCache durationObserverCache
+	runEventCounterCache  runEventCounterCache
 
 	reportCache struct {
 		submittedCount int64
@@ -37,56 +38,39 @@ type mvMetricTypeResultKey struct {
 	result string
 }
 
-type mvMetricObserver interface {
-	Observe(float64)
-}
-
-type mvMetricCounter interface {
-	Inc()
-}
-
-type metricCache[K comparable, V any] struct {
+type durationObserverCache struct {
 	mu   sync.RWMutex
-	data map[K]V
+	data map[mvMetricTypeResultKey]prometheus.Observer
 }
 
-// newMetricCache creates a map-backed cache with an optional initial capacity.
-func newMetricCache[K comparable, V any](capacity int) metricCache[K, V] {
+func newDurationObserverCache(capacity int) durationObserverCache {
 	if capacity < 0 {
 		capacity = 0
 	}
-	return metricCache[K, V]{
-		data: make(map[K]V, capacity),
+	return durationObserverCache{
+		data: make(map[mvMetricTypeResultKey]prometheus.Observer, capacity),
 	}
 }
 
-// getOrCreate returns the cached value for key, creating and caching it on demand.
-func (c *metricCache[K, V]) getOrCreate(key K, create func() V) V {
-	c.mu.RLock()
-	if value, ok := c.data[key]; ok {
-		c.mu.RUnlock()
-		return value
-	}
-	c.mu.RUnlock()
+type runEventCounterCache struct {
+	mu   sync.RWMutex
+	data map[string]prometheus.Counter
+}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.data == nil {
-		c.data = make(map[K]V)
+func newRunEventCounterCache(capacity int) runEventCounterCache {
+	if capacity < 0 {
+		capacity = 0
 	}
-	if value, ok := c.data[key]; ok {
-		return value
+	return runEventCounterCache{
+		data: make(map[string]prometheus.Counter, capacity),
 	}
-	value := create()
-	c.data[key] = value
-	return value
 }
 
 // newServerHelper builds a default helper used by MVService.
 func newServerHelper() *serverHelper {
 	return &serverHelper{
-		durationObserverCache: newMetricCache[mvMetricTypeResultKey, mvMetricObserver](8),
-		runEventCounterCache:  newMetricCache[string, mvMetricCounter](16),
+		durationObserverCache: newDurationObserverCache(8),
+		runEventCounterCache:  newRunEventCounterCache(16),
 	}
 }
 

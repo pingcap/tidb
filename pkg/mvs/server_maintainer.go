@@ -130,7 +130,7 @@ func (sch *ServerConsistentHash) refresh() error {
 		sch.mu.Lock() // Guard server map and hash-ring rebuild.
 
 		sch.servers = newServerInfos
-		RebuildFromMap(&sch.chash, sch.servers)
+		sch.chash.Rebuild(sch.servers)
 
 		sch.mu.Unlock() // Release guard after rebuild.
 	}

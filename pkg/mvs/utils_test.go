@@ -145,7 +145,9 @@ func TestConsistentHash_RebuildResetsRing(t *testing.T) {
 		t.Fatalf("expected non-empty node before rebuild")
 	}
 
-	c.Rebuild([]string{"nodeC"})
+	c.Rebuild(map[string]serverInfo{
+		"nodeC": {ID: "nodeC"},
+	})
 
 	if got := c.NodeCount(); got != 1 {
 		t.Fatalf("expected 1 node after rebuild, got %d", got)
@@ -161,7 +163,7 @@ func TestConsistentHash_RebuildResetsRing(t *testing.T) {
 	}
 }
 
-func TestConsistentHash_RebuildFromMap(t *testing.T) {
+func TestConsistentHash_Rebuild(t *testing.T) {
 	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
@@ -174,11 +176,10 @@ func TestConsistentHash_RebuildFromMap(t *testing.T) {
 	c := NewConsistentHash(2)
 	c.hashFunc = mustHash(mapping)
 
-	nodes := map[string]int{
-		"nodeA": 1,
-		"nodeB": 2,
-	}
-	RebuildFromMap(c, nodes)
+	c.Rebuild(map[string]serverInfo{
+		"nodeA": {ID: "nodeA"},
+		"nodeB": {ID: "nodeB"},
+	})
 
 	if got := c.NodeCount(); got != 2 {
 		t.Fatalf("expected 2 nodes, got %d", got)

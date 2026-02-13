@@ -74,28 +74,28 @@ type settingsFieldUpdater func(form url.Values, settings *mvServiceRuntimeSettin
 
 // mvServiceSettingsFieldUpdaters defines how each form field is parsed, validated, and applied.
 var mvServiceSettingsFieldUpdaters = []settingsFieldUpdater{
-	newSettingsFieldUpdater(mvServiceTaskMaxConcurrencyFormField, strconv.Atoi, func(v int) bool { return v > 0 }, func(settings *mvServiceRuntimeSettings, v int) {
+	newIntSettingsFieldUpdater(mvServiceTaskMaxConcurrencyFormField, func(v int) bool { return v > 0 }, func(settings *mvServiceRuntimeSettings, v int) {
 		settings.maxConcurrency = v
 	}),
-	newSettingsFieldUpdater(mvServiceTaskTimeoutFormField, time.ParseDuration, func(v time.Duration) bool { return v >= 0 }, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+	newDurationSettingsFieldUpdater(mvServiceTaskTimeoutFormField, func(v time.Duration) bool { return v >= 0 }, func(settings *mvServiceRuntimeSettings, v time.Duration) {
 		settings.timeout = v
 	}),
-	newSettingsFieldUpdater(mvServiceBackpressureEnabledFormField, strconv.ParseBool, nil, func(settings *mvServiceRuntimeSettings, v bool) {
+	newBoolSettingsFieldUpdater(mvServiceBackpressureEnabledFormField, nil, func(settings *mvServiceRuntimeSettings, v bool) {
 		settings.backpressureCfg.Enabled = v
 	}),
-	newSettingsFieldUpdater(mvServiceBackpressureCPUThresholdFormField, parseFloat64FieldValue, nil, func(settings *mvServiceRuntimeSettings, v float64) {
+	newFloat64SettingsFieldUpdater(mvServiceBackpressureCPUThresholdFormField, nil, func(settings *mvServiceRuntimeSettings, v float64) {
 		settings.backpressureCfg.CPUThreshold = v
 	}),
-	newSettingsFieldUpdater(mvServiceBackpressureMemThresholdFormField, parseFloat64FieldValue, nil, func(settings *mvServiceRuntimeSettings, v float64) {
+	newFloat64SettingsFieldUpdater(mvServiceBackpressureMemThresholdFormField, nil, func(settings *mvServiceRuntimeSettings, v float64) {
 		settings.backpressureCfg.MemThreshold = v
 	}),
-	newSettingsFieldUpdater(mvServiceBackpressureDelayFormField, time.ParseDuration, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+	newDurationSettingsFieldUpdater(mvServiceBackpressureDelayFormField, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
 		settings.backpressureCfg.Delay = v
 	}),
-	newSettingsFieldUpdater(mvServiceTaskFailRetryBaseDelayFormField, time.ParseDuration, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+	newDurationSettingsFieldUpdater(mvServiceTaskFailRetryBaseDelayFormField, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
 		settings.retryBase = v
 	}),
-	newSettingsFieldUpdater(mvServiceTaskFailRetryMaxDelayFormField, time.ParseDuration, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+	newDurationSettingsFieldUpdater(mvServiceTaskFailRetryMaxDelayFormField, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
 		settings.retryMax = v
 	}),
 }
@@ -229,20 +229,19 @@ func parseMVServiceSettingsUpdateFromForm(form url.Values, current mvServiceRunt
 	return updated, changed, nil
 }
 
-// newSettingsFieldUpdater builds a reusable updater for one form field.
-func newSettingsFieldUpdater[T any](
+func newIntSettingsFieldUpdater(
 	field string,
-	parse func(string) (T, error),
-	validate func(T) bool,
-	assign func(settings *mvServiceRuntimeSettings, value T),
+	validate func(int) bool,
+	assign func(settings *mvServiceRuntimeSettings, value int),
 ) settingsFieldUpdater {
 	return func(form url.Values, settings *mvServiceRuntimeSettings) (changed bool, err error) {
-		value, ok, err := parseOptionalFieldValue(form, field, parse)
-		if err != nil {
-			return false, err
-		}
+		text, ok := parseOptionalFieldText(form, field)
 		if !ok {
 			return false, nil
+		}
+		value, err := strconv.Atoi(text)
+		if err != nil {
+			return false, newIllegalMVServiceSettingsFieldError(field)
 		}
 		if validate != nil && !validate(value) {
 			return false, newIllegalMVServiceSettingsFieldError(field)
@@ -252,22 +251,79 @@ func newSettingsFieldUpdater[T any](
 	}
 }
 
-// parseOptionalFieldValue parses a field only when it is provided.
-func parseOptionalFieldValue[T any](form url.Values, field string, parse func(string) (T, error)) (value T, ok bool, err error) {
-	text := form.Get(field)
-	if text == "" {
-		return value, false, nil
+func newDurationSettingsFieldUpdater(
+	field string,
+	validate func(time.Duration) bool,
+	assign func(settings *mvServiceRuntimeSettings, value time.Duration),
+) settingsFieldUpdater {
+	return func(form url.Values, settings *mvServiceRuntimeSettings) (changed bool, err error) {
+		text, ok := parseOptionalFieldText(form, field)
+		if !ok {
+			return false, nil
+		}
+		value, err := time.ParseDuration(text)
+		if err != nil {
+			return false, newIllegalMVServiceSettingsFieldError(field)
+		}
+		if validate != nil && !validate(value) {
+			return false, newIllegalMVServiceSettingsFieldError(field)
+		}
+		assign(settings, value)
+		return true, nil
 	}
-	value, err = parse(text)
-	if err != nil {
-		return value, false, newIllegalMVServiceSettingsFieldError(field)
-	}
-	return value, true, nil
 }
 
-// parseFloat64FieldValue parses a float64 from text.
-func parseFloat64FieldValue(text string) (float64, error) {
-	return strconv.ParseFloat(text, 64)
+func newBoolSettingsFieldUpdater(
+	field string,
+	validate func(bool) bool,
+	assign func(settings *mvServiceRuntimeSettings, value bool),
+) settingsFieldUpdater {
+	return func(form url.Values, settings *mvServiceRuntimeSettings) (changed bool, err error) {
+		text, ok := parseOptionalFieldText(form, field)
+		if !ok {
+			return false, nil
+		}
+		value, err := strconv.ParseBool(text)
+		if err != nil {
+			return false, newIllegalMVServiceSettingsFieldError(field)
+		}
+		if validate != nil && !validate(value) {
+			return false, newIllegalMVServiceSettingsFieldError(field)
+		}
+		assign(settings, value)
+		return true, nil
+	}
+}
+
+func newFloat64SettingsFieldUpdater(
+	field string,
+	validate func(float64) bool,
+	assign func(settings *mvServiceRuntimeSettings, value float64),
+) settingsFieldUpdater {
+	return func(form url.Values, settings *mvServiceRuntimeSettings) (changed bool, err error) {
+		text, ok := parseOptionalFieldText(form, field)
+		if !ok {
+			return false, nil
+		}
+		value, err := strconv.ParseFloat(text, 64)
+		if err != nil {
+			return false, newIllegalMVServiceSettingsFieldError(field)
+		}
+		if validate != nil && !validate(value) {
+			return false, newIllegalMVServiceSettingsFieldError(field)
+		}
+		assign(settings, value)
+		return true, nil
+	}
+}
+
+// parseOptionalFieldText returns the field text only when it is provided.
+func parseOptionalFieldText(form url.Values, field string) (text string, ok bool) {
+	text = form.Get(field)
+	if text == "" {
+		return "", false
+	}
+	return text, true
 }
 
 // newIllegalMVServiceSettingsFieldError builds a uniform field validation error.
