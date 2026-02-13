@@ -63,7 +63,7 @@ func TestBuildCountSum(t *testing.T) {
 	}
 	mv := &model.TableInfo{
 		ID:    mvID,
-		Name:  pmodel.NewCIStr("mv"),
+		Name:  pmodel.NewCIStr("mv_tbl"),
 		State: model.StatePublic,
 		Columns: []*model.ColumnInfo{
 			mkCol(1, "x", 0, mysql.TypeLong),
@@ -103,6 +103,16 @@ func TestBuildCountSum(t *testing.T) {
 	}
 	require.True(t, hasCount)
 	require.True(t, hasSum)
+
+	mvDBName, err := dbNameByTableID(is, mv.ID)
+	require.NoError(t, err)
+	requireMergePlanOutputNames(t, res, []fieldNameInfo{
+		{Pos: 0, Col: "x"},
+		{Pos: 1, DB: mvDBName.O, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 2, DB: mvDBName.O, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
+		{Pos: 3, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 4, Tbl: deltaTableAlias, Col: "__mvmerge_delta_sum_2"},
+	})
 }
 
 func TestBuildMinMaxHasRemovedGate(t *testing.T) {
@@ -139,7 +149,7 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	}
 	mv := &model.TableInfo{
 		ID:    mvID,
-		Name:  pmodel.NewCIStr("mv"),
+		Name:  pmodel.NewCIStr("mv_minmax_tbl"),
 		State: model.StatePublic,
 		Columns: []*model.ColumnInfo{
 			mkCol(1, "x", 0, mysql.TypeLong),
@@ -174,6 +184,19 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	}
 	require.True(t, hasMax)
 	require.True(t, hasMin)
+
+	mvDBName, err := dbNameByTableID(is, mv.ID)
+	require.NoError(t, err)
+	requireMergePlanOutputNames(t, res, []fieldNameInfo{
+		{Pos: 0, Col: "x"},
+		{Pos: 1, DB: mvDBName.O, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 2, DB: mvDBName.O, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
+		{Pos: 3, DB: mvDBName.O, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
+		{Pos: 4, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 5, Tbl: deltaTableAlias, Col: "__mvmerge_max_in_added_2"},
+		{Pos: 6, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_added_3"},
+		{Pos: 7, Tbl: deltaTableAlias, Col: removedRowsName},
+	})
 }
 
 func TestBuildMissingOldNew(t *testing.T) {
@@ -243,4 +266,46 @@ func deltaColNames(cols []DeltaColumn) []string {
 		out = append(out, c.Name)
 	}
 	return out
+}
+
+type fieldNameInfo struct {
+	Pos int
+
+	Hidden bool
+	DB     string
+	Tbl    string
+	Col    string
+
+	OrigTbl string
+	OrigCol string
+}
+
+func nameSliceInfo(names types.NameSlice) []fieldNameInfo {
+	out := make([]fieldNameInfo, 0, len(names))
+	for i, n := range names {
+		if n == nil {
+			out = append(out, fieldNameInfo{Pos: i, Col: "<nil>"})
+			continue
+		}
+		out = append(out, fieldNameInfo{
+			Pos:     i,
+			Hidden:  n.Hidden,
+			DB:      n.DBName.O,
+			Tbl:     n.TblName.O,
+			Col:     n.ColName.O,
+			OrigTbl: n.OrigTblName.O,
+			OrigCol: n.OrigColName.O,
+		})
+	}
+	return out
+}
+
+func requireMergePlanOutputNames(t *testing.T, res *BuildResult, expected []fieldNameInfo) {
+	t.Helper()
+
+	outputNames := res.Plan.OutputNames()
+	require.Len(t, outputNames, res.Plan.Schema().Len())
+	require.Len(t, outputNames, res.MVColumnCount+len(res.DeltaColumns))
+	require.Len(t, expected, len(outputNames))
+	require.Equal(t, expected, nameSliceInfo(outputNames))
 }
