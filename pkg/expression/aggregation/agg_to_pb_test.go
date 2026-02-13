@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,5 +78,24 @@ func TestAggFunc2Pb(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, fmt.Sprintf(jsons[i], hasDistinct), string(js))
 		}
+	}
+}
+
+func TestAggFuncSumIntToPb(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	args := []expression.Expression{genColumn(mysql.TypeLonglong, 1)}
+	for _, hasDistinct := range []bool{true, false} {
+		aggFunc, err := NewAggFuncDesc(ctx, ast.AggFuncSumInt, args, hasDistinct)
+		require.NoError(t, err)
+		pushCtx := expression.NewPushDownContextFromSessionVars(
+			ctx,
+			ctx.GetSessionVars(),
+			client,
+		)
+		pbExpr, err := AggFuncToPBExpr(pushCtx, aggFunc, kv.TiFlash)
+		require.NoError(t, err)
+		require.Equal(t, tipb.ExprType_SumInt, pbExpr.Tp)
+		require.Equal(t, hasDistinct, pbExpr.HasDistinct)
 	}
 }

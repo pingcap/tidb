@@ -233,7 +233,8 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
 func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
-	if aggFunc.Name == ast.AggFuncSumInt {
+	// sum_int currently only supports push down to TiFlash.
+	if aggFunc.Name == ast.AggFuncSumInt && storeType != kv.TiFlash {
 		return false
 	}
 	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
@@ -250,8 +251,8 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	case kv.TiFlash:
 		ret = CheckAggPushFlash(ctx, aggFunc)
 	case kv.TiKV:
-		// TiKV does not support group_concat now
-		ret = aggFunc.Name != ast.AggFuncGroupConcat
+		// TiKV does not support group_concat or sum_int now.
+		ret = aggFunc.Name != ast.AggFuncGroupConcat && aggFunc.Name != ast.AggFuncSumInt
 	}
 	if ret {
 		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
@@ -285,7 +286,7 @@ func CheckAggPushFlash(ctx expression.EvalContext, aggFunc *AggFuncDesc) bool {
 	switch aggFunc.Name {
 	case ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct:
 		return true
-	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		// Now tiflash doesn't support CastJsonAsReal and CastJsonAsString.
 		return aggFunc.Args[0].GetType(ctx).GetType() != mysql.TypeJSON
 	}

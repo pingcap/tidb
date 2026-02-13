@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -165,6 +166,18 @@ func TestSum(t *testing.T) {
 	result = distinctSumFunc.GetResult(evalCtx)
 	needed = types.NewDecFromStringForTest("5050")
 	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
+}
+
+func TestCheckAggPushDownSumInt(t *testing.T) {
+	ctx := mock.NewContext()
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	desc, err := NewAggFuncDesc(ctx, ast.AggFuncSumInt, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+	require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
 }
 
 func TestBitAnd(t *testing.T) {

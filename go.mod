@@ -90,7 +90,7 @@ require (
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20241022082558-0607513e7fa4
+	github.com/pingcap/tipb v0.0.0-20260212132701-59b3af7d5324
 	github.com/prometheus/client_golang v1.20.5
 	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/common v0.57.0
