@@ -2697,6 +2697,27 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 	return []base.PhysicalPlan{join}
 }
 
+// hasTiFlashReplicaForMPP checks whether this logical subtree still has TiFlash replica paths
+// when strict SQL mode temporarily removes TiFlash from isolation read engines.
+func hasTiFlashReplicaForMPP(lp base.LogicalPlan) bool {
+	ds, ok := lp.(*logicalop.DataSource)
+	if ok {
+		preferTiKVOnly := ds.PreferStoreType&h.PreferTiKV != 0 && ds.PreferStoreType&h.PreferTiFlash == 0
+		return ds.HasTiflash() && !preferTiKVOnly && ds.SCtx().GetSessionVars().IsMPPAllowed()
+	}
+
+	children := lp.Children()
+	if len(children) == 0 {
+		return false
+	}
+	for _, child := range children {
+		if !hasTiFlashReplicaForMPP(child) {
+			return false
+		}
+	}
+	return true
+}
+
 // it can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
@@ -2727,6 +2748,12 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		"LogicalJoin hasTiflash should be conjunction of children hasTiflash")
 	// `hasTiflash` has been propagated in `PreparePossibleProperties` before task enumeration.
 	canTryMPPJoin := util.ShouldCheckTiFlashPushDown(p.SCtx(), logicalop.GetHasTiFlash(p))
+	// In strict SQL mode, non-readonly statements temporarily remove TiFlash from isolation engines.
+	// Keep join enumeration behavior compatible with previous versions in that case.
+	if !canTryMPPJoin && p.SCtx().GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode &&
+		hasTiFlashReplicaForMPP(p) {
+		canTryMPPJoin = true
+	}
 	// Enumerate MPP join plans only when the subtree has TiFlash path and TiFlash is enabled.
 	// This avoids spurious TiFlash pushdown warnings on pure TiKV plans.
 	if canTryMPPJoin {
