@@ -80,12 +80,13 @@ var LookupTableTaskChannelSize int32 = 50
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
 type lookupTableTask struct {
-	id      int
-	handles []kv.Handle
-	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
-	rows    []chunk.Row
-	idxRows *chunk.Chunk
-	cursor  int
+	id               int
+	handles          []kv.Handle
+	handleVersionMap *kv.HandleMap // HandleVersionMap is used to store the commit ts of the handle, only used for TiCI lookup.
+	rowIdx           []int         // rowIdx represents the handle index for every row. Only used when keep order.
+	rows             []chunk.Row
+	idxRows          *chunk.Chunk
+	cursor           int
 
 	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
 	buildDoneTime time.Time
@@ -551,6 +552,9 @@ type IndexLookUpExecutor struct {
 	// Used by the temporary table, cached table.
 	dummy bool
 
+	// if isVersionAware is true, the executor will use the version aware lookup to read data.
+	isVersionAware bool
+
 	// Whether to push down the index lookup to TiKV
 	indexLookUpPushDown bool
 }
@@ -719,6 +723,9 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 }
 
 func (e *IndexLookUpExecutor) open(_ context.Context) error {
+	if e.index.IsTiCIIndex() {
+		e.isVersionAware = true
+	}
 	// We have to initialize "memTracker" and other execution resources in here
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
@@ -790,6 +797,9 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
+		if col.ID == model.ExtraVersionID && len(outputOffsets) >= 2 {
+			col = cols[outputOffsets[len(outputOffsets)-2]]
+		}
 		// For indexScan, need partitionHandle when global index or keepOrder with partitionTable
 		needPartitionHandle = e.index.Global || e.partitionTableMode && e.keepOrder
 	} else {
@@ -834,6 +844,11 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	}
 	if ok, _ := e.needPartitionHandle(getHandleFromIndex); ok {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+	}
+	if e.isVersionAware {
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		intType.SetFlag(mysql.NotNullFlag)
+		tps = append(tps, intType)
 	}
 	return tps
 }
@@ -1043,7 +1058,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		byItems:                    e.byItems,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, task.handleVersionMap, true)
 	if err != nil {
 		if ctx.Err() != context.Canceled {
 			logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
@@ -1312,10 +1327,11 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		var handles []kv.Handle
 		var retChunk *chunk.Chunk
 		var curResultExhausted bool
+		var handleVersionMap *kv.HandleMap
 		if w.idxLookup.indexLookUpPushDown {
 			completedRows, handles, curResultExhausted, err = w.extractLookUpPushDownRowsOrHandles(ctx, result.RowIter, handleOffsets)
 		} else {
-			handles, retChunk, err = w.extractTaskHandles(ctx, chk, result.Result, handleOffsets)
+			handles, handleVersionMap, retChunk, err = w.extractTaskHandles(ctx, chk, result.Result, handleOffsets)
 			curResultExhausted = len(handles) == 0
 		}
 		finishFetch := time.Now()
@@ -1348,7 +1364,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			} else {
 				metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
 			}
-			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
+			tableLookUpTask = w.buildTableTask(taskID, handles, handleVersionMap, retChunk)
 			if w.idxLookup.partitionTableMode {
 				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 			}
@@ -1401,11 +1417,25 @@ func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
 		numColsWithoutPid = numColsWithoutPid - 1
 	}
 	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
-	for i := range w.idxLookup.handleCols {
-		handleOffset = append(handleOffset, numColsWithoutPid-len(w.idxLookup.handleCols)+i)
+
+	if !w.idxLookup.isVersionAware {
+		for i := range w.idxLookup.handleCols {
+			handleOffset = append(handleOffset, numColsWithoutPid-len(w.idxLookup.handleCols)+i)
+		}
+	} else {
+		for i := range w.idxLookup.handleCols {
+			handleOffset = append(handleOffset, numColsWithoutPid-1-len(w.idxLookup.handleCols)+i)
+		}
 	}
 	if len(handleOffset) == 0 {
-		handleOffset = []int{numColsWithoutPid - 1}
+		// In version-aware TiCI lookup, the last output column is `_tidb_mvcc_version`.
+		// When handleCols is empty (e.g. not keep-order int handle path), use the
+		// column right before version as the handle column.
+		if w.idxLookup.isVersionAware {
+			handleOffset = []int{numColsWithoutPid - 2}
+		} else {
+			handleOffset = []int{numColsWithoutPid - 1}
+		}
 	}
 	return handleOffset, nil
 }
@@ -1451,7 +1481,7 @@ func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, it
 		case channelIdxRow:
 			rows = append(rows, row.Row)
 		case channelIdxIndex:
-			h, err := w.idxLookup.getHandle(row.Row, handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
+			h, _, err := w.idxLookup.getHandle(row.Row, handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
 				return nil, nil, false, errors.Trace(err)
 			}
@@ -1469,14 +1499,14 @@ func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, it
 }
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleOffset []int) (
-	handles []kv.Handle, retChk *chunk.Chunk, err error) {
+	handles []kv.Handle, handleVersionMap *kv.HandleMap, retChk *chunk.Chunk, err error) {
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
 		if checkLimit {
 			if w.PushedLimit.Offset+w.PushedLimit.Count <= w.scannedKeys {
-				return handles, nil, nil
+				return handles, handleVersionMap, nil, nil
 			}
 			leftCnt := w.PushedLimit.Offset + w.PushedLimit.Count - w.scannedKeys
 			if uint64(requiredRows) > leftCnt {
@@ -1487,16 +1517,19 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		startTime := time.Now()
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
-			return handles, nil, err
+			return nil, nil, nil, err
 		}
 		if w.idxLookup.stats != nil {
 			w.idxLookup.stats.indexScanBasicStats.Record(time.Since(startTime), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
-			return handles, retChk, nil
+			return handles, handleVersionMap, retChk, nil
 		}
 		if handles == nil {
 			handles = make([]kv.Handle, 0, chk.NumRows())
+		}
+		if w.idxLookup.isVersionAware && handleVersionMap == nil {
+			handleVersionMap = kv.NewHandleMap()
 		}
 		for i := range chk.NumRows() {
 			w.scannedKeys++
@@ -1506,14 +1539,17 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 				}
 				if w.scannedKeys > (w.PushedLimit.Offset + w.PushedLimit.Count) {
 					// Skip the handles after Offset+Count.
-					return handles, nil, nil
+					return handles, handleVersionMap, nil, nil
 				}
 			}
-			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
+			h, version, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
-				return handles, retChk, err
+				return nil, nil, retChk, err
 			}
 			handles = append(handles, h)
+			if w.idxLookup.isVersionAware {
+				handleVersionMap.Set(h, version)
+			}
 		}
 		if w.checkIndexValue != nil {
 			if retChk == nil {
@@ -1526,7 +1562,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	if w.batchSize > w.maxBatchSize {
 		w.batchSize = w.maxBatchSize
 	}
-	return handles, retChk, nil
+	return handles, handleVersionMap, retChk, nil
 }
 
 func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTableTask {
@@ -1539,7 +1575,7 @@ func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTabl
 	return task
 }
 
-func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
+func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, handleVersionMap *kv.HandleMap, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder *kv.HandleMap
 	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
@@ -1566,6 +1602,7 @@ func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *ch
 	task := &lookupTableTask{
 		id:                   taskID,
 		handles:              handles,
+		handleVersionMap:     handleVersionMap,
 		indexOrder:           indexOrder,
 		duplicatedIndexOrder: duplicatedIndexOrder,
 		idxRows:              retChk,
@@ -1627,7 +1664,7 @@ type tableWorker struct {
 }
 
 func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
-	isCommonHandle bool, tp getHandleType) (handle kv.Handle, err error) {
+	isCommonHandle bool, tp getHandleType) (handle kv.Handle, version uint64, err error) {
 	if isCommonHandle {
 		var handleEncoded []byte
 		var datums []types.Datum
@@ -1653,11 +1690,11 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 		errCtx := ectx.ErrCtx()
 		err = errCtx.HandleError(err)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		handle, err = kv.NewCommonHandle(handleEncoded)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	} else {
 		if len(handleIdx) == 0 {
@@ -1668,11 +1705,19 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 	}
 	ok, err := e.needPartitionHandle(tp)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if ok {
-		pid := row.GetInt64(row.Len() - 1)
+		pidIdx := row.Len() - 1
+		if tp == getHandleFromIndex && e.isVersionAware {
+			pidIdx--
+		}
+		pid := row.GetInt64(pidIdx)
 		handle = kv.NewPartitionHandle(pid, handle)
+	}
+
+	if tp == getHandleFromIndex && e.isVersionAware {
+		version = row.GetUint64(row.Len() - 1)
 	}
 	return
 }
@@ -1822,7 +1867,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+			handle, _, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 			if err != nil {
 				return err
 			}
@@ -1949,7 +1994,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	if w.keepOrder {
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for i := range task.rows {
-			handle, err := w.idxLookup.getHandle(task.rows[i], w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+			handle, _, err := w.idxLookup.getHandle(task.rows[i], w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 			if err != nil {
 				return err
 			}
@@ -1969,7 +2014,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			for _, row := range task.rows {
-				handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+				handle, _, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 				if err != nil {
 					return err
 				}

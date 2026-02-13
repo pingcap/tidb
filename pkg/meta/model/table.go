@@ -51,6 +51,9 @@ const ExtraRowChecksumID = -4
 // ExtraCommitTSID is the column ID of column which holds the commit timestamp.
 const ExtraCommitTSID = -5
 
+// ExtraVersionID is the column ID of column which holds the version info for the row. Used by TiCI.
+const ExtraVersionID = -1024
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -93,6 +96,9 @@ var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
+
+// ExtraVersionName is the name of ExtraVersion Column.
+var ExtraVersionName = ast.NewCIStr("_tidb_mvcc_version")
 
 // ExtraCommitTSName is the name of ExtraCommitTSID Column.
 var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")

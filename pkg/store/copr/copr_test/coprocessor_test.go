@@ -173,9 +173,13 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks := it.GetTasks()
 	require.Equal(t, len(tasks), 2)
-	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
+	pbTasks, err := tasks[0].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 1)
 	require.Equal(t, tasks[0].RowCountHint, 5)
-	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 1)
+	pbTasks, err = tasks[1].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 1)
 	require.Equal(t, tasks[1].RowCountHint, 9)
 
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
@@ -189,7 +193,9 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 1)
-	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 3)
+	pbTasks, err = tasks[0].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 3)
 	require.Equal(t, tasks[0].RowCountHint, 14)
 
 	// paging will disable store batch.
@@ -226,8 +232,12 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 2)
-	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
-	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 0)
+	pbTasks, err = tasks[0].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 1)
+	pbTasks, err = tasks[1].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 0)
 }
 
 type mockResourceGroupProvider struct {
