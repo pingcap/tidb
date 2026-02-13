@@ -344,7 +344,9 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	if lenAccessConds == 0 && ds.Table.GetPartitionedTable() == nil {
 		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	} else {
-		path.IsFullRange = false
+		if len(path.AccessConds) > 0 {
+			path.IsFullRange = false
+		}
 		var countEst statistics.RowEstimate
 		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges, true)
 		path.CountAfterAccess = countEst.Est
