@@ -661,7 +661,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "5015"))
+		testkit.RowsWithSep("|", "5025"))
 }
 
 func TestIndexUsageTable(t *testing.T) {

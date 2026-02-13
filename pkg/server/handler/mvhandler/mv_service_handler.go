@@ -139,12 +139,12 @@ func (h MVServiceSettingsHandler) getMVService() (mvServiceRuntimeSettingsAccess
 }
 
 // serveGet returns the current runtime settings.
-func (_ MVServiceSettingsHandler) serveGet(w http.ResponseWriter, mvService mvServiceRuntimeSettingsAccessor) {
+func (MVServiceSettingsHandler) serveGet(w http.ResponseWriter, mvService mvServiceRuntimeSettingsAccessor) {
 	writeMVServiceSettingsResponse(w, loadMVServiceRuntimeSettings(mvService))
 }
 
 // servePost parses form values, applies valid updates, and returns the latest runtime settings.
-func (_ MVServiceSettingsHandler) servePost(w http.ResponseWriter, req *http.Request, mvService mvServiceRuntimeSettingsAccessor) {
+func (MVServiceSettingsHandler) servePost(w http.ResponseWriter, req *http.Request, mvService mvServiceRuntimeSettingsAccessor) {
 	if err := req.ParseForm(); err != nil {
 		handler.WriteError(w, err)
 		return

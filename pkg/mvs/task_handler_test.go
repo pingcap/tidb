@@ -101,7 +101,7 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	return nil, nil, nil
 }
 
-func (_ *recordingSessionContext) Close() {}
+func (*recordingSessionContext) Close() {}
 
 type mockTaskHandlerServerHelper struct{}
 

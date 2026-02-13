@@ -424,7 +424,7 @@ func (e *TaskExecutor) logResult(name string, err error) {
 }
 
 // safeExecute runs task and converts panics into errors.
-func (_ *TaskExecutor) safeExecute(_ string, task func() error) (err error) {
+func (*TaskExecutor) safeExecute(_ string, task func() error) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("mv task panicked: %v", r)

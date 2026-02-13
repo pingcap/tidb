@@ -88,11 +88,11 @@ func newServerHelper() *serverHelper {
 	}
 }
 
-func (_ *serverHelper) serverFilter(s serverInfo) bool {
+func (*serverHelper) serverFilter(s serverInfo) bool {
 	return true
 }
 
-func (_ *serverHelper) getServerInfo() (serverInfo, error) {
+func (*serverHelper) getServerInfo() (serverInfo, error) {
 	localSrv, err := infosync.GetServerInfo()
 	if err != nil {
 		return serverInfo{}, err
@@ -102,7 +102,7 @@ func (_ *serverHelper) getServerInfo() (serverInfo, error) {
 	}, nil
 }
 
-func (_ *serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverInfo, error) {
+func (*serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverInfo, error) {
 	servers := make(map[string]serverInfo)
 	allServers, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {

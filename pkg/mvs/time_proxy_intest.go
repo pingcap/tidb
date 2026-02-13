@@ -172,7 +172,7 @@ func (m *MockTimeModule) newTimer(d time.Duration) *mvsTimer {
 	return t
 }
 
-func (_ *MockTimeModule) stopTimer(state *moduleTimerState) bool {
+func (*MockTimeModule) stopTimer(state *moduleTimerState) bool {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
