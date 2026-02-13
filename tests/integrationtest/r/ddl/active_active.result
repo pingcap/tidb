@@ -178,6 +178,33 @@ create view v_aa as select * from t;
 show create table v_aa;
 View	Create View	character_set_client	collation_connection
 v_aa	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v_aa` (`id`, `name`) AS SELECT `test_aa`.`t`.`id` AS `id`,`test_aa`.`t`.`name` AS `name` FROM `test_aa`.`t`	utf8mb4	utf8mb4_general_ci
+show create view v_aa;
+View	Create View	character_set_client	collation_connection
+v_aa	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v_aa` (`id`, `name`) AS SELECT `test_aa`.`t`.`id` AS `id`,`test_aa`.`t`.`name` AS `name` FROM `test_aa`.`t`	utf8mb4	utf8mb4_general_ci
+desc t;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+name	varchar(50)	YES		NULL	
+desc v_aa;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+name	varchar(50)	YES		NULL	
 drop view v_aa;
+set @@session.tidb_translate_softdelete_sql=0;
+create view v_aa as select *,_tidb_commit_ts,_tidb_softdelete_time from t;
+show create view v_aa;
+View	Create View	character_set_client	collation_connection
+v_aa	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v_aa` (`id`, `name`, `_tidb_commit_ts`, `_tidb_softdelete_time`) AS SELECT `test_aa`.`t`.`id` AS `id`,`test_aa`.`t`.`name` AS `name`,`_tidb_commit_ts` AS `_tidb_commit_ts`,`_tidb_softdelete_time` AS `_tidb_softdelete_time` FROM `test_aa`.`t`	utf8mb4	utf8mb4_general_ci
+desc t;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+name	varchar(50)	YES		NULL	
+desc v_aa;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+name	varchar(50)	YES		NULL	
+_tidb_commit_ts	bigint	YES		NULL	
+drop view v_aa;
+set @@session.tidb_translate_softdelete_sql=default;
 drop database test_aa;
 set @@global.tidb_enable_check_constraint = default;

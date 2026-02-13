@@ -730,6 +730,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
 		}
+		if skipColumnInShowCreateTable(tb.Meta(), col.ColumnInfo) {
+			continue
+		}
 		desc := table.NewColDesc(col)
 		var columnDefault any
 		if desc.DefaultValue != nil {
@@ -1667,9 +1670,6 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, "VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
 	isFirst := true
 	for _, col := range tb.Columns {
-		if skipColumnInShowCreateTable(tb, col) {
-			continue
-		}
 		if !isFirst {
 			fmt.Fprintf(buf, ", ")
 		}

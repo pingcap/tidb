@@ -175,7 +175,17 @@ create temporary table tmp_aa2 (id int) active_active = 'ON' softdelete = retent
 # show create table for view should not expose internal active-active/softdelete columns
 create view v_aa as select * from t;
 show create table v_aa;
+show create view v_aa;
+desc t;
+desc v_aa;
 drop view v_aa;
+set @@session.tidb_translate_softdelete_sql=0;
+create view v_aa as select *,_tidb_commit_ts,_tidb_softdelete_time from t;
+show create view v_aa;
+desc t;
+desc v_aa;
+drop view v_aa;
+set @@session.tidb_translate_softdelete_sql=default;
 
 drop database test_aa;
 set @@global.tidb_enable_check_constraint = default;
