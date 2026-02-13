@@ -233,10 +233,6 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
 func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
-	// sum_int currently only supports push down to TiFlash.
-	if aggFunc.Name == ast.AggFuncSumInt && storeType != kv.TiFlash {
-		return false
-	}
 	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
 		return false
 	}
@@ -251,8 +247,8 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	case kv.TiFlash:
 		ret = CheckAggPushFlash(ctx, aggFunc)
 	case kv.TiKV:
-		// TiKV does not support group_concat or sum_int now.
-		ret = aggFunc.Name != ast.AggFuncGroupConcat && aggFunc.Name != ast.AggFuncSumInt
+		// TiKV does not support group_concat now.
+		ret = aggFunc.Name != ast.AggFuncGroupConcat
 	}
 	if ret {
 		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)

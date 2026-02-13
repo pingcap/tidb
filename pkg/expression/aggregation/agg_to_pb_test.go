@@ -85,17 +85,19 @@ func TestAggFuncSumIntToPb(t *testing.T) {
 	ctx := mock.NewContext()
 	client := new(mock.Client)
 	args := []expression.Expression{genColumn(mysql.TypeLonglong, 1)}
-	for _, hasDistinct := range []bool{true, false} {
-		aggFunc, err := NewAggFuncDesc(ctx, ast.AggFuncSumInt, args, hasDistinct)
-		require.NoError(t, err)
-		pushCtx := expression.NewPushDownContextFromSessionVars(
-			ctx,
-			ctx.GetSessionVars(),
-			client,
-		)
-		pbExpr, err := AggFuncToPBExpr(pushCtx, aggFunc, kv.TiFlash)
-		require.NoError(t, err)
-		require.Equal(t, tipb.ExprType_SumInt, pbExpr.Tp)
-		require.Equal(t, hasDistinct, pbExpr.HasDistinct)
+	for _, storeType := range []kv.StoreType{kv.TiFlash, kv.TiKV} {
+		for _, hasDistinct := range []bool{true, false} {
+			aggFunc, err := NewAggFuncDesc(ctx, ast.AggFuncSumInt, args, hasDistinct)
+			require.NoError(t, err)
+			pushCtx := expression.NewPushDownContextFromSessionVars(
+				ctx,
+				ctx.GetSessionVars(),
+				client,
+			)
+			pbExpr, err := AggFuncToPBExpr(pushCtx, aggFunc, storeType)
+			require.NoError(t, err)
+			require.Equal(t, tipb.ExprType_SumInt, pbExpr.Tp)
+			require.Equal(t, hasDistinct, pbExpr.HasDistinct)
+		}
 	}
 }

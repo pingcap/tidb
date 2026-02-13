@@ -177,7 +177,7 @@ func TestCheckAggPushDownSumInt(t *testing.T) {
 	desc, err := NewAggFuncDesc(ctx, ast.AggFuncSumInt, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
-	require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
+	require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
 }
 
 func TestBitAnd(t *testing.T) {
