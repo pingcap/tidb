@@ -126,16 +126,6 @@ func findTopNCountByEncoded(topN *statistics.TopN, encoded []byte) uint64 {
 	return 0
 }
 
-// findTopNMetaCountByEncoded returns the count for the given encoded value in left-over TopNMeta, or 0.
-func findTopNMetaCountByEncoded(metas []statistics.TopNMeta, encoded []byte) uint64 {
-	for _, meta := range metas {
-		if bytes.Equal(meta.Encoded, encoded) {
-			return meta.Count
-		}
-	}
-	return 0
-}
-
 // TestMergeTopNV1InflationHistValueNotAtUpperBound shows how V1 inflates a
 // TopN value's count using the uniform histogram estimate (NotNullCount/NDV)
 // when the value falls inside a histogram bucket but is NOT at the upper bound.

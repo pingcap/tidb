@@ -1747,6 +1747,7 @@ func MergePartTopNAndHistToGlobal(
 					}
 				}
 				counter[hack.String(encoded)] += uint64(b.Repeat)
+				totCount -= b.Repeat
 				b.Count -= b.Repeat
 				b.Repeat = 0
 			}
