@@ -669,6 +669,124 @@ func TestHybridShardingIndexEncoding(t *testing.T) {
 	require.Equal(t, indexedValues[2], decodedMap[colC.ID])
 }
 
+func TestHybridIndexEncodingCommonHandleRestoredData(t *testing.T) {
+	colPK := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	colPK.AddFlag(mysql.PriKeyFlag)
+	colBinType := types.NewFieldType(mysql.TypeVarchar)
+	colBinType.SetCharset(charset.CharsetUTF8MB4)
+	colBinType.SetCollate(charset.CollationUTF8MB4)
+	colBin := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *colBinType}
+	colInt := &model.ColumnInfo{ID: 3, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	pkIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+	}
+	tblInfo := &model.TableInfo{
+		ID:                  20,
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
+		Columns:             []*model.ColumnInfo{colPK, colBin, colInt},
+		Indices:             []*model.IndexInfo{pkIdx},
+	}
+	idxInfo := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_hybrid"),
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}, {Offset: 1, Length: types.UnspecifiedLength}, {Offset: 2, Length: types.UnspecifiedLength}},
+		HybridInfo: &model.HybridIndexInfo{
+			Sharding: &model.HybridShardingSpec{
+				Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+			},
+		},
+	}
+
+	indexedValues := []types.Datum{
+		types.NewIntDatum(101),
+		// the column with charset UTF8MB4, the raw value should be encoded but not the padding
+		types.NewCollationStringDatum("bin  ", charset.CollationUTF8MB4),
+		types.NewIntDatum(202),
+	}
+	handleRaw, err := codec.EncodeKey(time.UTC, nil, indexedValues[0])
+	require.NoError(t, err)
+	handle, err := kv.NewCommonHandle(handleRaw)
+	require.NoError(t, err)
+
+	value, err := GenIndexValuePortal(time.UTC, tblInfo, idxInfo, false, false, false, indexedValues, handle, tblInfo.ID, nil, nil)
+	require.NoError(t, err)
+
+	segs := SplitIndexValue(value)
+	require.NotNil(t, segs.RestoredValues)
+	decoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
+		{ID: colPK.ID, Ft: &colPK.FieldType},
+		{ID: colBin.ID, Ft: &colBin.FieldType},
+		{ID: colInt.ID, Ft: &colInt.FieldType},
+	}, time.UTC)
+	decodedMap, err := decoder.DecodeToDatumMap(segs.RestoredValues, nil)
+	require.NoError(t, err)
+	require.Len(t, decodedMap, 3)
+	require.Equal(t, indexedValues[0], decodedMap[colPK.ID])
+	require.Equal(t, indexedValues[1], decodedMap[colBin.ID])
+	require.Equal(t, indexedValues[2], decodedMap[colInt.ID])
+}
+
+func TestFulltextIndexEncodingCommonHandleRestoredData(t *testing.T) {
+	colPK := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	colPK.AddFlag(mysql.PriKeyFlag)
+	colBinType := types.NewFieldType(mysql.TypeVarchar)
+	colBinType.SetCharset(charset.CharsetUTF8MB4)
+	colBinType.SetCollate(charset.CollationUTF8MB4)
+	colBin := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *colBinType}
+	colInt := &model.ColumnInfo{ID: 3, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	pkIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+	}
+	fulltextIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_fts"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}, {Offset: 2, Length: types.UnspecifiedLength}},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	tblInfo := &model.TableInfo{
+		ID:                  21,
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
+		Columns:             []*model.ColumnInfo{colPK, colBin, colInt},
+		Indices:             []*model.IndexInfo{pkIdx, fulltextIdx},
+	}
+
+	indexedValues := []types.Datum{
+		types.NewCollationStringDatum("keep  ", charset.CollationUTF8MB4),
+		types.NewIntDatum(888),
+	}
+	handleRaw, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(123))
+	require.NoError(t, err)
+	handle, err := kv.NewCommonHandle(handleRaw)
+	require.NoError(t, err)
+
+	value, err := GenIndexValuePortal(time.UTC, tblInfo, fulltextIdx, false, false, false, indexedValues, handle, tblInfo.ID, nil, nil)
+	require.NoError(t, err)
+
+	segs := SplitIndexValue(value)
+	require.NotNil(t, segs.RestoredValues)
+	decoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
+		{ID: colBin.ID, Ft: &colBin.FieldType},
+		{ID: colInt.ID, Ft: &colInt.FieldType},
+	}, time.UTC)
+	decodedMap, err := decoder.DecodeToDatumMap(segs.RestoredValues, nil)
+	require.NoError(t, err)
+	require.Len(t, decodedMap, 2)
+	require.Equal(t, indexedValues[0], decodedMap[colBin.ID])
+	require.Equal(t, indexedValues[1], decodedMap[colInt.ID])
+}
+
 func TestFulltextIndexEncoding(t *testing.T) {
 	colID := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
 	colID.AddFlag(mysql.PriKeyFlag)
