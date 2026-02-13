@@ -3364,3 +3364,19 @@ func TestAlterTablePartitionRollback(t *testing.T) {
 		testFunc(states[:i+1])
 	}
 }
+
+func TestVerboseNoPartitionError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a varchar(255), b int) partition by list columns (a) (partition p0 values in ('A','B'))`)
+	tk.MustContainErrMsg(`insert into t values ('NotExists',1)`, "[table:1526]Table has no partition for value 'NotExists'")
+}
+
+func TestVerboseNoPartitionErrorMultiColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t_multi (a varchar(10), b int) partition by list columns (a, b) (partition p0 values in (('A', 1)))`)
+	tk.MustContainErrMsg(`insert into t_multi values ('B', 1)`, "[table:1526]Table has no partition for value ('B', 1)")
+}
