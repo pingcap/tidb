@@ -181,3 +181,52 @@ func EstimateF1BySketches(ndvSketches, f1Sketches []*FMSketch) uint64 {
 	}
 	return uint64(f1)
 }
+
+// EstimateF1ByHLLSketches estimates f1 (the number of values that appear once in the sample)
+// using HLL NDV sketches and HLL F1 sketches from multiple nodes. It follows Eq. 7-9 and
+// Algorithm 2 in "Sampling-based Estimation of the Number of Distinct Values in Distributed Environment"
+// (arXiv:2206.05476).
+//
+// For each node i, it estimates |U_-i ∪ F1_i| - |U_-i|, where U_-i is the union of NDV sketches
+// from all nodes except i. The sum of these differences is the estimated f1.
+func EstimateF1ByHLLSketches(ndvSketches, f1Sketches []*HLLSketch) uint64 {
+	if len(ndvSketches) == 0 || len(ndvSketches) != len(f1Sketches) {
+		return 0
+	}
+	var f1 int64
+	for i := range ndvSketches {
+		var other *HLLSketch
+		for j, sk := range ndvSketches {
+			if j == i || sk == nil {
+				continue
+			}
+			if other == nil {
+				other = sk.Copy()
+				continue
+			}
+			other.Merge(sk)
+		}
+		ndvOther := uint64(0)
+		if other != nil {
+			ndvOther = other.NDV()
+		}
+		var union *HLLSketch
+		if other != nil {
+			union = other.Copy()
+			if f1Sketches[i] != nil {
+				union.Merge(f1Sketches[i])
+			}
+		} else if f1Sketches[i] != nil {
+			union = f1Sketches[i].Copy()
+		}
+		ndvUnion := uint64(0)
+		if union != nil {
+			ndvUnion = union.NDV()
+		}
+		f1 += int64(ndvUnion) - int64(ndvOther)
+	}
+	if f1 < 0 {
+		return 0
+	}
+	return uint64(f1)
+}
