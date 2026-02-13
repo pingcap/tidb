@@ -963,7 +963,8 @@ func TestMergeTopNV1V2AccuracyWithBuildStats(t *testing.T) {
 
 	// Helper: estimate a value's count from global stats (TopN + histogram).
 	estimateCount := func(globalTopN *statistics.TopN, globalHist *statistics.Histogram, val int64) float64 {
-		encoded, _ := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(val))
+		encoded, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(val))
+		require.NoError(t, err)
 		topNCount := findTopNCountByEncoded(globalTopN, encoded)
 		if topNCount > 0 {
 			return float64(topNCount)
@@ -1033,7 +1034,8 @@ func TestMergeTopNV1V2AccuracyWithBuildStats(t *testing.T) {
 		"V2 total should be within 5%% of true total")
 
 	// val2 (the globally most frequent) should be in both global TopNs.
-	encoded2, _ := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(2))
+	encoded2, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(2))
+	require.NoError(t, err)
 	require.Greater(t, findTopNCountByEncoded(v1TopN, encoded2), uint64(0),
 		"val2 should be in V1 global TopN")
 	require.Greater(t, findTopNCountByEncoded(v2TopN, encoded2), uint64(0),
