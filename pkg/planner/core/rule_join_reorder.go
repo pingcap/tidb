@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -222,6 +223,7 @@ type joinTypeWithExtMsg struct {
 	outerBindCondition []expression.Expression
 }
 
+<<<<<<< HEAD
 func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
@@ -230,6 +232,18 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logi
 	tracer.traceJoinReorder(p)
 	appendJoinReorderTraceStep(tracer, p, opt)
 	return p, planChanged, err
+=======
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
+	failpoint.Inject("enableCDCJoinReorder", func(val failpoint.Value) {
+		if val.(bool) {
+			p2, err := joinorder.Optimize(p)
+			failpoint.Return(p2, false, err)
+		}
+	})
+	p, err := s.optimizeRecursive(p.SCtx(), p)
+	return p, false, err
+>>>>>>> f6f6d2e968e (planner: fix join reorder correctness with conflict detection algorithm (#65705))
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.

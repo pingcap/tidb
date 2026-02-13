@@ -29,9 +29,20 @@ var testDataMap = make(testdata.BookKeeper)
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
+<<<<<<< HEAD
 	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
 	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite")
+=======
+	testDataMap.LoadTestSuiteData("testdata", "outer2inner", true)
+	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window", true)
+	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification", true)
+	testDataMap.LoadTestSuiteData("testdata", "outer_to_semi_join_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "cdc_join_reorder_suite", true)
+
+>>>>>>> f6f6d2e968e (planner: fix join reorder correctness with conflict detection algorithm (#65705))
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
@@ -60,3 +71,18 @@ func GetJoinReorderSuiteData() testdata.TestData {
 func GetPredicatePushdownSuiteData() testdata.TestData {
 	return testDataMap["predicate_pushdown_suite"]
 }
+<<<<<<< HEAD
+=======
+
+func GetPredicateSimplificationSuiteData() testdata.TestData {
+	return testDataMap["predicate_simplification"]
+}
+
+func GetOuterToSemiJoinSuiteData() testdata.TestData {
+	return testDataMap["outer_to_semi_join_suite"]
+}
+
+func GetCDCJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["cdc_join_reorder_suite"]
+}
+>>>>>>> f6f6d2e968e (planner: fix join reorder correctness with conflict detection algorithm (#65705))
