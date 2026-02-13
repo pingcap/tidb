@@ -330,23 +330,22 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		path.CountAfterAccess = 1
 		return nil
 	}
-	lenAccessConds := len(path.AccessConds)
 	var remainedConds []expression.Expression
 	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.SCtx().GetRangerCtx(), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
 	path.TableFilters = append(path.TableFilters, remainedConds...)
 	if err != nil {
 		return err
 	}
-	// Optimization: If there are no AccessConds, the ranges will be full range and the count will be the full table count.
-	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
+	if len(path.AccessConds) > 0 || len(path.Ranges) == 0 {
+		path.IsFullRange = false
+	}
+	// Optimization: If IsFullRange, the ranges have not been narrowed and the count is the full table count.
+	// Skip the expensive GetRowCountByColumnRanges call in this case.
 	// Current code will exclude partitioned tables from this optimization.
 	// TODO: Enhance this optimization to support partitioned tables.
-	if lenAccessConds == 0 && ds.Table.GetPartitionedTable() == nil {
+	if path.IsFullRange && ds.Table.GetPartitionedTable() == nil {
 		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	} else {
-		if len(path.AccessConds) > 0 && !ranger.HasFullRange(path.Ranges, isUnsigned) {
-			path.IsFullRange = false
-		}
 		var countEst statistics.RowEstimate
 		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges, true)
 		path.CountAfterAccess = countEst.Est
@@ -423,8 +422,14 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	if len(res.AccessConds) > 0 && !ranger.HasFullRange(path.Ranges, false) {
+	if len(res.AccessConds) > 0 || len(path.Ranges) == 0 {
 		path.IsFullRange = false
+	}
+	// When IsFullRange, the ranges have not been narrowed from the initial full range and
+	// CountAfterAccess is already correctly set to RealtimeCount by the caller.
+	// Skip the expensive index estimation in this case.
+	if path.IsFullRange {
+		return nil
 	}
 	indexCols := path.IdxCols
 	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols
