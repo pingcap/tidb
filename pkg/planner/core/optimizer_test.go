@@ -15,6 +15,7 @@
 package core
 
 import (
+	"math/bits"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
@@ -454,4 +456,19 @@ func TestCanTiFlashUseHashJoinV2(t *testing.T) {
 	hashJoin.IsNullEQ = append(hashJoin.IsNullEQ, true)
 	// can not use hash join v2 due to null eq
 	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+}
+
+func TestOptRuleListFlagAlignment(t *testing.T) {
+	// Each position i in optRuleList is gated by the flag bit 1<<i.
+	// The Flag* constants in rule/logical_rules.go are declared via iota in the
+	// same order. This test catches silent misalignment when a rule or flag is
+	// added/removed without updating the other.
+	//
+	// bits.Len64(lastFlag) == bit-position + 1 == expected list length.
+	numFlags := bits.Len64(rule.FlagCorrelate)
+	require.Equalf(t, numFlags, len(optRuleList),
+		"optRuleList length (%d) does not match Flag* count (%d); "+
+			"did you add a rule without a flag or vice versa? "+
+			"Update both optRuleList and the Flag* iota block in rule/logical_rules.go.",
+		len(optRuleList), numFlags)
 }

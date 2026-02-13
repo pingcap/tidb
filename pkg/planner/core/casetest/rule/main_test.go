@@ -35,6 +35,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification", true)
 	testDataMap.LoadTestSuiteData("testdata", "outer_to_semi_join_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "correlate_suite", true)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -76,4 +77,8 @@ func GetPredicateSimplificationSuiteData() testdata.TestData {
 
 func GetOuterToSemiJoinSuiteData() testdata.TestData {
 	return testDataMap["outer_to_semi_join_suite"]
+}
+
+func GetCorrelateSuiteData() testdata.TestData {
+	return testDataMap["correlate_suite"]
 }
