@@ -1732,7 +1732,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return err
 	}
 	defer func() {
-		failpoint.Call(_curpkg_("checkUserMgmtSysSessionTxnIsolationBeforePut"), ctx, sysSession)
+		failpoint.InjectCall("checkUserMgmtSysSessionTxnIsolationBeforePut", ctx, sysSession)
 		e.ReleaseSysSession(ctx, sysSession)
 	}()
 	sqlExecutor := sysSession.GetSQLExecutor()
@@ -2502,7 +2502,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	defer func() {
-		failpoint.Call(_curpkg_("checkUserMgmtSysSessionTxnIsolationBeforePut"), ctx, sysSession)
+		failpoint.InjectCall("checkUserMgmtSysSessionTxnIsolationBeforePut", ctx, sysSession)
 		e.ReleaseSysSession(ctx, sysSession)
 	}()
 
