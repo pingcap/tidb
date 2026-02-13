@@ -415,13 +415,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 
 func generateRecords(ctx context.Context, task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 	records := make([]PlanReplayerStatusRecord, 0)
-	if !task.IsCapture {
-		if storage, err := extstore.GetGlobalExtStorage(ctx); err == nil {
-			if url, err := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour); err == nil {
-				task.PresignedURL = url
-			}
-		}
-	}
+	setTaskPresignedURL(ctx, task)
 	if len(task.ExecStmts) > 0 {
 		for _, execStmt := range task.ExecStmts {
 			records = append(records, PlanReplayerStatusRecord{
@@ -433,6 +427,26 @@ func generateRecords(ctx context.Context, task *PlanReplayerDumpTask) []PlanRepl
 		}
 	}
 	return records
+}
+
+func setTaskPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) {
+	if task.IsCapture {
+		return
+	}
+	url, err := getPresignedURL(ctx, task)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get plan replayer presigned URL", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", task.FileName))
+		return
+	}
+	task.PresignedURL = url
+}
+
+func getPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) (string, error) {
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return "", err
+	}
+	return storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 1*time.Hour)
 }
 
 func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
@@ -782,13 +796,7 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 }
 
 func dumpPlanReplayerExplain(ctx context.Context, sctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
-	if !task.IsCapture {
-		if storage, err := extstore.GetGlobalExtStorage(ctx); err == nil {
-			if url, err := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour); err == nil {
-				task.PresignedURL = url
-			}
-		}
-	}
+	setTaskPresignedURL(ctx, task)
 	sqls := make([]string, 0)
 	for _, execStmt := range task.ExecStmts {
 		sql := execStmt.Text()
