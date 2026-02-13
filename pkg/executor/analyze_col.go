@@ -78,10 +78,11 @@ func isColumnCoveredBySingleColUniqueIndex(tblInfo *model.TableInfo, colOffset i
 	return false
 }
 
-// isSingleColNonPrefixUniqueIndex returns true if the index is unique,
-// has exactly one column, and does not use a prefix.
+// isSingleColNonPrefixUniqueIndex returns true if the index is unique (or primary),
+// has exactly one column, and uses neither a prefix nor a partial-index condition.
 func isSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
-	return idx.Unique && len(idx.Columns) == 1 && !idx.HasPrefixIndex()
+	return (idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
+		!idx.HasPrefixIndex() && !idx.HasCondition()
 }
 
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
