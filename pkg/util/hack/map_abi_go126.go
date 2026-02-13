@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build go1.25 && !go1.26
+//go:build go1.26 && !go1.27
 
 package hack
 
@@ -409,8 +409,8 @@ func (m *MemAwareMap[K, V]) RealBytes() uint64 {
 }
 
 func checkMapABI() {
-	if !strings.Contains(runtime.Version(), `go1.25`) {
-		panic("The hack package only supports go1.25, please confirm the correctness of the ABI before upgrading")
+	if !strings.Contains(runtime.Version(), `go1.26`) {
+		panic("The hack package only supports go1.26, please confirm the correctness of the ABI before upgrading")
 	}
 }
 

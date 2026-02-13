@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "hack.go",
         "map_abi.go",
+        "map_abi_go126.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/hack",
     visibility = ["//visibility:public"],
