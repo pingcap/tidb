@@ -762,6 +762,15 @@ func job2TableIDs(jobW *JobWrapper) string {
 	case model.ActionTruncateTable:
 		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
 		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
+	case model.ActionCreateMaterializedViewLog:
+		args := jobW.JobArgs.(*model.CreateMaterializedViewLogArgs)
+		if args != nil && args.TableInfo != nil && args.TableInfo.MaterializedViewLog != nil {
+			baseTableID := args.TableInfo.MaterializedViewLog.BaseTableID
+			if baseTableID > 0 {
+				return makeStringForIDs([]int64{jobW.TableID, baseTableID})
+			}
+		}
+		return strconv.FormatInt(jobW.TableID, 10)
 	default:
 		return strconv.FormatInt(jobW.TableID, 10)
 	}
