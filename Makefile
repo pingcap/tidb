@@ -43,7 +43,7 @@ dev: checklist check integrationtest gogenerate br_unit_test test_part_parser_de
 # Install the check tools.
 .PHONY: check-setup
 check-setup: ## Install development and checking tools
-check-setup:tools/bin/revive
+check-setup:tools/bin/golangci-lint
 
 .PHONY: precheck
 precheck: ## Run pre-commit checks
@@ -86,10 +86,11 @@ errdoc:tools/bin/errdoc-gen
 	./tools/check/check-errdoc.sh
 
 .PHONY: lint
-lint:tools/bin/revive
+lint:tools/bin/golangci-lint
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./lightning/...
+	GO111MODULE=on CGO_ENABLED=$(CGO_ENABLED_FOR_LINT) tools/bin/golangci-lint run -v \
+		$$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) ./lightning/... \
+		--config .golangci.yml --enable-only revive
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/performance_overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb.json
@@ -357,10 +358,6 @@ tools/bin/ut: tools/check/ut.go tools/check/longtests.go
 tools/bin/xprog: tools/check/xprog/xprog.go
 	cd tools/check/xprog; \
 	$(GO) build -o ../../bin/xprog xprog.go
-
-.PHONY: tools/bin/revive
-tools/bin/revive:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@v1.2.1
 
 .PHONY: tools/bin/failpoint-ctl
 tools/bin/failpoint-ctl:
