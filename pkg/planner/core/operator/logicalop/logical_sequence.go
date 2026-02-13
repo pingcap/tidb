@@ -108,7 +108,6 @@ func (p *LogicalSequence) PreparePossibleProperties(_ *expression.Schema, childr
 	hasTiflash := len(childrenProperties) > 0
 	for _, child := range childrenProperties {
 		if child == nil {
-			hasTiflash = false
 			continue
 		}
 		hasTiflash = hasTiflash && child.HasTiflash
