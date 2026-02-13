@@ -16718,7 +16718,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB different ddl worker numbers",
+          "description": "How long the current instance has been the DDL owner. Resets on owner change.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -16729,10 +16729,10 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 39
+            "y": 60
           },
           "hiddenSeries": false,
-          "id": 55,
+          "id": 23763575000,
           "legend": {
             "alignAsTable": true,
             "avg": false,
@@ -16762,10 +16762,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "increase(tidb_ddl_worker_operation_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])",
+              "expr": "((time() - tidb_owner_is_owner_since_seconds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"ddl\"}) and (tidb_owner_is_owner_since_seconds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"ddl\"} > 0)) + on(instance) group_left(version) (0 * tidb_server_info{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"})",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}-{{type}}",
+              "legendFormat": "{{instance}} ({{version}})",
               "refId": "A"
             }
           ],
@@ -16773,7 +16773,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL META OPM",
+          "title": "DDL Owner",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -16789,8 +16789,9 @@
           },
           "yaxes": [
             {
-              "format": "short",
-              "logBase": 1,
+              "format": "dtdurations",
+              "logBase": 2,
+              "min": "0",
               "show": true
             },
             {
