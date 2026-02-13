@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -1923,7 +1924,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
 	checkErr = nil
 	tk.MustExec("rename table t1 to t")
 
@@ -1933,7 +1934,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to test2.t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	checkErr = nil
 
@@ -1944,7 +1945,7 @@ func TestParallelRenameTable(t *testing.T) {
 	concurrentDDLQueryPre = "create table t(a int)"
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	concurrentDDLQueryPre = ""
 	checkErr = nil
@@ -1955,7 +1956,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
 	tk.MustExec("rename table t1 to t")
 	checkErr = nil
 
@@ -1965,7 +1966,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to test2.t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	checkErr = nil
 
@@ -1977,7 +1978,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to tt, t2 to tt2, t3 to tt3")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
 	tk.MustExec("rename table tt to t")
 }
 
@@ -2030,4 +2031,37 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 	wg.Wait()
 	tk.MustExec("show create table t")
 	tk.MustExec("insert into t value()")
+}
+
+func TestConcurrentCreateTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	var wg sync.WaitGroup
+	skip := false
+	var err error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateNone:
+			if skip {
+				break
+			}
+			skip = true
+			wg.Add(1)
+			go func() {
+				_, err = tk1.Exec("create table t(a int)")
+				wg.Done()
+			}()
+		}
+	})
+
+	tk.MustExec("create table t(a int)")
+	wg.Wait()
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableExists))
 }
