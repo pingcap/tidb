@@ -17,10 +17,6 @@ severity = "error"
 confidence = 0.8
 errorCode = -1
 warningCode = -1
-exclude = [
-    "./pkg/util/hack/...",
-    "pkg/util/hack/...",
-]
 
 [rule.blank-imports]
 [rule.context-as-argument]
