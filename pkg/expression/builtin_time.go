@@ -2957,7 +2957,7 @@ func (du *baseDateArithmetical) getDateFromString(ctx EvalContext, args []Expres
 			return types.ZeroTime, true, err
 		}
 		return date, true, handleInvalidTimeError(ctx, err)
-	} else if sqlMode(ctx).HasNoZeroDateMode() && (date.Year() == 0 || date.Month() == 0 || date.Day() == 0) {
+	} else if sqlMode(ctx).HasNoZeroDateMode() && (date.Month() == 0 || date.Day() == 0) {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
 	}
 	return date, false, handleInvalidTimeError(ctx, err)
@@ -3414,7 +3414,7 @@ func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, ctx Eva
 				return err
 			}
 			result.SetNull(i, true)
-		} else if sqlMode(ctx).HasNoZeroDateMode() && (date.Year() == 0 || date.Month() == 0 || date.Day() == 0) {
+		} else if sqlMode(ctx).HasNoZeroDateMode() && (date.Month() == 0 || date.Day() == 0) {
 			err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
 			if err != nil {
 				return err
