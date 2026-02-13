@@ -18,6 +18,8 @@ go_test(
         "hack_test.go",
         "main_test.go",
         "map_abi_test.go",
+        "map_abi_test_type_go125_test.go",
+        "map_abi_test_type_go126_test.go",
     ],
     embed = [":hack"],
     flaky = True,
