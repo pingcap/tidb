@@ -166,6 +166,10 @@ func (m *mockTableIR) EscapeBackSlash() bool {
 	return m.escapeBackSlash
 }
 
+func (m *mockTableIR) ChunkKey() string {
+	return fmt.Sprintf("%s.%s", m.dbName, m.tblName)
+}
+
 func newMockTableIR(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string) *mockTableIR {
 	return &mockTableIR{
 		dbName:        databaseName,
