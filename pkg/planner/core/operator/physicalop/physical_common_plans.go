@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
@@ -475,6 +476,12 @@ func (p *Insert) ResolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 		column := colMap[assign.Column.Name.L]
 		if column.Hidden {
 			return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(column.Name, "field list")
+		}
+		// If columns in set list contains primary key columns on soft-delete tables, raise error.
+		// It's because if updating PK meets a conflict row, we need to delete the conflict row if that row is
+		// already soft-deleted. And this behavior is not implemented yet. So we forbid this kind of update now.
+		if tblInfo.SoftdeleteInfo != nil && mysql.HasPriKeyFlag(column.GetFlag()) && p.SCtx().GetSessionVars().CDCWriteSource == 0 {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
 		}
 		// Check whether the column to be updated is the generated column.
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.

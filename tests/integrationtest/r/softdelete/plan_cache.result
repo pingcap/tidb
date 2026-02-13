@@ -1,0 +1,57 @@
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+set tidb_enable_non_prepared_plan_cache = ON;
+insert into message values (1, '24h'), (2, '24h'), (3, '24h'), (4, '24h');
+delete from message where id = 2;
+select * from message where id > 1;
+id	text
+3	24h
+4	24h
+select * from message where id > 1;
+id	text
+3	24h
+4	24h
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @@tidb_translate_softdelete_sql = false;
+select * from message where id > 1;
+id	text
+2	24h
+3	24h
+4	24h
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @@tidb_translate_softdelete_sql = true;
+set tidb_enable_non_prepared_plan_cache = OFF;
+drop table message;
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+insert into message values (1, '24h'), (2, '24h'), (3, '24h'), (4, '24h');
+delete from message where id = 2;
+prepare stmt from 'select * from message where id > ?';
+set @a = 1;
+execute stmt using @a;
+id	text
+3	24h
+4	24h
+execute stmt using @a;
+id	text
+3	24h
+4	24h
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @@tidb_translate_softdelete_sql = false;
+execute stmt using @a;
+id	text
+2	24h
+3	24h
+4	24h
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @@tidb_translate_softdelete_sql = true;
+deallocate prepare stmt;
+drop table message;

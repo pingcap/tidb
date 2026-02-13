@@ -1,0 +1,41 @@
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+insert into message values (1, '24h'), (2, '24h'), (3, '1h'), (4, '1h');
+delete from message where id = 1;
+update message set text = 'new' where text = '24h';
+select * from message order by id;
+id	text
+2	new
+3	1h
+4	1h
+set @@tidb_translate_softdelete_sql = false;
+select id, text, _tidb_softdelete_time is not null as is_deleted from message where id = 1;
+id	text	is_deleted
+1	24h	1
+set @@tidb_translate_softdelete_sql = true;
+drop table message;
+create table message (id int primary key nonclustered, text varchar(10)) softdelete retention 7 day;
+insert into message values (1, '24h'), (2, '24h'), (3, '1h'), (4, '1h');
+delete from message where id = 1;
+update message set text = 'new' where text = '24h';
+select * from message order by id;
+id	text
+2	new
+3	1h
+4	1h
+set @@tidb_translate_softdelete_sql = false;
+select id, text, _tidb_softdelete_time is not null as is_deleted from message where id = 1;
+id	text	is_deleted
+1	24h	1
+set @@tidb_translate_softdelete_sql = true;
+drop table message;
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+insert into message values (1, 'new'), (2, '24h');
+update message set id = 3 where text = '24h';
+Error 1235 (42000): This version of TiDB doesn't yet support 'updating primary key column on soft-delete table'
+drop table message;
+create table message (id int, text varchar(10), primary key (id) nonclustered) softdelete retention 7 day;;
+insert into message values (1, 'new'), (2, '24h');
+update message set id = 3 where text = '24h';
+Error 1235 (42000): This version of TiDB doesn't yet support 'updating primary key column on soft-delete table'
+drop table message;

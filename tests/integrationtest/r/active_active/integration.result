@@ -1,0 +1,27 @@
+CREATE DATABASE t ACTIVE_ACTIVE = "ON" SOFTDELETE RETENTION 7 DAY;
+USE t;
+CREATE TABLE test (
+id int PRIMARY KEY,
+text varchar(10)
+);
+INSERT INTO test VALUES (1, "24h"),(2,"24h");
+select @a:=json_extract(@@tidb_last_txn_info, '$.commit_ts');
+@a:=json_extract(@@tidb_last_txn_info, '$.commit_ts')
+TSO
+INSERT INTO test VALUES (3, "24h");
+select @b:=json_extract(@@tidb_last_txn_info, '$.commit_ts');
+@b:=json_extract(@@tidb_last_txn_info, '$.commit_ts')
+TSO
+SELECT id,text,_tidb_origin_ts,_tidb_commit_ts = @a,_tidb_commit_ts = @b FROM test ORDER BY _tidb_commit_ts DESC;
+id	text	_tidb_origin_ts	_tidb_commit_ts = @a	_tidb_commit_ts = @b
+3	24h	NULL	0	1
+1	24h	NULL	1	0
+2	24h	NULL	1	0
+select * from test where _tidb_origin_ts is not NULL;
+id	text
+ALTER TABLE test ADD INDEX i1(_tidb_origin_ts);
+ALTER TABLE test DROP INDEX i1;
+ALTER TABLE test ADD UNIQUE INDEX i1(_tidb_origin_ts);
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
+ALTER TABLE test ADD INDEX i1(_tidb_commit_ts);
+Error 1072 (42000): column does not exist: _tidb_commit_ts

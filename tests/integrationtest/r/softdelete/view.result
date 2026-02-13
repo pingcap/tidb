@@ -1,0 +1,16 @@
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+create view v1 as select * from message where id >= 2;
+insert into message values (1, '24h'), (2, '24h'), (3, '24h');
+delete from message where id = 2;
+select * from v1 order by id;
+id	text
+3	24h
+set @@tidb_translate_softdelete_sql = false;
+select * from v1 order by id;
+id	text
+2	24h
+3	24h
+set @@tidb_translate_softdelete_sql = true;
+drop view v1;
+drop table message;

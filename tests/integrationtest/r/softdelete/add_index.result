@@ -1,0 +1,23 @@
+create table message (id int primary key, text varchar(10)) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+insert into message values (1, '24h'), (2, '24h');
+alter table message add index i_text(text);
+explain select * from message where text = '24h';
+id	estRows	task	access object	operator info
+Projection_4	1.00	root		softdelete__add_index.message.id, softdelete__add_index.message.text
+└─IndexLookUp_10	1.00	root		
+  ├─IndexRangeScan_7(Build)	10.00	cop[tikv]	table:message, index:i_text(text)	range:["24h","24h"], keep order:false, stats:pseudo
+  └─Selection_9(Probe)	1.00	cop[tikv]		isnull(softdelete__add_index.message._tidb_softdelete_time)
+    └─TableRowIDScan_8	10.00	cop[tikv]	table:message	keep order:false, stats:pseudo
+drop table message;
+create table message (id int primary key nonclustered, text varchar(10)) softdelete retention 7 day;
+insert into message values (1, '24h'), (2, '24h');
+alter table message add index i_text(text);
+explain select * from message where text = '24h';
+id	estRows	task	access object	operator info
+Projection_4	1.00	root		softdelete__add_index.message.id, softdelete__add_index.message.text
+└─IndexLookUp_10	1.00	root		
+  ├─IndexRangeScan_7(Build)	10.00	cop[tikv]	table:message, index:i_text(text)	range:["24h","24h"], keep order:false, stats:pseudo
+  └─Selection_9(Probe)	1.00	cop[tikv]		isnull(softdelete__add_index.message._tidb_softdelete_time)
+    └─TableRowIDScan_8	10.00	cop[tikv]	table:message	keep order:false, stats:pseudo
+drop table message;
