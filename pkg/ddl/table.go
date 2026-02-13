@@ -1424,7 +1424,7 @@ func checkDropMaterializedViewLogHasNoDependentMVs(jobCtx *jobContext, job *mode
 		}
 		return errors.Trace(err)
 	}
-	if hasMaterializedViewDependsOnBaseTable(jobCtx.infoCache.GetLatest(), baseTblInfo) {
+	if hasMaterializedViewDependsOnBaseTable(baseTblInfo) {
 		job.State = model.JobStateCancelled
 		return errDropMaterializedViewLogDependent(job.SchemaName, baseTblInfo.Name.O)
 	}

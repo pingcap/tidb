@@ -367,7 +367,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		// CREATE MATERIALIZED VIEW build is non-resumable in this stage. For normal retry/recovery
 		// paths, if this step restarts without an active reorg context and MV table already has
 		// rows, fail fast and roll back the whole job to avoid duplicate build writes.
-		if w.getReorgCtx(job.ID) == nil && job.AdminOperator == model.AdminCommandByNotKnown {
+		if w.getReorgCtx(job.ID) == nil {
 			hasRows, checkErr := w.hasCreateMaterializedViewBuildRows(jobCtx.stepCtx, job.SchemaName, mvTblInfo.Name.O)
 			if checkErr != nil {
 				job.State = model.JobStateRollingback

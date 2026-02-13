@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -266,7 +265,7 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	}
 
 	// MV LOG cannot be dropped while any MV still depends on the base table.
-	if hasMaterializedViewDependsOnBaseTable(is, baseTable.Meta()) {
+	if hasMaterializedViewDependsOnBaseTable(baseTable.Meta()) {
 		return errDropMaterializedViewLogDependent(schemaName.O, s.Table.Name.O)
 	}
 
@@ -699,22 +698,8 @@ func hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo *model.TableInfo, gr
 	return false
 }
 
-func hasMaterializedViewDependsOnBaseTable(is infoschema.InfoSchema, baseTableInfo *model.TableInfo) bool {
-	if baseTableInfo.MaterializedViewBase == nil || len(baseTableInfo.MaterializedViewBase.MViewIDs) == 0 {
-		return false
-	}
-	for _, mviewID := range baseTableInfo.MaterializedViewBase.MViewIDs {
-		mvTbl, ok := is.TableByID(context.Background(), mviewID)
-		if !ok || mvTbl.Meta().MaterializedView == nil {
-			continue
-		}
-		for _, id := range mvTbl.Meta().MaterializedView.BaseTableIDs {
-			if id == baseTableInfo.ID {
-				return true
-			}
-		}
-	}
-	return false
+func hasMaterializedViewDependsOnBaseTable(baseTableInfo *model.TableInfo) bool {
+	return baseTableInfo.MaterializedViewBase != nil && len(baseTableInfo.MaterializedViewBase.MViewIDs) > 0
 }
 
 func errDropMaterializedViewLogDependent(schemaName, baseTableName string) error {
