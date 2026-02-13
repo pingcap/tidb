@@ -471,8 +471,8 @@ TableReader	2.00	root		data:Selection
   └─TableFullScan	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain format = 'brief' select * from ct1 where pk>='1' and pk <='4';
 id	estRows	task	access object	operator info
-TableReader	4.00	root		data:TableRangeScan
-└─TableRangeScan	4.00	cop[tikv]	table:ct1	range:["1","4"], keep order:false
+TableReader	6.25	root		data:TableRangeScan
+└─TableRangeScan	6.25	cop[tikv]	table:ct1	range:["1","4"], keep order:false
 explain format = 'brief' select * from ct1 where pk>='4' and pk <='6';
 id	estRows	task	access object	operator info
 TableReader	3.75	root		data:TableRangeScan
