@@ -194,8 +194,8 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 		purgeMethodManually      = "MANUALLY"
 		purgeMethodAutomatically = "AUTOMATICALLY"
 		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-		deleteMLogSQL            = `DELETE FROM %n.%n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
-		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge_info SET PURGE_TIME = %?, PURGE_ENDTIME = %?, PURGE_ROWS = %?, PURGE_STATUS = 'SUCCESS', PURGE_JOB_ID = '', NEXT_TIME = %? WHERE MLOG_ID = %?`
+		deleteMLogSQL            = `DELETE FROM %n.%n WHERE COMMIT_TSO > 0 AND COMMIT_TSO <= %?`
+		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 	)
 	originalSQLMode := sctx.GetSessionVars().SQLMode
 	sctx.GetSessionVars().SQLMode = 0
@@ -277,6 +277,7 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 		return time.Time{}, err
 	}
 
+	var purgeExecErr error
 	err = withRCRestrictedTxn(ctx, sctx, func(txnCtx context.Context, sctx sessionctx.Context) error {
 		rows, err := execRCRestrictedSQLWithSession(txnCtx, sctx, lockPurgeSQL, []any{mvLogID})
 		if err != nil {
@@ -305,7 +306,12 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 
 		purgeTime := mvsNow()
 		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, deleteMLogSQL, []any{mvLogSchemaName, mvLogName, minRefreshReadTSO}); err != nil {
-			return err
+			purgeEndTime := mvsNow()
+			purgeExecErr = err
+			if histErr := recordMLogPurgeHist(txnCtx, sctx, mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, 0, "FAILED"); histErr != nil {
+				return errors.Join(purgeExecErr, histErr)
+			}
+			return nil
 		}
 		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
 		purgeEndTime := mvsNow()
@@ -314,7 +320,7 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 		if err = recordMLogPurgeHist(txnCtx, sctx, mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, affectedRows, "SUCCESS"); err != nil {
 			return err
 		}
-		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{purgeTime, purgeEndTime, affectedRows, nextPurge, mvLogID}); err != nil {
+		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{nextPurge, mvLogID}); err != nil {
 			return err
 		}
 
@@ -322,6 +328,9 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 	})
 	if err != nil {
 		return time.Time{}, err
+	}
+	if purgeExecErr != nil {
+		return time.Time{}, purgeExecErr
 	}
 	return nextPurge, nil
 }
@@ -463,7 +472,7 @@ func getMinRefreshReadTSOFromInfo(ctx context.Context, sctx sessionctx.Context, 
 	}
 	var b strings.Builder
 	params := make([]any, 0, len(mvIDs))
-	b.WriteString(`SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (`)
+	b.WriteString(`SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (`)
 	for i, id := range mvIDs {
 		if i > 0 {
 			b.WriteString(",")

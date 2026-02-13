@@ -868,10 +868,10 @@ func TestServerHelperPurgeMVLogDeletedWhenMetaNotFound(t *testing.T) {
 func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 	installMockTimeForTest(t)
 	const (
-		findMinRefreshReadTSO   = `SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
+		findMinRefreshReadTSO   = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
 		lockPurgeInfoSQL        = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-		deleteMLogSQL           = `DELETE FROM %n.%n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
-		updatePurgeInfoSQL      = `UPDATE mysql.tidb_mlog_purge_info SET PURGE_TIME = %?, PURGE_ENDTIME = %?, PURGE_ROWS = %?, PURGE_STATUS = 'SUCCESS', PURGE_JOB_ID = '', NEXT_TIME = %? WHERE MLOG_ID = %?`
+		deleteMLogSQL           = `DELETE FROM %n.%n WHERE COMMIT_TSO > 0 AND COMMIT_TSO <= %?`
+		updatePurgeInfoSQL      = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 		clearNewestPurgeHistSQL = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
 		insertPurgeHistSQL      = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
 	)
@@ -936,10 +936,10 @@ func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 func TestPurgeMVLogSuccess(t *testing.T) {
 	installMockTimeForTest(t)
 	const (
-		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
+		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
 		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-		deleteMLogSQL            = `DELETE FROM %n.%n WHERE COMMIT_TSO = 0 OR (COMMIT_TSO > 0 AND COMMIT_TSO <= %?)`
-		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge_info SET PURGE_TIME = %?, PURGE_ENDTIME = %?, PURGE_ROWS = %?, PURGE_STATUS = 'SUCCESS', PURGE_JOB_ID = '', NEXT_TIME = %? WHERE MLOG_ID = %?`
+		deleteMLogSQL            = `DELETE FROM %n.%n WHERE COMMIT_TSO > 0 AND COMMIT_TSO <= %?`
+		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 		clearNewestSQL           = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
 		insertHistSQL            = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
 	)
@@ -1007,7 +1007,7 @@ func TestPurgeMVLogSuccess(t *testing.T) {
 func TestPurgeMVLogSkipWhenNotForceAndNextTimeNull(t *testing.T) {
 	installMockTimeForTest(t)
 	const (
-		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
+		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
 		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
 	)
 
@@ -1064,7 +1064,7 @@ func TestPurgeMVLogSkipWhenNotForceAndNextTimeNull(t *testing.T) {
 func TestPurgeMVLogSkipWhenNotForceAndNextTimeFuture(t *testing.T) {
 	installMockTimeForTest(t)
 	const (
-		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) AS MIN_COMMIT_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
+		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
 		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
 	)
 
