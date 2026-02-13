@@ -339,7 +339,7 @@ func versionedKeyRangesToPB(ranges *KeyRanges, handleVersionMap map[string]uint6
 
 	pbRanges := make([]coprocessor.VersionedKeyRange, ranges.Len())
 	pbPtrs := make([]*coprocessor.VersionedKeyRange, ranges.Len())
-	for i := 0; i < ranges.Len(); i++ {
+	for i := range ranges.Len() {
 		ran := ranges.RefAt(i)
 		readTS, ok := handleVersionMap[string(hack.String(ran.StartKey))]
 		if !ok {
