@@ -49,47 +49,6 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killer)
 }
 
-// MergePartTopN2GlobalTopNV2 merges partition-level TopN lists into a single global TopN.
-// Unlike MergePartTopN2GlobalTopN, it does not consult partition histograms — counts come
-// solely from TopN entries. This avoids O(P^2) histogram lookups and histogram mutations
-// that reduce accuracy for the subsequent histogram merge.
-//
-// The output parameters:
-//  1. *TopN is the final global-level topN.
-//  2. []TopNMeta contains TopN values that did not make it into the global TopN.
-//     These should be folded back into the histogram during the subsequent histogram merge.
-func MergePartTopN2GlobalTopNV2(
-	topNs []*statistics.TopN,
-	n uint32,
-	killer *sqlkiller.SQLKiller,
-) (*statistics.TopN, []statistics.TopNMeta, error) {
-	counter := make(map[hack.MutableString]uint64)
-	for _, topN := range topNs {
-		if err := killer.HandleSignal(); err != nil {
-			return nil, nil, err
-		}
-		if topN.TotalCount() == 0 {
-			continue
-		}
-		for _, val := range topN.TopN {
-			encodedVal := hack.String(val.Encoded)
-			counter[encodedVal] += val.Count
-		}
-	}
-
-	numTop := len(counter)
-	if numTop == 0 {
-		return nil, nil, nil
-	}
-	sorted := make([]statistics.TopNMeta, 0, numTop)
-	for value, cnt := range counter {
-		data := hack.Slice(string(value))
-		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: cnt})
-	}
-	globalTopN, leftTopN := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-	return globalTopN, leftTopN, nil
-}
-
 // MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency.
 // To merge global stats topN by concurrency,
 // we will separate the partition topN in concurrency part and deal it with different worker.

@@ -141,26 +141,6 @@ func BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists(b *testing.B) {
 	}
 }
 
-func benchmarkMergePartTopN2GlobalTopNV2(partitions int, b *testing.B) {
-	loc := time.UTC
-	killer := sqlkiller.SQLKiller{}
-	topNs, _ := prepareTopNsAndHists(b, partitions, loc)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _ = MergePartTopN2GlobalTopNV2(topNs, 100, &killer)
-	}
-}
-
-// cmd: go test -run=^$ -bench=BenchmarkMergePartTopN2GlobalTopNV2 -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
-func BenchmarkMergePartTopN2GlobalTopNV2(b *testing.B) {
-	for _, size := range benchmarkSizes {
-		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			benchmarkMergePartTopN2GlobalTopNV2(size, b)
-		})
-	}
-}
-
 func benchmarkMergePartTopNAndHistToGlobal(partitions int, b *testing.B) {
 	loc := time.UTC
 	killer := sqlkiller.SQLKiller{}
