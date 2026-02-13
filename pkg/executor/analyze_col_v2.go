@@ -229,9 +229,10 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for range l {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
+		rootRowCollector.Base().HLLSketches = append(rootRowCollector.Base().HLLSketches, statistics.NewHLLSketch(statistics.DefaultHLLPrecision))
 	}
-	nodeNDVSketches := make([][]*statistics.FMSketch, 0, samplingStatsConcurrency)
-	nodeF1Sketches := make([][]*statistics.FMSketch, 0, samplingStatsConcurrency)
+	nodeNDVSketches := make([][]*statistics.HLLSketch, 0, samplingStatsConcurrency)
+	nodeF1Sketches := make([][]*statistics.HLLSketch, 0, samplingStatsConcurrency)
 	nodeSampleSizes := make([]int, 0, samplingStatsConcurrency)
 	nodeSketchSampleSizes := make([]int, 0, samplingStatsConcurrency)
 	defer func() {
@@ -291,8 +292,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
 				mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
 				"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
-			nodeNDVSketches = append(nodeNDVSketches, copySketches(mergeResult.collector.Base().FMSketches))
-			nodeF1Sketches = append(nodeF1Sketches, copySketches(mergeResult.collector.Base().F1Sketches))
+			nodeNDVSketches = append(nodeNDVSketches, copySketches(mergeResult.collector.Base().HLLSketches))
+			nodeF1Sketches = append(nodeF1Sketches, copySketches(mergeResult.collector.Base().F1HLLSketches))
 			nodeSampleSizes = append(nodeSampleSizes, mergeResult.collector.Base().Samples.Len())
 			nodeSketchSampleSizes = append(nodeSketchSampleSizes, int(mergeResult.collector.Base().SketchSampleCount))
 			e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
@@ -898,11 +899,11 @@ func buildColumnGroupOffsets(groups []*tipb.AnalyzeColumnGroup) [][]int64 {
 	return res
 }
 
-func copySketches(src []*statistics.FMSketch) []*statistics.FMSketch {
+func copySketches(src []*statistics.HLLSketch) []*statistics.HLLSketch {
 	if len(src) == 0 {
 		return nil
 	}
-	dst := make([]*statistics.FMSketch, len(src))
+	dst := make([]*statistics.HLLSketch, len(src))
 	for i, sketch := range src {
 		if sketch != nil {
 			dst[i] = sketch.Copy()
@@ -911,26 +912,25 @@ func copySketches(src []*statistics.FMSketch) []*statistics.FMSketch {
 	return dst
 }
 
-func destroySketchCopies(nodes [][]*statistics.FMSketch) {
-	for _, sketches := range nodes {
-		for _, sketch := range sketches {
-			if sketch != nil {
-				sketch.DestroyAndPutToPool()
-			}
+func destroySketchCopies(nodes [][]*statistics.HLLSketch) {
+	for i := range nodes {
+		for j := range nodes[i] {
+			nodes[i][j] = nil
 		}
+		nodes[i] = nil
 	}
 }
 
 func estimateNDVsBySketch(
 	rootCollector statistics.RowSampleCollector,
-	nodeNDVSketches [][]*statistics.FMSketch,
-	nodeF1Sketches [][]*statistics.FMSketch,
+	nodeNDVSketches [][]*statistics.HLLSketch,
+	nodeF1Sketches [][]*statistics.HLLSketch,
 	nodeSampleSizes []int,
 	nodeSketchSampleSizes []int,
 	colLen int,
 	isSpecialIndex []bool,
 ) []int64 {
-	totalLen := len(rootCollector.Base().FMSketches)
+	totalLen := len(rootCollector.Base().HLLSketches)
 	estimateNDVs := make([]int64, totalLen)
 	if totalLen == 0 || len(nodeNDVSketches) == 0 || len(nodeNDVSketches) != len(nodeF1Sketches) {
 		return estimateNDVs
@@ -954,16 +954,16 @@ func estimateNDVsBySketch(
 				continue
 			}
 		}
-		sketch := rootCollector.Base().FMSketches[i]
+		sketch := rootCollector.Base().HLLSketches[i]
 		if sketch == nil {
 			continue
 		}
-		sampleNDV := uint64(sketch.NDV())
+		sampleNDV := sketch.NDV()
 		if sampleNDV == 0 {
 			continue
 		}
-		ndvSketches := make([]*statistics.FMSketch, len(nodeNDVSketches))
-		f1Sketches := make([]*statistics.FMSketch, len(nodeF1Sketches))
+		ndvSketches := make([]*statistics.HLLSketch, len(nodeNDVSketches))
+		f1Sketches := make([]*statistics.HLLSketch, len(nodeF1Sketches))
 		for nodeIdx := range nodeNDVSketches {
 			if i < len(nodeNDVSketches[nodeIdx]) {
 				ndvSketches[nodeIdx] = nodeNDVSketches[nodeIdx][i]
@@ -972,7 +972,7 @@ func estimateNDVsBySketch(
 				f1Sketches[nodeIdx] = nodeF1Sketches[nodeIdx][i]
 			}
 		}
-		f1 := statistics.EstimateF1BySketches(ndvSketches, f1Sketches)
+		f1 := statistics.EstimateF1ByHLLSketches(ndvSketches, f1Sketches)
 		rowCount := uint64(0)
 		if i < len(rootCollector.Base().NullCount) {
 			count := rootCollector.Base().Count - rootCollector.Base().NullCount[i]
@@ -989,7 +989,7 @@ func estimateNDVsBySketch(
 			zap.Uint64("sample_size", sampleSize),
 			zap.Uint64("row_count", rowCount),
 		)
-		estimateNDVs[i] = int64(statistics.EstimateNDVByGEE(sampleNDV, f1, sampleSize, rowCount))
+		estimateNDVs[i] = int64(statistics.EstimateNDVByChao3(sampleNDV, f1, sampleSize, rowCount))
 	}
 	return estimateNDVs
 }
