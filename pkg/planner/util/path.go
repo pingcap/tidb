@@ -472,12 +472,6 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 }
 
-// IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
-// the table scan.
-func (path *AccessPath) IsFullScanRange(_ *model.TableInfo) bool {
-	return path.IsFullRange
-}
-
 // IsUndetermined checks if the path is undetermined.
 // The undetermined path is the one that may not be always valid.
 // e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.

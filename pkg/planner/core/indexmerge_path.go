@@ -254,7 +254,7 @@ func accessPathsForConds(
 		}
 		deriveIndexPathStats(ds, newPath, conditions, true)
 		// If the newPath contains a full range, ignore it.
-		if ranger.HasFullRange(newPath.Ranges, false) {
+		if newPath.IsFullRange {
 			return nil
 		}
 	}
@@ -292,7 +292,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 			continue
 		}
 		// If the path contains a full range, ignore it.
-		if ranger.HasFullRange(originalPath.Ranges, false) {
+		if originalPath.IsFullRange {
 			continue
 		}
 		if composedWithMvIndex {
