@@ -724,13 +724,12 @@ func TestUniqueColumnEstimation(t *testing.T) {
 
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 
 	// Trigger full loading of column b's histogram (lazy-loaded by default).
 	h := dom.StatsHandle()
 	tk.MustExec("explain select * from t where b is null")
 	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	statsTbl = h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	statsTbl := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 
 	// Build ColUniqueID2IdxIDs using column Info.ID (matching how columns are
 	// keyed in the HistColl from GetPhysicalTableStats).
