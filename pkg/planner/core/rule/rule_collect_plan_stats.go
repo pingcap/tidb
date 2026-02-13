@@ -17,6 +17,7 @@ package rule
 import (
 	"context"
 	"maps"
+	"slices"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -523,6 +524,33 @@ func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededI
 	for idx := range histNeededIndices {
 		histNeededItems = append(histNeededItems, model.StatsLoadItem{TableItemID: idx, FullLoad: true})
 	}
+	slices.SortFunc(histNeededItems, func(a, b model.StatsLoadItem) int {
+		if a.TableID != b.TableID {
+			if a.TableID < b.TableID {
+				return -1
+			}
+			return 1
+		}
+		if a.ID != b.ID {
+			if a.ID < b.ID {
+				return -1
+			}
+			return 1
+		}
+		if a.IsIndex != b.IsIndex {
+			if !a.IsIndex {
+				return -1
+			}
+			return 1
+		}
+		if a.FullLoad != b.FullLoad {
+			if !a.FullLoad {
+				return -1
+			}
+			return 1
+		}
+		return 0
+	})
 	return
 }
 
