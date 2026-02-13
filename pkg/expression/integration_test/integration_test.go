@@ -101,6 +101,13 @@ func TestFTSUnsupportedCasesForTiCI(t *testing.T) {
 
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
 	tk.MustQuery("explain select * from t where fts_match_word('hello', title) AND id > 10")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title, body)", "Incorrect parameter count in the call to native function")
+	tk.MustContainErrMsg("explain select * from t where fts_match_prefix('hello', title, body)", "Incorrect parameter count in the call to native function")
+	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('hello world', title, body)", "Incorrect parameter count in the call to native function")
+	tk.MustContainErrMsg(
+		"explain select * from t where match(title, body) against ('hello' IN BOOLEAN MODE)",
+		"Currently TiDB only supports searching one column at a time in MATCH AGAINST",
+	)
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body) OR id > 10", "you write it in a wrong way")
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) OR id > 10", "you write it in a wrong way")

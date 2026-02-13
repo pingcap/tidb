@@ -687,6 +687,7 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 	require.ElementsMatch(t, []ftsLeaf{
 		{funcName: ast.FTSMatchWord, query: "hello"},
 	}, collectFTSLeaves(expr))
+	assertFTSLeafArgCols(expr, 1)
 
 	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("hello*"))
 	require.NoError(t, err)
@@ -710,13 +711,20 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 		{funcName: ast.FTSMatchWord, query: "banana", underNot: true},
 	}, collectFTSLeaves(expr))
 
-	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainstWithCols("apple", titleCol, bodyCol))
-	require.NoError(t, err)
-	require.False(t, hasMySQLMatchAgainst(expr))
-	require.ElementsMatch(t, []ftsLeaf{
-		{funcName: ast.FTSMatchWord, query: "apple"},
-	}, collectFTSLeaves(expr))
-	assertFTSLeafArgCols(expr, 2)
+	{
+		// MATCH ... AGAINST only supports one matching column for now.
+		args := []Expression{
+			&Constant{
+				Value:   types.NewStringDatum("apple"),
+				RetType: types.NewFieldType(mysql.TypeString),
+			},
+			titleCol,
+			bodyCol,
+		}
+		_, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), args...)
+		require.Error(t, err)
+		require.True(t, ErrIncorrectParameterCount.Equal(err))
+	}
 
 	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("-banana"))
 	require.NoError(t, err)
