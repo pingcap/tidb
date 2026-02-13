@@ -171,6 +171,21 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinSet(dst *partialResul
 	return false
 }
 
+func (s *deserializeHelper) deserializePartialResult4MaxMinCount(dst *partialResult4MaxMinCount) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.count = util.DeserializeInt64(s.pab)
+		dst.val.SetNull()
+		if !dst.isNull {
+			dst.val.SetValueWithDefaultCollation(util.DeserializeInterface(s.pab))
+		}
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
 func (s *deserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResult4AvgDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)

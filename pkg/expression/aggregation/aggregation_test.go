@@ -603,6 +603,51 @@ func TestMaxMin(t *testing.T) {
 	require.Equal(t, int64(1), partialResult[0].GetInt64())
 }
 
+func TestMaxMinCount(t *testing.T) {
+	s := createAggFuncSuite()
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	ctx := mock.NewContext()
+	maxDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMaxCount, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	minDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMinCount, []expression.Expression{col}, false)
+	require.NoError(t, err)
+
+	maxFunc := maxDesc.GetAggFunc(ctx)
+	minFunc := minDesc.GetAggFunc(ctx)
+	maxEvalCtx := maxFunc.CreateContext(s.ctx)
+	minEvalCtx := minFunc.CreateContext(s.ctx)
+
+	maxResult := maxFunc.GetResult(maxEvalCtx)
+	minResult := minFunc.GetResult(minEvalCtx)
+	require.Equal(t, int64(0), maxResult.GetInt64())
+	require.Equal(t, int64(0), minResult.GetInt64())
+
+	rows := []chunk.Row{
+		chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(nil)).ToRow(),
+	}
+
+	for _, row := range rows {
+		err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		require.NoError(t, err)
+		err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		require.NoError(t, err)
+	}
+
+	maxResult = maxFunc.GetResult(maxEvalCtx)
+	minResult = minFunc.GetResult(minEvalCtx)
+	require.Equal(t, int64(2), maxResult.GetInt64())
+	require.Equal(t, int64(2), minResult.GetInt64())
+}
+
 func TestAggFuncDesc(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{

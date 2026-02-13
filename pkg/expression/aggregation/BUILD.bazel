@@ -24,6 +24,7 @@ go_library(
         "explain.go",
         "first_row.go",
         "max_min.go",
+        "max_min_count.go",
         "sum.go",
         "util.go",
         "window_func.go",
@@ -69,7 +70,7 @@ go_test(
     ],
     embed = [":aggregation"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 17,
     deps = [
         "//pkg/expression",
         "//pkg/kv",

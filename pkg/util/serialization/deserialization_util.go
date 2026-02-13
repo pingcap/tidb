@@ -218,10 +218,29 @@ func DeserializeInterface(posAndBuf *PosAndBuf) any {
 		return DeserializeInt64(posAndBuf)
 	case Uint64Type:
 		return DeserializeUint64(posAndBuf)
+	case Float32Type:
+		return DeserializeFloat32(posAndBuf)
 	case FloatType:
 		return DeserializeFloat64(posAndBuf)
 	case StringType:
 		return DeserializeString(posAndBuf)
+	case BytesType:
+		buf := deserializeBuffer(posAndBuf)
+		ret := make([]byte, len(buf))
+		copy(ret, buf)
+		return ret
+	case MyDecimalType:
+		dec := DeserializeMyDecimal(posAndBuf)
+		return &dec
+	case EnumType:
+		return DeserializeEnum(posAndBuf)
+	case SetType:
+		return DeserializeSet(posAndBuf)
+	case BinaryLiteralType:
+		buf := deserializeBuffer(posAndBuf)
+		ret := make([]byte, len(buf))
+		copy(ret, buf)
+		return types.BinaryLiteral(ret)
 	case BinaryJSONType:
 		return DeserializeBinaryJSON(posAndBuf)
 	case OpaqueType:
@@ -230,6 +249,15 @@ func DeserializeInterface(posAndBuf *PosAndBuf) any {
 		return DeserializeTime(posAndBuf)
 	case DurationType:
 		return DeserializeTypesDuration(posAndBuf)
+	case VectorFloat32Type:
+		buf := deserializeBuffer(posAndBuf)
+		tmp := make([]byte, len(buf))
+		copy(tmp, buf)
+		vec, _, err := types.ZeroCopyDeserializeVectorFloat32(tmp)
+		if err != nil {
+			panic(err)
+		}
+		return vec
 	default:
 		panic("Invalid data type happens in agg spill deserializing!")
 	}

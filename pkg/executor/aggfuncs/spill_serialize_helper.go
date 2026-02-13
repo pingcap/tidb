@@ -105,6 +105,16 @@ func (s *SerializeHelper) serializePartialResult4MaxMinSet(value partialResult4M
 	return s.buf
 }
 
+func (s *SerializeHelper) serializePartialResult4MaxMinCount(value partialResult4MaxMinCount) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	if !value.isNull {
+		s.buf = util.SerializeInterface(value.val.GetValue(), s.buf)
+	}
+	return s.buf
+}
+
 func (s *SerializeHelper) serializePartialResult4AvgDecimal(value partialResult4AvgDecimal) []byte {
 	s.buf = s.buf[:0]
 	s.buf = util.SerializeMyDecimal(&value.sum, s.buf)
