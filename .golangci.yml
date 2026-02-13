@@ -88,6 +88,18 @@ linters:
           - revive
         path: pkg/util/hack/map_abi_go126\.go
         text: "don't use underscores in Go names"
+      - linters:
+          - revive
+        path: pkg/(executor/internal/util/util|planner/core/rule/util/misc|statistics/util/json_objects)\.go
+        text: "avoid meaningless package names"
+      - linters:
+          - revive
+        path: pkg/(lightning/mydump/reader_test|lightning/mydump/region_test|objstore/s3store/s3_test)\.go
+        text: "should not use dot imports"
+      - linters:
+          - revive
+        path: pkg/(expression/builtin_grouping|session/test/temporarytabletest/temporary_table_test|store/mockstore/unistore/cophandler/closure_exec|store/mockstore/unistore/cophandler/cop_handler_test|store/mockstore/unistore/cophandler/mpp|table/tables/tables|tablecodec/tablecodec|util/rowcodec/rowcodec_test)\.go
+        text: "should be .*IDs"
     paths:
       - third_party$
       - builtin$
