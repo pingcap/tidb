@@ -399,6 +399,11 @@ func addUnchangedKeysForLockByRow(
 			fullHandle := h
 			if meta.Global {
 				idxTblID = t.Meta().ID
+				if pi := t.Meta().GetPartitionInfo(); pi != nil && pi.NewTableID != 0 {
+					if isNew, ok := pi.DDLChangedIndex[meta.ID]; ok && isNew {
+						idxTblID = pi.NewTableID
+					}
+				}
 				if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
 					meta.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
 					fullHandle = kv.NewPartitionHandle(physicalID, fullHandle)
