@@ -72,7 +72,7 @@ globalindex__analyze	t	p1	idx1	1	<update_time>	2	0	<avg_col_size>	0	allLoaded	42
 globalindex__analyze	t	p2	a	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p2	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p2	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	273	273	0	0
-globalindex__analyze	t	p2	idx1	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	8536	8536	0	0
+globalindex__analyze	t	p2	idx1	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	329	329	0	0
 globalindex__analyze	t	p3	a	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p3	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p3	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	273	273	0	0
