@@ -119,6 +119,22 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan) ([]*expression.C
 // DecorrelateSolver tries to convert apply plan to join plan.
 type DecorrelateSolver struct{}
 
+// refreshJoinSchemasInPlan recursively refreshes Join/Apply schemas in the plan subtree so they
+// include all columns from their children. This fixes cases where column pruning or other
+// optimizations left a Join with a pruned schema, but a descendant (e.g. Aggregation's
+// GroupByItems) needs columns from the Join's children that were omitted. See #65454 for more details.
+func refreshJoinSchemasInPlan(p base.LogicalPlan) {
+	for _, child := range p.Children() {
+		refreshJoinSchemasInPlan(child)
+	}
+	switch x := p.(type) {
+	case *logicalop.LogicalApply:
+		x.MergeSchema()
+	case *logicalop.LogicalJoin:
+		x.MergeSchema()
+	}
+}
+
 func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {
@@ -203,7 +219,13 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
-	return s.optimize(ctx, p, nil)
+	np, changed, err := s.optimize(ctx, p, nil)
+	if err != nil {
+		return nil, changed, err
+	}
+	// Final pass: refresh all Join/Apply schemas so Aggregation GroupBy columns are preserved.
+	refreshJoinSchemasInPlan(np)
+	return np, changed, nil
 }
 
 func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, groupByColumn map[*expression.Column]struct{}) (base.LogicalPlan, bool, error) {
