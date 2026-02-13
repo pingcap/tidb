@@ -3477,7 +3477,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
-	// create mysql.tidb_mview_refresh/mysql.tidb_mlog_purge/mysql.tidb_mview_refresh_hist/mysql.tidb_mlog_purge_hist
+	// create mysql.tidb_mview_refresh_info/mysql.tidb_mlog_purge_info/mysql.tidb_mview_refresh_hist/mysql.tidb_mlog_purge_hist
 	mustExecute(s, CreateTiDBMViewRefreshTable)
 	mustExecute(s, CreateTiDBMLogPurgeTable)
 	mustExecute(s, CreateTiDBMViewRefreshHistTable)
