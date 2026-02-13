@@ -1668,13 +1668,11 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	}
 	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
 	fmt.Fprintf(buf, "VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
-	isFirst := true
-	for _, col := range tb.Columns {
-		if !isFirst {
+	for i, col := range tb.Columns {
+		fmt.Fprintf(buf, "%s", stringutil.Escape(col.Name.O, sqlMode))
+		if i < len(tb.Columns)-1 {
 			fmt.Fprintf(buf, ", ")
 		}
-		fmt.Fprintf(buf, "%s", stringutil.Escape(col.Name.O, sqlMode))
-		isFirst = false
 	}
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
