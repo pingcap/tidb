@@ -155,16 +155,31 @@ func TestTimeProxyMockModuleTimer(t *testing.T) {
 	}
 }
 
-func TestTimeProxyPanicWhenModuleNotInstalled(t *testing.T) {
+func TestTimeProxyFallbackWhenModuleNotInstalled(t *testing.T) {
 	prev := activeMockTimeModule.Load()
 	activeMockTimeModule.Store(nil)
 	t.Cleanup(func() {
 		activeMockTimeModule.Store(prev)
 	})
 
-	require.PanicsWithValue(t, "mock time module is not installed", func() {
-		_ = mvsNow()
-	})
+	now := time.Now()
+	got := mvsNow()
+	require.WithinDuration(t, now, got, 100*time.Millisecond)
+
+	ch := mvsAfter(10 * time.Millisecond)
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("expected mvsAfter fallback to real timer")
+	}
+
+	timer := mvsNewTimer(10 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-time.After(time.Second):
+		t.Fatal("expected mvsNewTimer fallback to real timer")
+	}
 }
 
 func TestTimeProxyInstallPanicWhenModuleNil(t *testing.T) {
