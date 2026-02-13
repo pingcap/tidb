@@ -21,6 +21,8 @@ const (
 	ImportInto TaskType = "ImportInto"
 	// Backfill is TaskType of add index Backfilling process.
 	Backfill TaskType = "backfill"
+	// GlobalIndexCleanup is TaskType of global index cleanup for DROP/TRUNCATE PARTITION.
+	GlobalIndexCleanup TaskType = "global-index-cleanup"
 )
 
 // Type2Int converts task type to int.
@@ -32,6 +34,8 @@ func Type2Int(t TaskType) int {
 		return 2
 	case Backfill:
 		return 3
+	case GlobalIndexCleanup:
+		return 4
 	default:
 		return 0
 	}
@@ -46,6 +50,8 @@ func Int2Type(i int) TaskType {
 		return ImportInto
 	case 3:
 		return Backfill
+	case 4:
+		return GlobalIndexCleanup
 	default:
 		return ""
 	}
