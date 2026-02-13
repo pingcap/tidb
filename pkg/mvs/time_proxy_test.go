@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func waitValueNoTime[T any](t *testing.T, ch <-chan T, spins int) T {
+func waitValueNoTime(t *testing.T, ch <-chan time.Time, spins int) time.Time {
 	t.Helper()
 	for range spins {
 		select {
@@ -20,9 +20,7 @@ func waitValueNoTime[T any](t *testing.T, ch <-chan T, spins int) T {
 			runtime.Gosched()
 		}
 	}
-	t.Fatal("channel did not receive value within spin budget")
-	var zero T
-	return zero
+	panic("unreachable")
 }
 
 func waitSignalNoTime(t *testing.T, ch <-chan struct{}, spins int) {

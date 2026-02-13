@@ -56,8 +56,8 @@ type mvServiceRuntimeSettingsAccessor interface {
 	GetTaskBackpressureConfig() mvs.TaskBackpressureConfig
 	SetTaskBackpressureConfig(cfg mvs.TaskBackpressureConfig) error
 
-	GetRetryDelayConfig() (base, max time.Duration)
-	SetRetryDelayConfig(base, max time.Duration) error
+	GetRetryDelayConfig() (baseDelay, maxDelay time.Duration)
+	SetRetryDelayConfig(baseDelay, maxDelay time.Duration) error
 }
 
 type mvServiceRuntimeSettings struct {
@@ -281,8 +281,5 @@ func applyMVServiceSettings(mvService mvServiceRuntimeSettingsAccessor, settings
 	if err := mvService.SetTaskBackpressureConfig(settings.backpressureCfg); err != nil {
 		return err
 	}
-	if err := mvService.SetRetryDelayConfig(settings.retryBase, settings.retryMax); err != nil {
-		return err
-	}
-	return nil
+	return mvService.SetRetryDelayConfig(settings.retryBase, settings.retryMax)
 }

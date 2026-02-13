@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// TaskExecutor executes MV tasks with bounded concurrency, timeout, and optional backpressure.
 type TaskExecutor struct {
 	ctx context.Context
 
@@ -347,8 +348,8 @@ func (e *TaskExecutor) shouldBackpressure() (bool, time.Duration) {
 func (e *TaskExecutor) tryExitWorkerWithLock() bool {
 	for {
 		cur := e.workers.count.Load()
-		max := e.maxConcurrency.Load()
-		if cur <= max {
+		maxWorkers := e.maxConcurrency.Load()
+		if cur <= maxWorkers {
 			return false
 		}
 		if e.workers.count.CompareAndSwap(cur, cur-1) {

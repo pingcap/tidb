@@ -66,6 +66,7 @@ type ItemImpl[V Lessable[V]] struct {
 	index int // Heap index, used for Update/Remove.
 }
 
+// Item is the exported pointer handle of a priority-queue element.
 type Item[V Lessable[V]] *ItemImpl[V]
 
 func newItem[V Lessable[V]](value V) Item[V] {

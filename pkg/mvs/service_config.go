@@ -121,38 +121,38 @@ func (t *MVService) GetTaskExecConfig() (maxConcurrency int, timeout time.Durati
 }
 
 // SetRetryDelayConfig sets retry delay config.
-func (t *MVService) SetRetryDelayConfig(base, max time.Duration) error {
+func (t *MVService) SetRetryDelayConfig(baseDelay, maxDelay time.Duration) error {
 	if t == nil {
 		return fmt.Errorf("mv service is nil")
 	}
-	if base <= 0 || max <= 0 {
+	if baseDelay <= 0 || maxDelay <= 0 {
 		return fmt.Errorf("retry delay must be positive")
 	}
-	if base > max {
+	if baseDelay > maxDelay {
 		return fmt.Errorf("retry base delay must be less than or equal to max delay")
 	}
-	t.retryBaseDelayNanos.Store(int64(base))
-	t.retryMaxDelayNanos.Store(int64(max))
+	t.retryBaseDelayNanos.Store(int64(baseDelay))
+	t.retryMaxDelayNanos.Store(int64(maxDelay))
 	return nil
 }
 
 // GetRetryDelayConfig returns retry delay config.
-func (t *MVService) GetRetryDelayConfig() (base, max time.Duration) {
+func (t *MVService) GetRetryDelayConfig() (baseDelay, maxDelay time.Duration) {
 	if t == nil {
 		return defaultMVTaskRetryBase, defaultMVTaskRetryMax
 	}
-	base = time.Duration(t.retryBaseDelayNanos.Load())
-	max = time.Duration(t.retryMaxDelayNanos.Load())
-	if base <= 0 {
-		base = defaultMVTaskRetryBase
+	baseDelay = time.Duration(t.retryBaseDelayNanos.Load())
+	maxDelay = time.Duration(t.retryMaxDelayNanos.Load())
+	if baseDelay <= 0 {
+		baseDelay = defaultMVTaskRetryBase
 	}
-	if max <= 0 {
-		max = defaultMVTaskRetryMax
+	if maxDelay <= 0 {
+		maxDelay = defaultMVTaskRetryMax
 	}
-	if base > max {
-		max = base
+	if baseDelay > maxDelay {
+		maxDelay = baseDelay
 	}
-	return base, max
+	return baseDelay, maxDelay
 }
 
 // SetTaskBackpressureConfig sets task backpressure config.
@@ -200,15 +200,15 @@ func (t *MVService) SetTaskBackpressureController(controller TaskBackpressureCon
 }
 
 // calcRetryDelay computes exponential backoff with an upper bound.
-func calcRetryDelay(retryCount int64, base, max time.Duration) time.Duration {
+func calcRetryDelay(retryCount int64, baseDelay, maxDelay time.Duration) time.Duration {
 	if retryCount <= 0 {
-		return base
+		return baseDelay
 	}
-	delay := base
-	for i := int64(1); i < retryCount && delay < max; i++ {
+	delay := baseDelay
+	for i := int64(1); i < retryCount && delay < maxDelay; i++ {
 		delay *= 2
-		if delay >= max {
-			delay = max
+		if delay >= maxDelay {
+			delay = maxDelay
 			break
 		}
 	}
@@ -217,6 +217,6 @@ func calcRetryDelay(retryCount int64, base, max time.Duration) time.Duration {
 
 // retryDelay computes the current retry delay using runtime config.
 func (t *MVService) retryDelay(retryCount int64) time.Duration {
-	base, max := t.GetRetryDelayConfig()
-	return calcRetryDelay(retryCount, base, max)
+	baseDelay, maxDelay := t.GetRetryDelayConfig()
+	return calcRetryDelay(retryCount, baseDelay, maxDelay)
 }

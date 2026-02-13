@@ -383,9 +383,9 @@ func TestNewMVServiceConfigApplied(t *testing.T) {
 	require.Equal(t, cfg.TaskMaxConcurrency, maxConcurrency)
 	require.Equal(t, cfg.TaskTimeout, timeout)
 
-	base, max := svc.GetRetryDelayConfig()
-	require.Equal(t, cfg.RetryBaseDelay, base)
-	require.Equal(t, cfg.RetryMaxDelay, max)
+	baseDelay, maxDelay := svc.GetRetryDelayConfig()
+	require.Equal(t, cfg.RetryBaseDelay, baseDelay)
+	require.Equal(t, cfg.RetryMaxDelay, maxDelay)
 
 	backpressureCfg := svc.GetTaskBackpressureConfig()
 	require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
@@ -410,9 +410,9 @@ func TestNewMVServiceInvalidConfigFallback(t *testing.T) {
 
 	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
 
-	base, max := svc.GetRetryDelayConfig()
-	require.Equal(t, defaultMVTaskRetryBase, base)
-	require.Equal(t, defaultMVTaskRetryMax, max)
+	baseDelay, maxDelay := svc.GetRetryDelayConfig()
+	require.Equal(t, defaultMVTaskRetryBase, baseDelay)
+	require.Equal(t, defaultMVTaskRetryMax, maxDelay)
 
 	backpressureCfg := svc.GetTaskBackpressureConfig()
 	require.False(t, backpressureCfg.Enabled)
@@ -455,15 +455,15 @@ func TestMVServiceetRetryDelayConfig(t *testing.T) {
 	installMockTimeForTest(t)
 	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
 
-	base, max := svc.GetRetryDelayConfig()
-	require.Equal(t, defaultMVTaskRetryBase, base)
-	require.Equal(t, defaultMVTaskRetryMax, max)
+	baseDelay, maxDelay := svc.GetRetryDelayConfig()
+	require.Equal(t, defaultMVTaskRetryBase, baseDelay)
+	require.Equal(t, defaultMVTaskRetryMax, maxDelay)
 
 	err := svc.SetRetryDelayConfig(2*time.Second, 10*time.Second)
 	require.NoError(t, err)
-	base, max = svc.GetRetryDelayConfig()
-	require.Equal(t, 2*time.Second, base)
-	require.Equal(t, 10*time.Second, max)
+	baseDelay, maxDelay = svc.GetRetryDelayConfig()
+	require.Equal(t, 2*time.Second, baseDelay)
+	require.Equal(t, 10*time.Second, maxDelay)
 	require.Equal(t, 2*time.Second, svc.retryDelay(0))
 	require.Equal(t, 4*time.Second, svc.retryDelay(2))
 	require.Equal(t, 10*time.Second, svc.retryDelay(10))
