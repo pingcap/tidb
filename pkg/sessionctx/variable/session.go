@@ -1727,6 +1727,12 @@ type SessionVars struct {
 
 	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
 	IndexLookUpPushDownPolicy string
+
+	// InPacketBytes records the total incoming packet bytes from clients for current session.
+	InPacketBytes atomic.Uint64
+
+	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
+	OutPacketBytes atomic.Uint64
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.

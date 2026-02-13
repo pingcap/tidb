@@ -487,7 +487,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 	if cc.getCtx() != nil {
 		cc.pkt.SetMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
 	}
-	return cc.pkt.ReadPacket()
+	data, err := cc.pkt.ReadPacket()
+	if err == nil && cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().InPacketBytes.Add(uint64(len(data)))
+	}
+	return data, err
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
@@ -496,6 +500,9 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
+	if cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().OutPacketBytes.Add(uint64(len(data)))
+	}
 	return cc.pkt.WritePacket(data)
 }
 
@@ -1279,6 +1286,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
+		cc.ctx.GetSessionVars().InPacketBytes.Store(0)
+		cc.ctx.GetSessionVars().OutPacketBytes.Store(0)
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
