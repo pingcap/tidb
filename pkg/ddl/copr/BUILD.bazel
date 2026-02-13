@@ -9,7 +9,6 @@ go_library(
         "//pkg/distsql/context",
         "//pkg/expression",
         "//pkg/expression/exprctx",
-        "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/table/tables",
