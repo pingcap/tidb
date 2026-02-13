@@ -17,6 +17,7 @@ package copr
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -243,7 +244,7 @@ func (s *TiCIShardCache) BatchLocateKeyRanges(
 	var ss = "BatchLocateKeyRanges keyRanges:["
 	for _, info := range keyRanges {
 		ss += fmt.Sprintf("[ StartKey: %v, EndKey: %v ]",
-			[]byte(info.StartKey), []byte(info.EndKey))
+			hex.EncodeToString([]byte(info.StartKey)), hex.EncodeToString([]byte(info.EndKey)))
 	}
 	ss += "]"
 	logutil.BgLogger().Info("TiCIShardCache BatchLocateKeyRanges",
