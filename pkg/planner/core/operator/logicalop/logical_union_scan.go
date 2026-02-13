@@ -122,14 +122,15 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) (ba
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-func (p *LogicalUnionScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+func (p *LogicalUnionScan) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	// ref exhaustPhysicalPlans4LogicalUnionScan: it will push down the sort prop directly.
 	// in union scan exec, it will feel the underlying tableReader or indexReader to get the keepOrder.
-	childProps := p.Children()[0].PreparePossibleProperties(schema, childrenProperties...)
-	p.hasTiflash = false
-	if childProps == nil {
+	if len(childrenProperties) == 0 || childrenProperties[0] == nil {
+		p.hasTiflash = false
 		return &base.PossiblePropertiesInfo{}
 	}
+	childProps := childrenProperties[0]
+	p.hasTiflash = false
 	return &base.PossiblePropertiesInfo{
 		Order:      childProps.Order,
 		HasTiflash: false,
