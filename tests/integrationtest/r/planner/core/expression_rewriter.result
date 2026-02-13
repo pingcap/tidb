@@ -446,3 +446,53 @@ Projection	root		1->Column
     │ └─TableDual	root		rows:1
     └─TableReader(Probe)	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:tb0	keep order:false, stats:pseudo
+drop table if exists t1, t;
+create table t1(a int default null);
+create table t(a int not null);
+explain format='plan_tree' select * from t1 where t1.a > 1 or t1.a in (select a from t);
+id	task	access object	operator info
+Projection	root		planner__core__expression_rewriter.t1.a
+└─Selection	root		or(gt(planner__core__expression_rewriter.t1.a, 1), Column)
+  └─HashJoin	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)]
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 where t1.a > 1 and t1.a in (select a from t);
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)]
+├─HashAgg(Build)	root		group by:planner__core__expression_rewriter.t.a, funcs:firstrow(planner__core__expression_rewriter.t.a)->planner__core__expression_rewriter.t.a
+│ └─TableReader	root		data:HashAgg
+│   └─HashAgg	cop[tikv]		group by:planner__core__expression_rewriter.t.a, 
+│     └─Selection	cop[tikv]		gt(planner__core__expression_rewriter.t.a, 1)
+│       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		gt(planner__core__expression_rewriter.t1.a, 1), not(isnull(planner__core__expression_rewriter.t1.a))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select t1.a in (select a from t) from t1;
+id	task	access object	operator info
+HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 where (t1.a in (select a from t)) = 1;
+id	task	access object	operator info
+Projection	root		planner__core__expression_rewriter.t1.a
+└─Selection	root		eq(Column, 1)
+  └─HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select t1.a from t1 group by t1.a having t1.a > 1 or t1.a in (select a from t);
+id	task	access object	operator info
+Projection	root		planner__core__expression_rewriter.t1.a
+└─Selection	root		or(gt(planner__core__expression_rewriter.t1.a, 1), Column)
+  └─HashJoin	root		left outer semi join, left side:HashAgg, equal:[eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)]
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	root		group by:planner__core__expression_rewriter.t1.a, funcs:firstrow(planner__core__expression_rewriter.t1.a)->planner__core__expression_rewriter.t1.a
+      └─TableReader	root		data:HashAgg
+        └─HashAgg	cop[tikv]		group by:planner__core__expression_rewriter.t1.a, 
+          └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo

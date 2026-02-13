@@ -68,6 +68,32 @@ func (*DXFScheduleStatusHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 	handler.WriteData(w, status)
 }
 
+// DXFActiveTaskHandler handles getting active task counts in `mysql.tidb_global_task`.
+type DXFActiveTaskHandler struct{}
+
+// NewDXFActiveTaskHandler creates a new DXFActiveTaskHandler.
+func NewDXFActiveTaskHandler() *DXFActiveTaskHandler {
+	return &DXFActiveTaskHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+func (*DXFActiveTaskHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		handler.WriteError(w, errors.Errorf("This api only support GET method"))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
+	defer cancel()
+	summary, err := handle.GetActiveTaskSummary(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get DXF active task summary", zap.Error(err))
+		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	handler.WriteData(w, summary)
+}
+
 // DXFScheduleHandler handles the DXF schedule actions.
 type DXFScheduleHandler struct{}
 
