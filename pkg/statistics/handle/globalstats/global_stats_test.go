@@ -1017,10 +1017,9 @@ partitions 12;`)
 }
 
 func TestGlobalStatsMergeCombined(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000") // Ensure stats are fully loaded before assertions
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(` create table t (
 	a int primary key auto_increment,
@@ -1040,7 +1039,8 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 	tk.MustExec(`insert into t (a) select null from t, t t2, t t3, t t4, t t5`)
 	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=1")
 	tk.MustExec(`analyze table t with 1 topn, 3 buckets`)
-	tk.MustQuery(`explain select * from t where a = 9 or b = 8 or c is null or d = '' or e is null`)
+	// Force a full stats cache refresh from storage so all columns/indexes are loaded.
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_topn where table_name = 't' and partition_name = 'global'`).Sort().Check(testkit.Rows(""+
 		"test t global a 0 1 1", // TODO: Remove, since useless! #66236
 		"test t global b 0 1 100010",
