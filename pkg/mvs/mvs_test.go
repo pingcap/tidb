@@ -1,3 +1,17 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package mvs
 
 import (
@@ -372,7 +386,6 @@ func TestNewMVServiceConfigApplied(t *testing.T) {
 	cfg.RetryMaxDelay = 21 * time.Second
 	cfg.ServerConsistentHashReplicas = 17
 	cfg.TaskBackpressure = TaskBackpressureConfig{
-		Enabled:      true,
 		CPUThreshold: 0.7,
 		MemThreshold: 0.8,
 		Delay:        500 * time.Millisecond,
@@ -403,7 +416,6 @@ func TestNewMVServiceInvalidConfigFallback(t *testing.T) {
 	cfg.RetryBaseDelay = 10 * time.Second
 	cfg.RetryMaxDelay = 2 * time.Second
 	cfg.TaskBackpressure = TaskBackpressureConfig{
-		Enabled:      true,
 		CPUThreshold: -1,
 		MemThreshold: 0.8,
 	}
@@ -415,7 +427,7 @@ func TestNewMVServiceInvalidConfigFallback(t *testing.T) {
 	require.Equal(t, defaultMVTaskRetryMax, maxDelay)
 
 	backpressureCfg := svc.GetTaskBackpressureConfig()
-	require.False(t, backpressureCfg.Enabled)
+	require.Equal(t, TaskBackpressureConfig{}, backpressureCfg)
 	require.Nil(t, svc.executor.backpressure.Load())
 }
 
@@ -424,7 +436,6 @@ func TestMVServiceetTaskBackpressureConfig(t *testing.T) {
 	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
 
 	err := svc.SetTaskBackpressureConfig(TaskBackpressureConfig{
-		Enabled:      true,
 		CPUThreshold: 0.7,
 		MemThreshold: 0.8,
 		Delay:        time.Second,
@@ -432,19 +443,17 @@ func TestMVServiceetTaskBackpressureConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := svc.GetTaskBackpressureConfig()
-	require.True(t, cfg.Enabled)
 	require.Equal(t, 0.7, cfg.CPUThreshold)
 	require.Equal(t, 0.8, cfg.MemThreshold)
 	require.Equal(t, time.Second, cfg.Delay)
 	require.NotNil(t, svc.executor.backpressure.Load())
 
-	err = svc.SetTaskBackpressureConfig(TaskBackpressureConfig{Enabled: false})
+	err = svc.SetTaskBackpressureConfig(TaskBackpressureConfig{})
 	require.NoError(t, err)
-	require.False(t, svc.GetTaskBackpressureConfig().Enabled)
+	require.Equal(t, TaskBackpressureConfig{}, svc.GetTaskBackpressureConfig())
 	require.Nil(t, svc.executor.backpressure.Load())
 
 	err = svc.SetTaskBackpressureConfig(TaskBackpressureConfig{
-		Enabled:      true,
 		CPUThreshold: -1,
 		MemThreshold: 0.8,
 	})

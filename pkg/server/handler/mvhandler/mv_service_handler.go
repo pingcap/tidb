@@ -30,7 +30,6 @@ const (
 	mvServiceTaskMaxConcurrencyFormField = "task_max_concurrency"
 	mvServiceTaskTimeoutFormField        = "task_timeout"
 
-	mvServiceBackpressureEnabledFormField      = "backpressure_enabled"
 	mvServiceBackpressureCPUThresholdFormField = "backpressure_cpu_threshold"
 	mvServiceBackpressureMemThresholdFormField = "backpressure_mem_threshold"
 	mvServiceBackpressureDelayFormField        = "backpressure_delay"
@@ -80,9 +79,6 @@ var mvServiceSettingsFieldUpdaters = []settingsFieldUpdater{
 	newDurationSettingsFieldUpdater(mvServiceTaskTimeoutFormField, func(v time.Duration) bool { return v >= 0 }, func(settings *mvServiceRuntimeSettings, v time.Duration) {
 		settings.timeout = v
 	}),
-	newBoolSettingsFieldUpdater(mvServiceBackpressureEnabledFormField, nil, func(settings *mvServiceRuntimeSettings, v bool) {
-		settings.backpressureCfg.Enabled = v
-	}),
 	newFloat64SettingsFieldUpdater(mvServiceBackpressureCPUThresholdFormField, nil, func(settings *mvServiceRuntimeSettings, v float64) {
 		settings.backpressureCfg.CPUThreshold = v
 	}),
@@ -104,16 +100,11 @@ var mvServiceSettingsFieldUpdaters = []settingsFieldUpdater{
 type MVServiceSettingsResponse struct {
 	TaskMaxConcurrency           int     `json:"task_max_concurrency"`
 	TaskTimeout                  string  `json:"task_timeout"`
-	TaskTimeoutNanos             int64   `json:"task_timeout_nanos"`
-	TaskBackpressureEnabled      bool    `json:"task_backpressure_enabled"`
 	TaskBackpressureCPUThreshold float64 `json:"task_backpressure_cpu_threshold"`
 	TaskBackpressureMemThreshold float64 `json:"task_backpressure_mem_threshold"`
 	TaskBackpressureDelay        string  `json:"task_backpressure_delay"`
-	TaskBackpressureDelayNanos   int64   `json:"task_backpressure_delay_nanos"`
 	RetryBaseDelay               string  `json:"retry_base_delay"`
-	RetryBaseDelayNanos          int64   `json:"retry_base_delay_nanos"`
 	RetryMaxDelay                string  `json:"retry_max_delay"`
-	RetryMaxDelayNanos           int64   `json:"retry_max_delay_nanos"`
 }
 
 // ServeHTTP handles request of get/update MV service settings.
@@ -148,12 +139,12 @@ func (h MVServiceSettingsHandler) getMVService() (mvServiceRuntimeSettingsAccess
 }
 
 // serveGet returns the current runtime settings.
-func (h MVServiceSettingsHandler) serveGet(w http.ResponseWriter, mvService mvServiceRuntimeSettingsAccessor) {
+func (_ MVServiceSettingsHandler) serveGet(w http.ResponseWriter, mvService mvServiceRuntimeSettingsAccessor) {
 	writeMVServiceSettingsResponse(w, loadMVServiceRuntimeSettings(mvService))
 }
 
 // servePost parses form values, applies valid updates, and returns the latest runtime settings.
-func (h MVServiceSettingsHandler) servePost(w http.ResponseWriter, req *http.Request, mvService mvServiceRuntimeSettingsAccessor) {
+func (_ MVServiceSettingsHandler) servePost(w http.ResponseWriter, req *http.Request, mvService mvServiceRuntimeSettingsAccessor) {
 	if err := req.ParseForm(); err != nil {
 		handler.WriteError(w, err)
 		return
@@ -199,16 +190,11 @@ func writeMVServiceSettingsResponse(w http.ResponseWriter, settings mvServiceRun
 	handler.WriteData(w, MVServiceSettingsResponse{
 		TaskMaxConcurrency:           settings.maxConcurrency,
 		TaskTimeout:                  settings.timeout.String(),
-		TaskTimeoutNanos:             int64(settings.timeout),
-		TaskBackpressureEnabled:      settings.backpressureCfg.Enabled,
 		TaskBackpressureCPUThreshold: settings.backpressureCfg.CPUThreshold,
 		TaskBackpressureMemThreshold: settings.backpressureCfg.MemThreshold,
 		TaskBackpressureDelay:        settings.backpressureCfg.Delay.String(),
-		TaskBackpressureDelayNanos:   int64(settings.backpressureCfg.Delay),
 		RetryBaseDelay:               settings.retryBase.String(),
-		RetryBaseDelayNanos:          int64(settings.retryBase),
 		RetryMaxDelay:                settings.retryMax.String(),
-		RetryMaxDelayNanos:           int64(settings.retryMax),
 	})
 }
 
@@ -262,28 +248,6 @@ func newDurationSettingsFieldUpdater(
 			return false, nil
 		}
 		value, err := time.ParseDuration(text)
-		if err != nil {
-			return false, newIllegalMVServiceSettingsFieldError(field)
-		}
-		if validate != nil && !validate(value) {
-			return false, newIllegalMVServiceSettingsFieldError(field)
-		}
-		assign(settings, value)
-		return true, nil
-	}
-}
-
-func newBoolSettingsFieldUpdater(
-	field string,
-	validate func(bool) bool,
-	assign func(settings *mvServiceRuntimeSettings, value bool),
-) settingsFieldUpdater {
-	return func(form url.Values, settings *mvServiceRuntimeSettings) (changed bool, err error) {
-		text, ok := parseOptionalFieldText(form, field)
-		if !ok {
-			return false, nil
-		}
-		value, err := strconv.ParseBool(text)
 		if err != nil {
 			return false, newIllegalMVServiceSettingsFieldError(field)
 		}

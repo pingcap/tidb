@@ -1,3 +1,17 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package mvs
 
 import (
@@ -101,7 +115,6 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper MVServiceHel
 	if err := mgr.SetTaskBackpressureConfig(cfg.TaskBackpressure); err != nil {
 		logutil.BgLogger().Warn("invalid MV service backpressure config, disable backpressure",
 			zap.Error(err),
-			zap.Bool("enabled", cfg.TaskBackpressure.Enabled),
 			zap.Float64("cpu_threshold", cfg.TaskBackpressure.CPUThreshold),
 			zap.Float64("mem_threshold", cfg.TaskBackpressure.MemThreshold),
 			zap.Duration("delay", cfg.TaskBackpressure.Delay))
@@ -160,19 +173,16 @@ func (t *MVService) SetTaskBackpressureConfig(cfg TaskBackpressureConfig) error 
 	if t == nil {
 		return fmt.Errorf("mv service is nil")
 	}
-	if cfg.Enabled {
-		if cfg.CPUThreshold < 0 || cfg.CPUThreshold > 1 {
-			return fmt.Errorf("cpu threshold out of range")
-		}
-		if cfg.MemThreshold < 0 || cfg.MemThreshold > 1 {
-			return fmt.Errorf("memory threshold out of range")
-		}
-		if cfg.CPUThreshold <= 0 && cfg.MemThreshold <= 0 {
-			return fmt.Errorf("at least one threshold must be positive when backpressure is enabled")
-		}
-		if cfg.Delay < 0 {
-			return fmt.Errorf("backpressure delay must be non-negative")
-		}
+	if cfg.CPUThreshold < 0 || cfg.CPUThreshold > 1 {
+		return fmt.Errorf("cpu threshold out of range")
+	}
+	if cfg.MemThreshold < 0 || cfg.MemThreshold > 1 {
+		return fmt.Errorf("memory threshold out of range")
+	}
+	if cfg.Delay < 0 {
+		return fmt.Errorf("backpressure delay must be non-negative")
+	}
+	if cfg.CPUThreshold > 0 || cfg.MemThreshold > 0 {
 		t.SetTaskBackpressureController(NewCPUMemBackpressureController(cfg.CPUThreshold, cfg.MemThreshold, cfg.Delay))
 	} else {
 		t.SetTaskBackpressureController(nil)

@@ -1,3 +1,17 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package mvs
 
 import (
@@ -74,11 +88,11 @@ func newServerHelper() *serverHelper {
 	}
 }
 
-func (m *serverHelper) serverFilter(s serverInfo) bool {
+func (_ *serverHelper) serverFilter(s serverInfo) bool {
 	return true
 }
 
-func (m *serverHelper) getServerInfo() (serverInfo, error) {
+func (_ *serverHelper) getServerInfo() (serverInfo, error) {
 	localSrv, err := infosync.GetServerInfo()
 	if err != nil {
 		return serverInfo{}, err
@@ -88,7 +102,7 @@ func (m *serverHelper) getServerInfo() (serverInfo, error) {
 	}, nil
 }
 
-func (m *serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverInfo, error) {
+func (_ *serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverInfo, error) {
 	servers := make(map[string]serverInfo)
 	allServers, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
@@ -511,7 +525,6 @@ func RegisterMVS(
 
 	cfg := DefaultMVServiceConfig()
 	cfg.TaskBackpressure = TaskBackpressureConfig{
-		Enabled:      true,
 		CPUThreshold: defaultMVTaskBackpressureCPUThreshold,
 		MemThreshold: defaultMVTaskBackpressureMemThreshold,
 		Delay:        defaultTaskBackpressureDelay,
