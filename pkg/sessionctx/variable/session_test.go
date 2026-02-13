@@ -266,19 +266,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Storage_from_mpp: false`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
-<<<<<<< HEAD
-=======
-	tikvExecDetail := util.ExecDetails{
-		WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
-		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
-		BackoffDuration:    (12 * time.Second).Nanoseconds(),
-	}
 	ruDetails := util.NewRUDetailsWith(50.0, 100.56, 134*time.Millisecond)
-	seVar.DurationParse = time.Duration(10)
-	seVar.DurationCompile = time.Duration(10)
-	seVar.DurationOptimization = time.Duration(10)
-	seVar.DurationWaitTS = time.Duration(3)
->>>>>>> cd1aa428de3 (*: tiny cleanup LogSlowQuery (#62989))
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -286,6 +274,10 @@ func TestSlowLogFormat(t *testing.T) {
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
+		TimeParse:         time.Duration(10),
+		TimeCompile:       time.Duration(10),
+		TimeOptimize:      time.Duration(10),
+		TimeWaitTS:        time.Duration(3),
 		IndexNames:        "[t1:a,t2:b]",
 		CopTasks:          copTasks,
 		ExecDetail:        execDetail,
@@ -312,7 +304,9 @@ func TestSlowLogFormat(t *testing.T) {
 		IsWriteCacheTable: true,
 		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
-		RUDetails:         ruDetails,
+		RRU:               ruDetails.RRU(),
+		WRU:               ruDetails.WRU(),
+		WaitRUDuration:    ruDetails.RUWaitDuration(),
 		StorageKV:         true,
 		StorageMPP:        false,
 	}

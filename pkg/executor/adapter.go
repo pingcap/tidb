@@ -1746,7 +1746,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
 		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
-		RUDetails:         ruDetails,
+		RRU:               ruDetails.RRU(),
+		WRU:               ruDetails.WRU(),
+		WaitRUDuration:    ruDetails.RUWaitDuration(),
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
 		StorageKV:         stmtCtx.IsTiKV.Load(),
 		StorageMPP:        stmtCtx.IsTiFlash.Load(),
@@ -1790,7 +1792,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		if len(stmtCtx.TableIDs) > 0 {
 			tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", stmtCtx.TableIDs), " ", ",")
 		}
-<<<<<<< HEAD
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
 			Digest:     digest.String(),
@@ -1807,28 +1808,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			IndexNames: indexNames,
 			Internal:   sessVars.InRestrictedSQL,
 		})
-=======
-		// TODO log slow query for cross keyspace query?
-		dom := domain.GetDomain(a.Ctx)
-		if dom != nil {
-			dom.LogSlowQuery(&domain.SlowQueryInfo{
-				SQL:        sql.String(),
-				Digest:     digest.String(),
-				Start:      sessVars.StartTime,
-				Duration:   costTime,
-				Detail:     execDetail,
-				Succ:       succ,
-				ConnID:     sessVars.ConnectionID,
-				SessAlias:  sessVars.SessionAlias,
-				TxnTS:      txnTS,
-				User:       userString,
-				DB:         sessVars.CurrentDB,
-				TableIDs:   tableIDs,
-				IndexNames: indexNames,
-				Internal:   sessVars.InRestrictedSQL,
-			})
-		}
->>>>>>> cd1aa428de3 (*: tiny cleanup LogSlowQuery (#62989))
 	}
 }
 
