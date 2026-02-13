@@ -331,3 +331,34 @@ func TestTiCIWithDirtyWrites(t *testing.T) {
 	tk.MustExecToErr("explain select * from t2 where fts_match_word('apple', c)")
 	tk.MustExec("rollback")
 }
+
+func TestTiCIWithWrongColumn(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
+	}()
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int primary key, b text,fulltext index(b))`)
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	tk.MustContainErrMsg("explain select * from t where match(a) against('text1' IN BOOLEAN MODE)", "matching a non-string column")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('text1', a)", "matching a non-string column")
+	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('text1', a)", "matching a non-string column")
+}
