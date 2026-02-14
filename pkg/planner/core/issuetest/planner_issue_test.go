@@ -83,10 +83,10 @@ func TestPlannerIssueRegressions(t *testing.T) {
 			Sort().Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
 		tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
 			Check(testkit.Rows(
-				"HashAgg_10 8000.00 root  group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#4, funcs:firstrow(Column#9)->Column#5",
-				"└─TableReader_11 8000.00 root  data:HashAgg_4",
+				"HashAgg_8 8000.00 root  group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#4, funcs:firstrow(Column#9)->Column#5",
+				"└─TableReader_9 8000.00 root  data:HashAgg_4",
 				"  └─HashAgg_4 8000.00 cop[tikv]  group by:cast(test.t7.c, bigint(22) BINARY), cast(test.t7.c, decimal(10,0) BINARY), ",
-				"    └─TableFullScan_9 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"))
+				"    └─TableFullScan_7 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"))
 
 		tk.MustExec("analyze table t7 all columns")
 		tk.MustQuery("select distinct cast(c as decimal), cast(c as signed) from t7").
@@ -95,9 +95,9 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
 			Check(testkit.Rows(
 				"HashAgg_6 2.00 root  group by:Column#12, Column#13, funcs:firstrow(Column#12)->Column#4, funcs:firstrow(Column#13)->Column#5",
-				"└─Projection_14 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#12, cast(test.t7.c, bigint(22) BINARY)->Column#13",
-				"  └─TableReader_13 2.00 root  data:TableFullScan_12",
-				"    └─TableFullScan_12 2.00 cop[tikv] table:t7 keep order:false"))
+				"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#12, cast(test.t7.c, bigint(22) BINARY)->Column#13",
+				"  └─TableReader_11 2.00 root  data:TableFullScan_10",
+				"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 	})
 
 	t.Run("inl-join-inner-multi-pattern", func(t *testing.T) {
@@ -370,27 +370,27 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 		tk.MustExec("create table t3(vkey varchar(0), c20 integer);")
 		tk.MustQuery("explain select 0 from t2 join(t3 join t0 a on 0) left join(t1 b left join t1 c on 0) on(c20 = b.vkey) on(c13 = a.vkey) join(select c14 d from(t2 join t3 on c12 = vkey)) e on(c3 = d) where nullif(c15, case when(c.c10) then 0 end);").Check(testkit.Rows(
 			"Projection_34 0.00 root  0->Column#33",
-			"└─HashJoin_50 0.00 root  inner join, equal:[eq(Column#34, Column#35)]",
-			"  ├─HashJoin_71(Build) 0.00 root  inner join, equal:[eq(test.t0.c3, test.t2.c14)]",
-			"  │ ├─Selection_72(Build) 0.00 root  if(eq(test.t2.c15, cast(case(test.t1.c10, 0), double BINARY)), NULL, test.t2.c15)",
-			"  │ │ └─HashJoin_82 0.00 root  left outer join, left side:HashJoin_97, equal:[eq(test.t3.c20, test.t1.vkey)]",
-			"  │ │   ├─HashJoin_97(Build) 0.00 root  inner join, equal:[eq(test.t0.vkey, test.t2.c13)]",
-			"  │ │   │ ├─TableDual_107(Build) 0.00 root  rows:0",
-			"  │ │   │ └─TableReader_106(Probe) 9990.00 root  data:Selection_105",
-			"  │ │   │   └─Selection_105 9990.00 cop[tikv]  not(isnull(test.t2.c13))",
-			"  │ │   │     └─TableFullScan_104 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  │ │   └─HashJoin_115(Probe) 9990.00 root  CARTESIAN left outer join, left side:TableReader_119",
-			"  │ │     ├─TableDual_120(Build) 0.00 root  rows:0",
-			"  │ │     └─TableReader_119(Probe) 9990.00 root  data:Selection_118",
-			"  │ │       └─Selection_118 9990.00 cop[tikv]  not(isnull(test.t1.vkey))",
-			"  │ │         └─TableFullScan_117 10000.00 cop[tikv] table:b keep order:false, stats:pseudo",
-			"  │ └─Projection_126(Probe) 9990.00 root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column#34",
-			"  │   └─TableReader_130 9990.00 root  data:Selection_129",
-			"  │     └─Selection_129 9990.00 cop[tikv]  not(isnull(test.t2.c14))",
-			"  │       └─TableFullScan_128 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  └─Projection_133(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#35",
-			"    └─TableReader_136 10000.00 root  data:TableFullScan_135",
-			"      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
+			"└─HashJoin_48 0.00 root  inner join, equal:[eq(Column#34, Column#35)]",
+			"  ├─HashJoin_62(Build) 0.00 root  inner join, equal:[eq(test.t0.c3, test.t2.c14)]",
+			"  │ ├─Selection_63(Build) 0.00 root  if(eq(test.t2.c15, cast(case(test.t1.c10, 0), double BINARY)), NULL, test.t2.c15)",
+			"  │ │ └─HashJoin_71 0.00 root  left outer join, left side:HashJoin_85, equal:[eq(test.t3.c20, test.t1.vkey)]",
+			"  │ │   ├─HashJoin_85(Build) 0.00 root  inner join, equal:[eq(test.t0.vkey, test.t2.c13)]",
+			"  │ │   │ ├─TableDual_94(Build) 0.00 root  rows:0",
+			"  │ │   │ └─TableReader_93(Probe) 9990.00 root  data:Selection_92",
+			"  │ │   │   └─Selection_92 9990.00 cop[tikv]  not(isnull(test.t2.c13))",
+			"  │ │   │     └─TableFullScan_91 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"  │ │   └─HashJoin_101(Probe) 9990.00 root  CARTESIAN left outer join, left side:TableReader_105",
+			"  │ │     ├─TableDual_106(Build) 0.00 root  rows:0",
+			"  │ │     └─TableReader_105(Probe) 9990.00 root  data:Selection_104",
+			"  │ │       └─Selection_104 9990.00 cop[tikv]  not(isnull(test.t1.vkey))",
+			"  │ │         └─TableFullScan_103 10000.00 cop[tikv] table:b keep order:false, stats:pseudo",
+			"  │ └─Projection_112(Probe) 9990.00 root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column#34",
+			"  │   └─TableReader_115 9990.00 root  data:Selection_114",
+			"  │     └─Selection_114 9990.00 cop[tikv]  not(isnull(test.t2.c14))",
+			"  │       └─TableFullScan_113 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"  └─Projection_118(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#35",
+			"    └─TableReader_120 10000.00 root  data:TableFullScan_119",
+			"      └─TableFullScan_119 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
 	})
 
 	t.Run("plan-cache-explain-for-connection", func(t *testing.T) {

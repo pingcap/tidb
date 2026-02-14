@@ -154,25 +154,25 @@ id	c_utf8mb4_general_ci	c_utf8mb4_unicode_ci	c_utf8mb4_bin
 1	a�b	�	test�string
 EXPLAIN SELECT id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
 id	estRows	task	access object	operator info
-IndexReader_10	10.00	root		index:Projection_6
-└─Projection_6	10.00	cop[tikv]		new_character_set.t_fffd.id
-  └─IndexRangeScan_9	10.00	cop[tikv]	table:t_fffd, index:idx_general(c_utf8mb4_general_ci)	range:["\x00A\xff\xfd\x00B","\x00A\xff\xfd\x00B"], keep order:false, stats:pseudo
+IndexReader_9	10.00	root		index:Projection_5
+└─Projection_5	10.00	cop[tikv]		new_character_set.t_fffd.id
+  └─IndexRangeScan_8	10.00	cop[tikv]	table:t_fffd, index:idx_general(c_utf8mb4_general_ci)	range:["\x00A\xff\xfd\x00B","\x00A\xff\xfd\x00B"], keep order:false, stats:pseudo
 SELECT id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
 id
 1
 EXPLAIN SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
 id	estRows	task	access object	operator info
-IndexReader_10	10.00	root		index:Projection_6
-└─Projection_6	10.00	cop[tikv]		new_character_set.t_fffd.id
-  └─IndexRangeScan_9	10.00	cop[tikv]	table:t_fffd, index:idx_unicode(c_utf8mb4_unicode_ci)	range:["\r\xc6","\r\xc6"], keep order:false, stats:pseudo
+IndexReader_9	10.00	root		index:Projection_5
+└─Projection_5	10.00	cop[tikv]		new_character_set.t_fffd.id
+  └─IndexRangeScan_8	10.00	cop[tikv]	table:t_fffd, index:idx_unicode(c_utf8mb4_unicode_ci)	range:["\r\xc6","\r\xc6"], keep order:false, stats:pseudo
 SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
 id
 1
 EXPLAIN SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
 id	estRows	task	access object	operator info
-IndexReader_10	10.00	root		index:Projection_6
-└─Projection_6	10.00	cop[tikv]		new_character_set.t_fffd.id
-  └─IndexRangeScan_9	10.00	cop[tikv]	table:t_fffd, index:idx_bin(c_utf8mb4_bin)	range:["test�string","test�string"], keep order:false, stats:pseudo
+IndexReader_9	10.00	root		index:Projection_5
+└─Projection_5	10.00	cop[tikv]		new_character_set.t_fffd.id
+  └─IndexRangeScan_8	10.00	cop[tikv]	table:t_fffd, index:idx_bin(c_utf8mb4_bin)	range:["test�string","test�string"], keep order:false, stats:pseudo
 SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
 id
 1

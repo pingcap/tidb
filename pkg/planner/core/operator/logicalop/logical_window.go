@@ -413,7 +413,8 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, infos ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	p.hasTiflash = infos[0].HasTiflash
 	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
 	for i := range p.PartitionBy {
 		result = append(result, p.PartitionBy[i].Col)
@@ -421,7 +422,10 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 	for i := range p.OrderBy {
 		result = append(result, p.OrderBy[i].Col)
 	}
-	return [][]*expression.Column{result}
+	return &base.PossiblePropertiesInfo{
+		Order:      [][]*expression.Column{result},
+		HasTiflash: p.hasTiflash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
