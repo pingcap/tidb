@@ -337,11 +337,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		return err
 	}
 	if len(path.AccessConds) > 0 || len(path.Ranges) == 0 {
-		// Even with access conditions, DNF branches may union to cover the full range.
-		// Only clear IsFullRange when the computed ranges have actually been narrowed.
-		if !ranger.HasFullRange(path.Ranges, isUnsigned) {
-			path.IsFullRange = false
-		}
+		path.IsFullRange = false
 	}
 	// Optimization: If IsFullRange, the ranges have not been narrowed and the count is the full table count.
 	// Skip the expensive GetRowCountByColumnRanges call in this case.
@@ -353,6 +349,11 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		var countEst statistics.RowEstimate
 		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges, true)
 		path.CountAfterAccess = countEst.Est
+		// Re-check if ranges still cover the full range (e.g., DNF branches that
+		// union to full range). Set IsFullRange for skyline pruning purposes only.
+		if path.CountAfterAccess >= (cost.ToleranceFactor*float64(ds.StatisticTable.RealtimeCount)) && ranger.HasFullRange(path.Ranges, isUnsigned) {
+			path.IsFullRange = true
+		}
 	}
 	if !isIm {
 		// Check if we need to apply a lower bound to CountAfterAccess
@@ -427,12 +428,7 @@ func detachCondAndBuildRangeForPath(
 		}
 	}
 	if len(res.AccessConds) > 0 || len(path.Ranges) == 0 {
-		// Even with access conditions, DNF branches may union to cover the full range
-		// (e.g., "a >= 2 OR a < 6" covers (-inf, +inf)). Only clear IsFullRange when
-		// the computed ranges have actually been narrowed.
-		if !ranger.HasFullRange(path.Ranges, false) {
-			path.IsFullRange = false
-		}
+		path.IsFullRange = false
 	}
 	// When IsFullRange, the ranges have not been narrowed from the initial full range and
 	// CountAfterAccess is already correctly set to RealtimeCount by the caller.
@@ -446,6 +442,12 @@ func detachCondAndBuildRangeForPath(
 	}
 	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
 	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
+	// After estimation, re-check if ranges still cover the full range (e.g., DNF branches
+	// that union to (-inf, +inf)). Set IsFullRange for skyline pruning purposes only —
+	// the estimation above has already computed the correct CountAfterAccess.
+	if path.CountAfterAccess >= (cost.ToleranceFactor*float64(histColl.RealtimeCount)) && ranger.HasFullRange(path.Ranges, false) {
+		path.IsFullRange = true
+	}
 	return err
 }
 
