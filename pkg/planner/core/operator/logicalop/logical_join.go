@@ -870,6 +870,11 @@ func (p *LogicalJoin) ResolveRedundantColumn(col *expression.Column) (*expressio
 	if p == nil || col == nil || len(p.RedundantColsToOutputIdx) == 0 || p.Schema() == nil {
 		return nil, nil
 	}
+	// Remapping redundant USING/NATURAL columns is only valid for inner join.
+	// For outer joins, preserving original side semantics is required.
+	if p.JoinType != base.InnerJoin {
+		return nil, nil
+	}
 	visibleIdx, ok := p.RedundantColsToOutputIdx[col.UniqueID]
 	if !ok {
 		return nil, nil

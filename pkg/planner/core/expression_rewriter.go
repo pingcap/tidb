@@ -2678,8 +2678,10 @@ func resolveRedundantColumnFromNaturalUsingJoinPlan(p base.LogicalPlan, col *exp
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return resolveRedundantColumnFromNaturalUsingJoinPlan(p.Children()[0], col)
 	case *logicalop.LogicalJoin:
-		if mappedCol, mappedName := x.ResolveRedundantColumn(col); mappedCol != nil {
-			return mappedCol, mappedName
+		// If the column belongs to this join's full schema, this is the owning join.
+		// Stop searching deeper to avoid remapping by child joins with different semantics.
+		if x.FullSchema != nil && x.FullSchema.Contains(col) {
+			return x.ResolveRedundantColumn(col)
 		}
 		for _, child := range x.Children() {
 			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(child, col); mappedCol != nil {
