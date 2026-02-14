@@ -42,6 +42,26 @@ const (
 	// changingIndexPrefix the prefix is used to initialize new index name created in modify column.
 	// The new name will be like "_Idx$_<old_index_name>_n".
 	changingIndexPrefix = "_Idx$_"
+
+	// GlobalIndexVersion constants define the key format versions for global indexes.
+	// GlobalIndexVersionLegacy is the legacy format (version 0) where partition ID is not in the key.
+	// This format has a bug with duplicate handles after EXCHANGE PARTITION on non-clustered tables.
+	// See https://github.com/pingcap/tidb/issues/65289
+	GlobalIndexVersionLegacy uint8 = 0
+	// GlobalIndexVersionV1 is the current format (version 1) where partition ID is encoded in the key
+	// for global indexes on non-clustered tables to prevent key collisions
+	// after EXCHANGE PARTITION.
+	// Applies to non-unique indexes (handle always in key) and unique indexes with nullable
+	// columns (handle in key when any indexed value is NULL, since NULL != NULL).
+	// For unique global indexes where all columns are NOT NULL, version 0 is used since
+	// uniqueness alone prevents collisions.
+	// For clustered tables, common handles already include partition-specific data.
+	// Notice that for V1 the partition id is still in the value part as well,
+	// for decreasing the risk of issues changing the read code path for various index reads.
+	GlobalIndexVersionV1 uint8 = 1
+	// GlobalIndexVersionV2 is the next, not yet implemented format (version 2) where partition ID
+	// is encoded in the key ONLY!
+	GlobalIndexVersionV2 uint8 = 2
 )
 
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
@@ -85,6 +105,7 @@ type VectorIndexInfo struct {
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
+<<<<<<< HEAD
 	ID            int64            `json:"id"`
 	Name          model.CIStr      `json:"idx_name"` // Index name.
 	Table         model.CIStr      `json:"tbl_name"` // Table name.
@@ -99,6 +120,54 @@ type IndexInfo struct {
 	Global        bool             `json:"is_global"`    // Whether the index is global.
 	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
 	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+=======
+	ID                  int64              `json:"id"`
+	Name                ast.CIStr          `json:"idx_name"` // Index name.
+	Table               ast.CIStr          `json:"tbl_name"` // Table name.
+	Columns             []*IndexColumn     `json:"idx_cols"` // Index columns.
+	State               SchemaState        `json:"state"`
+	BackfillState       BackfillState      `json:"backfill_state"`
+	Comment             string             `json:"comment"`                 // Comment
+	Tp                  ast.IndexType      `json:"index_type"`              // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
+	Unique              bool               `json:"is_unique"`               // Whether the index is unique.
+	Primary             bool               `json:"is_primary"`              // Whether the index is primary key.
+	Invisible           bool               `json:"is_invisible"`            // Whether the index is invisible.
+	Global              bool               `json:"is_global"`               // Whether the index is global.
+	MVIndex             bool               `json:"mv_index"`                // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo   `json:"vector_index"`            // VectorInfo is the vector index information.
+	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`          // InvertedInfo is the inverted index information.
+	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
+	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
+	// Version of global index key format for non-clustered tables.
+	// Set to V1 when the handle can appear in the index key (non-unique indexes,
+	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
+	// 0=legacy, or unique with all NOT NULL columns, or clustered.
+	// 1=v1 with partition ID in key and value.
+	// 2=v2 with partition ID in key only (TODO).
+	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
+}
+
+// Hash64 implement HashEquals interface.
+func (index *IndexInfo) Hash64(h base.Hasher) {
+	h.HashInt64(index.ID)
+}
+
+// Equals implements HashEquals interface.
+func (index *IndexInfo) Equals(other any) bool {
+	// any(nil) can still be converted as (*IndexInfo)(nil)
+	index2, ok := other.(*IndexInfo)
+	if !ok {
+		return false
+	}
+	if index == nil {
+		return index2 == nil
+	}
+	if index2 == nil {
+		return false
+	}
+	return index.ID == index2.ID
+>>>>>>> 2f9776e8e7b (table: Non-clustered table non-unique global index needs partid in key, v1 (#65380))
 }
 
 // Clone clones IndexInfo.
