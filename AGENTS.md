@@ -30,6 +30,12 @@ This file provides guidance to agents working in this repository.
 | Fmt-only PR | `MUST NOT` run costly `realtikvtest`; local compilation is enough. |
 | Before finishing | `SHOULD` run `make bazel_lint_changed`. |
 
+### Skills
+
+- Repository-level Codex skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
+- Keep skill content and references together under each skill folder (for example: `.agents/skills/<skill>/SKILL.md` and `.agents/skills/<skill>/references/`).
+- `.github/skills` is kept only as a migration note path and should not be used as the primary location for new skill updates.
+
 ## Pre-flight Checklist
 
 1. Restate the task goal and acceptance criteria.

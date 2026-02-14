@@ -17,6 +17,7 @@ package runaway
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
@@ -48,6 +49,8 @@ const (
 
 	runawayRecordGCBatchSize       = 100
 	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
+
+	watchRecordFlushInterval = time.Second
 )
 
 var sampleLogger = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "runaway"))
@@ -60,9 +63,9 @@ type Manager struct {
 	// action "judging whether there is this record in the current watch list and adding records" have atomicity.
 	queryLock sync.Mutex
 	watchList *ttlcache.Cache[string, *QuarantineRecord]
-	// activeGroup is used to manage the active runaway watches of resource group
-	ActiveGroup map[string]int64
-	ActiveLock  sync.RWMutex
+	// activeGroup is used to manage the active runaway watches of resource group.
+	// It uses sync.Map + atomic.Int64 for lock-free reads on the per-query hot path.
+	activeGroup sync.Map // map[string]*atomic.Int64
 	MetricsMap  generic.SyncMap[string, prometheus.Counter]
 
 	ResourceGroupCtl   *rmclient.ResourceGroupsController
@@ -103,15 +106,13 @@ func NewRunawayManager(
 		ttlcache.WithDisableTouchOnHit[string, *QuarantineRecord](),
 	)
 	go watchList.Start()
-	staleQuarantineChan := make(chan *QuarantineRecord, maxWatchRecordChannelSize)
 	m := &Manager{
 		ResourceGroupCtl:      resourceGroupCtl,
 		watchList:             watchList,
 		serverID:              serverAddr,
 		runawayQueriesChan:    make(chan *Record, maxWatchRecordChannelSize),
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
-		staleQuarantineRecord: staleQuarantineChan,
-		ActiveGroup:           make(map[string]int64),
+		staleQuarantineRecord: make(chan *QuarantineRecord, maxWatchRecordChannelSize),
 		MetricsMap:            generic.NewSyncMap[string, prometheus.Counter](8),
 		sysSessionPool:        pool,
 		exit:                  exit,
@@ -119,18 +120,18 @@ func NewRunawayManager(
 		ddl:                   ddl,
 	}
 	m.insertionCancel = watchList.OnInsertion(func(_ context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
-		m.ActiveLock.Lock()
-		m.ActiveGroup[i.Value().ResourceGroupName]++
-		m.ActiveLock.Unlock()
+		name := i.Value().ResourceGroupName
+		counter, _ := m.loadOrStoreActiveCounter(name)
+		counter.Add(1)
 	})
 	m.evictionCancel = watchList.OnEviction(func(_ context.Context, _ ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
-		m.ActiveLock.Lock()
-		m.ActiveGroup[i.Value().ResourceGroupName]--
-		m.ActiveLock.Unlock()
+		name := i.Value().ResourceGroupName
+		counter, _ := m.loadOrStoreActiveCounter(name)
+		counter.Add(-1)
 		if i.Value().ID == 0 {
 			return
 		}
-		staleQuarantineChan <- i.Value()
+		m.staleQuarantineRecord <- i.Value()
 	})
 	m.runawaySyncer = newSyncer(pool, infoCache)
 
@@ -141,86 +142,91 @@ func NewRunawayManager(
 func (rm *Manager) RunawayRecordFlushLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
 
-	// this times used to batch flushing records, with 1s duration,
-	// we can guarantee a watch record can be seen by the user within 1s.
-	flushInteval, gcInteval := runawayRecordFlushInterval, runawayRecordGCInterval
+	runawayFlushInterval := runawayRecordFlushInterval
+	watchFlushInterval := watchRecordFlushInterval
+	gcInterval := runawayRecordGCInterval
+	batchSize := flushThreshold()
 	failpoint.Inject("FastRunawayGC", func() {
-		flushInteval = time.Millisecond * 50
-		gcInteval = time.Millisecond * 200
+		runawayFlushInterval = time.Millisecond * 50
+		watchFlushInterval = time.Millisecond * 50
+		gcInterval = time.Millisecond * 200
 	})
-	runawayRecordFlushTimer := time.NewTimer(flushInteval)
-	runawayRecordGCTicker := time.NewTicker(gcInteval)
 
-	fired := false
+	runawayRecordFlusher := newBatchFlusher(
+		"runaway-record",
+		runawayFlushInterval,
+		batchSize,
+		func(m map[recordKey]*Record, k recordKey, v *Record) {
+			if existing, ok := m[k]; ok {
+				existing.Repeats++
+			} else {
+				m[k] = v
+			}
+		},
+		genRunawayQueriesStmt,
+		rm.sysSessionPool,
+	)
+
+	quarantineRecordFlusher := newBatchFlusher(
+		"quarantine-record",
+		watchFlushInterval,
+		batchSize,
+		func(m map[string]*QuarantineRecord, k string, v *QuarantineRecord) {
+			if _, ok := m[k]; !ok {
+				m[k] = v
+			}
+		},
+		genBatchInsertWatchStmt,
+		rm.sysSessionPool,
+	)
+
+	staleQuarantineFlusher := newBatchFlusher(
+		"stale-quarantine-record",
+		watchFlushInterval,
+		batchSize,
+		func(m map[int64]*QuarantineRecord, k int64, v *QuarantineRecord) {
+			m[k] = v
+		},
+		genBatchDeleteWatchByIDStmt,
+		rm.sysSessionPool,
+	)
+
+	runawayRecordGCTicker := time.NewTicker(gcInterval)
 	recordCh := rm.runawayRecordChan()
 	quarantineRecordCh := rm.quarantineRecordChan()
 	staleQuarantineRecordCh := rm.staleQuarantineRecordChan()
-	flushThreshold := flushThreshold()
-	// recordMap is used to deduplicate records which will be inserted into `mysql.tidb_runaway_queries`.
-	recordMap := make(map[recordKey]*Record, flushThreshold)
-
-	flushRunawayRecords := func() {
-		if len(recordMap) == 0 {
-			return
-		}
-		sql, params := genRunawayQueriesStmt(recordMap)
-		if _, err := ExecRCRestrictedSQL(rm.sysSessionPool, sql, params); err != nil {
-			logutil.BgLogger().Error("flush runaway records failed", zap.Error(err), zap.Int("count", len(recordMap)))
-		}
-		// reset the map.
-		recordMap = make(map[recordKey]*Record, flushThreshold)
-	}
 
 	for {
 		select {
 		case <-rm.exit:
+			runawayRecordFlusher.stop()
+			quarantineRecordFlusher.stop()
+			staleQuarantineFlusher.stop()
 			logutil.BgLogger().Info("runaway record flush loop exit")
 			return
-		case <-runawayRecordFlushTimer.C:
-			flushRunawayRecords()
-			fired = true
-		case r := <-recordCh:
+		case <-runawayRecordFlusher.tickerCh(): // flush runaway records periodically
+			runawayRecordFlusher.flush()
+		case r := <-recordCh: // add runaway records to the flusher
 			key := recordKey{
 				ResourceGroupName: r.ResourceGroupName,
 				SQLDigest:         r.SQLDigest,
 				PlanDigest:        r.PlanDigest,
 				Match:             r.Match,
 			}
-			if _, exists := recordMap[key]; exists {
-				recordMap[key].Repeats++
-			} else {
-				recordMap[key] = r
-			}
-			failpoint.Inject("FastRunawayGC", func() {
-				flushRunawayRecords()
-			})
-			if len(recordMap) >= flushThreshold {
-				flushRunawayRecords()
-			} else if fired {
-				fired = false
-				// meet a new record, reset the timer.
-				runawayRecordFlushTimer.Reset(runawayRecordFlushInterval)
-			}
-		case <-runawayRecordGCTicker.C:
+			runawayRecordFlusher.add(key, r)
+		case <-runawayRecordGCTicker.C: // delete expired runaway records periodically
 			go rm.deleteExpiredRows(runawayRecordExpiredDuration)
-		case r := <-quarantineRecordCh:
-			go func() {
-				_, err := rm.AddRunawayWatch(r)
-				if err != nil {
-					logutil.BgLogger().Error("add runaway watch", zap.Error(err))
-				}
-			}()
-		case r := <-staleQuarantineRecordCh:
-			go func() {
-				for range 3 {
-					err := handleRemoveStaleRunawayWatch(rm.sysSessionPool, r)
-					if err == nil {
-						break
-					}
-					logutil.BgLogger().Error("remove stale runaway watch", zap.Error(err))
-					time.Sleep(time.Second)
-				}
-			}()
+		case <-quarantineRecordFlusher.tickerCh(): // flush quarantine records periodically
+			quarantineRecordFlusher.flush()
+		case r := <-quarantineRecordCh: // add quarantine records to the flusher
+			quarantineRecordFlusher.add(r.getRecordKey(), r)
+		case <-staleQuarantineFlusher.tickerCh(): // flush stale quarantine records periodically
+			staleQuarantineFlusher.flush()
+		case r := <-staleQuarantineRecordCh: // add stale quarantine records to the flusher
+			if r.ID == 0 {
+				continue
+			}
+			staleQuarantineFlusher.add(r.ID, r)
 		}
 	}
 }
@@ -370,6 +376,25 @@ func (rm *Manager) examineWatchList(resourceGroupName string, convict string) (b
 		return false, 0, "", ""
 	}
 	return true, item.Action, item.getSwitchGroupName(), item.GetExceedCause()
+}
+
+// loadOrStoreActiveCounter returns the counter for the given resource group name,
+// creating a new one if it doesn't exist.
+func (rm *Manager) loadOrStoreActiveCounter(name string) (*atomic.Int64, bool) {
+	if counter, ok := rm.activeGroup.Load(name); ok {
+		return counter.(*atomic.Int64), true
+	}
+	counter, loaded := rm.activeGroup.LoadOrStore(name, &atomic.Int64{})
+	return counter.(*atomic.Int64), loaded
+}
+
+// getActiveWatchCount returns the active watch count for the given resource group name.
+func (rm *Manager) getActiveWatchCount(name string) int64 {
+	counter, ok := rm.activeGroup.Load(name)
+	if !ok {
+		return 0
+	}
+	return counter.(*atomic.Int64).Load()
 }
 
 // Stop stops the watchList which is a ttlCache.
