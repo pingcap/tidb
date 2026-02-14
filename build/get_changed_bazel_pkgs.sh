@@ -24,13 +24,24 @@ detect_base_ref() {
 
 collect_changed_files() {
   local base_ref="$1"
+  local base_sha merge_sha
+
+  base_sha="$(git rev-parse -q --verify "$base_ref" 2>/dev/null || true)"
+  merge_sha="$(git rev-parse -q --verify MERGE_HEAD 2>/dev/null || true)"
 
   # Include committed, staged, unstaged, and untracked changes so
   # "run before commit" can still lint pending local edits.
   {
     git diff --name-only "$base_ref...HEAD"
-    git diff --name-only --cached
-    git diff --name-only
+    if [ -n "$merge_sha" ] && [ -n "$base_sha" ] && [ "$merge_sha" = "$base_sha" ]; then
+      # During "merge BASE_REF into current branch", avoid counting files that
+      # only changed due to the incoming base branch.
+      git diff --name-only --cached "$base_ref" || true
+      git diff --name-only "$base_ref" || true
+    else
+      git diff --name-only --cached
+      git diff --name-only
+    fi
     git ls-files --others --exclude-standard
   } | sed '/^[[:space:]]*$/d' | sort -u
 }
@@ -42,7 +53,9 @@ is_high_impact_change() {
     DEPS.bzl | WORKSPACE | WORKSPACE.bazel | build/BUILD.bazel)
       return 0
       ;;
-    build/linter/* | *.bzl | BUILD | BUILD.bazel | */BUILD | */BUILD.bazel)
+    # NOTE: do not treat every BUILD/BUILD.bazel as high-impact; those changes
+    # should be scoped to their own package (handled by map_file_to_bazel_target).
+    build/linter/* | *.bzl)
       return 0
       ;;
   esac
