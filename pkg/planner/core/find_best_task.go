@@ -514,10 +514,32 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
+<<<<<<< HEAD
 	bestTask = p.GetTask(prop)
 	if bestTask != nil {
 		planCounter.Dec(1)
 		return bestTask, 1, nil
+=======
+	// only get the physical cache from logicalOp under volcano mode.
+	if ge == nil {
+		bestTask = p.GetTask(prop)
+		if bestTask != nil {
+			return bestTask, nil
+		}
+	}
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(self, prop.IndexJoinProp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, nil
+		}
+	}
+	if !checkOpSelfSatisfyPropTaskTypeRequirement(p.Self(), prop) {
+		// Currently all plan cannot totally push down to TiKV.
+		p.StoreTask(prop, base.InvalidTask)
+		return base.InvalidTask, nil
+>>>>>>> f7b7465b14a (planner: fix IndexJoin with Aggregation correctness issue (#66217))
 	}
 
 	canAddEnforcer := prop.CanAddEnforcer
@@ -1789,11 +1811,37 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			ds.PossibleAccessPaths = newPaths
 		}
 	}
+<<<<<<< HEAD
 	t = ds.GetTask(prop)
 	if t != nil {
 		cntPlan = 1
 		planCounter.Dec(1)
 		return
+=======
+	// only get the physical cache from logicalOp under volcano mode.
+	if ge == nil {
+		t = ds.GetTask(prop)
+		if t != nil {
+			return
+		}
+	}
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(ds, prop.IndexJoinProp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, nil
+		}
+		// cache the physical for indexJoinProp
+		defer func() {
+			ds.StoreTask(prop, t)
+		}()
+		// when datasource leaf is in index join's inner side, build the task out with old
+		// index join build logic, we can't merge this with normal datasource's index range
+		// because normal index range is built on expression EQ/IN. while index join's inner
+		// has its special runtime constants detecting and filling logic.
+		return getBestIndexJoinInnerTaskByProp(ds, prop)
+>>>>>>> f7b7465b14a (planner: fix IndexJoin with Aggregation correctness issue (#66217))
 	}
 	var cnt int64
 	var unenforcedTask base.Task
