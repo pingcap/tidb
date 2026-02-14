@@ -135,12 +135,9 @@ func TestTruncateMaterializedViewRelatedTablesRejected(t *testing.T) {
 	tk.MustExec("create table t_truncate_mv (a int not null, b int)")
 	tk.MustExec("create materialized view log on t_truncate_mv (a, b)")
 
-	err := tk.ExecToErr("truncate table t_truncate_mv")
-	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view dependencies")
-
 	tk.MustExec("create materialized view mv_truncate_mv (a, cnt) refresh fast next 300 as select a, count(1) from t_truncate_mv group by a")
 
-	err = tk.ExecToErr("truncate table mv_truncate_mv")
+	err := tk.ExecToErr("truncate table mv_truncate_mv")
 	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view table")
 
 	err = tk.ExecToErr("truncate table t_truncate_mv")
@@ -168,7 +165,6 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	require.ErrorContains(t, err, "DROP TABLE on materialized view table")
 	err = tk.ExecToErr("rename table mv_ddl_mv to mv_ddl_mv2")
 	require.ErrorContains(t, err, "RENAME TABLE on materialized view table")
-
 }
 
 func TestTruncateOrdinaryTableStillWorks(t *testing.T) {

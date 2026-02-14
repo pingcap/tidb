@@ -4538,7 +4538,7 @@ func checkTableMaterializedViewConstraintsWithOptions(tblInfo *model.TableInfo, 
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 	if tblInfo.MaterializedViewBase != nil &&
-		(tblInfo.MaterializedViewBase.MLogID != 0 || len(tblInfo.MaterializedViewBase.MViewIDs) > 0) {
+		len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on base table with materialized view dependencies", op))
 	}
 	return nil
