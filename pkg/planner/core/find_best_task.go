@@ -3043,7 +3043,16 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *pro
 
 func (ts *PhysicalTableScan) getScanRowSize() float64 {
 	if ts.StoreType == kv.TiKV {
-		return cardinality.GetTableAvgRowSize(ts.SCtx(), ts.tblColHists, ts.tblCols, ts.StoreType, true)
+		cols := ts.tblCols
+		// _tidb_commit_ts is not a real extra column stored in the disk, and it should not bring extra cost, so we
+		// exclude it from the cost here.
+		for i, col := range cols {
+			if col.ID == model.ExtraCommitTSID {
+				cols = slices.Delete(slices.Clone(cols), i, i+1)
+				break
+			}
+		}
+		return cardinality.GetTableAvgRowSize(ts.SCtx(), ts.tblColHists, cols, ts.StoreType, true)
 	}
 	// If `ts.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 	// This logic can be ensured in column pruning.

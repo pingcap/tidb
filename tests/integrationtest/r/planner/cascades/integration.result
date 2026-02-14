@@ -155,8 +155,8 @@ explain select b from t order by a+b;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		planner__cascades__integration.t.b
 └─Projection_12	10000.00	root		planner__cascades__integration.t.b, planner__cascades__integration.t.a
-  └─Sort_8	10000.00	root		Column#4
-    └─Projection_13	10000.00	root		planner__cascades__integration.t.b, planner__cascades__integration.t.a, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#4
+  └─Sort_8	10000.00	root		Column#5
+    └─Projection_13	10000.00	root		planner__cascades__integration.t.b, planner__cascades__integration.t.a, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#5
       └─Projection_9	10000.00	root		planner__cascades__integration.t.b, planner__cascades__integration.t.a
         └─TableReader_10	10000.00	root		data:TableFullScan_11
           └─TableFullScan_11	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -170,8 +170,8 @@ explain select b from t order by b, a+b, a;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		planner__cascades__integration.t.b
 └─Projection_12	10000.00	root		planner__cascades__integration.t.b, planner__cascades__integration.t.a
-  └─Sort_8	10000.00	root		planner__cascades__integration.t.b, Column#4, planner__cascades__integration.t.a
-    └─Projection_13	10000.00	root		planner__cascades__integration.t.b, planner__cascades__integration.t.a, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#4
+  └─Sort_8	10000.00	root		planner__cascades__integration.t.b, Column#5, planner__cascades__integration.t.a
+    └─Projection_13	10000.00	root		planner__cascades__integration.t.b, planner__cascades__integration.t.a, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#5
       └─Projection_9	10000.00	root		planner__cascades__integration.t.b, planner__cascades__integration.t.a
         └─TableReader_10	10000.00	root		data:TableFullScan_11
           └─TableFullScan_11	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -190,29 +190,29 @@ set @@session.tidb_hash_join_concurrency = 5;
 set @@session.tidb_distsql_scan_concurrency = 15;
 explain select sum(a) from t;
 id	estRows	task	access object	operator info
-HashAgg_14	1.00	root		funcs:sum(Column#4)->Column#3
+HashAgg_14	1.00	root		funcs:sum(Column#5)->Column#4
 └─TableReader_15	1.00	root		data:HashAgg_16
-  └─HashAgg_16	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t.a)->Column#4
+  └─HashAgg_16	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t.a)->Column#5
     └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select sum(a) from t;
 sum(a)
 10
 explain select max(a), min(b) from t;
 id	estRows	task	access object	operator info
-HashAgg_11	1.00	root		funcs:max(Column#5)->Column#3, funcs:min(Column#6)->Column#4
+HashAgg_11	1.00	root		funcs:max(Column#6)->Column#4, funcs:min(Column#7)->Column#5
 └─TableReader_12	1.00	root		data:HashAgg_13
-  └─HashAgg_13	1.00	cop[tikv]		funcs:max(planner__cascades__integration.t.a)->Column#5, funcs:min(planner__cascades__integration.t.b)->Column#6
+  └─HashAgg_13	1.00	cop[tikv]		funcs:max(planner__cascades__integration.t.a)->Column#6, funcs:min(planner__cascades__integration.t.b)->Column#7
     └─TableFullScan_10	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select max(a), min(b) from t;
 max(a)	min(b)
 4	11
 explain select b, avg(a) from t group by b order by b;
 id	estRows	task	access object	operator info
-Projection_12	8000.00	root		planner__cascades__integration.t.b, Column#3
+Projection_12	8000.00	root		planner__cascades__integration.t.b, Column#4
 └─Sort_21	8000.00	root		planner__cascades__integration.t.b
-  └─HashAgg_18	8000.00	root		group by:planner__cascades__integration.t.b, funcs:avg(Column#4, Column#5)->Column#3, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
+  └─HashAgg_18	8000.00	root		group by:planner__cascades__integration.t.b, funcs:avg(Column#5, Column#6)->Column#4, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
     └─TableReader_19	8000.00	root		data:HashAgg_20
-      └─HashAgg_20	8000.00	cop[tikv]		group by:planner__cascades__integration.t.b, funcs:count(planner__cascades__integration.t.a)->Column#4, funcs:sum(planner__cascades__integration.t.a)->Column#5
+      └─HashAgg_20	8000.00	cop[tikv]		group by:planner__cascades__integration.t.b, funcs:count(planner__cascades__integration.t.a)->Column#5, funcs:sum(planner__cascades__integration.t.a)->Column#6
         └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select b, avg(a) from t group by b order by b;
 b	avg(a)
@@ -222,11 +222,11 @@ b	avg(a)
 44	4.0000
 explain select b, sum(a) from t group by b order by b;
 id	estRows	task	access object	operator info
-Projection_12	8000.00	root		planner__cascades__integration.t.b, Column#3
+Projection_12	8000.00	root		planner__cascades__integration.t.b, Column#4
 └─Sort_21	8000.00	root		planner__cascades__integration.t.b
-  └─HashAgg_18	8000.00	root		group by:planner__cascades__integration.t.b, funcs:sum(Column#4)->Column#3, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
+  └─HashAgg_18	8000.00	root		group by:planner__cascades__integration.t.b, funcs:sum(Column#5)->Column#4, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
     └─TableReader_19	8000.00	root		data:HashAgg_20
-      └─HashAgg_20	8000.00	cop[tikv]		group by:planner__cascades__integration.t.b, funcs:sum(planner__cascades__integration.t.a)->Column#4
+      └─HashAgg_20	8000.00	cop[tikv]		group by:planner__cascades__integration.t.b, funcs:sum(planner__cascades__integration.t.a)->Column#5
         └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select b, sum(a) from t group by b order by b;
 b	sum(a)
@@ -236,12 +236,12 @@ b	sum(a)
 44	4
 explain select b, avg(a) from t group by b having sum(a) > 1 order by b;
 id	estRows	task	access object	operator info
-Projection_14	6400.00	root		planner__cascades__integration.t.b, Column#3->Column#6
-└─Projection_16	6400.00	root		planner__cascades__integration.t.b, Column#3, Column#4
+Projection_14	6400.00	root		planner__cascades__integration.t.b, Column#4->Column#7
+└─Projection_16	6400.00	root		planner__cascades__integration.t.b, Column#4, Column#5
   └─Sort_29	6400.00	root		planner__cascades__integration.t.b
-    └─Selection_28	6400.00	root		gt(Column#4, 1)
-      └─HashAgg_19	8000.00	root		group by:planner__cascades__integration.t.b, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
-        └─Projection_20	10000.00	root		cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column#11, cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column#12, planner__cascades__integration.t.b, planner__cascades__integration.t.b
+    └─Selection_28	6400.00	root		gt(Column#5, 1)
+      └─HashAgg_19	8000.00	root		group by:planner__cascades__integration.t.b, funcs:avg(Column#12)->Column#4, funcs:sum(Column#13)->Column#5, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
+        └─Projection_20	10000.00	root		cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column#12, cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column#13, planner__cascades__integration.t.b, planner__cascades__integration.t.b
           └─TableReader_21	10000.00	root		data:TableFullScan_22
             └─TableFullScan_22	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select b, avg(a) from t group by b having sum(a) > 1 order by b;
@@ -251,17 +251,17 @@ b	avg(a)
 44	4.0000
 explain select max(a+b) from t;
 id	estRows	task	access object	operator info
-HashAgg_68	1.00	root		funcs:max(Column#4)->Column#3
+HashAgg_68	1.00	root		funcs:max(Column#5)->Column#4
 └─TableReader_69	1.00	root		data:HashAgg_70
-  └─HashAgg_70	1.00	cop[tikv]		funcs:max(plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b))->Column#4
+  └─HashAgg_70	1.00	cop[tikv]		funcs:max(plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b))->Column#5
     └─TableFullScan_41	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select max(a+b) from t;
 max(a+b)
 48
 explain select sum(a) from t group by a, a+b order by a;
 id	estRows	task	access object	operator info
-Projection_10	10000.00	root		Column#3->Column#4
-└─Projection_12	10000.00	root		cast(planner__cascades__integration.t.a, decimal(32,0) BINARY)->Column#3, planner__cascades__integration.t.a
+Projection_10	10000.00	root		Column#4->Column#5
+└─Projection_12	10000.00	root		cast(planner__cascades__integration.t.a, decimal(32,0) BINARY)->Column#4, planner__cascades__integration.t.a
   └─TableReader_13	10000.00	root		data:TableFullScan_14
     └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 select sum(a) from t group by a, a+b order by a;
@@ -272,11 +272,11 @@ sum(a)
 4
 explain select b, sum(a) from t group by b having b > 1 order by b;
 id	estRows	task	access object	operator info
-Projection_16	6400.00	root		planner__cascades__integration.t.b, Column#3
+Projection_16	6400.00	root		planner__cascades__integration.t.b, Column#4
 └─Sort_26	6400.00	root		planner__cascades__integration.t.b
-  └─HashAgg_23	6400.00	root		group by:planner__cascades__integration.t.b, funcs:sum(Column#4)->Column#3, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
+  └─HashAgg_23	6400.00	root		group by:planner__cascades__integration.t.b, funcs:sum(Column#5)->Column#4, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
     └─TableReader_24	6400.00	root		data:HashAgg_25
-      └─HashAgg_25	6400.00	cop[tikv]		group by:planner__cascades__integration.t.b, funcs:sum(planner__cascades__integration.t.a)->Column#4
+      └─HashAgg_25	6400.00	cop[tikv]		group by:planner__cascades__integration.t.b, funcs:sum(planner__cascades__integration.t.a)->Column#5
         └─Selection_21	8000.00	cop[tikv]		gt(planner__cascades__integration.t.b, 1)
           └─TableFullScan_22	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select b, sum(a) from t group by b having b > 1 order by b;
@@ -287,11 +287,11 @@ b	sum(a)
 44	4
 explain select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c;
 id	estRows	task	access object	operator info
-Projection_23	6400.00	root		Column#3, Column#4
-└─Sort_35	6400.00	root		Column#3
-  └─HashAgg_32	6400.00	root		group by:Column#7, funcs:sum(Column#8)->Column#4, funcs:firstrow(Column#7)->Column#3
+Projection_23	6400.00	root		Column#4, Column#5
+└─Sort_35	6400.00	root		Column#4
+  └─HashAgg_32	6400.00	root		group by:Column#8, funcs:sum(Column#9)->Column#5, funcs:firstrow(Column#8)->Column#4
     └─TableReader_33	6400.00	root		data:HashAgg_34
-      └─HashAgg_34	6400.00	cop[tikv]		group by:plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b), funcs:sum(planner__cascades__integration.t.a)->Column#8
+      └─HashAgg_34	6400.00	cop[tikv]		group by:plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b), funcs:sum(planner__cascades__integration.t.a)->Column#9
         └─Selection_28	8000.00	cop[tikv]		gt(plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b), 1)
           └─TableFullScan_29	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c;
@@ -302,7 +302,7 @@ c	sum(a)
 48	4
 explain select max(a.a) from t a left join t b on a.a = b.a;
 id	estRows	task	access object	operator info
-HashAgg_36	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#5
+HashAgg_36	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#7
 └─Limit_38	1.00	root		offset:0, count:1
   └─TableReader_43	1.00	root		data:Limit_44
     └─Limit_44	1.00	cop[tikv]		offset:0, count:1
@@ -312,16 +312,16 @@ max(a.a)
 4
 explain select avg(a.b) from t a left join t b on a.a = b.a;
 id	estRows	task	access object	operator info
-HashAgg_17	1.00	root		funcs:avg(Column#6, Column#7)->Column#5
+HashAgg_17	1.00	root		funcs:avg(Column#8, Column#9)->Column#7
 └─TableReader_18	1.00	root		data:HashAgg_19
-  └─HashAgg_19	1.00	cop[tikv]		funcs:count(planner__cascades__integration.t.b)->Column#6, funcs:sum(planner__cascades__integration.t.b)->Column#7
+  └─HashAgg_19	1.00	cop[tikv]		funcs:count(planner__cascades__integration.t.b)->Column#8, funcs:sum(planner__cascades__integration.t.b)->Column#9
     └─TableFullScan_16	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
 select avg(a.b) from t a left join t b on a.a = b.a;
 avg(a.b)
 27.5000
 explain select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a order by a;
 id	estRows	task	access object	operator info
-Projection_15	10000.00	root		planner__cascades__integration.t.a, planner__cascades__integration.t.b->Column#5
+Projection_15	10000.00	root		planner__cascades__integration.t.a, planner__cascades__integration.t.b->Column#7
 └─TableReader_16	10000.00	root		data:TableFullScan_17
   └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a order by a;
@@ -332,7 +332,7 @@ a	max(t1.b)
 4	44
 explain select t1.a, sum(distinct t1.b) from t as t1 left join (select * from t) as t2 on t1.b = t2.b group by t1.a order by a;
 id	estRows	task	access object	operator info
-Projection_15	10000.00	root		planner__cascades__integration.t.a, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#5
+Projection_15	10000.00	root		planner__cascades__integration.t.a, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#7
 └─TableReader_16	10000.00	root		data:TableFullScan_17
   └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 select t1.a, sum(distinct t1.b) from t as t1 left join (select * from t) as t2 on t1.b = t2.b group by t1.a order by a;
@@ -343,7 +343,7 @@ a	sum(distinct t1.b)
 4	44
 explain select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a order by a;
 id	estRows	task	access object	operator info
-Projection_15	10000.00	root		planner__cascades__integration.t.a, planner__cascades__integration.t.b->Column#5
+Projection_15	10000.00	root		planner__cascades__integration.t.a, planner__cascades__integration.t.b->Column#7
 └─TableReader_16	10000.00	root		data:TableFullScan_17
   └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a order by a;
@@ -354,7 +354,7 @@ a	max(t2.b)
 4	44
 explain select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a;
 id	estRows	task	access object	operator info
-Projection_18	10000.00	root		planner__cascades__integration.t.a, planner__cascades__integration.t.b->Column#5
+Projection_18	10000.00	root		planner__cascades__integration.t.a, planner__cascades__integration.t.b->Column#7
 └─TableReader_19	10000.00	root		data:TableFullScan_20
   └─TableFullScan_20	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a;
@@ -365,7 +365,7 @@ a	max(t3.b)
 4	44
 explain select max(a) from t;
 id	estRows	task	access object	operator info
-HashAgg_21	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#3
+HashAgg_21	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#4
 └─Limit_23	1.00	root		offset:0, count:1
   └─TableReader_28	1.00	root		data:Limit_29
     └─Limit_29	1.00	cop[tikv]		offset:0, count:1
@@ -375,52 +375,52 @@ max(a)
 4
 explain select sum(case when a > 0 and a <= 1000 then b else 0 end) from t;
 id	estRows	task	access object	operator info
-HashAgg_18	1.00	root		funcs:sum(Column#4)->Column#3
+HashAgg_18	1.00	root		funcs:sum(Column#5)->Column#4
 └─TableReader_19	1.00	root		data:HashAgg_20
-  └─HashAgg_20	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t.b)->Column#4
+  └─HashAgg_20	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t.b)->Column#5
     └─TableRangeScan_17	250.00	cop[tikv]	table:t	range:(0,1000], keep order:false, stats:pseudo
 select sum(case when a > 0 and a <= 1000 then b else 0 end) from t;
 sum(case when a > 0 and a <= 1000 then b else 0 end)
 110
 explain select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t;
 id	estRows	task	access object	operator info
-HashAgg_21	1.00	root		funcs:sum(Column#4)->Column#3
+HashAgg_21	1.00	root		funcs:sum(Column#5)->Column#4
 └─TableReader_22	1.00	root		data:HashAgg_23
-  └─HashAgg_23	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t.b)->Column#4
+  └─HashAgg_23	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t.b)->Column#5
     └─TableRangeScan_20	250.00	cop[tikv]	table:t	range:(0,1000], keep order:false, stats:pseudo
 select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t;
 sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end)
 110
 explain select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t;
 id	estRows	task	access object	operator info
-HashAgg_18	1.00	root		funcs:sum(Column#4)->Column#3
+HashAgg_18	1.00	root		funcs:sum(Column#5)->Column#4
 └─TableReader_19	1.00	root		data:HashAgg_20
-  └─HashAgg_20	1.00	cop[tikv]		funcs:sum(cast(planner__cascades__integration.t.b, decimal(12,1) BINARY))->Column#4
+  └─HashAgg_20	1.00	cop[tikv]		funcs:sum(cast(planner__cascades__integration.t.b, decimal(12,1) BINARY))->Column#5
     └─TableRangeScan_17	250.00	cop[tikv]	table:t	range:(0,1000], keep order:false, stats:pseudo
 select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t;
 sum(case when a <= 0 or a > 1000 then 0.0 else b end)
 110.0
 explain select count(case when a > 0 and a <= 1000 then b end) from t;
 id	estRows	task	access object	operator info
-HashAgg_15	1.00	root		funcs:count(Column#4)->Column#3
+HashAgg_15	1.00	root		funcs:count(Column#5)->Column#4
 └─TableReader_16	1.00	root		data:HashAgg_17
-  └─HashAgg_17	1.00	cop[tikv]		funcs:count(planner__cascades__integration.t.b)->Column#4
+  └─HashAgg_17	1.00	cop[tikv]		funcs:count(planner__cascades__integration.t.b)->Column#5
     └─TableRangeScan_14	250.00	cop[tikv]	table:t	range:(0,1000], keep order:false, stats:pseudo
 select count(case when a > 0 and a <= 1000 then b end) from t;
 count(case when a > 0 and a <= 1000 then b end)
 4
 explain select count(case when a <= 0 or a > 1000 then null else b end) from t;
 id	estRows	task	access object	operator info
-HashAgg_15	1.00	root		funcs:count(Column#4)->Column#3
+HashAgg_15	1.00	root		funcs:count(Column#5)->Column#4
 └─TableReader_16	1.00	root		data:HashAgg_17
-  └─HashAgg_17	1.00	cop[tikv]		funcs:count(planner__cascades__integration.t.b)->Column#4
+  └─HashAgg_17	1.00	cop[tikv]		funcs:count(planner__cascades__integration.t.b)->Column#5
     └─TableRangeScan_14	250.00	cop[tikv]	table:t	range:(0,1000], keep order:false, stats:pseudo
 select count(case when a <= 0 or a > 1000 then null else b end) from t;
 count(case when a <= 0 or a > 1000 then null else b end)
 4
 explain select count(distinct case when a > 0 and a <= 1000 then b end) from t;
 id	estRows	task	access object	operator info
-HashAgg_10	1.00	root		funcs:count(distinct planner__cascades__integration.t.b)->Column#3
+HashAgg_10	1.00	root		funcs:count(distinct planner__cascades__integration.t.b)->Column#4
 └─TableReader_11	250.00	root		data:TableRangeScan_12
   └─TableRangeScan_12	250.00	cop[tikv]	table:t	range:(0,1000], keep order:false, stats:pseudo
 select count(distinct case when a > 0 and a <= 1000 then b end) from t;
@@ -428,7 +428,7 @@ count(distinct case when a > 0 and a <= 1000 then b end)
 4
 explain select approx_count_distinct(case when a > 0 and a <= 1000 then b end) from t;
 id	estRows	task	access object	operator info
-HashAgg_10	1.00	root		funcs:approx_count_distinct(planner__cascades__integration.t.b)->Column#3
+HashAgg_10	1.00	root		funcs:approx_count_distinct(planner__cascades__integration.t.b)->Column#4
 └─TableReader_11	250.00	root		data:TableRangeScan_12
   └─TableRangeScan_12	250.00	cop[tikv]	table:t	range:(0,1000], keep order:false, stats:pseudo
 select approx_count_distinct(case when a > 0 and a <= 1000 then b end) from t;
@@ -436,8 +436,8 @@ approx_count_distinct(case when a > 0 and a <= 1000 then b end)
 4
 explain select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b;
 id	estRows	task	access object	operator info
-Projection_13	8000.00	root		Column#3->Column#11, Column#4->Column#12, Column#5->Column#13, planner__cascades__integration.t.b, Column#6->Column#15, Column#7->Column#16, Column#8->Column#17, Column#9->Column#18, Column#10->Column#19
-└─Projection_15	8000.00	root		if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, cast(planner__cascades__integration.t.b, decimal(15,4) BINARY)->Column#5, planner__cascades__integration.t.b, planner__cascades__integration.t.b->Column#6, planner__cascades__integration.t.b->Column#7, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column#9, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column#10, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3
+Projection_13	8000.00	root		Column#4->Column#12, Column#5->Column#13, Column#6->Column#14, planner__cascades__integration.t.b, Column#7->Column#16, Column#8->Column#17, Column#9->Column#18, Column#10->Column#19, Column#11->Column#20
+└─Projection_15	8000.00	root		if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#4, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#5, cast(planner__cascades__integration.t.b, decimal(15,4) BINARY)->Column#6, planner__cascades__integration.t.b, planner__cascades__integration.t.b->Column#7, planner__cascades__integration.t.b->Column#8, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 18446744073709551615)->Column#9, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column#10, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column#11, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#5, if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#4
   └─Sort_22	8000.00	root		planner__cascades__integration.t.b
     └─TableReader_19	8000.00	root		data:Selection_20
       └─Selection_20	8000.00	cop[tikv]		ge(cast(planner__cascades__integration.t.b, decimal(32,0) BINARY), 0), ge(if(isnull(planner__cascades__integration.t.b), 0, 1), 0)
@@ -451,8 +451,8 @@ count(b)	sum(b)	avg(b)	b	max(b)	min(b)	bit_and(b)	bit_or(b)	bit_xor(b)
 explain select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a;
 id	estRows	task	access object	operator info
 Sort_15	8000.00	root		planner__cascades__integration.t.a
-└─HashAgg_11	8000.00	root		group by:Column#9, planner__cascades__integration.t.a, funcs:group_concat(Column#6, Column#7 separator ",")->Column#3, funcs:min(planner__cascades__integration.t.b)->Column#4, funcs:avg(Column#8)->Column#5, funcs:firstrow(planner__cascades__integration.t.a)->planner__cascades__integration.t.a
-  └─Projection_12	10000.00	root		cast(planner__cascades__integration.t.a, var_string(20))->Column#6, cast(planner__cascades__integration.t.b, var_string(20))->Column#7, planner__cascades__integration.t.b, div(cast(planner__cascades__integration.t.a, decimal(10,0) BINARY), cast(planner__cascades__integration.t.b, decimal(10,0) BINARY))->Column#8, planner__cascades__integration.t.a, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#9, planner__cascades__integration.t.a
+└─HashAgg_11	8000.00	root		group by:Column#10, planner__cascades__integration.t.a, funcs:group_concat(Column#7, Column#8 separator ",")->Column#4, funcs:min(planner__cascades__integration.t.b)->Column#5, funcs:avg(Column#9)->Column#6, funcs:firstrow(planner__cascades__integration.t.a)->planner__cascades__integration.t.a
+  └─Projection_12	10000.00	root		cast(planner__cascades__integration.t.a, var_string(20))->Column#7, cast(planner__cascades__integration.t.b, var_string(20))->Column#8, planner__cascades__integration.t.b, div(cast(planner__cascades__integration.t.a, decimal(10,0) BINARY), cast(planner__cascades__integration.t.b, decimal(10,0) BINARY))->Column#9, planner__cascades__integration.t.a, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#10, planner__cascades__integration.t.a
     └─TableReader_13	10000.00	root		data:TableFullScan_14
       └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a;
@@ -463,9 +463,9 @@ group_concat(a, b)	min(b)	avg(a / b)	a
 444	44	0.09090909	4
 explain select approx_percentile(a, 50) from t order by b;
 id	estRows	task	access object	operator info
-Projection_8	1.00	root		Column#3->Column#4
+Projection_8	1.00	root		Column#4->Column#5
 └─Sort_14	1.00	root		planner__cascades__integration.t.b
-  └─HashAgg_11	1.00	root		funcs:approx_percentile(planner__cascades__integration.t.a, 50)->Column#3, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
+  └─HashAgg_11	1.00	root		funcs:approx_percentile(planner__cascades__integration.t.a, 50)->Column#4, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
     └─TableReader_12	10000.00	root		data:TableFullScan_13
       └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select approx_percentile(a, 50) from t order by b;
@@ -481,8 +481,8 @@ set session tidb_enable_cascades_planner = 1;
 set @@session.tidb_opt_distinct_agg_push_down = 1;
 explain select /*+ HASH_AGG() */ avg(distinct a) from t;
 id	estRows	task	access object	operator info
-HashAgg_16	1.00	root		funcs:avg(distinct Column#7)->Column#5
-└─Projection_17	8000.00	root		cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column#7
+HashAgg_16	1.00	root		funcs:avg(distinct Column#8)->Column#6
+└─Projection_17	8000.00	root		cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column#8
   └─TableReader_18	8000.00	root		data:HashAgg_19
     └─HashAgg_19	8000.00	cop[tikv]		group by:planner__cascades__integration.t.a, 
       └─TableFullScan_15	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -491,20 +491,20 @@ avg(distinct a)
 1.5000
 explain select /*+ HASH_AGG() */ a, count(distinct a) from t;
 id	estRows	task	access object	operator info
-Projection_8	1.00	root		planner__cascades__integration.t.a, Column#5
-└─HashAgg_12	1.00	root		funcs:count(distinct planner__cascades__integration.t.a)->Column#5, funcs:firstrow(Column#6)->planner__cascades__integration.t.a
+Projection_8	1.00	root		planner__cascades__integration.t.a, Column#6
+└─HashAgg_12	1.00	root		funcs:count(distinct planner__cascades__integration.t.a)->Column#6, funcs:firstrow(Column#7)->planner__cascades__integration.t.a
   └─TableReader_13	8000.00	root		data:HashAgg_14
-    └─HashAgg_14	8000.00	cop[tikv]		group by:planner__cascades__integration.t.a, funcs:firstrow(planner__cascades__integration.t.a)->Column#6
+    └─HashAgg_14	8000.00	cop[tikv]		group by:planner__cascades__integration.t.a, funcs:firstrow(planner__cascades__integration.t.a)->Column#7
       └─TableFullScan_11	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ HASH_AGG() */ a, count(distinct a) from t;
 a	count(distinct a)
 1	2
 explain select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;
 id	estRows	task	access object	operator info
-Projection_10	8000.00	root		Column#5, planner__cascades__integration.t.c, Column#5, Column#6, Column#7, Column#8, Column#9
-└─HashAgg_15	8000.00	root		group by:planner__cascades__integration.t.c, funcs:avg(Column#10, Column#11)->Column#5, funcs:count(distinct planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#6, funcs:count(distinct planner__cascades__integration.t.a)->Column#7, funcs:count(distinct planner__cascades__integration.t.c)->Column#8, funcs:sum(Column#12)->Column#9, funcs:firstrow(planner__cascades__integration.t.c)->planner__cascades__integration.t.c
+Projection_10	8000.00	root		Column#6, planner__cascades__integration.t.c, Column#6, Column#7, Column#8, Column#9, Column#10
+└─HashAgg_15	8000.00	root		group by:planner__cascades__integration.t.c, funcs:avg(Column#11, Column#12)->Column#6, funcs:count(distinct planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#7, funcs:count(distinct planner__cascades__integration.t.a)->Column#8, funcs:count(distinct planner__cascades__integration.t.c)->Column#9, funcs:sum(Column#13)->Column#10, funcs:firstrow(planner__cascades__integration.t.c)->planner__cascades__integration.t.c
   └─TableReader_16	8000.00	root		data:HashAgg_17
-    └─HashAgg_17	8000.00	cop[tikv]		group by:planner__cascades__integration.t.a, planner__cascades__integration.t.b, planner__cascades__integration.t.c, funcs:count(planner__cascades__integration.t.b)->Column#10, funcs:sum(planner__cascades__integration.t.b)->Column#11, funcs:sum(planner__cascades__integration.t.b)->Column#12
+    └─HashAgg_17	8000.00	cop[tikv]		group by:planner__cascades__integration.t.a, planner__cascades__integration.t.b, planner__cascades__integration.t.c, funcs:count(planner__cascades__integration.t.b)->Column#11, funcs:sum(planner__cascades__integration.t.b)->Column#12, funcs:sum(planner__cascades__integration.t.b)->Column#13
       └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;
 avg(b)	c	avg(b)	count(distinct A, B)	count(distinct A)	count(distinct c)	sum(b)
@@ -513,7 +513,7 @@ avg(b)	c	avg(b)	count(distinct A, B)	count(distinct A)	count(distinct c)	sum(b)
 2.0000	NULL	2.0000	1	1	0	2
 explain select /*+ STREAM_AGG() */ count(distinct c) from t group by c;
 id	estRows	task	access object	operator info
-HashAgg_17	8000.00	root		group by:planner__cascades__integration.t.c, funcs:count(distinct planner__cascades__integration.t.c)->Column#5
+HashAgg_17	8000.00	root		group by:planner__cascades__integration.t.c, funcs:count(distinct planner__cascades__integration.t.c)->Column#6
 └─IndexReader_18	8000.00	root		index:HashAgg_19
   └─HashAgg_19	8000.00	cop[tikv]		group by:planner__cascades__integration.t.c, 
     └─IndexFullScan_16	10000.00	cop[tikv]	table:t, index:c(c)	keep order:false, stats:pseudo
@@ -524,7 +524,7 @@ count(distinct c)
 1
 explain select /*+ STREAM_AGG() */ count(distinct c) from t;
 id	estRows	task	access object	operator info
-HashAgg_17	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#5
+HashAgg_17	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#6
 └─IndexReader_18	8000.00	root		index:HashAgg_19
   └─HashAgg_19	8000.00	cop[tikv]		group by:planner__cascades__integration.t.c, 
     └─IndexFullScan_16	10000.00	cop[tikv]	table:t, index:c(c)	keep order:false, stats:pseudo
@@ -533,7 +533,7 @@ count(distinct c)
 2
 explain select /*+ HASH_AGG() */ count(distinct c) from t;
 id	estRows	task	access object	operator info
-HashAgg_17	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#5
+HashAgg_17	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#6
 └─IndexReader_18	8000.00	root		index:HashAgg_19
   └─HashAgg_19	8000.00	cop[tikv]		group by:planner__cascades__integration.t.c, 
     └─IndexFullScan_16	10000.00	cop[tikv]	table:t, index:c(c)	keep order:false, stats:pseudo
@@ -542,7 +542,7 @@ count(distinct c)
 2
 explain select count(distinct c) from t group by c;
 id	estRows	task	access object	operator info
-HashAgg_17	8000.00	root		group by:planner__cascades__integration.t.c, funcs:count(distinct planner__cascades__integration.t.c)->Column#5
+HashAgg_17	8000.00	root		group by:planner__cascades__integration.t.c, funcs:count(distinct planner__cascades__integration.t.c)->Column#6
 └─IndexReader_18	8000.00	root		index:HashAgg_19
   └─HashAgg_19	8000.00	cop[tikv]		group by:planner__cascades__integration.t.c, 
     └─IndexFullScan_16	10000.00	cop[tikv]	table:t, index:c(c)	keep order:false, stats:pseudo
@@ -553,7 +553,7 @@ count(distinct c)
 1
 explain select count(distinct c) from t;
 id	estRows	task	access object	operator info
-HashAgg_17	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#5
+HashAgg_17	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#6
 └─IndexReader_18	8000.00	root		index:HashAgg_19
   └─HashAgg_19	8000.00	cop[tikv]		group by:planner__cascades__integration.t.c, 
     └─IndexFullScan_16	10000.00	cop[tikv]	table:t, index:c(c)	keep order:false, stats:pseudo
@@ -570,8 +570,8 @@ set session tidb_enable_cascades_planner = 1;
 set @@session.tidb_opt_distinct_agg_push_down = 0;
 explain select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;
 id	estRows	task	access object	operator info
-HashAgg_8	1.00	root		funcs:avg(distinct Column#6)->Column#5
-└─Projection_9	10000.00	root		cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column#6
+HashAgg_8	1.00	root		funcs:avg(distinct Column#7)->Column#6
+└─Projection_9	10000.00	root		cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column#7
   └─TableReader_10	10000.00	root		data:TableFullScan_11
     └─TableFullScan_11	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;
@@ -579,8 +579,8 @@ avg(distinct a)
 1.5000
 explain select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;
 id	estRows	task	access object	operator info
-Projection_6	1.00	root		planner__cascades__integration.t.a, Column#5
-└─HashAgg_7	1.00	root		funcs:count(distinct planner__cascades__integration.t.a)->Column#5, funcs:firstrow(planner__cascades__integration.t.a)->planner__cascades__integration.t.a
+Projection_6	1.00	root		planner__cascades__integration.t.a, Column#6
+└─HashAgg_7	1.00	root		funcs:count(distinct planner__cascades__integration.t.a)->Column#6, funcs:firstrow(planner__cascades__integration.t.a)->planner__cascades__integration.t.a
   └─TableReader_8	10000.00	root		data:TableFullScan_9
     └─TableFullScan_9	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;
@@ -588,9 +588,9 @@ a	count(distinct a)
 1	2
 explain select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;
 id	estRows	task	access object	operator info
-Projection_8	8000.00	root		Column#5, planner__cascades__integration.t.c, Column#5, Column#6, Column#7, Column#8, Column#9
-└─HashAgg_9	8000.00	root		group by:planner__cascades__integration.t.c, funcs:avg(Column#10)->Column#5, funcs:count(distinct planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#6, funcs:count(distinct planner__cascades__integration.t.a)->Column#7, funcs:count(distinct planner__cascades__integration.t.c)->Column#8, funcs:sum(Column#11)->Column#9, funcs:firstrow(planner__cascades__integration.t.c)->planner__cascades__integration.t.c
-  └─Projection_10	10000.00	root		cast(planner__cascades__integration.t.b, decimal(10,0) BINARY)->Column#10, planner__cascades__integration.t.a, planner__cascades__integration.t.b, planner__cascades__integration.t.a, planner__cascades__integration.t.c, cast(planner__cascades__integration.t.b, decimal(10,0) BINARY)->Column#11, planner__cascades__integration.t.c, planner__cascades__integration.t.c
+Projection_8	8000.00	root		Column#6, planner__cascades__integration.t.c, Column#6, Column#7, Column#8, Column#9, Column#10
+└─HashAgg_9	8000.00	root		group by:planner__cascades__integration.t.c, funcs:avg(Column#11)->Column#6, funcs:count(distinct planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#7, funcs:count(distinct planner__cascades__integration.t.a)->Column#8, funcs:count(distinct planner__cascades__integration.t.c)->Column#9, funcs:sum(Column#12)->Column#10, funcs:firstrow(planner__cascades__integration.t.c)->planner__cascades__integration.t.c
+  └─Projection_10	10000.00	root		cast(planner__cascades__integration.t.b, decimal(10,0) BINARY)->Column#11, planner__cascades__integration.t.a, planner__cascades__integration.t.b, planner__cascades__integration.t.a, planner__cascades__integration.t.c, cast(planner__cascades__integration.t.b, decimal(10,0) BINARY)->Column#12, planner__cascades__integration.t.c, planner__cascades__integration.t.c
     └─TableReader_11	10000.00	root		data:TableFullScan_12
       └─TableFullScan_12	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;
@@ -600,7 +600,7 @@ avg(b)	c	avg(b)	count(distinct A, B)	count(distinct A)	count(distinct c)	sum(b)
 2.0000	NULL	2.0000	1	1	0	2
 explain select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;
 id	estRows	task	access object	operator info
-HashAgg_8	8000.00	root		group by:planner__cascades__integration.t.c, funcs:count(distinct planner__cascades__integration.t.c)->Column#5
+HashAgg_8	8000.00	root		group by:planner__cascades__integration.t.c, funcs:count(distinct planner__cascades__integration.t.c)->Column#6
 └─IndexReader_11	10000.00	root		index:IndexFullScan_12
   └─IndexFullScan_12	10000.00	cop[tikv]	table:t, index:c(c)	keep order:false, stats:pseudo
 select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;
@@ -610,7 +610,7 @@ count(distinct c)
 1
 explain select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;
 id	estRows	task	access object	operator info
-HashAgg_8	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#5
+HashAgg_8	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#6
 └─IndexReader_11	10000.00	root		index:IndexFullScan_12
   └─IndexFullScan_12	10000.00	cop[tikv]	table:t, index:c(c)	keep order:false, stats:pseudo
 select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;
@@ -618,7 +618,7 @@ count(distinct c)
 2
 explain select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;
 id	estRows	task	access object	operator info
-HashAgg_8	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#5
+HashAgg_8	1.00	root		funcs:count(distinct planner__cascades__integration.t.c)->Column#6
 └─IndexReader_11	10000.00	root		index:IndexFullScan_12
   └─IndexFullScan_12	10000.00	cop[tikv]	table:t, index:c(c)	keep order:false, stats:pseudo
 select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;
@@ -626,7 +626,7 @@ count(distinct c)
 2
 explain select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;
 id	estRows	task	access object	operator info
-HashAgg_8	8000.00	root		group by:planner__cascades__integration.t.c, funcs:count(distinct planner__cascades__integration.t.c)->Column#5
+HashAgg_8	8000.00	root		group by:planner__cascades__integration.t.c, funcs:count(distinct planner__cascades__integration.t.c)->Column#6
 └─IndexReader_11	10000.00	root		index:IndexFullScan_12
   └─IndexFullScan_12	10000.00	cop[tikv]	table:t, index:c(c)	keep order:false, stats:pseudo
 select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;
@@ -679,12 +679,12 @@ a
 3
 explain select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa;
 id	estRows	task	access object	operator info
-Sort_23	20000.00	root		Column#5
+Sort_23	20000.00	root		Column#7
 └─Union_16	20000.00	root		
-  ├─Projection_17	10000.00	root		planner__cascades__integration.t.a->Column#5
+  ├─Projection_17	10000.00	root		planner__cascades__integration.t.a->Column#7
   │ └─TableReader_18	10000.00	root		data:TableFullScan_19
   │   └─TableFullScan_19	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection_20	10000.00	root		planner__cascades__integration.t.b->Column#5
+  └─Projection_20	10000.00	root		planner__cascades__integration.t.b->Column#7
     └─TableReader_21	10000.00	root		data:TableFullScan_22
       └─TableFullScan_22	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa;
@@ -699,7 +699,7 @@ aa
 44
 explain select a, b, lag(a,1) over (order by b) from t order by b;
 id	estRows	task	access object	operator info
-Window_10	10000.00	root		lag(planner__cascades__integration.t.a, 1)->Column#4 over(order by planner__cascades__integration.t.b)
+Window_10	10000.00	root		lag(planner__cascades__integration.t.a, 1)->Column#5 over(order by planner__cascades__integration.t.b)
 └─Sort_15	10000.00	root		planner__cascades__integration.t.b
   └─TableReader_13	10000.00	root		data:TableFullScan_14
     └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -711,9 +711,9 @@ a	b	lag(a,1) over (order by b)
 4	44	3
 explain select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10;
 id	estRows	task	access object	operator info
-Projection_22	10.00	root		plus(planner__cascades__integration.t.a, 1)->Column#3, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#4
-└─TopN_23	10.00	root		Column#5, offset:0, count:10
-  └─Projection_25	10.00	root		planner__cascades__integration.t.a, planner__cascades__integration.t.b, plus(plus(planner__cascades__integration.t.a, 1), plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b))->Column#5
+Projection_22	10.00	root		plus(planner__cascades__integration.t.a, 1)->Column#4, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#5
+└─TopN_23	10.00	root		Column#6, offset:0, count:10
+  └─Projection_25	10.00	root		planner__cascades__integration.t.a, planner__cascades__integration.t.b, plus(plus(planner__cascades__integration.t.a, 1), plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b))->Column#6
     └─TableReader_26	10.00	root		data:TopN_27
       └─TopN_27	10.00	cop[tikv]		plus(plus(planner__cascades__integration.t.a, 1), plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)), offset:0, count:10
         └─TableFullScan_28	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -836,7 +836,7 @@ insert into t2 values (1, 11), (2, 22), (3, 33);
 set session tidb_enable_cascades_planner = 1;
 explain select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1;
 id	estRows	task	access object	operator info
-Projection_19	10000.00	root		eq(planner__cascades__integration.t1.a, planner__cascades__integration.t2.a)->Column#7
+Projection_19	10000.00	root		eq(planner__cascades__integration.t1.a, planner__cascades__integration.t2.a)->Column#10
 └─Apply_21	10000.00	root		CARTESIAN left outer join
   ├─TableReader_22(Build)	10000.00	root		data:TableFullScan_23
   │ └─TableFullScan_23	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -855,12 +855,12 @@ a = (select a from t2 where t1.b = t2.b order by a limit 1)
 NULL
 explain select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2;
 id	estRows	task	access object	operator info
-Projection_32	1.00	root		Column#7, planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
+Projection_32	1.00	root		Column#10, planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
 └─Apply_34	1.00	root		CARTESIAN left outer join
   ├─Apply_36(Build)	1.00	root		CARTESIAN left outer join
-  │ ├─HashAgg_41(Build)	1.00	root		funcs:sum(Column#12)->Column#7, funcs:firstrow(Column#13)->planner__cascades__integration.t2.a, funcs:firstrow(Column#14)->planner__cascades__integration.t2.b
+  │ ├─HashAgg_41(Build)	1.00	root		funcs:sum(Column#17)->Column#10, funcs:firstrow(Column#18)->planner__cascades__integration.t2.a, funcs:firstrow(Column#19)->planner__cascades__integration.t2.b
   │ │ └─TableReader_42	1.00	root		data:HashAgg_43
-  │ │   └─HashAgg_43	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t2.a)->Column#12, funcs:firstrow(planner__cascades__integration.t2.a)->Column#13, funcs:firstrow(planner__cascades__integration.t2.b)->Column#14
+  │ │   └─HashAgg_43	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t2.a)->Column#17, funcs:firstrow(planner__cascades__integration.t2.a)->Column#18, funcs:firstrow(planner__cascades__integration.t2.b)->Column#19
   │ │     └─TableFullScan_40	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   │ └─MaxOneRow_44(Probe)	1.00	root		
   │   └─Limit_45	1.00	root		offset:0, count:1
