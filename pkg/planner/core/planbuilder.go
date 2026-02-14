@@ -4297,7 +4297,7 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 		// If columns in set list contains primary key columns on soft-delete tables, raise error.
 		// It's because if updating PK meets a conflict row, we need to delete the conflict row if that row is
 		// already soft-deleted. And this behavior is not implemented yet. So we forbid this kind of update now.
-		if tblInfo.SoftdeleteInfo != nil && mysql.HasPriKeyFlag(column.GetFlag()) {
+		if tblInfo.SoftdeleteInfo != nil && mysql.HasPriKeyFlag(column.GetFlag()) && p.SCtx().GetSessionVars().CDCWriteSource == 0 {
 			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("updating primary key column on soft-delete table")
 		}
 		// Check whether the column to be updated is the generated column.
