@@ -343,6 +343,10 @@ func TestPlanReplayerStmtRestore(t *testing.T) {
 			"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'test'"},
 		{"plan replayer dump with stats as of timestamp '12345' explain analyze 'test2'",
 			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP _UTF8MB4'12345' EXPLAIN ANALYZE 'test2'"},
+		{"plan replayer dump explain ('SELECT * FROM t1', 'SELECT * FROM t2')",
+			"PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')"},
+		{"plan replayer dump explain analyze ('SELECT * FROM t1')",
+			"PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1')"},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.PlanReplayerStmt)
