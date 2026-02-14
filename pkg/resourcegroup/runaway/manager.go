@@ -39,9 +39,8 @@ const (
 	ManualSource = "manual"
 
 	// MaxWaitDuration is the max duration to wait for acquiring token buckets.
-	MaxWaitDuration           = time.Second * 30
-	maxWatchListCap           = 10000
-	maxWatchRecordChannelSize = 1024
+	MaxWaitDuration = time.Second * 30
+	maxWatchListCap = 10000
 
 	runawayRecordFlushInterval   = 30 * time.Second
 	runawayRecordGCInterval      = time.Hour * 24
@@ -68,19 +67,15 @@ type Manager struct {
 	activeGroup sync.Map // map[string]*atomic.Int64
 	MetricsMap  generic.SyncMap[string, prometheus.Counter]
 
-	ResourceGroupCtl   *rmclient.ResourceGroupsController
-	serverID           string
-	runawayQueriesChan chan *Record
-	quarantineChan     chan *QuarantineRecord
-	// staleQuarantineRecord is used to clean outdated record. There are three scenarios:
-	// 1. Record is expired in watch list.
-	// 2. The record that will be added is itself out of date.
-	// 	  Like that tidb cluster is paused, and record is expired when restarting.
-	// 3. Duplicate added records.
-	// It replaces clean up loop.
-	staleQuarantineRecord chan *QuarantineRecord
-	evictionCancel        func()
-	insertionCancel       func()
+	ResourceGroupCtl *rmclient.ResourceGroupsController
+	serverID         string
+
+	runawayRecordFlusher    *batchFlusher[recordKey, *Record]
+	quarantineRecordFlusher *batchFlusher[string, *QuarantineRecord]
+	staleQuarantineFlusher  *batchFlusher[int64, *QuarantineRecord]
+
+	evictionCancel  func()
+	insertionCancel func()
 
 	// domain related fields
 	infoCache *infoschema.InfoCache
@@ -106,19 +101,61 @@ func NewRunawayManager(
 		ttlcache.WithDisableTouchOnHit[string, *QuarantineRecord](),
 	)
 	go watchList.Start()
+
+	runawayFlushInterval := runawayRecordFlushInterval
+	watchFlushInterval := watchRecordFlushInterval
+	failpoint.Inject("FastRunawayGC", func() {
+		runawayFlushInterval = time.Millisecond * 50
+		watchFlushInterval = time.Millisecond * 50
+	})
+
 	m := &Manager{
-		ResourceGroupCtl:      resourceGroupCtl,
-		watchList:             watchList,
-		serverID:              serverAddr,
-		runawayQueriesChan:    make(chan *Record, maxWatchRecordChannelSize),
-		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
-		staleQuarantineRecord: make(chan *QuarantineRecord, maxWatchRecordChannelSize),
-		MetricsMap:            generic.NewSyncMap[string, prometheus.Counter](8),
-		sysSessionPool:        pool,
-		exit:                  exit,
-		infoCache:             infoCache,
-		ddl:                   ddl,
+		ResourceGroupCtl: resourceGroupCtl,
+		watchList:        watchList,
+		serverID:         serverAddr,
+		MetricsMap:       generic.NewSyncMap[string, prometheus.Counter](8),
+		sysSessionPool:   pool,
+		exit:             exit,
+		infoCache:        infoCache,
+		ddl:              ddl,
 	}
+
+	m.runawayRecordFlusher = newBatchFlusher(
+		"runaway-record",
+		runawayFlushInterval,
+		func(buf map[recordKey]*Record, k recordKey, v *Record) {
+			if existing, ok := buf[k]; ok {
+				existing.Repeats++
+			} else {
+				buf[k] = v
+			}
+		},
+		genRunawayQueriesStmt,
+		pool,
+	)
+
+	m.quarantineRecordFlusher = newBatchFlusher(
+		"quarantine-record",
+		watchFlushInterval,
+		func(buf map[string]*QuarantineRecord, k string, v *QuarantineRecord) {
+			if _, ok := buf[k]; !ok {
+				buf[k] = v
+			}
+		},
+		genBatchInsertWatchStmt,
+		pool,
+	)
+
+	m.staleQuarantineFlusher = newBatchFlusher(
+		"stale-quarantine-record",
+		watchFlushInterval,
+		func(buf map[int64]*QuarantineRecord, k int64, v *QuarantineRecord) {
+			buf[k] = v
+		},
+		genBatchDeleteWatchByIDStmt,
+		pool,
+	)
+
 	m.insertionCancel = watchList.OnInsertion(func(_ context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
 		name := i.Value().ResourceGroupName
 		counter, _ := m.loadOrStoreActiveCounter(name)
@@ -131,7 +168,7 @@ func NewRunawayManager(
 		if i.Value().ID == 0 {
 			return
 		}
-		m.staleQuarantineRecord <- i.Value()
+		m.staleQuarantineFlusher.add(i.Value().ID, i.Value())
 	})
 	m.runawaySyncer = newSyncer(pool, infoCache)
 
@@ -142,91 +179,26 @@ func NewRunawayManager(
 func (rm *Manager) RunawayRecordFlushLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
 
-	runawayFlushInterval := runawayRecordFlushInterval
-	watchFlushInterval := watchRecordFlushInterval
+	go rm.runawayRecordFlusher.run()
+	go rm.quarantineRecordFlusher.run()
+	go rm.staleQuarantineFlusher.run()
+
 	gcInterval := runawayRecordGCInterval
-	batchSize := flushThreshold()
 	failpoint.Inject("FastRunawayGC", func() {
-		runawayFlushInterval = time.Millisecond * 50
-		watchFlushInterval = time.Millisecond * 50
 		gcInterval = time.Millisecond * 200
 	})
-
-	runawayRecordFlusher := newBatchFlusher(
-		"runaway-record",
-		runawayFlushInterval,
-		batchSize,
-		func(m map[recordKey]*Record, k recordKey, v *Record) {
-			if existing, ok := m[k]; ok {
-				existing.Repeats++
-			} else {
-				m[k] = v
-			}
-		},
-		genRunawayQueriesStmt,
-		rm.sysSessionPool,
-	)
-
-	quarantineRecordFlusher := newBatchFlusher(
-		"quarantine-record",
-		watchFlushInterval,
-		batchSize,
-		func(m map[string]*QuarantineRecord, k string, v *QuarantineRecord) {
-			if _, ok := m[k]; !ok {
-				m[k] = v
-			}
-		},
-		genBatchInsertWatchStmt,
-		rm.sysSessionPool,
-	)
-
-	staleQuarantineFlusher := newBatchFlusher(
-		"stale-quarantine-record",
-		watchFlushInterval,
-		batchSize,
-		func(m map[int64]*QuarantineRecord, k int64, v *QuarantineRecord) {
-			m[k] = v
-		},
-		genBatchDeleteWatchByIDStmt,
-		rm.sysSessionPool,
-	)
-
 	runawayRecordGCTicker := time.NewTicker(gcInterval)
-	recordCh := rm.runawayRecordChan()
-	quarantineRecordCh := rm.quarantineRecordChan()
-	staleQuarantineRecordCh := rm.staleQuarantineRecordChan()
 
 	for {
 		select {
 		case <-rm.exit:
-			runawayRecordFlusher.stop()
-			quarantineRecordFlusher.stop()
-			staleQuarantineFlusher.stop()
+			rm.runawayRecordFlusher.stop()
+			rm.quarantineRecordFlusher.stop()
+			rm.staleQuarantineFlusher.stop()
 			logutil.BgLogger().Info("runaway record flush loop exit")
 			return
-		case <-runawayRecordFlusher.tickerCh(): // flush runaway records periodically
-			runawayRecordFlusher.flush()
-		case r := <-recordCh: // add runaway records to the flusher
-			key := recordKey{
-				ResourceGroupName: r.ResourceGroupName,
-				SQLDigest:         r.SQLDigest,
-				PlanDigest:        r.PlanDigest,
-				Match:             r.Match,
-			}
-			runawayRecordFlusher.add(key, r)
-		case <-runawayRecordGCTicker.C: // delete expired runaway records periodically
+		case <-runawayRecordGCTicker.C:
 			go rm.deleteExpiredRows(runawayRecordExpiredDuration)
-		case <-quarantineRecordFlusher.tickerCh(): // flush quarantine records periodically
-			quarantineRecordFlusher.flush()
-		case r := <-quarantineRecordCh: // add quarantine records to the flusher
-			quarantineRecordFlusher.add(r.getRecordKey(), r)
-		case <-staleQuarantineFlusher.tickerCh(): // flush stale quarantine records periodically
-			staleQuarantineFlusher.flush()
-		case r := <-staleQuarantineRecordCh: // add stale quarantine records to the flusher
-			if r.ID == 0 {
-				continue
-			}
-			staleQuarantineFlusher.add(r.ID, r)
 		}
 	}
 }
@@ -271,11 +243,7 @@ func (rm *Manager) markQuarantine(
 	}
 	// Add record without ID into watch list in this TiDB right now.
 	rm.addWatchList(record, ttl, false)
-	select {
-	case rm.quarantineChan <- record:
-	default:
-		// TODO: add warning for discard flush records
-	}
+	rm.quarantineRecordFlusher.add(record.getRecordKey(), record)
 }
 
 func (rm *Manager) addWatchList(record *QuarantineRecord, ttl time.Duration, force bool) {
@@ -300,7 +268,7 @@ func (rm *Manager) addWatchList(record *QuarantineRecord, ttl time.Duration, for
 			if rm.watchList.Get(key) == nil {
 				rm.watchList.Set(key, record, ttl)
 			} else {
-				rm.staleQuarantineRecord <- record
+				rm.staleQuarantineFlusher.add(record.ID, record)
 			}
 			rm.queryLock.Unlock()
 		} else if item.ID == 0 {
@@ -310,7 +278,7 @@ func (rm *Manager) addWatchList(record *QuarantineRecord, ttl time.Duration, for
 			rm.watchList.Set(key, record, ttl)
 		} else if item.ID != record.ID {
 			// check the ID because of the earlier scan.
-			rm.staleQuarantineRecord <- record
+			rm.staleQuarantineFlusher.add(record.ID, record)
 		}
 	}
 }
@@ -334,9 +302,7 @@ func (rm *Manager) getWatchFromWatchList(key string) *QuarantineRecord {
 }
 
 func (rm *Manager) markRunaway(checker *Checker, action, matchType string, now *time.Time, exceedCause string) {
-	source := rm.serverID
-	select {
-	case rm.runawayQueriesChan <- &Record{
+	r := &Record{
 		ResourceGroupName: checker.resourceGroupName,
 		StartTime:         *now,
 		Match:             matchType,
@@ -344,29 +310,17 @@ func (rm *Manager) markRunaway(checker *Checker, action, matchType string, now *
 		SampleText:        checker.originalSQL,
 		SQLDigest:         checker.sqlDigest,
 		PlanDigest:        checker.planDigest,
-		Source:            source,
+		Source:            rm.serverID,
 		ExceedCause:       exceedCause,
-		// default value for Repeats
-		Repeats: 1,
-	}:
-	default:
-		// TODO: add warning for discard flush records
+		Repeats:           1,
 	}
-}
-
-// runawayRecordChan returns the channel of Record
-func (rm *Manager) runawayRecordChan() <-chan *Record {
-	return rm.runawayQueriesChan
-}
-
-// quarantineRecordChan returns the channel of QuarantineRecord
-func (rm *Manager) quarantineRecordChan() <-chan *QuarantineRecord {
-	return rm.quarantineChan
-}
-
-// staleQuarantineRecordChan returns the channel of staleQuarantineRecord
-func (rm *Manager) staleQuarantineRecordChan() <-chan *QuarantineRecord {
-	return rm.staleQuarantineRecord
+	key := recordKey{
+		ResourceGroupName: r.ResourceGroupName,
+		SQLDigest:         r.SQLDigest,
+		PlanDigest:        r.PlanDigest,
+		Match:             r.Match,
+	}
+	rm.runawayRecordFlusher.add(key, r)
 }
 
 // examineWatchList check whether the query is in watch list.
@@ -450,7 +404,7 @@ func (rm *Manager) AddWatch(record *QuarantineRecord) {
 	if record.EndTime.Equal(NullTime) {
 		ttl = 0
 	} else if ttl <= 0 {
-		rm.staleQuarantineRecord <- record
+		rm.staleQuarantineFlusher.add(record.ID, record)
 		return
 	}
 
@@ -472,9 +426,4 @@ func (rm *Manager) removeWatch(record *QuarantineRecord) {
 	if item.ID == record.ID {
 		rm.watchList.Delete(record.getRecordKey())
 	}
-}
-
-// FlushThreshold specifies the threshold for the number of records in trigger flush
-func flushThreshold() int {
-	return maxWatchRecordChannelSize / 2
 }
