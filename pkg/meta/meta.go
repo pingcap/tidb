@@ -1131,7 +1131,7 @@ var checkAttributesInOrder = []MustLoadFilterAttr{
 // Otherwise, it will return true, indicating that the table info should be loaded.
 // Since attributes are checked in sequence, it's important to choose the order carefully.
 // isCheckForeignKeyAttrsInOrder check foreign key or not, since fk_info contains two null situations.
-func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filterAttrs []MustLoadFilterAttr) bool {
+func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filterAttrs ...MustLoadFilterAttr) bool {
 	idx := 0
 	if isCheckForeignKeyAttrsInOrder {
 		idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesNil))
@@ -1224,7 +1224,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.
 // The filterAttrs are used to filter out any table that is not needed.
-func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs []MustLoadFilterAttr) ([]*model.TableInfo, error) {
+func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...MustLoadFilterAttr) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
