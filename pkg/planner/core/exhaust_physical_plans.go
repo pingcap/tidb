@@ -826,9 +826,9 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 // Current limitation:
 // This check currently relies on UniqueID matching between:
 // 1) columns extracted from GroupByItems, and
-// 2) inner join keys from the DataSource side.
-// It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
-// columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+1).
+// 2) columns from DataSource that are used as inner join keys.
+// It works for simple plans, but it is conservative for GROUP BY expressions or
+// columns introduced/re-mapped by intermediate operators (for example, PROJECTION may generate new columns that used by the group by).
 // In those cases, semantically equivalent keys may carry different UniqueIDs, so we may
 // reject some valid index join plans (false negatives) to keep correctness.
 // TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
