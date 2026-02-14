@@ -836,6 +836,7 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinRuntimeProp) bool {
 	// Make sure join key set is subset of group by items.
 	// Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
+	// TODO: use FunctionDependency to check the equivalence between join keys and group by items
 	groupByCols := expression.ExtractColumnsMapFromExpressions(nil, la.GroupByItems...)
 
 	var dataSourceSchema *expression.Schema
