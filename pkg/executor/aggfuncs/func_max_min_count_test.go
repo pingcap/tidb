@@ -306,3 +306,49 @@ func TestMaxMinCountSQL(t *testing.T) {
 	tk.MustContainErrMsg("select max_count(distinct a) from t", "You have an error in your SQL syntax")
 	tk.MustContainErrMsg("select min_count(distinct a) from t", "You have an error in your SQL syntax")
 }
+
+func TestMaxMinCountSlidingWindow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, a int)")
+	tk.MustExec("insert into t values (1,1),(2,1),(3,2),(4,2),(5,null),(6,2),(7,1)")
+
+	tk.MustQuery(`
+		select
+			id,
+			max_count(a) over (order by id rows between 1 preceding and current row),
+			min_count(a) over (order by id rows between 1 preceding and current row)
+		from t
+		order by id;
+	`).Check(testkit.Rows(
+		"1 1 1",
+		"2 2 2",
+		"3 1 1",
+		"4 2 2",
+		"5 1 1",
+		"6 1 1",
+		"7 1 1",
+	))
+}
+
+func TestBuildWindowMaxMinCountUsesSliding(t *testing.T) {
+	ctx := mock.NewContext()
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	args := []expression.Expression{&expression.Column{RetType: ft, Index: 0}}
+	orderByCols := []*expression.Column{{RetType: ft, Index: 0}}
+
+	maxDesc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMaxCount, args, false)
+	require.NoError(t, err)
+	minDesc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMinCount, args, false)
+	require.NoError(t, err)
+
+	maxFunc := aggfuncs.BuildWindowFunctions(ctx, maxDesc, 0, orderByCols)
+	minFunc := aggfuncs.BuildWindowFunctions(ctx, minDesc, 0, orderByCols)
+	require.NotNil(t, maxFunc)
+	require.NotNil(t, minFunc)
+	_, ok := maxFunc.(aggfuncs.MaxMinSlidingWindowAggFunc)
+	require.True(t, ok)
+	_, ok = minFunc.(aggfuncs.MaxMinSlidingWindowAggFunc)
+	require.True(t, ok)
+}

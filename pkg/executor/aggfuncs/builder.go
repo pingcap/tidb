@@ -110,6 +110,10 @@ func BuildWindowFunctions(ctx AggFuncBuildContext, windowFuncDesc *aggregation.A
 		return buildMaxMinInWindowFunction(ctx, windowFuncDesc, ordinal, true)
 	case ast.AggFuncMin:
 		return buildMaxMinInWindowFunction(ctx, windowFuncDesc, ordinal, false)
+	case ast.AggFuncMaxCount:
+		return buildMaxMinCountInWindowFunction(ctx.GetEvalCtx(), windowFuncDesc, ordinal, true)
+	case ast.AggFuncMinCount:
+		return buildMaxMinCountInWindowFunction(ctx.GetEvalCtx(), windowFuncDesc, ordinal, false)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}

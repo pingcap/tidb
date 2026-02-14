@@ -42,11 +42,20 @@ func (*maxMinCountFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datu
 
 // GetPartialResult implements Aggregation interface.
 func (mmcf *maxMinCountFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{mmcf.GetResult(evalCtx)}
+	return []types.Datum{mmcf.GetResult(evalCtx), evalCtx.Value}
 }
 
 // Update implements Aggregation interface.
 func (mmcf *maxMinCountFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
+	if len(mmcf.Args) > 1 {
+		// In two-phase execution, final/partial2 phase receives two columns:
+		// count and extrema value from partial phase.
+		return mmcf.updatePartialResult(evalCtx, sc, row)
+	}
+	return mmcf.updateRawValue(evalCtx, sc, row)
+}
+
+func (mmcf *maxMinCountFunction) updateRawValue(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	value, err := mmcf.Args[0].Eval(evalCtx.Ctx, row)
 	if err != nil {
 		return err
@@ -54,10 +63,31 @@ func (mmcf *maxMinCountFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx
 	if value.IsNull() {
 		return nil
 	}
+	return mmcf.mergeValue(evalCtx, sc, value, 1)
+}
 
+func (mmcf *maxMinCountFunction) updatePartialResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
+	cnt, isNull, err := mmcf.Args[0].EvalInt(evalCtx.Ctx, row)
+	if err != nil {
+		return err
+	}
+	if isNull || cnt == 0 {
+		return nil
+	}
+	value, err := mmcf.Args[1].Eval(evalCtx.Ctx, row)
+	if err != nil {
+		return err
+	}
+	if value.IsNull() {
+		return nil
+	}
+	return mmcf.mergeValue(evalCtx, sc, value, cnt)
+}
+
+func (mmcf *maxMinCountFunction) mergeValue(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, value types.Datum, count int64) error {
 	if evalCtx.Value.IsNull() {
 		value.Copy(&evalCtx.Value)
-		evalCtx.Count = 1
+		evalCtx.Count = count
 		return nil
 	}
 
@@ -67,11 +97,11 @@ func (mmcf *maxMinCountFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx
 	}
 	if (mmcf.isMax && cmp == -1) || (!mmcf.isMax && cmp == 1) {
 		value.Copy(&evalCtx.Value)
-		evalCtx.Count = 1
+		evalCtx.Count = count
 		return nil
 	}
 	if cmp == 0 {
-		evalCtx.Count++
+		evalCtx.Count += count
 	}
 	return nil
 }

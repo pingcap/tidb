@@ -268,9 +268,17 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation
 	case ast.AggFuncMin:
 		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
 	case ast.AggFuncMaxCount:
-		return &maxMinCountFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
+		cmpArgIdx := 0
+		if (a.Mode == FinalMode || a.Mode == Partial2Mode) && len(a.Args) > 1 {
+			cmpArgIdx = 1
+		}
+		return &maxMinCountFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[cmpArgIdx].GetType(ctx.GetEvalCtx()).GetCollate())}
 	case ast.AggFuncMinCount:
-		return &maxMinCountFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
+		cmpArgIdx := 0
+		if (a.Mode == FinalMode || a.Mode == Partial2Mode) && len(a.Args) > 1 {
+			cmpArgIdx = 1
+		}
+		return &maxMinCountFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[cmpArgIdx].GetType(ctx.GetEvalCtx()).GetCollate())}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitOr:

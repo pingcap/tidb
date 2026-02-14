@@ -126,6 +126,364 @@ func buildMaxMinCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFu
 	return nil
 }
 
+const (
+	DefPartialResult4MaxMinCountSlidingSize = int64(unsafe.Sizeof(partialResult4MaxMinCountSliding{}))
+	DefMaxMinCountDequeSize                 = int64(unsafe.Sizeof(minMaxCountDeque{}))
+)
+
+type maxMinCountDequeItem struct {
+	item any
+	idxs []uint64
+}
+
+type minMaxCountDeque struct {
+	items   []maxMinCountDequeItem
+	isMax   bool
+	cmpFunc func(i, j any) int
+}
+
+func newMinMaxCountDeque(isMax bool, cmpFunc func(i, j any) int) *minMaxCountDeque {
+	return &minMaxCountDeque{
+		items:   make([]maxMinCountDequeItem, 0, 64),
+		isMax:   isMax,
+		cmpFunc: cmpFunc,
+	}
+}
+
+func (d *minMaxCountDeque) reset() {
+	d.items = d.items[:0]
+}
+
+func (d *minMaxCountDeque) isEmpty() bool {
+	return len(d.items) == 0
+}
+
+func (d *minMaxCountDeque) enqueue(idx uint64, item any) {
+	for !d.isEmpty() {
+		backIdx := len(d.items) - 1
+		cmp := d.cmpFunc(item, d.items[backIdx].item)
+		if (d.isMax && cmp > 0) || (!d.isMax && cmp < 0) {
+			d.items = d.items[:backIdx]
+			continue
+		}
+		if cmp == 0 {
+			d.items[backIdx].idxs = append(d.items[backIdx].idxs, idx)
+			return
+		}
+		break
+	}
+	d.items = append(d.items, maxMinCountDequeItem{
+		item: item,
+		idxs: []uint64{idx},
+	})
+}
+
+func (d *minMaxCountDeque) dequeue(boundary uint64) {
+	for !d.isEmpty() {
+		front := &d.items[0]
+		firstAlive := 0
+		for firstAlive < len(front.idxs) && front.idxs[firstAlive] <= boundary {
+			firstAlive++
+		}
+		if firstAlive == 0 {
+			return
+		}
+		front.idxs = front.idxs[firstAlive:]
+		if len(front.idxs) > 0 {
+			return
+		}
+		d.items = d.items[1:]
+	}
+}
+
+func (d *minMaxCountDeque) frontCount() int {
+	if d.isEmpty() {
+		return 0
+	}
+	return len(d.items[0].idxs)
+}
+
+type partialResult4MaxMinCountSliding struct {
+	deque  *minMaxCountDeque
+	count  int64
+	isNull bool
+}
+
+type maxMinCount4Sliding struct {
+	baseMaxMinCountAggFunc
+	eval  func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error)
+	cmp   func(i, j any) int
+	clone func(v any) any
+	windowInfo
+}
+
+func (*maxMinCount4Sliding) AllocPartialResult() (PartialResult, int64) {
+	p := &partialResult4MaxMinCountSliding{isNull: true}
+	return PartialResult(p), DefPartialResult4MaxMinCountSlidingSize + DefMaxMinCountDequeSize
+}
+
+func (e *maxMinCount4Sliding) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4MaxMinCountSliding)(pr)
+	p.count = 0
+	p.isNull = true
+	if p.deque != nil {
+		p.deque.reset()
+		return
+	}
+	p.deque = newMinMaxCountDeque(e.isMax, e.cmp)
+}
+
+func (e *maxMinCount4Sliding) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4MaxMinCountSliding)(pr)
+	e.appendFinalResult(p.isNull, p.count, chk)
+	return nil
+}
+
+func (e *maxMinCount4Sliding) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+	p := (*partialResult4MaxMinCountSliding)(pr)
+	if p.deque == nil {
+		p.deque = newMinMaxCountDeque(e.isMax, e.cmp)
+	}
+	for i, row := range rowsInGroup {
+		item, isNull, err := e.eval(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if isNull {
+			continue
+		}
+		p.deque.enqueue(uint64(i)+e.start, e.clone(item))
+	}
+	e.refreshCount(p)
+	return 0, nil
+}
+
+func (e *maxMinCount4Sliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4MaxMinCountSliding)(pr)
+	if p.deque == nil {
+		p.deque = newMinMaxCountDeque(e.isMax, e.cmp)
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		item, isNull, err := e.eval(sctx, getRow(lastEnd+i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		p.deque.enqueue(lastEnd+i, e.clone(item))
+	}
+	if lastStart+shiftStart >= 1 {
+		p.deque.dequeue(lastStart + shiftStart - 1)
+	}
+	e.refreshCount(p)
+	return nil
+}
+
+func (e *maxMinCount4Sliding) refreshCount(p *partialResult4MaxMinCountSliding) {
+	if p.deque == nil || p.deque.isEmpty() {
+		p.isNull = true
+		p.count = 0
+		return
+	}
+	p.isNull = false
+	p.count = int64(p.deque.frontCount())
+}
+
+func buildMaxMinCountInWindowFunction(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	base := buildMaxMinCount(ctx, aggFuncDesc, ordinal, isMax)
+	if base == nil {
+		return nil
+	}
+
+	build := func(baseFunc baseMaxMinCountAggFunc, eval func(AggFuncUpdateContext, chunk.Row) (any, bool, error), cmp func(i, j any) int, clone func(any) any) AggFunc {
+		return &maxMinCount4Sliding{
+			baseMaxMinCountAggFunc: baseFunc,
+			eval:                   eval,
+			cmp:                    cmp,
+			clone:                  clone,
+			windowInfo:             windowInfo{},
+		}
+	}
+
+	switch b := base.(type) {
+	case *maxMinCount4Int:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalInt(sctx, row)
+				return v, isNull, err
+			},
+			func(i, j any) int {
+				lhs, rhs := i.(int64), j.(int64)
+				if lhs > rhs {
+					return 1
+				}
+				if lhs < rhs {
+					return -1
+				}
+				return 0
+			},
+			func(v any) any { return v },
+		)
+	case *maxMinCount4Uint:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalInt(sctx, row)
+				return uint64(v), isNull, err
+			},
+			func(i, j any) int {
+				lhs, rhs := i.(uint64), j.(uint64)
+				if lhs > rhs {
+					return 1
+				}
+				if lhs < rhs {
+					return -1
+				}
+				return 0
+			},
+			func(v any) any { return v },
+		)
+	case *maxMinCount4Float32:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalReal(sctx, row)
+				return float32(v), isNull, err
+			},
+			func(i, j any) int {
+				lhs, rhs := i.(float32), j.(float32)
+				if lhs > rhs {
+					return 1
+				}
+				if lhs < rhs {
+					return -1
+				}
+				return 0
+			},
+			func(v any) any { return v },
+		)
+	case *maxMinCount4Float64:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalReal(sctx, row)
+				return v, isNull, err
+			},
+			func(i, j any) int {
+				lhs, rhs := i.(float64), j.(float64)
+				if lhs > rhs {
+					return 1
+				}
+				if lhs < rhs {
+					return -1
+				}
+				return 0
+			},
+			func(v any) any { return v },
+		)
+	case *maxMinCount4Decimal:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalDecimal(sctx, row)
+				if isNull || err != nil {
+					return types.MyDecimal{}, isNull, err
+				}
+				return *v, false, nil
+			},
+			func(i, j any) int {
+				lhs, rhs := i.(types.MyDecimal), j.(types.MyDecimal)
+				return lhs.Compare(&rhs)
+			},
+			func(v any) any { return v },
+		)
+	case *maxMinCount4String:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalString(sctx, row)
+				return v, isNull, err
+			},
+			func(i, j any) int {
+				return types.CompareString(i.(string), j.(string), b.collate)
+			},
+			func(v any) any { return stringutil.Copy(v.(string)) },
+		)
+	case *maxMinCount4Time:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalTime(sctx, row)
+				return v, isNull, err
+			},
+			func(i, j any) int {
+				return i.(types.Time).Compare(j.(types.Time))
+			},
+			func(v any) any { return v },
+		)
+	case *maxMinCount4Duration:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalDuration(sctx, row)
+				return v, isNull, err
+			},
+			func(i, j any) int {
+				return i.(types.Duration).Compare(j.(types.Duration))
+			},
+			func(v any) any { return v },
+		)
+	case *maxMinCount4JSON:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalJSON(sctx, row)
+				return v, isNull, err
+			},
+			func(i, j any) int {
+				return types.CompareBinaryJSON(i.(types.BinaryJSON), j.(types.BinaryJSON))
+			},
+			func(v any) any { return v.(types.BinaryJSON).Copy() },
+		)
+	case *maxMinCount4VectorFloat32:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				v, isNull, err := b.args[0].EvalVectorFloat32(sctx, row)
+				return v, isNull, err
+			},
+			func(i, j any) int {
+				return i.(types.VectorFloat32).Compare(j.(types.VectorFloat32))
+			},
+			func(v any) any { return v.(types.VectorFloat32).Clone() },
+		)
+	case *maxMinCount4Enum:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				d, err := b.args[0].Eval(sctx, row)
+				if err != nil || d.IsNull() {
+					return types.Enum{}, d.IsNull(), err
+				}
+				return d.GetMysqlEnum(), false, nil
+			},
+			func(i, j any) int {
+				return b.collator.Compare(i.(types.Enum).Name, j.(types.Enum).Name)
+			},
+			func(v any) any { return v.(types.Enum).Copy() },
+		)
+	case *maxMinCount4Set:
+		return build(b.baseMaxMinCountAggFunc,
+			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
+				d, err := b.args[0].Eval(sctx, row)
+				if err != nil || d.IsNull() {
+					return types.Set{}, d.IsNull(), err
+				}
+				return d.GetMysqlSet(), false, nil
+			},
+			func(i, j any) int {
+				return b.collator.Compare(i.(types.Set).Name, j.(types.Set).Name)
+			},
+			func(v any) any { return v.(types.Set).Copy() },
+		)
+	}
+	return base
+}
+
+var _ SlidingWindowAggFunc = &maxMinCount4Sliding{}
+var _ MaxMinSlidingWindowAggFunc = &maxMinCount4Sliding{}
+
 type partialResult4MaxMinCount struct {
 	val    types.Datum
 	count  int64

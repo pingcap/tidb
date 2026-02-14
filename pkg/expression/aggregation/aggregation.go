@@ -207,13 +207,15 @@ func (af *aggFunction) updateSum(ctx types.Context, evalCtx *AggEvaluateContext,
 
 // NeedCount indicates whether the aggregate function should record count.
 func NeedCount(name string) bool {
-	return name == ast.AggFuncCount || name == ast.AggFuncAvg
+	return name == ast.AggFuncCount || name == ast.AggFuncAvg ||
+		name == ast.AggFuncMaxCount || name == ast.AggFuncMinCount
 }
 
 // NeedValue indicates whether the aggregate function should record value.
 func NeedValue(name string) bool {
 	switch name {
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
+		ast.AggFuncMaxCount, ast.AggFuncMinCount,
 		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor, ast.AggFuncApproxPercentile:
 		return true
 	default:

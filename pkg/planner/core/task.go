@@ -1444,9 +1444,15 @@ func BuildFinalModeAggregation(
 				partialCursor++
 			}
 			if aggregation.NeedValue(finalAggFunc.Name) {
+				valueRetType := original.Schema.Columns[i].GetType(ectx)
+				if finalAggFunc.Name == ast.AggFuncMaxCount || finalAggFunc.Name == ast.AggFuncMinCount {
+					// max_count/min_count partial result contains [count, extrema value].
+					// The value column should keep the original argument type for final-phase comparison.
+					valueRetType = aggFunc.Args[0].GetType(ectx).Clone()
+				}
 				partial.Schema.Append(&expression.Column{
 					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  original.Schema.Columns[i].GetType(ectx),
+					RetType:  valueRetType,
 				})
 				args = append(args, partial.Schema.Columns[partialCursor])
 				partialCursor++
