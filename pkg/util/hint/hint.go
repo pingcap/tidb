@@ -119,6 +119,8 @@ const (
 	HintSemiJoinRewrite = "semi_join_rewrite"
 	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
 	HintNoDecorrelate = "no_decorrelate"
+	// HintIndexOnlyJoin is a hint to use index-only join combining two indexes.
+	HintIndexOnlyJoin = "index_only_join"
 
 	// HintMemoryQuota sets the memory limit for a query
 	HintMemoryQuota = "memory_quota"
@@ -563,6 +565,7 @@ type PlanHints struct {
 	HJBuild               []HintedTable    // hash_join_build
 	HJProbe               []HintedTable    // hash_join_probe
 	NoIndexLookUpPushDown []HintedTable    // no_index_lookup_pushdown
+	IndexOnlyJoinHintList []HintedIndex    // index_only_join
 
 	// Hints belows are not associated with any particular table.
 	PreferAggType     uint // hash_agg, merge_agg, agg_to_cop and so on
@@ -774,7 +777,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []HintedTable
 		noHashJoinTables, noMergeJoinTables, noIndexLookUpPushDownTables                []HintedTable
 		shuffleJoinTables                                                               []HintedTable
-		indexHintList, indexMergeHintList                                               []HintedIndex
+		indexHintList, indexMergeHintList, indexOnlyJoinHintList                        []HintedIndex
 		tiflashTables, tikvTables                                                       []HintedTable
 		preferAggType                                                                   uint
 		preferAggToCop                                                                  bool
@@ -792,7 +795,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintLeading,
+			HintIndexOnlyJoin:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -921,6 +925,21 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					HintScope:  ast.HintForScan,
 				},
 			})
+		case HintIndexOnlyJoin:
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = ast.NewCIStr(currentDB)
+			}
+			indexOnlyJoinHintList = append(indexOnlyJoinHintList, HintedIndex{
+				DBName:     dbName,
+				TblName:    hint.Tables[0].TableName,
+				Partitions: hint.Tables[0].PartitionList,
+				IndexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   ast.HintUse,
+					HintScope:  ast.HintForScan,
+				},
+			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		case HintLimitToCop:
@@ -992,6 +1011,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		HJBuild:               hjBuildTables,
 		HJProbe:               hjProbeTables,
 		NoIndexLookUpPushDown: noIndexLookUpPushDownTables,
+		IndexOnlyJoinHintList: indexOnlyJoinHintList,
 		StraightJoinOrder:     straightJoinHint,
 	}, subQueryHintFlags, nil
 }

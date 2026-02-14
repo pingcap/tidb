@@ -128,6 +128,7 @@ import (
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 	hintNoDecorrelate         "NO_DECORRELATE"
+	hintIndexOnlyJoin         "INDEX_ONLY_JOIN"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -726,6 +727,7 @@ SupportedIndexLevelOptimizerHintName:
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
 |	"NO_INDEX_LOOKUP_PUSHDOWN"
+|	"INDEX_ONLY_JOIN"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -841,6 +843,7 @@ Identifier:
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"INDEX_ONLY_JOIN"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

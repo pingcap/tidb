@@ -4582,6 +4582,46 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+	// extract the IndexOnlyJoinHint
+	var indexOnlyJoinHints []h.HintedIndex
+	if hints := b.TableHints(); hints != nil {
+		for i, hint := range hints.IndexOnlyJoinHintList {
+			if hint.Match(dbName, tblName) {
+				hints.IndexOnlyJoinHintList[i].Matched = true
+				if len(hint.IndexHint.IndexNames) < 2 {
+					errMsg := fmt.Sprintf("index_only_join(%s) is inapplicable, it requires exactly 2 index names (driver, probe).",
+						hint.IndexString())
+					b.ctx.GetSessionVars().StmtCtx.SetHintWarning(errMsg)
+					continue
+				}
+				// check whether the index names in IndexOnlyJoinHint are valid.
+				invalidIdxNames := make([]string, 0, len(hint.IndexHint.IndexNames))
+				for _, idxName := range hint.IndexHint.IndexNames {
+					hasIdxName := false
+					for _, path := range possiblePaths {
+						if path.IsTablePath() {
+							continue
+						}
+						if idxName.L == path.Index.Name.L {
+							hasIdxName = true
+							break
+						}
+					}
+					if !hasIdxName {
+						invalidIdxNames = append(invalidIdxNames, idxName.String())
+					}
+				}
+				if len(invalidIdxNames) == 0 {
+					indexOnlyJoinHints = append(indexOnlyJoinHints, hint)
+				} else {
+					errMsg := fmt.Sprintf("index_only_join(%s) is inapplicable, check whether the indexes (%s) exist.",
+						hint.IndexString(), strings.Join(invalidIdxNames, ", "))
+					b.ctx.GetSessionVars().StmtCtx.SetHintWarning(errMsg)
+				}
+			}
+		}
+	}
+
 	allPaths := make([]*util.AccessPath, len(possiblePaths))
 	copy(allPaths, possiblePaths)
 
@@ -4595,6 +4635,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		AstIndexHints:          tn.IndexHints,
 		IndexHints:             b.TableHints().IndexHintList,
 		IndexMergeHints:        indexMergeHints,
+		IndexOnlyJoinHints:     indexOnlyJoinHints,
 		PossibleAccessPaths:    possiblePaths,
 		AllPossibleAccessPaths: allPaths,
 		Columns:                make([]*model.ColumnInfo, 0, countCnt),

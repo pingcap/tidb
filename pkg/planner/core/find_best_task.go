@@ -1531,6 +1531,12 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			continue
 		}
+		if path.IsIndexOnlyJoinPath() {
+			candidate := &candidatePath{path: path}
+			candidate.matchPropResult = matchProperty(ds, path.IndexOnlyJoinInfo.DriverPath, prop)
+			candidates = append(candidates, candidate)
+			continue
+		}
 		if path.PartialIndexPaths != nil {
 			candidates = append(candidates, getIndexMergeCandidate(ds, path, prop))
 			continue
@@ -1902,6 +1908,20 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 
 	for _, candidate := range candidates {
 		path := candidate.path
+		if path.IsIndexOnlyJoinPath() {
+			iojTask, err := convertToIndexOnlyJoin(ds, prop, candidate)
+			if err != nil {
+				return nil, err
+			}
+			curIsBetter, err := compareTaskCost(iojTask, t)
+			if err != nil {
+				return nil, err
+			}
+			if curIsBetter {
+				t = iojTask
+			}
+			continue
+		}
 		if path.PartialIndexPaths != nil {
 			// prefer tiflash, while current table path is tikv, skip it.
 			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
@@ -2178,6 +2198,95 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		task = cop
 	}
 	return task, nil
+}
+
+// convertToIndexOnlyJoin builds a PhysicalIndexOnlyJoin from an index-only join path.
+func convertToIndexOnlyJoin(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) (base.Task, error) {
+	if prop.IsFlashProp() || prop.TaskTp != property.RootTaskType {
+		return base.InvalidTask, nil
+	}
+	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
+		return base.InvalidTask, nil
+	}
+
+	path := candidate.path
+	info := path.IndexOnlyJoinInfo
+	keepOrder := candidate.matchPropResult.Matched()
+
+	// Build driver index scan.
+	driverIS := physicalop.GetOriginalPhysicalIndexScan(ds, prop, info.DriverPath, keepOrder, false)
+	driverReader := physicalop.PhysicalIndexReader{IndexPlan: driverIS}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	// Override schema and OutputColumns to match the index scan schema (not the full DataSource schema).
+	// The index reader only returns index columns + handle, not all table columns.
+	// Column.Index must be sequential (0, 1, 2, ...) matching position in the index scan output,
+	// because OutputOffsets uses col.Index to tell TiKV which columns to return.
+	setIndexReaderOutputCols(driverReader, driverIS)
+
+	// Build probe index scan (used as template for dataReaderBuilder).
+	probeIS := physicalop.GetOriginalPhysicalIndexScan(ds, prop, info.ProbePath, false, false)
+	probeReader := physicalop.PhysicalIndexReader{IndexPlan: probeIS}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	// Override schema and OutputColumns to match the index scan schema.
+	setIndexReaderOutputCols(probeReader, probeIS)
+
+	// Build table scan for final row fetch.
+	totalRowCount := path.CountAfterAccess
+	if prop.ExpectedCnt < ds.StatsInfo().RowCount {
+		totalRowCount *= prop.ExpectedCnt / ds.StatsInfo().RowCount
+	}
+	ts, _, _, err := physicalop.BuildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, false)
+	if err != nil {
+		return base.InvalidTask, err
+	}
+
+	// Construct handle columns (may be nil for implicit rowid).
+	handleCols := ds.HandleCols
+	if handleCols == nil {
+		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+	}
+
+	// Construct the PhysicalIndexOnlyJoin.
+	ioj := physicalop.PhysicalIndexOnlyJoin{
+		DriverPlan:     driverIS,
+		DriverReader:   driverReader,
+		ProbeIndexPlan: probeIS,
+		ProbeReader:    probeReader,
+		ProbeRanges:    ranger.Ranges(info.ProbeRanges),
+		KeyOff2IdxOff:  info.KeyOff2IdxOff,
+		TablePlan:      ts,
+		TableInfo:      ds.TableInfo,
+		ProbeIndex:     info.ProbeIndex,
+		HandleCols:     handleCols,
+		KeepOrder:      keepOrder,
+		TableFilters:   path.TableFilters,
+		PlanPartInfo: &physicalop.PhysPlanPartInfo{
+			PruningConds:   ds.AllConds,
+			PartitionNames: ds.PartitionNames,
+			Columns:        ds.TblCols,
+			ColumnNames:    ds.OutputNames(),
+		},
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+
+	// Wrap directly as a root task since IndexOnlyJoin is a root-level operator.
+	rt := &physicalop.RootTask{}
+	rt.SetPlan(ioj)
+	return rt, nil
+}
+
+// setIndexReaderOutputCols overrides the PhysicalIndexReader's schema and OutputColumns
+// to match the index scan's schema with correct sequential Index values (0, 1, 2, ...).
+// This is necessary because the default SetSchema uses DataSourceSchema (full table columns),
+// but index-only join readers only return the index columns + handle.
+func setIndexReaderOutputCols(reader *physicalop.PhysicalIndexReader, is *physicalop.PhysicalIndexScan) {
+	idxSchema := is.Schema()
+	cols := make([]*expression.Column, len(idxSchema.Columns))
+	for i, col := range idxSchema.Columns {
+		c := col.Clone().(*expression.Column)
+		c.Index = i
+		cols[i] = c
+	}
+	newSchema := expression.NewSchema(cols...)
+	reader.PhysicalSchemaProducer.SetSchema(newSchema)
+	reader.OutputColumns = newSchema.Clone().Columns
 }
 
 func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {
