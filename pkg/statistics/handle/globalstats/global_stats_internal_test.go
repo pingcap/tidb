@@ -373,29 +373,26 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 		"test t p2 a 0 2 2",
 		"test t p2 b 0 1 2",
 	))
-	// column a is trival.
-	// column b:
-	//   TopN:
-	//   p0: b=3, occurs 3 times
-	//   p1: b=2, occurs 3 times
-	//   p2: b=1, occurs 2 times
-	//   Histogram:
-	//   p0: hist of b: [2, 2] count=repeat=2
-	//   p1: hist of b: [1, 3] count=2, repeat=3. [4, 4] count==repeat=1
-	// After merging global TopN, it should be 2 with 4 as the repeat.(constructed by p1's TopN and p0's histogram)
-	// Kicking it out, the remained buckets for b are:(consider TopN as a bucket whose lower bound is the same as upper bound and count is the same as repeat)
-	// [3, 3] count=repeat=4
-	// [1, 1] count=repeat=2
-	// [1, 3] count=1, repeat=0(merged into TopN)
-	// [4, 4] count=repeat=1
-	// Finally, get one global bucket [1, 4] count=8, repeat=1
+	// column a is trivial.
+	// column b partition stats (TopN has 1 entry each, rest goes to histogram):
+	//   p0: TopN b=3 count=3.  Histogram: [2, 2] count=repeat=1
+	//   p1: TopN b=2 count=3.  Histogram: [1, 3] count=2, repeat=1. [4, 4] count=repeat=1
+	//   p2: TopN b=1 count=2.  No histogram (fully covered by TopN)
+	//
+	// Global TopN merge (both separate and combined produce same result):
+	//   b=2 wins with count=4 (p1 TopN=3 + p0 hist upper-bound b=2 repeat=1)
+	//   leftTopN b=3 count=4 (p0 TopN=3 + p1 hist upper-bound b=3 repeat=1),
+	//            b=1 count=2 (p2 TopN=2), b=4 count=1 (p1 hist repeat=1)
+	//   These leftTopN + remaining hist buckets merge into global b: [1, 4] count=8, repeat=1
+	//
+	// show stats_buckets format: db table partition col is_index bucket_id count repeats lower upper ndv
 	testKit.MustQuery("show stats_buckets where table_name='t'").Sort().Check(testkit.Rows(
-		"test t global a 0 0 4 4 0 0 0",
-		"test t global a 0 1 6 2 2 2 0",
-		"test t global b 0 0 8 1 1 4 0",
-		"test t p0 b 0 0 1 1 2 2 0",
-		"test t p1 b 0 0 2 1 1 3 0",
-		"test t p1 b 0 1 3 1 4 4 0",
+		"test t global a 0 0 4 4 0 0 0", // global a bucket 0: [0, 0] count=4, repeat=4
+		"test t global a 0 1 6 2 2 2 0", // global a bucket 1: [2, 2] cumulative=6, repeat=2
+		"test t global b 0 0 8 1 1 4 0", // global b bucket 0: [1, 4] count=8, repeat=1 (merged from leftTopN + hist)
+		"test t p0 b 0 0 1 1 2 2 0",     // p0 hist: [2, 2] count=1, repeat=1
+		"test t p1 b 0 0 2 1 1 3 0",     // p1 hist bucket 0: [1, 3] count=2, repeat=1
+		"test t p1 b 0 1 3 1 4 4 0",     // p1 hist bucket 1: [4, 4] cumulative=3, repeat=1
 	))
 }
 
