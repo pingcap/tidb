@@ -34,6 +34,7 @@ go_library(
         "//br/pkg/version/build",
         "//pkg/config",
         "//pkg/meta/model",
+        "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/util",
         "//pkg/util/gctuner",

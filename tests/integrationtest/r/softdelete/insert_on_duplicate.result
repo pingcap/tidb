@@ -85,7 +85,7 @@ select id, v from t;
 id	v
 2	0
 3	3
-create table t1 (id int primary key, v1 int unique, v2 int unique, v3 int unique) softdelete retention 7 day;
+create table t1 (id int primary key, v1 int, v2 int, v3 int) softdelete retention 7 day;
 insert into t1 (id, v1, v2, v3) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4);
 delete from t1 where id in (1, 2);
 set @@tidb_translate_softdelete_sql = 0;

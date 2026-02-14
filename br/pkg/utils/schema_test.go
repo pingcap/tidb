@@ -2,6 +2,8 @@ package utils
 
 import (
 	"testing"
+
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
 func TestIsSysOrTempSysDB(t *testing.T) {
@@ -26,6 +28,11 @@ func TestIsSysOrTempSysDB(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:     "tidb_cdc non-system db",
+			db:       mysql.TiCDCSystemDB,
+			expected: false,
+		},
+		{
 			name:     "temporary mysql db",
 			db:       "__TiDB_BR_Temporary_mysql",
 			expected: true,
@@ -38,6 +45,11 @@ func TestIsSysOrTempSysDB(t *testing.T) {
 		{
 			name:     "temporary workload_schema db",
 			db:       "__TiDB_BR_Temporary_workload_schema",
+			expected: false,
+		},
+		{
+			name:     "temporary tidb_cdc db",
+			db:       "__TiDB_BR_Temporary_" + mysql.TiCDCSystemDB,
 			expected: false,
 		},
 		{

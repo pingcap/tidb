@@ -730,6 +730,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
 		}
+		if skipColumnInShowCreateTable(tb.Meta(), col.ColumnInfo, false) {
+			continue
+		}
 		desc := table.NewColDesc(col)
 		var columnDefault any
 		if desc.DefaultValue != nil {
@@ -1080,13 +1083,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col == nil || col.Hidden || col.Name == model.ExtraHandleName || col.Name == model.ExtraOriginTSName {
-			continue
-		}
-		if tableInfo.SoftdeleteInfo != nil && model.IsSoftDeleteColumn(col.Name) {
-			continue
-		}
-		if tableInfo.IsActiveActive && model.IsActiveActiveColumn(col.Name) {
+		if skipColumnInShowCreateTable(tableInfo, col, true) {
 			continue
 		}
 		if needAddComma {
@@ -1678,6 +1675,27 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 		}
 	}
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
+}
+
+func skipColumnInShowCreateTable(tableInfo *model.TableInfo, col *model.ColumnInfo, hidden bool) bool {
+	if col == nil || col.Name == model.ExtraHandleName || col.Name == model.ExtraOriginTSName {
+		return true
+	}
+	if hidden && col.Hidden {
+		return true
+	}
+	// Keep the existing show-create-table behavior for base tables.
+	if tableInfo.SoftdeleteInfo != nil && model.IsSoftDeleteColumn(col.Name) {
+		return true
+	}
+	if tableInfo.IsActiveActive && model.IsActiveActiveColumn(col.Name) {
+		return true
+	}
+	// Views do not carry softdelete/active-active flags, but should still hide these internal columns.
+	if tableInfo.IsView() && (model.IsSoftDeleteColumn(col.Name) || model.IsActiveActiveColumn(col.Name)) {
+		return true
+	}
+	return false
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.

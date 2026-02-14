@@ -12,6 +12,8 @@ show create database test_aa;
 Database	Create Database
 test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![softdelete] SOFTDELETE=RETENTION 4 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 alter database test_aa active_active = 'ON' softdelete = retention 7 day;
+alter database test_aa softdelete = 'OFF';
+Error 8200 (HY000): Unsupported ACTIVE_ACTIVE = 'ON' but SOFTDELETE = 'OFF'
 show create database test_aa;
 Database	Create Database
 test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
@@ -83,6 +85,12 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 PARTITION BY HASH (`id`) PARTITIONS 4
 drop table if exists t;
+create table t (
+id int primary key,
+name varchar(50),
+unique i3(name)
+) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot create unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
 create table t (
 id int primary key,
 name varchar(50)
@@ -166,5 +174,37 @@ create global temporary table tmp_aa like t on commit delete rows;
 Error 1347 (HY000): 'test_aa.t' is not supported, it is ACTIVE_ACTIVE TABLE
 create temporary table tmp_aa2 (id int) active_active = 'ON' softdelete = retention 7 day;
 Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
+create view v_aa as select * from t;
+show create table v_aa;
+View	Create View	character_set_client	collation_connection
+v_aa	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v_aa` (`id`, `name`) AS SELECT `test_aa`.`t`.`id` AS `id`,`test_aa`.`t`.`name` AS `name` FROM `test_aa`.`t`	utf8mb4	utf8mb4_general_ci
+show create view v_aa;
+View	Create View	character_set_client	collation_connection
+v_aa	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v_aa` (`id`, `name`) AS SELECT `test_aa`.`t`.`id` AS `id`,`test_aa`.`t`.`name` AS `name` FROM `test_aa`.`t`	utf8mb4	utf8mb4_general_ci
+desc t;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+name	varchar(50)	YES		NULL	
+desc v_aa;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+name	varchar(50)	YES		NULL	
+drop view v_aa;
+set @@session.tidb_translate_softdelete_sql=0;
+create view v_aa as select *,_tidb_commit_ts,_tidb_softdelete_time from t;
+show create view v_aa;
+View	Create View	character_set_client	collation_connection
+v_aa	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v_aa` (`id`, `name`, `_tidb_commit_ts`, `_tidb_softdelete_time`) AS SELECT `test_aa`.`t`.`id` AS `id`,`test_aa`.`t`.`name` AS `name`,`_tidb_commit_ts` AS `_tidb_commit_ts`,`_tidb_softdelete_time` AS `_tidb_softdelete_time` FROM `test_aa`.`t`	utf8mb4	utf8mb4_general_ci
+desc t;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+name	varchar(50)	YES		NULL	
+desc v_aa;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+name	varchar(50)	YES		NULL	
+_tidb_commit_ts	bigint	YES		NULL	
+drop view v_aa;
+set @@session.tidb_translate_softdelete_sql=default;
 drop database test_aa;
 set @@global.tidb_enable_check_constraint = default;
