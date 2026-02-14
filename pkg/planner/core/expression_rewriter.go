@@ -2690,8 +2690,12 @@ func resolveRedundantColumnFromNaturalUsingJoin(join *logicalop.LogicalJoin, red
 		if !ok || sf.FuncName.L != ast.EQ {
 			continue
 		}
-		lCol, lOK := sf.GetArgs()[0].(*expression.Column)
-		rCol, rOK := sf.GetArgs()[1].(*expression.Column)
+		args := sf.GetArgs()
+		if len(args) != 2 {
+			continue
+		}
+		lCol, lOK := args[0].(*expression.Column)
+		rCol, rOK := args[1].(*expression.Column)
 		if !lOK || !rOK {
 			continue
 		}
