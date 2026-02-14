@@ -68,8 +68,39 @@ func (m *mockServerHelper) getAllServerInfo(_ context.Context) (map[string]serve
 	return res, nil
 }
 
+func newServerConsistentHashForTest(mapping map[string]uint32, helper ServerHelper, selfID string, serverIDs ...string) *ServerConsistentHash {
+	sch := NewServerConsistentHash(context.Background(), 1, helper)
+	sch.chash.hashFunc = mustHash(mapping)
+	sch.ID = selfID
+	for _, id := range serverIDs {
+		sch.AddServer(serverInfo{ID: id})
+	}
+	return sch
+}
+
+func assertRingNodeCount(t *testing.T, sch *ServerConsistentHash, expected int) {
+	t.Helper()
+	if got := sch.chash.NodeCount(); got != expected {
+		t.Fatalf("expected ring node count %d, got %d", expected, got)
+	}
+}
+
+func assertRingOwner(t *testing.T, sch *ServerConsistentHash, key []byte, expectedOwner string) {
+	t.Helper()
+	if got := sch.chash.GetNode(key); got != expectedOwner {
+		t.Fatalf("expected %q on %s, got %s", key, expectedOwner, got)
+	}
+}
+
+func assertAvailableForNode(t *testing.T, sch *ServerConsistentHash, nodeID string, key any, expected bool) {
+	t.Helper()
+	sch.ID = nodeID
+	if got := sch.Available(key); got != expected {
+		t.Fatalf("expected Available(%v) on %s = %t, got %t", key, nodeID, expected, got)
+	}
+}
+
 func TestServerConsistentHashAddRemoveAndAvailable(t *testing.T) {
-	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeB#0": 20,
@@ -77,84 +108,94 @@ func TestServerConsistentHashAddRemoveAndAvailable(t *testing.T) {
 		"key-mid": 15,
 	}
 
-	sch := NewServerConsistentHash(context.Background(), 1, &mockServerHelper{})
-	sch.chash.hashFunc = mustHash(mapping)
-	sch.ID = "nodeB"
-
-	sch.addServer(serverInfo{ID: "nodeA"})
-	sch.addServer(serverInfo{ID: "nodeB"})
+	sch := newServerConsistentHashForTest(mapping, &mockServerHelper{}, "nodeB", "nodeA", "nodeB")
 
 	if len(sch.servers) != 2 {
 		t.Fatalf("expected 2 servers, got %d", len(sch.servers))
 	}
-	if got := sch.chash.NodeCount(); got != 2 {
-		t.Fatalf("expected ring node count 2, got %d", got)
-	}
-	if got := sch.chash.GetNode([]byte("key-low")); got != "nodeA" {
-		t.Fatalf("expected key-low on nodeA, got %s", got)
-	}
-	if got := sch.chash.GetNode([]byte("key-mid")); got != "nodeB" {
-		t.Fatalf("expected key-mid on nodeB, got %s", got)
-	}
-	if sch.Available("key-low") {
-		t.Fatalf("expected key-low unavailable for nodeB")
-	}
-	if !sch.Available("key-mid") {
-		t.Fatalf("expected key-mid available for nodeB")
-	}
+	assertRingNodeCount(t, sch, 2)
+	assertRingOwner(t, sch, []byte("key-low"), "nodeA")
+	assertRingOwner(t, sch, []byte("key-mid"), "nodeB")
+	assertAvailableForNode(t, sch, "nodeB", "key-low", false)
+	assertAvailableForNode(t, sch, "nodeB", "key-mid", true)
 
-	sch.removeServer("nodeB")
+	sch.RemoveServer("nodeB")
 
 	if len(sch.servers) != 1 {
 		t.Fatalf("expected 1 server after remove, got %d", len(sch.servers))
 	}
-	if got := sch.chash.NodeCount(); got != 1 {
-		t.Fatalf("expected ring node count 1, got %d", got)
-	}
-	if got := sch.chash.GetNode([]byte("key-mid")); got != "nodeA" {
-		t.Fatalf("expected key-mid on nodeA after remove, got %s", got)
-	}
-	if sch.Available("key-mid") {
-		t.Fatalf("expected key-mid unavailable for nodeB after remove")
-	}
+	assertRingNodeCount(t, sch, 1)
+	assertRingOwner(t, sch, []byte("key-mid"), "nodeA")
+	assertAvailableForNode(t, sch, "nodeB", "key-mid", false)
 }
 
-func TestServerConsistentHashAvailableSupportsInt64Key(t *testing.T) {
-	key := int64(123456789)
-	var keyBytes [8]byte
-	binary.BigEndian.PutUint64(keyBytes[:], uint64(key))
-
-	sch := NewServerConsistentHash(context.Background(), 1, &mockServerHelper{})
-	sch.chash.hashFunc = func(data []byte) uint32 {
-		switch string(data) {
-		case "nodeA#0":
-			return 10
-		case "nodeB#0":
-			return 20
-		case "123456789":
-			t.Fatalf("int64 key should use binary bytes instead of decimal text")
-		}
-		if len(data) == len(keyBytes) && string(data) == string(keyBytes[:]) {
-			return 15
-		}
-		t.Fatalf("unexpected hash input: %v", data)
-		return 0
+func TestServerConsistentHashAvailableSupportsDifferentKeyTypes(t *testing.T) {
+	type testCase struct {
+		name     string
+		key      any
+		hashFunc func(t *testing.T) func([]byte) uint32
 	}
-	sch.addServer(serverInfo{ID: "nodeA"})
-	sch.addServer(serverInfo{ID: "nodeB"})
 
-	sch.ID = "nodeB"
-	if !sch.Available(key) {
-		t.Fatalf("expected int64 key to map to nodeB")
+	testCases := []testCase{
+		{
+			name: "int64",
+			key:  int64(123456789),
+			hashFunc: func(t *testing.T) func([]byte) uint32 {
+				key := int64(123456789)
+				var keyBytes [8]byte
+				binary.BigEndian.PutUint64(keyBytes[:], uint64(key))
+				return func(data []byte) uint32 {
+					switch string(data) {
+					case "nodeA#0":
+						return 10
+					case "nodeB#0":
+						return 20
+					case "123456789":
+						t.Fatalf("int64 key should use binary bytes instead of decimal text")
+					}
+					if len(data) == len(keyBytes) && string(data) == string(keyBytes[:]) {
+						return 15
+					}
+					t.Fatalf("unexpected hash input: %v", data)
+					return 0
+				}
+			},
+		},
+		{
+			name: "bytes",
+			key:  []byte("key-mid"),
+			hashFunc: func(t *testing.T) func([]byte) uint32 {
+				return func(data []byte) uint32 {
+					switch string(data) {
+					case "nodeA#0":
+						return 10
+					case "nodeB#0":
+						return 20
+					case "key-mid":
+						return 15
+					default:
+						t.Fatalf("unexpected hash input: %q", data)
+						return 0
+					}
+				}
+			},
+		},
 	}
-	sch.ID = "nodeA"
-	if sch.Available(key) {
-		t.Fatalf("expected int64 key to be unavailable for nodeA")
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			sch := NewServerConsistentHash(context.Background(), 1, &mockServerHelper{})
+			sch.chash.hashFunc = tc.hashFunc(t)
+			sch.AddServer(serverInfo{ID: "nodeA"})
+			sch.AddServer(serverInfo{ID: "nodeB"})
+
+			assertAvailableForNode(t, sch, "nodeB", tc.key, true)
+			assertAvailableForNode(t, sch, "nodeA", tc.key, false)
+		})
 	}
 }
 
 func TestServerConsistentHashFetchAppliesFilter(t *testing.T) {
-	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeB#0": 20,
@@ -170,8 +211,7 @@ func TestServerConsistentHashFetchAppliesFilter(t *testing.T) {
 			return s.ID == "nodeA"
 		},
 	}
-	sch := NewServerConsistentHash(context.Background(), 1, helper)
-	sch.chash.hashFunc = mustHash(mapping)
+	sch := newServerConsistentHashForTest(mapping, helper, "")
 
 	if err := sch.refresh(); err != nil {
 		t.Fatalf("fetch failed: %v", err)
@@ -182,16 +222,11 @@ func TestServerConsistentHashFetchAppliesFilter(t *testing.T) {
 	if _, ok := sch.servers["nodeA"]; !ok {
 		t.Fatalf("expected nodeA kept by filter")
 	}
-	if got := sch.chash.NodeCount(); got != 1 {
-		t.Fatalf("expected ring node count 1, got %d", got)
-	}
-	if got := sch.chash.GetNode([]byte("key-mid")); got != "nodeA" {
-		t.Fatalf("expected key-mid on nodeA, got %s", got)
-	}
+	assertRingNodeCount(t, sch, 1)
+	assertRingOwner(t, sch, []byte("key-mid"), "nodeA")
 }
 
 func TestServerConsistentHashFetchNoChange(t *testing.T) {
-	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"key-mid": 15,
@@ -202,8 +237,7 @@ func TestServerConsistentHashFetchNoChange(t *testing.T) {
 			"nodeA": {ID: "nodeA"},
 		},
 	}
-	sch := NewServerConsistentHash(context.Background(), 1, helper)
-	sch.chash.hashFunc = mustHash(mapping)
+	sch := newServerConsistentHashForTest(mapping, helper, "")
 
 	if err := sch.refresh(); err != nil {
 		t.Fatalf("first fetch failed: %v", err)
@@ -223,13 +257,10 @@ func TestServerConsistentHashFetchNoChange(t *testing.T) {
 	if got := helper.getAllInfoCalls; got != 2 {
 		t.Fatalf("expected getAllServerInfo called twice, got %d", got)
 	}
-	if got := sch.chash.GetNode([]byte("key-mid")); got != "nodeA" {
-		t.Fatalf("expected key-mid on nodeA, got %s", got)
-	}
+	assertRingOwner(t, sch, []byte("key-mid"), "nodeA")
 }
 
 func TestServerConsistentHashInit(t *testing.T) {
-	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"key-mid": 15,
@@ -241,8 +272,7 @@ func TestServerConsistentHashInit(t *testing.T) {
 			"nodeA": {ID: "nodeA"},
 		},
 	}
-	sch := NewServerConsistentHash(context.Background(), 1, helper)
-	sch.chash.hashFunc = mustHash(mapping)
+	sch := newServerConsistentHashForTest(mapping, helper, "")
 
 	if !sch.init() {
 		t.Fatalf("init failed")
@@ -251,9 +281,7 @@ func TestServerConsistentHashInit(t *testing.T) {
 	if sch.ID != "nodeA" {
 		t.Fatalf("expected current ID nodeA, got %s", sch.ID)
 	}
-	if got := sch.chash.NodeCount(); got != 0 {
-		t.Fatalf("expected ring node count 0 before refresh, got %d", got)
-	}
+	assertRingNodeCount(t, sch, 0)
 	if got := helper.getServerInfoCalls; got < 1 {
 		t.Fatalf("expected getServerInfo called at least once, got %d", got)
 	}
@@ -287,7 +315,6 @@ func TestServerConsistentHashInitCanceled(t *testing.T) {
 }
 
 func TestServerConsistentHashFetchError(t *testing.T) {
-	installMockTimeForTest(t)
 	helper := &mockServerHelper{
 		allErr: errors.New("boom"),
 	}

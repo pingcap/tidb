@@ -94,7 +94,7 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper MVServiceHel
 	mgr := &MVService{
 		sysSessionPool: se,
 		sch:            NewServerConsistentHash(ctx, cfg.ServerConsistentHashReplicas, helper),
-		executor:       NewTaskExecutor(ctx, cfg.TaskMaxConcurrency, cfg.TaskTimeout),
+		executor:       NewTaskExecutor(cfg.TaskMaxConcurrency, cfg.TaskTimeout),
 
 		notifier: NewNotifier(),
 		ctx:      ctx,

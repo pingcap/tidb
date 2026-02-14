@@ -41,7 +41,6 @@ func mustHash(mapping map[string]uint32) func([]byte) uint32 {
 }
 
 func TestConsistentHash_GetNodeWraps(t *testing.T) {
-	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0":  10,
 		"nodeB#0":  20,
@@ -72,7 +71,6 @@ func TestConsistentHash_GetNodeWraps(t *testing.T) {
 }
 
 func TestConsistentHash_RemoveNodeUpdatesState(t *testing.T) {
-	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeA#1": 30,
@@ -120,7 +118,6 @@ func TestConsistentHash_RemoveNodeUpdatesState(t *testing.T) {
 }
 
 func TestConsistentHash_EmptyState(t *testing.T) {
-	installMockTimeForTest(t)
 	c := NewConsistentHash(1)
 
 	if got := c.GetNode([]byte("any")); got != "" {
@@ -135,7 +132,6 @@ func TestConsistentHash_EmptyState(t *testing.T) {
 }
 
 func TestConsistentHash_RebuildResetsRing(t *testing.T) {
-	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeA#1": 30,
@@ -178,7 +174,6 @@ func TestConsistentHash_RebuildResetsRing(t *testing.T) {
 }
 
 func TestConsistentHash_Rebuild(t *testing.T) {
-	installMockTimeForTest(t)
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeA#1": 30,
@@ -219,7 +214,6 @@ func (t node) Less(other node) bool {
 }
 
 func TestPriorityQueue(t *testing.T) {
-	installMockTimeForTest(t)
 	base := time.Time{}.Add(time.Hour * 8192).UnixMilli()
 	t.Run("basic ordering and update", func(t *testing.T) {
 		pq := &PriorityQueue[node]{}

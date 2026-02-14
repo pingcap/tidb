@@ -119,7 +119,6 @@ const (
 
 type mv struct {
 	ID              int64
-	lastRefresh     time.Time
 	refreshInterval time.Duration
 	nextRefresh     time.Time
 
@@ -130,8 +129,6 @@ type mv struct {
 // mvLog tracks scheduling state for one MV log purge task.
 type mvLog struct {
 	ID            int64
-	baseTableID   int64
-	lastPurge     time.Time
 	purgeInterval time.Duration
 	nextPurge     time.Time
 
@@ -156,6 +153,7 @@ func (m *mvLog) Less(other *mvLog) bool {
 
 // fetchExecTasks collects due tasks from both queues and marks them as running.
 func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRefresh []*mv) {
+	nowTs := now.UnixMilli()
 	{
 		t.mvLogPurgeMu.Lock() // guard mvlog purge queue
 		for t.mvLogPurgeMu.prio.Len() > 0 {
@@ -164,7 +162,7 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 			if l.orderTs == maxNextScheduleTs {
 				break
 			}
-			if mvsUnixMilli(l.orderTs).After(now) {
+			if l.orderTs > nowTs {
 				break
 			}
 			mvLogToPurge = append(mvLogToPurge, l)
@@ -181,7 +179,7 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 			if m.orderTs == maxNextScheduleTs {
 				break
 			}
-			if mvsUnixMilli(m.orderTs).After(now) {
+			if m.orderTs > nowTs {
 				break
 			}
 			mvToRefresh = append(mvToRefresh, m)
@@ -199,31 +197,7 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 	}
 	for _, m := range mvToRefresh {
 		t.executor.Submit("mv-refresh/"+strconv.FormatInt(m.ID, 10), func() error {
-			t.metrics.runningMVRefreshCount.Add(1)
-			defer t.metrics.runningMVRefreshCount.Add(-1)
-			taskStart := mvsNow()
-			nextRefresh, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
-			result := mvTaskDurationResultOK
-			if err != nil {
-				result = mvTaskDurationResultErr
-			}
-			t.mh.observeTaskDuration(mvTaskDurationTypeRefresh, result, mvsSince(taskStart))
-			if err != nil {
-				retryCount := m.retryCount.Add(1)
-				t.rescheduleMV(m, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
-				t.notifier.Wake()
-				return err
-			}
-			if nextRefresh.IsZero() {
-				m.retryCount.Store(0)
-				t.removeMVTask(m)
-				t.notifier.Wake()
-				return nil
-			}
-			m.retryCount.Store(0)
-			t.rescheduleMVSuccess(m, nextRefresh)
-			t.notifier.Wake()
-			return nil
+			return t.executeRefreshTask(m)
 		})
 	}
 }
@@ -235,33 +209,71 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 	}
 	for _, l := range mvLogToPurge {
 		t.executor.Submit("mvlog-purge/"+strconv.FormatInt(l.ID, 10), func() error {
-			t.metrics.runningMVLogPurgeCount.Add(1)
-			defer t.metrics.runningMVLogPurgeCount.Add(-1)
-			taskStart := mvsNow()
-			nextPurge, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
-			result := mvTaskDurationResultOK
-			if err != nil {
-				result = mvTaskDurationResultErr
-			}
-			t.mh.observeTaskDuration(mvTaskDurationTypePurge, result, mvsSince(taskStart))
-			if err != nil {
-				retryCount := l.retryCount.Add(1)
-				t.rescheduleMVLog(l, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
-				t.notifier.Wake()
-				return err
-			}
-			if nextPurge.IsZero() {
-				l.retryCount.Store(0)
-				t.removeMVLogTask(l)
-				t.notifier.Wake()
-				return nil
-			}
-			l.retryCount.Store(0)
-			t.rescheduleMVLogSuccess(l, nextPurge)
-			t.notifier.Wake()
-			return nil
+			return t.executePurgeTask(l)
 		})
 	}
+}
+
+func (t *MVService) executeRefreshTask(m *mv) error {
+	t.metrics.runningMVRefreshCount.Add(1)
+	defer t.metrics.runningMVRefreshCount.Add(-1)
+
+	taskStart := mvsNow()
+	nextRefresh, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
+	t.observeTaskDuration(mvTaskDurationTypeRefresh, taskStart, err)
+	return t.handleRefreshTaskResult(m, nextRefresh, err)
+}
+
+func (t *MVService) executePurgeTask(l *mvLog) error {
+	t.metrics.runningMVLogPurgeCount.Add(1)
+	defer t.metrics.runningMVLogPurgeCount.Add(-1)
+
+	taskStart := mvsNow()
+	nextPurge, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
+	t.observeTaskDuration(mvTaskDurationTypePurge, taskStart, err)
+	return t.handlePurgeTaskResult(l, nextPurge, err)
+}
+
+func (t *MVService) observeTaskDuration(taskType string, taskStart time.Time, err error) {
+	result := mvTaskDurationResultOK
+	if err != nil {
+		result = mvTaskDurationResultErr
+	}
+	t.mh.observeTaskDuration(taskType, result, mvsSince(taskStart))
+}
+
+func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err error) error {
+	defer t.notifier.Wake()
+	if err != nil {
+		retryCount := m.retryCount.Add(1)
+		t.rescheduleMV(m, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
+		return err
+	}
+	if nextRefresh.IsZero() {
+		m.retryCount.Store(0)
+		t.removeMVTask(m)
+		return nil
+	}
+	m.retryCount.Store(0)
+	t.rescheduleMVSuccess(m, nextRefresh)
+	return nil
+}
+
+func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err error) error {
+	defer t.notifier.Wake()
+	if err != nil {
+		retryCount := l.retryCount.Add(1)
+		t.rescheduleMVLog(l, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
+		return err
+	}
+	if nextPurge.IsZero() {
+		l.retryCount.Store(0)
+		t.removeMVLogTask(l)
+		return nil
+	}
+	l.retryCount.Store(0)
+	t.rescheduleMVLogSuccess(l, nextPurge)
+	return nil
 }
 
 // removeMVLogTask removes a purge task from the scheduler after completion.
@@ -338,7 +350,7 @@ func (t *MVService) rescheduleMVLogSuccess(l *mvLog, nextPurge time.Time) {
 // 1. Update mutable metadata fields (purgeInterval, nextPurge).
 // 2. If nextPurge changed and the task is not currently running, update orderTs and heap position.
 // 3. If the task is currently running (orderTs == maxNextScheduleTs), defer heap adjustment until task completion.
-func (t *MVService) buildMLogPurgeTasks(newPending map[int64]*mvLog) error {
+func (t *MVService) buildMLogPurgeTasks(newPending map[int64]*mvLog) {
 	t.mvLogPurgeMu.Lock()         // guard mvlog purge queue
 	defer t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 
@@ -369,12 +381,10 @@ func (t *MVService) buildMLogPurgeTasks(newPending map[int64]*mvLog) error {
 	}
 
 	t.metrics.mvLogCount.Store(int64(len(t.mvLogPurgeMu.pending)))
-
-	return nil
 }
 
 // buildMVRefreshTasks rebuilds refresh task states from fetched metadata.
-func (t *MVService) buildMVRefreshTasks(newPending map[int64]*mv) error {
+func (t *MVService) buildMVRefreshTasks(newPending map[int64]*mv) {
 	t.mvRefreshMu.Lock()         // guard mv refresh queue
 	defer t.mvRefreshMu.Unlock() // release mv refresh queue guard
 
@@ -405,8 +415,6 @@ func (t *MVService) buildMVRefreshTasks(newPending map[int64]*mv) error {
 	}
 
 	t.metrics.mvCount.Store(int64(len(t.mvRefreshMu.pending)))
-
-	return nil
 }
 
 // fetchAllTiDBMLogPurge fetches purge metadata and filters out tasks not owned by this node.
@@ -425,7 +433,7 @@ func (t *MVService) fetchAllTiDBMLogPurge() (map[int64]*mvLog, error) {
 	}
 	t.mh.observeRunEvent(mvRunEventFetchMLogOK)
 	for id := range newPending {
-		if !t.sch.Available(id) {
+		if !t.sch.AvailableInt64(id) {
 			delete(newPending, id)
 		}
 	}
@@ -448,7 +456,7 @@ func (t *MVService) fetchAllTiDBMViews() (map[int64]*mv, error) {
 	}
 	t.mh.observeRunEvent(mvRunEventFetchMViewsOK)
 	for id := range newPending {
-		if !t.sch.Available(id) {
+		if !t.sch.AvailableInt64(id) {
 			delete(newPending, id)
 		}
 	}
@@ -465,12 +473,8 @@ func (t *MVService) fetchAllMVMeta() error {
 	if err != nil {
 		return err
 	}
-	if err = t.buildMLogPurgeTasks(newMLogPending); err != nil {
-		return err
-	}
-	if err = t.buildMVRefreshTasks(newMViewPending); err != nil {
-		return err
-	}
+	t.buildMLogPurgeTasks(newMLogPending)
+	t.buildMVRefreshTasks(newMViewPending)
 
 	t.lastRefresh.Store(mvsNow().UnixMilli())
 	return nil

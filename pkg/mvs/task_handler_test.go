@@ -40,6 +40,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testSQLFetchMLogPurge      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMViews         = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLRefreshMV           = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
+	testSQLFindMVNextTime      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLFindMinRefreshRead  = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
+	testSQLLockPurgeInfo       = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
+	testSQLDeleteMLog          = `DELETE FROM %n.%n WHERE COMMIT_TSO > 0 AND COMMIT_TSO <= %?`
+	testSQLUpdatePurgeInfo     = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
+	testSQLClearNewestPurgeHis = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
+	testSQLInsertPurgeHist     = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
+)
+
+var (
+	testExpectedPurgeSQLSuccess = []string{
+		testSQLFindMinRefreshRead,
+		testSQLLockPurgeInfo,
+		testSQLDeleteMLog,
+		testSQLClearNewestPurgeHis,
+		testSQLInsertPurgeHist,
+		testSQLUpdatePurgeInfo,
+	}
+	testExpectedPurgeSQLSkip = []string{
+		testSQLFindMinRefreshRead,
+		testSQLLockPurgeInfo,
+	}
+)
+
 type mockSessionPool struct{}
 
 func (mockSessionPool) Get() (pools.Resource, error) { return nil, nil }
@@ -102,6 +130,62 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 }
 
 func (*recordingSessionContext) Close() {}
+
+func withMockInfoSchema(t *testing.T, tables ...*meta.TableInfo) {
+	t.Helper()
+	oldMockInfoSchema := mock.MockInfoschema
+	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
+		return infoschema.MockInfoSchema(tables)
+	}
+	t.Cleanup(func() {
+		mock.MockInfoschema = oldMockInfoSchema
+	})
+}
+
+func buildMockMVBaseAndMLogTables(baseTableID, mLogID int64, mViewIDs ...int64) (baseTable *meta.TableInfo, mlogTable *meta.TableInfo) {
+	baseInfo := &meta.MaterializedViewBaseInfo{
+		MLogID:   mLogID,
+		MViewIDs: mViewIDs,
+	}
+	baseTable = &meta.TableInfo{
+		ID:                   baseTableID,
+		Name:                 pmodel.NewCIStr("mv_base"),
+		State:                meta.StatePublic,
+		MaterializedViewBase: baseInfo,
+	}
+	mlogTable = &meta.TableInfo{
+		ID:   mLogID,
+		Name: pmodel.NewCIStr("mlog1"),
+		MaterializedViewLog: &meta.MaterializedViewLogInfo{
+			BaseTableID:    baseTableID,
+			PurgeMethod:    "TIME_WINDOW",
+			PurgeStartWith: "'2026-01-02 03:04:05'",
+			PurgeNext:      "60",
+		},
+		State: meta.StatePublic,
+	}
+	return baseTable, mlogTable
+}
+
+func waitExecutorCompletedCount(t *testing.T, svc *MVService, expected int64) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return svc.executor.metrics.counters.completedCount.Load() == expected
+	}, time.Second, 10*time.Millisecond)
+}
+
+func setupPurgeMVLogMetaForTest(t *testing.T, se *recordingSessionContext, lockRows []chunk.Row) {
+	t.Helper()
+	se.restrictedRows[testSQLFindMinRefreshRead] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(100),
+		}).ToRow(),
+	}
+	se.restrictedRows[testSQLLockPurgeInfo] = lockRows
+
+	mvTable, mvlogTable := buildMockMVBaseAndMLogTables(101, 201, 101, 102)
+	withMockInfoSchema(t, mvTable, mvlogTable)
+}
 
 type mockTaskHandlerServerHelper struct{}
 
@@ -323,14 +407,14 @@ func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
 		nextPurge: mvsNow().Add(2 * time.Minute),
 	}
 	oldMLog.orderTs = oldMLog.nextPurge.UnixMilli()
-	require.NoError(t, svc.buildMLogPurgeTasks(map[int64]*mvLog{oldMLog.ID: oldMLog}))
+	svc.buildMLogPurgeTasks(map[int64]*mvLog{oldMLog.ID: oldMLog})
 
 	oldMV := &mv{
 		ID:          102,
 		nextRefresh: mvsNow().Add(3 * time.Minute),
 	}
 	oldMV.orderTs = oldMV.nextRefresh.UnixMilli()
-	require.NoError(t, svc.buildMVRefreshTasks(map[int64]*mv{oldMV.ID: oldMV}))
+	svc.buildMVRefreshTasks(map[int64]*mv{oldMV.ID: oldMV})
 
 	err := svc.fetchAllMVMeta()
 	require.Error(t, err)
@@ -368,13 +452,11 @@ func TestMVServicePurgeMVLogRemoveOnDeleted(t *testing.T) {
 		ID:        301,
 		nextPurge: mvsNow(),
 	}
-	require.NoError(t, svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l}))
+	svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l})
 
 	svc.purgeMVLog([]*mvLog{l})
 
-	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.completedCount.Load() == 1
-	}, time.Second, 10*time.Millisecond)
+	waitExecutorCompletedCount(t, svc, 1)
 	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	require.Eventually(t, func() bool {
@@ -401,13 +483,11 @@ func TestMVServicePurgeMVLogSuccessUpdatesNextPurgeAndOrderTS(t *testing.T) {
 		ID:        302,
 		nextPurge: mvsNow().Add(-time.Minute).Round(0),
 	}
-	require.NoError(t, svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l}))
+	svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l})
 
 	svc.purgeMVLog([]*mvLog{l})
 
-	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.completedCount.Load() == 1
-	}, time.Second, 10*time.Millisecond)
+	waitExecutorCompletedCount(t, svc, 1)
 	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	svc.mvLogPurgeMu.Lock()
@@ -429,13 +509,11 @@ func TestMVServiceRefreshMVRemoveOnZeroNextRefresh(t *testing.T) {
 		ID:          401,
 		nextRefresh: mvsNow(),
 	}
-	require.NoError(t, svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m}))
+	svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
 
 	svc.refreshMV([]*mv{m})
 
-	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.completedCount.Load() == 1
-	}, time.Second, 10*time.Millisecond)
+	waitExecutorCompletedCount(t, svc, 1)
 	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	require.Eventually(t, func() bool {
@@ -462,13 +540,11 @@ func TestMVServiceRefreshMVSuccessUpdatesNextRefreshAndOrderTS(t *testing.T) {
 		ID:          402,
 		nextRefresh: mvsNow().Add(-time.Minute).Round(0),
 	}
-	require.NoError(t, svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m}))
+	svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
 
 	svc.refreshMV([]*mv{m})
 
-	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.completedCount.Load() == 1
-	}, time.Second, 10*time.Millisecond)
+	waitExecutorCompletedCount(t, svc, 1)
 	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	svc.mvRefreshMu.Lock()
@@ -499,15 +575,13 @@ func TestMVServiceTaskExecutionReportsDuration(t *testing.T) {
 		ID:        601,
 		nextPurge: mvsNow().Add(-time.Minute).Round(0),
 	}
-	require.NoError(t, svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m}))
-	require.NoError(t, svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l}))
+	svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
+	svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l})
 
 	svc.refreshMV([]*mv{m})
 	svc.purgeMVLog([]*mvLog{l})
 
-	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.completedCount.Load() == 2
-	}, time.Second, 10*time.Millisecond)
+	waitExecutorCompletedCount(t, svc, 2)
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultOK))
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultOK))
 	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultErr))
@@ -532,15 +606,13 @@ func TestMVServiceTaskExecutionReportsDurationFailed(t *testing.T) {
 		ID:        602,
 		nextPurge: mvsNow().Add(-time.Minute).Round(0),
 	}
-	require.NoError(t, svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m}))
-	require.NoError(t, svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l}))
+	svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
+	svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l})
 
 	svc.refreshMV([]*mv{m})
 	svc.purgeMVLog([]*mvLog{l})
 
-	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.completedCount.Load() == 2
-	}, time.Second, 10*time.Millisecond)
+	waitExecutorCompletedCount(t, svc, 2)
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultErr))
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultErr))
 	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultOK))
@@ -576,66 +648,72 @@ func TestRegisterMVSBootstrapAndDDLHandler(t *testing.T) {
 	require.Equal(t, int32(1), called.Load())
 }
 
-func TestCalcNextPurgeTime(t *testing.T) {
+func TestCalcNextExecTime(t *testing.T) {
 	installMockTimeForTest(t)
-	start := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.Local)
-	interval := 10 * time.Second
 	cases := []struct {
 		name     string
+		start    time.Time
 		now      time.Time
 		interval int64
 		expect   time.Time
 	}{
 		{
 			name:     "before start",
+			start:    time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.Local),
 			now:      time.Date(2026, 1, 2, 3, 4, 4, 0, time.Local),
-			interval: int64(interval / time.Second),
+			interval: 10,
 			expect:   time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local),
 		},
 		{
 			name:     "exactly on boundary",
+			start:    time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.Local),
 			now:      time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local),
-			interval: int64(interval / time.Second),
+			interval: 10,
 			expect:   time.Date(2026, 1, 2, 3, 4, 15, 0, time.Local),
 		},
 		{
 			name:     "between boundaries",
+			start:    time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.Local),
 			now:      time.Date(2026, 1, 2, 3, 4, 22, 500000000, time.Local),
-			interval: int64(interval / time.Second),
+			interval: 10,
 			expect:   time.Date(2026, 1, 2, 3, 4, 25, 0, time.Local),
+		},
+		{
+			name:     "refresh path",
+			start:    time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local),
+			now:      time.Date(2026, 1, 2, 3, 4, 22, 0, time.Local),
+			interval: 10,
+			expect:   time.Date(2026, 1, 2, 3, 4, 25, 0, time.Local),
+		},
+		{
+			name:     "zero interval",
+			start:    time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local),
+			now:      time.Date(2026, 1, 2, 3, 4, 22, 0, time.Local),
+			interval: 0,
+			expect:   time.Date(2026, 1, 2, 3, 4, 22, 0, time.Local),
+		},
+		{
+			name:     "negative interval",
+			start:    time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local),
+			now:      time.Date(2026, 1, 2, 3, 4, 22, 0, time.Local),
+			interval: -1,
+			expect:   time.Date(2026, 1, 2, 3, 4, 22, 0, time.Local),
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.expect, calcNextExecTime(start, tc.interval, tc.now))
+			require.Equal(t, tc.expect, calcNextExecTime(tc.start, tc.interval, tc.now))
 		})
 	}
 }
 
-func TestCalcNextRefreshTime(t *testing.T) {
-	installMockTimeForTest(t)
-	start := time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local)
-	now := time.Date(2026, 1, 2, 3, 4, 22, 0, time.Local)
-	require.Equal(t, time.Date(2026, 1, 2, 3, 4, 25, 0, time.Local), calcNextExecTime(start, 10, now))
-}
-
-func TestCalcNextScheduleTimeZeroInterval(t *testing.T) {
-	installMockTimeForTest(t)
-	start := time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local)
-	now := time.Date(2026, 1, 2, 3, 4, 22, 0, time.Local)
-	require.Equal(t, now, calcNextExecTime(start, 0, now))
-	require.Equal(t, now, calcNextExecTime(start, -1, now))
-}
-
 func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 	installMockTimeForTest(t)
-	const fetchMLogPurgeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
-
 	nextPurgeSec1 := int64(600)
 	nextPurgeSec2 := int64(720)
 
 	se := newRecordingSessionContext()
-	se.restrictedRows[fetchMLogPurgeSQL] = []chunk.Row{
+	se.restrictedRows[testSQLFetchMLogPurge] = []chunk.Row{
 		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(nextPurgeSec1),
@@ -661,7 +739,7 @@ func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 
 	got, err := (&serverHelper{}).fetchAllTiDBMLogPurge(context.Background(), pool)
 	require.NoError(t, err)
-	require.Equal(t, []string{fetchMLogPurgeSQL}, se.executedRestrictedSQL)
+	require.Equal(t, []string{testSQLFetchMLogPurge}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
 
 	l201 := got[int64(201)]
@@ -681,13 +759,11 @@ func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 
 func TestServerHelperFetchAllTiDBMViews(t *testing.T) {
 	installMockTimeForTest(t)
-	const fetchMViewsSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
-
 	nextRefreshSec1 := int64(900)
 	nextRefreshSec2 := int64(1200)
 
 	se := newRecordingSessionContext()
-	se.restrictedRows[fetchMViewsSQL] = []chunk.Row{
+	se.restrictedRows[testSQLFetchMViews] = []chunk.Row{
 		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(nextRefreshSec1),
@@ -713,7 +789,7 @@ func TestServerHelperFetchAllTiDBMViews(t *testing.T) {
 
 	got, err := (&serverHelper{}).fetchAllTiDBMViews(context.Background(), pool)
 	require.NoError(t, err)
-	require.Equal(t, []string{fetchMViewsSQL}, se.executedRestrictedSQL)
+	require.Equal(t, []string{testSQLFetchMViews}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
 
 	m101 := got[int64(101)]
@@ -731,39 +807,37 @@ func TestServerHelperFetchAllTiDBMViews(t *testing.T) {
 	require.Equal(t, int64(0), int64(m102.refreshInterval))
 }
 
-func TestWithRCRestrictedTxnCommit(t *testing.T) {
+func TestWithRCRestrictedTxn(t *testing.T) {
 	installMockTimeForTest(t)
-	se := newRecordingSessionContext()
-
-	err := withRCRestrictedTxn(context.Background(), se, func(_ context.Context, _ sessionctx.Context) error {
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
-}
-
-func TestWithRCRestrictedTxnRollbackOnError(t *testing.T) {
-	installMockTimeForTest(t)
-	se := newRecordingSessionContext()
 	injectedErr := errors.New("injected error")
 
-	err := withRCRestrictedTxn(context.Background(), se, func(_ context.Context, _ sessionctx.Context) error {
-		return injectedErr
-	})
-	require.ErrorIs(t, err, injectedErr)
-	require.Equal(t, []string{"BEGIN PESSIMISTIC", "ROLLBACK"}, se.executedSQL)
-}
-
-func TestWithRCRestrictedTxnRollbackOnPanic(t *testing.T) {
-	installMockTimeForTest(t)
-	se := newRecordingSessionContext()
-
-	require.PanicsWithValue(t, "panic in txn body", func() {
-		_ = withRCRestrictedTxn(context.Background(), se, func(_ context.Context, _ sessionctx.Context) error {
-			panic("panic in txn body")
+	t.Run("commit", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		err := withRCRestrictedTxn(context.Background(), se, func(_ context.Context, _ sessionctx.Context) error {
+			return nil
 		})
+		require.NoError(t, err)
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
 	})
-	require.Equal(t, []string{"BEGIN PESSIMISTIC", "ROLLBACK"}, se.executedSQL)
+
+	t.Run("rollback_on_error", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		err := withRCRestrictedTxn(context.Background(), se, func(_ context.Context, _ sessionctx.Context) error {
+			return injectedErr
+		})
+		require.ErrorIs(t, err, injectedErr)
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "ROLLBACK"}, se.executedSQL)
+	})
+
+	t.Run("rollback_on_panic", func(t *testing.T) {
+		se := newRecordingSessionContext()
+		require.PanicsWithValue(t, "panic in txn body", func() {
+			_ = withRCRestrictedTxn(context.Background(), se, func(_ context.Context, _ sessionctx.Context) error {
+				panic("panic in txn body")
+			})
+		})
+		require.Equal(t, []string{"BEGIN PESSIMISTIC", "ROLLBACK"}, se.executedSQL)
+	})
 }
 
 func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {
@@ -780,16 +854,12 @@ func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {
 
 func TestServerHelperRefreshMVSuccess(t *testing.T) {
 	installMockTimeForTest(t)
-	const (
-		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
-		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
-	)
 
 	se := newRecordingSessionContext()
 	originalSQLMode := mysql.ModeStrictTransTables | mysql.ModeOnlyFullGroupBy
 	se.GetSessionVars().SQLMode = originalSQLMode
 	expectedNextRefresh := mvsNow().Add(time.Minute).Round(0)
-	se.restrictedRows[findNextTimeSQL] = []chunk.Row{
+	se.restrictedRows[testSQLFindMVNextTime] = []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(expectedNextRefresh.Unix()),
 		}).ToRow(),
@@ -799,13 +869,7 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 		Name:  pmodel.NewCIStr("mv1"),
 		State: meta.StatePublic,
 	}
-	oldMockInfoSchema := mock.MockInfoschema
-	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
-		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable})
-	}
-	t.Cleanup(func() {
-		mock.MockInfoschema = oldMockInfoSchema
-	})
+	withMockInfoSchema(t, mvTable)
 	pool := recordingSessionPool{se: se}
 
 	nextRefresh, err := (&serverHelper{}).RefreshMV(context.Background(), pool, 101)
@@ -813,8 +877,8 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 	require.Equal(t, expectedNextRefresh.Unix(), nextRefresh.Unix())
 	require.Empty(t, se.executedSQL)
 	require.Equal(t, []string{
-		refreshMVSQL,
-		findNextTimeSQL,
+		testSQLRefreshMV,
+		testSQLFindMVNextTime,
 	}, se.executedRestrictedSQL)
 	require.Equal(t, []mysql.SQLMode{0, 0}, se.restrictedSQLModes)
 	require.Equal(t, originalSQLMode, se.GetSessionVars().SQLMode)
@@ -822,10 +886,6 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 
 func TestServerHelperRefreshMVDeletedWhenNextTimeNotFound(t *testing.T) {
 	installMockTimeForTest(t)
-	const (
-		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
-		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
-	)
 
 	se := newRecordingSessionContext()
 	mvTable := &meta.TableInfo{
@@ -833,14 +893,8 @@ func TestServerHelperRefreshMVDeletedWhenNextTimeNotFound(t *testing.T) {
 		Name:  pmodel.NewCIStr("mv1"),
 		State: meta.StatePublic,
 	}
-	oldMockInfoSchema := mock.MockInfoschema
-	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
-		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable})
-	}
-	t.Cleanup(func() {
-		mock.MockInfoschema = oldMockInfoSchema
-	})
-	se.restrictedRows[findNextTimeSQL] = nil
+	withMockInfoSchema(t, mvTable)
+	se.restrictedRows[testSQLFindMVNextTime] = nil
 	pool := recordingSessionPool{se: se}
 
 	nextRefresh, err := (&serverHelper{}).RefreshMV(context.Background(), pool, 101)
@@ -848,8 +902,8 @@ func TestServerHelperRefreshMVDeletedWhenNextTimeNotFound(t *testing.T) {
 	require.True(t, nextRefresh.IsZero())
 	require.Empty(t, se.executedSQL)
 	require.Equal(t, []string{
-		refreshMVSQL,
-		findNextTimeSQL,
+		testSQLRefreshMV,
+		testSQLFindMVNextTime,
 	}, se.executedRestrictedSQL)
 }
 
@@ -867,54 +921,13 @@ func TestServerHelperPurgeMVLogDeletedWhenMetaNotFound(t *testing.T) {
 
 func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 	installMockTimeForTest(t)
-	const (
-		findMinRefreshReadTSO   = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
-		lockPurgeInfoSQL        = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-		deleteMLogSQL           = `DELETE FROM %n.%n WHERE COMMIT_TSO > 0 AND COMMIT_TSO <= %?`
-		updatePurgeInfoSQL      = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
-		clearNewestPurgeHistSQL = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
-		insertPurgeHistSQL      = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
-	)
-
 	se := newRecordingSessionContext()
-	se.restrictedRows[findMinRefreshReadTSO] = []chunk.Row{
-		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(100),
-		}).ToRow(),
-	}
-	se.restrictedRows[lockPurgeInfoSQL] = []chunk.Row{
+	lockRows := []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(mvsNow().Add(-time.Minute).Unix()),
 		}).ToRow(),
 	}
-	mvInfo := &meta.MaterializedViewBaseInfo{
-		MLogID:   201,
-		MViewIDs: []int64{101, 102},
-	}
-	mvTable := &meta.TableInfo{
-		ID:                   101,
-		Name:                 pmodel.NewCIStr("mv_base"),
-		State:                meta.StatePublic,
-		MaterializedViewBase: mvInfo,
-	}
-	mvlogTable := &meta.TableInfo{
-		ID:   201,
-		Name: pmodel.NewCIStr("mlog1"),
-		MaterializedViewLog: &meta.MaterializedViewLogInfo{
-			BaseTableID:    101,
-			PurgeMethod:    "TIME_WINDOW",
-			PurgeStartWith: "'2026-01-02 03:04:05'",
-			PurgeNext:      "60",
-		},
-		State: meta.StatePublic,
-	}
-	oldMockInfoSchema := mock.MockInfoschema
-	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
-		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable, mvlogTable})
-	}
-	t.Cleanup(func() {
-		mock.MockInfoschema = oldMockInfoSchema
-	})
+	setupPurgeMVLogMetaForTest(t, se, lockRows)
 
 	pool := recordingSessionPool{se: se}
 
@@ -923,66 +936,18 @@ func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 	require.False(t, nextPurge.IsZero())
 	require.True(t, nextPurge.After(mvsNow().Add(-2*time.Second)))
 	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
-	require.Equal(t, []string{
-		findMinRefreshReadTSO,
-		lockPurgeInfoSQL,
-		deleteMLogSQL,
-		clearNewestPurgeHistSQL,
-		insertPurgeHistSQL,
-		updatePurgeInfoSQL,
-	}, se.executedRestrictedSQL)
+	require.Equal(t, testExpectedPurgeSQLSuccess, se.executedRestrictedSQL)
 }
 
 func TestPurgeMVLogSuccess(t *testing.T) {
 	installMockTimeForTest(t)
-	const (
-		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
-		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-		deleteMLogSQL            = `DELETE FROM %n.%n WHERE COMMIT_TSO > 0 AND COMMIT_TSO <= %?`
-		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
-		clearNewestSQL           = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
-		insertHistSQL            = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
-	)
-
 	se := newRecordingSessionContext()
-	se.restrictedRows[findMinRefreshReadTSOSQL] = []chunk.Row{
-		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(100),
-		}).ToRow(),
-	}
-	se.restrictedRows[lockPurgeSQL] = []chunk.Row{
+	lockRows := []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(mvsNow().Add(time.Minute).Unix()),
 		}).ToRow(),
 	}
-	mvInfo := &meta.MaterializedViewBaseInfo{
-		MLogID:   201,
-		MViewIDs: []int64{101, 102},
-	}
-	mvTable := &meta.TableInfo{
-		ID:                   101,
-		Name:                 pmodel.NewCIStr("mv_base"),
-		State:                meta.StatePublic,
-		MaterializedViewBase: mvInfo,
-	}
-	mvlogTable := &meta.TableInfo{
-		ID:   201,
-		Name: pmodel.NewCIStr("mlog1"),
-		MaterializedViewLog: &meta.MaterializedViewLogInfo{
-			BaseTableID:    101,
-			PurgeMethod:    "TIME_WINDOW",
-			PurgeStartWith: "'2026-01-02 03:04:05'",
-			PurgeNext:      "60",
-		},
-		State: meta.StatePublic,
-	}
-	oldMockInfoSchema := mock.MockInfoschema
-	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
-		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable, mvlogTable})
-	}
-	t.Cleanup(func() {
-		mock.MockInfoschema = oldMockInfoSchema
-	})
+	setupPurgeMVLogMetaForTest(t, se, lockRows)
 
 	loc := time.Local
 	if vars := se.GetSessionVars(); vars != nil && vars.Location() != nil {
@@ -994,127 +959,55 @@ func TestPurgeMVLogSuccess(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expectedNextPurge.Unix(), nextPurge.Unix())
 	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
-	require.Equal(t, []string{
-		findMinRefreshReadTSOSQL,
-		lockPurgeSQL,
-		deleteMLogSQL,
-		clearNewestSQL,
-		insertHistSQL,
-		updatePurgeSQL,
-	}, se.executedRestrictedSQL)
+	require.Equal(t, testExpectedPurgeSQLSuccess, se.executedRestrictedSQL)
 }
 
-func TestPurgeMVLogSkipWhenNotForceAndNextTimeNull(t *testing.T) {
+func TestPurgeMVLogSkipWhenAutoPurge(t *testing.T) {
 	installMockTimeForTest(t)
-	const (
-		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
-		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-	)
-
-	se := newRecordingSessionContext()
-	se.restrictedRows[findMinRefreshReadTSOSQL] = []chunk.Row{
-		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(100),
-		}).ToRow(),
-	}
-	se.restrictedRows[lockPurgeSQL] = []chunk.Row{
-		chunk.MutRowFromDatums([]types.Datum{
-			types.NewDatum(nil),
-		}).ToRow(),
-	}
-	mvInfo := &meta.MaterializedViewBaseInfo{
-		MLogID:   201,
-		MViewIDs: []int64{101, 102},
-	}
-	mvTable := &meta.TableInfo{
-		ID:                   101,
-		Name:                 pmodel.NewCIStr("mv_base"),
-		State:                meta.StatePublic,
-		MaterializedViewBase: mvInfo,
-	}
-	mvlogTable := &meta.TableInfo{
-		ID:   201,
-		Name: pmodel.NewCIStr("mlog1"),
-		MaterializedViewLog: &meta.MaterializedViewLogInfo{
-			BaseTableID:    101,
-			PurgeMethod:    "TIME_WINDOW",
-			PurgeStartWith: "'2026-01-02 03:04:05'",
-			PurgeNext:      "60",
+	testCases := []struct {
+		name     string
+		lockRows func(now time.Time) []chunk.Row
+		expected func(now time.Time) time.Time
+	}{
+		{
+			name: "next_time_null",
+			lockRows: func(_ time.Time) []chunk.Row {
+				return []chunk.Row{
+					chunk.MutRowFromDatums([]types.Datum{
+						types.NewDatum(nil),
+					}).ToRow(),
+				}
+			},
+			expected: func(_ time.Time) time.Time {
+				return time.Time{}
+			},
 		},
-		State: meta.StatePublic,
-	}
-	oldMockInfoSchema := mock.MockInfoschema
-	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
-		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable, mvlogTable})
-	}
-	t.Cleanup(func() {
-		mock.MockInfoschema = oldMockInfoSchema
-	})
-
-	nextPurge, err := PurgeMVLog(context.Background(), se, 201, true)
-	require.NoError(t, err)
-	require.True(t, nextPurge.IsZero())
-	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
-	require.Equal(t, []string{
-		findMinRefreshReadTSOSQL,
-		lockPurgeSQL,
-	}, se.executedRestrictedSQL)
-}
-
-func TestPurgeMVLogSkipWhenNotForceAndNextTimeFuture(t *testing.T) {
-	installMockTimeForTest(t)
-	const (
-		findMinRefreshReadTSOSQL = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
-		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-	)
-
-	se := newRecordingSessionContext()
-	se.restrictedRows[findMinRefreshReadTSOSQL] = []chunk.Row{
-		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(100),
-		}).ToRow(),
-	}
-	se.restrictedRows[lockPurgeSQL] = []chunk.Row{
-		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(mvsNow().Add(time.Minute).Unix()),
-		}).ToRow(),
-	}
-	mvInfo := &meta.MaterializedViewBaseInfo{
-		MLogID:   201,
-		MViewIDs: []int64{101, 102},
-	}
-	mvTable := &meta.TableInfo{
-		ID:                   101,
-		Name:                 pmodel.NewCIStr("mv_base"),
-		State:                meta.StatePublic,
-		MaterializedViewBase: mvInfo,
-	}
-	mvlogTable := &meta.TableInfo{
-		ID:   201,
-		Name: pmodel.NewCIStr("mlog1"),
-		MaterializedViewLog: &meta.MaterializedViewLogInfo{
-			BaseTableID:    101,
-			PurgeMethod:    "TIME_WINDOW",
-			PurgeStartWith: "'2026-01-02 03:04:05'",
-			PurgeNext:      "60",
+		{
+			name: "next_time_future",
+			lockRows: func(now time.Time) []chunk.Row {
+				return []chunk.Row{
+					chunk.MutRowFromDatums([]types.Datum{
+						types.NewIntDatum(now.Add(time.Minute).Unix()),
+					}).ToRow(),
+				}
+			},
+			expected: func(now time.Time) time.Time {
+				return mvsUnix(now.Add(time.Minute).Unix(), 0)
+			},
 		},
-		State: meta.StatePublic,
 	}
-	oldMockInfoSchema := mock.MockInfoschema
-	mock.MockInfoschema = func(_ []*meta.TableInfo) infoschemacontext.MetaOnlyInfoSchema {
-		return infoschema.MockInfoSchema([]*meta.TableInfo{mvTable, mvlogTable})
-	}
-	t.Cleanup(func() {
-		mock.MockInfoschema = oldMockInfoSchema
-	})
 
-	expectNextPurge := mvsUnix(mvsNow().Add(time.Minute).Unix(), 0)
-	nextPurge, err := PurgeMVLog(context.Background(), se, 201, true)
-	require.NoError(t, err)
-	require.Equal(t, expectNextPurge, nextPurge)
-	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
-	require.Equal(t, []string{
-		findMinRefreshReadTSOSQL,
-		lockPurgeSQL,
-	}, se.executedRestrictedSQL)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := mvsNow()
+			se := newRecordingSessionContext()
+			setupPurgeMVLogMetaForTest(t, se, tc.lockRows(now))
+
+			nextPurge, err := PurgeMVLog(context.Background(), se, 201, true)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected(now), nextPurge)
+			require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
+			require.Equal(t, testExpectedPurgeSQLSkip, se.executedRestrictedSQL)
+		})
+	}
 }

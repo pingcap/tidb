@@ -15,7 +15,6 @@
 package mvs
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -27,12 +26,11 @@ import (
 
 // TaskExecutor executes MV tasks with bounded concurrency, timeout, and optional backpressure.
 type TaskExecutor struct {
-	ctx context.Context
-
 	maxConcurrency atomic.Int64
 	timeoutNanos   atomic.Int64
 	lifecycleState atomic.Int32
 	backpressure   atomic.Pointer[taskBackpressureHolder]
+	closeCh        chan struct{}
 
 	metrics struct {
 		counters struct {
@@ -143,12 +141,12 @@ func (q *taskQueue) grow() {
 }
 
 // NewTaskExecutor creates a task executor with dynamic concurrency/timeout controls.
-func NewTaskExecutor(ctx context.Context, maxConcurrency int, timeout time.Duration) *TaskExecutor {
+func NewTaskExecutor(maxConcurrency int, timeout time.Duration) *TaskExecutor {
 	if maxConcurrency <= 0 {
 		maxConcurrency = 1
 	}
 	exec := &TaskExecutor{
-		ctx: ctx,
+		closeCh: make(chan struct{}),
 	}
 	exec.queue.cond = sync.NewCond(&exec.queue.mu)
 	exec.maxConcurrency.Store(int64(maxConcurrency))
@@ -239,7 +237,7 @@ func (e *TaskExecutor) Submit(name string, task func() error) {
 	e.queue.mu.Lock()
 	defer e.queue.mu.Unlock()
 
-	if e.lifecycleState.Load() == taskExecutorStateClosed || e.ctx.Err() != nil {
+	if e.lifecycleState.Load() == taskExecutorStateClosed {
 		e.metrics.counters.rejectedCount.Add(1)
 		return
 	}
@@ -259,6 +257,7 @@ func (e *TaskExecutor) Close() bool {
 	if e.lifecycleState.Swap(taskExecutorStateClosed) == taskExecutorStateClosed {
 		return false
 	}
+	close(e.closeCh)
 	e.queue.mu.Lock()
 	pending := e.queue.tasks.clear()
 	e.queue.cond.Broadcast()
@@ -314,7 +313,10 @@ func (e *TaskExecutor) nextTask() (taskRequest, bool) {
 		e.queue.mu.Unlock()
 
 		if blocked, delay := e.shouldBackpressure(); blocked {
-			mvsSleep(delay)
+			select {
+			case <-e.closeCh:
+			case <-mvsAfter(delay):
+			}
 			continue
 		}
 
@@ -380,8 +382,7 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 	if timeout <= 0 {
 		err := e.safeExecute(name, task)
 		e.metrics.gauges.runningCount.Add(-1)
-		e.tasksWG.Done()
-		e.logResult(name, err)
+		e.finishTask(name, err)
 		return
 	}
 
@@ -396,8 +397,7 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 	select {
 	case err := <-done:
 		e.metrics.gauges.runningCount.Add(-1)
-		e.tasksWG.Done()
-		e.logResult(name, err)
+		e.finishTask(name, err)
 	case <-timer.C:
 		e.metrics.counters.timeoutCount.Add(1)
 		e.metrics.gauges.runningCount.Add(-1)
@@ -406,19 +406,23 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 		go func() {
 			err := <-done
 			e.metrics.gauges.timedOutRunningCount.Add(-1)
-			e.tasksWG.Done()
-			e.logResult(name, err)
+			e.finishTask(name, err)
 		}()
 	}
 }
 
+// finishTask marks one task as done and reports execution result metrics.
+func (e *TaskExecutor) finishTask(name string, err error) {
+	e.tasksWG.Done()
+	e.logResult(name, err)
+}
+
 // logResult updates completion/failure counters and emits warning logs on failures.
 func (e *TaskExecutor) logResult(name string, err error) {
+	e.metrics.counters.completedCount.Add(1)
 	if err == nil {
-		e.metrics.counters.completedCount.Add(1)
 		return
 	}
-	e.metrics.counters.completedCount.Add(1)
 	e.metrics.counters.failedCount.Add(1)
 	logutil.BgLogger().Warn("mv task failed", zap.String("task", name), zap.Error(err))
 }

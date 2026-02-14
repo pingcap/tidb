@@ -91,16 +91,16 @@ func (sch *ServerConsistentHash) init() bool {
 	}
 }
 
-// addServer inserts one server into the member map and hash ring.
-func (sch *ServerConsistentHash) addServer(srv serverInfo) {
+// AddServer inserts one server into the member map and hash ring.
+func (sch *ServerConsistentHash) AddServer(srv serverInfo) {
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
 	sch.servers[srv.ID] = srv
 	sch.chash.AddNode(srv.ID)
 }
 
-// removeServer removes one server from the member map and hash ring.
-func (sch *ServerConsistentHash) removeServer(srvID string) {
+// RemoveServer removes one server from the member map and hash ring.
+func (sch *ServerConsistentHash) RemoveServer(srvID string) {
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
 	delete(sch.servers, srvID)
@@ -152,17 +152,38 @@ func (sch *ServerConsistentHash) refresh() error {
 }
 
 // Available checks if the server responsible for key is available (i.e. matches current server ID).
-// Supported key types are string and int64.
+// Supported key types are string, []byte and int64.
 // int64 keys are hashed by their fixed-width binary encoding.
 func (sch *ServerConsistentHash) Available(key any) bool {
-	sch.mu.RLock()
-	defer sch.mu.RUnlock()
 	switch v := key.(type) {
 	case string:
-		return sch.chash.GetNode([]byte(v)) == sch.ID
+		return sch.AvailableString(v)
+	case []byte:
+		return sch.AvailableBytes(v)
 	case int64:
-		return sch.chash.GetNode(int64KeyToBinaryBytes(v)) == sch.ID
+		return sch.AvailableInt64(v)
 	default:
 		return false
 	}
+}
+
+// AvailableString checks if the owner of the string key is the current server.
+func (sch *ServerConsistentHash) AvailableString(key string) bool {
+	sch.mu.RLock()
+	defer sch.mu.RUnlock()
+	return sch.chash.GetNode([]byte(key)) == sch.ID
+}
+
+// AvailableBytes checks if the owner of the byte key is the current server.
+func (sch *ServerConsistentHash) AvailableBytes(key []byte) bool {
+	sch.mu.RLock()
+	defer sch.mu.RUnlock()
+	return sch.chash.GetNode(key) == sch.ID
+}
+
+// AvailableInt64 checks if the owner of the int64 key is the current server.
+func (sch *ServerConsistentHash) AvailableInt64(key int64) bool {
+	sch.mu.RLock()
+	defer sch.mu.RUnlock()
+	return sch.chash.GetNode(int64KeyToBinaryBytes(key)) == sch.ID
 }
