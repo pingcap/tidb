@@ -382,9 +382,6 @@ type IndexJoinRuntimeProp struct {
 	// and double reader cost consideration. Therefore, we introduce another bool to
 	// indicate prefer tableRangeScan or indexRangeScan each at a time.
 	TableRangeScan bool
-
-	// HintPreferIndexJoin indicates whether the index join is preferred by hint.
-	HintPreferIndexJoin bool
 }
 
 // NewPhysicalProperty builds property from columns.

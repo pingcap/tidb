@@ -1166,10 +1166,6 @@ HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.tj1.c2, planner__c
     └─TableFullScan	cop[tikv]	table:tj1	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items
-Warning	1815	Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items
-Warning	1815	Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items
-Warning	1815	Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items
 Warning	1815	Optimizer Hint /*+ INL_JOIN(a_t) */ or /*+ TIDB_INLJ(a_t) */ is inapplicable
 select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.c2 from tj1 inner join (select c2 from tj2 group by c1) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.c2;
 c2	c2
@@ -1193,10 +1189,6 @@ HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.tj1.c1, planner__c
     └─TableFullScan	cop[tikv]	table:tj1	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items
-Warning	1815	Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items
-Warning	1815	Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items
-Warning	1815	Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items
 Warning	1815	Optimizer Hint /*+ INL_JOIN(a_t) */ or /*+ TIDB_INLJ(a_t) */ is inapplicable
 select /*+ INL_JOIN(a_t) */ tj1.c1, a_t.c1 from tj1 inner join (select c1 from tj3 group by c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.c1;
 c1	c1

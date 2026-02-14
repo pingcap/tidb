@@ -736,27 +736,21 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	if count := outerStats.RowCount; count > 0 {
 		avgInnerRowCnt = p.EqualCondOutCnt / count
 	}
-	var preferINL bool
-	if p.PreferAny(h.PreferLeftAsINLJInner, h.PreferRightAsINLJInner, h.PreferLeftAsINLMJInner, h.PreferRightAsINLMJInner, h.PreferLeftAsINLHJInner, h.PreferRightAsINLHJInner) {
-		preferINL = true
-	}
 	// for pk path
 	indexJoinPropTS := &property.IndexJoinRuntimeProp{
-		OtherConditions:     p.OtherConditions,
-		InnerJoinKeys:       innerJoinKeys,
-		OuterJoinKeys:       outerJoinKeys,
-		AvgInnerRowCnt:      avgInnerRowCnt,
-		TableRangeScan:      true,
-		HintPreferIndexJoin: preferINL,
+		OtherConditions: p.OtherConditions,
+		InnerJoinKeys:   innerJoinKeys,
+		OuterJoinKeys:   outerJoinKeys,
+		AvgInnerRowCnt:  avgInnerRowCnt,
+		TableRangeScan:  true,
 	}
 	// for normal index path
 	indexJoinPropIS := &property.IndexJoinRuntimeProp{
-		OtherConditions:     p.OtherConditions,
-		InnerJoinKeys:       innerJoinKeys,
-		OuterJoinKeys:       outerJoinKeys,
-		AvgInnerRowCnt:      avgInnerRowCnt,
-		TableRangeScan:      false,
-		HintPreferIndexJoin: preferINL,
+		OtherConditions: p.OtherConditions,
+		InnerJoinKeys:   innerJoinKeys,
+		OuterJoinKeys:   outerJoinKeys,
+		AvgInnerRowCnt:  avgInnerRowCnt,
+		TableRangeScan:  false,
 	}
 	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropTS, outerStats)
 	indexJoins = append(indexJoins, constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropIS, outerStats)...)
@@ -833,19 +827,18 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 	}
 }
 
+// checkIndexJoinInnerTaskWithAgg checks if join key set is subset of group by items.
+// Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
+// Current limitation:
+// This check currently relies on UniqueID matching between:
+// 1) columns extracted from GroupByItems, and
+// 2) inner join keys from the DataSource side.
+// It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
+// columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+1).
+// In those cases, semantically equivalent keys may carry different UniqueIDs, so we may
+// reject some valid index join plans (false negatives) to keep correctness.
+// TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
 func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinRuntimeProp) bool {
-	// Make sure join key set is subset of group by items.
-	// Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
-	//
-	// Current limitation:
-	// This check currently relies on UniqueID matching between:
-	// 1) columns extracted from GroupByItems, and
-	// 2) inner join keys from the DataSource side.
-	// It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
-	// columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+1).
-	// In those cases, semantically equivalent keys may carry different UniqueIDs, so we may
-	// reject some valid index join plans (false negatives) to keep correctness.
-	// TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
 	groupByCols := expression.ExtractColumnsMapFromExpressions(nil, la.GroupByItems...)
 
 	var dataSourceSchema *expression.Schema
@@ -856,17 +849,15 @@ func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinP
 			break
 		}
 		if iterChild.Children() == nil || len(iterChild.Children()) != 1 {
-			// Got unexpected plan shape, be defensive here and return false to disable index join inner task with agg in this case.
 			return false
 		}
 		iterChild = iterChild.Children()[0]
 	}
 	if dataSourceSchema == nil {
-		// No DataSource found in the inner child, be defensive here and return false to disable index join inner task with agg in this case.
 		return false
 	}
 
-	// Only check the inner keys that is really from the DataSource, and newly generated keys like agg func or projection column
+	// Only check the inner keys that is from the DataSource, and newly generated keys like agg func or projection column
 	// will not be considerted here. Because we only need to make sure the keys from DataSource is not split by group by,
 	// and the newly generated keys will not cause the split.
 	innerKeysFromDataSource := make(map[int64]struct{}, len(indexJoinProp.InnerJoinKeys))
@@ -905,9 +896,6 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property
 			return false
 		}
 		if !checkIndexJoinInnerTaskWithAgg(x, indexJoinProp) {
-			if indexJoinProp.HintPreferIndexJoin {
-				x.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items")
-			}
 			return false
 		}
 
