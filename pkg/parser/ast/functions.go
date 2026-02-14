@@ -762,6 +762,8 @@ const (
 	AggFuncCount = "count"
 	// AggFuncSum is the name of Sum function.
 	AggFuncSum = "sum"
+	// AggFuncSumInt is the name of SumInt function.
+	AggFuncSumInt = "sum_int"
 	// AggFuncAvg is the name of Avg function.
 	AggFuncAvg = "avg"
 	// AggFuncFirstRow is the name of FirstRowColumn function.
