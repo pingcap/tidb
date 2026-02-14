@@ -782,7 +782,7 @@ func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
 	// The order matter!
 	// IsTableInfoMustLoad relies on the order of the json marshal result,
 	// or the internal of the json marshal in other words.
-	// This test cover the invariance, if Go std library changes, we can catch it.
+	// This test covers the invariance, if Go std library changes, we can catch it.
 	tableInfo := &model.TableInfo{
 		Affinity:       &model.TableAffinityInfo{Level: "s"},
 		SoftdeleteInfo: &model.SoftdeleteInfo{Retention: "1h"},

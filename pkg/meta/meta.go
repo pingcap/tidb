@@ -1127,9 +1127,8 @@ var checkAttributesInOrder = []MustLoadFilterAttr{
 }
 
 // isTableInfoMustLoad checks whether the table info needs to be loaded.
-// If the byte representation contains all the given attributes,
-// then it does not need to be loaded and this function will return false.
-// Otherwise, it will return true, indicating that the table info should be loaded.
+// If the byte representation follows filterAttrs, it returns true.
+// Otherwise, it return false meaning that table is not neeeded to load.
 // Since attributes are checked in sequence, it's important to choose the order carefully.
 // isCheckForeignKeyAttrsInOrder check foreign key or not, since fk_info contains two null situations.
 func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filterAttrs ...MustLoadFilterAttr) bool {
