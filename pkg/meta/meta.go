@@ -1162,7 +1162,7 @@ func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filter
 // IsTableInfoMustLoad checks whether the table info needs to be loaded.
 // Exported for testing.
 func IsTableInfoMustLoad(json []byte) bool {
-	return isTableInfoMustLoad(json, true, checkAttributesInOrder)
+	return isTableInfoMustLoad(json, true, checkAttributesInOrder...)
 }
 
 // NameExtractRegexp is exported for testing.
@@ -1207,7 +1207,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if isTableInfoMustLoad(value, true, checkAttributesInOrder) {
+		if isTableInfoMustLoad(value, true, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1236,7 +1236,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...MustLoadF
 			return nil
 		}
 
-		if isTableInfoMustLoad(value, false, filterAttrs) {
+		if isTableInfoMustLoad(value, false, filterAttrs...) {
 			tbInfo := &model.TableInfo{}
 			err := json.Unmarshal(value, tbInfo)
 			if err != nil {
