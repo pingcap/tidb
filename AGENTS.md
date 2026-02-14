@@ -49,6 +49,12 @@ This file provides guidance to agents when working with code in this repository.
 
 - When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
 
+### Skills
+
+- Repository-level Codex skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
+- Keep skill content and references together under each skill folder (for example: `.agents/skills/<skill>/SKILL.md` and `.agents/skills/<skill>/references/`).
+- `.github/skills` is kept only as a migration note path and should not be used as the primary location for new skill updates.
+
 ### Notes
 
 - Notes directory: `docs/note/<component>/` is the canonical location for component notes. If missing, create it and add an entry here.
