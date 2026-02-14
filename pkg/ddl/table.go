@@ -1474,7 +1474,7 @@ func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, dr
 	}
 
 	baseTblInfo, err := jobCtx.metaMut.GetTable(job.SchemaID, baseTableID)
-	if err != nil {
+	if err != nil || baseTblInfo == nil {
 		// The base table may already be dropped; keep dropping MV/MLOG table going.
 		return nil, nil
 	}
