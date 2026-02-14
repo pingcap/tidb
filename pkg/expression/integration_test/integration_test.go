@@ -2491,12 +2491,22 @@ func TestPrimaryKeyRequiredSysvar(t *testing.T) {
 		name varchar(60),
 		age int
 	  )`)
-	tk.MustExec(`DROP TABLE t`)
 
 	tk.MustExec("set @@sql_require_primary_key=true")
+	// issue 66207
+	tk.MustExec(`CREATE TABLE IF NOT EXISTS t (
+		name varchar(60),
+		age int
+	  )`)
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1050|Table 'test.t' already exists"))
 
 	// creating table without primary key should now fail
+	tk.MustExec(`DROP TABLE t`)
 	tk.MustGetErrCode(`CREATE TABLE t (
+		name varchar(60),
+		age int
+	  )`, errno.ErrTableWithoutPrimaryKey)
+	tk.MustGetErrCode(`CREATE TABLE IF NOT EXISTS t (
 		name varchar(60),
 		age int
 	  )`, errno.ErrTableWithoutPrimaryKey)
