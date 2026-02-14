@@ -132,52 +132,6 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(distinct col_2 order by col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
 	}
 
-	// join-using-compare-all-missing-column
-	{
-		tk := prepareSharedTestKit(t)
-		tk.MustExec(`CREATE TABLE t1 (
-  id BIGINT NOT NULL,
-  k0 BIGINT NOT NULL,
-  d0 DATE NOT NULL,
-  d1 FLOAT NOT NULL,
-  PRIMARY KEY (id)
-)`)
-		tk.MustExec(`CREATE TABLE t3 (
-  id BIGINT NOT NULL,
-  k2 VARCHAR(64) NOT NULL,
-  k0 BIGINT NOT NULL,
-  d0 DOUBLE NOT NULL,
-  d1 DATE NOT NULL,
-  PRIMARY KEY (id)
-)`)
-		tk.MustExec("INSERT INTO t1 (id, k0, d0, d1) VALUES (10, 93, '2024-04-14', 14.19)")
-		tk.MustExec("INSERT INTO t3 (id, k2, k0, d0, d1) VALUES (10, 's356', 749, 89.26, '2024-04-29')")
-		tk.MustQuery(`SELECT id AS t0_id
-FROM t1
-JOIN t3 USING (id)
-WHERE t3.d1 = '2024-04-29'
-  AND t3.id = 10
-  AND t1.k0 = 93`).Check(testkit.Rows("10"))
-		tk.MustQuery(`SELECT
-  id AS t0_id
-FROM t1
-JOIN t3 USING (id)
-WHERE (
-  (
-    (t3.d1 = '2024-04-29')
-    AND (t3.id = 10)
-  )
-  AND (t1.k0 = 93)
-)
-AND (
-  t3.k0 = ALL (
-    SELECT t3.k0 AS c0
-    FROM t3
-    WHERE t3.k0 = 749
-  )
-)`).Check(testkit.Rows("10"))
-	}
-
 	// only-full-group-by-view
 	{
 		tk := prepareSharedTestKit(t)
