@@ -31,6 +31,7 @@ Review gate:
 
 - [ ] `AGENTS.md` remains concise: policy-focused, not overloaded with step-by-step runbook detail.
 - [ ] Detailed workflows are linked from `AGENTS.md` to `docs/agents/*` instead of copied inline.
+- [ ] Policy statements are not duplicated across sections or docs; keep one source-of-truth line and reference it elsewhere if needed.
 - [ ] No duplicated checklist documents with overlapping normative rules.
 
 ### 3) High-Risk Policy Gates
@@ -39,7 +40,7 @@ Validate these first because they caused prior drift/regressions:
 
 - [ ] Bazel metadata rule is explicit and unambiguous (no ambiguous wildcard wording).
 - [ ] PR requirements include the `Issue Number:` line with `close #<id>` or `ref #<id>`.
-- [ ] Notes update policy is consistent between `AGENTS.md` and planner notes.
+- [ ] Notes update policy is consistent between `docs/agents/notes-guide.md` and planner notes.
 - [ ] Testing policy in `AGENTS.md` matches testing runbook guidance under `docs/agents/` (no contradiction).
 
 ### 4) Testing and Validation Consistency
@@ -78,8 +79,13 @@ grep -n "Task -> Validation Matrix\|Testing Policy\|make bazel_prepare" AGENTS.m
 # Check cross-doc source-of-truth boundaries in docs/agents/
 grep -R -n 'root `AGENTS.md`' --include="*.md" docs/agents
 
-# Ensure removed docs are not referenced
-grep -R -n "pr-issue.md" --include="*.md" . --exclude="agents-review-guide.md"
+# Ensure deleted/renamed paths in this change are not referenced in Markdown docs.
+# Replace <base_ref> with the PR base branch if needed.
+git diff --name-status <base_ref>...HEAD | \
+  awk '$1=="D"{print $2} $1 ~ /^R[0-9]*/{print $2}' | \
+  while read -r old_path; do
+    [ -n "${old_path}" ] && rg -n --fixed-strings "${old_path}" --glob '*.md' . || true
+  done
 ```
 
 ## Acceptance Criteria for AGENTS-related Changes

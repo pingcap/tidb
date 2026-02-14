@@ -21,16 +21,16 @@ popd
 - Policy reference: `AGENTS.md` -> `Quick Decision Matrix`, `AGENTS.md` -> `Testing Policy`.
 
 ```bash
-grep -R -n "failpoint\\." pkg/<package_name>
-grep -R -n "testfailpoint\\." pkg/<package_name>
-# Optional (Bazel): check failpoint dependency if BUILD.bazel exists.
-test -f pkg/<package_name>/BUILD.bazel && grep -n "@com_github_pingcap_failpoint//:failpoint" pkg/<package_name>/BUILD.bazel
+rg -n --fixed-strings -- "failpoint." pkg/<package_name>
+rg -n --fixed-strings -- "testfailpoint." pkg/<package_name>
+# If BUILD.bazel exists, also check failpoint dependency.
+test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_pingcap_failpoint//:failpoint" pkg/<package_name>/BUILD.bazel
 ```
 
-- The grep checks above are heuristic and can have false positives/negatives.
-- If grep finds matches, run with failpoints enabled.
-- If grep finds no matches, do not enable failpoints by default.
-- If failpoint usage is still uncertain (for example build-tagged code paths), enable failpoints and state the reason in the final report.
+- The `rg` checks above are heuristic and can have false positives/negatives.
+- If `rg` finds matches, run with failpoints enabled.
+- If `rg` finds no matches, do not enable failpoints by default.
+- If failpoint usage is still uncertain (for example build-tagged code paths), enable failpoints by default and state the reason in the final report.
 - `--tags=intest,deadlock` does not enable failpoints.
 
 ```bash
@@ -44,8 +44,8 @@ make failpoint-enable && (
 )
 ```
 
-- If running Bazel directly (for example `bazel test`), run `make bazel-failpoint-enable` first, then `make failpoint-disable` after tests.
-- If using `make bazel_test`, do not run `make bazel-failpoint-enable` separately because `bazel_test` already depends on it; still run `make failpoint-disable` after tests.
+- If running Bazel directly (for example `bazel test`), run `make bazel-failpoint-enable` first, then `make bazel-failpoint-disable` after tests.
+- If using `make bazel_test`, do not run `make bazel-failpoint-enable` separately because `bazel_test` already depends on it; still run `make bazel-failpoint-disable` after tests.
 
 ## Unit test design notes
 

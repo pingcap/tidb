@@ -86,6 +86,7 @@ Hard requirements remain in the repository root `AGENTS.md`.
 
 ## Notes and Runbooks
 - Planner notes: `docs/note/planner/rule/rule_ai_notes.md`
+- Notes guide: `docs/agents/notes-guide.md`
 - Testing runbook: `docs/agents/testing-flow.md`
 - AGENTS review guide: `docs/agents/agents-review-guide.md`
 - Root execution contract: `AGENTS.md`
