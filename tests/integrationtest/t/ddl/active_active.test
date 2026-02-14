@@ -9,6 +9,8 @@ show create database test_aa;
 alter database test_aa active_active = 'OFF' softdelete = retention 4 day;
 show create database test_aa;
 alter database test_aa active_active = 'ON' softdelete = retention 7 day;
+-- error 8200
+alter database test_aa softdelete = 'OFF';
 show create database test_aa;
 use test_aa;
 
@@ -59,6 +61,12 @@ ALTER TABLE t ADD INDEX i3(_tidb_softdelete_time) GLOBAL;
 show create table t;
 drop table if exists t;
 
+-- error 1846
+create table t (
+	id int primary key,
+	name varchar(50),
+	unique i3(name)
+) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
 create table t (
 	id int primary key,
 	name varchar(50)

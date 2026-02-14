@@ -1,5 +1,14 @@
 set @@global.tidb_enable_global_index = 1;
 drop database if exists test_sd;
+create database test_sd SOFTDELETE = 'OFF';
+CREATE TABLE t (
+id int PRIMARY KEY,
+text varchar(10)
+);
+show create database test_sd;
+Database	Create Database
+test_sd	CREATE DATABASE `test_sd` /*!40100 DEFAULT CHARACTER SET utf8mb4 */
+drop database if exists test_sd;
 create database test_sd softdelete = RETENTION 7 DAY;
 show create database test_sd;
 Database	Create Database
@@ -9,7 +18,10 @@ create database test_sd softdelete retention 7 DAY softdelete_job_enable = 'ON' 
 show create database test_sd;
 Database	Create Database
 test_sd	CREATE DATABASE `test_sd` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='1h' */
+alter database test_sd softdelete = retention 3 day;
 alter database test_sd softdelete = 'OFF';
+alter database test_sd softdelete_job_interval = '3h';
+Error 8200 (HY000): Unsupported must sepecify SOFTDELETE = RETENTION xxx
 show create database test_sd;
 Database	Create Database
 test_sd	CREATE DATABASE `test_sd` /*!40100 DEFAULT CHARACTER SET utf8mb4 */
@@ -22,114 +34,146 @@ test_sd	CREATE DATABASE `test_sd` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T!
 drop database test_sd;
 create database test_sd;
 use test_sd;
-create table t1 (id int primary key, name varchar(50)) softdelete = retention 7 day;
-show create table t1;
+drop table if exists t;
+create table t (id int primary key, name varchar(50)) retention 7 day;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 63 near "retention 7 day" 
+create table t (id int primary key, name varchar(50)) softdelete = retention 7 day;
+show create table t;
 Table	Create Table
-t1	CREATE TABLE `t1` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 select COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE, COLUMN_KEY from information_schema.columns
-where table_schema = 'test_sd' and table_name = 't1' and column_name = '_tidb_softdelete_time';
+where table_schema = 'test_sd' and table_name = 't' and column_name = '_tidb_softdelete_time';
 COLUMN_NAME	COLUMN_DEFAULT	IS_NULLABLE	DATA_TYPE	CHARACTER_MAXIMUM_LENGTH	CHARACTER_OCTET_LENGTH	NUMERIC_PRECISION	NUMERIC_SCALE	DATETIME_PRECISION	CHARACTER_SET_NAME	COLLATION_NAME	COLUMN_TYPE	COLUMN_KEY
 _tidb_softdelete_time	NULL	YES	timestamp	NULL	NULL	NULL	NULL	6	NULL	NULL	timestamp(6)	
-create table t2 (id int primary key, name varchar(50)) softdelete retention 7 hour;
-show create table t2;
+drop table if exists t;
+create table t (id int primary key, name varchar(50)) softdelete retention 7 hour;
+show create table t;
 Table	Create Table
-t2	CREATE TABLE `t2` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 HOUR */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
-create table t3 (id int primary key, name varchar(50)) softdelete retention 4 hour softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
-show create table t3;
+drop table if exists t;
+create table t (id int primary key, name varchar(50)) softdelete retention 4 hour softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
+show create table t;
 Table	Create Table
-t3	CREATE TABLE `t3` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 4 HOUR */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='2h' */
 alter database test_sd softdelete retention 7 hour;
-create table t4 (id int primary key, name varchar(50));
-show create table t4;
+drop table if exists t;
+create table t (id int primary key, name varchar(50));
+show create table t;
 Table	Create Table
-t4	CREATE TABLE `t4` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 HOUR */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
-drop table if exists t4_gi;
-create table t4_gi (id int primary key) /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ partition by hash(id) partitions 4;
-alter table t4_gi add index i1(_tidb_softdelete_time) global;
-show create table t4_gi;
+drop table if exists t;
+create table t (id int primary key, name varchar(50)) softdelete_job_enable = 'OFF';
+show create table t;
 Table	Create Table
-t4_gi	CREATE TABLE `t4_gi` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 HOUR */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='OFF' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+drop table if exists t;
+create table t (id int primary key, name varchar(50)) softdelete = 'OFF';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t4;
+create table t4 (id int primary key, text varchar(10)) /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ partition by hash(id) partitions 4;
+alter table t4 add index i1(_tidb_softdelete_time) global;
+alter table t4 add unique index i1(_tidb_softdelete_time) global;
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
+alter table t4 add unique index i1(text) global;
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
+show create table t4;
+Table	Create Table
+t4	CREATE TABLE `t4` (
+  `id` int NOT NULL,
+  `text` varchar(10) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
   /*T![softdelete] , KEY `i1` (`_tidb_softdelete_time`) GLOBAL */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 PARTITION BY HASH (`id`) PARTITIONS 4
-drop table if exists t4_gi;
 alter database test_sd softdelete = 'off';
-create table t5 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+create table t5 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='OFF' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
 show create table t5;
 Table	Create Table
 t5	CREATE TABLE `t5` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='OFF' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 create table t6 (id int primary key, name varchar(50)) softdelete_job_interval = '2h' softdelete_job_enable = 'ON' softdelete = 'OFF';
 Error 8200 (HY000): Unsupported having SOFTDELETE options but SOFTDELETE = 'OFF'
 create table t6 (id int primary key, name varchar(50)) softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
 Error 8200 (HY000): Unsupported must sepecify SOFTDELETE = RETENTION xxx
-insert into t4 values (0, 's');
-alter table t4 softdelete retention 30 DAY;
+insert into t values (0, 's');
+alter table t softdelete retention 30 DAY;
 set @@tidb_translate_softdelete_sql = true;
-insert into t4 values (1, 's');
+insert into t values (1, 's');
 set @@tidb_translate_softdelete_sql = false;
-select *,_tidb_softdelete_time from t4;
+select *,_tidb_softdelete_time from t;
 id	name	_tidb_softdelete_time
 0	s	NULL
 1	s	NULL
-insert into t4(id,name,_tidb_softdelete_time) values (2, 's', '2013-08-05 18:19:03');
-select *,_tidb_softdelete_time from t4;
+insert into t(id,name,_tidb_softdelete_time) values (2, 's', '2013-08-05 18:19:03');
+select *,_tidb_softdelete_time from t;
 id	name	_tidb_softdelete_time
 0	s	NULL
 1	s	NULL
 2	s	2013-08-05 18:19:03.000000
 set @@tidb_translate_softdelete_sql = default;
-show create table t4;
+show create table t;
 Table	Create Table
-t4	CREATE TABLE `t4` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 30 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
-alter table t4 drop column _tidb_softdelete_time;
+alter table t drop column _tidb_softdelete_time;
 Error 8200 (HY000): Unsupported can not drop internal columns
-alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
-show create table t4;
+alter table t modify column _tidb_softdelete_time DATETIME;
+Error 1166 (42000): Incorrect column name '_tidb_softdelete_time'
+alter table t softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
+show create table t;
 Table	Create Table
-t4	CREATE TABLE `t4` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 30 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='OFF' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='9h' */
-alter table t4 softdelete = 'OFF';
-show create table t4;
+alter table t softdelete = 'OFF';
+alter table t softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
+Error 8200 (HY000): Unsupported must sepecify SOFTDELETE = RETENTION xxx
+show create table t;
 Table	Create Table
-t4	CREATE TABLE `t4` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   `_tidb_softdelete_time` timestamp(6) NULL DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t4 drop column _tidb_softdelete_time;
-show create table t4;
+alter table t drop column _tidb_softdelete_time;
+show create table t;
 Table	Create Table
-t4	CREATE TABLE `t4` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
@@ -144,8 +188,8 @@ create table t6 (id int) softdelete = retention 'invalid_duration' DAY;
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 66 near "'invalid_duration' DAY" 
 create global temporary table tmp_aa (id int) softdelete = retention 7 day on commit delete rows;
 Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
-create global temporary table tmp_aa like t3 on commit delete rows;
-Error 1347 (HY000): 'test_sd.t3' is not supported, it is SOFTDELETE TABLE
+create global temporary table tmp_aa like t5 on commit delete rows;
+Error 1347 (HY000): 'test_sd.t5' is not supported, it is ACTIVE_ACTIVE TABLE
 create temporary table tmp_sd2 (id int) softdelete = retention 7 day;
 Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
 create table parent_fk (id int primary key);
