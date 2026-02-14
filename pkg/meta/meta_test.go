@@ -668,6 +668,26 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
+		SoftdeleteInfo: &model.SoftdeleteInfo{
+			Retention: "x",
+		},
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		Affinity: &model.TableAffinityInfo{
+			Level: "s",
+		},
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
 		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
 		State:          model.StatePublic,
 	}
@@ -762,11 +782,14 @@ func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
 	// The order matter!
 	// IsTableInfoMustLoad relies on the order of the json marshal result,
 	// or the internal of the json marshal in other words.
-	// This test cover the invariance, if Go std library changes, we can catch it.
-	tableInfo := &model.TableInfo{}
+	// This test covers the invariance, if Go std library changes, we can catch it.
+	tableInfo := &model.TableInfo{
+		Affinity:       &model.TableAffinityInfo{Level: "s"},
+		SoftdeleteInfo: &model.SoftdeleteInfo{Retention: "1h"},
+	}
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
-	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"revision":0}`
+	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"affinity":{"level":"s"},"softdelete_info":{"retention":"1h"},"revision":0}`
 	require.Equal(t, expect, string(b))
 }
 
@@ -994,6 +1017,12 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 			Enable:           true,
 			JobInterval:      "1h",
 		},
+		Affinity: &model.TableAffinityInfo{
+			Level: "1",
+		},
+		SoftdeleteInfo: &model.SoftdeleteInfo{
+			Retention: "1",
+		},
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
@@ -1031,6 +1060,14 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
+	// softdelete info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.SoftDeleteAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.SoftdeleteInfo, tblInfoRes[0].TableInfos[0].SoftdeleteInfo)
+	// affinity
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Affinity, tblInfoRes[0].TableInfos[0].Affinity)
 }
 
 func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
