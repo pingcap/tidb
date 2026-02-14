@@ -126,21 +126,17 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Contains(t, showCreate, "UNIQUE KEY")
 	require.False(t, strings.Contains(showCreate, "PRIMARY KEY (`a`)"))
 
-	// Index DDL on MV-related tables: base/mlog remain forbidden, MV table is allowed.
+	// Index DDL on MV-related tables: base remains forbidden, MV table is allowed.
 	err = tk.ExecToErr("create index idx_forbidden_base on t (b)")
 	require.ErrorContains(t, err, "CREATE INDEX on base table with materialized view dependencies")
 	err = tk.ExecToErr("drop index idx_bac on t_minmax_ok")
 	require.ErrorContains(t, err, "DROP INDEX on base table with materialized view dependencies")
 	tk.MustExec("create index idx_mv_s on mv (s)")
 	tk.MustExec("drop index idx_mv_s on mv")
-	err = tk.ExecToErr("create index idx_forbidden_mlog on `$mlog$t` (a)")
-	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")
 
-	// ALTER TABLE ... SET TIFLASH REPLICA is allowed on MV table, but still forbidden on base/mlog.
+	// ALTER TABLE ... SET TIFLASH REPLICA is allowed on MV table, but still forbidden on base.
 	err = tk.ExecToErr("alter table t set tiflash replica 1")
 	require.ErrorContains(t, err, "ALTER TABLE on base table with materialized view dependencies")
-	err = tk.ExecToErr("alter table `$mlog$t` set tiflash replica 1")
-	require.ErrorContains(t, err, "ALTER TABLE on materialized view log table")
 	err = tk.ExecToErr("alter table mv set tiflash replica 1")
 	if err != nil {
 		require.NotContains(t, err.Error(), "ALTER TABLE on materialized view table")

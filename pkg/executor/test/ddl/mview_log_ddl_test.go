@@ -143,9 +143,6 @@ func TestTruncateMaterializedViewRelatedTablesRejected(t *testing.T) {
 	err = tk.ExecToErr("truncate table mv_truncate_mv")
 	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view table")
 
-	err = tk.ExecToErr("truncate table `$mlog$t_truncate_mv`")
-	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view log table")
-
 	err = tk.ExecToErr("truncate table t_truncate_mv")
 	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view dependencies")
 }
@@ -172,12 +169,6 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	err = tk.ExecToErr("rename table mv_ddl_mv to mv_ddl_mv2")
 	require.ErrorContains(t, err, "RENAME TABLE on materialized view table")
 
-	err = tk.ExecToErr("alter table `$mlog$t_ddl_mv` add column y int")
-	require.ErrorContains(t, err, "ALTER TABLE on materialized view log table")
-	err = tk.ExecToErr("drop table `$mlog$t_ddl_mv`")
-	require.ErrorContains(t, err, "DROP TABLE on materialized view log table")
-	err = tk.ExecToErr("rename table `$mlog$t_ddl_mv` to mlog_ddl_mv2")
-	require.ErrorContains(t, err, "RENAME TABLE on materialized view log table")
 }
 
 func TestTruncateOrdinaryTableStillWorks(t *testing.T) {
