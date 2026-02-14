@@ -2584,6 +2584,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
+		// For USING/NATURAL JOIN, a redundant column can be found through FullSchema/FullNames,
+		// but it does not exist in Join.Schema(). Rewrite it to the visible equivalent column
+		// before pushing into the expression stack, so later ResolveIndices can still find it.
 		if planCtx != nil &&
 			(er.clause() == whereClause || er.clause() == havingClause) &&
 			name != nil &&
@@ -2622,6 +2625,8 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.err = err
 		return
 	} else if col != nil {
+		// Same remapping as above, but for the path that resolves from the underlying
+		// natural/using join's FullSchema directly.
 		if foundInJoin != nil &&
 			foundInJoin.JoinType == base.InnerJoin &&
 			name != nil &&
@@ -2658,6 +2663,8 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 }
 
 func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, join *logicalop.LogicalJoin, err error) {
+	// Return both the resolved column and the join node, so the caller can decide
+	// whether a redundant USING/NATURAL JOIN column needs remapping.
 	switch x := p.(type) {
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
@@ -2676,6 +2683,8 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 }
 
 func resolveRedundantColumnFromNaturalUsingJoin(join *logicalop.LogicalJoin, redundantCol *expression.Column) (*expression.Column, *types.FieldName) {
+	// USING/NATURAL JOIN introduces equality predicates. Use these EQ pairs to find
+	// the visible peer column that is actually present in Join.Schema().
 	for _, cond := range join.OtherConditions {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.EQ {
