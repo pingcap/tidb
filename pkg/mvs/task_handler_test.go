@@ -47,7 +47,7 @@ const (
 	testSQLFindMVNextTime      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	testSQLFindMinRefreshRead  = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
 	testSQLLockPurgeInfo       = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
-	testSQLDeleteMLog          = `DELETE FROM %n.%n WHERE COMMIT_TSO > 0 AND COMMIT_TSO <= %?`
+	testSQLDeleteMLog          = `DELETE FROM %n.%n WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= %?`
 	testSQLUpdatePurgeInfo     = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 	testSQLClearNewestPurgeHis = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
 	testSQLInsertPurgeHist     = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`

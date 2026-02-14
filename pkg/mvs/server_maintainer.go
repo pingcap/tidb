@@ -67,7 +67,9 @@ func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerHel
 // init loads local server info with retry and initializes local server ID.
 func (sch *ServerConsistentHash) init() bool {
 	backoff := time.Second
+	attempt := 0
 	for {
+		attempt++
 		// Retry until local server identity is available; otherwise this node
 		// cannot be part of the hash ring and will receive no tasks.
 		info, err := sch.helper.getServerInfo()
@@ -81,9 +83,19 @@ func (sch *ServerConsistentHash) init() bool {
 		}
 
 		waitBackoff := min(backoff, time.Second*5)
-		logutil.BgLogger().Warn("get local TiDB server info failed, retrying after backoff", zap.Error(err), zap.Duration("backoff", waitBackoff))
+		logutil.BgLogger().Warn(
+			"get local TiDB server info failed, retrying after backoff",
+			zap.Int("attempt", attempt),
+			zap.Duration("backoff", waitBackoff),
+			zap.Error(err),
+		)
 		select {
 		case <-sch.ctx.Done():
+			logutil.BgLogger().Warn(
+				"stop initializing server consistent hash because context is done",
+				zap.Int("attempt", attempt),
+				zap.NamedError("context_error", sch.ctx.Err()),
+			)
 			return false
 		case <-mvsAfter(waitBackoff):
 			backoff = waitBackoff * 2
@@ -109,9 +121,18 @@ func (sch *ServerConsistentHash) RemoveServer(srvID string) {
 
 // refresh reloads server membership and rebuilds the hash ring when changed.
 func (sch *ServerConsistentHash) refresh() error {
+	sch.mu.RLock()
+	oldServerCount := len(sch.servers)
+	sch.mu.RUnlock()
+
 	newServerInfos, err := sch.helper.getAllServerInfo(sch.ctx)
 	if err != nil {
-		logutil.BgLogger().Warn("get available TiDB nodes failed", zap.Error(err))
+		logutil.BgLogger().Warn(
+			"get available TiDB nodes failed",
+			zap.Int("old_server_count", oldServerCount),
+			zap.NamedError("context_error", sch.ctx.Err()),
+			zap.Error(err),
+		)
 		return err
 	}
 	// Filter servers by helper policy.
@@ -148,6 +169,12 @@ func (sch *ServerConsistentHash) refresh() error {
 
 		sch.mu.Unlock() // Release guard after rebuild.
 	}
+
+	logutil.BgLogger().Info(
+		"refreshed TiDB server membership for MV scheduler",
+		zap.Int("old_server_count", oldServerCount),
+		zap.Int("new_server_count", len(newServerInfos)),
+	)
 	return nil
 }
 

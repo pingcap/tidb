@@ -16,12 +16,15 @@ package mvs
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	basic "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type mvLogItem = Item[*mvLog]
@@ -242,11 +245,37 @@ func (t *MVService) observeTaskDuration(taskType string, taskStart time.Time, er
 	t.mh.observeTaskDuration(taskType, result, mvsSince(taskStart))
 }
 
+func (t *MVService) runtimeLogFields() []zap.Field {
+	fields := []zap.Field{
+		zap.String("server_id", t.sch.ID),
+		zap.Int64("mv_pending_count", t.metrics.mvCount.Load()),
+		zap.Int64("mvlog_pending_count", t.metrics.mvLogCount.Load()),
+		zap.Int64("running_refresh_count", t.metrics.runningMVRefreshCount.Load()),
+		zap.Int64("running_purge_count", t.metrics.runningMVLogPurgeCount.Load()),
+		zap.Int64("executor_running_count", t.executor.metrics.gauges.runningCount.Load()),
+		zap.Int64("executor_waiting_count", t.executor.metrics.gauges.waitingCount.Load()),
+	}
+	if lastRefreshTS := t.lastRefresh.Load(); lastRefreshTS > 0 {
+		fields = append(fields, zap.Time("last_refresh_time", mvsUnixMilli(lastRefreshTS)))
+	}
+	return fields
+}
+
 func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err error) error {
 	defer t.notifier.Wake()
 	if err != nil {
 		retryCount := m.retryCount.Add(1)
-		t.rescheduleMV(m, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
+		retryDelay := t.retryDelay(retryCount)
+		nextRetryAt := mvsNow().Add(retryDelay)
+		t.rescheduleMV(m, nextRetryAt.UnixMilli())
+		fields := append(t.runtimeLogFields(),
+			zap.Int64("mview_id", m.ID),
+			zap.Int64("retry_count", retryCount),
+			zap.Duration("retry_delay", retryDelay),
+			zap.Time("next_retry_at", nextRetryAt),
+			zap.Error(err),
+		)
+		logutil.BgLogger().Warn("refresh MV task failed, rescheduled for retry", fields...)
 		return err
 	}
 	if nextRefresh.IsZero() {
@@ -263,7 +292,17 @@ func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err err
 	defer t.notifier.Wake()
 	if err != nil {
 		retryCount := l.retryCount.Add(1)
-		t.rescheduleMVLog(l, mvsNow().Add(t.retryDelay(retryCount)).UnixMilli())
+		retryDelay := t.retryDelay(retryCount)
+		nextRetryAt := mvsNow().Add(retryDelay)
+		t.rescheduleMVLog(l, nextRetryAt.UnixMilli())
+		fields := append(t.runtimeLogFields(),
+			zap.Int64("mvlog_id", l.ID),
+			zap.Int64("retry_count", retryCount),
+			zap.Duration("retry_delay", retryDelay),
+			zap.Time("next_retry_at", nextRetryAt),
+			zap.Error(err),
+		)
+		logutil.BgLogger().Warn("purge MV log task failed, rescheduled for retry", fields...)
 		return err
 	}
 	if nextPurge.IsZero() {
@@ -429,6 +468,8 @@ func (t *MVService) fetchAllTiDBMLogPurge() (map[int64]*mvLog, error) {
 	if err != nil {
 		result = mvFetchDurationResultErr
 		t.mh.observeRunEvent(mvRunEventFetchMLogError)
+		fields := append(t.runtimeLogFields(), zap.Error(err))
+		logutil.BgLogger().Warn("fetch all mvlog purge tasks failed", fields...)
 		return nil, err
 	}
 	t.mh.observeRunEvent(mvRunEventFetchMLogOK)
@@ -452,6 +493,8 @@ func (t *MVService) fetchAllTiDBMViews() (map[int64]*mv, error) {
 	if err != nil {
 		result = mvFetchDurationResultErr
 		t.mh.observeRunEvent(mvRunEventFetchMViewsError)
+		fields := append(t.runtimeLogFields(), zap.Error(err))
+		logutil.BgLogger().Warn("fetch all materialized view refresh tasks failed", fields...)
 		return nil, err
 	}
 	t.mh.observeRunEvent(mvRunEventFetchMViewsOK)
@@ -467,11 +510,11 @@ func (t *MVService) fetchAllTiDBMViews() (map[int64]*mv, error) {
 func (t *MVService) fetchAllMVMeta() error {
 	newMLogPending, err := t.fetchAllTiDBMLogPurge()
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch mvlog purge metadata failed: %w", err)
 	}
 	newMViewPending, err := t.fetchAllTiDBMViews()
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch mview refresh metadata failed: %w", err)
 	}
 	t.buildMLogPurgeTasks(newMLogPending)
 	t.buildMVRefreshTasks(newMViewPending)

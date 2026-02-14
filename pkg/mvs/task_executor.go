@@ -16,6 +16,7 @@ package mvs
 
 import (
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -402,7 +403,14 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 		e.metrics.counters.timeoutCount.Add(1)
 		e.metrics.gauges.runningCount.Add(-1)
 		e.metrics.gauges.timedOutRunningCount.Add(1)
-		logutil.BgLogger().Warn("mv task timed out, continue in background", zap.String("task", name), zap.Duration("timeout", timeout))
+		logutil.BgLogger().Warn(
+			"mv task timed out, continue in background",
+			zap.String("task", name),
+			zap.Duration("timeout", timeout),
+			zap.Int64("running_count", e.metrics.gauges.runningCount.Load()),
+			zap.Int64("waiting_count", e.metrics.gauges.waitingCount.Load()),
+			zap.Int64("timed_out_running_count", e.metrics.gauges.timedOutRunningCount.Load()),
+		)
 		go func() {
 			err := <-done
 			e.metrics.gauges.timedOutRunningCount.Add(-1)
@@ -424,14 +432,21 @@ func (e *TaskExecutor) logResult(name string, err error) {
 		return
 	}
 	e.metrics.counters.failedCount.Add(1)
-	logutil.BgLogger().Warn("mv task failed", zap.String("task", name), zap.Error(err))
+	logutil.BgLogger().Warn(
+		"mv task failed",
+		zap.String("task", name),
+		zap.Error(err),
+		zap.Int64("running_count", e.metrics.gauges.runningCount.Load()),
+		zap.Int64("waiting_count", e.metrics.gauges.waitingCount.Load()),
+		zap.Int64("timed_out_running_count", e.metrics.gauges.timedOutRunningCount.Load()),
+	)
 }
 
 // safeExecute runs task and converts panics into errors.
-func (*TaskExecutor) safeExecute(_ string, task func() error) (err error) {
+func (*TaskExecutor) safeExecute(taskName string, task func() error) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("mv task panicked: %v", r)
+			err = fmt.Errorf("mv task panicked, task=%s, panic=%v, stack=%s", taskName, r, debug.Stack())
 		}
 	}()
 	return task()

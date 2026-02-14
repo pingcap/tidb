@@ -15,6 +15,7 @@
 package mvs
 
 import (
+	"runtime/debug"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -47,7 +48,8 @@ func (t *MVService) Run() {
 	defer func() {
 		if r := recover(); r != nil {
 			t.mh.observeRunEvent(mvRunEventRecoveredPanic)
-			logutil.BgLogger().Error("MVService panicked", zap.Any("error", r))
+			fields := append(t.runtimeLogFields(), zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
+			logutil.BgLogger().Error("MVService panicked", fields...)
 		}
 	}()
 	if !t.sch.init() {
@@ -85,7 +87,8 @@ func (t *MVService) Run() {
 		if now.Sub(lastServerRefresh) >= t.serverRefreshInterval {
 			if err := t.sch.refresh(); err != nil {
 				t.mh.observeRunEvent(mvRunEventServerRefreshError)
-				logutil.BgLogger().Warn("refresh all TiDB server info failed", zap.Error(err))
+				fields := append(t.runtimeLogFields(), zap.Error(err))
+				logutil.BgLogger().Warn("refresh all TiDB server info failed", fields...)
 			} else {
 				t.mh.observeRunEvent(mvRunEventServerRefreshOK)
 			}
@@ -102,6 +105,12 @@ func (t *MVService) Run() {
 			}
 			// Fetch metadata on demand; errors are throttled via lastRefresh update below.
 			if err := t.fetchAllMVMeta(); err != nil {
+				fields := append(t.runtimeLogFields(),
+					zap.Bool("ddl_dirty", ddlDirty),
+					zap.Bool("periodic_fetch", shouldFetch),
+					zap.Error(err),
+				)
+				logutil.BgLogger().Warn("fetch materialized view metadata failed", fields...)
 				// Avoid tight retries when metadata fetch keeps failing.
 				t.lastRefresh.Store(now.UnixMilli())
 			}
