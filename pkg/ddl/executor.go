@@ -1042,6 +1042,14 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	}
 
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
+		// Issue 66207 compatibility: For CREATE TABLE IF NOT EXISTS, if PK-required validation fails but the target
+		// table already exists, return Note 1050 instead of ErrTableWithoutPrimaryKey.
+		if s.IfNotExists && infoschema.ErrTableWithoutPrimaryKey.Equal(err) {
+			if _, tableErr := is.TableByName(e.ctx, ident.Schema, ident.Name); tableErr == nil {
+				ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.FastGenByArgs(ident))
+				return nil
+			}
+		}
 		return err
 	}
 	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
