@@ -351,7 +351,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		path.CountAfterAccess = countEst.Est
 		// Re-check if ranges still cover the full range (e.g., DNF branches that
 		// union to full range). Set IsFullRange for skyline pruning purposes only.
-		if path.CountAfterAccess >= (cost.ToleranceFactor*float64(ds.StatisticTable.RealtimeCount)) && ranger.HasFullRange(path.Ranges, isUnsigned) {
+		if path.CountAfterAccess >= ((1-cost.ToleranceFactor)*float64(ds.StatisticTable.RealtimeCount)) && ranger.HasFullRange(path.Ranges, isUnsigned) {
 			path.IsFullRange = true
 		}
 	}
@@ -445,7 +445,7 @@ func detachCondAndBuildRangeForPath(
 	// After estimation, re-check if ranges still cover the full range (e.g., DNF branches
 	// that union to (-inf, +inf)). Set IsFullRange for skyline pruning purposes only —
 	// the estimation above has already computed the correct CountAfterAccess.
-	if path.CountAfterAccess >= (cost.ToleranceFactor*float64(histColl.RealtimeCount)) && ranger.HasFullRange(path.Ranges, false) {
+	if path.CountAfterAccess >= ((1-cost.ToleranceFactor)*float64(histColl.RealtimeCount)) && ranger.HasFullRange(path.Ranges, false) {
 		path.IsFullRange = true
 	}
 	return err
