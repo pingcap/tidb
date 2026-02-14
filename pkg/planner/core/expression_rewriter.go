@@ -2584,18 +2584,13 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
-		// For USING/NATURAL JOIN, a redundant column can be found through FullSchema/FullNames,
-		// but it does not exist in Join.Schema(). Rewrite it to the visible equivalent column
-		// before pushing into the expression stack, so later ResolveIndices can still find it.
 		if planCtx != nil &&
 			(er.clause() == whereClause || er.clause() == havingClause) &&
 			name != nil &&
 			name.Redundant &&
 			name.OrigTblName.L != "" {
-			if join := findNaturalUsingJoinByColumn(planCtx.plan, column); join != nil && join.JoinType == base.InnerJoin {
-				if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoin(join, column); mappedCol != nil {
-					column, name = mappedCol, mappedName
-				}
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(planCtx.plan, column); mappedCol != nil {
+				column, name = mappedCol, mappedName
 			}
 		}
 		er.ctxStackAppend(column, name)
@@ -2621,20 +2616,16 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		return
 	}
 
-	col, name, foundInJoin, err := findFieldNameFromNaturalUsingJoin(planCtx.plan, v)
+	col, name, err := findFieldNameFromNaturalUsingJoin(planCtx.plan, v)
 	if err != nil {
 		er.err = err
 		return
 	} else if col != nil {
-		// Same remapping as above, but for the path that resolves from the underlying
-		// natural/using join's FullSchema directly.
-		if foundInJoin != nil &&
-			foundInJoin.JoinType == base.InnerJoin &&
+		if (er.clause() == whereClause || er.clause() == havingClause) &&
 			name != nil &&
 			name.Redundant &&
-			name.OrigTblName.L != "" &&
-			(er.clause() == whereClause || er.clause() == havingClause) {
-			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoin(foundInJoin, col); mappedCol != nil {
+			name.OrigTblName.L != "" {
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(planCtx.plan, col); mappedCol != nil {
 				col, name = mappedCol, mappedName
 			}
 		}
@@ -2664,9 +2655,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[planCtx.builder.curClause])
 }
 
-func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, join *logicalop.LogicalJoin, err error) {
-	// Return both the resolved column and the join node, so the caller can decide
-	// whether a redundant USING/NATURAL JOIN column needs remapping.
+func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
 	switch x := p.(type) {
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
@@ -2674,62 +2663,31 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 		if x.FullSchema != nil {
 			idx, err := expression.FindFieldName(x.FullNames, v)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 			if idx >= 0 {
-				return x.FullSchema.Columns[idx], x.FullNames[idx], x, nil
+				return x.FullSchema.Columns[idx], x.FullNames[idx], nil
 			}
 		}
 	}
-	return nil, nil, nil, nil
+	return nil, nil, nil
 }
 
-func resolveRedundantColumnFromNaturalUsingJoin(join *logicalop.LogicalJoin, redundantCol *expression.Column) (*expression.Column, *types.FieldName) {
-	// USING/NATURAL JOIN introduces equality predicates. Use these EQ pairs to find
-	// the visible peer column that is actually present in Join.Schema().
-	for _, cond := range join.OtherConditions {
-		sf, ok := cond.(*expression.ScalarFunction)
-		if !ok || sf.FuncName.L != ast.EQ {
-			continue
+func resolveRedundantColumnFromNaturalUsingJoinPlan(p base.LogicalPlan, col *expression.Column) (*expression.Column, *types.FieldName) {
+	switch x := p.(type) {
+	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
+		return resolveRedundantColumnFromNaturalUsingJoinPlan(p.Children()[0], col)
+	case *logicalop.LogicalJoin:
+		if mappedCol, mappedName := x.ResolveRedundantColumn(col); mappedCol != nil {
+			return mappedCol, mappedName
 		}
-		args := sf.GetArgs()
-		if len(args) != 2 {
-			continue
-		}
-		lCol, lOK := args[0].(*expression.Column)
-		rCol, rOK := args[1].(*expression.Column)
-		if !lOK || !rOK {
-			continue
-		}
-
-		var matched *expression.Column
-		if lCol.EqualColumn(redundantCol) {
-			matched = join.Schema().RetrieveColumn(rCol)
-		} else if rCol.EqualColumn(redundantCol) {
-			matched = join.Schema().RetrieveColumn(lCol)
-		}
-		if matched == nil {
-			continue
-		}
-
-		idx := join.Schema().ColumnIndex(matched)
-		if idx >= 0 && idx < len(join.OutputNames()) {
-			return matched, join.OutputNames()[idx]
+		for _, child := range x.Children() {
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(child, col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
 		}
 	}
 	return nil, nil
-}
-
-func findNaturalUsingJoinByColumn(p base.LogicalPlan, col *expression.Column) *logicalop.LogicalJoin {
-	switch x := p.(type) {
-	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
-		return findNaturalUsingJoinByColumn(p.Children()[0], col)
-	case *logicalop.LogicalJoin:
-		if x.FullSchema != nil && x.FullSchema.Contains(col) {
-			return x
-		}
-	}
-	return nil
 }
 
 func (er *expressionRewriter) evalDefaultExprForTable(v *ast.DefaultExpr, tbl *model.TableInfo) {

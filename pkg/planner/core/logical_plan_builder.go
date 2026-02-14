@@ -893,6 +893,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	copy(names[len(lNames):], rNames[commonLen:])
 
 	conds := make([]expression.Expression, 0, commonLen)
+	redundantColMappings := make([][2]*expression.Column, 0, commonLen)
 	for i := range commonLen {
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
 		cond, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
@@ -904,14 +905,19 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 			// since FullSchema is derived from left and right schema in upper layer, so rc/lc must be in FullSchema.
 			if joinTp == ast.RightJoin {
 				p.FullNames[p.FullSchema.ColumnIndex(lc)].Redundant = true
+				redundantColMappings = append(redundantColMappings, [2]*expression.Column{lc, rc})
 			} else {
 				p.FullNames[p.FullSchema.ColumnIndex(rc)].Redundant = true
+				redundantColMappings = append(redundantColMappings, [2]*expression.Column{rc, lc})
 			}
 		}
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.SetOutputNames(names)
+	for _, pair := range redundantColMappings {
+		p.RegisterRedundantColumnMapping(pair[0], pair[1])
+	}
 
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
@@ -1217,9 +1223,19 @@ func findColFromNaturalUsingJoin(p base.LogicalPlan, col *expression.Column) (na
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findColFromNaturalUsingJoin(p.Children()[0], col)
 	case *logicalop.LogicalJoin:
+		if _, mappedName := x.ResolveRedundantColumn(col); mappedName != nil {
+			return mappedName
+		}
 		if x.FullSchema != nil {
 			idx := x.FullSchema.ColumnIndex(col)
-			return x.FullNames[idx]
+			if idx >= 0 && idx < len(x.FullNames) {
+				return x.FullNames[idx]
+			}
+		}
+		for _, child := range x.Children() {
+			if mappedName := findColFromNaturalUsingJoin(child, col); mappedName != nil {
+				return mappedName
+			}
 		}
 	}
 	return nil
@@ -2250,6 +2266,14 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[a.curClause])
 	}
 	name := outputNames[idx]
+	if join, ok := p.(*logicalop.LogicalJoin); ok &&
+		name != nil &&
+		name.Redundant &&
+		name.OrigTblName.L != "" {
+		if mappedCol, mappedName := join.ResolveRedundantColumn(col); mappedCol != nil {
+			col, name = mappedCol, mappedName
+		}
+	}
 	newColName := &ast.ColumnName{
 		Schema: name.DBName,
 		Table:  name.TblName,

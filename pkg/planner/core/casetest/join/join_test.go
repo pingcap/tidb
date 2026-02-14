@@ -215,6 +215,34 @@ func TestJoinRegression(t *testing.T) {
 				`└─TableReader(Probe) 9990.00 root  data:Selection`,
 				`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
 				`    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
+		tk.MustExec(`CREATE TABLE t_using_l (
+  id BIGINT NOT NULL,
+  k0 BIGINT NOT NULL,
+  d0 DATE NOT NULL,
+  d1 FLOAT NOT NULL,
+  PRIMARY KEY (id)
+);`)
+		tk.MustExec(`CREATE TABLE t_using_r (
+  id BIGINT NOT NULL,
+  k2 VARCHAR(64) NOT NULL,
+  k0 BIGINT NOT NULL,
+  d0 DOUBLE NOT NULL,
+  d1 DATE NOT NULL,
+  PRIMARY KEY (id)
+);`)
+		tk.MustExec(`INSERT INTO t_using_l (id, k0, d0, d1) VALUES (10, 93, '2024-04-14', 14.19);`)
+		tk.MustExec(`INSERT INTO t_using_r (id, k2, k0, d0, d1) VALUES (10, 's356', 749, 89.26, '2024-04-29');`)
+		tk.MustQuery(`SELECT /* issue:66272 */ id AS t0_id
+FROM t_using_l
+JOIN t_using_r USING (id)
+WHERE (((t_using_r.d1 = '2024-04-29') AND (t_using_r.id = 10)) AND (t_using_l.k0 = 93))
+  AND (
+    t_using_r.k0 = ALL (
+      SELECT t_using_r.k0 AS c0
+      FROM t_using_r
+      WHERE t_using_r.k0 = 749
+    )
+  );`).Check(testkit.Rows("10"))
 
 		tk.MustExec(`create table t1 (a int)`)
 		tk.MustExec(`create table t2 (a int, b int, c int, d int, key ab(a, b), key abcd(a, b, c, d))`)
