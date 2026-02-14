@@ -93,7 +93,8 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 	if argAgainstConstant.Value.Kind() != types.KindString && !argAgainstConstant.Value.IsNull() {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("match against a non-string constant")
 	}
-	for _, arg := range args[1:] {
+	argsMatch := args[1:]
+	for _, arg := range argsMatch {
 		if _, ok := arg.(*Column); !ok {
 			return nil, ErrNotSupportedYet.GenWithStackByArgs("not matching a column")
 		}
@@ -101,7 +102,10 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETString)
-	for range args[1:] {
+	for _, arg := range argsMatch {
+		if arg.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("matching a non-string column")
+		}
 		argTps = append(argTps, types.ETString)
 	}
 
@@ -172,7 +176,10 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETString)
-	for range argsMatch {
+	for _, arg := range argsMatch {
+		if arg.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("matching a non-string column")
+		}
 		argTps = append(argTps, types.ETString)
 	}
 
@@ -230,9 +237,13 @@ func (c *ftsMatchPrefixFunctionClass) getFunction(ctx BuildContext, args []Expre
 		}
 	}
 
-	argTps := make([]types.EvalType, len(args))
-	for i := range argTps {
-		argTps[i] = types.ETString
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETString)
+	for _, arg := range argsMatch {
+		if arg.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("matching a non-string column")
+		}
+		argTps = append(argTps, types.ETString)
 	}
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
@@ -274,9 +285,13 @@ func (c *ftsMatchPhraseFunctionClass) getFunction(ctx BuildContext, args []Expre
 		}
 	}
 
-	argTps := make([]types.EvalType, len(args))
-	for i := range argTps {
-		argTps[i] = types.ETString
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETString)
+	for _, arg := range argsMatch {
+		if arg.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("matching a non-string column")
+		}
+		argTps = append(argTps, types.ETString)
 	}
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
