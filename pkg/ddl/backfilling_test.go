@@ -275,6 +275,27 @@ func TestReorgExprContext(t *testing.T) {
 	}
 }
 
+func TestCreateMaterializedViewBuildSessionSQLMode(t *testing.T) {
+	store := &mockStorage{client: &mock.Client{}}
+	sctx := newMockReorgSessCtx(store)
+	originalSQLMode := mysql.ModeStrictTransTables | mysql.ModeNoZeroDate
+	sctx.GetSessionVars().SQLMode = originalSQLMode
+	require.True(t, sctx.GetSessionVars().SQLMode.HasStrictMode())
+
+	reorgMeta := &model.DDLReorgMeta{
+		SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
+		Location:          &model.TimeZoneLocation{Name: "UTC"},
+		ResourceGroupName: "default",
+	}
+	restore, err := initCreateMaterializedViewBuildSession(sctx, reorgMeta)
+	require.NoError(t, err)
+	require.False(t, sctx.GetSessionVars().SQLMode.HasStrictMode())
+	require.Equal(t, mysql.ModeAllowInvalidDates, sctx.GetSessionVars().SQLMode)
+
+	restore()
+	require.Equal(t, originalSQLMode, sctx.GetSessionVars().SQLMode)
+}
+
 func TestReorgTableMutateContext(t *testing.T) {
 	originalRowFmt := variable.GetDDLReorgRowFormat()
 	defer variable.SetDDLReorgRowFormat(originalRowFmt)

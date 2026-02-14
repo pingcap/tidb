@@ -550,12 +550,18 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 	return len(rows) > 0, nil
 }
 
+func createMaterializedViewBuildSQLMode(sqlMode mysql.SQLMode) mysql.SQLMode {
+	return mysql.DelSQLMode(sqlMode, mysql.ModeStrictTransTables|mysql.ModeStrictAllTables)
+}
+
 func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) (func(), error) {
 	restore := restoreSessCtx(sessCtx)
 	if reorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
-	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
+	buildReorgMeta := *reorgMeta
+	buildReorgMeta.SQLMode = createMaterializedViewBuildSQLMode(buildReorgMeta.SQLMode)
+	if err := initSessCtx(sessCtx, &buildReorgMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return func() {
