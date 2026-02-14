@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -681,7 +682,7 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 	matchAgainst := buildMatchAgainst("hello")
 	require.True(t, ContainsFullTextSearchFn(matchAgainst))
 
-	expr, err := RewriteMySQLMatchAgainst(ctx, matchAgainst)
+	expr, _, err := RewriteMySQLMatchAgainstRecursively(ctx, matchAgainst, model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
 	require.False(t, hasMySQLMatchAgainst(expr))
 	require.ElementsMatch(t, []ftsLeaf{
@@ -689,21 +690,29 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 	}, collectFTSLeaves(expr))
 	assertFTSLeafArgCols(expr, 1)
 
-	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("hello*"))
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("hello*"), model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
 	require.False(t, hasMySQLMatchAgainst(expr))
 	require.ElementsMatch(t, []ftsLeaf{
 		{funcName: ast.FTSMatchPrefix, query: "hello"},
 	}, collectFTSLeaves(expr))
 
-	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("\"hello world\""))
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("\"hello world\""), model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
 	require.False(t, hasMySQLMatchAgainst(expr))
 	require.ElementsMatch(t, []ftsLeaf{
 		{funcName: ast.FTSMatchPhrase, query: "hello world"},
 	}, collectFTSLeaves(expr))
 
-	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("+apple -banana"))
+	ngramExpr := buildMatchAgainst(`"a>b"`)
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, ngramExpr, model.FullTextParserTypeNgramV1)
+	require.NoError(t, err)
+	require.False(t, hasMySQLMatchAgainst(expr))
+	require.ElementsMatch(t, []ftsLeaf{
+		{funcName: ast.FTSMatchPhrase, query: "a b"},
+	}, collectFTSLeaves(expr))
+
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("+apple -banana"), model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
 	require.False(t, hasMySQLMatchAgainst(expr))
 	require.ElementsMatch(t, []ftsLeaf{
@@ -726,20 +735,32 @@ func TestRewriteMySQLMatchAgainst(t *testing.T) {
 		require.True(t, ErrIncorrectParameterCount.Equal(err))
 	}
 
-	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("-banana"))
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("-banana"), model.FullTextParserTypeStandardV1)
 	require.NoError(t, err)
 	c, ok := expr.(*Constant)
 	require.True(t, ok)
 	require.Equal(t, int64(0), c.Value.GetInt64())
 
-	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("hello world"))
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("hello world"), model.FullTextParserTypeStandardV1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "TiDB only supports multiple terms with +/- modifiers")
 	require.True(t, hasMySQLMatchAgainst(expr))
 
-	expr, err = RewriteMySQLMatchAgainst(ctx, buildMatchAgainst("+hello world"))
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, buildMatchAgainst("+hello world"), model.FullTextParserTypeStandardV1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "TiDB only supports multiple terms with +/- modifiers")
+	require.True(t, hasMySQLMatchAgainst(expr))
+
+	ngramErrExpr := buildMatchAgainst(">hello")
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, ngramErrExpr, model.FullTextParserTypeNgramV1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported operator '>'")
+	require.True(t, hasMySQLMatchAgainst(expr))
+
+	unknownParserExpr := buildMatchAgainst("hello")
+	expr, _, err = RewriteMySQLMatchAgainstRecursively(ctx, unknownParserExpr, model.FullTextParserType("UNKNOWN_V1"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported fulltext parser type")
 	require.True(t, hasMySQLMatchAgainst(expr))
 }
 

@@ -125,6 +125,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 		job.Type == model.ActionAddPrimaryKey ||
 			job.Type == model.ActionAddIndex ||
 			job.Type == model.ActionAddHybridIndex ||
+			job.Type == model.ActionAddFullTextIndex ||
 			job.Type == model.ActionModifyColumn,
 	)
 	intest.Assert(job.ReorgMeta != nil)

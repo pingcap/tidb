@@ -1108,6 +1108,51 @@ func TestAddIndexArgs(t *testing.T) {
 	}
 }
 
+func TestAddFullTextAndHybridIndexArgsV1Compatibility(t *testing.T) {
+	inArgs := &ModifyIndexArgs{
+		IndexArgs: []*IndexArg{{
+			IndexName: ast.NewCIStr("idx_col"),
+			IndexPartSpecifications: []*ast.IndexPartSpecification{
+				{Column: &ast.ColumnName{Name: ast.NewCIStr("c1")}, Length: -1},
+				{Column: &ast.ColumnName{Name: ast.NewCIStr("c2")}, Length: 2},
+			},
+			IndexOption: &ast.IndexOption{Comment: "test_comment"},
+		}},
+	}
+
+	for _, action := range []ActionType{ActionAddFullTextIndex, ActionAddHybridIndex} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, action)))
+			args, err := GetModifyIndexArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs.IndexArgs[0].IndexName, args.IndexArgs[0].IndexName)
+			require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, args.IndexArgs[0].IndexPartSpecifications)
+			require.Equal(t, inArgs.IndexArgs[0].IndexOption, args.IndexArgs[0].IndexOption)
+		}
+
+		// Backward compatibility for legacy v1 jobs that encoded a single spec
+		// instead of a slice.
+		legacy := &Job{}
+		require.NoError(t, legacy.Decode(getJobBytes(t, inArgs, JobVersion1, action)))
+		UpdateJobArgsForTest(legacy, func(_ []any) []any {
+			return []any{inArgs.IndexArgs[0].IndexName, inArgs.IndexArgs[0].IndexPartSpecifications[0], inArgs.IndexArgs[0].IndexOption}
+		})
+		_, err := legacy.Encode(true)
+		require.NoError(t, err)
+
+		jobBytes, err := legacy.Encode(false)
+		require.NoError(t, err)
+		decoded := &Job{}
+		require.NoError(t, decoded.Decode(jobBytes))
+		args, err := GetModifyIndexArgs(decoded)
+		require.NoError(t, err)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, args.IndexArgs[0].IndexName)
+		require.Equal(t, []*ast.IndexPartSpecification{inArgs.IndexArgs[0].IndexPartSpecifications[0]}, args.IndexArgs[0].IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, args.IndexArgs[0].IndexOption)
+	}
+}
+
 func TestDropIndexArguements(t *testing.T) {
 	checkFunc := func(t *testing.T, inArgs *ModifyIndexArgs) {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {

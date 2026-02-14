@@ -56,8 +56,13 @@ func TestTiCISearchExplain(t *testing.T) {
 		FULLTEXT INDEX idx_title (title),
 		index idx_field1 (field1)
 	)`)
+	tk.MustExec(`create table t6(
+		id INT PRIMARY KEY, title TEXT,
+		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
+	)`)
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t6")
 	tk.MustExec("create table t2(a int, col text)")
 
 	tk.MustExec(`create table t3(
@@ -205,8 +210,13 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		FULLTEXT INDEX idx_title (title),
 		index idx_field1 (field1)
 	)`)
+	tk.MustExec(`create table t6(
+		id INT PRIMARY KEY, title TEXT,
+		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
+	)`)
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t6")
 
 	// Non-BOOLEAN MODE is rejected.
 	tk.MustContainErrMsg(
@@ -230,6 +240,12 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 	tk.MustContainErrMsg(
 		"explain format='brief' select * from t1 where match(title) against ('+hello world' IN BOOLEAN MODE)",
 		"TiDB only supports multiple terms with +/- modifiers",
+	)
+
+	// Parser should follow the fulltext index parser type.
+	tk.MustContainErrMsg(
+		"explain format='brief' select * from t6 where match(title) against ('>hello' IN BOOLEAN MODE)",
+		"unsupported operator '>' in BOOLEAN MODE query",
 	)
 }
 
@@ -330,4 +346,35 @@ func TestTiCIWithDirtyWrites(t *testing.T) {
 	tk.MustExec("insert into t2 values(1, 1, 'text1')")
 	tk.MustExecToErr("explain select * from t2 where fts_match_word('apple', c)")
 	tk.MustExec("rollback")
+}
+
+func TestTiCIWithWrongColumn(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
+	}()
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int primary key, b text,fulltext index(b))`)
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	tk.MustContainErrMsg("explain select * from t where match(a) against('text1' IN BOOLEAN MODE)", "matching a non-string column")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('text1', a)", "matching a non-string column")
+	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('text1', a)", "matching a non-string column")
 }

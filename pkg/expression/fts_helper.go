@@ -17,6 +17,7 @@ package expression
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/matchagainst"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -155,97 +156,162 @@ func InterpretFullTextSearchExpr(expr Expression) *FTSInfo {
 	}
 }
 
-// RewriteMySQLMatchAgainst rewrites one MySQL MATCH AGAINST function into a combination of TiDB's internal FTS functions.
-func RewriteMySQLMatchAgainst(bctx BuildContext, expr Expression) (Expression, error) {
+// RewriteMySQLMatchAgainstRecursively rewrites MATCH AGAINST expressions recursively.
+// parserType controls which boolean parser to use for MATCH AGAINST rewrite.
+func RewriteMySQLMatchAgainstRecursively(
+	bctx BuildContext,
+	expr Expression,
+	parserType model.FullTextParserType,
+) (Expression, bool, error) {
 	scalarFunc, ok := expr.(*ScalarFunction)
 	if !ok {
-		return expr, nil
+		return expr, false, nil
 	}
 	if scalarFunc.FuncName.L != ast.FTSMysqlMatchAgainst {
-		return expr, nil
-	}
-	var (
-		patternGroup matchagainst.StandardBooleanGroup
-		err          error
-	)
-	if scalarFunc.Function.(*builtinFtsMysqlMatchAgainstSig).modifier == ast.FulltextSearchModifierBooleanMode {
-		patternStr := scalarFunc.GetArgs()[0].(*Constant).Value.GetString()
-		patternGroup, err = matchagainst.ParseStandardBooleanMode(patternStr)
-		if err != nil {
-			return expr, err
+		changed := false
+		newArgs := make([]Expression, 0, len(scalarFunc.GetArgs()))
+		for _, arg := range scalarFunc.GetArgs() {
+			newArg, argChanged, err := RewriteMySQLMatchAgainstRecursively(bctx, arg, parserType)
+			if err != nil {
+				return expr, false, err
+			}
+			if argChanged {
+				changed = true
+			}
+			newArgs = append(newArgs, newArg)
 		}
-	}
-	// Current limitation of TiDB.
-	if len(patternGroup.Must)+len(patternGroup.MustNot) > 0 && len(patternGroup.Should) > 0 {
-		return expr, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
-	}
-	if len(patternGroup.Must)+len(patternGroup.MustNot) == 0 && len(patternGroup.Should) > 1 {
-		return expr, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
+		if changed {
+			return NewFunctionInternal(bctx, scalarFunc.FuncName.L, scalarFunc.RetType, newArgs...), true, nil
+		}
+		return expr, false, nil
 	}
 
+	newExpr, err := rewriteOneMySQLMatchAgainst(bctx, scalarFunc, parserType)
+	if err != nil {
+		return expr, false, err
+	}
+	return newExpr, true, nil
+}
+
+func rewriteOneMySQLMatchAgainst(
+	bctx BuildContext,
+	scalarFunc *ScalarFunction,
+	parserType model.FullTextParserType,
+) (Expression, error) {
+	sig, ok := scalarFunc.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return nil, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, scalarFunc.Function)
+	}
+	if sig.modifier != ast.FulltextSearchModifierBooleanMode {
+		return nil, errors.Errorf("Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
+	}
+
+	patternStr := scalarFunc.GetArgs()[0].(*Constant).Value.GetString()
+	var (
+		patternGroup *matchagainst.BooleanGroup
+		err          error
+	)
+	switch parserType {
+	case model.FullTextParserTypeNgramV1:
+		patternGroup, err = matchagainst.ParseNgramBooleanMode(patternStr)
+	case model.FullTextParserTypeStandardV1, model.FullTextParserTypeMultilingualV1:
+		// STANDARD and MULTILINGUAL both use the standard BOOLEAN MODE parser semantics in TiDB.
+		patternGroup, err = matchagainst.ParseStandardBooleanMode(patternStr)
+	default:
+		return nil, errors.Errorf("unsupported fulltext parser type: %s", parserType)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	argsBuffer := make([]Expression, len(scalarFunc.GetArgs()))
+	for i := 1; i < len(scalarFunc.GetArgs()); i++ {
+		argsBuffer[i] = scalarFunc.GetArgs()[i]
+	}
+	return rewriteBooleanGroupToFTSExpr(bctx, argsBuffer, patternGroup)
+}
+
+func rewriteBooleanGroupToFTSExpr(
+	bctx BuildContext,
+	argsBuffer []Expression,
+	group *matchagainst.BooleanGroup,
+) (Expression, error) {
+	if group == nil {
+		return nil, errors.New("invalid nil boolean group")
+	}
+	// Current limitation of TiDB.
+	if len(group.Must)+len(group.MustNot) > 0 && len(group.Should) > 0 {
+		return nil, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
+	}
+	if len(group.Must)+len(group.MustNot) == 0 && len(group.Should) > 1 {
+		return nil, errors.Errorf("TiDB only supports multiple terms with +/- modifiers")
+	}
 	// Compatible with MySQL, if there is no valid term in the pattern or only negative search, we return a constant false.
-	if (len(patternGroup.Must)+len(patternGroup.MustNot)+len(patternGroup.Should) == 0) ||
-		(len(patternGroup.Must)+len(patternGroup.Should) == 0 && len(patternGroup.MustNot) > 0) {
+	if (len(group.Must)+len(group.MustNot)+len(group.Should) == 0) ||
+		(len(group.Must)+len(group.Should) == 0 && len(group.MustNot) > 0) {
 		return &Constant{
 			Value:   types.NewIntDatum(0),
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}, nil
 	}
-	argsBuffer := make([]Expression, len(scalarFunc.GetArgs()))
-	searchFuncs := make([]Expression, 0, len(patternGroup.Must)+len(patternGroup.MustNot)+len(patternGroup.Should))
-	for i := 1; i < len(scalarFunc.GetArgs()); i++ {
-		argsBuffer[i] = scalarFunc.GetArgs()[i]
-	}
-	rewriteFunc := func(item matchagainst.StandardBooleanClause) (Expression, error) {
-		patternConst := &Constant{
-			Value:   types.NewStringDatum(item.Expr.Text()),
-			RetType: types.NewFieldType(mysql.TypeString),
-		}
-		argsBuffer[0] = patternConst
-		// Map the original pattern to different internal functions based on the type and wildcard property of the pattern.
-		switch x := item.Expr.(type) {
-		case *matchagainst.StandardBooleanTerm:
-			if !x.Wildcard {
-				return NewFunctionInternal(bctx, ast.FTSMatchWord, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
-			}
-			return NewFunctionInternal(bctx, ast.FTSMatchPrefix, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
-		case *matchagainst.StandardBooleanPhrase:
-			return NewFunctionInternal(bctx, ast.FTSMatchPhrase, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
-		default:
-			return nil, errors.Errorf("unsupported boolean expression: %T", item.Expr)
-		}
-	}
-	for _, item := range patternGroup.Must {
-		f, err := rewriteFunc(item)
+
+	searchFuncs := make([]Expression, 0, len(group.Must)+len(group.MustNot)+len(group.Should))
+	for _, item := range group.Must {
+		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item)
 		if err != nil {
-			return expr, err
+			return nil, err
 		}
 		searchFuncs = append(searchFuncs, f)
 	}
-	for _, item := range patternGroup.MustNot {
-		f, err := rewriteFunc(item)
+	for _, item := range group.MustNot {
+		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item)
 		if err != nil {
-			return expr, err
+			return nil, err
 		}
-		// For NOT conditions, we wrap the function with a unary NOT operator.
 		nf := NewFunctionInternal(bctx, ast.UnaryNot, types.NewFieldType(mysql.TypeDouble), f)
 		searchFuncs = append(searchFuncs, nf)
 	}
-	for _, item := range patternGroup.Should {
-		f, err := rewriteFunc(item)
+	for _, item := range group.Should {
+		f, err := rewriteBooleanClauseToFTSExpr(bctx, argsBuffer, item)
 		if err != nil {
-			return expr, err
+			return nil, err
 		}
 		searchFuncs = append(searchFuncs, f)
 	}
-	if len(patternGroup.Should) > 0 {
-		// If there are multiple SHOULD conditions, we combine them with OR operator.
-		startIdx := len(patternGroup.Must) + len(patternGroup.MustNot)
-		endIdx := startIdx + len(patternGroup.Should)
+	if len(group.Should) > 0 {
+		startIdx := len(group.Must) + len(group.MustNot)
+		endIdx := startIdx + len(group.Should)
 		orShould := ComposeDNFCondition(bctx, searchFuncs[startIdx:endIdx]...)
 		searchFuncs[startIdx] = orShould
 		searchFuncs = searchFuncs[:startIdx+1]
 	}
-	final := ComposeCNFCondition(bctx, searchFuncs...)
-	return final, nil
+	return ComposeCNFCondition(bctx, searchFuncs...), nil
+}
+
+func rewriteBooleanClauseToFTSExpr(
+	bctx BuildContext,
+	argsBuffer []Expression,
+	item matchagainst.BooleanClause,
+) (Expression, error) {
+	switch x := item.Expr.(type) {
+	case *matchagainst.BooleanTerm:
+		argsBuffer[0] = &Constant{
+			Value:   types.NewStringDatum(x.Text()),
+			RetType: types.NewFieldType(mysql.TypeString),
+		}
+		if !x.Wildcard {
+			return NewFunctionInternal(bctx, ast.FTSMatchWord, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
+		}
+		return NewFunctionInternal(bctx, ast.FTSMatchPrefix, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
+	case *matchagainst.BooleanPhrase:
+		argsBuffer[0] = &Constant{
+			Value:   types.NewStringDatum(x.Text()),
+			RetType: types.NewFieldType(mysql.TypeString),
+		}
+		return NewFunctionInternal(bctx, ast.FTSMatchPhrase, types.NewFieldType(mysql.TypeDouble), argsBuffer...), nil
+	case *matchagainst.BooleanGroup:
+		return rewriteBooleanGroupToFTSExpr(bctx, argsBuffer, x)
+	default:
+		return nil, errors.Errorf("unsupported boolean expression: %T", item.Expr)
+	}
 }

@@ -501,6 +501,21 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols
 			rowLayout = append(rowLayout, col)
 		}
 	}
+
+	for _, col := range p.DataSourceSchema.Columns {
+		if col.ID == model.ExtraPhysTblID && !columnIDSet.Has(int(col.ID)) {
+			rowLayout = append(rowLayout, col.Clone().(*expression.Column))
+			columnIDSet.Insert(int(col.ID))
+			break
+		}
+	}
+
+	rowLayout = append(rowLayout, &expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		ID:       model.ExtraVersionID,
+		UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+		OrigName: model.ExtraVersionName.O,
+	})
 	p.SetSchema(expression.NewSchema(rowLayout...))
 }
 
@@ -614,7 +629,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 	tableColumns := p.Table.Cols()
 	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraHandleID {
-			if store == kv.TiFlash && p.Table.PKIsHandle {
+			if (store == kv.TiFlash || store == kv.TiCI) && p.Table.PKIsHandle {
 				// For tici, we need to find int pk from table columns.
 				for _, tblCol := range tableColumns {
 					if mysql.HasPriKeyFlag(tblCol.GetFlag()) {
@@ -627,6 +642,8 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
+		} else if col.ID == model.ExtraVersionID {
+			columns = append(columns, model.NewExtraVersionColInfo())
 		} else {
 			columns = append(columns, model.FindColumnInfoByID(tableColumns, col.ID))
 		}
@@ -635,7 +652,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 	if p.NeedCommonHandle {
 		pkColIDs = tables.TryGetCommonPkColumnIds(p.Table)
 	}
-	if store == kv.TiFlash {
+	if store == kv.TiFlash || store == kv.TiCI {
 		executorID := p.ExplainID().String()
 		unique := false
 		idxExec := &tipb.IndexScan{
@@ -783,13 +800,13 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		StoreType:        path.StoreType,
 		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	if is.FtsQueryInfo != nil {
+	if path.Index.IsTiCIIndex() {
 		is.StoreType = kv.TiCI
 	}
 
 	is.SetNoncacheableReason(path.NoncacheableReason)
 	rowCount := path.CountAfterAccess
-	if is.FtsQueryInfo != nil {
+	if path.Index.IsTiCIIndex() {
 		is.InitSchemaForTiCIIndex(ds.CommonHandleCols, path.FullIdxCols)
 	} else {
 		is.InitSchemaForTiKVIndex(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)

@@ -19,7 +19,7 @@ import (
 	"strings"
 )
 
-// StandardBooleanGroup is the parsed form of `AGAINST (... IN BOOLEAN MODE)` for the STANDARD parser.
+// BooleanGroup is the parsed form of `AGAINST (... IN BOOLEAN MODE)`.
 //
 // This structure is used for both:
 //   - the root boolean query (with Parenthesized=false)
@@ -30,14 +30,14 @@ import (
 // Notes:
 //   - Term secondary tokenization (splitting one TERM into multiple tokens) is intentionally NOT performed here.
 //   - Clauses are grouped by their boolean role (must/must-not/should) to match the evaluation model.
-type StandardBooleanGroup struct {
+type BooleanGroup struct {
 	// Must holds the clauses prefixed by '+'.
-	Must []StandardBooleanClause
+	Must []BooleanClause
 	// Should holds the clauses without '+'/'-'.
 	// Other boolean-mode modifiers may be represented in the clause's Modifier (even if not currently accepted).
-	Should []StandardBooleanClause
+	Should []BooleanClause
 	// MustNot holds the clauses prefixed by '-'.
-	MustNot []StandardBooleanClause
+	MustNot []BooleanClause
 
 	// Parenthesized indicates this group comes from an explicit "( ... )" in the query.
 	// It only affects DebugString formatting, and is not part of the boolean semantics.
@@ -46,7 +46,7 @@ type StandardBooleanGroup struct {
 
 // DebugString returns a deterministic, human-readable representation of the group.
 // It is intended for debugging and unit tests.
-func (g StandardBooleanGroup) DebugString() string {
+func (g BooleanGroup) DebugString() string {
 	if g.IsEmpty() {
 		return ""
 	}
@@ -57,9 +57,9 @@ func (g StandardBooleanGroup) DebugString() string {
 	return inner
 }
 
-func (g StandardBooleanGroup) debugStringNoParen() string {
+func (g BooleanGroup) debugStringNoParen() string {
 	var b strings.Builder
-	writeSection := func(label string, clauses []StandardBooleanClause, keepModifier bool) {
+	writeSection := func(label string, clauses []BooleanClause, keepModifier bool) {
 		b.WriteString(label)
 		b.WriteByte('[')
 		for i, c := range clauses {
@@ -85,31 +85,31 @@ func (g StandardBooleanGroup) debugStringNoParen() string {
 }
 
 // IsEmpty returns whether the group contains no clauses.
-func (g StandardBooleanGroup) IsEmpty() bool {
+func (g BooleanGroup) IsEmpty() bool {
 	return len(g.Must) == 0 && len(g.Should) == 0 && len(g.MustNot) == 0
 }
 
-func (g *StandardBooleanGroup) addClause(c StandardBooleanClause) {
+func (g *BooleanGroup) addClause(c BooleanClause) {
 	switch c.Modifier {
-	case StandardBooleanModifierMust:
+	case BooleanModifierMust:
 		g.Must = append(g.Must, c)
-	case StandardBooleanModifierMustNot:
+	case BooleanModifierMustNot:
 		g.MustNot = append(g.MustNot, c)
 	default:
 		g.Should = append(g.Should, c)
 	}
 }
 
-// StandardBooleanClause is a single boolean-mode clause with an optional prefix modifier.
-type StandardBooleanClause struct {
+// BooleanClause is a single boolean-mode clause with an optional prefix modifier.
+type BooleanClause struct {
 	// Modifier is the prefix operator (if any) for this clause.
-	Modifier StandardBooleanModifier
+	Modifier BooleanModifier
 	// Expr is the clause payload.
-	Expr StandardBooleanExpr
+	Expr BooleanExpr
 }
 
 // DebugString returns a human-readable representation of the clause.
-func (c StandardBooleanClause) DebugString() string {
+func (c BooleanClause) DebugString() string {
 	prefix := c.Modifier.prefixChar()
 	if prefix == 0 {
 		return c.Expr.DebugString()
@@ -120,91 +120,103 @@ func (c StandardBooleanClause) DebugString() string {
 	return b.String()
 }
 
-// StandardBooleanModifier is the boolean-mode prefix operator applied to a clause.
-type StandardBooleanModifier uint8
+// BooleanModifier is the boolean-mode prefix operator applied to a clause.
+type BooleanModifier uint8
 
-// StandardBooleanModifier values correspond to boolean-mode prefix operators.
+// BooleanModifier values correspond to boolean-mode prefix operators.
 const (
-	// StandardBooleanModifierNone indicates no prefix modifier.
-	StandardBooleanModifierNone StandardBooleanModifier = iota
-	// StandardBooleanModifierMust is '+'.
-	StandardBooleanModifierMust
-	// StandardBooleanModifierMustNot is '-'.
-	StandardBooleanModifierMustNot
-	// StandardBooleanModifierNegate is '~' (affects scoring but stays in SHOULD group).
-	StandardBooleanModifierNegate
-	// StandardBooleanModifierBoost is '>' (affects scoring but stays in SHOULD group).
-	StandardBooleanModifierBoost
-	// StandardBooleanModifierDeBoost is '<' (affects scoring but stays in SHOULD group).
-	StandardBooleanModifierDeBoost
+	// BooleanModifierNone indicates no prefix modifier.
+	BooleanModifierNone BooleanModifier = iota
+	// BooleanModifierMust is '+'.
+	BooleanModifierMust
+	// BooleanModifierMustNot is '-'.
+	BooleanModifierMustNot
+	// BooleanModifierNegate is '~' (affects scoring but stays in SHOULD group).
+	BooleanModifierNegate
+	// BooleanModifierBoost is '>' (affects scoring but stays in SHOULD group).
+	BooleanModifierBoost
+	// BooleanModifierDeBoost is '<' (affects scoring but stays in SHOULD group).
+	BooleanModifierDeBoost
 )
 
-func (m StandardBooleanModifier) prefixChar() byte {
+func (m BooleanModifier) prefixChar() byte {
 	switch m {
-	case StandardBooleanModifierMust:
+	case BooleanModifierMust:
 		return '+'
-	case StandardBooleanModifierMustNot:
+	case BooleanModifierMustNot:
 		return '-'
-	case StandardBooleanModifierNegate:
+	case BooleanModifierNegate:
 		return '~'
-	case StandardBooleanModifierBoost:
+	case BooleanModifierBoost:
 		return '>'
-	case StandardBooleanModifierDeBoost:
+	case BooleanModifierDeBoost:
 		return '<'
 	default:
 		return 0
 	}
 }
 
-// StandardBooleanExpr is the payload of a boolean-mode clause.
-type StandardBooleanExpr interface {
+// BooleanExpr is the payload of a boolean-mode clause.
+type BooleanExpr interface {
 	DebugString() string
-	standardBooleanExpr()
+	booleanExpr()
 	Text() string
 }
 
-// StandardBooleanTerm is a TERM/NUM token in boolean mode.
-type StandardBooleanTerm struct {
+// BooleanTerm is a TERM/NUM token in boolean mode.
+type BooleanTerm struct {
 	// text is the raw TERM/NUM token text (no secondary tokenization).
 	text string
 	// Wildcard means a trailing '*' is present, representing a prefix match.
 	Wildcard bool
+	// Ignored marks terms that are intentionally emitted but ignored by later
+	// stages, e.g. ngram phrase distance forms.
+	Ignored bool
 }
 
-func (*StandardBooleanTerm) standardBooleanExpr() {}
+func (*BooleanTerm) booleanExpr() {}
 
 // DebugString returns a human-readable representation of the term.
-func (e *StandardBooleanTerm) DebugString() string {
+func (e *BooleanTerm) DebugString() string {
 	if e == nil {
 		return ""
 	}
+	var b strings.Builder
+	b.WriteString(e.text)
 	if !e.Wildcard {
-		return e.text
+		if e.Ignored {
+			b.WriteString("{ign}")
+		}
+		return b.String()
 	}
-	return e.text + "*"
+	b.WriteByte('*')
+	if e.Ignored {
+		b.WriteString("{ign}")
+	}
+	return b.String()
 }
 
 // Text returns the raw term text without the wildcard suffix, for use in execution.
-func (e *StandardBooleanTerm) Text() string {
+func (e *BooleanTerm) Text() string {
 	if e == nil {
 		return ""
 	}
 	return e.text
 }
 
-// StandardBooleanPhrase is a double-quoted phrase token in boolean mode.
-type StandardBooleanPhrase struct {
+// BooleanPhrase is a double-quoted phrase token in boolean mode.
+type BooleanPhrase struct {
 	// text is the content between the quotes (without the surrounding quotes).
 	text string
 	// Distance is from the optional "@N" suffix. It is nil when not specified.
-	// Note: the current STANDARD boolean-mode parser rejects '@', so this is reserved for future use.
+	// Note: the current standard parser path rejects '@', so this is reserved for future use.
 	Distance *int
 }
 
-func (*StandardBooleanPhrase) standardBooleanExpr() {}
+func (*BooleanPhrase) booleanExpr() {}
 
 // DebugString returns a human-readable representation of the phrase.
-func (e *StandardBooleanPhrase) DebugString() string {
+func (e *BooleanPhrase) DebugString() string {
 	if e == nil {
 		return ""
 	}
@@ -219,10 +231,18 @@ func (e *StandardBooleanPhrase) DebugString() string {
 	return b.String()
 }
 
-func (*StandardBooleanGroup) standardBooleanExpr() {}
+func (*BooleanGroup) booleanExpr() {}
+
+// Text returns the group text representation.
+func (g *BooleanGroup) Text() string {
+	if g == nil {
+		return ""
+	}
+	return g.DebugString()
+}
 
 // Text returns the raw phrase text without the quotes, for use in execution.
-func (e *StandardBooleanPhrase) Text() string {
+func (e *BooleanPhrase) Text() string {
 	if e == nil {
 		return ""
 	}

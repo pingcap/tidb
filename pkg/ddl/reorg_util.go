@@ -50,7 +50,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	var setDistTaskParam bool
 
 	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionAddHybridIndex:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionAddHybridIndex, model.ActionAddFullTextIndex:
 		setReorgParam = true
 		setDistTaskParam = true
 	case model.ActionModifyColumn:

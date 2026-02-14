@@ -700,6 +700,58 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	require.Equal(t, tasks[0].pagingSize, uint64(0))
 }
 
+func TestBuildCopTasksWithVersionedRangesRequiresPointRanges(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	_, _, _ = testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	ranges := buildCopRanges("a", "c") // non-point range
+	handleVersionMap := map[string]uint64{}
+	req := &kv.Request{}
+	_, err = buildCopTasks(bo, ranges, &buildCopTaskOpt{
+		req:              req,
+		cache:            cache,
+		respChan:         true,
+		handleVersionMap: handleVersionMap,
+	})
+	require.Error(t, err)
+}
+
+func TestCopTaskToPBBatchTasksVersionedRangesDecodeFail(t *testing.T) {
+	parent := &copTask{
+		batchTaskList: map[uint64]*batchedCopTask{},
+	}
+	sub := &copTask{
+		ranges:           buildCopRanges("a", "b"),
+		handleVersionMap: map[string]uint64{},
+	}
+	parent.batchTaskList[1] = &batchedCopTask{
+		task: sub,
+		region: coprocessor.RegionInfo{
+			Ranges: []*coprocessor.KeyRange{
+				{Start: []byte("a"), End: []byte("b")},
+			},
+		},
+	}
+
+	_, err := parent.ToPBBatchTasks()
+	require.Error(t, err)
+}
+
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {
 	coprRange := coprocessor.KeyRange{}
 	coprRange.Start = r.StartKey
