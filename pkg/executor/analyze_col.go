@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"math"
 	"strings"
@@ -32,14 +33,17 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
+	"go.uber.org/zap"
 )
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
@@ -64,11 +68,31 @@ type AnalyzeColumnsExec struct {
 	memTracker *memory.Tracker
 }
 
-func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
+func analyzeColumnsPushDownEntry(ctx context.Context, gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownV2(gp)
+		res := e.toV2().analyzeColumnsPushDownV2(ctx, gp)
+		e.logAnalyzeCanceledInTest(ctx, res.Err, "analyze columns canceled")
+		return res
 	}
-	return e.toV1().analyzeColumnsPushDownV1()
+	res := e.toV1().analyzeColumnsPushDownV1(ctx)
+	e.logAnalyzeCanceledInTest(ctx, res.Err, "analyze columns canceled")
+	return res
+}
+
+func (e *AnalyzeColumnsExec) logAnalyzeCanceledInTest(ctx context.Context, err error, msg string) {
+	if !intest.InTest || err == nil || !stderrors.Is(err, context.Canceled) {
+		return
+	}
+	cause := context.Cause(ctx)
+	ctxErr := ctx.Err()
+	statslogutil.StatsLogger().Info(msg,
+		zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+		zap.Error(err),
+		zap.Error(cause),
+		zap.Error(ctxErr),
+		zap.Stack("stack"),
+	)
 }
 
 func (e *AnalyzeColumnsExec) toV1() *AnalyzeColumnsExecV1 {
@@ -83,12 +107,12 @@ func (e *AnalyzeColumnsExec) toV2() *AnalyzeColumnsExecV2 {
 	}
 }
 
-func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
+func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) error {
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
-	firstResult, err := e.buildResp(firstPartRanges)
+	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		return err
 	}
@@ -97,7 +121,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 		return nil
 	}
 	var secondResult distsql.SelectResult
-	secondResult, err = e.buildResp(secondPartRanges)
+	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
 		return err
 	}
@@ -106,7 +130,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
+func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
@@ -130,16 +154,16 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.TODO()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
+		e.logAnalyzeCanceledInTest(ctx, err, "analyze columns distsql canceled")
 		return nil, err
 	}
 	return result, nil
 }
 
-func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
-	if err = e.open(ranges); err != nil {
+func (e *AnalyzeColumnsExec) buildStats(ctx context.Context, ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
+	if err = e.open(ctx, ranges); err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 	defer func() {
@@ -186,11 +210,19 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			return nil, nil, nil, nil, nil, err
 		}
 		failpoint.Inject("mockSlowAnalyzeV1", func() {
-			time.Sleep(1000 * time.Second)
+			select {
+			case <-ctx.Done():
+				err := context.Cause(ctx)
+				if err == nil {
+					err = ctx.Err()
+				}
+				failpoint.Return(nil, nil, nil, nil, nil, err)
+			case <-time.After(1000 * time.Second):
+			}
 		})
-		data, err1 := e.resultHandler.nextRaw(context.TODO())
+		data, err1 := e.resultHandler.nextRaw(ctx)
 		if err1 != nil {
-			return nil, nil, nil, nil, nil, err1
+			return nil, nil, nil, nil, nil, normalizeCtxErrWithCause(ctx, err1)
 		}
 		if data == nil {
 			break
@@ -310,7 +342,7 @@ type AnalyzeColumnsExecV1 struct {
 	*AnalyzeColumnsExec
 }
 
-func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeResults {
+func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1(ctx context.Context) *statistics.AnalyzeResults {
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -322,7 +354,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 		ranges = ranger.FullIntRange(false)
 	}
 	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
-	hists, cms, topNs, fms, extStats, err := e.buildStats(ranges, collExtStats)
+	hists, cms, topNs, fms, extStats, err := e.buildStats(ctx, ranges, collExtStats)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}

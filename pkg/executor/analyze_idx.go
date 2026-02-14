@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"math"
 	"time"
 
@@ -29,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -47,7 +50,7 @@ type AnalyzeIndexExec struct {
 	countNullRes   distsql.SelectResult
 }
 
-func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults {
+func analyzeIndexPushdown(ctx context.Context, idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults {
 	ranges := ranger.FullRange()
 	// For single-column index, we do not load null rows from TiKV, so the built histogram would not include
 	// null values, and its `NullCount` would be set by result of another distsql call to get null rows.
@@ -57,8 +60,9 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults 
 	if len(idxExec.idxInfo.Columns) == 1 {
 		ranges = ranger.FullNotNullRange()
 	}
-	hist, cms, fms, topN, err := idxExec.buildStats(ranges, true)
+	hist, cms, fms, topN, err := idxExec.buildStats(ctx, ranges, true)
 	if err != nil {
+		idxExec.logAnalyzeCanceledInTest(ctx, err, "analyze index canceled")
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
 	}
 	var statsVer = statistics.Version1
@@ -95,8 +99,8 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults 
 	return result
 }
 
-func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, fms *statistics.FMSketch, topN *statistics.TopN, err error) {
-	if err = e.open(ranges, considerNull); err != nil {
+func (e *AnalyzeIndexExec) buildStats(ctx context.Context, ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, fms *statistics.FMSketch, topN *statistics.TopN, err error) {
+	if err = e.open(ctx, ranges, considerNull); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	defer func() {
@@ -105,12 +109,12 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 			err = err1
 		}
 	}()
-	hist, cms, fms, topN, err = e.buildStatsFromResult(e.result, true)
+	hist, cms, fms, topN, err = e.buildStatsFromResult(ctx, e.result, true)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
 	if e.countNullRes != nil {
-		nullHist, _, _, _, err := e.buildStatsFromResult(e.countNullRes, false)
+		nullHist, _, _, _, err := e.buildStatsFromResult(ctx, e.countNullRes, false)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -122,14 +126,14 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 	return hist, cms, fms, topN, nil
 }
 
-func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error {
-	err := e.fetchAnalyzeResult(ranges, false)
+func (e *AnalyzeIndexExec) open(ctx context.Context, ranges []*ranger.Range, considerNull bool) error {
+	err := e.fetchAnalyzeResult(ctx, ranges, false)
 	if err != nil {
 		return err
 	}
 	if considerNull && len(e.idxInfo.Columns) == 1 {
 		ranges = ranger.NullRange()
-		err = e.fetchAnalyzeResult(ranges, true)
+		err = e.fetchAnalyzeResult(ctx, ranges, true)
 		if err != nil {
 			return err
 		}
@@ -140,7 +144,7 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 // fetchAnalyzeResult builds and dispatches the `kv.Request` from given ranges, and stores the `SelectResult`
 // in corresponding fields based on the input `isNullRange` argument, which indicates if the range is the
 // special null range for single-column index to get the null count.
-func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRange bool) error {
+func (e *AnalyzeIndexExec) fetchAnalyzeResult(ctx context.Context, ranges []*ranger.Range, isNullRange bool) error {
 	var builder distsql.RequestBuilder
 	var kvReqBuilder *distsql.RequestBuilder
 	if e.isCommonHandle && e.idxInfo.Primary {
@@ -166,9 +170,9 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	if err != nil {
 		return err
 	}
-	ctx := context.TODO()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
+		e.logAnalyzeCanceledInTest(ctx, err, "analyze index distsql canceled")
 		return err
 	}
 	if isNullRange {
@@ -179,7 +183,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	return nil
 }
 
-func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, *statistics.FMSketch, *statistics.TopN, error) {
+func (e *AnalyzeIndexExec) buildStatsFromResult(killerCtx context.Context, result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, *statistics.FMSketch, *statistics.TopN, error) {
 	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, nil, nil, nil, errors.New("mock buildStatsFromResult error"))
@@ -204,14 +208,30 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 				dom.SysProcTracker().KillSysProcess(id)
 			}
 		})
-		if err := e.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+		select {
+		case <-killerCtx.Done():
+			err := context.Cause(killerCtx)
+			if err == nil {
+				err = killerCtx.Err()
+			}
 			return nil, nil, nil, nil, err
+		default:
 		}
 		failpoint.Inject("mockSlowAnalyzeIndex", func() {
-			time.Sleep(1000 * time.Second)
+			select {
+			case <-killerCtx.Done():
+				err := context.Cause(killerCtx)
+				if err == nil {
+					err = killerCtx.Err()
+				}
+				failpoint.Return(nil, nil, nil, nil, err)
+			case <-time.After(1000 * time.Second):
+			}
 		})
-		data, err := result.NextRaw(context.TODO())
+		data, err := result.NextRaw(killerCtx)
 		if err != nil {
+			err = normalizeCtxErrWithCause(killerCtx, err)
+			e.logAnalyzeCanceledInTest(killerCtx, err, "analyze index nextRaw canceled")
 			return nil, nil, nil, nil, err
 		}
 		if data == nil {
@@ -240,8 +260,24 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 	return hist, cms, fms, topn, nil
 }
 
-func (e *AnalyzeIndexExec) buildSimpleStats(ranges []*ranger.Range, considerNull bool) (fms *statistics.FMSketch, nullHist *statistics.Histogram, err error) {
-	if err = e.open(ranges, considerNull); err != nil {
+func (e *AnalyzeIndexExec) logAnalyzeCanceledInTest(ctx context.Context, err error, msg string) {
+	if !intest.InTest || err == nil || !stderrors.Is(err, context.Canceled) {
+		return
+	}
+	cause := context.Cause(ctx)
+	ctxErr := ctx.Err()
+	statslogutil.StatsLogger().Info(msg,
+		zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+		zap.Error(err),
+		zap.Error(cause),
+		zap.Error(ctxErr),
+		zap.Stack("stack"),
+	)
+}
+
+func (e *AnalyzeIndexExec) buildSimpleStats(killerCtx context.Context, ranges []*ranger.Range, considerNull bool) (fms *statistics.FMSketch, nullHist *statistics.Histogram, err error) {
+	if err = e.open(killerCtx, ranges, considerNull); err != nil {
 		return nil, nil, err
 	}
 	defer func() {
@@ -250,9 +286,9 @@ func (e *AnalyzeIndexExec) buildSimpleStats(ranges []*ranger.Range, considerNull
 			err = err1
 		}
 	}()
-	_, _, fms, _, err = e.buildStatsFromResult(e.result, false)
+	_, _, fms, _, err = e.buildStatsFromResult(killerCtx, e.result, false)
 	if e.countNullRes != nil {
-		nullHist, _, _, _, err := e.buildStatsFromResult(e.countNullRes, false)
+		nullHist, _, _, _, err := e.buildStatsFromResult(killerCtx, e.countNullRes, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -263,7 +299,7 @@ func (e *AnalyzeIndexExec) buildSimpleStats(ranges []*ranger.Range, considerNull
 	return fms, nil, nil
 }
 
-func analyzeIndexNDVPushDown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults {
+func analyzeIndexNDVPushDown(killerCtx context.Context, idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults {
 	ranges := ranger.FullRange()
 	// For single-column index, we do not load null rows from TiKV, so the built histogram would not include
 	// null values, and its `NullCount` would be set by result of another distsql call to get null rows.
@@ -273,7 +309,7 @@ func analyzeIndexNDVPushDown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResul
 	if len(idxExec.idxInfo.Columns) == 1 {
 		ranges = ranger.FullNotNullRange()
 	}
-	fms, nullHist, err := idxExec.buildSimpleStats(ranges, len(idxExec.idxInfo.Columns) == 1)
+	fms, nullHist, err := idxExec.buildSimpleStats(killerCtx, ranges, len(idxExec.idxInfo.Columns) == 1)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
 	}

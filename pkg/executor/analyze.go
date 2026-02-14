@@ -46,6 +46,7 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
@@ -101,6 +102,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
+	ctx, stop := e.buildAnalyzeKillCtx(ctx)
+	defer stop()
 
 	// Filter the locked tables.
 	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
@@ -132,7 +135,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)
 	for range buildStatsConcurrency {
-		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
+		e.wg.Run(func() { e.analyzeWorker(ctx, taskCh, resultsCh) })
 	}
 	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
@@ -152,10 +155,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
 	})
+	sentTasks := 0
 TASKLOOP:
 	for _, task := range tasks {
 		select {
 		case taskCh <- task:
+			sentTasks++
 		case <-e.errExitCh:
 			break TASKLOOP
 		case <-gctx.Done():
@@ -173,6 +178,17 @@ TASKLOOP:
 
 	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
+		if stderrors.Is(err, context.Canceled) {
+			if cause := context.Cause(ctx); cause != nil {
+				err = cause
+			}
+		}
+		for task := range taskCh {
+			finishJobWithLog(statsHandle, task.job, err)
+		}
+		for i := sentTasks; i < len(tasks); i++ {
+			finishJobWithLog(statsHandle, tasks[i].job, err)
+		}
 		return err
 	}
 
@@ -469,6 +485,28 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			break
 		}
 		if results.Err != nil {
+			if intest.InTest && stderrors.Is(results.Err, context.Canceled) {
+				jobInfo := ""
+				dbName := ""
+				tableName := ""
+				partitionName := ""
+				if results.Job != nil {
+					jobInfo = results.Job.JobInfo
+					dbName = results.Job.DBName
+					tableName = results.Job.TableName
+					partitionName = results.Job.PartitionName
+				}
+				statslogutil.StatsLogger().Info("analyze result canceled",
+					zap.Uint32("killSignal", e.Ctx().GetSessionVars().SQLKiller.GetKillSignal()),
+					zap.Uint64("connID", e.Ctx().GetSessionVars().ConnectionID),
+					zap.String("jobInfo", jobInfo),
+					zap.String("dbName", dbName),
+					zap.String("tableName", tableName),
+					zap.String("partitionName", partitionName),
+					zap.Error(results.Err),
+					zap.Stack("stack"),
+				)
+			}
 			err = results.Err
 			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
@@ -503,7 +541,77 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	return err
 }
 
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
+func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	killer := &e.Ctx().GetSessionVars().SQLKiller
+	killCh := killer.GetKillEventChan()
+	stopCh := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopCh:
+				return
+			case <-killCh:
+				status := killer.GetKillSignal()
+				if status == 0 {
+					return
+				}
+				err := killer.HandleSignal()
+				if err == nil {
+					err = exeerrors.ErrQueryInterrupted
+				}
+				cancel(err)
+				return
+			}
+		}
+	}()
+	return ctx, func() {
+		cancel(context.Canceled)
+		close(stopCh)
+	}
+}
+
+func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error {
+	select {
+	case <-ctx.Done():
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return exeerrors.ErrQueryInterrupted
+	case <-errExitCh:
+		return exeerrors.ErrQueryInterrupted
+	default:
+		return nil
+	}
+}
+
+func (e *AnalyzeExec) sendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
+	select {
+	case resultsCh <- result:
+		return
+	case <-ctx.Done():
+	case <-e.errExitCh:
+	}
+	err := result.Err
+	if err == nil {
+		err = context.Cause(ctx)
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil {
+		err = exeerrors.ErrQueryInterrupted
+	}
+	finishJobWithLog(statsHandle, result.Job, err)
+}
+
+// ctx must be from AnalyzeExec.buildAnalyzeKillCtx
+func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	defer func() {
@@ -526,23 +634,22 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		var ok bool
 		task, ok = <-taskCh
 		if !ok {
-			break
+			return
+		}
+		if err := analyzeWorkerExitErr(ctx, e.errExitCh); err != nil {
+			finishJobWithLog(statsHandle, task.job, err)
+			return
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
-		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
-			select {
-			case <-e.errExitCh:
-				return
-			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
-			}
+			statsHandle.StartAnalyzeJob(task.job)
+			result := analyzeColumnsPushDownEntry(ctx, e.gp, task.colExec)
+			e.sendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		case idxTask:
-			select {
-			case <-e.errExitCh:
-				return
-			case resultsCh <- analyzeIndexPushdown(task.idxExec):
-			}
+			statsHandle.StartAnalyzeJob(task.job)
+			result := analyzeIndexPushdown(ctx, task.idxExec)
+			e.sendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		}
 	}
 }
