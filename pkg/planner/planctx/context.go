@@ -87,6 +87,12 @@ type PlanContext interface {
 	//
 	// NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
 	// (sessionctx -> planctx). Callers can type-assert the returned value when needed.
+	//
+	// Usage:
+	// This is mainly used when a PlanContext might be wrapped (for example by
+	// `planctx.WithExprCtx` / `planctx.WithTruncateErrLevel`) but the caller still
+	// needs the original session-backed context.
+	// See `plannercore.AsSctx` for the conversion path.
 	UnwrapAsInternalSctx() any
 	// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
 	GetNullRejectCheckExprCtx() exprctx.ExprContext
@@ -165,6 +171,10 @@ type planCtxExprOverrideWrapper struct {
 //
 // NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
 // (sessionctx -> planctx). Callers can type-assert the returned value when needed.
+//
+// It is called by helpers that recover the original session-backed context from
+// wrapped PlanContext values (for example wrappers created by `WithExprCtx` /
+// `WithTruncateErrLevel`).
 func (c *planCtxExprOverrideWrapper) UnwrapAsInternalSctx() any {
 	return c.PlanContext.UnwrapAsInternalSctx()
 }
