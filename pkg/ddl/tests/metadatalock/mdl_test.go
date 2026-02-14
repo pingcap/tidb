@@ -1277,6 +1277,94 @@ func TestMDLViewBaseTable(t *testing.T) {
 	require.Less(t, ts1, ts2)
 }
 
+func TestMDLCreateMaterializedViewLogBlockByBaseTableTxn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int)")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		ddlDone <- tkDDL.ExecToErr("create materialized view log on test.t (a)")
+	}()
+
+	select {
+	case err := <-ddlDone:
+		require.FailNowf(t, "create materialized view log should be blocked by running transaction", "ddl finished before commit, err=%v", err)
+	case <-time.After(2 * time.Second):
+	}
+
+	tk.MustExec("commit")
+
+	select {
+	case err := <-ddlDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "create materialized view log should finish after transaction commit")
+	}
+}
+
+func TestMDLCreateMaterializedViewLogNewTxnWriteMLog(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int)")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		ddlDone <- tkDDL.ExecToErr("create materialized view log on test.t (a)")
+	}()
+
+	select {
+	case err := <-ddlDone:
+		require.FailNowf(t, "create materialized view log should be blocked by running transaction", "ddl finished before commit, err=%v", err)
+	case <-time.After(2 * time.Second):
+	}
+
+	tk.MustExec("commit")
+
+	select {
+	case err := <-ddlDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "create materialized view log should finish after transaction commit")
+	}
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("commit")
+
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a").
+		Check(testkit.Rows("2 I 1"))
+}
+
 func TestMDLSavePoint(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)

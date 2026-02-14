@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -463,6 +464,43 @@ func TestCombinedIDAllocation(t *testing.T) {
 		}
 		require.Len(t, uniqueIDs, allocatedIDCount)
 	})
+}
+
+func TestCreateMaterializedViewLogJobTableIDs(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	// disable DDL to avoid it interfere the test
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	dom.DDL().OwnerManager().CampaignCancel()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	const baseTableID int64 = 900000000000000000
+	jobW := ddl.NewJobWrapperWithArgs(
+		&model.Job{
+			Version:    model.GetJobVerInUse(),
+			Type:       model.ActionCreateMaterializedViewLog,
+			SchemaName: "test",
+			TableName:  "$mlog$t",
+		},
+		&model.CreateMaterializedViewLogArgs{
+			TableInfo: &model.TableInfo{
+				MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: baseTableID},
+			},
+		},
+		false,
+	)
+	submitter := ddl.NewJobSubmitterForTest()
+	require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{jobW}))
+
+	rows := tk.MustQuery(fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", jobW.ID)).Rows()
+	require.Len(t, rows, 1)
+
+	tableIDs := strings.Split(rows[0][0].(string), ",")
+	require.Len(t, tableIDs, 2)
+	require.ElementsMatch(t, []string{
+		strconv.FormatInt(jobW.TableID, 10),
+		strconv.FormatInt(baseTableID, 10),
+	}, tableIDs)
 }
 
 var (
