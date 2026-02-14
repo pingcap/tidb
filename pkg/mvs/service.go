@@ -456,6 +456,21 @@ func (t *MVService) buildMVRefreshTasks(newPending map[int64]*mv) {
 	t.metrics.mvCount.Store(int64(len(t.mvRefreshMu.pending)))
 }
 
+// filterUnownedTasks removes tasks that are not owned by this server.
+// It checks all IDs under one hash-ring read lock to reduce lock contention.
+func filterUnownedTasks[T any](sch *ServerConsistentHash, newPending map[int64]T) {
+	if len(newPending) == 0 {
+		return
+	}
+	sch.mu.RLock()
+	for id := range newPending {
+		if sch.chash.GetNode(int64KeyToBinaryBytes(id)) != sch.ID {
+			delete(newPending, id)
+		}
+	}
+	sch.mu.RUnlock()
+}
+
 // fetchAllTiDBMLogPurge fetches purge metadata and filters out tasks not owned by this node.
 func (t *MVService) fetchAllTiDBMLogPurge() (map[int64]*mvLog, error) {
 	start := mvsNow()
@@ -473,11 +488,7 @@ func (t *MVService) fetchAllTiDBMLogPurge() (map[int64]*mvLog, error) {
 		return nil, err
 	}
 	t.mh.observeRunEvent(mvRunEventFetchMLogOK)
-	for id := range newPending {
-		if !t.sch.AvailableInt64(id) {
-			delete(newPending, id)
-		}
-	}
+	filterUnownedTasks(t.sch, newPending)
 	return newPending, nil
 }
 
@@ -498,11 +509,7 @@ func (t *MVService) fetchAllTiDBMViews() (map[int64]*mv, error) {
 		return nil, err
 	}
 	t.mh.observeRunEvent(mvRunEventFetchMViewsOK)
-	for id := range newPending {
-		if !t.sch.AvailableInt64(id) {
-			delete(newPending, id)
-		}
-	}
+	filterUnownedTasks(t.sch, newPending)
 	return newPending, nil
 }
 
