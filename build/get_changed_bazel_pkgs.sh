@@ -33,11 +33,14 @@ collect_changed_files() {
   # "run before commit" can still lint pending local edits.
   {
     git diff --name-only "$base_ref...HEAD"
-    if [ -n "$merge_sha" ] && [ -n "$base_sha" ] && [ "$merge_sha" = "$base_sha" ]; then
-      # During "merge BASE_REF into current branch", avoid counting files that
-      # only changed due to the incoming base branch.
-      git diff --name-only --cached "$base_ref" || true
-      git diff --name-only "$base_ref" || true
+    if [ -n "$merge_sha" ] &&
+      [ -n "$base_sha" ] &&
+      git merge-base --is-ancestor "$merge_sha" "$base_sha" 2>/dev/null; then
+      # When merging something that is already on the base branch history (most
+      # commonly: merging BASE_REF into current branch), avoid counting files that
+      # only changed due to the incoming base-side commits.
+      git diff --name-only --cached "$merge_sha" || true
+      git diff --name-only "$merge_sha" || true
     else
       git diff --name-only --cached
       git diff --name-only
