@@ -862,10 +862,7 @@ func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinP
 	// and the newly generated keys will not cause the split.
 	innerKeysFromDataSource := make([]*expression.Column, 0, len(indexJoinProp.InnerJoinKeys))
 	innerKeysFromDataSource = expression.Filter(innerKeysFromDataSource, indexJoinProp.InnerJoinKeys, func(col *expression.Column) bool {
-		if expression.ExprFromSchema(col, dataSourceSchema) {
-			return true
-		}
-		return false
+		return expression.ExprFromSchema(col, dataSourceSchema)
 	})
 	if len(innerKeysFromDataSource) > len(groupByCols) {
 		return false
