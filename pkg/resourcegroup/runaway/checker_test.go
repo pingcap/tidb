@@ -25,6 +25,21 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
+// newTestRunawayRecordFlusher creates a minimal batchFlusher for testing markRunaway.
+func newTestRunawayRecordFlusher() *batchFlusher[recordKey, *Record] {
+	return newTestBatchFlusher(
+		100,
+		func(m map[recordKey]*Record, k recordKey, v *Record) {
+			if existing, ok := m[k]; ok {
+				existing.Repeats++
+			} else {
+				m[k] = v
+			}
+		},
+		func(m map[recordKey]*Record) error { return nil },
+	)
+}
+
 func TestActiveGroupCounterOrdering(t *testing.T) {
 	t.Run("NormalOrder", func(t *testing.T) {
 		m := &Manager{}
@@ -284,7 +299,7 @@ func TestNilCheckerSafety(t *testing.T) {
 
 func TestCheckThresholds(t *testing.T) {
 	newCheckerWithAction := func(action rmpb.RunawayAction) (*Checker, *Manager) {
-		m := &Manager{runawayQueriesChan: make(chan *Record, 10)}
+		m := &Manager{runawayRecordFlusher: newTestRunawayRecordFlusher()}
 		c := &Checker{
 			manager:                m,
 			resourceGroupName:      "rg_threshold",
@@ -309,7 +324,7 @@ func TestCheckThresholds(t *testing.T) {
 		err := c.CheckThresholds(&util.RUDetails{}, 200, nil)
 		assert.Error(t, err)
 		assert.True(t, c.markedByIdentifyInRunawaySettings.Load())
-		assert.Equal(t, 1, len(m.runawayQueriesChan))
+		assert.Equal(t, 1, m.runawayRecordFlusher.bufferLen())
 	})
 
 	t.Run("CoolDownOnExceed", func(t *testing.T) {
@@ -317,13 +332,13 @@ func TestCheckThresholds(t *testing.T) {
 		err := c.CheckThresholds(&util.RUDetails{}, 200, nil)
 		assert.NoError(t, err)
 		assert.True(t, c.markedByIdentifyInRunawaySettings.Load())
-		assert.Equal(t, 1, len(m.runawayQueriesChan))
+		assert.Equal(t, 1, m.runawayRecordFlusher.bufferLen())
 	})
 }
 
 func TestCheckRuleKillAction(t *testing.T) {
 	newCheckerWithDeadline := func(action rmpb.RunawayAction) *Checker {
-		m := &Manager{runawayQueriesChan: make(chan *Record, 10)}
+		m := &Manager{runawayRecordFlusher: newTestRunawayRecordFlusher()}
 		return &Checker{
 			manager:           m,
 			resourceGroupName: "rg_rule_kill",
@@ -358,7 +373,7 @@ func TestCheckRuleKillAction(t *testing.T) {
 	})
 
 	t.Run("NotExceeded", func(t *testing.T) {
-		m := &Manager{runawayQueriesChan: make(chan *Record, 10)}
+		m := &Manager{runawayRecordFlusher: newTestRunawayRecordFlusher()}
 		c := &Checker{
 			manager:           m,
 			resourceGroupName: "rg_rule_kill",
@@ -383,7 +398,7 @@ func TestCheckRuleKillAction(t *testing.T) {
 }
 
 func TestMarkRunawayBySettingsCAS(t *testing.T) {
-	m := &Manager{runawayQueriesChan: make(chan *Record, 10)}
+	m := &Manager{runawayRecordFlusher: newTestRunawayRecordFlusher()}
 	c := &Checker{
 		manager:           m,
 		resourceGroupName: "rg_cas",
@@ -405,5 +420,5 @@ func TestMarkRunawayBySettingsCAS(t *testing.T) {
 	wg.Wait()
 	assert.True(t, c.markedByIdentifyInRunawaySettings.Load())
 	// CAS ensures only one goroutine successfully marks and enqueues a record.
-	assert.Equal(t, 1, len(m.runawayQueriesChan))
+	assert.Equal(t, 1, m.runawayRecordFlusher.bufferLen())
 }

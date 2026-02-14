@@ -26,6 +26,7 @@ var (
 
 	RunawayFlusherCounter            *prometheus.CounterVec
 	RunawayFlusherAddCounter         *prometheus.CounterVec
+	RunawayFlusherDropCounter        *prometheus.CounterVec
 	RunawayFlusherBatchSizeHistogram *prometheus.HistogramVec
 	RunawayFlusherDurationHistogram  *prometheus.HistogramVec
 	RunawayFlusherIntervalHistogram  *prometheus.HistogramVec
@@ -55,6 +56,14 @@ func InitResourceGroupMetrics() {
 			Subsystem: "server",
 			Name:      "runaway_flusher_add_total",
 			Help:      "Counter of records added to runaway flusher.",
+		}, []string{LblName})
+
+	RunawayFlusherDropCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_flusher_drop_total",
+			Help:      "Counter of records dropped by runaway flusher due to buffer overflow.",
 		}, []string{LblName})
 
 	RunawayFlusherBatchSizeHistogram = metricscommon.NewHistogramVec(
