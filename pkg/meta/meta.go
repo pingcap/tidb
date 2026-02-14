@@ -1106,6 +1106,9 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 var checkForeignKeyAttributesNil = `"fk_info":null`
 var checkForeignKeyAttributesZero = `"fk_info":[]`
 
+// MustLoadFilterAttr is filters for IsTableInfoMustLoad.
+// LoadIfMissing == true, it loads if attr is missing.
+// LoadIfMissing == false, it loads if attr is present.
 type MustLoadFilterAttr struct {
 	Attr          string
 	LoadIfMissing bool
@@ -1118,8 +1121,8 @@ var checkAttributesInOrder = []MustLoadFilterAttr{
 	{Attr: `"temp_table_type":0`, LoadIfMissing: true},
 	{Attr: `"policy_ref_info":null`, LoadIfMissing: true},
 	{Attr: `"ttl_info":null`, LoadIfMissing: true},
-	{Attr: `"affinity":`, LoadIfMissing: false},
-	{Attr: `"softdelete_info"`, LoadIfMissing: false},
+	{Attr: `"affinity":{`, LoadIfMissing: false},
+	{Attr: `"softdelete_info":{`, LoadIfMissing: false},
 }
 
 // isTableInfoMustLoad checks whether the table info needs to be loaded.

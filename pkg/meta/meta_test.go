@@ -1063,11 +1063,11 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	// softdelete info
 	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.SoftDeleteAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
-	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].SoftdeleteInfo)
+	require.Equal(t, tblInfo.SoftdeleteInfo, tblInfoRes[0].TableInfos[0].SoftdeleteInfo)
 	// affinity
 	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
-	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].Affinity)
+	require.Equal(t, tblInfo.Affinity, tblInfoRes[0].TableInfos[0].Affinity)
 }
 
 func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
