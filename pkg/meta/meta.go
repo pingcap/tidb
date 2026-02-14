@@ -1118,7 +1118,7 @@ var checkAttributesInOrder = []MustLoadFilterAttr{
 	{Attr: `"temp_table_type":0`, LoadIfMissing: true},
 	{Attr: `"policy_ref_info":null`, LoadIfMissing: true},
 	{Attr: `"ttl_info":null`, LoadIfMissing: true},
-	{Attr: `"is_active_active":true`, LoadIfMissing: false},
+	{Attr: `"affinity":`, LoadIfMissing: false},
 	{Attr: `"softdelete_info"`, LoadIfMissing: false},
 }
 
