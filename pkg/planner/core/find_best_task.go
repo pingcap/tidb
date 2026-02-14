@@ -605,7 +605,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(self)
+		pass := admitIndexJoinInnerChildPattern(self, prop.IndexJoinProp)
 		if !pass {
 			// even enforce hint can not work with this.
 			return base.InvalidTask, nil
@@ -1811,7 +1811,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(ds)
+		pass := admitIndexJoinInnerChildPattern(ds, prop.IndexJoinProp)
 		if !pass {
 			// even enforce hint can not work with this.
 			return base.InvalidTask, nil

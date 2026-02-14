@@ -79,7 +79,7 @@ func (c *cowExprRef) Result() []Expression {
 }
 
 // Filter the input expressions, append the results to result.
-func Filter(result []Expression, input []Expression, filter func(Expression) bool) []Expression {
+func Filter[T any](result []T, input []T, filter func(T) bool) []T {
 	for _, e := range input {
 		if filter(e) {
 			result = append(result, e)

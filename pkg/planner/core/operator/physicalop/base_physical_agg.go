@@ -931,31 +931,9 @@ func (p *BasePhysicalAgg) ResolveIndices() (err error) {
 	return
 }
 
-func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinRuntimeProp) bool {
-	// Make sure join key set is subset of group by items.
-	groupByCols := expression.ExtractColumnsMapFromExpressions(nil, la.GroupByItems...)
-	if len(indexJoinProp.InnerJoinKeys) > len(groupByCols) {
-		return false
-	}
-	for _, key := range indexJoinProp.InnerJoinKeys {
-		if _, ok := groupByCols[key.UniqueID]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
 // ExhaustPhysicalPlans4LogicalAggregation will be called by LogicalAggregation in logicalOp pkg.
 func ExhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalAggregation)
-	if prop.IndexJoinProp != nil {
-		if !checkIndexJoinInnerTaskWithAgg(la, prop.IndexJoinProp) {
-			if prop.IndexJoinProp.HintPreferIndexJoin {
-				la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items")
-			}
-			return nil, false, nil
-		}
-	}
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)
 	if len(hashAggs) > 0 && preferHash {

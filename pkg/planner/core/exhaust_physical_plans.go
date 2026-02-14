@@ -833,20 +833,75 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 	}
 }
 
+func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinRuntimeProp) bool {
+	// Make sure join key set is subset of group by items.
+	// Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
+	groupByCols := expression.ExtractColumnsMapFromExpressions(nil, la.GroupByItems...)
+
+	var dataSourceSchema *expression.Schema
+	var iterChild base.LogicalPlan = la
+	for iterChild != nil {
+		if ds, ok := iterChild.(*logicalop.DataSource); ok {
+			dataSourceSchema = ds.Schema()
+			break
+		}
+		if iterChild.Children() == nil || len(iterChild.Children()) != 1 {
+			// Got unexpected plan shape, be defensive here and return false to disable index join inner task with agg in this case.
+			return false
+		}
+		iterChild = iterChild.Children()[0]
+	}
+	if dataSourceSchema == nil {
+		// No DataSource found in the inner child, be defensive here and return false to disable index join inner task with agg in this case.
+		return false
+	}
+
+	// Only check the inner keys that is really from the DataSource, and newly generated keys like agg func or projection column
+	// will not be considerted here. Because we only need to make sure the keys from DataSource is not split by group by,
+	// and the newly generated keys will not cause the split.
+	innerKeysFromDataSource := make([]*expression.Column, 0, len(indexJoinProp.InnerJoinKeys))
+	innerKeysFromDataSource = expression.Filter(innerKeysFromDataSource, indexJoinProp.InnerJoinKeys, func(col *expression.Column) bool {
+		if expression.ExprFromSchema(col, dataSourceSchema) {
+			return true
+		}
+		return false
+	})
+	if len(innerKeysFromDataSource) > len(groupByCols) {
+		return false
+	}
+	for _, key := range innerKeysFromDataSource {
+		if _, ok := groupByCols[key.UniqueID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // admitIndexJoinInnerChildPattern is used to check whether current physical choosing is under an index join's
 // probe side. If it is, and we ganna check the original inner pattern check here to keep compatible with the old.
 // the @first bool indicate whether current logical plan is valid of index join inner side.
-func admitIndexJoinInnerChildPattern(p base.LogicalPlan) bool {
+func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property.IndexJoinRuntimeProp) bool {
 	switch x := p.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).Self().(type) {
 	case *logicalop.DataSource:
 		// DS that prefer tiFlash reading couldn't walk into index join.
 		if x.PreferStoreType&h.PreferTiFlash != 0 {
 			return false
 		}
-	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
+	case *logicalop.LogicalProjection, *logicalop.LogicalSelection:
 		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return false
 		}
+	case *logicalop.LogicalAggregation:
+		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return false
+		}
+		if !checkIndexJoinInnerTaskWithAgg(x, indexJoinProp) {
+			if indexJoinProp.HintPreferIndexJoin {
+				x.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint INDEX_JOIN is inapplicable due to the join keys are not subset of group by items")
+			}
+			return false
+		}
+
 	case *logicalop.LogicalUnionScan:
 	default: // index join inner side couldn't allow join, sort, limit, etc. todo: open it.
 		return false
