@@ -43,5 +43,5 @@ Implementation choice:
 
 Test and verification:
 - Add SQL-only case to `predicate_pushdown_suite_in.json`; keep DDL in the test setup, otherwise `explain` will try to run `DROP/CREATE`.
-- Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation --tags=intest,deadlock -record`.
-- Add integration test to `tests/integrationtest/t/select.test` and record via `./run-tests.sh -r select` (integration tests use `-r`, not `-record`).
+- Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation -tags=intest,deadlock -record`.
+- Add integration test to `tests/integrationtest/t/select.test` and record via `pushd tests/integrationtest && ./run-tests.sh -r select && popd` (integration tests use `-r`, not `-record`).

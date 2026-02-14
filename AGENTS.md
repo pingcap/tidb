@@ -4,9 +4,9 @@ This file provides guidance to agents working in this repository.
 
 ## Purpose and Precedence
 
-- `MUST` means required.
-- `SHOULD` means recommended unless there is a concrete reason to deviate.
-- `MAY` means optional.
+- MUST means required.
+- SHOULD means recommended unless there is a concrete reason to deviate.
+- MAY means optional.
 - Root `AGENTS.md` defines repository-wide defaults. If a deeper path later adds a more specific `AGENTS.md`, the deeper file SHOULD be treated as higher precedence for that subtree.
 
 ## Non-negotiables
@@ -21,14 +21,14 @@ This file provides guidance to agents working in this repository.
 
 | Task | Required action |
 | --- | --- |
-| Added/moved/renamed/removed Go files, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | `MUST` run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
-| Running package unit tests | `SHOULD` run targeted tests (`-run <TestName>`) and avoid full-package runs unless needed. |
-| Unit tests in a package that uses failpoints | `MUST` enable failpoints before tests and disable afterward. |
-| Recording integration tests | `MUST` use `./run-tests.sh -r <TestName>` (not `-record`). |
-| RealTiKV tests | `MUST` start playground in background, run tests, then clean up playground/data. |
-| Bug fix | `MUST` add a regression test and verify it fails before fix and passes after fix. |
-| Fmt-only PR | `MUST NOT` run costly `realtikvtest`; local compilation is enough. |
-| Before finishing | `SHOULD` run `make bazel_lint_changed`. |
+| Added/moved/renamed/removed Go files, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | MUST run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
+| Running package unit tests | SHOULD run targeted tests (`go test -run <TestName> -tags=intest,deadlock`) and avoid full-package runs unless needed. |
+| Unit tests in a package that uses failpoints | MUST enable failpoints before tests and disable afterward (see `docs/agents/testing-flow.md`). |
+| Recording integration tests | MUST use `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd` (not `-record`; `-record` is for unit-test suites that explicitly support it). |
+| RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md`). |
+| Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
+| Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
+| Before finishing | SHOULD run `make bazel_lint_changed`. |
 
 ### Skills
 
@@ -58,14 +58,9 @@ This file provides guidance to agents working in this repository.
 - `/tests/integrationtest/`, `/tests/realtikvtest/`: SQL integration and real TiKV test surfaces.
 - `/cmd/tidb-server/`: TiDB server entrypoint.
 
-## Source Files and Notes
+## Notes
 
-- When creating new source files (for example `*.go`), include the standard TiDB copyright and Apache 2.0 header by copying from a nearby file and updating year if needed.
-- Notes location is `docs/note/<component>/`. If missing, create it and add an entry in this file.
-- Notes update rule: update existing sections when the topic/root cause overlaps; append a new dated section only for a genuinely new topic.
-- Planner rule notes: `docs/note/planner/rule/rule_ai_notes.md`.
-- If one notes file exceeds 2000 lines, split by functionality and update references in this file.
-- Predicate pushdown and integration test recording rules are defined in `docs/agents/testing-flow.md` and `Code Style Guide -> Tests and testdata`.
+- Follow `docs/agents/notes-guide.md`.
 
 ## Build Flow
 
@@ -74,7 +69,7 @@ This file provides guidance to agents working in this repository.
 Run `make bazel_prepare` before building when any of the following is true:
 
 - New workspace or fresh clone.
-- Bazel-related files changed (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`).
+- Bazel-related files changed (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`).
 - Any Go source file is added/removed/renamed/moved in the PR.
 - Go module dependencies changed (for example `go.mod`, `go.sum`), including adding third-party dependencies.
 - UT or RealTiKV tests were added and Bazel test targets were updated (for example `_test.go` in `srcs`, `shard_count`, or `tests/realtikvtest/**/BUILD.bazel` updates).
@@ -95,27 +90,30 @@ make bazel_lint_changed
 
 Use the smallest set that still proves correctness.
 
+Typical package unit test command: `go test -run <TestName> -tags=intest,deadlock` (see `docs/agents/testing-flow.md`).
+
 | Change scope | Minimum validation |
 | --- | --- |
-| `pkg/planner/**` rules or logical/physical plans | Targeted planner unit tests (`go test -run <TestName> --tags=intest,deadlock`) and update rule testdata when needed |
+| `pkg/planner/**` rules or logical/physical plans | Targeted planner unit tests (`go test -run <TestName> -tags=intest,deadlock`) and update rule testdata when needed |
 | `pkg/executor/**` SQL behavior | Targeted unit test plus relevant integration test (`tests/integrationtest`) |
 | `pkg/expression/**` builtins or type inference | Targeted expression unit tests with edge-case coverage |
 | `pkg/session/**` / variables / protocol behavior | Targeted package tests plus SQL integration tests for user-visible behavior |
 | `pkg/ddl/**` schema changes | DDL-focused unit/integration tests and compatibility impact checks |
 | `pkg/store/**` / `pkg/kv/**` storage behavior | Targeted unit tests; use realtikv tests if behavior depends on real TiKV |
 | Parser files (`pkg/parser/**`) | Parser-specific Make targets and related unit tests |
-| `tests/integrationtest/t/**` changed | `./run-tests.sh -r <TestName>` and verify regenerated result correctness |
-| `tests/realtikvtest/**` changed | Start playground, run scoped `go test --tags=intest,deadlock`, then mandatory cleanup |
+| `tests/integrationtest/t/**` changed | `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd` and verify regenerated result correctness |
+| `tests/realtikvtest/**` changed | Start playground, run scoped `go test -tags=intest,deadlock`, then mandatory cleanup |
 
 ## Testing Policy
 
 - Detailed command playbooks live in `docs/agents/testing-flow.md`.
 - Select required test surfaces first (`Task -> Validation Matrix`), then run scoped commands.
 - Prefer targeted runs (`-run <TestName>`). Avoid package-wide runs unless needed for broad refactors, CI reproduction, or shared golden/testdata updates.
-- If a package uses failpoints, `MUST` enable failpoints before tests and disable them afterward.
-- Bug fixes `MUST` add regression tests and verify fail-before-fix/pass-after-fix (or document why pre-fix reproduction is infeasible).
-- Integration test recording `MUST` use `./run-tests.sh -r <TestName>`.
-- RealTiKV tests `MUST` start playground in background and perform mandatory cleanup.
+- If a package uses failpoints, MUST enable failpoints before tests and disable them afterward.
+- Failpoint decision MUST follow `docs/agents/testing-flow.md`: if failpoint search checks have no matches, run without failpoint enable/disable and state the evidence in the final report.
+- Bug fixes MUST add regression tests and verify fail-before-fix/pass-after-fix (or document why pre-fix reproduction is infeasible).
+- Integration test recording MUST use `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd`.
+- RealTiKV tests MUST start playground in background and perform mandatory cleanup.
 
 ## Code Style Guide
 
@@ -125,11 +123,12 @@ Use the smallest set that still proves correctness.
 - Keep changes focused; avoid unrelated refactors, renames, or moves in the same PR.
 - For implementation details, add comments only for non-obvious intent, invariants, concurrency guarantees, SQL/compatibility contracts, or important performance trade-offs; avoid comments that only restate nearby code. Keep exported-symbol doc comments, and prefer semantic constraints over name restatement.
 - Keep error handling actionable and contextual; avoid silently swallowing errors.
-- For new source files, include the standard TiDB license header.
+- For new source files (for example `*.go`), include the standard TiDB license header (copyright + Apache 2.0) by copying from a nearby file and updating year if needed.
 
 ### Tests and testdata
 
 - Prefer extending existing test suites and fixtures over creating new scaffolding.
+- Unit test suite size in one package SHOULD stay around 50 or fewer as a practical target; use `shard_count` in package `BUILD.bazel` as a reference when splitting.
 - Keep test changes minimal and deterministic; avoid broad golden/testdata churn unless required.
 - For planner predicate pushdown cases, keep SQL-only statements in `predicate_pushdown_suite_in.json` and put DDL in setup.
 - When recording outputs, verify changed result files before reporting completion.

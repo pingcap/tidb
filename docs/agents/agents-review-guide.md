@@ -1,7 +1,7 @@
 # AGENTS.md Review Guide
 
 This document is a repeatable review guide for changes to `AGENTS.md` and related agent runbooks.
-Normative requirements (`MUST`/`SHOULD`) remain in root `AGENTS.md`.
+Normative requirements (MUST/SHOULD/MAY/MUST NOT) remain in root `AGENTS.md`.
 
 ## When to Use
 
@@ -17,20 +17,22 @@ Run this guide before merging changes to:
 
 Review gate:
 
-- [ ] Any new `MUST`/`SHOULD` policy lives in `AGENTS.md` first.
+- [ ] Any new MUST/SHOULD/MAY/MUST NOT policy lives in `AGENTS.md` first.
 - [ ] Supporting docs only explain or exemplify policy; they do not introduce new policy scope.
+- [ ] Normative keywords keep a consistent style (MUST/SHOULD/MAY/MUST NOT are not wrapped in backticks).
 
 ## Review Workflow
 
 ### 1) Precedence and Scope
 
-- [ ] Confirm precedence wording remains clear (`MUST`/`SHOULD`/`MAY`, root-first precedence).
+- [ ] Confirm precedence wording remains clear (MUST/SHOULD/MAY, root-first precedence).
 - [ ] If subtree-specific guidance is added, ensure it does not conflict with root `AGENTS.md`.
 
 ### 2) Structure and Duplication
 
 - [ ] `AGENTS.md` remains concise: policy-focused, not overloaded with step-by-step runbook detail.
 - [ ] Detailed workflows are linked from `AGENTS.md` to `docs/agents/*` instead of copied inline.
+- [ ] Policy statements are not duplicated across sections or docs; keep one source-of-truth line and reference it elsewhere if needed.
 - [ ] No duplicated checklist documents with overlapping normative rules.
 
 ### 3) High-Risk Policy Gates
@@ -39,14 +41,13 @@ Validate these first because they caused prior drift/regressions:
 
 - [ ] Bazel metadata rule is explicit and unambiguous (no ambiguous wildcard wording).
 - [ ] PR requirements include the `Issue Number:` line with `close #<id>` or `ref #<id>`.
-- [ ] Notes update policy is consistent between `AGENTS.md` and planner notes.
+- [ ] Notes update policy is consistent between `docs/agents/notes-guide.md` and planner notes.
 - [ ] Testing policy in `AGENTS.md` matches testing runbook guidance under `docs/agents/` (no contradiction).
 
 ### 4) Testing and Validation Consistency
 
 - [ ] `Task -> Validation Matrix` still defines minimal required test surfaces by change scope.
 - [ ] `Testing Policy` remains policy-level and points to command playbooks under `docs/agents/`.
-- [ ] Integration recording rule remains `./run-tests.sh -r <TestName>`.
 - [ ] RealTiKV rule still requires background start and mandatory cleanup.
 - [ ] Bug-fix policy still requires regression tests with fail-before-fix/pass-after-fix evidence (or explicit infeasibility note).
 
@@ -75,11 +76,19 @@ Use from repository root.
 grep -n "Issue Number:" AGENTS.md
 grep -n "Task -> Validation Matrix\|Testing Policy\|make bazel_prepare" AGENTS.md
 
+# Ensure normative keywords are not wrapped in backticks in policy docs.
+rg -n -P '\x60(MUST(?: NOT)?|SHOULD|MAY)\x60' AGENTS.md docs/agents/agents-review-guide.md
+
 # Check cross-doc source-of-truth boundaries in docs/agents/
 grep -R -n 'root `AGENTS.md`' --include="*.md" docs/agents
 
-# Ensure removed docs are not referenced
-grep -R -n "pr-issue.md" --include="*.md" . --exclude="agents-review-guide.md"
+# Ensure deleted/renamed paths in this change are not referenced in Markdown docs.
+# Replace <base_ref> with the PR base branch if needed.
+git diff --name-status <base_ref>...HEAD | \
+  awk '$1=="D"{print $2} $1 ~ /^R[0-9]*/{print $2}' | \
+  while read -r old_path; do
+    [ -n "${old_path}" ] && rg -n --fixed-strings "${old_path}" --glob '*.md' . || true
+  done
 ```
 
 ## Acceptance Criteria for AGENTS-related Changes

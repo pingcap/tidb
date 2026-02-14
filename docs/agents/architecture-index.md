@@ -70,11 +70,11 @@ Hard requirements remain in the repository root `AGENTS.md`.
 
 ## Practical Search Workflow
 1. Start from symptom:
-  - SQL keyword
-  - error message
-  - variable name
+   - SQL keyword
+   - error message
+   - variable name
 2. Find implementation entrypoint:
-  - planner/executor/expression/session/ddl/store
+   - planner/executor/expression/session/ddl/store
 3. Find existing tests around the same behavior.
 4. Confirm neighboring modules only if call chain crosses boundaries.
 
@@ -86,6 +86,7 @@ Hard requirements remain in the repository root `AGENTS.md`.
 
 ## Notes and Runbooks
 - Planner notes: `docs/note/planner/rule/rule_ai_notes.md`
+- Notes guide: `docs/agents/notes-guide.md`
 - Testing runbook: `docs/agents/testing-flow.md`
 - AGENTS review guide: `docs/agents/agents-review-guide.md`
 - Root execution contract: `AGENTS.md`

@@ -8,7 +8,7 @@ Use `AGENTS.md` -> `Task -> Validation Matrix` first, run the smallest valid com
 
 ```bash
 pushd pkg/<package_name>
-go test -run <TestName> --tags=intest,deadlock
+go test -run <TestName> -tags=intest,deadlock
 popd
 ```
 
@@ -21,22 +21,21 @@ popd
 - Policy reference: `AGENTS.md` -> `Quick Decision Matrix`, `AGENTS.md` -> `Testing Policy`.
 
 ```bash
-grep -R -n "failpoint\\." pkg/<package_name>
-grep -R -n "testfailpoint\\." pkg/<package_name>
-# Optional (Bazel): check failpoint dependency if BUILD.bazel exists.
-test -f pkg/<package_name>/BUILD.bazel && grep -n "@com_github_pingcap_failpoint//:failpoint" pkg/<package_name>/BUILD.bazel
+rg -n --fixed-strings -- "failpoint." pkg/<package_name>
+rg -n --fixed-strings -- "testfailpoint." pkg/<package_name>
+# If BUILD.bazel exists, also check failpoint dependency.
+test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_pingcap_failpoint//:failpoint" pkg/<package_name>/BUILD.bazel
 ```
 
-- The grep checks above are heuristic and can have false positives/negatives.
-- If grep finds matches, run with failpoints enabled.
-- If grep finds no matches, do not enable failpoints by default.
-- If failpoint usage is still uncertain (for example build-tagged code paths), enable failpoints and state the reason in the final report.
-- `--tags=intest,deadlock` does not enable failpoints.
+- Use the checks above as the default decision basis.
+- If `rg` finds matches, run with failpoints enabled.
+- If `rg` finds no matches, run without failpoint enable/disable and state the check evidence in the final report.
+- `-tags=intest,deadlock` does not enable failpoints.
 
 ```bash
 make failpoint-enable && (
   pushd pkg/<package_name>
-  go test -run <TestName> --tags=intest,deadlock
+  go test -run <TestName> -tags=intest,deadlock
   rc=$?
   popd
   make failpoint-disable
@@ -44,12 +43,12 @@ make failpoint-enable && (
 )
 ```
 
-- If running Bazel directly (for example `bazel test`), run `make bazel-failpoint-enable` first, then `make failpoint-disable` after tests.
-- If using `make bazel_test`, do not run `make bazel-failpoint-enable` separately because `bazel_test` already depends on it; still run `make failpoint-disable` after tests.
+- If running Bazel directly (for example `bazel test`), run `make bazel-failpoint-enable` first, then `make bazel-failpoint-disable` after tests.
+- If using `make bazel_test`, do not run `make bazel-failpoint-enable` separately because `bazel_test` already depends on it; still run `make bazel-failpoint-disable` after tests.
 
 ## Unit test design notes
 
-1. As a practical guideline, keep unit test count within one package around 50 or fewer; use `shard_count` in package `BUILD.bazel` as reference.
+1. Follow `AGENTS.md` -> `Code Style Guide` -> `Tests and testdata` for package-level unit test suite sizing guidance (around 50 or fewer; use `shard_count` as reference).
 2. Reuse existing tests, testdata, and table structures whenever possible.
 3. For JSON-driven tests (`xxxx_in.json`, `xxxx_out.json`, `xxxx_xut.json`), update the input test set first before running/recording.
 
@@ -58,7 +57,7 @@ make failpoint-enable && (
 - Add a regression test that reproduces the issue.
 - Verify fail-before-fix and pass-after-fix when feasible (for example `upstream/master` or a temporary revert).
 - If pre-fix failure cannot be reproduced locally, document why and provide best-available evidence.
-- Include exact test commands in PR description under `Tests` (for example `go test -run TestXxx --tags=intest,deadlock ./pkg/...`).
+- Include exact test commands in PR description under `Tests` (for example `go test -run TestXxx -tags=intest,deadlock ./pkg/...`).
 
 ## Integration tests (`/tests/integrationtest`)
 
@@ -106,9 +105,9 @@ until curl -sf "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; do sleep 1; don
 ```
 
 ```bash
-go test -run <TestName> --tags=intest,deadlock ./tests/realtikvtest/<dir>/...
+go test -run <TestName> -tags=intest,deadlock ./tests/realtikvtest/<dir>/...
 # non-default PD example
-go test -run <TestName> --tags=intest,deadlock ./tests/realtikvtest/<dir>/... -args \
+go test -run <TestName> -tags=intest,deadlock ./tests/realtikvtest/<dir>/... -args \
   -tikv-path "tikv://127.0.0.1:12379?disableGC=true"
 ```
 
