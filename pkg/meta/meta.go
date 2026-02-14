@@ -1106,9 +1106,10 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 var checkForeignKeyAttributesNil = `"fk_info":null`
 var checkForeignKeyAttributesZero = `"fk_info":[]`
 
-// MustLoadFilterAttr is filters for IsTableInfoMustLoad.
-// LoadIfMissing == true, it loads if attr is missing.
-// LoadIfMissing == false, it loads if attr is present.
+// MustLoadFilterAttr defines filters for IsTableInfoMustLoad.
+// LoadIfMissing controls whether the absence or presence of the attribute
+// should trigger loading: when true, load if the attribute is missing;
+// when false, load if the attribute is present.
 type MustLoadFilterAttr struct {
 	Attr          string
 	LoadIfMissing bool
@@ -1223,7 +1224,12 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 }
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.
-// The filterAttrs are used to filter out any table that is not needed.
+// filterAttrs is a list of MustLoadFilterAttr rules that decide which tables must be loaded:
+//   - Each rule describes an attribute marker to search for in the serialized table info.
+//   - If a rule has LoadIfMissing == true, the table is loaded when that marker is NOT present
+//     (e.g. when a default/null marker is missing and the table should be treated specially).
+//   - If a rule has LoadIfMissing == false, the table is loaded only when that marker IS present
+//     (e.g. when a special attribute flag is explicitly set on the table).
 func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...MustLoadFilterAttr) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
