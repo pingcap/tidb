@@ -514,17 +514,27 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 	if err != nil {
 		return false, err
 	}
-	if resp.Status != ErrorCode_SUCCESS {
-		logutil.BgLogger().Error("GetIndexProgress failed",
-			zap.Int64("tableID", tableID),
-			zap.Int64("indexID", indexID),
-			zap.String("errorMessage", resp.ErrorMessage))
-		return false, fmt.Errorf("tici GetIndexProgress error: %s", resp.ErrorMessage)
-	}
+	// State is the source of truth for GetIndexProgress.
+	// Some TiCI implementations may only return state and omit status/error_message.
 	switch resp.State {
 	case GetIndexProgressResponse_COMPLETED:
+		if resp.Status != ErrorCode_SUCCESS {
+			logutil.BgLogger().Warn("GetIndexProgress completed with non-success status",
+				zap.Int64("tableID", tableID),
+				zap.Int64("indexID", indexID),
+				zap.String("status", resp.Status.String()),
+				zap.String("errorMessage", resp.ErrorMessage))
+		}
 		return true, nil
 	case GetIndexProgressResponse_PENDING, GetIndexProgressResponse_RUNNING, GetIndexProgressResponse_NOTFOUND:
+		if resp.Status != ErrorCode_SUCCESS {
+			logutil.BgLogger().Warn("GetIndexProgress in-progress with non-success status",
+				zap.Int64("tableID", tableID),
+				zap.Int64("indexID", indexID),
+				zap.String("state", resp.State.String()),
+				zap.String("status", resp.Status.String()),
+				zap.String("errorMessage", resp.ErrorMessage))
+		}
 		return false, nil
 	case GetIndexProgressResponse_FAILED, GetIndexProgressResponse_ERROR:
 		errMsg := resp.ErrorMessage
@@ -538,6 +548,18 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 			zap.String("errorMessage", errMsg))
 		return false, fmt.Errorf("tici index build %s: %s", resp.State.String(), errMsg)
 	default:
+		if resp.Status != ErrorCode_SUCCESS {
+			errMsg := resp.ErrorMessage
+			if errMsg == "" {
+				errMsg = resp.Status.String()
+			}
+			logutil.BgLogger().Error("GetIndexProgress failed",
+				zap.Int64("tableID", tableID),
+				zap.Int64("indexID", indexID),
+				zap.String("status", resp.Status.String()),
+				zap.String("errorMessage", errMsg))
+			return false, fmt.Errorf("tici GetIndexProgress error: %s", errMsg)
+		}
 		return false, fmt.Errorf("tici GetIndexProgress unknown state: %s", resp.State.String())
 	}
 }

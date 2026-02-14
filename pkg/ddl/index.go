@@ -1741,6 +1741,9 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 				logutil.DDLLogger().Debug("[ddl] wait for TiCI fulltext index ready",
 					zap.Int64("tableID", tblInfo.ID),
 					zap.Int64("indexID", indexInfo.ID))
+				if err := waitTiCIAddIndexProgressPoll(jobCtx.stepCtx); err != nil {
+					return ver, errors.Trace(err)
+				}
 				return ver, nil
 			}
 
@@ -1918,6 +1921,9 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 				logutil.DDLLogger().Debug("[ddl] wait for TiCI hybrid index ready",
 					zap.Int64("tableID", tblInfo.ID),
 					zap.Int64("indexID", indexInfo.ID))
+				if err := waitTiCIAddIndexProgressPoll(jobCtx.stepCtx); err != nil {
+					return ver, errors.Trace(err)
+				}
 				return ver, nil
 			}
 
@@ -1965,6 +1971,22 @@ func ensureHybridIndexReorgMeta(job *model.Job) error {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires ingest backfill")
 	}
 	return nil
+}
+
+const ticiAddIndexProgressPollInterval = 500 * time.Millisecond
+
+func waitTiCIAddIndexProgressPoll(ctx context.Context) error {
+	timer := time.NewTimer(ticiAddIndexProgressPollInterval)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+		return ctx.Err()
+	}
 }
 
 func ensureFulltextIndexReorgMeta(job *model.Job) error {

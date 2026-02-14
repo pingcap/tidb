@@ -257,6 +257,18 @@ func TestCheckAddIndexProgress(t *testing.T) {
 		Return(&GetIndexProgressResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "bad"}, nil).
 		Once()
 	ready, err = ctx.CheckAddIndexProgress(context.Background(), tableID, indexID)
+	require.NoError(t, err)
+	require.False(t, ready)
+
+	mockClient.
+		On("GetIndexProgress", mock.Anything, matchReq).
+		Return(&GetIndexProgressResponse{
+			Status:       ErrorCode_UNKNOWN_ERROR,
+			State:        GetIndexProgressResponse_State(99),
+			ErrorMessage: "bad",
+		}, nil).
+		Once()
+	ready, err = ctx.CheckAddIndexProgress(context.Background(), tableID, indexID)
 	require.Error(t, err)
 	require.False(t, ready)
 
