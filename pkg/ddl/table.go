@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -1792,6 +1793,46 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func (w *worker) onAlterTableSetRegionSplitPolicy(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetAlterTableSetRegionSplitPolicyArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return 0, err
+	}
+
+	if args.IndexName == "" {
+		// Table-level split (SPLIT BETWEEN)
+		tblInfo.TableSplitPolicy = args.Policy.Clone()
+	} else {
+		// Index split (SPLIT INDEX idx BETWEEN)
+		indexInfo := tblInfo.FindIndexByName(strings.ToLower(args.IndexName))
+		if indexInfo == nil {
+			job.State = model.JobStateCancelled
+			return 0, infoschema.ErrKeyNotExists.GenWithStackByArgs(args.IndexName, tblInfo.Name.O)
+		}
+		indexInfo.RegionSplitPolicy = args.Policy.Clone()
+	}
+
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	scatterScope := vardef.ScatterOff
+	if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
+	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil

@@ -1419,6 +1419,81 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
+	var parse *parser.Parser
+	// Show table region split policy
+	if tableInfo.TableSplitPolicy != nil {
+		parse = parser.New()
+		buf.WriteString("\n/*T![region_split] ")
+		buf.WriteString("SPLIT BETWEEN (")
+
+		policy := tableInfo.TableSplitPolicy
+
+		for i, val := range policy.Lower {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		buf.WriteString(") AND (")
+
+		for i, val := range policy.Upper {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
+		buf.WriteString(" */")
+	}
+
+	// Show index region split policies
+	for _, indexInfo := range tableInfo.Indices {
+		if indexInfo.RegionSplitPolicy == nil {
+			continue
+		}
+		if parse == nil {
+			parse = parser.New()
+		}
+
+		policy := indexInfo.RegionSplitPolicy
+		buf.WriteString("\n/*T![region_split] ")
+
+		fmt.Fprintf(buf, "SPLIT ")
+		if indexInfo.Name.O == mysql.PrimaryKeyName {
+			fmt.Fprintf(buf, "PRIMARY KEY ")
+		} else {
+			fmt.Fprintf(buf, "INDEX ")
+		}
+		fmt.Fprintf(buf, "%s BETWEEN (", stringutil.Escape(indexInfo.Name.O, sqlMode))
+
+		for i, val := range policy.Lower {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		buf.WriteString(") AND (")
+
+		for i, val := range policy.Upper {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
+		buf.WriteString(" */")
+	}
+
 	if tableInfo.TTLInfo != nil {
 		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
 		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
@@ -2822,4 +2897,13 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	return fn(sysCtx)
+}
+
+func formatSplitValue(parser *parser.Parser, buf *bytes.Buffer, val string) error {
+	stmts, _, err := parser.ParseSQL("select " + val)
+	if err == nil {
+		expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
+		expr.Format(buf)
+	}
+	return err
 }

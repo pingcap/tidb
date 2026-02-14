@@ -16,17 +16,26 @@ package ddl
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
@@ -36,11 +45,19 @@ const GlobalScatterGroupID int64 = -1
 
 func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
 	// Max partition count is 8192, should we sample and just choose some partitions to split?
-	var regionIDs []uint64
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
-	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
+
+	var regionIDs []uint64
+	if hasSplitPolicies(tbInfo) {
+		regionIDs = append(regionIDs,
+			applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID)...)
+		for _, def := range parts {
+			regionIDs = append(regionIDs,
+				applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, def.ID)...)
+		}
+	} else if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
 		regionIDs = make([]uint64, 0, len(parts)*(len(tbInfo.Indices)+1))
 		scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
 		// Try to split global index region here.
@@ -63,8 +80,11 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
+
 	var regionIDs []uint64
-	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
+	if hasSplitPolicies(tbInfo) {
+		regionIDs = applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID)
+	} else if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
 		regionIDs = preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatterScope)
 	} else {
 		regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, tbInfo.ID, tbInfo.ID, scatterScope))
@@ -199,4 +219,215 @@ func WaitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regi
 			}
 		}
 	}
+}
+
+func hasSplitPolicies(tbInfo *model.TableInfo) bool {
+	if tbInfo.TableSplitPolicy != nil {
+		return true
+	}
+	for _, idx := range tbInfo.Indices {
+		if idx.RegionSplitPolicy != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalTableID int64) []uint64 {
+	var regionIDs []uint64
+
+	sc := sctx.GetSessionVars().StmtCtx
+	svars := sctx.GetSessionVars() //nolint:forbidigo
+	scatter, tableID := getScatterConfig(svars.ScatterRegion, tbInfo.ID)
+
+	// apply table policy
+	if policy := tbInfo.TableSplitPolicy; policy != nil {
+		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to parse lower bound for table policy",
+				zap.String("table", tbInfo.Name.O), zap.Error(err))
+			goto index
+		}
+		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to parse upper bound for table policy",
+				zap.String("table", tbInfo.Name.O), zap.Error(err))
+			goto index
+		}
+
+		handleCols := regionsplit.BuildHandleColsForSplit(tbInfo)
+		keys, err := regionsplit.GetSplitTableKeys(sc, tbInfo, handleCols, physicalTableID, lower, upper, int(policy.Regions), nil, dbterror.ErrInvalidSplitRegionRanges)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to generate split keys for table policy",
+				zap.String("table", tbInfo.Name.O), zap.Error(err))
+			goto index
+		}
+
+		ids, err := store.SplitRegions(ctx, keys, scatter, &tableID)
+		if err != nil {
+			logutil.DDLLogger().Warn("split regions failed", zap.Error(err))
+			goto index
+		}
+		regionIDs = ids
+	}
+
+index:
+	// 2. Apply index policies (including PRIMARY)
+	for _, idx := range tbInfo.Indices {
+		if tbInfo.GetPartitionInfo() != nil &&
+			((idx.Global && tbInfo.ID != physicalTableID) || (!idx.Global && tbInfo.ID == physicalTableID)) {
+			continue
+		}
+
+		if idx.RegionSplitPolicy == nil {
+			continue
+		}
+
+		// skip clustered primary
+		if tbInfo.HasClusteredIndex() && idx.Primary {
+			continue
+		}
+
+		policy := idx.RegionSplitPolicy
+		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to parse lower bound for index policy",
+				zap.String("table", tbInfo.Name.O),
+				zap.String("index", idx.Name.O),
+				zap.Error(err))
+			continue
+		}
+		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to parse upper bound for index policy",
+				zap.String("table", tbInfo.Name.O),
+				zap.String("index", idx.Name.O),
+				zap.Error(err))
+			continue
+		}
+
+		keys, err := regionsplit.GetSplitIndexKeys(sc, tbInfo, idx, physicalTableID, lower, upper, int(policy.Regions), nil, dbterror.ErrInvalidSplitRegionRanges)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to generate split keys for index policy",
+				zap.String("table", tbInfo.Name.O),
+				zap.String("index", idx.Name.O),
+				zap.Error(err))
+		}
+
+		ids, err := store.SplitRegions(ctx, keys, scatter, &tableID)
+		if err != nil {
+			logutil.DDLLogger().Warn("split regions failed", zap.Error(err))
+			goto index
+		}
+		regionIDs = append(regionIDs, ids...)
+	}
+
+	return regionIDs
+}
+
+func parseValuesToDatums(exprCtx exprctx.ExprContext, values []string) ([]types.Datum, error) {
+	datums := make([]types.Datum, len(values))
+	for i, val := range values {
+		d, err := expression.ParseSimpleExpr(exprCtx, val)
+		if err != nil {
+			return nil, err
+		}
+		datums[i], err = d.Eval(exprCtx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return datums, nil
+}
+
+func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexOption, tbInfo *model.TableInfo) (*model.RegionSplitPolicy, string, error) {
+	if tbInfo.HasClusteredIndex() && splitOpt.PrimaryKey {
+		// cannot specify both SPLIT PRIMARY for CLUSTERED table
+		// it is for unclustered primary
+		return nil, "", dbterror.ErrForbiddenDDL.FastGenByArgs("SPLIT PRIMARY is only for non-clustered table")
+	}
+
+	if splitOpt.SplitOpt.Num < 1 {
+		// must larger than 1
+		return nil, "", dbterror.ErrForbiddenDDL.FastGenByArgs("SPLIT REGION number must not be zero or negative")
+	}
+
+	indexName := ""
+	if !splitOpt.TableLevel {
+		pkName := strings.ToLower(mysql.PrimaryKeyName)
+		indexName = splitOpt.IndexName.L
+
+		// fill primary key name
+		isPK := splitOpt.PrimaryKey
+		if isPK && indexName == "" {
+			indexName = pkName
+		}
+		if indexName == pkName {
+			isPK = true
+		}
+
+		if isPK && (pkName != indexName) {
+			// specified pk, but incorrect name, or reverse
+			return nil, "", dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
+		}
+	}
+
+	// default int, it is 1
+	colen := 1
+	if tbInfo.IsCommonHandle && splitOpt.PrimaryKey {
+		pk := tables.FindPrimaryIndex(tbInfo)
+		colen = len(pk.Columns)
+	} else if indexName != "" {
+		idx := tbInfo.FindIndexByName(indexName)
+		if idx == nil {
+			return nil, "", dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
+		}
+		colen = len(idx.Columns)
+	}
+	if colen != len(splitOpt.SplitOpt.Upper) || colen != len(splitOpt.SplitOpt.Lower) {
+		return nil, "", dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("length of index columns and split values differ")
+	}
+
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+
+	policy := &model.RegionSplitPolicy{
+		Regions: splitOpt.SplitOpt.Num,
+	}
+
+	policy.Lower = make([]string, len(splitOpt.SplitOpt.Lower))
+	for i, expr := range splitOpt.SplitOpt.Lower {
+		buf.Reset()
+		// validate expr
+		d, err := expression.BuildSimpleExpr(ctx, expr)
+		if err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		if _, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		if err := expr.Restore(restoreCtx); err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		policy.Lower[i] = buf.String()
+	}
+
+	policy.Upper = make([]string, len(splitOpt.SplitOpt.Upper))
+	for i, expr := range splitOpt.SplitOpt.Upper {
+		buf.Reset()
+		// validate expr
+		d, err := expression.BuildSimpleExpr(ctx, expr)
+		if err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		if _, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		if err := expr.Restore(restoreCtx); err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		policy.Upper[i] = buf.String()
+	}
+
+	return policy, indexName, nil
 }
