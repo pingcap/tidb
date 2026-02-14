@@ -337,7 +337,11 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		return err
 	}
 	if len(path.AccessConds) > 0 || len(path.Ranges) == 0 {
-		path.IsFullRange = false
+		// Even with access conditions, DNF branches may union to cover the full range.
+		// Only clear IsFullRange when the computed ranges have actually been narrowed.
+		if !ranger.HasFullRange(path.Ranges, isUnsigned) {
+			path.IsFullRange = false
+		}
 	}
 	// Optimization: If IsFullRange, the ranges have not been narrowed and the count is the full table count.
 	// Skip the expensive GetRowCountByColumnRanges call in this case.
@@ -423,7 +427,12 @@ func detachCondAndBuildRangeForPath(
 		}
 	}
 	if len(res.AccessConds) > 0 || len(path.Ranges) == 0 {
-		path.IsFullRange = false
+		// Even with access conditions, DNF branches may union to cover the full range
+		// (e.g., "a >= 2 OR a < 6" covers (-inf, +inf)). Only clear IsFullRange when
+		// the computed ranges have actually been narrowed.
+		if !ranger.HasFullRange(path.Ranges, false) {
+			path.IsFullRange = false
+		}
 	}
 	// When IsFullRange, the ranges have not been narrowed from the initial full range and
 	// CountAfterAccess is already correctly set to RealtimeCount by the caller.
