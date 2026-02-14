@@ -1735,10 +1735,18 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			var done bool
 			if done, err = tici.CheckAddIndexProgress(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("[ddl] check TiCI fulltext index progress failed",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", int8(job.ReorgMeta.AnalyzeState)),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID),
+					zap.Error(err))
 				return ver, errors.Trace(err)
 			}
 			if !done {
 				logutil.DDLLogger().Debug("[ddl] wait for TiCI fulltext index ready",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", int8(job.ReorgMeta.AnalyzeState)),
 					zap.Int64("tableID", tblInfo.ID),
 					zap.Int64("indexID", indexInfo.ID))
 				if err := waitTiCIAddIndexProgressPoll(jobCtx.stepCtx); err != nil {
@@ -1915,10 +1923,18 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			var done bool
 			if done, err = tici.CheckAddIndexProgress(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("[ddl] check TiCI hybrid index progress failed",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", int8(job.ReorgMeta.AnalyzeState)),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID),
+					zap.Error(err))
 				return ver, errors.Trace(err)
 			}
 			if !done {
 				logutil.DDLLogger().Debug("[ddl] wait for TiCI hybrid index ready",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", int8(job.ReorgMeta.AnalyzeState)),
 					zap.Int64("tableID", tblInfo.ID),
 					zap.Int64("indexID", indexInfo.ID))
 				if err := waitTiCIAddIndexProgressPoll(jobCtx.stepCtx); err != nil {

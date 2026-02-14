@@ -514,6 +514,18 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 	if err != nil {
 		return false, err
 	}
+	logutil.BgLogger().Info("GetIndexProgress response",
+		zap.Int64("tableID", tableID),
+		zap.Int64("indexID", indexID),
+		zap.Int32("statusCode", int32(resp.Status)),
+		zap.String("status", resp.Status.String()),
+		zap.Int32("stateCode", int32(resp.State)),
+		zap.String("state", resp.State.String()),
+		zap.Uint64("documentCount", resp.DocumentCount),
+		zap.Bool("isUploaded", resp.IsUploaded),
+		zap.String("lastUploadTime", resp.LastUploadTime),
+		zap.String("s3Path", resp.S3Path),
+		zap.String("errorMessage", resp.ErrorMessage))
 	// State is the source of truth for GetIndexProgress.
 	// Some TiCI implementations may only return state and omit status/error_message.
 	switch resp.State {
@@ -522,6 +534,7 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 			logutil.BgLogger().Warn("GetIndexProgress completed with non-success status",
 				zap.Int64("tableID", tableID),
 				zap.Int64("indexID", indexID),
+				zap.Int32("statusCode", int32(resp.Status)),
 				zap.String("status", resp.Status.String()),
 				zap.String("errorMessage", resp.ErrorMessage))
 		}
@@ -531,7 +544,9 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 			logutil.BgLogger().Warn("GetIndexProgress in-progress with non-success status",
 				zap.Int64("tableID", tableID),
 				zap.Int64("indexID", indexID),
+				zap.Int32("stateCode", int32(resp.State)),
 				zap.String("state", resp.State.String()),
+				zap.Int32("statusCode", int32(resp.Status)),
 				zap.String("status", resp.Status.String()),
 				zap.String("errorMessage", resp.ErrorMessage))
 		}
@@ -544,7 +559,10 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 		logutil.BgLogger().Error("TiCI index build failed",
 			zap.Int64("tableID", tableID),
 			zap.Int64("indexID", indexID),
+			zap.Int32("stateCode", int32(resp.State)),
 			zap.String("state", resp.State.String()),
+			zap.Int32("statusCode", int32(resp.Status)),
+			zap.String("status", resp.Status.String()),
 			zap.String("errorMessage", errMsg))
 		return false, fmt.Errorf("tici index build %s: %s", resp.State.String(), errMsg)
 	default:
@@ -556,6 +574,9 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 			logutil.BgLogger().Error("GetIndexProgress failed",
 				zap.Int64("tableID", tableID),
 				zap.Int64("indexID", indexID),
+				zap.Int32("stateCode", int32(resp.State)),
+				zap.String("state", resp.State.String()),
+				zap.Int32("statusCode", int32(resp.Status)),
 				zap.String("status", resp.Status.String()),
 				zap.String("errorMessage", errMsg))
 			return false, fmt.Errorf("tici GetIndexProgress error: %s", errMsg)
