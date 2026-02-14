@@ -2590,7 +2590,8 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		if planCtx != nil &&
 			(er.clause() == whereClause || er.clause() == havingClause) &&
 			name != nil &&
-			name.Redundant {
+			name.Redundant &&
+			name.OrigTblName.L != "" {
 			if join := findNaturalUsingJoinByColumn(planCtx.plan, column); join != nil && join.JoinType == base.InnerJoin {
 				if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoin(join, column); mappedCol != nil {
 					column, name = mappedCol, mappedName
@@ -2631,6 +2632,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			foundInJoin.JoinType == base.InnerJoin &&
 			name != nil &&
 			name.Redundant &&
+			name.OrigTblName.L != "" &&
 			(er.clause() == whereClause || er.clause() == havingClause) {
 			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoin(foundInJoin, col); mappedCol != nil {
 				col, name = mappedCol, mappedName
