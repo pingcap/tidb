@@ -2571,6 +2571,7 @@ func (er *expressionRewriter) clause() clauseCode {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
+	planCtx := er.planCtx
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
 		er.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
@@ -2578,11 +2579,22 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
+		name := er.names[idx]
 		if column.IsHidden {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
-		er.ctxStackAppend(column, er.names[idx])
+		if planCtx != nil &&
+			(er.clause() == whereClause || er.clause() == havingClause) &&
+			name != nil &&
+			name.Redundant {
+			if join := findNaturalUsingJoinByColumn(planCtx.plan, column); join != nil && join.JoinType == base.InnerJoin {
+				if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoin(join, column); mappedCol != nil {
+					column, name = mappedCol, mappedName
+				}
+			}
+		}
+		er.ctxStackAppend(column, name)
 		return
 	} else if er.planCtx == nil && er.sourceTable != nil &&
 		(v.Table.L == "" || er.sourceTable.Name.L == v.Table.L) {
@@ -2600,17 +2612,25 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		return
 	}
 
-	planCtx := er.planCtx
 	if planCtx == nil {
 		er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[er.clause()])
 		return
 	}
 
-	col, name, err := findFieldNameFromNaturalUsingJoin(planCtx.plan, v)
+	col, name, foundInJoin, err := findFieldNameFromNaturalUsingJoin(planCtx.plan, v)
 	if err != nil {
 		er.err = err
 		return
 	} else if col != nil {
+		if foundInJoin != nil &&
+			foundInJoin.JoinType == base.InnerJoin &&
+			name != nil &&
+			name.Redundant &&
+			(er.clause() == whereClause || er.clause() == havingClause) {
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoin(foundInJoin, col); mappedCol != nil {
+				col, name = mappedCol, mappedName
+			}
+		}
 		er.ctxStackAppend(col, name)
 		return
 	}
@@ -2637,7 +2657,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[planCtx.builder.curClause])
 }
 
-func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
+func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, join *logicalop.LogicalJoin, err error) {
 	switch x := p.(type) {
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
@@ -2645,14 +2665,56 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 		if x.FullSchema != nil {
 			idx, err := expression.FindFieldName(x.FullNames, v)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if idx >= 0 {
-				return x.FullSchema.Columns[idx], x.FullNames[idx], nil
+				return x.FullSchema.Columns[idx], x.FullNames[idx], x, nil
 			}
 		}
 	}
-	return nil, nil, nil
+	return nil, nil, nil, nil
+}
+
+func resolveRedundantColumnFromNaturalUsingJoin(join *logicalop.LogicalJoin, redundantCol *expression.Column) (*expression.Column, *types.FieldName) {
+	for _, cond := range join.OtherConditions {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.EQ {
+			continue
+		}
+		lCol, lOK := sf.GetArgs()[0].(*expression.Column)
+		rCol, rOK := sf.GetArgs()[1].(*expression.Column)
+		if !lOK || !rOK {
+			continue
+		}
+
+		var matched *expression.Column
+		if lCol.EqualColumn(redundantCol) {
+			matched = join.Schema().RetrieveColumn(rCol)
+		} else if rCol.EqualColumn(redundantCol) {
+			matched = join.Schema().RetrieveColumn(lCol)
+		}
+		if matched == nil {
+			continue
+		}
+
+		idx := join.Schema().ColumnIndex(matched)
+		if idx >= 0 && idx < len(join.OutputNames()) {
+			return matched, join.OutputNames()[idx]
+		}
+	}
+	return nil, nil
+}
+
+func findNaturalUsingJoinByColumn(p base.LogicalPlan, col *expression.Column) *logicalop.LogicalJoin {
+	switch x := p.(type) {
+	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
+		return findNaturalUsingJoinByColumn(p.Children()[0], col)
+	case *logicalop.LogicalJoin:
+		if x.FullSchema != nil && x.FullSchema.Contains(col) {
+			return x
+		}
+	}
+	return nil
 }
 
 func (er *expressionRewriter) evalDefaultExprForTable(v *ast.DefaultExpr, tbl *model.TableInfo) {
