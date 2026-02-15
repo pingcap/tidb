@@ -1207,7 +1207,7 @@
           "1 1 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.b, offset:0, count:1",
+          "TopN_11 1.00 root  test.t.b, offset:0, count:1",
           "└─TableReader_17 1.00 root  data:TopN_16",
           "  └─TopN_16 1.00 cop[tikv]  test.t.b, offset:0, count:1",
           "    └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -1223,7 +1223,7 @@
           "5 5 5"
         ],
         "Plan": [
-          "TopN_8 5.00 root  test.t.b, offset:0, count:5",
+          "TopN_11 5.00 root  test.t.b, offset:0, count:5",
           "└─TableReader_17 5.00 root  data:TopN_16",
           "  └─TopN_16 5.00 cop[tikv]  test.t.b, offset:0, count:5",
           "    └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
