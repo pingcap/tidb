@@ -340,14 +340,15 @@
       {
         "SQL": "desc format = 'plan_tree' select * from t join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "HashJoin root  inner join, equal:[eq(test.t.id, Column)]",
-          "├─Projection(Build) root  minus(test.t.id, 2)->Column",
-          "│ └─TableReader root  data:Selection",
-          "│   └─Selection cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "│     └─TableFullScan cop[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader(Probe) root  data:Selection",
-          "  └─Selection cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan cop[tiflash] table:t keep order:false, stats:pseudo"
+          "Projection root  test.t.id, test.t.value, test.t.name, Column",
+          "└─HashJoin root  inner join, equal:[eq(Column, test.t.id)]",
+          "  ├─Projection(Build) root  minus(test.t.id, 2)->Column",
+          "  │ └─TableReader root  data:Selection",
+          "  │   └─Selection cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "  │     └─TableFullScan cop[tiflash] table:t keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) root  data:Selection",
+          "    └─Selection cop[tiflash]  not(isnull(test.t.id))",
+          "      └─TableFullScan cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
