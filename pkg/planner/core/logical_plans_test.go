@@ -1956,7 +1956,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where f > 1 and g > 1",
-			result: "f_g",
+			result: "PRIMARY_KEY,g,f_g",
 		},
 		{
 			sql:    "select * from t where f = 1 and c = 1 and d = 1",
@@ -1984,11 +1984,11 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where f > 3 and g = 5",
-			result: "g,f_g",
+			result: "g",
 		},
 		{
 			sql:    "select * from t where g = 5 order by f",
-			result: "PRIMARY_KEY,g,f_g",
+			result: "g,f_g",
 		},
 		{
 			sql:    "select * from t where d = 3 order by c, e",
@@ -2020,7 +2020,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where c > 1 and d > 1 and e > 1",
-			result: "c_d_e", // will prune `b_c` and `b_c_global`
+			result: "PRIMARY_KEY,c_d_e", // will prune `b_c` and `b_c_global`
 		},
 		{
 			sql:    "select * from pt2_global_index where (b = 1 and c = 1) or (b = 2 and c = 2)",

@@ -3395,11 +3395,10 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
-IndexHashJoin	root		left outer join, inner:StreamAgg, left side:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.ta.id, inner key:planner__core__casetest__physicalplantest__physical_plan.tb.id, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)
-├─IndexLookUp(Build)	root		
-│ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-│ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
+IndexHashJoin	root		left outer join, inner:StreamAgg, left side:TableReader, outer key:planner__core__casetest__physicalplantest__physical_plan.ta.id, inner key:planner__core__casetest__physicalplantest__physical_plan.tb.id, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+│   └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─StreamAgg(Probe)	root		group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.tb.id
   └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column
     └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.tb.id, planner__core__casetest__physicalplantest__physical_plan.tb.code
@@ -3414,11 +3413,10 @@ Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column
-└─Apply	root		CARTESIAN left outer join, left side:IndexLookUp
-  ├─IndexLookUp(Build)	root		
-  │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-  │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
-  │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
+└─Apply	root		CARTESIAN left outer join, left side:TableReader
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+  │   └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
     └─StreamAgg	root		funcs:sum(Column)->Column
       └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column
@@ -3431,11 +3429,10 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
-HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
-├─IndexLookUp(Build)	root		
-│ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-│ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+│   └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─HashAgg(Probe)	root		group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.tb.id
   └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column
     └─HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)]
@@ -3452,11 +3449,10 @@ Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column
-└─Apply	root		CARTESIAN left outer join, left side:IndexLookUp
-  ├─IndexLookUp(Build)	root		
-  │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-  │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
-  │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
+└─Apply	root		CARTESIAN left outer join, left side:TableReader
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+  │   └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
     └─StreamAgg	root		funcs:sum(Column)->Column
       └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column
@@ -3476,11 +3472,10 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
-HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
-├─IndexLookUp(Build)	root		
-│ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-│ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+│   └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─HashAgg(Probe)	root		group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.tb.id
   └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column
     └─Apply	root		CARTESIAN semi join, left side:TableReader
@@ -3500,11 +3495,10 @@ Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column
-└─Apply	root		CARTESIAN left outer join, left side:IndexLookUp
-  ├─IndexLookUp(Build)	root		
-  │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-  │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
-  │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
+└─Apply	root		CARTESIAN left outer join, left side:TableReader
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+  │   └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
     └─StreamAgg	root		funcs:sum(Column)->Column
       └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column
@@ -3573,11 +3567,10 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__
 └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)]
   ├─Selection(Build)	root		gt(Column, 100)
   │ └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tc.name)->planner__core__casetest__physicalplantest__physical_plan.tc.name
-  │   └─IndexLookUp	root		
-  │     ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92)
-  │     │ └─IndexRangeScan	cop[tikv]	table:tc, index:idx_tc_name(name)	range:["chad99","chad9:"), keep order:false, stats:pseudo
-  │     └─HashAgg(Probe)	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column
-  │       └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
+  │   └─TableReader	root		data:HashAgg
+  │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column
+  │       └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tc.name))
+  │         └─TableFullScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
   └─HashJoin(Probe)	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.code))

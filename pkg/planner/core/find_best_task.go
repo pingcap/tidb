@@ -1463,7 +1463,9 @@ func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	candidate.matchPropResult = matchProperty(ds, path, prop)
 	// An order-matching full-range path with a LIMIT will terminate early, so it is
 	// effectively a range scan and should not be pruned as a full scan.
-	if path.IsFullRange && candidate.matchPropResult.Matched() && prop.ExpectedCnt < math.MaxFloat64 {
+	// Use max(CountAfterAccess, MaxCountAfterAccess) to guard against underestimation.
+	if path.IsFullRange && candidate.matchPropResult.Matched() &&
+		prop.ExpectedCnt > 0 && prop.ExpectedCnt < max(path.CountAfterAccess, path.MaxCountAfterAccess) {
 		path.IsFullRange = false
 	}
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
@@ -1475,7 +1477,9 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	candidate.matchPropResult = matchProperty(ds, path, prop)
 	// An order-matching full-range path with a LIMIT will terminate early, so it is
 	// effectively a range scan and should not be pruned as a full scan.
-	if path.IsFullRange && candidate.matchPropResult.Matched() && prop.ExpectedCnt < math.MaxFloat64 {
+	// Use max(CountAfterAccess, MaxCountAfterAccess) to guard against underestimation.
+	if path.IsFullRange && candidate.matchPropResult.Matched() &&
+		prop.ExpectedCnt > 0 && prop.ExpectedCnt < max(path.CountAfterAccess, path.MaxCountAfterAccess) {
 		path.IsFullRange = false
 	}
 	// Because the skyline pruning already prune the indexes that cannot provide partial order
@@ -1632,6 +1636,13 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				hasMultiRange = true
 			}
 			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
+				preferredPaths = append(preferredPaths, c)
+				continue
+			}
+			// A full-range path that matches the ORDER BY provides a sorting benefit
+			// independent of row filtering; keep it so the cost model can compare it
+			// against range-scan paths (but do not count it as a range scan itself).
+			if c.path.IsFullRange && c.matchPropResult.Matched() {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
