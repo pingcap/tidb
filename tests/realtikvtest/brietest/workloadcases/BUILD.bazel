@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "workloadcases",
+    srcs = [
+        "add_index.go",
+        "modify_tiflash.go",
+        "nexus_common.go",
+        "nexus_ddl.go",
+        "nexus_ddl_destructive.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tests/realtikvtest/brietest/workloadcases",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/testkit/brhelper/workload",
+    ],
+)
