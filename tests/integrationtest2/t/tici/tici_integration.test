@@ -27,3 +27,13 @@ INSERT INTO t2 VALUES
 DO SLEEP(10);
 SELECT * FROM t1 WHERE fts_match_word('first', body);
 SELECT * FROM t2 WHERE fts_match_word('first', content);
+
+# Non-empty table FULLTEXT index add should succeed and be queryable.
+DROP TABLE IF EXISTS t3;
+CREATE TABLE IF NOT EXISTS t3(id varchar(10), body TEXT, PRIMARY KEY (id) CLUSTERED);
+INSERT INTO t3 VALUES
+(1, 'hello world from empty table case'),
+(2, 'another row for fulltext query');
+ALTER TABLE t3 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
+DO SLEEP(3);
+SELECT * FROM t3 WHERE fts_match_word('hello', body);

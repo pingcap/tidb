@@ -25,3 +25,13 @@ id	body
 SELECT * FROM t2 WHERE fts_match_word('first', content);
 id	content
 1	This is the first test data, used to demonstrate the insert operation
+DROP TABLE IF EXISTS t3;
+CREATE TABLE IF NOT EXISTS t3(id varchar(10), body TEXT, PRIMARY KEY (id) CLUSTERED);
+INSERT INTO t3 VALUES
+(1, 'hello world from empty table case'),
+(2, 'another row for fulltext query');
+ALTER TABLE t3 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
+DO SLEEP(3);
+SELECT * FROM t3 WHERE fts_match_word('hello', body);
+id	body
+1	hello world from empty table case
