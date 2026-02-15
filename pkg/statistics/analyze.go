@@ -84,24 +84,28 @@ func (a *AnalyzeResult) DestroyAndPutToPool() {
 
 // AnalyzeResults represents the analyze results of a task.
 type AnalyzeResults struct {
-	Err      error
-	ExtStats *ExtendedStatsColl
-	Job      *AnalyzeJob
+	Err error
+	// RowCollector carries the raw sample collector for sample-based global stats.
+	// Only populated when tidb_enable_sample_based_global_stats is enabled and the
+	// analyze version is 2. Nil otherwise to avoid memory overhead.
+	RowCollector RowSampleCollector
+	ExtStats     *ExtendedStatsColl
+	Job          *AnalyzeJob
 	// Ars: combine the analyze result of all columns and the analyze result of indexes.
 	// (In stats version2)
 	// For example:
 	// If the tableA (c1, c2, c3) has indexes (c1, c2), (c2, c3), the result will be:
 	// Ars: [AnalyzeResult1[c1, c2, c3], AnalyzeResult2[c1_c2, c2_c3]]
-	Ars      []*AnalyzeResult
-	TableID  AnalyzeTableID
-	Count    int64
-	StatsVer int
+	Ars     []*AnalyzeResult
+	TableID AnalyzeTableID
+	Count   int64
 	// Snapshot is the snapshot timestamp when we start the analysis job.
 	Snapshot uint64
 	// BaseCount is the original count in mysql.stats_meta at the beginning of analyze.
 	BaseCount int64
 	// BaseModifyCnt is the original modify_count in mysql.stats_meta at the beginning of analyze.
 	BaseModifyCnt int64
+	StatsVer      int
 	// For multi-valued index analyze, there are some very different behaviors, so we add this field to indicate it.
 	//
 	// Analyze result of multi-valued index come from an independent v2 analyze index task (AnalyzeIndexExec), and it's
@@ -121,11 +125,6 @@ type AnalyzeResults struct {
 	// The global index has only one key range, so an independent task is used to process it.
 	// Global index needs to update only the version at the table-level fields, just like mv index.
 	ForMVIndexOrGlobalIndex bool
-
-	// RowCollector carries the raw sample collector for sample-based global stats.
-	// Only populated when tidb_enable_sample_based_global_stats is enabled and the
-	// analyze version is 2. Nil otherwise to avoid memory overhead.
-	RowCollector RowSampleCollector
 }
 
 // DestroyAndPutToPool destroys the result and put it to the pool.
