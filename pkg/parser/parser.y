@@ -58,7 +58,7 @@ import (
 	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
-	fullJoinType         "FULL JOIN"
+	fullJoinType         "FULL OUTER JOIN"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
