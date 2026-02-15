@@ -521,10 +521,6 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 		zap.String("status", resp.Status.String()),
 		zap.Int32("stateCode", int32(resp.State)),
 		zap.String("state", resp.State.String()),
-		zap.Uint64("documentCount", resp.DocumentCount),
-		zap.Bool("isUploaded", resp.IsUploaded),
-		zap.String("lastUploadTime", resp.LastUploadTime),
-		zap.String("s3Path", resp.S3Path),
 		zap.String("errorMessage", resp.ErrorMessage))
 	// State is the source of truth for GetIndexProgress.
 	// Some TiCI implementations may only return state and omit status/error_message.
