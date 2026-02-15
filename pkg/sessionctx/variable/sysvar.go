@@ -3070,6 +3070,16 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:  vardef.TiDBEnableSampleBasedGlobalStats,
+		Value: BoolToOnOff(vardef.DefTiDBEnableSampleBasedGlobalStats),
+		Type:  vardef.TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableSampleBasedGlobalStats = TiDBOptOn(val)
+			return nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(vardef.DefTiDBOptPrefixIndexSingleScan), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil

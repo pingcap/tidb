@@ -206,6 +206,7 @@ go_library(
         "//pkg/statistics",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/cache",
+        "//pkg/statistics/handle/globalstats",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",

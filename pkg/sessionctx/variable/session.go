@@ -1636,6 +1636,10 @@ type SessionVars struct {
 	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	EnableAsyncMergeGlobalStats bool
 
+	// EnableSampleBasedGlobalStats indicates whether to build global stats from merged
+	// partition samples during ANALYZE instead of merging partition-level stats.
+	EnableSampleBasedGlobalStats bool
+
 	// EnableExternalTSRead indicates whether to enable read through external ts
 	EnableExternalTSRead bool
 
