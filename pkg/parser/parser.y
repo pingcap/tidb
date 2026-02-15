@@ -5258,6 +5258,7 @@ CreateMaterializedViewStmt:
 				Cols:            $6.([]model.CIStr),
 				Comment:         opts.comment,
 				Refresh:         opts.refresh,
+				Options:         opts.options,
 				Select:          $10.(ast.StmtNode).(ast.ResultSetNode),
 			}
 			$$ = x
@@ -5282,32 +5283,65 @@ MViewCreateOptionList:
 	{
 		opts := $1.(*mviewCreateOptions)
 		opt := $2.(*mviewCreateOptions)
-			if opt.hasComment {
-				if opts.hasComment {
-					yylex.AppendError(yylex.Errorf("Duplicate COMMENT specified in CREATE MATERIALIZED VIEW"))
-				}
-				opts.hasComment = true
-				opts.comment = opt.comment
+		if opt.hasComment {
+			if opts.hasComment {
+				yylex.AppendError(yylex.Errorf("Duplicate COMMENT specified in CREATE MATERIALIZED VIEW"))
 			}
-			if opt.hasRefresh {
-				if opts.hasRefresh {
-					yylex.AppendError(yylex.Errorf("Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW"))
-				}
-				opts.hasRefresh = true
+			opts.hasComment = true
+			opts.comment = opt.comment
+		}
+		if opt.hasRefresh {
+			if opts.hasRefresh {
+				yylex.AppendError(yylex.Errorf("Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasRefresh = true
 			opts.refresh = opt.refresh
 		}
+		if opt.hasShardRowIDBits {
+			if opts.hasShardRowIDBits {
+				yylex.AppendError(yylex.Errorf("Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasShardRowIDBits = true
+		}
+		if opt.hasPreSplitRegion {
+			if opts.hasPreSplitRegion {
+				yylex.AppendError(yylex.Errorf("Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasPreSplitRegion = true
+		}
+		opts.options = append(opts.options, opt.options...)
 		$$ = opts
 	}
 
-	MViewCreateOption:
-		"COMMENT" "=" stringLit
-		{
-			$$ = &mviewCreateOptions{hasComment: true, comment: $3}
+MViewCreateOption:
+	"COMMENT" "=" stringLit
+	{
+		$$ = &mviewCreateOptions{hasComment: true, comment: $3}
+	}
+|	MViewRefreshClause
+	{
+		$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
+	}
+|	"SHARD_ROW_ID_BITS" EqOpt LengthNum
+	{
+		$$ = &mviewCreateOptions{
+			hasShardRowIDBits: true,
+			options: []*ast.TableOption{{
+				Tp:        ast.TableOptionShardRowID,
+				UintValue: $3.(uint64),
+			}},
 		}
-	|	MViewRefreshClause
-		{
-			$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt LengthNum
+	{
+		$$ = &mviewCreateOptions{
+			hasPreSplitRegion: true,
+			options: []*ast.TableOption{{
+				Tp:        ast.TableOptionPreSplitRegion,
+				UintValue: $3.(uint64),
+			}},
 		}
+	}
 
 MViewRefreshClause:
 	"REFRESH" "FAST" MViewRefreshOnClauseOpt
