@@ -42,7 +42,7 @@ func BuildGlobalStatsFromSamples(
 	if isIndex {
 		return buildGlobalIndexStatsFromSamples(ctx, collector, opts, colsInfo, indexes, histIDs)
 	}
-	return buildGlobalColumnStatsFromSamples(ctx, collector, opts, colsInfo, indexes, histIDs)
+	return buildGlobalColumnStatsFromSamples(ctx, collector, opts, colsInfo, histIDs)
 }
 
 func buildGlobalColumnStatsFromSamples(
@@ -50,7 +50,6 @@ func buildGlobalColumnStatsFromSamples(
 	collector *statistics.ReservoirRowSampleCollector,
 	opts map[ast.AnalyzeOptionType]uint64,
 	colsInfo []*model.ColumnInfo,
-	indexes []*model.IndexInfo,
 	histIDs []int64,
 ) (*GlobalStats, error) {
 	histIDSet := make(map[int64]bool, len(histIDs))
