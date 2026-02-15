@@ -21,4 +21,8 @@ type mviewCreateOptions struct {
 
 	hasRefresh bool
 	refresh    *ast.MViewRefreshClause
+
+	hasShardRowIDBits bool
+	hasPreSplitRegion bool
+	options           []*ast.TableOption
 }
