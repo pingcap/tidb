@@ -59,6 +59,8 @@ type DataSource struct {
 	TableAsName *ast.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
+	// IndexOnlyJoinHints are the hints for index-only join.
+	IndexOnlyJoinHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
 	PushedDownConds []expression.Expression `hash64-equals:"true"`
 	// AllConds contains all the filters on this table. For now it's maintained

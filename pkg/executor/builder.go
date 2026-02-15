@@ -318,6 +318,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildDistributeTable(v)
 	case *physicalop.PhysicalIndexMergeReader:
 		return b.buildIndexMergeReader(v)
+	case *physicalop.PhysicalIndexOnlyJoin:
+		return b.buildIndexOnlyJoin(v)
 	case *plannercore.SelectInto:
 		return b.buildSelectInto(v)
 	case *physicalop.PhysicalCTE:
@@ -4886,6 +4888,39 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 		}
 	}
 	return ret
+}
+
+func (b *executorBuilder) buildIndexOnlyJoin(v *physicalop.PhysicalIndexOnlyJoin) exec.Executor {
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
+	is := v.DriverPlans[0].(*physicalop.PhysicalIndexScan)
+	tbl, _ := b.is.TableByID(context.Background(), is.Table.ID)
+
+	e := &IndexOnlyJoinExec{
+		BaseExecutor:  exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		table:         tbl,
+		tableInfo:     v.TableInfo,
+		probeIndex:    v.ProbeIndex,
+		handleCols:    v.HandleCols,
+		driverPlans:   v.DriverPlans,
+		driverReader:  v.DriverReader,
+		probePlans:    v.ProbePlans,
+		probeReader:   v.ProbeReader,
+		tblPlans:      v.TablePlans,
+		probeRanges:   v.ProbeRanges.Range(),
+		keyOff2IdxOff: v.KeyOff2IdxOff,
+		keepOrder:     v.KeepOrder,
+		startTS:       startTS,
+		dataReaderBuilder: &dataReaderBuilder{
+			plan:            v,
+			executorBuilder: b,
+		},
+	}
+	return e
 }
 
 // dataReaderBuilder build an executor.
