@@ -994,6 +994,203 @@ func TestMergeGlobalStatsForCMSketch(t *testing.T) {
 			"  └─TableFullScan_6 18.00 cop[tikv] table:t keep order:false"))
 }
 
+func TestSampleBasedGlobalStats(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+
+	// Create a range-partitioned table with a column and an index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a int, key(a))
+		partition by range (a) (
+			partition p0 values less than (10),
+			partition p1 values less than (20)
+		)`)
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
+
+	// Enable sample-based global stats and analyze.
+	tk.MustExec("set @@tidb_enable_sample_based_global_stats=ON")
+	tk.MustExec("analyze table t with 0 topn, 2 buckets")
+
+	// Verify global stats_meta is produced with correct row count.
+	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(
+		testkit.Rows("0 18", "0 8", "0 10"))
+
+	// Verify global histograms exist for both column and index.
+	rs := tk.MustQuery("show stats_histograms where table_name='t' and partition_name='global'").Rows()
+	require.Len(t, rs, 2) // one for column a (is_index=0), one for index a (is_index=1)
+
+	// Verify global buckets are created.
+	globalBuckets := tk.MustQuery("show stats_buckets where partition_name='global'").Rows()
+	require.Greater(t, len(globalBuckets), 0)
+
+	// Verify partition-level stats still exist.
+	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 3) // global + p0 + p1
+}
+
+func TestSampleBasedGlobalStatsWithTopN(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@tidb_enable_sample_based_global_stats=ON")
+
+	// Create table with data that has clearly frequent values across partitions.
+	tk.MustExec(`create table t (c int, key(c)) partition by range (c) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	)`)
+	// p0: 5 appears 3 times (most frequent in p0), 4 appears 2 times
+	// p1: 16 appears 4 times (most frequent in p1), 17 appears 2 times
+	tk.MustExec(`insert into t values
+		(1), (2), (3), (4), (4), (5), (5), (5), (null),
+		(11), (12), (13), (14), (15), (16), (16), (16), (16), (17), (17)`)
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
+
+	// Verify row counts.
+	rs := tk.MustQuery("show stats_meta where table_name='t'").Rows()
+	require.Equal(t, "20", rs[0][5].(string)) // global
+	require.Equal(t, "9", rs[1][5].(string))  // p0
+	require.Equal(t, "11", rs[2][5].(string)) // p1
+
+	// Verify global TopN entries exist for column stats.
+	globalTopN := tk.MustQuery("show stats_topn where table_name='t' and partition_name='global'").Rows()
+	require.Greater(t, len(globalTopN), 0)
+
+	// Verify global NDV (distinct_count) from histograms is reasonable.
+	rs = tk.MustQuery("show stats_histograms where table_name='t' and partition_name='global' and is_index=0").Rows()
+	require.Len(t, rs, 1)
+	// NDV should be around 12 (5 unique in p0 + 7 unique in p1)
+	ndv := rs[0][6].(string)
+	require.NotEqual(t, "0", ndv)
+}
+
+func TestSampleBasedGlobalStatsWithIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@tidb_enable_sample_based_global_stats=ON")
+
+	// Composite index test.
+	tk.MustExec(`create table t (a int, b int, key(a, b)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	)`)
+	tk.MustExec(`insert into t values
+		(1, 1), (1, 2), (2, 1), (2, 2), (2, 3), (2, 3), (3, 1), (3, 1), (3, 1),
+		(11, 1), (12, 1), (12, 2), (13, 1), (13, 1), (13, 2), (13, 2), (13, 2)`)
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
+
+	// Verify global stats are produced.
+	rs := tk.MustQuery("show stats_meta where table_name='t'").Rows()
+	require.Equal(t, "17", rs[0][5].(string)) // global row count
+
+	// Verify index TopN for global.
+	globalIdxTopN := tk.MustQuery("show stats_topn where table_name='t' and partition_name='global' and is_index=1").Rows()
+	require.Greater(t, len(globalIdxTopN), 0)
+
+	// Verify index histograms for global.
+	rs = tk.MustQuery("show stats_histograms where table_name='t' and partition_name='global' and is_index=1").Rows()
+	require.Len(t, rs, 1)
+	require.NotEqual(t, "0", rs[0][6].(string)) // NDV > 0
+}
+
+func TestSampleBasedGlobalStatsDisabled(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+
+	// Explicitly disable sample-based path (it should be off by default).
+	tk.MustExec("set @@tidb_enable_sample_based_global_stats=OFF")
+
+	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	)`)
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
+	tk.MustExec("analyze table t with 0 topn, 2 buckets")
+
+	// Old merge-based path should still produce global stats.
+	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(
+		testkit.Rows("0 18", "0 8", "0 10"))
+	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 3)
+}
+
+func TestSampleBasedGlobalStatsHashPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@tidb_enable_sample_based_global_stats=ON")
+
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 4")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
+	tk.MustExec("analyze table t")
+
+	// Verify global stats exist.
+	rs := tk.MustQuery("show stats_meta where table_name='t' and partition_name='global'").Rows()
+	require.Len(t, rs, 1)
+	require.Equal(t, "10", rs[0][5].(string)) // global row count
+}
+
+func TestSampleBasedGlobalStatsV1Fallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// V1 stats should fall back to merge-based path even with sample-based enabled.
+	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@tidb_enable_sample_based_global_stats=ON")
+
+	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	)`)
+	tk.MustExec("insert into t values (1), (2), (3), (11), (12), (13)")
+	tk.MustExec("analyze table t")
+
+	// Global stats should still be produced via merge-based fallback.
+	rs := tk.MustQuery("show stats_meta where table_name='t' and partition_name='global'").Rows()
+	require.Len(t, rs, 1)
+	require.Equal(t, "6", rs[0][5].(string))
+}
+
+func TestSampleBasedGlobalStatsEmptyPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@tidb_enable_sample_based_global_stats=ON")
+
+	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30)
+	)`)
+	// Only insert into p0 and p2; p1 is empty.
+	tk.MustExec("insert into t values (1), (2), (3), (21), (22), (23)")
+	tk.MustExec("analyze table t")
+
+	// Global stats should reflect all data correctly.
+	rs := tk.MustQuery("show stats_meta where table_name='t' and partition_name='global'").Rows()
+	require.Len(t, rs, 1)
+	require.Equal(t, "6", rs[0][5].(string))
+
+	// Empty partition should have 0 count.
+	rs = tk.MustQuery("show stats_meta where table_name='t' and partition_name='p1'").Rows()
+	require.Len(t, rs, 1)
+	require.Equal(t, "0", rs[0][5].(string))
+}
+
 func TestEmptyHists(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
