@@ -69,7 +69,7 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 				}
 
 				// Try sample-based path first.
-				if gs, err := e.buildGlobalStatsFromSamples(statsHandle, globalStatsID, &info, globalOpts); err != nil {
+				if gs, err := e.buildGlobalStatsFromSamples(globalStatsID, &info, globalOpts); err != nil {
 					logutil.ErrVerboseLogger().Warn("build sample-based global stats failed, falling back to merge",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 				} else if gs != nil {
@@ -107,7 +107,6 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 // sample collector. Returns (nil, nil) if sample-based path is not available for
 // this particular stats entry, signaling the caller to fall back.
 func (e *AnalyzeExec) buildGlobalStatsFromSamples(
-	statsHandle *handle.Handle,
 	key globalStatsKey,
 	info *statstypes.GlobalStatsInfo,
 	opts map[ast.AnalyzeOptionType]uint64,
