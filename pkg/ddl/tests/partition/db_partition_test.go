@@ -3089,6 +3089,57 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
 }
 
+func TestAlterModifyPartitionColumnOnListPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ListModifyCol")
+	tk.MustExec("use ListModifyCol")
+	tk.MustExec(`create table t (a int, b varchar(32), key idx_b (b)) partition by list (a)
+		(partition p0 values in (1,2), partition p1 values in (3,4), partition pDef values in (default))`)
+	tk.MustExec(`insert into t values (1, "v1"), (3, "v3"), (10, "v10")`)
+	tk.MustExec(`alter table t modify column a bigint`)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`select data_type from information_schema.columns where table_schema = 'listmodifycol' and table_name = 't' and column_name = 'a'`).Check(testkit.Rows("bigint"))
+	tk.MustQuery(`select a, b from t order by a`).Check(testkit.Rows("1 v1", "3 v3", "10 v10"))
+}
+
+func TestAlterModifyPartitionColumnOnListColumnsPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ListColumnsModifyCol")
+	tk.MustExec("use ListColumnsModifyCol")
+	tk.MustExec(`create table t (a int, b varchar(32), key idx_b (b)) partition by list columns (a)
+		(partition p0 values in (1,2), partition p1 values in (3,4), partition pDef values in (default))`)
+	tk.MustExec(`insert into t values (1, "v1"), (3, "v3"), (10, "v10")`)
+	tk.MustExec(`alter table t modify column a bigint`)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`select data_type from information_schema.columns where table_schema = 'listcolumnsmodifycol' and table_name = 't' and column_name = 'a'`).Check(testkit.Rows("bigint"))
+	tk.MustQuery(`select a, b from t order by a`).Check(testkit.Rows("1 v1", "3 v3", "10 v10"))
+}
+
+func TestAlterModifyPartitionColumnToNotAllowedType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int) partition by list (a)
+		(partition p0 values in (1,2), partition p1 values in (3,4), partition pDef values in (default))`)
+	err := tk.ExecToErr(`alter table t modify column a decimal(10,2)`)
+	require.True(t, dbterror.ErrNotAllowedTypeInPartition.Equal(err), "unexpected error: %v", err)
+}
+
+func TestAlterModifyPartitionColumnIncompatibleDefinitions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int) partition by range columns (a)
+		(partition p0 values less than (1000), partition pMax values less than (MAXVALUE))`)
+	err := tk.ExecToErr(`alter table t modify column a tinyint`)
+	require.True(t, dbterror.ErrUnsupportedModifyColumn.Equal(err), "unexpected error: %v", err)
+	require.ErrorContains(t, err, "New column does not match partition definitions")
+}
+
 func TestRemoveKeyPartitioning(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
