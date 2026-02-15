@@ -61,7 +61,8 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 		}
 		return statistics.DefaultRowEst(pseudoResult), nil
 	}
-	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, pkIsHandle)
+	colIsUnique := coll.ColHasSingleColUniqueIdx(colUniqueID)
+	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, pkIsHandle, colIsUnique)
 	if err != nil {
 		return statistics.DefaultRowEst(0), errors.Trace(err)
 	}
@@ -69,9 +70,14 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 }
 
 // equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
-func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate, err error) {
+func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64, colIsUnique bool) (result statistics.RowEstimate, err error) {
 	if val.IsNull() {
 		return statistics.DefaultRowEst(float64(c.NullCount)), nil
+	}
+	// For a column with a single-column unique index, every non-null value appears at most once.
+	// We can skip all TopN / CMSketch lookups and return 1 directly.
+	if colIsUnique {
+		return statistics.DefaultRowEst(1), nil
 	}
 	if c.StatsVer < statistics.Version2 {
 		// All the values are null.
@@ -118,7 +124,7 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 }
 
 // getColumnRowCount estimates the row count by a slice of Range.
-func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (statistics.RowEstimate, error) {
+func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool, colIsUnique bool) (statistics.RowEstimate, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	var totalCount statistics.RowEstimate
 	for _, rg := range ranges {
@@ -148,12 +154,12 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			// case 1: it's a point
 			if !rg.LowExclude && !rg.HighExclude {
 				// In this case, the row count is at most 1.
-				if pkIsHandle {
+				if pkIsHandle || (colIsUnique && !lowVal.IsNull()) {
 					totalCount.AddAll(1)
 					continue
 				}
 				var cnt statistics.RowEstimate
-				cnt, err = equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
+				cnt, err = equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount, colIsUnique)
 				if err != nil {
 					return statistics.DefaultRowEst(0), errors.Trace(err)
 				}
@@ -171,7 +177,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			// case 2: it's a small range && using ver1 stats
 			if rangeVals != nil {
 				for _, val := range rangeVals {
-					cnt, err := equalRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount, modifyCount)
+					cnt, err := equalRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount, modifyCount, colIsUnique)
 					if err != nil {
 						return statistics.DefaultRowEst(0), err
 					}
@@ -185,14 +191,14 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		}
 
 		// case 3: it's an interval
-		cnt := betweenRowCountOnColumn(sctx, c, lowVal, highVal, lowEncoded, highEncoded)
+		cnt := betweenRowCountOnColumn(sctx, c, lowVal, highVal, lowEncoded, highEncoded, colIsUnique)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		//   where null is the lower bound.
 		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
 		//   expressions like b < 3, we need to exclude the special values.
 		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
+			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount, colIsUnique)
 			if err != nil {
 				return statistics.DefaultRowEst(0), errors.Trace(err)
 			}
@@ -203,7 +209,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			cnt.AddAll(float64(c.NullCount))
 		}
 		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
+			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount, colIsUnique)
 			if err != nil {
 				return statistics.DefaultRowEst(0), errors.Trace(err)
 			}
@@ -238,10 +244,17 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 }
 
 // betweenRowCountOnColumn estimates the row count for interval [l, r).
-func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) statistics.RowEstimate {
+func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte, colIsUnique bool) statistics.RowEstimate {
 	// TODO: Track min/max range for column estimates, currently only used for indexes.
 	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
 	if c.StatsVer <= statistics.Version1 {
+		return histBetweenCnt
+	}
+	// For unique columns every value has count=1, so TopN is normally
+	// redundant. However, in stats v2 the histogram may be empty when all
+	// values fit in TopN; in that case we must still consult TopN to avoid
+	// returning 0.
+	if colIsUnique && c.TopN.Num() == 0 {
 		return histBetweenCnt
 	}
 	topNCnt := float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded))

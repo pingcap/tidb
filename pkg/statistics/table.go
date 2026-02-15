@@ -325,6 +325,32 @@ func (coll *HistColl) GetIdx(id int64) *Index {
 	return coll.indices[id]
 }
 
+// ColHasSingleColUniqueIdx checks whether the column with the given UniqueID
+// is covered by a single-column, non-prefix unique index. For such columns
+// every value appears at most once, making TopN statistics redundant.
+func (coll *HistColl) ColHasSingleColUniqueIdx(colUniqueID int64) bool {
+	for _, idxID := range coll.ColUniqueID2IdxIDs[colUniqueID] {
+		idx := coll.GetIdx(idxID)
+		if idx == nil || idx.Info == nil {
+			continue
+		}
+		// Only consider public indexes — during DDL transitions (e.g. DROP INDEX)
+		// uniqueness may no longer be enforced.
+		if idx.Info.State != model.StatePublic {
+			continue
+		}
+		// Exclude partial indexes (they only enforce uniqueness for rows matching
+		// the condition, not globally) and prefix indexes.
+		if idx.Info.HasCondition() || idx.Info.HasPrefixIndex() {
+			continue
+		}
+		if (idx.Info.Unique || idx.Info.Primary) && len(idx.Info.Columns) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
 // ForEachColumnImmutable iterates all columns in the HistColl.
 // The bool return value of f is used to control the iteration. If f returns true, the iteration will be stopped.
 // Warning: Don't change the content when calling this function.
