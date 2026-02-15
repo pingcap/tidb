@@ -254,14 +254,18 @@ func (s *Scanner) Lex(v *yySymType) (tok int) {
 		}
 	}
 
-	// `FULL [OUTER] JOIN` needs special handling because `FULL` is an unreserved keyword,
+	// `FULL OUTER JOIN` needs special handling because `FULL` is an unreserved keyword,
 	// and it can also be used as a table alias / identifier (e.g. `t AS full` or `FROM full`).
-	// To avoid ambiguity for patterns like `t1 full join t2`, the lexer returns a dedicated
-	// token `fullJoinType` when `FULL` is followed by `JOIN` (or `OUTER JOIN`) in a join
-	// operator position.
+	// If we rely on grammar only, `t1 full outer join t2` would be reduced as
+	// `t1 AS full` first, and then fail to parse at `OUTER`. To avoid the ambiguity, the
+	// lexer returns a dedicated token `fullJoinType` when `FULL` is followed by
+	// `OUTER JOIN` in a join operator position.
+	//
+	// Note: we intentionally do NOT treat `FULL JOIN` as a shorthand for `FULL OUTER JOIN`,
+	// so `t1 full join t2` will keep the MySQL-compatible meaning: `t1 AS full JOIN t2`.
 	if tok == full {
 		tok1, tok2 := s.getNextTwoTokens()
-		if tok1 == join || (tok1 == outer && tok2 == join) {
+		if tok1 == outer && tok2 == join {
 			switch s.lastTok {
 			case as, from, join, update, ',', '(', '.':
 				// Treat as identifier / table name / alias.

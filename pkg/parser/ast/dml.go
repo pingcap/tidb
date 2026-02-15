@@ -194,7 +194,7 @@ func (n *Join) Restore(ctx *format.RestoreCtx) error {
 	case RightJoin:
 		ctx.WriteKeyWord(" RIGHT")
 	case FullJoin:
-		ctx.WriteKeyWord(" FULL")
+		ctx.WriteKeyWord(" FULL OUTER")
 	}
 	if n.StraightJoin {
 		ctx.WriteKeyWord(" STRAIGHT_JOIN ")
