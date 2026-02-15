@@ -14,6 +14,7 @@ go_test(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/session",
         "//pkg/ddl/testutil",
