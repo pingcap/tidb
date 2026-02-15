@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/expression/exprctx",
-        "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/table/tables",
