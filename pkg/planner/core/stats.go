@@ -163,7 +163,9 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
 	path.Ranges = ranger.FullRange()
-	path.IsFullRange = true
+	// Do not mark partial indexes (subset of rows) or MV indexes (can exceed table rows)
+	// as full range, since their actual cardinality differs from table RealtimeCount.
+	path.IsFullRange = path.Index != nil && !path.Index.MVIndex && path.Index.ConditionExprString == ""
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.MinCountAfterAccess = 0
 	path.MaxCountAfterAccess = 0
