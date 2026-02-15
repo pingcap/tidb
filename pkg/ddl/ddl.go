@@ -1070,6 +1070,9 @@ func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
 // Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
 // we should make sure that before invoking EnableDDL(), ddl is DISABLE.
 func (d *ddl) EnableDDL() error {
+	// Best-effort cleanup for stale DDL owner election keys so that a restart won't
+	// block DDL for a full lease TTL when the previous TiDB exited ungracefully.
+	cleanupStaleDDLOwnerKeys(d.ctx, d.etcdCli, d.uuid)
 	err := d.ownerManager.CampaignOwner()
 	return errors.Trace(err)
 }
