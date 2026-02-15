@@ -33,7 +33,6 @@ import (
 func BuildGlobalStatsFromSamples(
 	ctx sessionctx.Context,
 	collector *statistics.ReservoirRowSampleCollector,
-	tableInfo *model.TableInfo,
 	opts map[ast.AnalyzeOptionType]uint64,
 	colsInfo []*model.ColumnInfo,
 	indexes []*model.IndexInfo,
@@ -41,15 +40,14 @@ func BuildGlobalStatsFromSamples(
 	isIndex bool,
 ) (*GlobalStats, error) {
 	if isIndex {
-		return buildGlobalIndexStatsFromSamples(ctx, collector, tableInfo, opts, colsInfo, indexes, histIDs)
+		return buildGlobalIndexStatsFromSamples(ctx, collector, opts, colsInfo, indexes, histIDs)
 	}
-	return buildGlobalColumnStatsFromSamples(ctx, collector, tableInfo, opts, colsInfo, indexes, histIDs)
+	return buildGlobalColumnStatsFromSamples(ctx, collector, opts, colsInfo, indexes, histIDs)
 }
 
 func buildGlobalColumnStatsFromSamples(
 	ctx sessionctx.Context,
 	collector *statistics.ReservoirRowSampleCollector,
-	tableInfo *model.TableInfo,
 	opts map[ast.AnalyzeOptionType]uint64,
 	colsInfo []*model.ColumnInfo,
 	indexes []*model.IndexInfo,
@@ -92,7 +90,6 @@ func buildGlobalColumnStatsFromSamples(
 func buildGlobalIndexStatsFromSamples(
 	ctx sessionctx.Context,
 	collector *statistics.ReservoirRowSampleCollector,
-	tableInfo *model.TableInfo,
 	opts map[ast.AnalyzeOptionType]uint64,
 	colsInfo []*model.ColumnInfo,
 	indexes []*model.IndexInfo,
@@ -100,7 +97,14 @@ func buildGlobalIndexStatsFromSamples(
 ) (*GlobalStats, error) {
 	numBuckets := int(opts[ast.AnalyzeOptNumBuckets])
 	numTopN := int(opts[ast.AnalyzeOptNumTopN])
-	colLen := len(colsInfo)
+
+	// The collector's arrays (FMSketches, NullCount, TotalSizes) are laid out as:
+	//   [col_0, col_1, ..., col_N-1, idx_0, idx_1, ..., idx_M-1]
+	// where N = number of columns in the analyze task's colsInfo (which may include
+	// _tidb_rowid for tables without a clustered primary key). We derive the actual
+	// column count from the sample rows rather than from tableInfo.Columns, which
+	// does NOT include _tidb_rowid.
+	sampleColCount := sampleColumnCount(collector)
 
 	globalStats := newGlobalStats(len(histIDs))
 	globalStats.Count = collector.Base().Count
@@ -117,7 +121,7 @@ func buildGlobalIndexStatsFromSamples(
 			continue
 		}
 		idx := indexes[idxOffset]
-		fmSketchIdx := colLen + idxOffset
+		fmSketchIdx := sampleColCount + idxOffset
 		sc := buildIndexSampleCollector(collector, colsInfo, idx, fmSketchIdx, ctx)
 		hist, topn, err := statistics.BuildHistAndTopN(ctx, numBuckets, numTopN, idx.ID, sc, types.NewFieldType(mysql.TypeBlob), false, nil, false)
 		if err != nil {
@@ -129,6 +133,19 @@ func buildGlobalIndexStatsFromSamples(
 	}
 
 	return globalStats, nil
+}
+
+// sampleColumnCount returns the number of columns per sample row in the collector.
+// This may be larger than len(tableInfo.Columns) when _tidb_rowid is included
+// (for tables without a clustered primary key).
+func sampleColumnCount(collector *statistics.ReservoirRowSampleCollector) int {
+	if collector.Base().Samples.Len() > 0 {
+		return len(collector.Base().Samples[0].Columns)
+	}
+	// Fallback: no samples available. Derive from NullCount array length,
+	// which is numCols + numIndexes. This path is rarely hit since we only
+	// call this when Count > 0.
+	return len(collector.Base().NullCount)
 }
 
 // buildColumnSampleCollector extracts a per-column SampleCollector from the

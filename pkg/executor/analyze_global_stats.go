@@ -125,14 +125,12 @@ func (e *AnalyzeExec) buildGlobalStatsFromSamples(
 	if !ok {
 		return nil, nil
 	}
-	tableInfo := table.Meta()
-
-	colsInfo := tableInfo.Columns
-	indexes := tableInfo.Indices
+	colsInfo := table.Meta().Columns
+	indexes := table.Meta().Indices
 
 	isIndex := info.IsIndex == 1
 	return globalstats.BuildGlobalStatsFromSamples(
-		e.Ctx(), collector, tableInfo, opts,
+		e.Ctx(), collector, opts,
 		colsInfo, indexes, info.HistIDs, isIndex,
 	)
 }

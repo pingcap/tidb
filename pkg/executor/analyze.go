@@ -192,6 +192,14 @@ TASKLOOP:
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
+		// Release accumulated sample collectors to free memory.
+		for id, c := range e.globalSampleCollectors {
+			if c != nil {
+				c.DestroyAndPutToPool()
+			}
+			delete(e.globalSampleCollectors, id)
+		}
+		e.globalSampleCollectors = nil
 		if err != nil {
 			return err
 		}

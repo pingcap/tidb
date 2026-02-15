@@ -1022,6 +1022,18 @@ func TestSampleBasedGlobalStats(t *testing.T) {
 	rs := tk.MustQuery("show stats_histograms where table_name='t' and partition_name='global'").Rows()
 	require.Len(t, rs, 2) // one for column a (is_index=0), one for index a (is_index=1)
 
+	// Verify global column stats: distinct_count=15 (6 in p0 + 9 in p1), null_count=1.
+	colHist := tk.MustQuery("show stats_histograms where table_name='t' and partition_name='global' and is_index=0").Rows()
+	require.Len(t, colHist, 1)
+	require.Equal(t, "15", colHist[0][6].(string)) // distinct_count
+	require.Equal(t, "1", colHist[0][7].(string))  // null_count
+
+	// Verify global index stats: distinct_count=15, null_count=1.
+	idxHist := tk.MustQuery("show stats_histograms where table_name='t' and partition_name='global' and is_index=1").Rows()
+	require.Len(t, idxHist, 1)
+	require.Equal(t, "15", idxHist[0][6].(string)) // distinct_count
+	require.Equal(t, "1", idxHist[0][7].(string))  // null_count
+
 	// Verify global buckets are created.
 	globalBuckets := tk.MustQuery("show stats_buckets where partition_name='global'").Rows()
 	require.Greater(t, len(globalBuckets), 0)
@@ -1060,12 +1072,12 @@ func TestSampleBasedGlobalStatsWithTopN(t *testing.T) {
 	globalTopN := tk.MustQuery("show stats_topn where table_name='t' and partition_name='global'").Rows()
 	require.Greater(t, len(globalTopN), 0)
 
-	// Verify global NDV (distinct_count) from histograms is reasonable.
+	// Verify global NDV (distinct_count) from histograms.
+	// p0 has 5 distinct non-null (1,2,3,4,5), p1 has 7 distinct (11,12,13,14,15,16,17) = 12 total.
 	rs = tk.MustQuery("show stats_histograms where table_name='t' and partition_name='global' and is_index=0").Rows()
 	require.Len(t, rs, 1)
-	// NDV should be around 12 (5 unique in p0 + 7 unique in p1)
-	ndv := rs[0][6].(string)
-	require.NotEqual(t, "0", ndv)
+	require.Equal(t, "12", rs[0][6].(string)) // distinct_count
+	require.Equal(t, "1", rs[0][7].(string))  // null_count
 }
 
 func TestSampleBasedGlobalStatsWithIndex(t *testing.T) {
@@ -1094,10 +1106,12 @@ func TestSampleBasedGlobalStatsWithIndex(t *testing.T) {
 	globalIdxTopN := tk.MustQuery("show stats_topn where table_name='t' and partition_name='global' and is_index=1").Rows()
 	require.Greater(t, len(globalIdxTopN), 0)
 
-	// Verify index histograms for global.
+	// Verify index histograms for global with non-zero NDV.
+	// The composite index (a,b) has 11 distinct pairs. The sample-based path may
+	// estimate NDV slightly differently via BuildHistAndTopN, so just verify > 0.
 	rs = tk.MustQuery("show stats_histograms where table_name='t' and partition_name='global' and is_index=1").Rows()
 	require.Len(t, rs, 1)
-	require.NotEqual(t, "0", rs[0][6].(string)) // NDV > 0
+	require.NotEqual(t, "0", rs[0][6].(string)) // distinct_count > 0
 }
 
 func TestSampleBasedGlobalStatsDisabled(t *testing.T) {
