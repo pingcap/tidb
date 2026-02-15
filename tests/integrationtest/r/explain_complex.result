@@ -276,16 +276,16 @@ insert into Tab_C values(2,'C01',22);
 insert into Tab_C values(4,'C01',5);
 explain select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
 id	estRows	task	access object	operator info
-Projection_11	15.62	root		explain_complex.tab_a.name, explain_complex.tab_b.name, explain_complex.tab_a.amt, explain_complex.tab_c.amt, ifnull(explain_complex.tab_c.amt, 0.00)->Column#13
-└─IndexJoin_16	15.62	root		left outer join, inner:TableReader_13, outer key:explain_complex.tab_a.cid, inner key:explain_complex.tab_c.id, equal cond:eq(explain_complex.tab_a.cid, explain_complex.tab_c.id), left cond:eq(explain_complex.tab_a.type, "01")
-  ├─IndexJoin_27(Build)	12.50	root		left outer join, inner:TableReader_24, outer key:explain_complex.tab_a.bid, inner key:explain_complex.tab_b.id, equal cond:eq(explain_complex.tab_a.bid, explain_complex.tab_b.id)
-  │ ├─TableReader_36(Build)	10.00	root		data:Selection_35
-  │ │ └─Selection_35	10.00	cop[tikv]		eq(explain_complex.tab_a.num, 112)
-  │ │   └─TableFullScan_34	10000.00	cop[tikv]	table:Tab_A	keep order:false, stats:pseudo
-  │ └─TableReader_24(Probe)	10.00	root		data:TableRangeScan_23
-  │   └─TableRangeScan_23	10.00	cop[tikv]	table:Tab_B	range: decided by [explain_complex.tab_a.bid], keep order:false, stats:pseudo
-  └─TableReader_13(Probe)	12.50	root		data:TableRangeScan_12
-    └─TableRangeScan_12	12.50	cop[tikv]	table:Tab_C	range: decided by [explain_complex.tab_a.cid], keep order:false, stats:pseudo
+Projection_12	15.62	root		explain_complex.tab_a.name, explain_complex.tab_b.name, explain_complex.tab_a.amt, explain_complex.tab_c.amt, ifnull(explain_complex.tab_c.amt, 0.00)->Column#13
+└─IndexJoin_18	15.62	root		left outer join, inner:TableReader_15, outer key:explain_complex.tab_a.cid, inner key:explain_complex.tab_c.id, equal cond:eq(explain_complex.tab_a.cid, explain_complex.tab_c.id), left cond:eq(explain_complex.tab_a.type, "01")
+  ├─IndexJoin_29(Build)	12.50	root		left outer join, inner:TableReader_26, outer key:explain_complex.tab_a.bid, inner key:explain_complex.tab_b.id, equal cond:eq(explain_complex.tab_a.bid, explain_complex.tab_b.id)
+  │ ├─TableReader_38(Build)	10.00	root		data:Selection_37
+  │ │ └─Selection_37	10.00	cop[tikv]		eq(explain_complex.tab_a.num, 112)
+  │ │   └─TableFullScan_36	10000.00	cop[tikv]	table:Tab_A	keep order:false, stats:pseudo
+  │ └─TableReader_26(Probe)	10.00	root		data:TableRangeScan_25
+  │   └─TableRangeScan_25	10.00	cop[tikv]	table:Tab_B	range: decided by [explain_complex.tab_a.bid], keep order:false, stats:pseudo
+  └─TableReader_15(Probe)	12.50	root		data:TableRangeScan_14
+    └─TableRangeScan_14	12.50	cop[tikv]	table:Tab_C	range: decided by [explain_complex.tab_a.cid], keep order:false, stats:pseudo
 select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
 AAA	BBB	Aamt	Bamt	IFNULL(Tab_C.amt, 0)
 A01	B01	111.00	22.00	22.00
