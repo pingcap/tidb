@@ -170,6 +170,12 @@ func CleanUpTempDir(ctx context.Context, se sessionctx.Context, path string) {
 	}
 
 	for id := range toCheckJobIDs {
+		// If local backend is still running on this TiDB instance, do not delete
+		// its temp directory even if the job row is already removed from
+		// `mysql.tidb_ddl_job` (e.g. ADMIN CANCEL races with background cleanup).
+		if LitDiskRoot != nil && LitDiskRoot.Has(id) {
+			continue
+		}
 		logutil.DDLIngestLogger().Info("remove stale temp index data",
 			zap.Int64("jobID", id))
 		p := filepath.Join(path, encodeBackendTag(id, false))
