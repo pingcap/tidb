@@ -1461,6 +1461,11 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
+	// An order-matching full-range path with a LIMIT will terminate early, so it is
+	// effectively a range scan and should not be pruned as a full scan.
+	if path.IsFullRange && candidate.matchPropResult.Matched() && prop.ExpectedCnt < math.MaxFloat64 {
+		path.IsFullRange = false
+	}
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	return candidate
 }
@@ -1468,6 +1473,11 @@ func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
+	// An order-matching full-range path with a LIMIT will terminate early, so it is
+	// effectively a range scan and should not be pruned as a full scan.
+	if path.IsFullRange && candidate.matchPropResult.Matched() && prop.ExpectedCnt < math.MaxFloat64 {
+		path.IsFullRange = false
+	}
 	// Because the skyline pruning already prune the indexes that cannot provide partial order
 	// when prop has PartialOrderInfo physical property,
 	// So here we just need to record the partial order match result(prefixCol, prefixLen).
@@ -1627,9 +1637,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 			if !c.path.IsFullRange {
-				if preferMerge || c.path.IsSingleScan ||
-					(c.matchPropResult.Matched() &&
-						len(c.path.TableFilters) < len(c.path.IndexFilters)+len(c.path.AccessConds)) ||
+				orderedPlan := (c.matchPropResult.Matched() && (len(c.path.TableFilters) == 0 ||
+					len(c.path.TableFilters) < len(c.path.IndexFilters)+len(c.path.AccessConds)))
+				if preferMerge || c.path.IsSingleScan || orderedPlan ||
 					c.equalPredicateCount() > 0 {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true

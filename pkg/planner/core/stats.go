@@ -222,18 +222,21 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
-		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
-			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
-		} else {
-			selectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
-			for i := range accesses {
-				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
-				ndv *= selectivity
-				if ndv < 1 {
-					ndv = 1.0
+		if len(accesses) > 0 {
+			path.IsFullRange = false
+			if ds.StatisticTable.Pseudo {
+				path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
+			} else {
+				selectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
+				for i := range accesses {
+					col := path.IdxCols[path.EqOrInCondCount+i]
+					ndv := cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
+					ndv *= selectivity
+					if ndv < 1 {
+						ndv = 1.0
+					}
+					path.CountAfterAccess = path.CountAfterAccess / ndv
 				}
-				path.CountAfterAccess = path.CountAfterAccess / ndv
 			}
 		}
 	}
@@ -378,18 +381,21 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
-		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
-			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
-		} else {
-			selectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
-			for i := range accesses {
-				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
-				ndv *= selectivity
-				if ndv < 1 {
-					ndv = 1.0
+		if len(accesses) > 0 {
+			path.IsFullRange = false
+			if ds.StatisticTable.Pseudo {
+				path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
+			} else {
+				selectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
+				for i := range accesses {
+					col := path.IdxCols[path.EqOrInCondCount+i]
+					ndv := cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
+					ndv *= selectivity
+					if ndv < 1 {
+						ndv = 1.0
+					}
+					path.CountAfterAccess = path.CountAfterAccess / ndv
 				}
-				path.CountAfterAccess = path.CountAfterAccess / ndv
 			}
 		}
 	}
