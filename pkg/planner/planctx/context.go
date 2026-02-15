@@ -17,6 +17,7 @@ package planctx
 import (
 	"iter"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -82,6 +83,17 @@ type Common interface {
 type PlanContext interface {
 	Common
 	tablelock.TableLockReadContext
+	// UnwrapAsInternalSctx returns the underlying internal session context as `any`.
+	//
+	// NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
+	// (sessionctx -> planctx). Callers can type-assert the returned value when needed.
+	//
+	// Usage:
+	// This is mainly used when a PlanContext might be wrapped (for example by
+	// `planctx.WithExprCtx` / `planctx.WithTruncateErrLevel`) but the caller still
+	// needs the original session-backed context.
+	// See `plannercore.AsSctx` for the conversion path.
+	UnwrapAsInternalSctx() any
 	// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
 	GetNullRejectCheckExprCtx() exprctx.ExprContext
 	// AdviseTxnWarmup advises the txn to warm up.
@@ -147,4 +159,71 @@ func (b *BuildPBContext) Detach(staticExprCtx exprctx.BuildContext) *BuildPBCont
 	newCtx := *b
 	newCtx.ExprCtx = staticExprCtx
 	return &newCtx
+}
+
+type planCtxExprOverrideWrapper struct {
+	PlanContext
+	exprCtx                exprctx.ExprContext
+	nullRejectCheckExprCtx exprctx.ExprContext
+}
+
+// UnwrapAsInternalSctx returns the underlying internal session context as `any`.
+//
+// NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
+// (sessionctx -> planctx). Callers can type-assert the returned value when needed.
+//
+// It is called by helpers that recover the original session-backed context from
+// wrapped PlanContext values (for example wrappers created by `WithExprCtx` /
+// `WithTruncateErrLevel`).
+func (c *planCtxExprOverrideWrapper) UnwrapAsInternalSctx() any {
+	return c.PlanContext.UnwrapAsInternalSctx()
+}
+
+func (c *planCtxExprOverrideWrapper) GetExprCtx() exprctx.ExprContext {
+	return c.exprCtx
+}
+
+func (c *planCtxExprOverrideWrapper) GetNullRejectCheckExprCtx() exprctx.ExprContext {
+	return c.nullRejectCheckExprCtx
+}
+
+func (c *planCtxExprOverrideWrapper) GetBuildPBCtx() *BuildPBContext {
+	// BuildPBContext is a per-statement cache in StatementContext; detach it to avoid mutating the original.
+	return c.PlanContext.GetBuildPBCtx().Detach(c.exprCtx)
+}
+
+func (c *planCtxExprOverrideWrapper) GetRangerCtx() *rangerctx.RangerContext {
+	// RangerContext is a per-statement cache in StatementContext; detach it to avoid mutating the original.
+	rctx := c.PlanContext.GetRangerCtx().Detach(c.exprCtx)
+	evalCtx := c.exprCtx.GetEvalCtx()
+	rctx.TypeCtx = evalCtx.TypeCtx()
+	rctx.ErrCtx = evalCtx.ErrCtx()
+	return rctx
+}
+
+// WithExprCtx wraps the PlanContext and overrides ExprCtx, without mutating the original context.
+//
+// The returned context is only guaranteed to implement `planctx.PlanContext`.
+func WithExprCtx(pctx PlanContext, exprCtx exprctx.ExprContext) PlanContext {
+	if exprCtx == nil || exprCtx == pctx.GetExprCtx() {
+		return pctx
+	}
+	return &planCtxExprOverrideWrapper{
+		PlanContext:            pctx,
+		exprCtx:                exprCtx,
+		nullRejectCheckExprCtx: exprctx.WithNullRejectCheck(exprCtx),
+	}
+}
+
+// WithTruncateErrLevel wraps the PlanContext and overrides its ExprCtx
+// to handle truncation errors at the specified level.
+//
+// It is a scoped change that does not mutate the original context.
+func WithTruncateErrLevel(pctx PlanContext, level errctx.Level) PlanContext {
+	origExprCtx := pctx.GetExprCtx()
+	overrideExprCtx := exprctx.WithHandleTruncateErrLevel(origExprCtx, level)
+	if overrideExprCtx == origExprCtx {
+		return pctx
+	}
+	return WithExprCtx(pctx, overrideExprCtx)
 }

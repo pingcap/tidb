@@ -413,3 +413,72 @@ with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 l
 c1
 100
 set tidb_max_chunk_size=default;
+set @@sql_mode = 'STRICT_TRANS_TABLES';
+with recursive cte as (
+select cast('abcdefgh' as char(3)) as s, 1 as n
+union all
+select s, n + 1
+from cte
+where n < 2
+)
+select * from cte;
+Error 1406 (22001): Data Too Long, field len 3, data len 8
+with recursive cte as (
+select cast('x' as char(10)) as s, 1 as n
+union all
+select cast('abcdefgh' as char(3)), n + 1
+from cte
+where n < 2
+)
+select * from cte;
+Error 1406 (22001): Data Too Long, field len 3, data len 8
+with recursive cte as (
+select cast('abc' as char(3)) as s, 1 as n
+union all
+select 'abcdefgh', n + 1
+from cte
+where n < 2
+)
+select * from cte;
+Error 1406 (22001): Data Too Long, field len 3, data len 8
+with cte as (
+select cast('abcdefgh' as char(3)) as short_str, 1 as n
+)
+select * from cte;
+short_str	n
+abc	1
+show warnings;
+Level	Code	Message
+Warning	1406	Data Too Long, field len 3, data len 8
+Warning	1406	Data Too Long, field len 3, data len 8
+set @@sql_mode = '';
+with recursive cte as (
+select cast('abcdefgh' as char(3)) as s, 1 as n
+union all
+select s, n + 1
+from cte
+where n < 2
+)
+select * from cte;
+s	n
+abc	1
+abc	2
+show warnings;
+Level	Code	Message
+Warning	1406	Data Too Long, field len 3, data len 8
+Warning	1406	Data Too Long, field len 3, data len 8
+with recursive cte as (
+select cast('abc' as char(3)) as s, 1 as n
+union all
+select 'abcdefgh', n + 1
+from cte
+where n < 2
+)
+select * from cte;
+s	n
+abc	1
+abc	2
+show warnings;
+Level	Code	Message
+Warning	1406	Data Too Long, field len 3, data len 8
+set @@sql_mode = default;
