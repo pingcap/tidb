@@ -5191,6 +5191,14 @@ func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 			sql:       "CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
 			substring: "Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW",
 		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2 AS SELECT 1",
+			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2 AS SELECT 1",
+			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW",
+		},
 	}
 	for _, c := range dupCases {
 		_, err := p.ParseOneStmt(c.sql, "", "")
@@ -5283,9 +5291,19 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW `mv` (`a`) COMMENT = 'c1' AS SELECT 1",
 		},
 		{
+			"CREATE MATERIALIZED VIEW mv (a) SHARD_ROW_ID_BITS = 4 PRE_SPLIT_REGIONS = 2 AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) SHARD_ROW_ID_BITS = 4 PRE_SPLIT_REGIONS = 2 AS SELECT 1",
+		},
+		{
 			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST AS SELECT 1",
 			true,
 			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW mv (a) PRE_SPLIT_REGIONS = 2 REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST PRE_SPLIT_REGIONS = 2 SHARD_ROW_ID_BITS = 4 AS SELECT 1",
 		},
 		{
 			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() NEXT 300 AS SELECT 1",

@@ -20,10 +20,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -59,6 +61,10 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	originSplit := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, originSplit)
+	tk.MustExec("set @@session.tidb_scatter_region='table'")
 	tk.MustExec("create table t (a int not null, b int not null)")
 
 	// Base table must have MV LOG first.
@@ -164,6 +170,29 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Contains(t, showCreate, "UNIQUE KEY")
 	require.False(t, strings.Contains(showCreate, "PRIMARY KEY (`a`)"))
 
+	// CREATE MATERIALIZED VIEW supports SHARD_ROW_ID_BITS/PRE_SPLIT_REGIONS and follows table pre-split flow.
+	tk.MustExec("create table t_presplit (a int, b int not null)")
+	tk.MustExec("create materialized view log on t_presplit (a) purge immediate")
+	tk.MustExec("create materialized view mv_presplit (a, cnt) shard_row_id_bits = 2 pre_split_regions = 2 as select a, count(1) from t_presplit group by a")
+	showCreate = tk.MustQuery("show create table mv_presplit").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS=2")
+	require.Contains(t, showCreate, "PRE_SPLIT_REGIONS=2")
+
+	is = dom.InfoSchema()
+	mvPreSplit, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_presplit"))
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), mvPreSplit.Meta().ShardRowIDBits)
+	require.Equal(t, uint64(2), mvPreSplit.Meta().PreSplitRegions)
+
+	regions := tk.MustQuery("show table mv_presplit regions").Rows()
+	regionNames := make([]string, 0, len(regions))
+	for _, row := range regions {
+		regionNames = append(regionNames, fmt.Sprint(row[1]))
+	}
+	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_2305843009213693952", mvPreSplit.Meta().ID))
+	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_4611686018427387904", mvPreSplit.Meta().ID))
+	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_6917529027641081856", mvPreSplit.Meta().ID))
+
 	// Index DDL on MV-related tables: base remains forbidden, MV table is allowed.
 	err = tk.ExecToErr("create index idx_forbidden_base on t (b)")
 	require.ErrorContains(t, err, "CREATE INDEX on base table with materialized view dependencies")
@@ -193,11 +222,13 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view mv_alias")
 	tk.MustExec("drop materialized view mv_nullable")
 	tk.MustExec("drop materialized view mv_minmax_ok")
+	tk.MustExec("drop materialized view mv_presplit")
 	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop materialized view log on t_nullable")
 	tk.MustExec("drop materialized view log on t_sum_nullable")
 	tk.MustExec("drop materialized view log on t_minmax_bad")
 	tk.MustExec("drop materialized view log on t_minmax_ok")
+	tk.MustExec("drop materialized view log on t_presplit")
 	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
 
 	// Reverse mapping cleared.
