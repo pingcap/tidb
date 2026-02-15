@@ -15,6 +15,7 @@
 package asyncload
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -100,6 +101,33 @@ func (n *neededStatsMap) AllItems() []model.StatsLoadItem {
 		keys := n.items[i].AllItems()
 		result = append(result, keys...)
 	}
+	slices.SortFunc(result, func(a, b model.StatsLoadItem) int {
+		if a.TableID != b.TableID {
+			if a.TableID < b.TableID {
+				return -1
+			}
+			return 1
+		}
+		if a.ID != b.ID {
+			if a.ID < b.ID {
+				return -1
+			}
+			return 1
+		}
+		if a.IsIndex != b.IsIndex {
+			if !a.IsIndex {
+				return -1
+			}
+			return 1
+		}
+		if a.FullLoad != b.FullLoad {
+			if !a.FullLoad {
+				return -1
+			}
+			return 1
+		}
+		return 0
+	})
 	return result
 }
 
