@@ -137,7 +137,7 @@ func TestPreferRangeScanForDNF(t *testing.T) {
 
 	// DNF with mixed predicates - should not prefer IndexLookUp
 	// This should fall back to TableReader since it contains non-equal predicates
-	result = tk.MustQuery("explain format='brief' select * from t where (a = 1 and b = 1) or (a >= 2 and b <= 3) or (a = 4 and b = 4) or (a = 5 and b > 0) or (a < 6 and b < 6)")
+	result = tk.MustQuery("explain format='brief' select * from t where (a = 1 and b = 1) or (a >= 2 and b <= 3) or (a = 4 and b = 4) or (a = 5 and b > 0) or (a <> 6 and b < 6)")
 	require.Contains(t, result.Rows()[0][0], "TableReader")
 
 	// Disabling prefer_range_scan should not use IndexLookUp for long set of DNF conditions

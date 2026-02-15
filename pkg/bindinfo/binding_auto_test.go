@@ -65,7 +65,7 @@ func TestGenPlanWithSCtx(t *testing.T) {
 	sctx.GetSessionVars().IndexJoinCostFactor = 100000
 	sctx.GetSessionVars().HashJoinCostFactor = 100000
 	check("select * from t1, t2 where t1.a=t2.a and t2.b=1",
-		"merge_join", `MergeJoin`)
+		"inl_hash_join", "IndexHashJoin")
 }
 
 func TestExplainExploreBasic(t *testing.T) {
