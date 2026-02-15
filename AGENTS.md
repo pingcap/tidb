@@ -57,8 +57,12 @@ This file provides guidance to agents when working with code in this repository.
 
 ### Notes
 
-- Notes directory: `docs/note/<component>/` is the canonical location for component notes. If missing, create it and add an entry here.
+- Notes directory: `docs/note/` is the canonical location for component notes (for example `docs/note/planner/`). If missing, create it and add an entry here.
 - Notes rules: update existing sections when topics overlap; append new sections only for new topics. Purpose: capture decisions, pitfalls, and test patterns.
+- DDL module-only rules (applies to changes under `pkg/ddl/` and `docs/agents/ddl/`):
+  - **REQUIRED**: Before making/reviewing any DDL changes in the DDL module, read `docs/agents/ddl/README.md` first and use it as the default map of the execution framework.
+  - Debugging: You may reference `docs/agents/ddl/*`, but you **MUST NOT** treat it as authoritative. Treat it as hypotheses until verified in code/tests (avoid hallucination/outdated assumptions).
+  - Doc drift: If implementation and `docs/agents/ddl/*` differ, you **MUST** update the docs to match reality and call it out in the PR/issue. Do not defer.
 - Planner rule notes: `docs/note/planner/rule/rule_ai_notes.md`.
 - If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
 - Predicate pushdown testdata (`pkg/planner/core/casetest/rule/testdata/predicate_pushdown_suite_in.json`) should contain SQL-only cases; put DDL in the test setup to avoid `EXPLAIN` parsing DDL during record runs.
@@ -283,7 +287,7 @@ curl -f "http://${PD_ADDR}/pd/api/v1/version"
 - Bug reports should include minimal reproduction steps, expected/actual behavior, and the TiDB version (for example: the output of `SELECT tidb_version()`).
 - Search existing issues/PRs first to avoid duplicates (try `gh` first; for example: `gh search issues --repo pingcap/tidb --include-prs "<keywords>"`), and include any relevant logs/configuration/SQL plans to help diagnosis.
 - Apply labels to help triage:
-  - `type/*` is usually applied by the issue template; add `type/regression` when applicable.
+  - `type/*` is usually applied by the issue template (GitHub UI); if creating issues via `gh issue create`, add it explicitly via `--label` (or follow up with `gh issue edit --add-label`).
   - Add at least one `component/*` label (for example: `component/ddl`, `component/br`, `component/parser`).
   - For bug/regression issues, `severity/*` and affected-version label(s) are required (for example: `affects-8.5`; use `may-affects-*` if unsure).
   - If you don't have permission to add labels, include a `Suggested labels: ...` line in the issue body.
@@ -301,6 +305,8 @@ The PR title **must** strictly adhere to the following format. It uses the packa
 ### PR description
 
 The PR description **must** strictly follow the template located at @.github/pull_request_template.md and **must** keep the HTML comment elements like `Tests <!-- At least one of them must be included. -->` unchanged in the pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.
+
+If you create PRs via GitHub CLI, start from the template to avoid breaking required HTML comments: `gh pr create -T .github/pull_request_template.md` (then fill in the fields; do not delete/alter the HTML comment markers).
 
 ### Language
 
