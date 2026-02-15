@@ -512,6 +512,8 @@ message GetIndexProgressRequest {
   int64 table_id = 1;
   // Index ID
   int64 index_id = 2;
+  // Keyspace ID
+  uint32 keyspace_id = 3;
 }
 
 // GetIndexProgressResponse is a response containing index build progress
@@ -527,16 +529,8 @@ message GetIndexProgressResponse {
   ErrorCode status = 1;
   // Error message, only valid when status is non-zero
   string error_message = 2;
-  // Number of documents indexed so far
-  uint64 document_count = 3;
   // Build task state (PENDING, RUNNING, COMPLETED, FAILED)
-  State state = 4;
-  // Whether index has been uploaded to S3
-  bool is_uploaded = 5;
-  // Last S3 upload time in RFC3339 format
-  string last_upload_time = 6;
-  // S3 path where the index is stored
-  string s3_path = 7;
+  State state = 3;
 }
 
 // -----------------------------------------------------------------------------
@@ -638,3 +632,4 @@ message FinishImportResponse {
 }
 
 // -----------------------------------------------------------------------------
+
