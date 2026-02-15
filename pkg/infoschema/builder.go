@@ -145,7 +145,32 @@ func applyDropTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff
 	// bundle ops
 	b.markTableBundleShouldUpdate(diff.TableID)
 	for _, opt := range diff.AffectedOpts {
-		b.deleteBundle(b.infoSchema, opt.OldTableID)
+		// When SchemaID is 0, it comes from buildPlacementAffects and only indicates
+		// physical IDs (e.g. partition IDs) for placement bundle operations.
+		if opt.SchemaID == 0 && opt.OldSchemaID == 0 {
+			b.deleteBundle(b.infoSchema, opt.OldTableID)
+			continue
+		}
+
+		// Otherwise, it indicates an extra table updated in the same DDL transaction.
+		// Drop-table diffs don't apply affected opts by default, so reload the table
+		// metadata explicitly.
+		affectedDiff := &model.SchemaDiff{
+			// Use a non-drop action type so that applyTableUpdate treats it as a normal
+			// table update (reload from meta) instead of a drop.
+			Type:        model.ActionModifyTableComment,
+			Version:     diff.Version,
+			SchemaID:    opt.SchemaID,
+			TableID:     opt.TableID,
+			OldSchemaID: opt.OldSchemaID,
+			OldTableID:  opt.OldTableID,
+		}
+		affectedIDs, err := applyTableUpdate(b, m, affectedDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tblIDs = append(tblIDs, affectedIDs...)
+		b.markTableBundleShouldUpdate(opt.TableID)
 	}
 	return tblIDs, nil
 }
@@ -330,7 +355,7 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
-	case model.ActionCreateTable, model.ActionCreateMaterializedViewLog:
+	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog:
 		// WARN: when support create table with foreign key in https://github.com/pingcap/tidb/pull/37148,
 		// create table with foreign key requires a multi-step state change(none -> write-only -> public),
 		// when the table's state changes from write-only to public, infoSchema need to drop the old table
@@ -373,6 +398,12 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 	switch diff.Type {
 	case model.ActionCreateTable, model.ActionCreateMaterializedViewLog, model.ActionAddTablePartition:
 		b.markTableBundleShouldUpdate(newTableID)
+	case model.ActionCreateMaterializedView:
+		if tableIDIsValid(newTableID) {
+			b.markTableBundleShouldUpdate(newTableID)
+		} else if tableIDIsValid(oldTableID) {
+			b.deleteBundle(b.infoSchema, oldTableID)
+		}
 	case model.ActionDropTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
 	case model.ActionTruncateTable:

@@ -112,6 +112,7 @@ const (
 	ActionRemovePartitioning        ActionType = 72
 	ActionAddVectorIndex            ActionType = 73
 	ActionCreateMaterializedViewLog ActionType = 74
+	ActionCreateMaterializedView    ActionType = 75
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -120,6 +121,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
 	ActionCreateMaterializedViewLog:     "create materialized view log",
+	ActionCreateMaterializedView:        "create materialized view",
 	ActionCreateTables:                  "create tables",
 	ActionDropTable:                     "drop table",
 	ActionAddColumn:                     "add column",
@@ -814,7 +816,7 @@ func (job *Job) GetSessionVars(name string) (string, bool) {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition,
+	case ActionAddIndex, ActionAddPrimaryKey, ActionCreateMaterializedView, ActionReorganizePartition,
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
@@ -856,6 +858,8 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StatePublic {
 			return false
 		}
+	case ActionCreateMaterializedView:
+		return job.SchemaState == StateNone || job.SchemaState == StateWriteReorganization
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,

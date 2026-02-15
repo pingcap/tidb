@@ -108,9 +108,15 @@ type Executor interface {
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	CreateMaterializedView(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewStmt) error
 	CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
+	DropMaterializedView(ctx sessionctx.Context, stmt *ast.DropMaterializedViewStmt) error
+	DropMaterializedViewLog(ctx sessionctx.Context, stmt *ast.DropMaterializedViewLogStmt) error
+	AlterMaterializedView(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewStmt) error
+	AlterMaterializedViewLog(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewLogStmt) error
+	RefreshMaterializedView(ctx sessionctx.Context, stmt *ast.RefreshMaterializedViewStmt) error
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
 	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
@@ -1858,7 +1864,15 @@ func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
 	return false
 }
 
+func isMVTableAlterTiFlashReplica(tblInfo *model.TableInfo, specs []*ast.AlterTableSpec) bool {
+	return tblInfo.MaterializedView != nil && len(specs) == 1 && specs[0].Tp == ast.AlterTableSetTiFlashReplica
+}
+
 func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
+	return e.alterTable(ctx, sctx, stmt, false)
+}
+
+func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt, allowMaterializedViewRelated bool) (err error) {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	validSpecs, err := ResolveAlterTableSpec(sctx, stmt.Specs)
 	if err != nil {
@@ -1872,6 +1886,18 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 	}
 	if tb.Meta().IsView() || tb.Meta().IsSequence() {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
+	}
+	allowMVSetTiFlashReplica := isMVTableAlterTiFlashReplica(tb.Meta(), validSpecs)
+	if !allowMaterializedViewRelated {
+		if allowMVSetTiFlashReplica {
+			if err := checkTableMaterializedViewConstraintsAllowMVTable(tb.Meta(), "ALTER TABLE"); err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			if err := checkTableMaterializedViewConstraints(tb.Meta(), "ALTER TABLE"); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		if len(validSpecs) != 1 {
@@ -4270,6 +4296,7 @@ func (e *executor) dropTableObject(
 	objects []*ast.TableName,
 	ifExists bool,
 	tableObjectType objectType,
+	allowMaterializedViewRelated bool,
 ) error {
 	var (
 		notExistTables []string
@@ -4334,6 +4361,11 @@ func (e *executor) dropTableObject(
 				notExistTables = append(notExistTables, fullti.String())
 				continue
 			}
+			if !allowMaterializedViewRelated {
+				if err := checkTableMaterializedViewConstraints(tableInfo.Meta(), "DROP TABLE"); err != nil {
+					return errors.Trace(err)
+				}
+			}
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
@@ -4367,17 +4399,31 @@ func (e *executor) dropTableObject(
 			}
 		}
 
+		involvingSchemas := []model.InvolvingSchemaInfo{{
+			Database: schema.Name.L,
+			Table:    tableInfo.Meta().Name.L,
+		}}
+		if tableObjectType == tableObject && tableInfo.Meta().MaterializedViewLog != nil {
+			if baseTbl, ok := is.TableByID(e.ctx, tableInfo.Meta().MaterializedViewLog.BaseTableID); ok {
+				involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
+					Database: schema.Name.L,
+					Table:    baseTbl.Meta().Name.L,
+				})
+			}
+		}
+
 		job := &model.Job{
-			Version:        model.GetJobVerInUse(),
-			SchemaID:       schema.ID,
-			TableID:        tableInfo.Meta().ID,
-			SchemaName:     schema.Name.L,
-			SchemaState:    schema.State,
-			TableName:      tableInfo.Meta().Name.L,
-			Type:           jobType,
-			BinlogInfo:     &model.HistoryInfo{},
-			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-			SQLMode:        ctx.GetSessionVars().SQLMode,
+			Version:             model.GetJobVerInUse(),
+			SchemaID:            schema.ID,
+			TableID:             tableInfo.Meta().ID,
+			SchemaName:          schema.Name.L,
+			SchemaState:         schema.State,
+			TableName:           tableInfo.Meta().Name.L,
+			Type:                jobType,
+			BinlogInfo:          &model.HistoryInfo{},
+			InvolvingSchemaInfo: involvingSchemas,
+			CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+			SQLMode:             ctx.GetSessionVars().SQLMode,
 		}
 		args := &model.DropTableArgs{
 			Identifiers: objectIdents,
@@ -4417,12 +4463,12 @@ func (e *executor) dropTableObject(
 
 // DropTable will proceed even if some table in the list does not exists.
 func (e *executor) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject)
+	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject, false)
 }
 
 // DropView will proceed even if some view in the list does not exists.
 func (e *executor) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject)
+	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject, false)
 }
 
 func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
@@ -4433,6 +4479,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	tblInfo := tb.Meta()
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tblInfo.Name.O)
+	}
+	if err := checkTableMaterializedViewConstraints(tblInfo, "TRUNCATE TABLE"); err != nil {
+		return errors.Trace(err)
 	}
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
@@ -4476,6 +4525,25 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	return nil
 }
 
+func checkTableMaterializedViewConstraints(tblInfo *model.TableInfo, op string) error {
+	return checkTableMaterializedViewConstraintsWithOptions(tblInfo, op, false)
+}
+
+func checkTableMaterializedViewConstraintsAllowMVTable(tblInfo *model.TableInfo, op string) error {
+	return checkTableMaterializedViewConstraintsWithOptions(tblInfo, op, true)
+}
+
+func checkTableMaterializedViewConstraintsWithOptions(tblInfo *model.TableInfo, op string, allowMVTable bool) error {
+	if !allowMVTable && tblInfo.MaterializedView != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
+	}
+	if tblInfo.MaterializedViewBase != nil &&
+		len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on base table with materialized view dependencies", op))
+	}
+	return nil
+}
+
 func (e *executor) RenameTable(ctx sessionctx.Context, s *ast.RenameTableStmt) error {
 	isAlterTable := false
 	var err error
@@ -4510,6 +4578,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 	}
 
 	if tbl, ok := is.TableByID(e.ctx, tableID); ok {
+		if err := checkTableMaterializedViewConstraints(tbl.Meta(), "RENAME TABLE"); err != nil {
+			return errors.Trace(err)
+		}
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
@@ -4557,6 +4628,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		}
 
 		if t, ok := is.TableByID(e.ctx, tableID); ok {
+			if err := checkTableMaterializedViewConstraints(t.Meta(), "RENAME TABLE"); err != nil {
+				return errors.Trace(err)
+			}
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
 			}
@@ -5020,6 +5094,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := checkTableMaterializedViewConstraintsAllowMVTable(t.Meta(), "CREATE INDEX"); err != nil {
+		return errors.Trace(err)
+	}
 
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
@@ -5155,6 +5232,8 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				return err
 			}
 		}
+	case model.ActionCreateMaterializedView:
+		setReorgParam()
 	case model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
@@ -5466,6 +5545,9 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	t, err := is.TableByName(context.Background(), ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+	if err := checkTableMaterializedViewConstraintsAllowMVTable(t.Meta(), "DROP INDEX"); err != nil {
+		return errors.Trace(err)
 	}
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
@@ -6026,7 +6108,7 @@ func (e *executor) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequence
 }
 
 func (e *executor) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
-	return e.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject)
+	return e.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject, false)
 }
 
 func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName pmodel.CIStr, visibility ast.IndexVisibility) error {
@@ -7067,6 +7149,8 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
+	case model.ActionCreateMaterializedView:
+		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	default:
 		return getIntervalFromPolicy(normalDDLIntervalPolicy, i)
 	}

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,6 +109,16 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 
 	val, changed = getIntervalFromPolicy(policy, 3)
 	require.Equal(t, val, 2*time.Second)
+	require.False(t, changed)
+}
+
+func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
+	val, changed := getJobCheckInterval(model.ActionCreateMaterializedView, 0)
+	require.Equal(t, slowDDLIntervalPolicy[0], val)
+	require.True(t, changed)
+
+	val, changed = getJobCheckInterval(model.ActionCreateMaterializedView, len(slowDDLIntervalPolicy))
+	require.Equal(t, slowDDLIntervalPolicy[len(slowDDLIntervalPolicy)-1], val)
 	require.False(t, changed)
 }
 
@@ -554,12 +565,17 @@ func TestCheckHistoryJobStmtType(t *testing.T) {
 	}
 
 	createTableStmt := parseStmt("create table t (a int)")
+	createMViewStmt := parseStmt("create materialized view mv (a, c) as select a, count(1) from t group by a")
 	createMLogStmt := parseStmt("create materialized view log on t (a)")
 	createDBStmt := parseStmt("create database test")
 	createPolicyStmt := parseStmt("create placement policy p followers=1")
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateTable, createTableStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMLogStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMViewStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createMViewStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createTableStmt))
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createMLogStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createTableStmt))
@@ -572,4 +588,18 @@ func TestCheckHistoryJobStmtType(t *testing.T) {
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateTables, createTableStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateTables, createMLogStmt))
+}
+
+func TestBuildCreateMaterializedViewImportSQLNoAsOfTimestamp(t *testing.T) {
+	mvTblInfo := &model.TableInfo{
+		Name: pmodel.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo)
+	require.NoError(t, err)
+	require.Contains(t, sql, "IMPORT INTO `test`.`mv` FROM (")
+	require.Contains(t, sql, "WITH disable_precheck")
+	require.NotContains(t, strings.ToUpper(sql), "AS OF TIMESTAMP")
 }
