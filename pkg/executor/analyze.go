@@ -66,6 +66,10 @@ type AnalyzeExec struct {
 	gp         *gp.Pool
 	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
 	errExitCh chan struct{}
+	// globalSampleCollectors accumulates per-partition sample collectors keyed by table ID
+	// for building global stats from merged samples. Only populated when
+	// tidb_enable_sample_based_global_stats is enabled.
+	globalSampleCollectors map[int64]*statistics.ReservoirRowSampleCollector
 }
 
 var (
@@ -138,6 +142,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]statstypes.GlobalStatsInfo)
+	if needGlobalStats && sessionVars.EnableSampleBasedGlobalStats {
+		e.globalSampleCollectors = make(map[int64]*statistics.ReservoirRowSampleCollector)
+	}
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return e.handleResultsError(buildStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
@@ -479,6 +486,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		e.mergePartitionSamplesForGlobal(results)
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		saveResultsCh <- results
 	}
@@ -609,6 +617,31 @@ func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, an
 				zap.String("sample rate reason", job.SampleRateReason))
 		}
 	}
+}
+
+// mergePartitionSamplesForGlobal incrementally merges per-partition sample collectors into
+// the global sample collector for sample-based global stats. Only operates when the feature
+// is enabled and results carry a RowCollector.
+func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.AnalyzeResults) {
+	if e.globalSampleCollectors == nil || results.RowCollector == nil || !results.TableID.IsPartitionTable() {
+		return
+	}
+	tableID := results.TableID.TableID
+	globalCollector, ok := e.globalSampleCollectors[tableID]
+	if !ok {
+		// First partition for this table — adopt its collector as the global one.
+		rc, isReservoir := results.RowCollector.(*statistics.ReservoirRowSampleCollector)
+		if !isReservoir {
+			return
+		}
+		e.globalSampleCollectors[tableID] = rc
+		results.RowCollector = nil
+		return
+	}
+	// Merge subsequent partitions into the existing global collector.
+	globalCollector.MergeCollector(results.RowCollector)
+	results.RowCollector.DestroyAndPutToPool()
+	results.RowCollector = nil
 }
 
 func handleGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, results *statistics.AnalyzeResults) {

@@ -20,8 +20,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -65,6 +67,16 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 						globalOpts = v2Options.FilledOpts
 					}
 				}
+
+				// Try sample-based path first.
+				if gs, err := e.buildGlobalStatsFromSamples(statsHandle, globalStatsID, &info, globalOpts); err != nil {
+					logutil.ErrVerboseLogger().Warn("build sample-based global stats failed, falling back to merge",
+						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
+				} else if gs != nil {
+					return globalstats.WriteGlobalStatsToStorage(statsHandle, gs, &info, globalStatsID.tableID)
+				}
+
+				// Fallback to existing merge-based path.
 				err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
@@ -89,6 +101,40 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 	}
 
 	return nil
+}
+
+// buildGlobalStatsFromSamples attempts to build global stats from the accumulated
+// sample collector. Returns (nil, nil) if sample-based path is not available for
+// this particular stats entry, signaling the caller to fall back.
+func (e *AnalyzeExec) buildGlobalStatsFromSamples(
+	statsHandle *handle.Handle,
+	key globalStatsKey,
+	info *statstypes.GlobalStatsInfo,
+	opts map[ast.AnalyzeOptionType]uint64,
+) (*globalstats.GlobalStats, error) {
+	if e.globalSampleCollectors == nil {
+		return nil, nil
+	}
+	collector, ok := e.globalSampleCollectors[key.tableID]
+	if !ok || collector == nil || collector.Base().Count == 0 {
+		return nil, nil
+	}
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	table, ok := is.TableByID(context.Background(), key.tableID)
+	if !ok {
+		return nil, nil
+	}
+	tableInfo := table.Meta()
+
+	colsInfo := tableInfo.Columns
+	indexes := tableInfo.Indices
+
+	isIndex := info.IsIndex == 1
+	return globalstats.BuildGlobalStatsFromSamples(
+		e.Ctx(), collector, tableInfo, opts,
+		colsInfo, indexes, info.HistIDs, isIndex,
+	)
 }
 
 func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statistics.AnalyzeJob {

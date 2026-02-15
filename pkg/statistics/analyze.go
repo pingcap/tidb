@@ -121,11 +121,20 @@ type AnalyzeResults struct {
 	// The global index has only one key range, so an independent task is used to process it.
 	// Global index needs to update only the version at the table-level fields, just like mv index.
 	ForMVIndexOrGlobalIndex bool
+
+	// RowCollector carries the raw sample collector for sample-based global stats.
+	// Only populated when tidb_enable_sample_based_global_stats is enabled and the
+	// analyze version is 2. Nil otherwise to avoid memory overhead.
+	RowCollector RowSampleCollector
 }
 
 // DestroyAndPutToPool destroys the result and put it to the pool.
 func (a *AnalyzeResults) DestroyAndPutToPool() {
 	for _, f := range a.Ars {
 		f.DestroyAndPutToPool()
+	}
+	if a.RowCollector != nil {
+		a.RowCollector.DestroyAndPutToPool()
+		a.RowCollector = nil
 	}
 }
