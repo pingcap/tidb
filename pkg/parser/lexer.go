@@ -46,9 +46,6 @@ type Scanner struct {
 	warns        []error
 	stmtStartPos int
 
-	// lastTok records the previous token returned by Lex (including punctuations).
-	lastTok int
-
 	// inBangComment is true if we are inside a `/*! ... */` block.
 	// It is used to ignore a stray `*/` when scanning.
 	inBangComment bool
@@ -102,7 +99,6 @@ func (s *Scanner) reset(sql string) {
 	s.errs = s.errs[:0]
 	s.warns = s.warns[:0]
 	s.stmtStartPos = 0
-	s.lastTok = 0
 	s.inBangComment = false
 	s.lastKeyword = 0
 	s.identifierDot = false
@@ -231,10 +227,6 @@ func (s *Scanner) getNextTwoTokens() (tok1 int, tok2 int) {
 // return 0 tells parser that scanner meets EOF,
 // return invalid tells parser that scanner meets illegal character.
 func (s *Scanner) Lex(v *yySymType) (tok int) {
-	defer func() {
-		s.lastTok = tok
-	}()
-
 	var pos Pos
 	var lit string
 	tok, pos, lit = s.scan()
@@ -256,23 +248,17 @@ func (s *Scanner) Lex(v *yySymType) (tok int) {
 
 	// `FULL OUTER JOIN` needs special handling because `FULL` is an unreserved keyword,
 	// and it can also be used as a table alias / identifier (e.g. `t AS full` or `FROM full`).
-	// If we rely on grammar only, `t1 full outer join t2` would be reduced as
-	// `t1 AS full` first, and then fail to parse at `OUTER`. To avoid the ambiguity, the
-	// lexer returns a dedicated token `fullJoinType` when `FULL` is followed by
-	// `OUTER JOIN` in a join operator position.
+	// If we rely on grammar only, `t1 full outer join t2` would be reduced as `t1 AS full`
+	// first, and then fail to parse at `OUTER`. To avoid the ambiguity, the lexer returns
+	// a dedicated token `fullJoinType` when `FULL` is followed by `OUTER JOIN`.
 	//
 	// Note: we intentionally do NOT treat `FULL JOIN` as a shorthand for `FULL OUTER JOIN`,
 	// so `t1 full join t2` will keep the MySQL-compatible meaning: `t1 AS full JOIN t2`.
 	if tok == full {
 		tok1, tok2 := s.getNextTwoTokens()
 		if tok1 == outer && tok2 == join {
-			switch s.lastTok {
-			case as, from, join, update, ',', '(', '.':
-				// Treat as identifier / table name / alias.
-			default:
-				tok = fullJoinType
-				s.lastKeyword = fullJoinType
-			}
+			tok = fullJoinType
+			s.lastKeyword = fullJoinType
 		}
 	}
 
