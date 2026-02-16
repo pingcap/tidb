@@ -1988,7 +1988,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where g = 5 order by f",
-			result: "g",
+			result: "PRIMARY_KEY,g,f_g",
 		},
 		{
 			sql:    "select * from t where d = 3 order by c, e",

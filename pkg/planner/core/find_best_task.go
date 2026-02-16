@@ -1648,10 +1648,12 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 					hasRangeScanPath = true
 				} else {
 					// hasEquals can be an expensive check - moved below other checks
+					// Don't set hasRangeScanPath however - so that plans with equals/IN predicates
+					// suvive. If an equals/IN plan matched a sort property or didn't require a sort
+					// it would already have triggered hasRangeScanPath above.
 					hasEquals := c.equalPredicateCount() > 0
 					if hasEquals {
 						preferredPaths = append(preferredPaths, c)
-						hasRangeScanPath = true
 					}
 				}
 			}
