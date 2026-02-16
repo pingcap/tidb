@@ -196,6 +196,7 @@
           "    └─IndexMerge 3.00 root partition:all type: intersection",
           "      ├─IndexRangeScan(Build) 6.00 cop[tikv] table:t1, index:ia(a) range:(10,+inf], keep order:false",
           "      ├─IndexRangeScan(Build) 4.00 cop[tikv] table:t1, index:ibc(b, c) range: decided by [eq(test.t1.b, 20) eq(test.t1.c, test.t2.a)], keep order:false",
+          "      ├─IndexRangeScan(Build) 4.00 cop[tikv] table:t1, index:ic(c) range: decided by [eq(test.t1.c, test.t2.a)], keep order:false",
           "      └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
