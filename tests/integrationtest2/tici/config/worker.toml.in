@@ -15,7 +15,7 @@
 [server]
 pd-addr = "${PD_ADDR}"
 
-[stroage]
+[storage]
 data = "./data/tici-worker"
 
 [s3]

@@ -1722,7 +1722,9 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 
 			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			checkAndMarkNonRevertible(job)
-		case model.AnalyzeStateRunning:
+		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
+			// AnalyzeStateSkipped may come from older owners before this branch
+			// was split; run FinishIndexUpload once for compatibility.
 			taskID := strconv.FormatInt(job.ID, 10)
 			// FinishIndexUpload should run after the reorg ingest
 			// completes using the lightweight helper
@@ -1732,7 +1734,7 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 			}
 			job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 			checkAndMarkNonRevertible(job)
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+		case model.AnalyzeStateDone, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			var done bool
 			if done, err = tici.CheckAddIndexProgress(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexInfo.ID); err != nil {
 				logutil.DDLLogger().Warn("[ddl] check TiCI fulltext index progress failed",
@@ -1909,7 +1911,9 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 
 			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			checkAndMarkNonRevertible(job)
-		case model.AnalyzeStateRunning:
+		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
+			// AnalyzeStateSkipped may come from older owners before this branch
+			// was split; run FinishIndexUpload once for compatibility.
 			taskID := strconv.FormatInt(job.ID, 10)
 			// FinishIndexUpload should run after the reorg ingest
 			// completes using the lightweight helper
@@ -1919,8 +1923,7 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 			}
 			job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 			checkAndMarkNonRevertible(job)
-		// why match matchAnalyzeStateTimeout and not match model.AnalyzeStateRunning?
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+		case model.AnalyzeStateDone, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			var done bool
 			if done, err = tici.CheckAddIndexProgress(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexInfo.ID); err != nil {
 				logutil.DDLLogger().Warn("[ddl] check TiCI hybrid index progress failed",
@@ -1989,7 +1992,7 @@ func ensureHybridIndexReorgMeta(job *model.Job) error {
 	return nil
 }
 
-const ticiAddIndexProgressPollInterval = 500 * time.Millisecond
+const ticiAddIndexProgressPollInterval = 2 * time.Second
 
 func waitTiCIAddIndexProgressPoll(ctx context.Context) error {
 	timer := time.NewTimer(ticiAddIndexProgressPollInterval)

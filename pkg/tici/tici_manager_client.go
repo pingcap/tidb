@@ -44,6 +44,14 @@ var (
 	newManagerCtxFunc = NewManagerCtx
 )
 
+type addIndexProgressLogKey struct {
+	keyspaceID uint32
+	tableID    int64
+	indexID    int64
+}
+
+var addIndexProgressLogState sync.Map // map[addIndexProgressLogKey]GetIndexProgressResponse_State
+
 var mockTiCICreateIndexRequest atomic.Value // stores []byte of CreateIndexRequest for tests.
 
 // GetMockTiCICreateIndexRequest returns the marshaled CreateIndexRequest bytes captured by the
@@ -514,14 +522,11 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 	if err != nil {
 		return false, err
 	}
-	logutil.BgLogger().Info("GetIndexProgress response",
-		zap.Int64("tableID", tableID),
-		zap.Int64("indexID", indexID),
-		zap.Int32("statusCode", int32(resp.Status)),
-		zap.String("status", resp.Status.String()),
-		zap.Int32("stateCode", int32(resp.State)),
-		zap.String("state", resp.State.String()),
-		zap.String("errorMessage", resp.ErrorMessage))
+	logGetIndexProgressResponse(addIndexProgressLogKey{
+		keyspaceID: t.getKeyspaceID(),
+		tableID:    tableID,
+		indexID:    indexID,
+	}, resp)
 	// State is the source of truth for GetIndexProgress.
 	// Some TiCI implementations may only return state and omit status/error_message.
 	switch resp.State {
@@ -581,6 +586,35 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 	}
 }
 
+func logGetIndexProgressResponse(key addIndexProgressLogKey, resp *GetIndexProgressResponse) {
+	if resp == nil {
+		return
+	}
+	terminal := resp.State == GetIndexProgressResponse_COMPLETED ||
+		resp.State == GetIndexProgressResponse_FAILED ||
+		resp.State == GetIndexProgressResponse_ERROR
+	if terminal {
+		addIndexProgressLogState.Delete(key)
+	} else {
+		prev, loaded := addIndexProgressLogState.Load(key)
+		if loaded {
+			if prevState, ok := prev.(GetIndexProgressResponse_State); ok && prevState == resp.State {
+				return
+			}
+		}
+		addIndexProgressLogState.Store(key, resp.State)
+	}
+	logutil.BgLogger().Info("GetIndexProgress response",
+		zap.Int64("tableID", key.tableID),
+		zap.Int64("indexID", key.indexID),
+		zap.Uint32("keyspaceID", key.keyspaceID),
+		zap.Int32("statusCode", int32(resp.Status)),
+		zap.String("status", resp.Status.String()),
+		zap.Int32("stateCode", int32(resp.State)),
+		zap.String("state", resp.State.String()),
+		zap.String("errorMessage", resp.ErrorMessage))
+}
+
 func maybeMockFinishIndexUpload(tidbTaskID string) (bool, error) {
 	var (
 		handled bool
@@ -629,6 +663,15 @@ func maybeMockCheckAddIndexProgress(tableID, indexID int64) (handled bool, ready
 			zap.Bool("ready", ready))
 	})
 	return handled, ready, err
+}
+
+func closeEtcdClient(etcdClient *clientv3.Client) {
+	if etcdClient == nil || etcdClient.ActiveConnection() == nil {
+		return
+	}
+	if err := etcdClient.Close(); err != nil {
+		logutil.BgLogger().Warn("close TiCI etcd client failed", zap.Error(err))
+	}
 }
 
 // AbortIndexUpload notifies TiCI that the job has failed and the related TiCI job should be aborted.
@@ -816,6 +859,7 @@ func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.T
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
+	defer closeEtcdClient(etcdClient)
 	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
@@ -842,6 +886,7 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
+	defer closeEtcdClient(etcdClient)
 	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
@@ -868,6 +913,7 @@ func FinishIndexUpload(ctx context.Context, store kv.Storage, tidbTaskID string)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
+	defer closeEtcdClient(etcdClient)
 	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
@@ -893,6 +939,7 @@ func CheckAddIndexProgress(ctx context.Context, store kv.Storage, tableID, index
 	if err != nil {
 		return false, dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
+	defer closeEtcdClient(etcdClient)
 	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
 	if err != nil {
 		return false, dbterror.ErrInvalidDDLJob.FastGenByArgs(err)

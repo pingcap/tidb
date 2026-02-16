@@ -2188,7 +2188,56 @@ func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 		"inverted": {"columns": ["col2"]},
 		"sort": {"columns": ["col1"]},
 		"sharding_key": {"columns": ["col1", "col4"]}
-	}'`)
+		}'`)
+}
+
+func TestHybridIndexCheckAddIndexProgressTransition(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `1*return(false)->return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(col1 int, col2 text, col3 int, col4 int)")
+	tk.MustExec("insert into t values (1, 'a', 2, 3)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	createHybridIndexSQL := `create hybrid index idx_progress on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
+		"sharding_key": {"columns": ["col1", "col4"]}
+	}'`
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- tk.ExecToErr(createHybridIndexSQL)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case err := <-doneCh:
+			doneCh <- err
+			return false
+		default:
+		}
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		if err != nil {
+			return false
+		}
+		idx := tbl.Meta().FindIndexByName("idx_progress")
+		return idx != nil && idx.State != model.StatePublic
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, <-doneCh)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("idx_progress")
+	require.NotNil(t, idx)
+	require.Equal(t, model.StatePublic, idx.State)
 }
 
 func TestUniqueTiCIHybridIndexRejected(t *testing.T) {
