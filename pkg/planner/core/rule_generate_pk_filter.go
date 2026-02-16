@@ -138,8 +138,28 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource, underLim
 		return false, nil
 	}
 
-	// Inject conditions into DataSource's PushedDownConds
+	// Ensure the PK column is in the DataSource's schema. It may have been
+	// pruned (ColumnPruner runs before this rule) if the query doesn't
+	// reference the PK column. The new ge/le conditions reference it, so
+	// it must be present for resolveIndices during physical plan building.
+	schema := ds.Schema()
+	idx := schema.ColumnIndex(pkCol)
+	if idx == -1 {
+		schema.Append(pkCol.Clone().(*expression.Column))
+		for _, colInfo := range ds.TableInfo.Columns {
+			if colInfo.ID == pkCol.ID {
+				ds.Columns = append(ds.Columns, colInfo)
+				break
+			}
+		}
+	}
+
+	// Inject conditions into DataSource's PushedDownConds and AllConds.
+	// AllConds must also be updated because a second ColumnPruner pass runs
+	// after this rule (see optRuleList in optimizer.go). PruneColumns uses
+	// AllConds to determine which columns to protect from pruning.
 	ds.PushedDownConds = append(ds.PushedDownConds, newConds...)
+	ds.AllConds = append(ds.AllConds, newConds...)
 	return true, nil
 }
 
@@ -322,8 +342,8 @@ func buildPKFilterConditions(ctx context.Context, ds *logicalop.DataSource, idxP
 func buildMinMaxScalarSubQuery(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, eqConds []expression.Expression, aggFuncName string) (expression.Expression, error) {
 	sctx := ds.SCtx()
 
-	// Clone the DataSource
-	clonedDS := cloneDataSourceForPKFilter(ds, idxPath, eqConds)
+	// Clone the DataSource, ensuring the PK column is in the schema
+	clonedDS := cloneDataSourceForPKFilter(ds, idxPath, pkCol, eqConds)
 
 	// Build the aggregation function
 	aggFunc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), aggFuncName, []expression.Expression{pkCol.Clone()}, false)
@@ -380,13 +400,28 @@ func buildMinMaxScalarSubQuery(ctx context.Context, ds *logicalop.DataSource, id
 }
 
 // cloneDataSourceForPKFilter creates a clone of the DataSource with only the
-// qualifying equality conditions and a specific index path.
-func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPath, eqConds []expression.Expression) *logicalop.DataSource {
+// qualifying equality conditions and a specific index path. It ensures the
+// PK column is present in the schema (it may have been pruned from the
+// original DataSource if the query doesn't reference it).
+func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, eqConds []expression.Expression) *logicalop.DataSource {
 	newDs := *ds
 	newDs.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ds.SCtx(), ds.TP(), &newDs, ds.QueryBlockOffset())
-	newDs.SetSchema(ds.Schema().Clone())
+	schema := ds.Schema().Clone()
 	newDs.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(newDs.Columns, ds.Columns)
+
+	// Ensure the PK column is in the schema (it may have been pruned)
+	if schema.ColumnIndex(pkCol) == -1 {
+		schema.Append(pkCol.Clone().(*expression.Column))
+		// Also add the corresponding ColumnInfo
+		for _, colInfo := range ds.TableInfo.Columns {
+			if colInfo.ID == pkCol.ID {
+				newDs.Columns = append(newDs.Columns, colInfo)
+				break
+			}
+		}
+	}
+	newDs.SetSchema(schema)
 
 	// Use only the equality conditions for the index
 	newConds := make([]expression.Expression, len(eqConds))
