@@ -108,9 +108,9 @@
       {
         "Query": "explain format = brief select * from tp where b = 10",
         "Result": [
-          "TableReader 4.80 root partition:all data:Selection",
-          "└─Selection 4.80 cop[tikv]  eq(test.tp.b, 10)",
-          "  └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[ic:unInitialized, b:unInitialized]"
+          "TableReader 0.01 root partition:all data:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test.tp.b, 10)",
+          "  └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:pseudo"
         ]
       },
       {
@@ -122,13 +122,13 @@
         ]
       },
       {
-        "Query": "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
+        "Query": "explain format = brief select /*+ INL_JOIN(t, tp) */ * from t join tp where tp.a = 10 and t.b = tp.c",
         "Result": [
           "Projection 1.00 root  test.t.a, test.t.b, test.t.c, test.tp.a, test.tp.b, test.tp.c",
           "└─IndexJoin 1.00 root  inner join, inner:IndexLookUp, outer key:test.tp.c, inner key:test.t.b, equal cond:eq(test.tp.c, test.t.b)",
           "  ├─TableReader(Build) 1.00 root partition:p1 data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  eq(test.tp.a, 10), not(isnull(test.tp.c))",
-          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false",
+          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[ic:unInitialized, c:unInitialized]",
           "  └─IndexLookUp(Probe) 1.00 root  ",
           "    ├─Selection(Build) 1.00 cop[tikv]  not(isnull(test.t.b))",
           "    │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:idx(b) range: decided by [eq(test.t.b, test.tp.c)], keep order:false, stats:partial[idx:allEvicted, b:allEvicted]",
@@ -136,7 +136,7 @@
         ]
       },
       {
-        "Query": "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
+        "Query": "explain format = brief select /*+ HASH_JOIN(t, tp) */ * from t join tp where tp.a = 10 and t.b = tp.c",
         "Result": [
           "Projection 1.00 root  test.t.a, test.t.b, test.t.c, test.tp.a, test.tp.b, test.tp.c",
           "└─HashJoin 1.00 root  inner join, equal:[eq(test.tp.c, test.t.b)]",

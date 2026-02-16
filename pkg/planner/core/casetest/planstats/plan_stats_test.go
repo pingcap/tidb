@@ -614,8 +614,11 @@ func TestPartialStatsInExplain(t *testing.T) {
 		testKit.MustExec("analyze table t2")
 		testKit.MustExec("analyze table tp all columns")
 		testKit.RequireNoError(dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
-		testKit.MustQuery("explain select * from tp where a = 1")
+		// Set sync_wait=0 *before* any warmup queries so they don't pre-load stats.
+		// This ensures deterministic partial->full stats transitions in the loop below.
 		testKit.MustExec("set @@tidb_stats_load_sync_wait = 0")
+		// Warmup: trigger stats init for tp without loading column histograms.
+		testKit.MustQuery("explain select * from tp where a = 1")
 		var (
 			input  []string
 			output []struct {
