@@ -9,6 +9,10 @@ go_test(
     ],
     embed = [":globalkilltest"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 11,
+>>>>>>> 579d0c569dd (server: fix `kill query` incorrectly killing idle connections (#65464))
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",
