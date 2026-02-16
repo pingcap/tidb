@@ -1639,21 +1639,20 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
-			// A full-range path that matches the ORDER BY provides a sorting benefit
-			// independent of row filtering; keep it so the cost model can compare it
-			// against range-scan paths (but do not count it as a range scan itself).
-			if c.path.IsFullRange && c.matchPropResult.Matched() {
-				preferredPaths = append(preferredPaths, c)
-				continue
-			}
 			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 			if !c.path.IsFullRange {
-				orderedPlan := (c.matchPropResult.Matched() && (len(c.path.TableFilters) == 0 ||
-					len(c.path.TableFilters) < len(c.path.IndexFilters)+len(c.path.AccessConds)))
-				if preferMerge || c.path.IsSingleScan || orderedPlan ||
-					c.equalPredicateCount() > 0 {
+				indexFilters := len(c.path.TableFilters) < len(c.path.AccessConds)+len(c.path.IndexFilters)
+				noSortPlan := (prop.IsSortItemEmpty() || c.matchPropResult.Matched())
+				if preferMerge || ((c.path.IsSingleScan || indexFilters) && noSortPlan) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
+				} else {
+					// hasEquals can be an expensive check - moved below other checks
+					hasEquals := c.equalPredicateCount() > 0
+					if hasEquals {
+						preferredPaths = append(preferredPaths, c)
+						hasRangeScanPath = true
+					}
 				}
 			}
 		}
