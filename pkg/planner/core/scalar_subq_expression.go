@@ -117,38 +117,73 @@ func (s *ScalarSubQueryExpr) Eval(_ expression.EvalContext, _ chunk.Row) (types.
 }
 
 // EvalInt returns the int64 representation of expression.
-func (*ScalarSubQueryExpr) EvalInt(_ expression.EvalContext, _ chunk.Row) (val int64, isNull bool, err error) {
-	return 0, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
+func (s *ScalarSubQueryExpr) EvalInt(ctx expression.EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return 0, false, err
+		}
+	}
+	return s.Constant.EvalInt(ctx, row)
 }
 
 // EvalReal returns the float64 representation of expression.
-func (*ScalarSubQueryExpr) EvalReal(_ expression.EvalContext, _ chunk.Row) (val float64, isNull bool, err error) {
-	return 0, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
+func (s *ScalarSubQueryExpr) EvalReal(ctx expression.EvalContext, row chunk.Row) (val float64, isNull bool, err error) {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return 0, false, err
+		}
+	}
+	return s.Constant.EvalReal(ctx, row)
 }
 
 // EvalString returns the string representation of expression.
-func (*ScalarSubQueryExpr) EvalString(_ expression.EvalContext, _ chunk.Row) (val string, isNull bool, err error) {
-	return "", false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
+func (s *ScalarSubQueryExpr) EvalString(ctx expression.EvalContext, row chunk.Row) (val string, isNull bool, err error) {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return "", false, err
+		}
+	}
+	return s.Constant.EvalString(ctx, row)
 }
 
 // EvalDecimal returns the decimal representation of expression.
-func (*ScalarSubQueryExpr) EvalDecimal(_ expression.EvalContext, _ chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
-	return nil, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
+func (s *ScalarSubQueryExpr) EvalDecimal(ctx expression.EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return nil, false, err
+		}
+	}
+	return s.Constant.EvalDecimal(ctx, row)
 }
 
 // EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-func (*ScalarSubQueryExpr) EvalTime(_ expression.EvalContext, _ chunk.Row) (val types.Time, isNull bool, err error) {
-	return types.ZeroTime, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
+func (s *ScalarSubQueryExpr) EvalTime(ctx expression.EvalContext, row chunk.Row) (val types.Time, isNull bool, err error) {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return types.ZeroTime, false, err
+		}
+	}
+	return s.Constant.EvalTime(ctx, row)
 }
 
 // EvalDuration returns the duration representation of expression.
-func (*ScalarSubQueryExpr) EvalDuration(_ expression.EvalContext, _ chunk.Row) (val types.Duration, isNull bool, err error) {
-	return types.ZeroDuration, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
+func (s *ScalarSubQueryExpr) EvalDuration(ctx expression.EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error) {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return types.ZeroDuration, false, err
+		}
+	}
+	return s.Constant.EvalDuration(ctx, row)
 }
 
 // EvalJSON returns the JSON representation of expression.
-func (*ScalarSubQueryExpr) EvalJSON(_ expression.EvalContext, _ chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
-	return types.BinaryJSON{}, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
+func (s *ScalarSubQueryExpr) EvalJSON(ctx expression.EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return types.BinaryJSON{}, false, err
+		}
+	}
+	return s.Constant.EvalJSON(ctx, row)
 }
 
 // GetType implements the Expression interface.
@@ -269,38 +304,73 @@ func (s *ScalarSubQueryExpr) String() string {
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
-func (*ScalarSubQueryExpr) VecEvalInt(_ expression.EvalContext, _ *chunk.Chunk, _ *chunk.Column) error {
-	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
+func (s *ScalarSubQueryExpr) VecEvalInt(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return err
+		}
+	}
+	return s.Constant.VecEvalInt(ctx, input, result)
 }
 
 // VecEvalReal evaluates this expression in a vectorized manner.
-func (*ScalarSubQueryExpr) VecEvalReal(_ expression.EvalContext, _ *chunk.Chunk, _ *chunk.Column) error {
-	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
+func (s *ScalarSubQueryExpr) VecEvalReal(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return err
+		}
+	}
+	return s.Constant.VecEvalReal(ctx, input, result)
 }
 
 // VecEvalString evaluates this expression in a vectorized manner.
-func (*ScalarSubQueryExpr) VecEvalString(_ expression.EvalContext, _ *chunk.Chunk, _ *chunk.Column) error {
-	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
+func (s *ScalarSubQueryExpr) VecEvalString(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return err
+		}
+	}
+	return s.Constant.VecEvalString(ctx, input, result)
 }
 
 // VecEvalDecimal evaluates this expression in a vectorized manner.
-func (*ScalarSubQueryExpr) VecEvalDecimal(_ expression.EvalContext, _ *chunk.Chunk, _ *chunk.Column) error {
-	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
+func (s *ScalarSubQueryExpr) VecEvalDecimal(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return err
+		}
+	}
+	return s.Constant.VecEvalDecimal(ctx, input, result)
 }
 
 // VecEvalTime evaluates this expression in a vectorized manner.
-func (*ScalarSubQueryExpr) VecEvalTime(_ expression.EvalContext, _ *chunk.Chunk, _ *chunk.Column) error {
-	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
+func (s *ScalarSubQueryExpr) VecEvalTime(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return err
+		}
+	}
+	return s.Constant.VecEvalTime(ctx, input, result)
 }
 
 // VecEvalDuration evaluates this expression in a vectorized manner.
-func (*ScalarSubQueryExpr) VecEvalDuration(_ expression.EvalContext, _ *chunk.Chunk, _ *chunk.Column) error {
-	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
+func (s *ScalarSubQueryExpr) VecEvalDuration(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return err
+		}
+	}
+	return s.Constant.VecEvalDuration(ctx, input, result)
 }
 
 // VecEvalJSON evaluates this expression in a vectorized manner.
-func (*ScalarSubQueryExpr) VecEvalJSON(_ expression.EvalContext, _ *chunk.Chunk, _ *chunk.Column) error {
-	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
+func (s *ScalarSubQueryExpr) VecEvalJSON(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if !s.evaled {
+		if err := s.selfEvaluate(); err != nil {
+			return err
+		}
+	}
+	return s.Constant.VecEvalJSON(ctx, input, result)
 }
 
 // Vectorized returns whether the expression can be vectorized.
