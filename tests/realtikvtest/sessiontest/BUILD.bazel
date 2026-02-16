@@ -11,6 +11,10 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
+=======
+    shard_count = 16,
+>>>>>>> 7784a4dd6f5 (exexcutor: correct timestamp used in infoschema reader (#63696))
     deps = [
         "//pkg/config",
         "//pkg/infoschema",
