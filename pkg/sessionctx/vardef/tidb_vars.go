@@ -1688,7 +1688,7 @@ const (
 	DefTiDBOptPrefixIndexSingleScan                   = true
 	DefTiDBOptPartialOrderedIndexForTopN              = "DISABLE"
 	DefTiDBEnableAsyncMergeGlobalStats                = true
-	DefTiDBEnableSampleBasedGlobalStats               = false
+	DefTiDBEnableSampleBasedGlobalStats               = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
 	DefTiDBEnableReusechunk                           = true
