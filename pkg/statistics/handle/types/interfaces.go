@@ -439,6 +439,10 @@ type StatsReadWriter interface {
 
 	// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
 	SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error)
+
+	// SavePartitionSamples persists a pruned sample collector for a single
+	// partition into mysql.stats_samples.
+	SavePartitionSamples(tableID, partitionID int64, version uint64, collector *statistics.ReservoirRowSampleCollector) error
 }
 
 // NeededItemTask represents one needed column/indices with expire time.

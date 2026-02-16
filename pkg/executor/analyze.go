@@ -70,6 +70,9 @@ type AnalyzeExec struct {
 	// for building global stats from merged samples. Only populated when
 	// tidb_enable_sample_based_global_stats is enabled.
 	globalSampleCollectors map[int64]*statistics.ReservoirRowSampleCollector
+	// samplePruner computes the target sample count for each partition when
+	// persisting pruned samples. Nil when sample-based global stats is disabled.
+	samplePruner *statistics.SamplePruner
 }
 
 var (
@@ -144,6 +147,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	globalStatsMap := make(map[globalStatsKey]statstypes.GlobalStatsInfo)
 	if needGlobalStats && sessionVars.EnableSampleBasedGlobalStats {
 		e.globalSampleCollectors = make(map[int64]*statistics.ReservoirRowSampleCollector)
+		e.samplePruner = statistics.NewSamplePruner(countPartitionTasks(tasks), statistics.DefaultSampleBudget)
 	}
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -494,6 +498,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		e.savePartitionSamples(results)
 		e.mergePartitionSamplesForGlobal(results)
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		saveResultsCh <- results
@@ -650,6 +655,47 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 	globalCollector.MergeCollector(results.RowCollector)
 	results.RowCollector.DestroyAndPutToPool()
 	results.RowCollector = nil
+}
+
+// countPartitionTasks counts distinct partition tasks (tasks whose TableID
+// indicates a partitioned table).
+func countPartitionTasks(tasks []*analyzeTask) int {
+	seen := make(map[int64]struct{})
+	for _, task := range tasks {
+		tid := getTableIDFromTask(task)
+		if tid.IsPartitionTable() {
+			seen[tid.PartitionID] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+// savePartitionSamples prunes the partition's sample collector and persists it
+// to mysql.stats_samples for future incremental global stats rebuilds.
+func (e *AnalyzeExec) savePartitionSamples(results *statistics.AnalyzeResults) {
+	if e.samplePruner == nil || results.RowCollector == nil || !results.TableID.IsPartitionTable() {
+		return
+	}
+	rc, ok := results.RowCollector.(*statistics.ReservoirRowSampleCollector)
+	if !ok {
+		return
+	}
+
+	targetSize := e.samplePruner.PruneCount(rc.Base().Count)
+	pruned := rc.PruneTo(targetSize)
+	e.samplePruner.Observe(rc.Base().Count)
+
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	if err := statsHandle.SavePartitionSamples(
+		results.TableID.TableID, results.TableID.PartitionID, results.Snapshot, pruned,
+	); err != nil {
+		statslogutil.StatsErrVerboseLogger().Warn("failed to save partition samples",
+			zap.Int64("tableID", results.TableID.TableID),
+			zap.Int64("partitionID", results.TableID.PartitionID),
+			zap.Error(err),
+		)
+	}
+	pruned.DestroyAndPutToPool()
 }
 
 func handleGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, results *statistics.AnalyzeResults) {
