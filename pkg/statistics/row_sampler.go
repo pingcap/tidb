@@ -404,6 +404,20 @@ func (s *ReservoirRowSampleCollector) DestroyAndPutToPool() {
 // current samples through sampleZippedRow with a smaller MaxSampleSize. This is
 // correct A-Res sub-sampling: the highest-weight items survive.
 func (s *ReservoirRowSampleCollector) PruneTo(targetSize int) *ReservoirRowSampleCollector {
+	if targetSize <= 0 {
+		totalLen := 0
+		if len(s.FMSketches) > 0 {
+			totalLen = len(s.FMSketches)
+		} else if len(s.NullCount) > 0 {
+			totalLen = len(s.NullCount)
+		}
+		empty := NewReservoirRowSampleCollector(0, totalLen)
+		empty.Count = s.Count
+		empty.NullCount = s.NullCount
+		empty.FMSketches = s.FMSketches
+		empty.TotalSizes = s.TotalSizes
+		return empty
+	}
 	if targetSize >= len(s.Samples) {
 		// No pruning needed; shallow-clone with a copy of the sample slice.
 		cloned := &ReservoirRowSampleCollector{

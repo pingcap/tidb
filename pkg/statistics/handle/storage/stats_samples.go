@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -60,8 +61,13 @@ func LoadSampleCollectorsFromStorage(
 		sql = "SELECT partition_id, sample_data, max_sample_size FROM mysql.stats_samples WHERE table_id = %?"
 		args = []any{tableID}
 	} else {
+		// Convert int64 IDs to strings for the %? SQL escaper.
+		strIDs := make([]string, 0, len(excludePartitionIDs))
+		for _, id := range excludePartitionIDs {
+			strIDs = append(strIDs, fmt.Sprintf("%d", id))
+		}
 		sql = "SELECT partition_id, sample_data, max_sample_size FROM mysql.stats_samples WHERE table_id = %? AND partition_id NOT IN (%?)"
-		args = []any{tableID, excludePartitionIDs}
+		args = []any{tableID, strIDs}
 	}
 	rows, _, err := util.ExecRows(sctx, sql, args...)
 	if err != nil {

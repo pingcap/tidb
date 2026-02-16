@@ -60,9 +60,10 @@ go_test(
         "gc_test.go",
         "read_test.go",
         "stats_read_writer_test.go",
+        "stats_samples_test.go",
     ],
     flaky = True,
-    shard_count = 29,
+    shard_count = 37,
     deps = [
         ":storage",
         "//pkg/config/kerneltype",
@@ -80,8 +81,11 @@ go_test(
         "//pkg/statistics/util",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
+        "//pkg/types",
         "//pkg/util",
+        "//pkg/util/memory",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
     ],
 )

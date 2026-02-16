@@ -22,11 +22,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -1509,6 +1511,203 @@ func TestExchangePartition(t *testing.T) {
 	require.False(t, isNull)
 	require.Equal(t, int64(200), count)
 	require.Equal(t, int64(200), modifyCount)
+}
+
+func buildSmallTestCollector(nSamples int) *statistics.ReservoirRowSampleCollector {
+	c := statistics.NewReservoirRowSampleCollector(nSamples, 1)
+	c.Base().FMSketches = append(c.Base().FMSketches, statistics.NewFMSketch(100))
+	c.Base().Count = int64(nSamples * 10)
+	for i := range nSamples {
+		cols := []types.Datum{types.NewIntDatum(int64(i))}
+		c.Base().Samples = append(c.Base().Samples, &statistics.ReservoirRowSampleItem{
+			Columns: cols,
+			Weight:  int64(i + 1),
+		})
+	}
+	c.Base().NullCount[0] = 1
+	c.Base().TotalSizes[0] = 100
+	return c
+}
+
+func countSampleRows(tk *testkit.TestKit, where string, args ...any) int {
+	rows := tk.MustQuery("SELECT COUNT(*) FROM mysql.stats_samples WHERE "+where, args...).Rows()
+	cnt := rows[0][0].(string)
+	n, _ := fmt.Sscanf(cnt, "%d", new(int))
+	if n == 0 {
+		return 0
+	}
+	var v int
+	fmt.Sscanf(cnt, "%d", &v)
+	return v
+}
+
+func TestDropPartitionCleansUpSamples(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b))
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16)
+		)`)
+	tk.MustExec("insert into t values (1,2),(6,2),(11,2)")
+	tk.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+
+	// Insert sample data for all partitions.
+	for _, def := range pi.Definitions {
+		c := buildSmallTestCollector(5)
+		err := h.SavePartitionSamples(tableInfo.ID, def.ID, 1, c)
+		require.NoError(t, err)
+	}
+	// Verify all 3 partition samples exist.
+	require.Equal(t, 3, countSampleRows(tk, "table_id = ?", tableInfo.ID))
+
+	// Drop partition p0.
+	droppedP0ID := pi.Definitions[0].ID
+	tk.MustExec("alter table t drop partition p0")
+	dropEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionDropTablePartition)
+	err = statstestutil.HandleDDLEventWithTxn(h, dropEvent)
+	require.NoError(t, err)
+
+	// p0's samples should be gone, p1 and p2 remain.
+	require.Equal(t, 2, countSampleRows(tk, "table_id = ?", tableInfo.ID))
+	require.Equal(t, 0, countSampleRows(tk, "partition_id = ?", droppedP0ID))
+	require.Equal(t, 1, countSampleRows(tk, "partition_id = ?", pi.Definitions[1].ID))
+	require.Equal(t, 1, countSampleRows(tk, "partition_id = ?", pi.Definitions[2].ID))
+}
+
+func TestTruncatePartitionCleansUpSamples(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b))
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16)
+		)`)
+	tk.MustExec("insert into t values (1,2),(6,2),(11,2)")
+	tk.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+
+	// Insert sample data for all partitions.
+	for _, def := range pi.Definitions {
+		c := buildSmallTestCollector(5)
+		require.NoError(t, h.SavePartitionSamples(tableInfo.ID, def.ID, 1, c))
+	}
+	require.Equal(t, 3, countSampleRows(tk, "table_id = ?", tableInfo.ID))
+
+	// Truncate partition p0, p1.
+	oldP0 := pi.Definitions[0].ID
+	oldP1 := pi.Definitions[1].ID
+	tk.MustExec("alter table t truncate partition p0, p1")
+	truncateEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
+	err = statstestutil.HandleDDLEventWithTxn(h, truncateEvent)
+	require.NoError(t, err)
+
+	// Old p0 and p1 samples should be gone.
+	require.Equal(t, 0, countSampleRows(tk, "partition_id = ?", oldP0))
+	require.Equal(t, 0, countSampleRows(tk, "partition_id = ?", oldP1))
+	// p2 remains.
+	require.Equal(t, 1, countSampleRows(tk, "partition_id = ?", pi.Definitions[2].ID))
+}
+
+func TestDropTableCleansUpSamples(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b))
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11)
+		)`)
+	tk.MustExec("insert into t values (1,2),(6,2)")
+	tk.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+
+	// Insert sample data for both partitions.
+	for _, def := range pi.Definitions {
+		c := buildSmallTestCollector(5)
+		require.NoError(t, h.SavePartitionSamples(tableInfo.ID, def.ID, 1, c))
+	}
+	require.Equal(t, 2, countSampleRows(tk, "table_id = ?", tableInfo.ID))
+
+	// Also insert samples for a different table to ensure they're not affected.
+	c := buildSmallTestCollector(3)
+	require.NoError(t, h.SavePartitionSamples(99999, 88888, 1, c))
+	require.Equal(t, 1, countSampleRows(tk, "table_id = ?", 99999))
+
+	// Drop the table.
+	tk.MustExec("drop table t")
+	dropEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionDropTable)
+	err = statstestutil.HandleDDLEventWithTxn(h, dropEvent)
+	require.NoError(t, err)
+
+	// All samples for table t should be gone.
+	require.Equal(t, 0, countSampleRows(tk, "table_id = ?", tableInfo.ID))
+	// Other table's samples untouched.
+	require.Equal(t, 1, countSampleRows(tk, "table_id = ?", 99999))
+}
+
+func TestReorgPartitionCleansUpSamples(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b))
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)`)
+	tk.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
+	tk.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+
+	// Insert sample data for all 4 partitions.
+	for _, def := range pi.Definitions {
+		c := buildSmallTestCollector(5)
+		require.NoError(t, h.SavePartitionSamples(tableInfo.ID, def.ID, 1, c))
+	}
+	require.Equal(t, 4, countSampleRows(tk, "table_id = ?", tableInfo.ID))
+
+	// Reorganize p0 and p1 into a single new partition.
+	oldP0 := pi.Definitions[0].ID
+	oldP1 := pi.Definitions[1].ID
+	tk.MustExec("alter table t reorganize partition p0, p1 into (partition p0 values less than (11))")
+	reorgEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionReorganizePartition)
+	err = statstestutil.HandleDDLEventWithTxn(h, reorgEvent)
+	require.NoError(t, err)
+
+	// Old p0 and p1 samples should be deleted.
+	require.Equal(t, 0, countSampleRows(tk, "partition_id = ?", oldP0))
+	require.Equal(t, 0, countSampleRows(tk, "partition_id = ?", oldP1))
+	// p2 and p3 samples remain.
+	require.Equal(t, 1, countSampleRows(tk, "partition_id = ?", pi.Definitions[2].ID))
+	require.Equal(t, 1, countSampleRows(tk, "partition_id = ?", pi.Definitions[3].ID))
 }
 
 func TestDumpStatsDeltaBeforeHandleDDLEvent(t *testing.T) {
