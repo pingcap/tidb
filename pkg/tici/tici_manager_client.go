@@ -510,8 +510,9 @@ func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID
 		return ready, err
 	}
 	req := &GetIndexProgressRequest{
-		TableId: tableID,
-		IndexId: indexID,
+		TableId:    tableID,
+		IndexId:    indexID,
+		KeyspaceId: t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
