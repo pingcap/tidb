@@ -1977,6 +1977,50 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	assertTiCIFulltextParserInfo(t, raw)
 }
 
+func TestFulltextIndexCheckAddIndexProgressTransition(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `1*return(false)->return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(id int, c text)")
+	tk.MustExec("insert into t values (1, 'hello world')")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- tk.ExecToErr("alter table t add fulltext index fts_idx(c) with parser standard")
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case err := <-doneCh:
+			doneCh <- err
+			return false
+		default:
+		}
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		if err != nil {
+			return false
+		}
+		idx := tbl.Meta().FindIndexByName("fts_idx")
+		return idx != nil && idx.State != model.StatePublic
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, <-doneCh)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("fts_idx")
+	require.NotNil(t, idx)
+	require.Equal(t, model.StatePublic, idx.State)
+}
+
 func assertTiCIFulltextParserInfo(t *testing.T, raw []byte) {
 	t.Helper()
 
