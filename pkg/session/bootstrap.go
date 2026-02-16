@@ -450,8 +450,20 @@ func doBootstrapSQLFile(s sessionapi.Session) error {
 			logutil.BgLogger().Warn("InitializeSQLFile error", zap.Error(err))
 		}
 		if rs != nil {
-			// I don't believe we need to drain the result-set in bootstrap mode
-			// but if required we can do this here in future.
+			// Drain the result set before closing. For SELECT statements that
+			// call functions with side effects (e.g. audit_log_create_filter),
+			// the function is evaluated lazily during row iteration. Without
+			// draining, the side effects never take place. See #63450.
+			chk := rs.NewChunk(nil)
+			for {
+				if err := rs.Next(ctx, chk); err != nil {
+					logutil.BgLogger().Warn("InitializeSQLFile result set drain error", zap.Error(err))
+					break
+				}
+				if chk.NumRows() == 0 {
+					break
+				}
+			}
 			if err := rs.Close(); err != nil {
 				logutil.BgLogger().Fatal("unable to close result", zap.Error(err))
 			}
