@@ -45,3 +45,42 @@ Test and verification:
 - Add SQL-only case to `predicate_pushdown_suite_in.json`; keep DDL in the test setup, otherwise `explain` will try to run `DROP/CREATE`.
 - Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation -tags=intest,deadlock -record`.
 - Add integration test to `tests/integrationtest/t/select.test` and record via `pushd tests/integrationtest && ./run-tests.sh -r select && popd` (integration tests use `-r`, not `-record`).
+
+## 2026-02-16 - Index range dimension mismatch with appended handle column (issue #66291)
+
+Background:
+- A panic was reported under query + DDL interleaving: `runtime error: index out of range [2] with length 2`.
+- The DDL worker for `ADD/DROP INDEX` on the same table is serialized, so the issue is not caused by concurrent index DDL jobs running at the same time.
+
+Root cause:
+- For non-unique index paths, planner may append a handle column to `path.IdxCols` for execution-range construction.
+- In `detachCondAndBuildRangeForPath`, ranges were built from the extended column set, but row-count estimation used `indexCols` truncated to index-definition columns.
+- In the partial-stats branch (`index stats invalid` + `column stats available`), cardinality estimation iterated using range dimension and read `idxCols[i]`, which could overflow when ranges had an extra handle dimension.
+
+Why it is not deterministic:
+- It only triggers when several conditions overlap:
+  - optimizer chooses the affected index path,
+  - estimation enters the partial-stats path,
+  - range construction includes appended handle dimension,
+  - query/DDL timing hits the same optimization window.
+
+Implementation choice:
+- Fix at the source invariant instead of adding defensive checks in lower-level cardinality code.
+- In `pkg/planner/core/stats.go`, when estimation columns are truncated from `path.IdxCols` to `indexCols`, rebuild estimation ranges with the same `indexCols` before calling `GetRowCountByIndexRanges`.
+- Keep execution ranges unchanged; only align inputs used for row-count estimation.
+
+Test and verification:
+- Add regression test `TestIndexRangeEstimationWithAppendedHandleColumn` in `pkg/planner/cardinality/selectivity_test.go`.
+- The test uses a non-unique index + PK handle shape and mocked stats (`missing index stats + available column stats`) and verifies `EXPLAIN` does not panic.
+- Reference command:
+  - `GOROOT=/Users/weizhenwang/.gvm/gos/go1.25.7 GOPATH=/Users/weizhenwang/go GOMODCACHE=/Users/weizhenwang/go/pkg/mod GOCACHE=/Users/weizhenwang/Library/Caches/go-build /Users/weizhenwang/.gvm/gos/go1.25.7/bin/go test ./pkg/planner/cardinality -run TestIndexRangeEstimationWithAppendedHandleColumn --tags=intest -count=1`
+
+Reusable lessons:
+- Prefer fixing cross-layer shape mismatch at the producer boundary (planner/stats boundary), not by adding deep defensive guards in estimation internals.
+- When one path uses `FullIdxCols/IdxCols` with appended handle columns, any paired data structure (`Ranges`, `IdxColLens`, stats lookup keys) must be generated from the exact same column slice.
+- For flaky panic reports under query/DDL interleaving, first separate:
+  - DDL job serialization facts,
+  - metadata version visibility,
+  - optimizer path/branch conditions.
+  This avoids misattributing the issue to impossible DDL concurrency.
+- Regression tests should intentionally force the vulnerable branch (here: `index stats invalid + partial column stats`) instead of relying on random timing.
