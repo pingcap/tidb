@@ -1527,6 +1527,10 @@ type SessionVars struct {
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
 
+	// InMaterializedViewMaintenance indicates the session is executing internal MV refresh / MV log purge statements.
+	// When enabled, TiFlash can be considered for the SELECT part of non-readonly statements even if sql_mode is strict.
+	InMaterializedViewMaintenance bool
+
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
 
