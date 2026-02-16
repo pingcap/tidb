@@ -4582,6 +4582,44 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+	// extract the PkFilterHint
+	var pkFilterHints []h.HintedIndex
+	if hints := b.TableHints(); hints != nil {
+		for i, hint := range hints.PkFilterHintList {
+			if hint.Match(dbName, tblName) {
+				hints.PkFilterHintList[i].Matched = true
+				// check whether the index names in PkFilterHint are valid.
+				invalidIdxNames := make([]string, 0, len(hint.IndexHint.IndexNames))
+				for _, idxName := range hint.IndexHint.IndexNames {
+					hasIdxName := false
+					for _, path := range possiblePaths {
+						if path.IsTablePath() {
+							if idxName.L == "primary" {
+								hasIdxName = true
+								break
+							}
+							continue
+						}
+						if idxName.L == path.Index.Name.L {
+							hasIdxName = true
+							break
+						}
+					}
+					if !hasIdxName {
+						invalidIdxNames = append(invalidIdxNames, idxName.String())
+					}
+				}
+				if len(invalidIdxNames) == 0 {
+					pkFilterHints = append(pkFilterHints, hint)
+				} else {
+					// Append warning if there are invalid index names.
+					errMsg := fmt.Sprintf("pk_filter(%s) is inapplicable, check whether the indexes (%s) exist.",
+						hint.IndexString(), strings.Join(invalidIdxNames, ", "))
+					b.ctx.GetSessionVars().StmtCtx.SetHintWarning(errMsg)
+				}
+			}
+		}
+	}
 	allPaths := make([]*util.AccessPath, len(possiblePaths))
 	copy(allPaths, possiblePaths)
 
@@ -4595,6 +4633,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		AstIndexHints:          tn.IndexHints,
 		IndexHints:             b.TableHints().IndexHintList,
 		IndexMergeHints:        indexMergeHints,
+		PkFilterHints:          pkFilterHints,
 		PossibleAccessPaths:    possiblePaths,
 		AllPossibleAccessPaths: allPaths,
 		Columns:                make([]*model.ColumnInfo, 0, countCnt),

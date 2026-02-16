@@ -57,6 +57,9 @@ const (
 	// TiDBOptDeriveTopN is used to enable/disable the optimizer rule of deriving topN.
 	TiDBOptDeriveTopN = "tidb_opt_derive_topn"
 
+	// TiDBOptGeneratePKFilter is used to enable/disable the optimizer rule of generating PK filter from secondary index MIN/MAX subqueries.
+	TiDBOptGeneratePKFilter = "tidb_opt_generate_pk_filter"
+
 	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
 	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
 
@@ -1408,6 +1411,7 @@ const (
 	DefSkipASCIICheck                       = false
 	DefOptAggPushDown                       = false
 	DefOptDeriveTopN                        = false
+	DefOptGeneratePKFilter                  = false
 	DefOptCartesianBCJ                      = 1
 	DefOptMPPOuterJoinFixedBuildSide        = false
 	DefOptWriteRowID                        = false

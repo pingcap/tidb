@@ -1,0 +1,174 @@
+drop table if exists t1;
+create table t1(a int primary key clustered, b int, c int, d int, key idx_b(b), key idx_c(c), key idx_bc(b,c));
+insert into t1 values(1,1,1,1),(2,2,2,2),(3,3,3,3),(4,1,4,4),(5,2,5,5);
+explain format='brief' select /*+ pk_filter(t1, idx_b) */ * from t1 where b = 1 order by a limit 10;
+id	estRows	task	access object	operator info
+Limit	8.00	root		offset:0, count:10
+└─Selection	8.00	root		ge(planner__core__casetest__rule__rule_generate_pk_filter.t1.a, ScalarQueryCol#13), le(planner__core__casetest__rule__rule_generate_pk_filter.t1.a, ScalarQueryCol#21)
+  └─IndexLookUp	10.00	root		
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_b(b)	range:[1,1], keep order:true, stats:pseudo
+    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#13
+└─HashAgg	1.00	root		funcs:min(Column#8)->Column#6
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__rule__rule_generate_pk_filter.t1.a)->Column#8
+      └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx_b(b)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#21
+└─HashAgg	1.00	root		funcs:max(Column#16)->Column#14
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:max(planner__core__casetest__rule__rule_generate_pk_filter.t1.a)->Column#16
+      └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx_b(b)	keep order:false, stats:pseudo
+explain format='brief' select /*+ pk_filter(t1, idx_bc) */ * from t1 where b = 1 and c = 2 order by a limit 10;
+id	estRows	task	access object	operator info
+Limit	1.00	root		offset:0, count:10
+└─Selection	1.00	root		ge(planner__core__casetest__rule__rule_generate_pk_filter.t1.a, ScalarQueryCol#17), le(planner__core__casetest__rule__rule_generate_pk_filter.t1.a, ScalarQueryCol#29)
+  └─IndexLookUp	1.25	root		
+    ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t1, index:idx_bc(b, c)	range:[1 2,1 2], keep order:true, stats:pseudo
+    └─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#17
+└─HashAgg	1.00	root		funcs:min(Column#9)->Column#6
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__rule__rule_generate_pk_filter.t1.a)->Column#9
+      └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx_bc(b, c)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#29
+└─HashAgg	1.00	root		funcs:max(Column#21)->Column#18
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:max(planner__core__casetest__rule__rule_generate_pk_filter.t1.a)->Column#21
+      └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx_bc(b, c)	keep order:false, stats:pseudo
+explain format='brief' select /*+ pk_filter(t1, idx_bc) */ * from t1 where b = 1 order by a limit 10;
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		limit embedded(offset:0, count:10)
+├─Limit(Build)	10.00	cop[tikv]		offset:0, count:10
+│ └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:idx_b(b)	range:[1,1], keep order:true, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select /*+ pk_filter(t1, idx_b, idx_c) */ * from t1 where b = 1 and c = 2 order by a limit 10;
+id	estRows	task	access object	operator info
+Limit	1.00	root		offset:0, count:10
+└─Selection	1.00	root		ge(planner__core__casetest__rule__rule_generate_pk_filter.t1.a, ScalarQueryCol#13), ge(planner__core__casetest__rule__rule_generate_pk_filter.t1.a, ScalarQueryCol#29), le(planner__core__casetest__rule__rule_generate_pk_filter.t1.a, ScalarQueryCol#21), le(planner__core__casetest__rule__rule_generate_pk_filter.t1.a, ScalarQueryCol#37)
+  └─IndexLookUp	1.25	root		
+    ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t1, index:idx_bc(b, c)	range:[1 2,1 2], keep order:true, stats:pseudo
+    └─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#13
+└─HashAgg	1.00	root		funcs:min(Column#8)->Column#6
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__rule__rule_generate_pk_filter.t1.a)->Column#8
+      └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx_b(b)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#21
+└─HashAgg	1.00	root		funcs:max(Column#16)->Column#14
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:max(planner__core__casetest__rule__rule_generate_pk_filter.t1.a)->Column#16
+      └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx_b(b)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#29
+└─HashAgg	1.00	root		funcs:min(Column#24)->Column#22
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__rule__rule_generate_pk_filter.t1.a)->Column#24
+      └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx_c(c)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#37
+└─HashAgg	1.00	root		funcs:max(Column#32)->Column#30
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:max(planner__core__casetest__rule__rule_generate_pk_filter.t1.a)->Column#32
+      └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx_c(c)	keep order:false, stats:pseudo
+explain format='brief' select /*+ pk_filter(t1, idx_b) */ * from t1 where b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t2;
+create table t2(a int primary key clustered, b int, c int, key idx_b(b));
+insert into t2 values(1,1,1),(2,2,2),(3,3,3);
+set tidb_opt_generate_pk_filter = ON;
+explain format='brief' select * from t2 where b = 1 order by a limit 10;
+id	estRows	task	access object	operator info
+Limit	8.00	root		offset:0, count:10
+└─Selection	8.00	root		ge(planner__core__casetest__rule__rule_generate_pk_filter.t2.a, ScalarQueryCol#12), le(planner__core__casetest__rule__rule_generate_pk_filter.t2.a, ScalarQueryCol#20)
+  └─IndexLookUp	10.00	root		
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:idx_b(b)	range:[1,1], keep order:true, stats:pseudo
+    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#12
+└─HashAgg	1.00	root		funcs:min(Column#7)->Column#5
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__rule__rule_generate_pk_filter.t2.a)->Column#7
+      └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#20
+└─HashAgg	1.00	root		funcs:max(Column#15)->Column#13
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:max(planner__core__casetest__rule__rule_generate_pk_filter.t2.a)->Column#15
+      └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:false, stats:pseudo
+set tidb_opt_generate_pk_filter = OFF;
+drop table if exists t3;
+create table t3(a int, b int, c int, d int, primary key(a,b) clustered, key idx_c(c), key idx_d(d));
+insert into t3 values(1,1,1,1),(2,2,2,2),(3,3,3,3);
+explain format='brief' select /*+ pk_filter(t3, idx_c) */ * from t3 where c = 1 order by a, b limit 10;
+id	estRows	task	access object	operator info
+TopN	8.00	root		planner__core__casetest__rule__rule_generate_pk_filter.t3.a, planner__core__casetest__rule__rule_generate_pk_filter.t3.b, offset:0, count:10
+└─Selection	8.00	root		ge(planner__core__casetest__rule__rule_generate_pk_filter.t3.a, ScalarQueryCol#13), le(planner__core__casetest__rule__rule_generate_pk_filter.t3.a, ScalarQueryCol#21)
+  └─IndexLookUp	10.00	root		
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:idx_c(c)	range:[1,1], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#13
+└─HashAgg	1.00	root		funcs:min(Column#8)->Column#6
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__rule__rule_generate_pk_filter.t3.a)->Column#8
+      └─IndexFullScan	10000.00	cop[tikv]	table:t3, index:idx_c(c)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#21
+└─HashAgg	1.00	root		funcs:max(Column#16)->Column#14
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:max(planner__core__casetest__rule__rule_generate_pk_filter.t3.a)->Column#16
+      └─IndexFullScan	10000.00	cop[tikv]	table:t3, index:idx_c(c)	keep order:false, stats:pseudo
+explain format='brief' select /*+ pk_filter(t3, idx_c) */ * from t3 where a = 1 and c = 1 order by b limit 10;
+id	estRows	task	access object	operator info
+Limit	1.00	root		offset:0, count:10
+└─Selection	0.01	root		ge(planner__core__casetest__rule__rule_generate_pk_filter.t3.b, ScalarQueryCol#13), le(planner__core__casetest__rule__rule_generate_pk_filter.t3.b, ScalarQueryCol#21)
+  └─TableReader	0.01	root		data:Selection
+    └─Selection	0.01	cop[tikv]		eq(planner__core__casetest__rule__rule_generate_pk_filter.t3.c, 1)
+      └─TableRangeScan	10.00	cop[tikv]	table:t3	range:[1,1], keep order:true, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#13
+└─HashAgg	1.00	root		funcs:min(Column#8)->Column#6
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__rule__rule_generate_pk_filter.t3.b)->Column#8
+      └─IndexFullScan	10000.00	cop[tikv]	table:t3, index:idx_c(c)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#21
+└─HashAgg	1.00	root		funcs:max(Column#16)->Column#14
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:max(planner__core__casetest__rule__rule_generate_pk_filter.t3.b)->Column#16
+      └─IndexFullScan	10000.00	cop[tikv]	table:t3, index:idx_c(c)	keep order:false, stats:pseudo
+explain format='brief' select /*+ pk_filter(t3, idx_c) */ * from t3 where a = 1 and b = 2 and c = 1 order by d limit 10;
+id	estRows	task	access object	operator info
+TopN	1.00	root		planner__core__casetest__rule__rule_generate_pk_filter.t3.d, offset:0, count:10
+└─Selection	1.00	root		eq(planner__core__casetest__rule__rule_generate_pk_filter.t3.c, 1)
+  └─Point_Get	1.00	root	table:t3, clustered index:PRIMARY(a, b)	
+drop table if exists t4;
+create table t4(a int primary key clustered, b int, key idx_b(b));
+insert into t4 values(1,1),(2,2),(3,3);
+explain format='brief' select /*+ pk_filter(t4, idx_b) */ * from t4 where b = 1 order by a limit 5;
+id	estRows	task	access object	operator info
+Limit	5.00	root		offset:0, count:5
+└─Selection	5.03	root		ge(planner__core__casetest__rule__rule_generate_pk_filter.t4.a, ScalarQueryCol#11), le(planner__core__casetest__rule__rule_generate_pk_filter.t4.a, ScalarQueryCol#19)
+  └─IndexReader	6.29	root		index:IndexRangeScan
+    └─IndexRangeScan	6.29	cop[tikv]	table:t4, index:idx_b(b)	range:[1,1], keep order:true, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#11
+└─HashAgg	1.00	root		funcs:min(Column#6)->Column#4
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__rule__rule_generate_pk_filter.t4.a)->Column#6
+      └─IndexFullScan	10000.00	cop[tikv]	table:t4, index:idx_b(b)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#19
+└─HashAgg	1.00	root		funcs:max(Column#14)->Column#12
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:max(planner__core__casetest__rule__rule_generate_pk_filter.t4.a)->Column#14
+      └─IndexFullScan	10000.00	cop[tikv]	table:t4, index:idx_b(b)	keep order:false, stats:pseudo
+explain format='brief' select /*+ pk_filter(t4, idx_b) */ * from t4 where b = 1 limit 5;
+id	estRows	task	access object	operator info
+Limit	5.00	root		offset:0, count:5
+└─Selection	5.03	root		ge(planner__core__casetest__rule__rule_generate_pk_filter.t4.a, ScalarQueryCol#11), le(planner__core__casetest__rule__rule_generate_pk_filter.t4.a, ScalarQueryCol#19)
+  └─IndexReader	6.29	root		index:IndexRangeScan
+    └─IndexRangeScan	6.29	cop[tikv]	table:t4, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#11
+└─HashAgg	1.00	root		funcs:min(Column#6)->Column#4
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:min(planner__core__casetest__rule__rule_generate_pk_filter.t4.a)->Column#6
+      └─IndexFullScan	10000.00	cop[tikv]	table:t4, index:idx_b(b)	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#19
+└─HashAgg	1.00	root		funcs:max(Column#14)->Column#12
+  └─IndexReader	1.00	root		index:HashAgg
+    └─HashAgg	1.00	cop[tikv]		funcs:max(planner__core__casetest__rule__rule_generate_pk_filter.t4.a)->Column#14
+      └─IndexFullScan	10000.00	cop[tikv]	table:t4, index:idx_b(b)	keep order:false, stats:pseudo
