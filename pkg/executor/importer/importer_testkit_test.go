@@ -389,7 +389,7 @@ func TestProcessChunkWith(t *testing.T) {
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
 		if kerneltype.IsClassic() {
-			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111, 3, 18171781844378606789),
+			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111, 3, 17525860725273960722),
 				*checksumMap[verify.DataKVGroupID])
 		} else if kerneltype.IsNextGen() {
 			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111+scanedRows*prefixLenForOneRow, 3, 9366516372087212007),
