@@ -439,6 +439,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.varsReadonly[node.Name] = struct{}{}
 			}
 		}
+	case *ast.ColumnName:
+		if node.Name.L == model.ExtraCommitTSName.L &&
+			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) {
+			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
+				model.ExtraCommitTSName.O)
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
