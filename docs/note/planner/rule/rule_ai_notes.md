@@ -66,8 +66,8 @@ Why it is not deterministic:
 
 Implementation choice:
 - Fix at the source invariant instead of adding defensive checks in lower-level cardinality code.
-- In `pkg/planner/core/stats.go`, when estimation columns are truncated from `path.IdxCols` to `indexCols`, rebuild estimation ranges with the same `indexCols` before calling `GetRowCountByIndexRanges`.
-- Keep execution ranges unchanged; only align inputs used for row-count estimation.
+- In `pkg/planner/core/stats.go`, pass the same column set used by range detachment (`path.IdxCols`) into `GetRowCountByIndexRanges`.
+- Keep `path.Ranges` and estimation columns generated from one source to preserve dimension consistency and handle-predicate selectivity.
 
 Test and verification:
 - Add regression test `TestIndexRangeEstimationWithAppendedHandleColumn` in `pkg/planner/cardinality/selectivity_test.go`.
