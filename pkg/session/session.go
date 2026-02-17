@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
-	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,7 +37,6 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
@@ -47,8 +45,6 @@ import (
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -61,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	planctx "github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
@@ -82,7 +77,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -1109,202 +1103,6 @@ func (s *session) ReportUsageStats() {
 	}
 }
 
-// CreateSession4Test creates a new session environment for test.
-func CreateSession4Test(store kv.Storage) (sessionapi.Session, error) {
-	se, err := CreateSession4TestWithOpt(store, nil)
-	if err == nil {
-		// Cover both chunk rpc encoding and default encoding.
-		// nolint:gosec
-		if rand.Intn(2) == 0 {
-			se.GetSessionVars().EnableChunkRPC = false
-		} else {
-			se.GetSessionVars().EnableChunkRPC = true
-		}
-	}
-	return se, err
-}
-
-// Opt describes the option for creating session
-type Opt struct {
-	PreparedPlanCache sessionctx.SessionPlanCache
-}
-
-// CreateSession4TestWithOpt creates a new session environment for test.
-func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (sessionapi.Session, error) {
-	s, err := CreateSessionWithOpt(store, opt)
-	if err == nil {
-		// initialize session variables for test.
-		s.GetSessionVars().InitChunkSize = 2
-		s.GetSessionVars().MaxChunkSize = 32
-		s.GetSessionVars().MinPagingSize = vardef.DefMinPagingSize
-		s.GetSessionVars().EnablePaging = vardef.DefTiDBEnablePaging
-		s.GetSessionVars().StmtCtx.SetTimeZone(s.GetSessionVars().Location())
-		err = s.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, "utf8mb4")
-	}
-	return s, err
-}
-
-// CreateSession creates a new session environment.
-func CreateSession(store kv.Storage) (sessionapi.Session, error) {
-	return CreateSessionWithOpt(store, nil)
-}
-
-// CreateSessionWithOpt creates a new session environment with option.
-// Use default option if opt is nil.
-func CreateSessionWithOpt(store kv.Storage, opt *Opt) (sessionapi.Session, error) {
-	do, err := domap.Get(store)
-	if err != nil {
-		return nil, err
-	}
-	s, err := createSessionWithOpt(store, do, do.GetSchemaValidator(), do.InfoCache(), opt)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add auth here.
-	extensions, err := extension.GetExtensions()
-	if err != nil {
-		return nil, err
-	}
-	pm := privileges.NewUserPrivileges(do.PrivilegeHandle(), extensions)
-	privilege.BindPrivilegeManager(s, pm)
-
-	// Add stats collector, and it will be freed by background stats worker
-	// which periodically updates stats using the collected data.
-	if do.StatsHandle() != nil && do.StatsUpdating() {
-		s.statsCollector = do.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
-		if config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
-			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
-		}
-	}
-
-	s.cursorTracker = cursor.NewTracker()
-
-	return s, nil
-}
-
-// loadCollationParameter loads collation parameter from mysql.tidb
-func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
-	para, err := se.getTableValue(ctx, mysql.TiDBTable, TidbNewCollationEnabled)
-	if err != nil {
-		return false, err
-	}
-	switch para {
-	case varTrue:
-		return true, nil
-	case varFalse:
-		return false, nil
-	}
-	logutil.BgLogger().Warn(
-		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'False' instead",
-		zap.String("value", para))
-	return false, nil
-}
-
-// DatabaseBasicInfo contains the basic information of a database.
-type DatabaseBasicInfo struct {
-	ID     int64
-	Name   string
-	Tables []TableBasicInfo
-}
-
-// TableBasicInfo contains the basic information of a table used in DDL.
-type TableBasicInfo struct {
-	ID   int64
-	Name string
-	SQL  string
-}
-
-type versionedDDLTables struct {
-	ver    meta.DDLTableVersion
-	tables []TableBasicInfo
-}
-
-var (
-	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
-	// DDLJobTables is a list of tables definitions used in concurrent DDL.
-	DDLJobTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLJobTableID, Name: "tidb_ddl_job", SQL: metadef.CreateTiDBDDLJobTable},
-		{ID: metadef.TiDBDDLReorgTableID, Name: "tidb_ddl_reorg", SQL: metadef.CreateTiDBReorgTable},
-		{ID: metadef.TiDBDDLHistoryTableID, Name: "tidb_ddl_history", SQL: metadef.CreateTiDBDDLHistoryTable},
-	}
-	// MDLTables is a list of tables definitions used for metadata lock.
-	MDLTables = []TableBasicInfo{
-		{ID: metadef.TiDBMDLInfoTableID, Name: "tidb_mdl_info", SQL: metadef.CreateTiDBMDLTable},
-	}
-	// BackfillTables is a list of tables definitions used in dist reorg DDL.
-	BackfillTables = []TableBasicInfo{
-		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: "tidb_background_subtask", SQL: metadef.CreateTiDBBackgroundSubtaskTable},
-		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: "tidb_background_subtask_history", SQL: metadef.CreateTiDBBackgroundSubtaskHistoryTable},
-	}
-	// DDLNotifierTables contains the table definitions used in DDL notifier.
-	// It only contains the notifier table.
-	// Put it here to reuse a unified initialization function and make it easier to find.
-	DDLNotifierTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: metadef.CreateTiDBDDLNotifierTable},
-	}
-
-	ddlTableVersionTables = []versionedDDLTables{
-		{ver: meta.BaseDDLTableVersion, tables: DDLJobTables},
-		{ver: meta.MDLTableVersion, tables: MDLTables},
-		{ver: meta.BackfillTableVersion, tables: BackfillTables},
-		{ver: meta.DDLNotifierTableVersion, tables: DDLNotifierTables},
-	}
-)
-
-
-const (
-	notBootstrapped = 0
-)
-
-func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
-	var ver int64
-	// check in kv store
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
-		var err error
-		t := meta.NewReader(txn)
-		ver, err = t.GetBootstrapVersion()
-		return err
-	})
-	if err != nil {
-		logutil.BgLogger().Fatal("get store bootstrap version failed", zap.Error(err))
-	}
-	return ver
-}
-
-func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
-	// check in memory
-	_, ok := store.GetOption(StoreBootstrappedKey)
-	if ok {
-		return currentBootstrapVersion
-	}
-
-	ver := mustGetStoreBootstrapVersion(store)
-
-	if ver > notBootstrapped {
-		// here mean memory is not ok, but other server has already finished it
-		store.SetOption(StoreBootstrappedKey, true)
-	}
-
-	modifyBootstrapVersionForTest(ver)
-	return ver
-}
-
-func finishBootstrap(store kv.Storage) {
-	store.SetOption(StoreBootstrappedKey, true)
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		err := t.FinishBootstrap(currentBootstrapVersion)
-		return err
-	})
-	if err != nil {
-		logutil.BgLogger().Fatal("finish bootstrap failed",
-			zap.Error(err))
-	}
-}
 
 
 func (s *session) ShowProcess() *sessmgr.ProcessInfo {
