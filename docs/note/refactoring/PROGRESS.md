@@ -64,9 +64,16 @@ Last updated: 2026-02-17 (benchmark validation complete)
 
 ## P1 - High Priority
 
-- [ ] **session.go decomposition** - Extract transaction, variable, privilege management
-  - File: `pkg/session/session.go` (5,035 lines)
+- [~] **session.go decomposition** - Extract transaction, variable, privilege management
+  - File: `pkg/session/session.go` (5,558 → 2,042 lines, 63% reduction)
   - Target: <1000 lines per file with clear sub-package boundaries
+  - [x] `session_txn.go` (768 lines) - transaction commit/rollback, retry logic
+  - [x] `session_bootstrap.go` (752 lines) - bootstrap, session factory, domain init
+  - [x] `session_auth.go` (413 lines) - authentication, privilege validation
+  - [x] `session_execute.go` (836 lines) - statement execution, prepared stmts
+  - [x] `session_parse.go` (546 lines) - SQL parsing, process info, internal exec
+  - [x] `session_restricted.go` (287 lines) - restricted SQL execution
+  - [x] `session_logging.go` (251 lines) - query logging, metrics recording
 
 - [ ] **domain.go decomposition** - Extract subsystem managers
   - File: `pkg/domain/domain.go` (2,739 lines, 89 fields)
@@ -85,7 +92,9 @@ Last updated: 2026-02-17 (benchmark validation complete)
   - Target: Grouped sub-structs by concern
   - [x] Phase 1: Extracted `TiFlashVars` (27 fields) and `CostModelFactors` (28 fields) as embedded sub-structs
   - [x] Phase 2: Extracted `PlanCacheVars` (13 fields) and `OptimizerVars` (32 fields) as embedded sub-structs
-  - [ ] Phase 3: Extract transaction, statistics, execution settings
+  - [x] Phase 3a: Extracted `StatsVars` (16 statistics-related fields) as embedded sub-struct
+  - [x] Phase 3b: Extracted `TransactionVars` (16 transaction-related fields) as embedded sub-struct
+  - [ ] Phase 4: Extract execution settings
 
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
@@ -130,4 +139,7 @@ Last updated: 2026-02-17 (benchmark validation complete)
 - [x] **SessionVars decomposition phase 2** - 2026-02-17 - Extract `PlanCacheVars` (13 plan cache fields) and `OptimizerVars` (32 optimizer fields) into embedded sub-structs
 - [x] **executor/builder.go split phase 3** - 2026-02-17 - Extract `builder_ddl_admin.go` (474 lines) and `builder_sort_window.go` (411 lines), reducing builder.go from 3,172 to 2,360 lines (62% total reduction)
 - [x] **executor/builder.go split phase 4** - 2026-02-17 - Extract `builder_agg_project.go` (244 lines), `builder_cte_misc.go` (315 lines), `builder_stmt.go` (601 lines), and `builder_union_scan.go` (236 lines), reducing builder.go from 2,360 to 1,082 lines (83% total reduction). Split complete: 10 builder files total.
+- [x] **SessionVars Phase 3a (StatsVars)** - 2026-02-17 - Extract 16 statistics-related fields (EnableFastAnalyze, AnalyzeVersion, RegardNULLAsPoint, etc.) into embedded `StatsVars` sub-struct
+- [x] **SessionVars Phase 3b (TransactionVars)** - 2026-02-17 - Extract 16 transaction-related fields (RetryLimit, LockWaitTimeout, TxnScope, EnableAsyncCommit, etc.) into embedded `TransactionVars` sub-struct
+- [x] **session.go decomposition** - 2026-02-17 - Split into 7 focused files: `session_txn.go` (768), `session_bootstrap.go` (752), `session_execute.go` (836), `session_parse.go` (546), `session_auth.go` (413), `session_restricted.go` (287), `session_logging.go` (251). Reduced session.go from 5,558 to 2,042 lines (63% reduction).
 - [x] **DDL executor.go decomposition** - 2026-02-17 - Split into 8 focused files: `executor_partition.go` (1,084 lines), `executor_index.go` (967 lines), `executor_column.go` (472 lines), `executor_create.go` (565 lines), `executor_table.go` (532 lines), `executor_misc.go` (543 lines), `executor_schema.go` (680 lines), `executor_table_props.go` (683 lines). Reduced executor.go from 7,201 to 1,986 lines (72% reduction).
