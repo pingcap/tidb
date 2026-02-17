@@ -33,6 +33,18 @@ import (
 )
 
 //revive:disable:defer
+
+// runeByteIndex returns the byte index in str corresponding to the given rune index.
+// If runeIdx exceeds the number of runes in str, len(str) is returned.
+func runeByteIndex(str string, runeIdx int) int {
+	byteIdx := 0
+	for i := 0; i < runeIdx && byteIdx < len(str); i++ {
+		_, size := utf8.DecodeRuneInString(str[byteIdx:])
+		byteIdx += size
+	}
+	return byteIdx
+}
+
 func (b *builtinLowerSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	// if error is not nil return error, or builtinLowerSig is for binary strings (do nothing)
 	return b.args[0].VecEvalString(ctx, input, result)
@@ -217,14 +229,17 @@ func (b *builtinLeftUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		}
 
 		str := buf.GetString(i)
-		runes, leftLength := []rune(str), int(nums[i])
-		if runeLength := len(runes); leftLength > runeLength {
-			leftLength = runeLength
-		} else if leftLength < 0 {
+		leftLength := int(nums[i])
+		if leftLength < 0 {
 			leftLength = 0
 		}
 
-		result.AppendString(string(runes[:leftLength]))
+		byteIdx := 0
+		for j := 0; j < leftLength && byteIdx < len(str); j++ {
+			_, size := utf8.DecodeRuneInString(str[byteIdx:])
+			byteIdx += size
+		}
+		result.AppendString(str[:byteIdx])
 	}
 	return nil
 }
@@ -262,15 +277,21 @@ func (b *builtinRightUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		}
 
 		str := buf.GetString(i)
-		runes := []rune(str)
-		strLength, rightLength := len(runes), int(nums[i])
+		strLength := utf8.RuneCountInString(str)
+		rightLength := int(nums[i])
 		if rightLength > strLength {
 			rightLength = strLength
 		} else if rightLength < 0 {
 			rightLength = 0
 		}
 
-		result.AppendString(string(runes[strLength-rightLength:]))
+		// Skip (strLength - rightLength) runes from the start to find byte offset
+		byteIdx := 0
+		for range strLength - rightLength {
+			_, size := utf8.DecodeRuneInString(str[byteIdx:])
+			byteIdx += size
+		}
+		result.AppendString(str[byteIdx:])
 	}
 	return nil
 }
@@ -436,8 +457,8 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 
 		// Transfer the argument which starts from 1 to real index which starts from 0.
 		pos--
-		strLen := int64(len([]rune(str)))
-		subStrLen := int64(len([]rune(subStr)))
+		strLen := int64(utf8.RuneCountInString(str))
+		subStrLen := int64(utf8.RuneCountInString(subStr))
 		if pos < 0 || pos > strLen-subStrLen {
 			i64s[i] = 0
 			continue
@@ -445,7 +466,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 			i64s[i] = pos + 1
 			continue
 		}
-		slice := string([]rune(str)[pos:])
+		slice := str[runeByteIndex(str, int(pos)):]
 		if ci {
 			subStr = strings.ToLower(subStr)
 			slice = strings.ToLower(slice)
@@ -1093,8 +1114,8 @@ func (b *builtinLpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		}
 		str := buf.GetString(i)
 		padStr := buf2.GetString(i)
-		runeLength := len([]rune(str))
-		padLength := len([]rune(padStr))
+		runeLength := utf8.RuneCountInString(str)
+		padLength := utf8.RuneCountInString(padStr)
 
 		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
 			result.AppendNull()
@@ -1106,9 +1127,10 @@ func (b *builtinLpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		}
 		if tailLen := targetLength - runeLength; tailLen > 0 {
 			repeatCount := tailLen/padLength + 1
-			str = string([]rune(strings.Repeat(padStr, repeatCount))[:tailLen]) + str
+			repeated := strings.Repeat(padStr, repeatCount)
+			str = repeated[:runeByteIndex(repeated, tailLen)] + str
 		}
-		result.AppendString(string([]rune(str)[:targetLength]))
+		result.AppendString(str[:runeByteIndex(str, targetLength)])
 	}
 	return nil
 }
@@ -1648,8 +1670,7 @@ func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 		str := buf.GetString(i)
 		pos := nums[i]
 
-		runes := []rune(str)
-		length := int64(len(runes))
+		length := int64(utf8.RuneCountInString(str))
 		if pos < 0 {
 			pos += length
 		} else {
@@ -1658,7 +1679,7 @@ func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 		if pos > length || pos < 0 {
 			pos = length
 		}
-		result.AppendString(string(runes[pos:]))
+		result.AppendString(str[runeByteIndex(str, int(pos)):])
 	}
 
 	return nil
@@ -1912,8 +1933,7 @@ func (b *builtinInsertUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 		length := i64s2[i]
 		newstr := buf3.GetString(i)
 
-		runes := []rune(str)
-		runeLength := int64(len(runes))
+		runeLength := int64(utf8.RuneCountInString(str))
 		if pos < 1 || pos > runeLength {
 			result.AppendString(str)
 			continue
@@ -1922,8 +1942,10 @@ func (b *builtinInsertUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 			length = runeLength - pos + 1
 		}
 
-		strHead := string(runes[0 : pos-1])
-		strTail := string(runes[pos+length-1:])
+		headEnd := runeByteIndex(str, int(pos-1))
+		tailStart := runeByteIndex(str, int(pos+length-1))
+		strHead := str[:headEnd]
+		strTail := str[tailStart:]
 		if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
 			if err := handleAllowedPacketOverflowed(ctx, "insert", b.maxAllowedPacket); err != nil {
 				return err
@@ -2050,8 +2072,7 @@ func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 		str := buf.GetString(i)
 		pos := positions[i]
 		length := lengths[i]
-		runes := []rune(str)
-		numRunes := int64(len(runes))
+		numRunes := int64(utf8.RuneCountInString(str))
 		if pos < 0 {
 			pos += numRunes
 		} else {
@@ -2064,11 +2085,14 @@ func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 		if end < pos {
 			result.AppendString("")
 			continue
-		} else if end < numRunes {
-			result.AppendString(string(runes[pos:end]))
+		}
+		bytePos := runeByteIndex(str, int(pos))
+		if end < numRunes {
+			byteEnd := bytePos + runeByteIndex(str[bytePos:], int(end-pos))
+			result.AppendString(str[bytePos:byteEnd])
 			continue
 		}
-		result.AppendString(string(runes[pos:]))
+		result.AppendString(str[bytePos:])
 	}
 
 	return nil
@@ -2266,7 +2290,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 		}
 		subStr := buf.GetString(i)
 		str := buf1.GetString(i)
-		subStrLen := int64(len([]rune(subStr)))
+		subStrLen := int64(utf8.RuneCountInString(subStr))
 		if subStrLen == 0 {
 			i64s[i] = 1
 			continue
@@ -2632,8 +2656,8 @@ func (b *builtinRpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		}
 		str := buf.GetString(i)
 		padStr := buf2.GetString(i)
-		runeLength := len([]rune(str))
-		padLength := len([]rune(padStr))
+		runeLength := utf8.RuneCountInString(str)
+		padLength := utf8.RuneCountInString(padStr)
 
 		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
 			result.AppendNull()
@@ -2647,7 +2671,7 @@ func (b *builtinRpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 			repeatCount := tailLen/padLength + 1
 			str = str + strings.Repeat(padStr, repeatCount)
 		}
-		result.AppendString(string([]rune(str)[:targetLength]))
+		result.AppendString(str[:runeByteIndex(str, targetLength)])
 	}
 	return nil
 }
@@ -2967,7 +2991,7 @@ func (b *builtinCharLengthUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 			continue
 		}
 		str := buf.GetString(i)
-		i64s[i] = int64(len([]rune(str)))
+		i64s[i] = int64(utf8.RuneCountInString(str))
 	}
 	return nil
 }
