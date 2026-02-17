@@ -966,6 +966,36 @@ type TransactionVars struct {
 	SlowTxnThreshold uint64
 }
 
+// ExecutionVars contains execution-related settings for DML operations,
+// result limits, and execution control.
+type ExecutionVars struct {
+	// DMLBatchSize indicates the number of rows batch-committed for a statement.
+	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
+	DMLBatchSize int
+	// BatchInsert indicates if we should split insert data into multiple batches.
+	BatchInsert bool
+	// BatchDelete indicates if we should split delete data into multiple batches.
+	BatchDelete bool
+	// BatchCommit indicates if we should split the transaction into multiple batches.
+	BatchCommit bool
+	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
+	BulkDMLEnabled bool
+	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
+	EnableChunkRPC bool
+	// EnablePaging indicates whether enable paging in coprocessor requests.
+	EnablePaging bool
+	// EnableReuseChunk indicates request chunk whether use chunk alloc.
+	EnableReuseChunk bool
+	// MaxExecutionTime is the timeout for select statement, in milliseconds.
+	// If the value is 0, timeouts are not enabled.
+	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
+	MaxExecutionTime uint64
+	// SelectLimit limits the max counts of select statement's output rows.
+	SelectLimit uint64
+	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
+	StoreBatchSize int
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -978,9 +1008,7 @@ type SessionVars struct {
 	OptimizerVars
 	StatsVars
 	TransactionVars
-	// DMLBatchSize indicates the number of rows batch-committed for a statement.
-	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize int
+	ExecutionVars
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -1151,15 +1179,6 @@ type SessionVars struct {
 	// DefaultCollationForUTF8MB4 indicates the default collation of UTF8MB4.
 	DefaultCollationForUTF8MB4 string
 
-	// BatchInsert indicates if we should split insert data into multiple batches.
-	BatchInsert bool
-
-	// BatchDelete indicates if we should split delete data into multiple batches.
-	BatchDelete bool
-
-	// BatchCommit indicates if we should split the transaction into multiple batches.
-	BatchCommit bool
-
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -1179,9 +1198,6 @@ type SessionVars struct {
 
 	// WaitSplitRegionTimeout defines the split region timeout.
 	WaitSplitRegionTimeout uint64
-
-	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
-	EnableChunkRPC bool
 
 	writeStmtBufs WriteStmtBufs
 
@@ -1206,11 +1222,6 @@ type SessionVars struct {
 	// lowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	// Do not use it directly, use the `UseLowResolutionTSO` method below.
 	lowResolutionTSO bool
-
-	// MaxExecutionTime is the timeout for select statement, in milliseconds.
-	// If the value is 0, timeouts are not enabled.
-	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
-	MaxExecutionTime uint64
 
 	// LoadBindingTimeout is the timeout for loading the bind info.
 	LoadBindingTimeout uint64
@@ -1333,9 +1344,6 @@ type SessionVars struct {
 	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
 	OptimizerUseInvisibleIndexes bool
 
-	// SelectLimit limits the max counts of select statement's output
-	SelectLimit uint64
-
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex vardef.ClusteredIndexDefMode
 
@@ -1407,9 +1415,6 @@ type SessionVars struct {
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *mathutil.MysqlRng
-
-	// EnablePaging indicates whether enable paging in coprocessor requests.
-	EnablePaging bool
 
 	// EnableLegacyInstanceScope says if SET SESSION can be used to set an instance
 	// scope variable. The default is TRUE.
@@ -1490,8 +1495,6 @@ type SessionVars struct {
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator
-	// EnableReuseChunk indicates  request chunk whether use chunk alloc
-	EnableReuseChunk bool
 
 	// EnableAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
 	EnableAdvancedJoinHint bool
@@ -1509,9 +1512,6 @@ type SessionVars struct {
 	// PlanReplayerFinishedTaskKey used to record the finished plan replayer task key in order not to record the
 	// duplicate task in plan replayer continues capture
 	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
-
-	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
-	StoreBatchSize int
 
 	// shardGenerator indicates to generate shard for row id.
 	shardGenerator *RowIDShardGenerator
@@ -1617,9 +1617,6 @@ type SessionVars struct {
 
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
 	CacheStmtExecInfo *stmtsummary.StmtExecInfo
-
-	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
-	BulkDMLEnabled bool
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
@@ -2153,7 +2150,10 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		FoundInPlanCache:              vardef.DefTiDBFoundInPlanCache,
 		PrevFoundInBinding:            vardef.DefTiDBFoundInBinding,
 		FoundInBinding:                vardef.DefTiDBFoundInBinding,
-		SelectLimit:                   math.MaxUint64,
+		ExecutionVars: ExecutionVars{
+			SelectLimit:      math.MaxUint64,
+			EnableReuseChunk: vardef.DefTiDBEnableReusechunk,
+		},
 		AllowAutoRandExplicitInsert:   vardef.DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:          vardef.DefTiDBEnableClusteredIndex,
 		EnableParallelApply:           vardef.DefTiDBEnableParallelApply,
@@ -2170,7 +2170,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RemoveOrderbyInSubquery:       vardef.DefTiDBRemoveOrderbyInSubquery,
 		MaxAllowedPacket:              vardef.DefMaxAllowedPacket,
 		HookContext:                   hctx,
-		EnableReuseChunk:              vardef.DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              vardef.DefTiDBUseAlloc,
 		chunkPool:                     nil,
 		EnableLateMaterialization:     vardef.DefTiDBOptEnableLateMaterialization,
