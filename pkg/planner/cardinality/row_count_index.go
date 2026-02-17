@@ -44,7 +44,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	idx := coll.GetIdx(idxID)
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
-		if hasColumnStats(sctx, coll, idxCols) {
+		if hasColumnStats(sctx, coll, idxCols) && !ranger.HasFullRange(indexRanges, false) {
 			count, maxCount, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
 			result = statistics.RowEstimate{Est: count, MinEst: count, MaxEst: maxCount}
 		} else {
@@ -58,6 +58,9 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		return result, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
+	if ranger.HasFullRange(indexRanges, false) {
+		return statistics.DefaultRowEst(float64(realtimeCnt)), nil
+	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		count, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 		result = statistics.DefaultRowEst(count)

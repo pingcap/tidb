@@ -419,17 +419,9 @@ func detachCondAndBuildRangeForPath(
 	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols
 		indexCols = indexCols[0:len(path.Index.Columns)]
 	}
-	// If the ranges cover the full scan, skip the expensive GetRowCountByIndexRanges call.
-	if ranger.HasFullRange(path.Ranges, false) {
-		path.CountAfterAccess = float64(histColl.RealtimeCount)
-	} else {
-		count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
-		if err != nil {
-			return err
-		}
-		path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
-	}
-	return nil
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
+	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
+	return err
 }
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
