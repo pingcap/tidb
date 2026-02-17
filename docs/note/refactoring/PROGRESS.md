@@ -29,11 +29,13 @@ Last updated: 2026-02-17 (benchmark validation complete)
 ## P0 - Critical (Do First)
 
 - [~] **executor/builder.go split** - Replace 103-case switch with registry/factory pattern
-  - File: `pkg/executor/builder.go` (6,222 lines → 4,266 lines)
+  - File: `pkg/executor/builder.go` (6,222 lines → 3,172 lines, 49% reduction)
   - Target: Split into per-operator-type builder files with auto-registration
   - [x] Phase 1: Extract `buildMemTable` (292 lines) → `builder_memtable.go`
-  - [x] Phase 1: Extract reader builders (1,652 lines) → `builder_reader.go` (buildNoRangeTableReader, buildTableReader, buildIndexReader, buildIndexLookUpReader, buildIndexMergeReader, buildMPPGather, dataReaderBuilder, all index join reader builders)
-  - [ ] Phase 2: Extract join builders, analyze builders, remaining groups
+  - [x] Phase 1: Extract reader builders (1,652 lines) → `builder_reader.go`
+  - [x] Phase 2: Extract analyze builders (376 lines) → `builder_analyze.go`
+  - [x] Phase 2: Extract join builders (706 lines) → `builder_join.go`
+  - [ ] Phase 3: Extract DDL/admin, DML, window/shuffle/misc groups
 
 - [ ] **Hash Join V1 deprecation** - Complete V2 for all join types, remove V1
   - Files: `pkg/executor/join/hash_join_v1.go` (1,458 lines), `hash_join_v2.go` (1,538 lines)
@@ -118,4 +120,4 @@ Last updated: 2026-02-17 (benchmark validation complete)
 - [x] **Runtime panic elimination (8 panics)** - 2026-02-17 - Replace panics in builder.go, analyze.go, index_merge_reader.go, aggfuncs/func_value.go, encode.go, rule_partition_processor.go, txn_info.go, summary.go
 - [x] **Additional rune optimizations (6 patterns)** - 2026-02-17 - SUBSTRING non-vec, INSERT non-vec, Quote, WeightString, ValidatePasswordStrength
 - [x] **SessionVars decomposition phase 1** - 2026-02-17 - Extract `TiFlashVars` (27 MPP/TiFlash fields) and `CostModelFactors` (28 cost factor fields) into embedded sub-structs, reducing SessionVars from 315 to ~260 direct fields
-- [x] **executor/builder.go split phase 1** - 2026-02-17 - Extract `buildMemTable` (292 lines) → `builder_memtable.go` and reader builders (1,652 lines) → `builder_reader.go`, reducing builder.go from 6,223 to 4,266 lines
+- [x] **executor/builder.go split phases 1-2** - 2026-02-17 - Extract into 4 files: `builder_memtable.go` (324 lines), `builder_reader.go` (1,710 lines), `builder_analyze.go` (416 lines), `builder_join.go` (740 lines), reducing builder.go from 6,223 to 3,172 lines (49% reduction)
