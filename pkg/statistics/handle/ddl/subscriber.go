@@ -100,9 +100,6 @@ func (h subscriber) handle(
 				return errors.Trace(err)
 			}
 		}
-		if err := storage.DeleteSamplesByTable(ctx, sctx, droppedTableInfo.ID); err != nil {
-			return errors.Trace(err)
-		}
 	case model.ActionAddColumn:
 		newTableInfo, newColumnInfo := change.GetAddColumnInfo()
 		ids, err := getPhysicalIDs(sctx, newTableInfo)
@@ -160,9 +157,6 @@ func (h subscriber) handle(
 			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, def.ID); err != nil {
 				return errors.Trace(err)
 			}
-			if err := storage.DeleteSamplesByPartition(ctx, sctx, def.ID); err != nil {
-				return errors.Trace(err)
-			}
 		}
 
 		return nil
@@ -180,9 +174,6 @@ func (h subscriber) handle(
 		// Reset the partition stats.
 		for _, def := range droppedPartitionInfo.Definitions {
 			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, def.ID); err != nil {
-				return errors.Trace(err)
-			}
-			if err := storage.DeleteSamplesByPartition(ctx, sctx, def.ID); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -226,9 +217,6 @@ func (h subscriber) handle(
 		for _, def := range droppedPartitionInfo.Definitions {
 			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, def.ID); err != nil {
 				return err
-			}
-			if err := storage.DeleteSamplesByPartition(ctx, sctx, def.ID); err != nil {
-				return errors.Trace(err)
 			}
 		}
 

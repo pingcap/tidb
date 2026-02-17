@@ -791,20 +791,6 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
-
-	// CreateStatsSamplesTable stores pruned per-partition sample collectors for
-	// incremental global stats rebuilds. Each row holds a serialized
-	// ReservoirRowSampleCollector blob for one partition of one table.
-	CreateStatsSamplesTable = `CREATE TABLE IF NOT EXISTS mysql.stats_samples (
-		table_id        BIGINT(64) NOT NULL,
-		partition_id    BIGINT(64) NOT NULL,
-		version         BIGINT(64) UNSIGNED NOT NULL,
-		sample_data     LONGBLOB NOT NULL,
-		max_sample_size INT NOT NULL,
-		sample_count    INT NOT NULL,
-		row_count       BIGINT(64) NOT NULL,
-		PRIMARY KEY (table_id, partition_id)
-	);`
 )
 
 // all below are related to DDL or DXF tables

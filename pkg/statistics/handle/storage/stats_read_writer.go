@@ -737,14 +737,6 @@ func (s *statsReadWriter) SaveColumnStatsUsageToStorage(physicalID int64, predic
 	}, util.FlagWrapTxn)
 }
 
-// SavePartitionSamples persists a pruned sample collector for a single
-// partition into mysql.stats_samples via a pooled session.
-func (s *statsReadWriter) SavePartitionSamples(tableID, partitionID int64, version uint64, collector *statistics.ReservoirRowSampleCollector) error {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		return SaveSampleCollectorToStorage(sctx, tableID, partitionID, version, collector)
-	}, util.FlagWrapTxn)
-}
-
 func parseTimeOrNil(timeStr *string) (*types.Time, error) {
 	if timeStr == nil {
 		return nil, nil
