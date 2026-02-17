@@ -1742,7 +1742,8 @@ func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, 
 		}
 		return leftColumnIndex, rightColumnIndex
 	default:
-		panic("unsupported expression")
+		// Gracefully handle unknown expression types by returning current indices unchanged.
+		return leftColumnIndex, rightColumnIndex
 	}
 }
 

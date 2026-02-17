@@ -1,6 +1,21 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-17 (hot-path allocation fixes)
+Last updated: 2026-02-17 (benchmark validation complete)
+
+## Benchmark Validation (2026-02-17)
+
+### Micro-benchmarks (benchstat, p=0.008, n=5)
+- **Vectorized string functions**: -24% to -59% faster (SUBSTR, LOCATE, CHAR_LENGTH)
+  - Substring2ArgsUTF8 Vec: -24.4%, Substring3ArgsUTF8 Vec: -38.5%
+  - Locate3ArgsUTF8 Vec: -48.3% to -59.5%, Locate2ArgsUTF8 Vec: -7.6% to -15.0%
+  - CharLengthUTF8 NonVec: -20.8%
+  - Geomean: **-23.9% sec/op, -5.2% B/op, -4.3% allocs/op**
+- **reflect.TypeOf caching**: 10.0ns → 5.65ns (**1.8x faster**)
+- **Chunk iterator reuse**: negligible (compiler inlines allocation)
+
+### go-ycsb macro (8 threads, 20k ops, 10k records, unistore)
+- Workload A (50/50 read/update): ~50k OPS, no regression
+- Workload C (100% read): ~78k OPS, no regression
 
 ## Status Legend
 

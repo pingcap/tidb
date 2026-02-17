@@ -309,8 +309,8 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 			func() {
 				if e.isIntersection {
 					if e.keepOrder {
-						// todo: implementing fetchLoopIntersectionWithOrderBy if necessary.
-						panic("Not support intersection with keepOrder = true")
+						syncErr(ctx, e.finished, e.resultCh, errors.New("index merge intersection with keepOrder = true is not supported"))
+						return
 					}
 					idxMergeProcessWorker.fetchLoopIntersection(ctx, fetch, workCh, e.resultCh, e.finished)
 				} else if len(e.byItems) != 0 {

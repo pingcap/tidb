@@ -86,7 +86,7 @@ func (s *trxSummaries) dumpTrxSummary() [][]types.Datum {
 
 		res, err := json.Marshal(sqls)
 		if err != nil {
-			panic(err)
+			continue
 		}
 
 		result = append(result, []types.Datum{

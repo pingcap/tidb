@@ -306,10 +306,8 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	if len(normalized) == 0 {
 		return "", parser.NewDigest(nil)
 	}
-	_, err := d.hasher.Write(d.buf.Bytes())
-	if err != nil {
-		panic(err)
-	}
+	// hash.Hash.Write never returns an error per Go spec.
+	d.hasher.Write(d.buf.Bytes())
 	digest = parser.NewDigest(d.hasher.Sum(nil))
 	return
 }
@@ -329,10 +327,8 @@ func NormalizePlan(p base.Plan) (normalized string, digest *parser.Digest) {
 	}()
 	d.normalizePlanTree(selectPlan)
 	normalized = d.buf.String()
-	_, err := d.hasher.Write(d.buf.Bytes())
-	if err != nil {
-		panic(err)
-	}
+	// hash.Hash.Write never returns an error per Go spec.
+	d.hasher.Write(d.buf.Bytes())
 	digest = parser.NewDigest(d.hasher.Sum(nil))
 	return
 }

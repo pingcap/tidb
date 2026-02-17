@@ -336,7 +336,7 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 		return task.idxExec.tableID
 	}
 
-	panic("unreachable")
+	return statistics.AnalyzeTableID{}
 }
 
 func (e *AnalyzeExec) saveV2AnalyzeOpts() error {

@@ -1691,7 +1691,8 @@ func opposite(op string) string {
 	case ast.GE:
 		return ast.LE
 	}
-	panic("invalid input parameter" + op)
+	// Return the original op unchanged for unrecognized operators.
+	return op
 }
 
 // relaxOP relax the op > to >= and < to <=

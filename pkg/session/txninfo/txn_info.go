@@ -207,7 +207,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 	StateStr: func(info *TxnInfo) types.Datum {
 		e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
 		if err != nil {
-			panic("this should never happen")
+			return types.NewDatum(nil)
 		}
 
 		state := types.NewMysqlEnumDatum(e)

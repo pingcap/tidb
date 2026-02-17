@@ -15,7 +15,6 @@
 package aggfuncs
 
 import (
-	"fmt"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -242,7 +241,7 @@ func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64
 		switch tp.GetType() {
 		case mysql.TypeFloat:
 			return &value4Float32{}, DefValue4Float32Size
-		case mysql.TypeDouble:
+		default:
 			return &value4Float64{}, DefValue4Float64Size
 		}
 	case types.ETDecimal:
@@ -258,9 +257,8 @@ func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64
 	case types.ETVectorFloat32:
 		return &value4VectorFloat32{}, DefValue4VectorFloat32Size
 	default:
-		panic(fmt.Sprintf("unsupported eval type %v", evalType))
+		return nil, 0
 	}
-	return nil, 0
 }
 
 type firstValue struct {
