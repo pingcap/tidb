@@ -1381,7 +1381,7 @@ func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
 	if s.Version != 0 {
 		ver = strconv.FormatUint(s.Version, 10)
 	}
-	fmt.Fprintf(w, "%s:%s[%d;%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
+	fmt.Fprintf(w, "%s:version=%s[realtime_count=%d;modify_count=%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
 	if ver == "pseudo" {
 		return
 	}

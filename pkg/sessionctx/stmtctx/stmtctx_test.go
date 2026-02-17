@@ -15,12 +15,14 @@
 package stmtctx_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -500,6 +502,59 @@ func TestReservedRowIDAlloc(t *testing.T) {
 	id, ok = reserved.Consume()
 	require.False(t, ok)
 	require.Equal(t, int64(0), id)
+}
+
+func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
+	// pseudo stats: Version=0
+	sPseudo := &stmtctx.UsedStatsInfoForTable{
+		Name:          "t1",
+		Version:       0,
+		RealtimeCount: 1000,
+		ModifyCount:   100,
+	}
+	var buf bytes.Buffer
+	sPseudo.WriteToSlowLog(&buf)
+	out := buf.String()
+	require.Contains(t, out, "t1:")
+	require.Contains(t, out, "version=pseudo")
+	require.Contains(t, out, "realtime_count=1000")
+	require.Contains(t, out, "modify_count=100")
+	// pseudo returns early, so no "[index][column]" part
+	require.NotContains(t, out, "][")
+	require.Equal(t, "t1:version=pseudo[realtime_count=1000;modify_count=100]", out)
+
+	// real stats: Version != 0
+	buf.Reset()
+	sReal := &stmtctx.UsedStatsInfoForTable{
+		Name:          "orders",
+		Version:       5,
+		RealtimeCount: 1000000,
+		ModifyCount:   500,
+	}
+	sReal.WriteToSlowLog(&buf)
+	out = buf.String()
+	require.Contains(t, out, "orders:")
+	require.Contains(t, out, "version=5")
+	require.Contains(t, out, "realtime_count=1000000")
+	require.Contains(t, out, "modify_count=500")
+	require.Equal(t, "orders:version=5[realtime_count=1000000;modify_count=500]", out)
+
+	// real stats with column/index load status
+	buf.Reset()
+	sWithStatus := &stmtctx.UsedStatsInfoForTable{
+		Name:                  "t2",
+		Version:               10,
+		RealtimeCount:         2000,
+		ModifyCount:            0,
+		IndexStatsLoadStatus:  map[int64]string{1: "allLoaded"},
+		ColumnStatsLoadStatus: map[int64]string{2: "onlyCmsEvicted"},
+	}
+	sWithStatus.WriteToSlowLog(&buf)
+	out = buf.String()
+	require.True(t, strings.HasPrefix(out, "t2:version=10[realtime_count=2000;modify_count=0]"))
+	require.Contains(t, out, "[")
+	// TblInfo is nil so column/index names fall back to "ID <id>"; order: [index][column]
+	require.Equal(t, "t2:version=10[realtime_count=2000;modify_count=0][ID 1:allLoaded][ID 2:onlyCmsEvicted]", out)
 }
 
 func BenchmarkErrCtx(b *testing.B) {
