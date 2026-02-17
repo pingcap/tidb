@@ -248,13 +248,13 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.stats_global_merge_data").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 	))
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_global_merge_data").Check(testkit.Rows("2"))
 }
 
 func TestAnalyzeMetricsCounters(t *testing.T) {

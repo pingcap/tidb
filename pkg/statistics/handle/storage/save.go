@@ -278,11 +278,11 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 			if err = saveTopNToStorage(sctx, tableID, result.IsIndex, hg.ID, result.TopNs[i]); err != nil {
 				return 0, err
 			}
-			if _, err := util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+			if err := DeleteFMSketchFromMergeData(sctx, tableID, int64(result.IsIndex), hg.ID); err != nil {
 				return 0, err
 			}
 			if fmSketch != nil && needDumpFMS {
-				if _, err = util.Exec(sctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, fmSketch); err != nil {
+				if err := SaveFMSketchToMergeData(sctx, tableID, int64(result.IsIndex), hg.ID, fmSketch); err != nil {
 					return 0, err
 				}
 			}
@@ -371,7 +371,7 @@ func SaveColOrIdxStatsToStorage(
 	if err = saveTopNToStorage(sctx, tableID, isIndex, hg.ID, topN); err != nil {
 		return 0, err
 	}
-	if _, err := util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
+	if err := DeleteFMSketchFromMergeData(sctx, tableID, int64(isIndex), hg.ID); err != nil {
 		return 0, err
 	}
 	if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?)",

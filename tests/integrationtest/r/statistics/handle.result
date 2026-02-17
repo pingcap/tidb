@@ -10,31 +10,31 @@ analyze table t1;
 set @@tidb_partition_prune_mode=default;
 set @@tidb_partition_prune_mode='static';
 drop table if exists t;
-delete from mysql.stats_fm_sketch;
+delete from mysql.stats_global_merge_data;
 create table t(a int, index(a));
 insert into t values (1), (2), (3);
 analyze table t;
-select count(*) from mysql.stats_fm_sketch;
+select count(*) from mysql.stats_global_merge_data;
 count(*)
 0
 create table tp(a int, index(a)) partition by hash(a) partitions 3;
 insert into tp values (1), (2), (3);
 analyze table tp;
-select count(*) from mysql.stats_fm_sketch;
+select count(*) from mysql.stats_global_merge_data;
 count(*)
 6
 set @@tidb_partition_prune_mode='dynamic';
 analyze table t;
-select count(*) from mysql.stats_fm_sketch;
+select count(*) from mysql.stats_global_merge_data;
 count(*)
 6
 analyze table tp;
-select count(*) from mysql.stats_fm_sketch;
+select count(*) from mysql.stats_global_merge_data;
 count(*)
 6
 insert into t values (10), (20), (30), (12), (23), (23), (4344);
 analyze table tp;
-select count(*) from mysql.stats_fm_sketch;
+select count(*) from mysql.stats_global_merge_data;
 count(*)
 6
 set @@tidb_partition_prune_mode=default;
