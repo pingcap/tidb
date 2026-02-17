@@ -807,6 +807,85 @@ type PlanCacheVars struct {
 	SessionPlanCacheSize uint64
 }
 
+// OptimizerVars contains settings that control the query optimizer's behavior,
+// including aggregation pushdown, selectivity estimation, join optimization,
+// and planner feature flags.
+type OptimizerVars struct {
+	// AllowAggPushDown can be set to false to forbid aggregation push down.
+	AllowAggPushDown bool
+	// AllowDeriveTopN is used to enable/disable derived TopN optimization.
+	AllowDeriveTopN bool
+	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
+	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
+	// size exceeds the broadcast threshold
+	AllowCartesianBCJ int
+	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
+	AllowDistinctAggPushDown bool
+	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
+	EnableSkewDistinctAgg bool
+	// Enable3StageDistinctAgg indicates whether to allow 3 stage distinct aggregate
+	Enable3StageDistinctAgg bool
+	// Enable3StageMultiDistinctAgg indicates whether to allow 3 stage multi distinct aggregate
+	Enable3StageMultiDistinctAgg bool
+
+	ExplainNonEvaledSubQuery bool
+
+	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
+	LimitPushDownThreshold int64
+	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
+	CorrelationThreshold float64
+	// EnableCorrelationAdjustment is used to indicate if correlation adjustment is enabled.
+	EnableCorrelationAdjustment bool
+	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
+	CorrelationExpFactor int
+	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
+	RiskEqSkewRatio float64
+	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket or outside the histogram bucket range.
+	RiskRangeSkewRatio float64
+	// RiskScaleNDVSkewRatio controls the NDV estimation risk strategy for scaling NDV estimation.
+	RiskScaleNDVSkewRatio float64
+	// TiDBOptRiskGroupNDVSkewRatio controls the NDV estimation risk strategy for multi-column operations
+	// including GROUP BY, JOIN, and DISTINCT operations.
+	// When 0: uses conservative estimate (max of individual column NDVs, production default)
+	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
+	RiskGroupNDVSkewRatio float64
+	// AlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	AlwaysKeepJoinKey bool
+	// CartesianJoinOrderThreshold controls whether to allow do Cartesian Join first in Join Reorder.
+	// When 0: never do Cartesian Join first.
+	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
+	CartesianJoinOrderThreshold float64
+	// enableForceInlineCTE is used to enable/disable force inline CTE.
+	enableForceInlineCTE bool
+
+	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
+	OptimizerSelectivityLevel int
+	// OptIndexPruneThreshold defines the threshold for index pruning optimization.
+	OptIndexPruneThreshold int
+	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
+	OptimizerEnableNewOnlyFullGroupByCheck bool
+	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
+	EnableOuterJoinReorder bool
+	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
+	OptimizerEnableNAAJ bool
+	// EnableCascadesPlanner enables the cascades planner.
+	EnableCascadesPlanner bool
+	// EnableWindowFunction enables the window function.
+	EnableWindowFunction bool
+	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
+	EnablePipelinedWindowExec bool
+	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
+	EnableNoDecorrelateInSelect bool
+	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
+	EnableSemiJoinRewrite bool
+	// AllowProjectionPushDown enables pushdown projection on TiKV.
+	AllowProjectionPushDown bool
+	// EnableStrictDoubleTypeCheck enables table field double type check.
+	EnableStrictDoubleTypeCheck bool
+	// EnableVectorizedExpression  enables the vectorized expression evaluation.
+	EnableVectorizedExpression bool
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -816,6 +895,7 @@ type SessionVars struct {
 	TiFlashVars
 	CostModelFactors
 	PlanCacheVars
+	OptimizerVars
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -949,31 +1029,6 @@ type SessionVars struct {
 	// Note: this variable should be accessed and updated by atomic operations.
 	RefCountOfStmtCtx stmtctx.ReferenceCount
 
-	// AllowAggPushDown can be set to false to forbid aggregation push down.
-	AllowAggPushDown bool
-
-	// AllowDeriveTopN is used to enable/disable derived TopN optimization.
-	AllowDeriveTopN bool
-
-	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
-	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
-	// size exceeds the broadcast threshold
-	AllowCartesianBCJ int
-
-	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
-	AllowDistinctAggPushDown bool
-
-	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
-	EnableSkewDistinctAgg bool
-
-	// Enable3StageDistinctAgg indicates whether to allow 3 stage distinct aggregate
-	Enable3StageDistinctAgg bool
-
-	// Enable3StageMultiDistinctAgg indicates whether to allow 3 stage multi distinct aggregate
-	Enable3StageMultiDistinctAgg bool
-
-	ExplainNonEvaledSubQuery bool
-
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -985,47 +1040,6 @@ type SessionVars struct {
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
-
-	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
-	LimitPushDownThreshold int64
-
-	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
-	CorrelationThreshold float64
-
-	// EnableCorrelationAdjustment is used to indicate if correlation adjustment is enabled.
-	EnableCorrelationAdjustment bool
-
-	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
-	CorrelationExpFactor int
-
-	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
-	RiskEqSkewRatio float64
-
-	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket or outside the histogram bucket range.
-	RiskRangeSkewRatio float64
-
-	// RiskScaleNDVSkewRatio controls the NDV estimation risk strategy for scaling NDV estimation.
-	RiskScaleNDVSkewRatio float64
-
-	// TiDBOptRiskGroupNDVSkewRatio controls the NDV estimation risk strategy for multi-column operations
-	// including GROUP BY, JOIN, and DISTINCT operations.
-	// When 0: uses conservative estimate (max of individual column NDVs, production default)
-	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
-	RiskGroupNDVSkewRatio float64
-
-	// AlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
-	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
-	// join keys might lead to suboptimal plans in some cases.
-	AlwaysKeepJoinKey bool
-
-	// CartesianJoinOrderThreshold controls whether to allow do Cartesian Join first in Join Reorder.
-	// This variable is used as a penalty to trade off the risk and join order quality.
-	// When 0: never do Cartesian Join first.
-	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
-	CartesianJoinOrderThreshold float64
-
-	// enableForceInlineCTE is used to enable/disable force inline CTE.
-	enableForceInlineCTE bool
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -1065,45 +1079,6 @@ type SessionVars struct {
 
 	// BatchCommit indicates if we should split the transaction into multiple batches.
 	BatchCommit bool
-
-	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
-	OptimizerSelectivityLevel int
-
-	// OptIndexPruneThreshold defines the threshold for index pruning optimization.
-	OptIndexPruneThreshold int
-
-	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
-	OptimizerEnableNewOnlyFullGroupByCheck bool
-
-	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
-	EnableOuterJoinReorder bool
-
-	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
-	OptimizerEnableNAAJ bool
-
-	// EnableCascadesPlanner enables the cascades planner.
-	EnableCascadesPlanner bool
-
-	// EnableWindowFunction enables the window function.
-	EnableWindowFunction bool
-
-	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
-	EnablePipelinedWindowExec bool
-
-	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
-	EnableNoDecorrelateInSelect bool
-
-	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
-	EnableSemiJoinRewrite bool
-
-	// AllowProjectionPushDown enables pushdown projection on TiKV.
-	AllowProjectionPushDown bool
-
-	// EnableStrictDoubleTypeCheck enables table field double type check.
-	EnableStrictDoubleTypeCheck bool
-
-	// EnableVectorizedExpression  enables the vectorized expression evaluation.
-	EnableVectorizedExpression bool
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
@@ -2132,28 +2107,11 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AutoIncrementIncrement:        vardef.DefAutoIncrementIncrement,
 		AutoIncrementOffset:           vardef.DefAutoIncrementOffset,
 		StmtCtx:                       stmtctx.NewStmtCtx(),
-		AllowAggPushDown:              false,
-		AllowCartesianBCJ:             vardef.DefOptCartesianBCJ,
-		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
-		OptIndexPruneThreshold:        vardef.DefTiDBOptIndexPruneThreshold,
-		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
-		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
-		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
-		CartesianJoinOrderThreshold:   vardef.DefOptCartesianJoinOrderThreshold,
-		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
-		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
-		EnableSemiJoinRewrite:         vardef.DefOptEnableSemiJoinRewrite,
 		RetryLimit:                    vardef.DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           vardef.DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       vardef.DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               vardef.DefOptPreferRangeScan,
-		EnableCorrelationAdjustment:   vardef.DefOptEnableCorrelationAdjustment,
-		LimitPushDownThreshold:        vardef.DefOptLimitPushDownThreshold,
-		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
-		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
-		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
-		RiskRangeSkewRatio:            vardef.DefOptRiskRangeSkewRatio,
 		CostModelFactors: CostModelFactors{
 			cpuFactor:                     vardef.DefOptCPUFactor,
 			copCPUFactor:                  vardef.DefOptCopCPUFactor,
@@ -2184,8 +2142,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 			IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
 			SelectivityFactor:             vardef.DefOptSelectivityFactor,
 		},
-		enableForceInlineCTE:          vardef.DefOptForceInlineCTE,
-		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptJoinReorderThroughSel:  vardef.DefTiDBOptJoinReorderThroughSel,
@@ -2229,8 +2185,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Rng:                           mathutil.NewWithTime(),
 		EnableLegacyInstanceScope:     vardef.DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       vardef.DefTiDBRemoveOrderbyInSubquery,
-		EnableSkewDistinctAgg:         vardef.DefTiDBSkewDistinctAgg,
-		Enable3StageDistinctAgg:       vardef.DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              vardef.DefMaxAllowedPacket,
 		ForeignKeyChecks:              vardef.DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
@@ -2242,15 +2196,38 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:               vardef.DefTiDBRedactLog,
-		EnableWindowFunction:          vardef.DefEnableWindowFunction,
 		CostModelVersion:              vardef.DefTiDBCostModelVer,
-		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
 		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
 		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
-		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
 		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:     vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN: vardef.DefTiDBOptPartialOrderedIndexForTopN,
+		OptimizerVars: OptimizerVars{
+			AllowAggPushDown:                      false,
+			AllowCartesianBCJ:                     vardef.DefOptCartesianBCJ,
+			EnableSkewDistinctAgg:                 vardef.DefTiDBSkewDistinctAgg,
+			Enable3StageDistinctAgg:               vardef.DefTiDB3StageDistinctAgg,
+			LimitPushDownThreshold:                vardef.DefOptLimitPushDownThreshold,
+			CorrelationThreshold:                  vardef.DefOptCorrelationThreshold,
+			EnableCorrelationAdjustment:           vardef.DefOptEnableCorrelationAdjustment,
+			CorrelationExpFactor:                  vardef.DefOptCorrelationExpFactor,
+			RiskEqSkewRatio:                       vardef.DefOptRiskEqSkewRatio,
+			RiskRangeSkewRatio:                    vardef.DefOptRiskRangeSkewRatio,
+			RiskScaleNDVSkewRatio:                 vardef.DefOptRiskScaleNDVSkewRatio,
+			RiskGroupNDVSkewRatio:                 vardef.DefOptRiskGroupNDVSkewRatio,
+			AlwaysKeepJoinKey:                     vardef.DefOptAlwaysKeepJoinKey,
+			CartesianJoinOrderThreshold:           vardef.DefOptCartesianJoinOrderThreshold,
+			enableForceInlineCTE:                  vardef.DefOptForceInlineCTE,
+			OptimizerSelectivityLevel:             vardef.DefTiDBOptimizerSelectivityLevel,
+			OptIndexPruneThreshold:                vardef.DefTiDBOptIndexPruneThreshold,
+			EnableOuterJoinReorder:                vardef.DefTiDBEnableOuterJoinReorder,
+			OptimizerEnableNAAJ:                   vardef.DefTiDBEnableNAAJ,
+			EnableWindowFunction:                  vardef.DefEnableWindowFunction,
+			EnableNoDecorrelateInSelect:           vardef.DefOptEnableNoDecorrelateInSelect,
+			EnableSemiJoinRewrite:                 vardef.DefOptEnableSemiJoinRewrite,
+			AllowProjectionPushDown:               vardef.DefOptEnableProjectionPushDown,
+			EnableVectorizedExpression:            vardef.DefEnableVectorizedExpression,
+		},
 		TiFlashVars: TiFlashVars{
 			MPPOuterJoinFixedBuildSide:           vardef.DefOptMPPOuterJoinFixedBuildSide,
 			BroadcastJoinThresholdSize:           vardef.DefBroadcastJoinThresholdSize,
