@@ -347,7 +347,7 @@ func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.Refre
 	case ast.RefreshMaterializedViewTypeComplete:
 		// supported
 	case ast.RefreshMaterializedViewTypeFast:
-		// Framework is supported; actual execution happens via RefreshMaterializedViewInternalStmt.
+		// Framework is supported; actual execution happens via RefreshMaterializedViewImplementStmt.
 	default:
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unknown REFRESH MATERIALIZED VIEW type")
 	}
@@ -482,7 +482,7 @@ func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.Refre
 				return err
 			}
 		case ast.RefreshMaterializedViewTypeFast:
-			internalStmt := &ast.RefreshMaterializedViewInternalStmt{
+			implementStmt := &ast.RefreshMaterializedViewImplementStmt{
 				RefreshStmt:                  s,
 				LastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
 			}
@@ -501,7 +501,7 @@ func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.Refre
 			if internalExec, ok := sqlExec.(interface {
 				ExecuteInternalStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 			}); ok {
-				rs, err := internalExec.ExecuteInternalStmt(kctx, internalStmt)
+				rs, err := internalExec.ExecuteInternalStmt(kctx, implementStmt)
 				if rs == nil {
 					return err
 				}
@@ -522,7 +522,7 @@ func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.Refre
 			defer func() {
 				sessVars.InRestrictedSQL = origRestricted
 			}()
-			rs, err := sqlExec.ExecuteStmt(kctx, internalStmt)
+			rs, err := sqlExec.ExecuteStmt(kctx, implementStmt)
 			if rs == nil {
 				return err
 			}
