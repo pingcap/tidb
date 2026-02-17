@@ -29,6 +29,7 @@ import (
 	"hash"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -1058,7 +1059,7 @@ func (b *builtinValidatePasswordStrengthSig) evalInt(ctx EvalContext, row chunk.
 	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, true, err
-	} else if len([]rune(str)) < 4 {
+	} else if utf8.RuneCountInString(str) < 4 {
 		return 0, false, nil
 	}
 	if validation, err := globalVars.GetGlobalSysVar(vardef.ValidatePasswordEnable); err != nil {

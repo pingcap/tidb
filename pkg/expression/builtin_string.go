@@ -1302,17 +1302,16 @@ func (b *builtinSubstring2ArgsUTF8Sig) evalString(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return "", true, err
 	}
-	runes := []rune(str)
-	length := int64(len(runes))
+	runeCount := int64(utf8.RuneCountInString(str))
 	if pos < 0 {
-		pos += length
+		pos += runeCount
 	} else {
 		pos--
 	}
-	if pos > length || pos < 0 {
-		pos = length
+	if pos > runeCount || pos < 0 {
+		pos = runeCount
 	}
-	return string(runes[pos:]), false, nil
+	return str[runeByteIndex(str, int(pos)):], false, nil
 }
 
 type builtinSubstring3ArgsSig struct {
@@ -1391,8 +1390,7 @@ func (b *builtinSubstring3ArgsUTF8Sig) evalString(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return "", true, err
 	}
-	runes := []rune(str)
-	numRunes := int64(len(runes))
+	numRunes := int64(utf8.RuneCountInString(str))
 	if pos < 0 {
 		pos += numRunes
 	} else {
@@ -1404,10 +1402,13 @@ func (b *builtinSubstring3ArgsUTF8Sig) evalString(ctx EvalContext, row chunk.Row
 	end := pos + length
 	if end < pos {
 		return "", false, nil
-	} else if end < numRunes {
-		return string(runes[pos:end]), false, nil
 	}
-	return string(runes[pos:]), false, nil
+	startByte := runeByteIndex(str, int(pos))
+	if end < numRunes {
+		endByte := runeByteIndex(str, int(end))
+		return str[startByte:endByte], false, nil
+	}
+	return str[startByte:], false, nil
 }
 
 type substringIndexFunctionClass struct {
@@ -3144,14 +3145,14 @@ func (b *builtinQuoteSig) evalString(ctx EvalContext, row chunk.Row) (string, bo
 
 // Quote produce a result that can be used as a properly escaped data value in an SQL statement.
 func Quote(str string) string {
-	runes := []rune(str)
 	buffer := bytes.NewBufferString("")
 	buffer.WriteRune('\'')
-	for i, runeLength := 0, len(runes); i < runeLength; i++ {
-		switch runes[i] {
+	for i := 0; i < len(str); {
+		r, size := utf8.DecodeRuneInString(str[i:])
+		switch r {
 		case '\\', '\'':
 			buffer.WriteRune('\\')
-			buffer.WriteRune(runes[i])
+			buffer.WriteRune(r)
 		case 0:
 			buffer.WriteRune('\\')
 			buffer.WriteRune('0')
@@ -3159,8 +3160,9 @@ func Quote(str string) string {
 			buffer.WriteRune('\\')
 			buffer.WriteRune('Z')
 		default:
-			buffer.WriteRune(runes[i])
+			buffer.WriteRune(r)
 		}
+		i += size
 	}
 	buffer.WriteRune('\'')
 
@@ -3942,8 +3944,7 @@ func (b *builtinInsertUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (strin
 		return "", true, err
 	}
 
-	runes := []rune(str)
-	runeLength := int64(len(runes))
+	runeLength := int64(utf8.RuneCountInString(str))
 	if pos < 1 || pos > runeLength {
 		return str, false, nil
 	}
@@ -3951,8 +3952,10 @@ func (b *builtinInsertUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (strin
 		length = runeLength - pos + 1
 	}
 
-	strHead := string(runes[0 : pos-1])
-	strTail := string(runes[pos+length-1:])
+	headEnd := runeByteIndex(str, int(pos-1))
+	tailStart := runeByteIndex(str, int(pos+length-1))
+	strHead := str[:headEnd]
+	strTail := str[tailStart:]
 	if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
 		return "", true, handleAllowedPacketOverflowed(ctx, "insert", b.maxAllowedPacket)
 	}
@@ -4235,10 +4238,9 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 	// TODO: refactor padding codes after padding is implemented by all collators.
 	switch b.padding {
 	case weightStringPaddingAsChar:
-		runes := []rune(str)
-		lenRunes := len(runes)
+		lenRunes := utf8.RuneCountInString(str)
 		if b.length < lenRunes {
-			str = string(runes[:b.length])
+			str = str[:runeByteIndex(str, b.length)]
 		} else if b.length > lenRunes {
 			if uint64(b.length-lenRunes) > b.maxAllowedPacket {
 				return "", true, handleAllowedPacketOverflowed(ctx, "weight_string", b.maxAllowedPacket)
