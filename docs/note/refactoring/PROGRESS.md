@@ -28,8 +28,8 @@ Last updated: 2026-02-17 (benchmark validation complete)
 
 ## P0 - Critical (Do First)
 
-- [~] **executor/builder.go split** - Replace 103-case switch with registry/factory pattern
-  - File: `pkg/executor/builder.go` (6,222 lines → 2,360 lines, 62% reduction)
+- [x] **executor/builder.go split** - Replace 103-case switch with registry/factory pattern
+  - File: `pkg/executor/builder.go` (6,222 lines → 1,414 lines, 77% reduction)
   - Target: Split into per-operator-type builder files with auto-registration
   - [x] Phase 1: Extract `buildMemTable` (292 lines) → `builder_memtable.go`
   - [x] Phase 1: Extract reader builders (1,652 lines) → `builder_reader.go`
@@ -37,7 +37,9 @@ Last updated: 2026-02-17 (benchmark validation complete)
   - [x] Phase 2: Extract join builders (706 lines) → `builder_join.go`
   - [x] Phase 3: Extract DDL/admin builders (474 lines) → `builder_ddl_admin.go`
   - [x] Phase 3: Extract sort/window builders (411 lines) → `builder_sort_window.go`
-  - [ ] Phase 4: Extract CTE, table ops, remaining misc groups
+  - [x] Phase 4: Extract agg/project builders (244 lines) → `builder_agg_project.go`
+  - [x] Phase 4: Extract CTE/misc builders (315 lines) → `builder_cte_misc.go`
+  - [x] Phase 4: Extract statement builders (474 lines) → `builder_stmt.go`
 
 - [ ] **Hash Join V1 deprecation** - Complete V2 for all join types, remove V1
   - Files: `pkg/executor/join/hash_join_v1.go` (1,458 lines), `hash_join_v2.go` (1,538 lines)
@@ -126,3 +128,4 @@ Last updated: 2026-02-17 (benchmark validation complete)
 - [x] **executor/builder.go split phases 1-2** - 2026-02-17 - Extract into 4 files: `builder_memtable.go` (324 lines), `builder_reader.go` (1,710 lines), `builder_analyze.go` (416 lines), `builder_join.go` (740 lines), reducing builder.go from 6,223 to 3,172 lines (49% reduction)
 - [x] **SessionVars decomposition phase 2** - 2026-02-17 - Extract `PlanCacheVars` (13 plan cache fields) and `OptimizerVars` (32 optimizer fields) into embedded sub-structs
 - [x] **executor/builder.go split phase 3** - 2026-02-17 - Extract `builder_ddl_admin.go` (474 lines) and `builder_sort_window.go` (411 lines), reducing builder.go from 3,172 to 2,360 lines (62% total reduction)
+- [x] **executor/builder.go split phase 4** - 2026-02-17 - Extract `builder_agg_project.go` (244 lines), `builder_cte_misc.go` (315 lines), and `builder_stmt.go` (474 lines), reducing builder.go from 2,360 to 1,414 lines (77% total reduction). Split complete: 9 builder files total.
