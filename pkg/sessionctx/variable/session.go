@@ -782,6 +782,8 @@ type SessionVars struct {
 	MemQuota
 	BatchSize
 	PipelinedDMLConfig
+	TiFlashVars
+	CostModelFactors
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -926,9 +928,6 @@ type SessionVars struct {
 	// size exceeds the broadcast threshold
 	AllowCartesianBCJ int
 
-	// MPPOuterJoinFixedBuildSide means in MPP plan, always use right(left) table as build side for left(right) out join
-	MPPOuterJoinFixedBuildSide bool
-
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -952,81 +951,8 @@ type SessionVars struct {
 	// AllowWriteRowID variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
-	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
-	// Value set to 2 means to force to send batch cop for any query. Value set to 0 means never use batch cop.
-	AllowBatchCop int
-
-	// allowMPPExecution means if we should use mpp way to execute query.
-	// Default value is `true`, means to be determined by the optimizer.
-	// Value set to `false` means never use mpp.
-	allowMPPExecution bool
-
-	// allowTiFlashCop means if we must use mpp way to execute query.
-	// Default value is `false`, means to be determined by the optimizer.
-	// Value set to `true` means we may fall back to TiFlash cop if possible.
-	allowTiFlashCop bool
-
-	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
-	// Default value is `true`, means support hash exchange when new collation is enabled.
-	// Value set to `false` means not use hash exchange when new collation is enabled.
-	HashExchangeWithNewCollation bool
-
-	// enforceMPPExecution means if we should enforce mpp way to execute query.
-	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
-	// Value set to `true` means enforce use mpp.
-	// Note if you want to set `enforceMPPExecution` to `true`, you must set `allowMPPExecution` to `true` first.
-	enforceMPPExecution bool
-
-	// TiFlashMaxThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
-	// Default value is -1, means it will not be pushed down to tiflash.
-	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
-	TiFlashMaxThreads int64
-
-	// TiFlashMaxBytesBeforeExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
-	// Default value is -1, means it will not be pushed down to TiFlash
-	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
-	// not limit and spill will never happen
-	TiFlashMaxBytesBeforeExternalJoin int64
-
-	// TiFlashMaxBytesBeforeExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
-	// Default value is -1, means it will not be pushed down to TiFlash
-	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
-	// not limit and spill will never happen
-	TiFlashMaxBytesBeforeExternalGroupBy int64
-
-	// TiFlashMaxBytesBeforeExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
-	// Default value is -1, means it will not be pushed down to TiFlash
-	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
-	// not limit and spill will never happen
-	TiFlashMaxBytesBeforeExternalSort int64
-
-	// TiFlash max query memory per node, -1 and 0 means no limit, and the default value is 0
-	// If TiFlashMaxQueryMemoryPerNode > 0 && TiFlashQuerySpillRatio > 0, it will trigger auto spill in TiFlash side, and when auto spill
-	// is triggered, per executor's memory usage threshold set by TiFlashMaxBytesBeforeExternalJoin/TiFlashMaxBytesBeforeExternalGroupBy/TiFlashMaxBytesBeforeExternalSort will be ignored.
-	TiFlashMaxQueryMemoryPerNode int64
-
-	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
-	TiFlashQuerySpillRatio float64
-
-	// TiFlashHashJoinVersion controls the hash join version in TiFlash.
-	// "optimized" enables hash join v2, while "legacy" uses the original version.
-	TiFlashHashJoinVersion string
-
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
-
-	// BroadcastJoinThresholdSize is used to limit the size of smaller table.
-	// It's unit is bytes, if the size of small table is larger than it, we will not use bcj.
-	BroadcastJoinThresholdSize int64
-
-	// BroadcastJoinThresholdCount is used to limit the total count of smaller table.
-	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
-	BroadcastJoinThresholdCount int64
-
-	// PreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
-	// false: choose mpp broadcast join by `BroadcastJoinThresholdSize` and `BroadcastJoinThresholdCount`
-	// true: compare data exchange size of join and choose the smallest one
-	PreferBCJByExchangeDataSize bool
 
 	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	LimitPushDownThreshold int64
@@ -1066,50 +992,8 @@ type SessionVars struct {
 	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
 	CartesianJoinOrderThreshold float64
 
-	// cpuFactor is the CPU cost of processing one expression for one row.
-	cpuFactor float64
-	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
-	copCPUFactor float64
-	// networkFactor is the network cost of transferring 1 byte data.
-	networkFactor float64
-	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
-	scanFactor float64
-	// descScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
-	descScanFactor float64
-	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
-	seekFactor float64
-	// memoryFactor is the memory cost of storing one tuple.
-	memoryFactor float64
-	// diskFactor is the IO cost of reading/writing one byte to temporary disk.
-	diskFactor float64
-	// concurrencyFactor is the CPU cost of additional one goroutine.
-	concurrencyFactor float64
-
-	// Optimizer cost model factors for each physical operator
-	IndexScanCostFactor        float64
-	IndexReaderCostFactor      float64
-	TableReaderCostFactor      float64
-	TableFullScanCostFactor    float64
-	TableRangeScanCostFactor   float64
-	TableRowIDScanCostFactor   float64
-	TableTiFlashScanCostFactor float64
-	IndexLookupCostFactor      float64
-	IndexMergeCostFactor       float64
-	SortCostFactor             float64
-	TopNCostFactor             float64
-	LimitCostFactor            float64
-	StreamAggCostFactor        float64
-	HashAggCostFactor          float64
-	MergeJoinCostFactor        float64
-	HashJoinCostFactor         float64
-	IndexJoinCostFactor        float64
-	SelectivityFactor          float64
-
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
-
-	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
-	CopTiFlashConcurrencyFactor float64
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -1333,10 +1217,6 @@ type SessionVars struct {
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
 
-	mppVersion kv.MppVersion
-
-	mppExchangeCompressionMode vardef.ExchangeCompressionMode
-
 	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
@@ -1471,9 +1351,6 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
 
-	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
-	MPPStoreFailTTL string
-
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
 
@@ -1512,8 +1389,6 @@ type SessionVars struct {
 	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
 	IndexJoinDoubleReadPenaltyCostRate float64
 
-	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
-	BatchPendingTiFlashCount int
 	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
 	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
@@ -1524,10 +1399,6 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
-
-	// TiFlash related optimization, only for MPP.
-	TiFlashFineGrainedShuffleStreamCount int64
-	TiFlashFineGrainedShuffleBatchSize   uint64
 
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
@@ -1556,9 +1427,6 @@ type SessionVars struct {
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
-
-	// TiFlashFastScan indicates whether use fast scan in TiFlash
-	TiFlashFastScan bool
 
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
@@ -1603,9 +1471,6 @@ type SessionVars struct {
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
 	ConstraintCheckInPlacePessimistic bool
-
-	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
-	EnableTiFlashReadForWriteStmt bool
 
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
@@ -1704,10 +1569,6 @@ type SessionVars struct {
 	// EnableRowLevelChecksum indicates whether row level checksum is enabled.
 	EnableRowLevelChecksum bool
 
-	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
-	// Only for disaggregated-tiflash mode.
-	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
-
 	// SlowTxnThreshold is the threshold of slow transaction logs
 	SlowTxnThreshold uint64
 
@@ -1737,9 +1598,6 @@ type SessionVars struct {
 	// RelevantOptFixes is a map of relevant optimizer fixes to be recorded.
 	RelevantOptFixes map[uint64]struct{}
 
-	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
-	EnableMPPSharedCTEExecution bool
-
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
 
@@ -1748,9 +1606,6 @@ type SessionVars struct {
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
-
-	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
-	TiFlashReplicaRead tiflash.ReplicaRead
 
 	// HypoTiFlashReplicas are for the Index Advisor.
 	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
@@ -1799,9 +1654,6 @@ type SessionVars struct {
 
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
-
-	// TiFlashPreAggMode indicates the policy of pre aggregation.
-	TiFlashPreAggMode string
 
 	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
 	EnableLazyCursorFetch bool
@@ -2289,9 +2141,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		StmtCtx:                       stmtctx.NewStmtCtx(),
 		AllowAggPushDown:              false,
 		AllowCartesianBCJ:             vardef.DefOptCartesianBCJ,
-		MPPOuterJoinFixedBuildSide:    vardef.DefOptMPPOuterJoinFixedBuildSide,
-		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
 		OptIndexPruneThreshold:        vardef.DefTiDBOptIndexPruneThreshold,
 		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
@@ -2312,34 +2161,36 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
 		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
 		RiskRangeSkewRatio:            vardef.DefOptRiskRangeSkewRatio,
-		cpuFactor:                     vardef.DefOptCPUFactor,
-		copCPUFactor:                  vardef.DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,
-		networkFactor:                 vardef.DefOptNetworkFactor,
-		scanFactor:                    vardef.DefOptScanFactor,
-		descScanFactor:                vardef.DefOptDescScanFactor,
-		seekFactor:                    vardef.DefOptSeekFactor,
-		memoryFactor:                  vardef.DefOptMemoryFactor,
-		diskFactor:                    vardef.DefOptDiskFactor,
-		concurrencyFactor:             vardef.DefOptConcurrencyFactor,
-		IndexScanCostFactor:           vardef.DefOptIndexScanCostFactor,
-		IndexReaderCostFactor:         vardef.DefOptIndexReaderCostFactor,
-		TableReaderCostFactor:         vardef.DefOptTableReaderCostFactor,
-		TableFullScanCostFactor:       vardef.DefOptTableFullScanCostFactor,
-		TableRangeScanCostFactor:      vardef.DefOptTableRangeScanCostFactor,
-		TableRowIDScanCostFactor:      vardef.DefOptTableRowIDScanCostFactor,
-		TableTiFlashScanCostFactor:    vardef.DefOptTableTiFlashScanCostFactor,
-		IndexLookupCostFactor:         vardef.DefOptIndexLookupCostFactor,
-		IndexMergeCostFactor:          vardef.DefOptIndexMergeCostFactor,
-		SortCostFactor:                vardef.DefOptSortCostFactor,
-		TopNCostFactor:                vardef.DefOptTopNCostFactor,
-		LimitCostFactor:               vardef.DefOptLimitCostFactor,
-		StreamAggCostFactor:           vardef.DefOptStreamAggCostFactor,
-		HashAggCostFactor:             vardef.DefOptHashAggCostFactor,
-		MergeJoinCostFactor:           vardef.DefOptMergeJoinCostFactor,
-		HashJoinCostFactor:            vardef.DefOptHashJoinCostFactor,
-		IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
-		SelectivityFactor:             vardef.DefOptSelectivityFactor,
+		CostModelFactors: CostModelFactors{
+			cpuFactor:                     vardef.DefOptCPUFactor,
+			copCPUFactor:                  vardef.DefOptCopCPUFactor,
+			CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,
+			networkFactor:                 vardef.DefOptNetworkFactor,
+			scanFactor:                    vardef.DefOptScanFactor,
+			descScanFactor:                vardef.DefOptDescScanFactor,
+			seekFactor:                    vardef.DefOptSeekFactor,
+			memoryFactor:                  vardef.DefOptMemoryFactor,
+			diskFactor:                    vardef.DefOptDiskFactor,
+			concurrencyFactor:             vardef.DefOptConcurrencyFactor,
+			IndexScanCostFactor:           vardef.DefOptIndexScanCostFactor,
+			IndexReaderCostFactor:         vardef.DefOptIndexReaderCostFactor,
+			TableReaderCostFactor:         vardef.DefOptTableReaderCostFactor,
+			TableFullScanCostFactor:       vardef.DefOptTableFullScanCostFactor,
+			TableRangeScanCostFactor:      vardef.DefOptTableRangeScanCostFactor,
+			TableRowIDScanCostFactor:      vardef.DefOptTableRowIDScanCostFactor,
+			TableTiFlashScanCostFactor:    vardef.DefOptTableTiFlashScanCostFactor,
+			IndexLookupCostFactor:         vardef.DefOptIndexLookupCostFactor,
+			IndexMergeCostFactor:          vardef.DefOptIndexMergeCostFactor,
+			SortCostFactor:                vardef.DefOptSortCostFactor,
+			TopNCostFactor:                vardef.DefOptTopNCostFactor,
+			LimitCostFactor:               vardef.DefOptLimitCostFactor,
+			StreamAggCostFactor:           vardef.DefOptStreamAggCostFactor,
+			HashAggCostFactor:             vardef.DefOptHashAggCostFactor,
+			MergeJoinCostFactor:           vardef.DefOptMergeJoinCostFactor,
+			HashJoinCostFactor:            vardef.DefOptHashJoinCostFactor,
+			IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
+			SelectivityFactor:             vardef.DefOptSelectivityFactor,
+		},
 		enableForceInlineCTE:          vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
@@ -2382,24 +2233,18 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          vardef.DefCTEMaxRecursionDepth,
 		TMPTableSize:                  vardef.DefTiDBTmpTableMaxSize,
-		MPPStoreFailTTL:               vardef.DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
 		EnableLegacyInstanceScope:     vardef.DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       vardef.DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:         vardef.DefTiDBSkewDistinctAgg,
 		Enable3StageDistinctAgg:       vardef.DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              vardef.DefMaxAllowedPacket,
-		TiFlashFastScan:               vardef.DefTiFlashFastScan,
-		EnableTiFlashReadForWriteStmt: true,
 		ForeignKeyChecks:              vardef.DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseChunk:              vardef.DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              vardef.DefTiDBUseAlloc,
 		chunkPool:                     nil,
-		mppExchangeCompressionMode:    vardef.DefaultExchangeCompressionMode,
-		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     vardef.DefTiDBOptEnableLateMaterialization,
-		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
@@ -2413,8 +2258,30 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:     vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN: vardef.DefTiDBOptPartialOrderedIndexForTopN,
+		TiFlashVars: TiFlashVars{
+			MPPOuterJoinFixedBuildSide:           vardef.DefOptMPPOuterJoinFixedBuildSide,
+			BroadcastJoinThresholdSize:           vardef.DefBroadcastJoinThresholdSize,
+			BroadcastJoinThresholdCount:          vardef.DefBroadcastJoinThresholdCount,
+			MPPStoreFailTTL:                      vardef.DefTiDBMPPStoreFailTTL,
+			TiFlashFastScan:                      vardef.DefTiFlashFastScan,
+			EnableTiFlashReadForWriteStmt:        true,
+			mppExchangeCompressionMode:           vardef.DefaultExchangeCompressionMode,
+			mppVersion:                           kv.MppVersionUnspecified,
+			TiFlashComputeDispatchPolicy:         tiflashcompute.DispatchPolicyConsistentHash,
+			TiFlashFineGrainedShuffleBatchSize:   vardef.DefTiFlashFineGrainedShuffleBatchSize,
+			AllowBatchCop:                        vardef.DefTiDBAllowBatchCop,
+			allowMPPExecution:                    vardef.DefTiDBAllowMPPExecution,
+			HashExchangeWithNewCollation:         vardef.DefTiDBHashExchangeWithNewCollation,
+			enforceMPPExecution:                  vardef.DefTiDBEnforceMPPExecution,
+			TiFlashMaxThreads:                    vardef.DefTiFlashMaxThreads,
+			TiFlashMaxBytesBeforeExternalJoin:    vardef.DefTiFlashMaxBytesBeforeExternalJoin,
+			TiFlashMaxBytesBeforeExternalGroupBy: vardef.DefTiFlashMaxBytesBeforeExternalGroupBy,
+			TiFlashMaxBytesBeforeExternalSort:    vardef.DefTiFlashMaxBytesBeforeExternalSort,
+			TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
+			TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
+			TiFlashHashJoinVersion:               vardef.DefTiFlashHashJoinVersion,
+		},
 	}
-	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
@@ -2446,18 +2313,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MaxPagingSize:      vardef.DefMaxPagingSize,
 	}
 	vars.DMLBatchSize = vardef.DefDMLBatchSize
-	vars.AllowBatchCop = vardef.DefTiDBAllowBatchCop
-	vars.allowMPPExecution = vardef.DefTiDBAllowMPPExecution
-	vars.HashExchangeWithNewCollation = vardef.DefTiDBHashExchangeWithNewCollation
-	vars.enforceMPPExecution = vardef.DefTiDBEnforceMPPExecution
-	vars.TiFlashMaxThreads = vardef.DefTiFlashMaxThreads
-	vars.TiFlashMaxBytesBeforeExternalJoin = vardef.DefTiFlashMaxBytesBeforeExternalJoin
-	vars.TiFlashMaxBytesBeforeExternalGroupBy = vardef.DefTiFlashMaxBytesBeforeExternalGroupBy
-	vars.TiFlashMaxBytesBeforeExternalSort = vardef.DefTiFlashMaxBytesBeforeExternalSort
-	vars.TiFlashMaxQueryMemoryPerNode = vardef.DefTiFlashMemQuotaQueryPerNode
-	vars.TiFlashQuerySpillRatio = vardef.DefTiFlashQuerySpillRatio
-	vars.TiFlashHashJoinVersion = vardef.DefTiFlashHashJoinVersion
-	vars.MPPStoreFailTTL = vardef.DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
@@ -3420,6 +3275,144 @@ type PipelinedDMLConfig struct {
 	// by adding sleep intervals between flushes, to avoid overwhelming the storage layer.
 	// It is defined as: throttle_ratio =  T_sleep / (T_sleep + T_flush)
 	PipelinedWriteThrottleRatio float64
+}
+
+// TiFlashVars groups TiFlash and MPP execution related session variables.
+type TiFlashVars struct {
+	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
+	// Value set to 2 means to force to send batch cop for any query. Value set to 0 means never use batch cop.
+	AllowBatchCop int
+
+	// allowMPPExecution means if we should use mpp way to execute query.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means never use mpp.
+	allowMPPExecution bool
+
+	// allowTiFlashCop means if we must use mpp way to execute query.
+	// Default value is `false`, means to be determined by the optimizer.
+	// Value set to `true` means we may fall back to TiFlash cop if possible.
+	allowTiFlashCop bool
+
+	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
+	HashExchangeWithNewCollation bool
+
+	// enforceMPPExecution means if we should enforce mpp way to execute query.
+	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
+	// Value set to `true` means enforce use mpp.
+	enforceMPPExecution bool
+
+	// TiFlashMaxThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
+	TiFlashMaxThreads int64
+
+	// TiFlashMaxBytesBeforeExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	TiFlashMaxBytesBeforeExternalJoin int64
+
+	// TiFlashMaxBytesBeforeExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	TiFlashMaxBytesBeforeExternalGroupBy int64
+
+	// TiFlashMaxBytesBeforeExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	TiFlashMaxBytesBeforeExternalSort int64
+
+	// TiFlashMaxQueryMemoryPerNode is the max query memory per node, -1 and 0 means no limit
+	TiFlashMaxQueryMemoryPerNode int64
+
+	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash
+	TiFlashQuerySpillRatio float64
+
+	// TiFlashHashJoinVersion controls the hash join version in TiFlash.
+	TiFlashHashJoinVersion string
+
+	// BroadcastJoinThresholdSize is used to limit the size of smaller table for broadcast join.
+	BroadcastJoinThresholdSize int64
+
+	// BroadcastJoinThresholdCount is used to limit the total count of smaller table for broadcast join.
+	BroadcastJoinThresholdCount int64
+
+	// PreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
+	PreferBCJByExchangeDataSize bool
+
+	// MPPOuterJoinFixedBuildSide means in MPP plan, always use right(left) table as build side for left(right) out join
+	MPPOuterJoinFixedBuildSide bool
+
+	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
+	MPPStoreFailTTL string
+
+	// TiFlashFineGrainedShuffleStreamCount is the stream count of fine grained shuffle in TiFlash.
+	TiFlashFineGrainedShuffleStreamCount int64
+
+	// TiFlashFineGrainedShuffleBatchSize is the batch size of fine grained shuffle in TiFlash.
+	TiFlashFineGrainedShuffleBatchSize uint64
+
+	// TiFlashFastScan indicates whether use fast scan in TiFlash
+	TiFlashFastScan bool
+
+	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
+	EnableTiFlashReadForWriteStmt bool
+
+	// TiFlashComputeDispatchPolicy indicates how to dispatch task to tiflash_compute nodes.
+	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
+
+	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
+	EnableMPPSharedCTEExecution bool
+
+	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
+	TiFlashReplicaRead tiflash.ReplicaRead
+
+	// TiFlashPreAggMode indicates the policy of pre aggregation.
+	TiFlashPreAggMode string
+
+	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
+	BatchPendingTiFlashCount int
+
+	mppVersion kv.MppVersion
+
+	mppExchangeCompressionMode vardef.ExchangeCompressionMode
+}
+
+// CostModelFactors groups cost model factor fields used by the query optimizer.
+// These factors control how the optimizer estimates the cost of different operations.
+type CostModelFactors struct {
+	// cpuFactor is the CPU cost of processing one expression for one row.
+	cpuFactor float64
+	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
+	copCPUFactor float64
+	// networkFactor is the network cost of transferring 1 byte data.
+	networkFactor float64
+	// scanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
+	scanFactor float64
+	// descScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
+	descScanFactor float64
+	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	seekFactor float64
+	// memoryFactor is the memory cost of storing one tuple.
+	memoryFactor float64
+	// diskFactor is the IO cost of reading/writing one byte to temporary disk.
+	diskFactor float64
+	// concurrencyFactor is the CPU cost of additional one goroutine.
+	concurrencyFactor float64
+
+	// Optimizer cost model factors for each physical operator
+	IndexScanCostFactor        float64
+	IndexReaderCostFactor      float64
+	TableReaderCostFactor      float64
+	TableFullScanCostFactor    float64
+	TableRangeScanCostFactor   float64
+	TableRowIDScanCostFactor   float64
+	TableTiFlashScanCostFactor float64
+	IndexLookupCostFactor      float64
+	IndexMergeCostFactor       float64
+	SortCostFactor             float64
+	TopNCostFactor             float64
+	LimitCostFactor            float64
+	StreamAggCostFactor        float64
+	HashAggCostFactor          float64
+	MergeJoinCostFactor        float64
+	HashJoinCostFactor         float64
+	IndexJoinCostFactor        float64
+	SelectivityFactor          float64
+
+	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
+	CopTiFlashConcurrencyFactor float64
 }
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
