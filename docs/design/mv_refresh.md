@@ -146,7 +146,7 @@ COMMIT;
 - `pkg/executor/ddl.go` 会把 `*ast.RefreshMaterializedViewStmt` 转发到 `ddl.Executor.RefreshMaterializedView`。
 - 实际执行在 `pkg/ddl/materialized_view.go` 的 `(*executor).RefreshMaterializedView(...)`：
   - `COMPLETE`：事务内执行 `DELETE FROM` + `INSERT INTO ... SQLContent`（`ExecuteInternal`）。
-  - `FAST`：读取 `LAST_SUCCESSFUL_REFRESH_READ_TSO`，构造 `*ast.RefreshMaterializedViewInternalStmt` 并走 `ExecuteInternalStmt`（当前 planner/build 返回 not supported，占位）。
+  - `FAST`：读取 `LAST_SUCCESSFUL_REFRESH_READ_TSO`，构造 `*ast.RefreshMaterializedViewImplementStmt` 并走 `ExecuteInternalStmt`（当前 planner/build 返回 not supported，占位）。
 
 ### 为什么会被当成 DDL statement
 
@@ -194,18 +194,18 @@ COMMIT;
 ## 已知限制与后续演进方向
 
 - FAST refresh 目前只搭了“框架路径”，还没有实现真正的增量刷新逻辑：
-  - 引入一个 **internal-only 的 statement AST**：`RefreshMaterializedViewInternalStmt`，只会在 executor 内部直接构造，不会由 parser 从 SQL text 解析得到。
+  - 引入一个 **internal-only 的 statement AST**：`RefreshMaterializedViewImplementStmt`，只会在 executor 内部直接构造，不会由 parser 从 SQL text 解析得到。
   - 该 AST 携带两类信息：
     1. 原始的 `RefreshMaterializedViewStmt`（要求 `Type=FAST`）
     2. `LAST_SUCCESSFUL_REFRESH_READ_TSO` 的值（在 FAST refresh 路径里假设它**必须是非 NULL 的 int64**，否则直接报错）
   - 执行入口使用 `ExecuteInternalStmt(ctx, stmtNode)`，目的是让它未来可以走 TiDB 常规的 **compile / optimize / executor** pipeline，而不是走 `buildSimple` 的简单路径。
-  - planner 侧已经把 `RefreshMaterializedViewInternalStmt` 从 `buildSimple` 的分支里拆出来，并单独加了 build 分支；但目前 build 会直接返回“不支持”的错误（placeholder），以便先把 code path 铺通。
-  - `RefreshMaterializedViewInternalStmt.Restore()` 会输出形如 `IMPLEMENT FOR <RefreshStmt> USING TIMESTAMP <LAST_SUCCESSFUL_REFRESH_READ_TSO>` 的字符串，用于日志/toString；因为 parser grammar 不暴露这种语法形式，所以 Restore 不追求“可反向 parse”的语义。
+  - planner 侧已经把 `RefreshMaterializedViewImplementStmt` 从 `buildSimple` 的分支里拆出来，并单独加了 build 分支；但目前 build 会直接返回“不支持”的错误（placeholder），以便先把 code path 铺通。
+  - `RefreshMaterializedViewImplementStmt.Restore()` 会输出形如 `IMPLEMENT FOR <RefreshStmt> USING TIMESTAMP <LAST_SUCCESSFUL_REFRESH_READ_TSO>` 的字符串，用于日志/toString；因为 parser grammar 不暴露这种语法形式，所以 Restore 不追求“可反向 parse”的语义。
   - `ExecuteInternalStmt` 返回的 `RecordSet` 如果非空，必须通过 `Next()` drain 才能保证整棵 executor tree 真正执行完成；因此 FAST refresh 的框架代码会在 `rs != nil` 且 `err == nil` 时主动 drain，再 `Close()` 回收资源（对未来可能生成 `INSERT INTO ... SELECT ...` 之类 plan 的实现更稳）。
 - `DELETE FROM mv` + `INSERT INTO mv SELECT ...` 在一个事务里，对大 MV 可能产生超大事务，容易触发 txn size limit/写入放大/GC 压力。
   后续可考虑“新表构建 + 原子切换”的策略，但那通常涉及 DDL（rename/交换分区等），需要重新设计原子性边界。
 - 为了支持未来更高级的 refresh（例如 FAST/增量、基于 MLOG 的 merge/upsert、或其它无法用 SQL text 表达的执行算子），可能需要逐步减少对“拼 SQL + ExecuteInternal”的依赖：
-  - 当前引入的 `RefreshMaterializedViewInternalStmt` 可以作为第一步：先用内部 AST 串起 compile/optimize/executor 的链路，并把 executor-only 参数（比如 `LAST_SUCCESSFUL_REFRESH_READ_TSO`）以结构化方式传下去。
+  - 当前引入的 `RefreshMaterializedViewImplementStmt` 可以作为第一步：先用内部 AST 串起 compile/optimize/executor 的链路，并把 executor-only 参数（比如 `LAST_SUCCESSFUL_REFRESH_READ_TSO`）以结构化方式传下去。
   - 后续再让 planner 为该 statement 生成专用 plan tree / executor（例如最终形成 `INSERT INTO mv SELECT ...` 或更复杂的 merge/upsert 计划），从而彻底替换 “拼 SQL + 执行 SQL text” 的接口。
 - 失败记录（`LAST_REFRESH_FAILED_REASON`）要在“不污染 MV 数据”的同时持久化，依赖 `SAVEPOINT`/`ROLLBACK TO SAVEPOINT` 这类能力；
   如果未来出现不支持 savepoint 的执行场景（或需要更强的一致性语义），可能需要把“失败元信息落盘”与“数据更新”拆成两段事务，并重新定义并发互斥与状态可见性。
