@@ -886,6 +886,50 @@ type OptimizerVars struct {
 	EnableVectorizedExpression bool
 }
 
+// StatsVars contains settings related to statistics collection, analysis,
+// and selectivity estimation.
+type StatsVars struct {
+	// EnableFastAnalyze indicates whether to take fast analyze.
+	EnableFastAnalyze bool
+	// EnableExtendedStats indicates whether we enable the extended statistics feature.
+	EnableExtendedStats bool
+	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
+	AnalyzeVersion int
+	// EnableHistoricalStats indicates whether to enable historical statistics.
+	EnableHistoricalStats bool
+	// EnablePseudoForOutdatedStats if using pseudo for outdated stats
+	EnablePseudoForOutdatedStats bool
+	// RegardNULLAsPoint if regard NULL as Point
+	RegardNULLAsPoint bool
+	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
+	StatsLoadSyncWait atomic.Int64
+	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When it is false, ANALYZE reads the latest data.
+	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	EnableAnalyzeSnapshot bool
+	// EnableDDLAnalyze is a sysVar to indicate create index or reorg index with embedded analyze.
+	EnableDDLAnalyze bool
+	// EnableDDLAnalyzeExecOpt is a internal flag to notify internal session whether we do ddl analyze.
+	// It is not controlled by user behavior, and is always default off.
+	EnableDDLAnalyzeExecOpt bool
+	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
+	// when > 0: it's the selectivity for the expression.
+	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
+	DefaultStrMatchSelectivity float64
+	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
+	AnalyzePartitionConcurrency int
+	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
+	AnalyzePartitionMergeConcurrency int
+	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
+	EnableAsyncMergeGlobalStats bool
+	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	AnalyzeSkipColumnTypes map[string]struct{}
+	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	SkipMissingPartitionStats bool
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -896,6 +940,7 @@ type SessionVars struct {
 	CostModelFactors
 	PlanCacheVars
 	OptimizerVars
+	StatsVars
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -1126,9 +1171,6 @@ type SessionVars struct {
 	// This allows flexible and fine-grained control over slow logging beyond the traditional single-threshold approach.
 	SlowLogRules *slowlogrule.SessionSlowLogRules
 
-	// EnableFastAnalyze indicates whether to take fast analyze.
-	EnableFastAnalyze bool
-
 	// TxnMode indicates should be pessimistic or optimistic.
 	TxnMode string
 
@@ -1200,9 +1242,6 @@ type SessionVars struct {
 
 	// EvolvePlanBaselines indicates whether we will evolve the plan baselines.
 	EvolvePlanBaselines bool
-
-	// EnableExtendedStats indicates whether we enable the extended statistics feature.
-	EnableExtendedStats bool
 
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
@@ -1310,17 +1349,11 @@ type SessionVars struct {
 	// GuaranteeLinearizability indicates whether to guarantee linearizability
 	GuaranteeLinearizability bool
 
-	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
-	AnalyzeVersion int
-
 	// DisableHashJoin indicates whether to disable hash join.
 	DisableHashJoin bool
 
 	// UseHashJoinV2 indicates whether to use hash join v2.
 	UseHashJoinV2 bool
-
-	// EnableHistoricalStats indicates whether to enable historical statistics.
-	EnableHistoricalStats bool
 
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool
@@ -1344,12 +1377,6 @@ type SessionVars struct {
 
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
-
-	// EnablePseudoForOutdatedStats if using pseudo for outdated stats
-	EnablePseudoForOutdatedStats bool
-
-	// RegardNULLAsPoint if regard NULL as Point
-	RegardNULLAsPoint bool
 
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
@@ -1376,9 +1403,6 @@ type SessionVars struct {
 
 	// ReadConsistency indicates the read consistency requirement.
 	ReadConsistency ReadConsistencyLevel
-
-	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
-	StatsLoadSyncWait atomic.Int64
 
 	// EnableParallelHashaggSpill indicates if parallel hash agg could spill.
 	EnableParallelHashaggSpill bool
@@ -1416,23 +1440,6 @@ type SessionVars struct {
 	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
 	MemoryDebugModeAlarmRatio int64
 
-	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
-	// When it is false, ANALYZE reads the latest data.
-	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
-	EnableAnalyzeSnapshot bool
-
-	// EnableDDLAnalyze is a sysVar to indicate create index or reorg index with embedded analyze.
-	EnableDDLAnalyze bool
-
-	// EnableDDLAnalyzeExecOpt is a internal flag to notify internal session whether we do ddl analyze.
-	// It is not controlled by user behavior, and is always default off.
-	EnableDDLAnalyzeExecOpt bool
-
-	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
-	// when > 0: it's the selectivity for the expression.
-	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
-	DefaultStrMatchSelectivity float64
-
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
 
@@ -1460,14 +1467,6 @@ type SessionVars struct {
 	// InPlanReplayer means we are now executing a statement for a PLAN REPLAYER SQL.
 	// Note that PLAN REPLAYER CAPTURE is not included here.
 	InPlanReplayer bool
-
-	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
-	AnalyzePartitionConcurrency int
-	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
-	AnalyzePartitionMergeConcurrency int
-
-	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
-	EnableAsyncMergeGlobalStats bool
 
 	// EnableExternalTSRead indicates whether to enable read through external ts
 	EnableExternalTSRead bool
@@ -1588,14 +1587,6 @@ type SessionVars struct {
 	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
 	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
 	LockUnchangedKeys bool
-
-	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
-	AnalyzeSkipColumnTypes map[string]struct{}
-
-	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
-	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
-	// When set to false, give up merging partition stats to global stats.
-	SkipMissingPartitionStats bool
 
 	// SessionAlias is the identifier of the session
 	SessionAlias string
@@ -2154,7 +2145,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowRemoveAutoInc:            vardef.DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:              vardef.DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:           vardef.DefTiDBEvolvePlanBaselines,
-		EnableExtendedStats:           false,
 		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
 		LockWaitTimeout:               vardef.DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:              vardef.DefTiDBMetricSchemaStep,
@@ -2177,7 +2167,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableAsyncCommit:             vardef.DefTiDBEnableAsyncCommit,
 		Enable1PC:                     vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:      vardef.DefTiDBGuaranteeLinearizability,
-		AnalyzeVersion:                vardef.DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:          vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          vardef.DefCTEMaxRecursionDepth,
@@ -2198,8 +2187,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               vardef.DefTiDBRedactLog,
 		CostModelVersion:              vardef.DefTiDBCostModelVer,
 		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
-		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
-		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:     vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN: vardef.DefTiDBOptPartialOrderedIndexForTopN,
 		OptimizerVars: OptimizerVars{
@@ -2250,6 +2237,12 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 			TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
 			TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
 			TiFlashHashJoinVersion:               vardef.DefTiFlashHashJoinVersion,
+		},
+		StatsVars: StatsVars{
+			EnableExtendedStats:       false,
+			AnalyzeVersion:            vardef.DefTiDBAnalyzeVersion,
+			RegardNULLAsPoint:         vardef.DefTiDBRegardNULLAsPoint,
+			SkipMissingPartitionStats: vardef.DefTiDBSkipMissingPartitionStats,
 		},
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
