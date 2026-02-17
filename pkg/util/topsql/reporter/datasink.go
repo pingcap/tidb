@@ -42,16 +42,27 @@ type DataSinkRegisterer interface {
 }
 
 // ReportData contains data that reporter sends to the agent.
+//
+// Design Rationale (D2 - Separate RU Storage):
+//   - DataRecords: TopSQL CPU time records (existing)
+//   - RURecords: TopRU records (new, separate from CPU)
+//   - Both share SQLMetas/PlanMetas for digest->text lookup
+//
+// Phase 2: RURecords populated from ruCollecting.getReportRecords() with Hybrid TopN.
 type ReportData struct {
 	// DataRecords contains the topN records of each second and the `others`
 	// record which aggregation all []tipb.TopSQLRecord that is out of Top N.
 	DataRecords []tipb.TopSQLRecord
-	SQLMetas    []tipb.SQLMeta
-	PlanMetas   []tipb.PlanMeta
+	// RURecords contains TopRU records aggregated by (user, sql_digest, plan_digest).
+	// Stored separately to avoid mixing with CPU-based TopSQLRecord.
+	// Phase 2: Populated by reporter after two-level TopN filtering.
+	RURecords []tipb.TopRURecord
+	SQLMetas  []tipb.SQLMeta
+	PlanMetas []tipb.PlanMeta
 }
 
 func (d *ReportData) hasData() bool {
-	return len(d.DataRecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
+	return len(d.DataRecords) != 0 || len(d.RURecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
 }
 
 var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}

@@ -198,6 +198,44 @@ func TestCollectAndEvicted(t *testing.T) {
 	}
 }
 
+func TestEffectiveReportIntervalSeconds_TopSQLIndependentFromTopRU(t *testing.T) {
+	topsqlstate.DisableTopSQL()
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	origTopSQLInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load()
+	t.Cleanup(func() {
+		topsqlstate.GlobalState.ReportIntervalSeconds.Store(origTopSQLInterval)
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		topsqlstate.ResetTopRUItemInterval()
+	})
+
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(60)
+	topsqlstate.ResetTopRUItemInterval()
+	topsqlstate.SetTopRUItemInterval(15)
+
+	require.Equal(t, int64(60), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+
+	topsqlstate.EnableTopRU()
+	require.Equal(t, int64(60), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(10)
+	topsqlstate.SetTopRUItemInterval(1)
+	require.Equal(t, int64(10), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(30)
+	topsqlstate.ResetTopRUItemInterval()
+	topsqlstate.SetTopRUItemInterval(0)
+	require.Equal(t, int64(30), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	require.Equal(t, int64(30), topsqlstate.GlobalState.ReportIntervalSeconds.Load())
+}
+
 func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) collector.SQLCPUTimeRecord {
 	key := []byte("sqlDigest" + strconv.Itoa(sqlID))
 	value := "sqlNormalized" + strconv.Itoa(sqlID)

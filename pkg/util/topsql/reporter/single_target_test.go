@@ -45,6 +45,7 @@ func TestSingleTargetDataSink(t *testing.T) {
 
 	recordsCnt := server.RecordsCnt()
 	sqlMetaCnt := server.SQLMetaCnt()
+	ruRecordsCnt := server.RURecordsCnt()
 
 	err = ds.TrySend(&ReportData{
 		DataRecords: []tipb.TopSQLRecord{{
@@ -56,6 +57,17 @@ func TestSingleTargetDataSink(t *testing.T) {
 				StmtExecCount:     1,
 				StmtKvExecCount:   map[string]uint64{"": 1},
 				StmtDurationSumNs: 1,
+			}},
+		}},
+		RURecords: []tipb.TopRURecord{{
+			User:       "user1",
+			SqlDigest:  []byte("S1"),
+			PlanDigest: []byte("P1"),
+			Items: []*tipb.TopRURecordItem{{
+				TimestampSec: 1,
+				TotalRu:      1.5,
+				ExecCount:    1,
+				ExecDuration: 1,
 			}},
 		}},
 		SQLMetas: []tipb.SQLMeta{{
@@ -71,8 +83,17 @@ func TestSingleTargetDataSink(t *testing.T) {
 
 	server.WaitCollectCnt(recordsCnt, 1, 5*time.Second)
 	server.WaitCollectCntOfSQLMeta(sqlMetaCnt, 1, 5*time.Second)
+	start := time.Now()
+	for {
+		if server.RURecordsCnt() > ruRecordsCnt || time.Since(start) > 5*time.Second {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	assert.Len(t, server.GetLatestRecords(), 1)
+	assert.Greater(t, server.RURecordsCnt(), ruRecordsCnt)
+	assert.Len(t, server.GetLatestRURecords(), 1)
 	assert.Len(t, server.GetTotalSQLMetas(), 1)
 	sqlMeta, exist := server.GetSQLMetaByDigestBlocking([]byte("S1"), 5*time.Second)
 	assert.True(t, exist)

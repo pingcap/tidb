@@ -23,8 +23,11 @@ import (
 var (
 	IgnoreExceedSQLCounter              prometheus.Counter
 	IgnoreExceedPlanCounter             prometheus.Counter
+	IgnoreExceedRUKeysCounter           prometheus.Counter
+	IgnoreExceedRUAmountCounter         prometheus.Counter
 	IgnoreCollectChannelFullCounter     prometheus.Counter
 	IgnoreCollectStmtChannelFullCounter prometheus.Counter
+	IgnoreCollectRUChannelFullCounter   prometheus.Counter
 	IgnoreReportChannelFullCounter      prometheus.Counter
 	ReportAllDurationSuccHistogram      prometheus.Observer
 	ReportAllDurationFailedHistogram    prometheus.Observer
@@ -47,8 +50,11 @@ func init() {
 func InitMetricsVars() {
 	IgnoreExceedSQLCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_sql")
 	IgnoreExceedPlanCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_plan")
+	IgnoreExceedRUKeysCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_ru_keys")
+	IgnoreExceedRUAmountCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_ru_amount")
 	IgnoreCollectChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_channel_full")
 	IgnoreCollectStmtChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_stmt_channel_full")
+	IgnoreCollectRUChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_ru_channel_full")
 	IgnoreReportChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_report_channel_full")
 	ReportAllDurationSuccHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblOK)
 	ReportAllDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblError)

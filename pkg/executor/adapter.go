@@ -78,6 +78,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
@@ -365,7 +366,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, a.InfoSchema)
 	})
 
-	ctx = a.observeStmtBeginForTopProfiling(ctx)
+	ctx = a.observeStmtBeginForTopSQL(ctx)
 	startTs, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
 	if err != nil {
 		return nil, err
@@ -542,11 +543,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 					metrics.PessimisticLockKeysDuration.Observe(execDetails.LockKeysDetail.TotalTime.Seconds())
 				}
 			}
-			if execDetails.SharedLockKeysDetail != nil {
-				if execDetails.SharedLockKeysDetail.LockKeys > 0 {
-					metrics.StatementSharedLockKeysCount.Observe(float64(execDetails.SharedLockKeysDetail.LockKeys))
-				}
-			}
 
 			if err == nil && execDetails.LockKeysDetail != nil &&
 				(execDetails.LockKeysDetail.AggressiveLockNewCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0) {
@@ -643,7 +639,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			stmtCtx.ResourceGroupName = switchGroupName
 		}
 	}
-	ctx = a.observeStmtBeginForTopProfiling(ctx)
+	ctx = a.observeStmtBeginForTopSQL(ctx)
 
 	// Record start time before buildExecutor() to include TSO waiting time in maxExecutionTime timeout.
 	// buildExecutor() may block waiting for TSO, so we should start the timer earlier.
@@ -1158,44 +1154,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		}
 	}()
 
-	tryLockKeys := func(e exec.Executor, keys []kv.Key, shared bool) (exec.Executor, error) {
-		seVars := sctx.GetSessionVars()
-		keys = filterTemporaryTableKeys(seVars, keys)
-		keys = filterLockTableKeys(seVars.StmtCtx, keys)
-		if len(keys) == 0 {
-			return nil, nil
-		}
-		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys), shared)
-		if err != nil {
-			return nil, err
-		}
-		var lockKeyStats *util.LockKeysDetails
-		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
-		startLocking := time.Now()
-		err = txn.LockKeys(ctx, lockCtx, keys...)
-		a.phaseLockDurations[0] += time.Since(startLocking)
-		if e.RuntimeStats() != nil {
-			e.RuntimeStats().Record(time.Since(startLocking), 0)
-		}
-		if lockKeyStats != nil {
-			if shared {
-				seVars.StmtCtx.MergeSharedLockKeysExecDetails(lockKeyStats)
-			} else {
-				seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
-			}
-		}
-		if err == nil {
-			return nil, nil
-		}
-		e, err = a.handlePessimisticLockError(ctx, err)
-		if err != nil {
-			if exeerrors.ErrDeadlock.Equal(err) {
-				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
-			}
-			return nil, err
-		}
-		return e, nil
-	}
 	isFirstAttempt := true
 
 	for {
@@ -1203,7 +1161,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			failpoint.Inject("pessimisticDMLRetry", nil)
 		}
 
-		txnCtx.ResetUnchangedKeysForLock()
 		startTime := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
@@ -1228,71 +1185,42 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			}
 			continue
 		}
-
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
 			return err1
 		}
-
-		if !a.Ctx.GetSessionVars().ForeignKeyCheckInSharedLock {
-			// When `tidb_foreign_key_check_in_shared_lock` is off, lock all keys in exclusive mode
-			keys = txnCtx.CollectUnchangedKeysForXLock(keys)
-			keys = txnCtx.CollectUnchangedKeysForSLock(keys)
-			startLock := time.Now()
-			ex, err := tryLockKeys(e, keys, false)
-			if err != nil {
-				return err
-			}
-			if ex != nil {
-				e = ex
-				continue
-			}
-			updateFKCheckLockStats(e, time.Since(startLock))
+		keys = txnCtx.CollectUnchangedKeysForLock(keys)
+		if len(keys) == 0 {
 			return nil
 		}
-
-		// When `tidb_foreign_key_check_in_shared_lock` is on, lock keys in two phases:
-		//
-		//   1. acquire exclusive locks for keys that need exclusive locks
-		//   2. acquire shared locks for keys that need shared locks
-
-		// acquire xlocks
-		keys = txnCtx.CollectUnchangedKeysForXLock(keys)
-		if ex, err := tryLockKeys(e, keys, false); err != nil {
+		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
+		seVars := sctx.GetSessionVars()
+		keys = filterLockTableKeys(seVars.StmtCtx, keys)
+		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
+		if err != nil {
 			return err
-		} else if ex != nil {
-			e = ex
-			continue
 		}
-
-		// acquire slocks
-		keys = txnCtx.CollectUnchangedKeysForSLock(keys[:0])
-		startLock := time.Now()
-		if ex, err := tryLockKeys(e, keys, true); err != nil {
+		var lockKeyStats *util.LockKeysDetails
+		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
+		startLocking := time.Now()
+		err = txn.LockKeys(ctx, lockCtx, keys...)
+		a.phaseLockDurations[0] += time.Since(startLocking)
+		if e.RuntimeStats() != nil {
+			e.RuntimeStats().Record(time.Since(startLocking), 0)
+		}
+		if lockKeyStats != nil {
+			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+		}
+		if err == nil {
+			return nil
+		}
+		e, err = a.handlePessimisticLockError(ctx, err)
+		if err != nil {
+			// todo: Report deadlock
+			if exeerrors.ErrDeadlock.Equal(err) {
+				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
+			}
 			return err
-		} else if ex != nil {
-			e = ex
-			continue
-		}
-		updateFKCheckLockStats(e, time.Since(startLock))
-
-		return nil
-	}
-}
-
-// updateFKCheckLockStats updates the Lock stats of FK check executors after the deferred
-// pessimistic lock phase completes. In pessimistic mode, FK check keys are not locked
-// inline during doCheck but deferred to handlePessimisticDML. This function attributes
-// the lock duration back to FK check runtime stats.
-func updateFKCheckLockStats(e exec.Executor, lockDur time.Duration) {
-	fkExec, ok := e.(WithForeignKeyTrigger)
-	if !ok {
-		return
-	}
-	for _, fkCheck := range fkExec.GetFKChecks() {
-		if fkCheck.stats != nil {
-			fkCheck.stats.Lock = lockDur
-			fkCheck.stats.Total += lockDur
 		}
 	}
 }
@@ -1564,11 +1492,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
-	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil || execDetail.SharedLockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
+	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
 		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
-			Commit:         execDetail.CommitDetail,
-			LockKeys:       execDetail.LockKeysDetail,
-			SharedLockKeys: execDetail.SharedLockKeysDetail,
+			Commit:   execDetail.CommitDetail,
+			LockKeys: execDetail.LockKeysDetail,
 		}
 		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
 	}
@@ -1594,7 +1521,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	a.observeStmtFinishedForTopProfiling()
+	a.observeStmtFinishedForTopSQL()
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
@@ -2226,10 +2153,13 @@ func (a *ExecStmt) updatePrevStmt() {
 	}
 }
 
-func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.Context {
-	if !topsqlstate.TopProfilingEnabled() && IsFastPlan(a.Plan) {
+func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
+	topSQL := topsqlstate.TopSQLEnabled()
+	topRU := topsqlstate.TopRUEnabled()
+	topProfiling := topsqlstate.TopProfilingEnabled()
+	if !topProfiling && IsFastPlan(a.Plan) {
 		// To reduce the performance impact on fast plan.
-		// Drop them does not cause notable accuracy issue in Top Profiling.
+		// Drop them does not cause notable accuracy issue in TopSQL.
 		return ctx
 	}
 
@@ -2245,19 +2175,30 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 		planDigestByte = planDigest.Bytes()
 	}
 	stats := a.Ctx.GetStmtStats()
-	if !topsqlstate.TopProfilingEnabled() {
-		// Always attach the SQL and plan info uses to catch the running SQL when Top Profiling is enabled in execution.
-		// Note: Goroutine labels for CPU profiling are only set when TopSQL is enabled.
+	if !topProfiling {
+		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
-			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
+			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, &stmtstats.ExecBeginInfo{
+				InNetworkBytes: vars.InPacketBytes.Load(),
+				User:           userString(vars),
+				TopRUEnabled:   topRU,
+				Ctx:            a.GoCtx,
+			})
 		}
 		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}
 
 	if stats != nil {
-		stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
-		// This is a special logic prepared for TiKV's SQLExecCount.
-		sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
+		stats.OnExecutionBegin(sqlDigestByte, planDigestByte, &stmtstats.ExecBeginInfo{
+			InNetworkBytes: vars.InPacketBytes.Load(),
+			User:           userString(vars),
+			TopRUEnabled:   topRU,
+			Ctx:            a.GoCtx,
+		})
+		if topSQL {
+			// This is a special logic prepared for TiKV's SQLExecCount.
+			sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
+		}
 	}
 
 	isSQLRegistered := sc.IsSQLRegistered.Load()
@@ -2297,7 +2238,7 @@ func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
 	a.Ctx.GetSessionVars().PlanCacheValue = nil // reset
 }
 
-func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
+func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	vars := a.Ctx.GetSessionVars()
 	if vars == nil {
 		return
@@ -2305,8 +2246,25 @@ func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
 	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopProfilingEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		execDuration := vars.GetTotalCostDuration()
-		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration, vars.OutPacketBytes.Load())
+		var ruDetail *util.RUDetails
+		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			ruDetail = ruDetailRaw.(*util.RUDetails)
+		}
+		stats.OnExecutionFinished(sqlDigest, planDigest, &stmtstats.ExecFinishInfo{
+			OutNetworkBytes: vars.OutPacketBytes.Load(),
+			ExecDuration:    execDuration,
+			User:            userString(vars),
+			TopRUEnabled:    topsqlstate.TopRUEnabled(),
+			RUDetails:       ruDetail,
+		})
 	}
+}
+
+func userString(vars *variable.SessionVars) string {
+	if vars == nil || vars.User == nil {
+		return ""
+	}
+	return vars.User.String()
 }
 
 func (a *ExecStmt) getSQLPlanDigest() (sqlDigest, planDigest []byte) {

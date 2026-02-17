@@ -58,8 +58,8 @@ func Test_aggregator_register_collect(t *testing.T) {
 		finished: atomic.NewBool(false),
 	}
 	a.register(stats)
-	stats.OnExecutionBegin([]byte("SQL-1"), []byte(""), 0)
-	stats.OnExecutionFinished([]byte("SQL-1"), []byte(""), time.Millisecond, 0)
+	stats.OnExecutionBegin([]byte("SQL-1"), []byte(""), &ExecBeginInfo{InNetworkBytes: 0})
+	stats.OnExecutionFinished([]byte("SQL-1"), []byte(""), &ExecFinishInfo{ExecDuration: time.Millisecond})
 	total := StatementStatsMap{}
 	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
 		total.Merge(data)
@@ -121,6 +121,95 @@ func TestAggregatorDisableAggregate(t *testing.T) {
 	require.Empty(t, stats.data)
 	require.Len(t, total, 1)
 	state.DisableTopSQL()
+}
+
+func TestAggregatorDisableAggregateRU(t *testing.T) {
+	for state.TopRUEnabled() {
+		state.DisableTopRU()
+	}
+
+	a := newAggregator()
+	stats := &StatementStats{
+		data:             StatementStatsMap{},
+		finished:         atomic.NewBool(false),
+		finishedRUBuffer: RUIncrementMap{},
+	}
+	stats.finishedRUBuffer[RUKey{User: "u1", SQLDigest: BinaryDigest("s1")}] = &RUIncrement{TotalRU: 1}
+	a.register(stats)
+
+	a.aggregateRU()
+	require.Len(t, stats.finishedRUBuffer, 0)
+}
+
+func TestAggregatorDisableAggregateRUNoEmit(t *testing.T) {
+	for state.TopRUEnabled() {
+		state.DisableTopRU()
+	}
+
+	a := newAggregator()
+	stats := &StatementStats{
+		data:             StatementStatsMap{},
+		finished:         atomic.NewBool(false),
+		finishedRUBuffer: RUIncrementMap{},
+	}
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("s1")}
+	stats.finishedRUBuffer[key] = &RUIncrement{TotalRU: 1}
+	a.register(stats)
+
+	collected := RUIncrementMap{}
+	callCnt := 0
+	a.registerRUCollector(&mockRUCollector{
+		f: func(m RUIncrementMap) {
+			callCnt++
+			collected.Merge(m)
+		},
+	})
+
+	a.aggregateRU()
+
+	require.Len(t, stats.finishedRUBuffer, 0) // housekeeping drain is allowed
+	require.Equal(t, 0, callCnt)              // disabled => no RU output
+	require.Len(t, collected, 0)
+}
+
+func TestAggregatorRunOrderKeepsFinishedRU(t *testing.T) {
+	for state.TopRUEnabled() {
+		state.DisableTopRU()
+	}
+	state.EnableTopRU()
+	defer func() {
+		for state.TopRUEnabled() {
+			state.DisableTopRU()
+		}
+	}()
+
+	a := newAggregator()
+	stats := &StatementStats{
+		data:             StatementStatsMap{},
+		finished:         atomic.NewBool(true),
+		finishedRUBuffer: RUIncrementMap{},
+	}
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("s1")}
+	stats.finishedRUBuffer[key] = &RUIncrement{TotalRU: 1}
+	a.register(stats)
+
+	collected := RUIncrementMap{}
+	a.registerRUCollector(&mockRUCollector{f: func(m RUIncrementMap) { collected.Merge(m) }})
+	a.aggregateRU()
+	a.aggregate()
+
+	require.Len(t, collected, 1)
+	require.Equal(t, 1.0, collected[key].TotalRU)
+	_, ok := a.statsSet.Load(stats)
+	require.False(t, ok)
+}
+
+type mockRUCollector struct {
+	f func(RUIncrementMap)
+}
+
+func (c *mockRUCollector) CollectRUIncrements(data RUIncrementMap) {
+	c.f(data)
 }
 
 type mockCollector struct {

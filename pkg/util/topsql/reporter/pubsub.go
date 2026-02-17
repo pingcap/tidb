@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -45,10 +46,14 @@ var _ tipb.TopSQLPubSubServer = &TopSQLPubSubService{}
 
 // Subscribe registers dataSinks to the reporter and redirects data received from reporter
 // to subscribers associated with those dataSinks.
-func (ps *TopSQLPubSubService) Subscribe(_ *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer) error {
-	ds := newPubSubDataSink(stream, ps.dataSinkRegisterer)
+func (ps *TopSQLPubSubService) Subscribe(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer) error {
+	ds := newPubSubDataSink(req, stream, ps.dataSinkRegisterer)
 	if err := ps.dataSinkRegisterer.Register(ds); err != nil {
 		return err
+	}
+	if ds.enableTopRU {
+		topsqlstate.EnableTopRU()
+		topsqlstate.SetTopRUItemInterval(ds.itemInterval)
 	}
 	return ds.run()
 }
@@ -62,12 +67,53 @@ type pubSubDataSink struct {
 
 	// for deregister
 	registerer DataSinkRegisterer
+
+	// TopRU subscription config
+	enableTopRU  bool
+	itemInterval tipb.ItemInterval
 }
 
-func newPubSubDataSink(stream tipb.TopSQLPubSub_SubscribeServer, registerer DataSinkRegisterer) *pubSubDataSink {
-	ctx, cancel := context.WithCancel(stream.Context())
+func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval) {
+	if req == nil {
+		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
+	}
 
-	return &pubSubDataSink{
+	cfg := req.GetTopru()
+	if cfg == nil {
+		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
+	}
+
+	enabled := false
+	for _, collector := range req.GetCollectors() {
+		if collector == tipb.CollectorType_COLLECTOR_TYPE_TOPRU {
+			enabled = true
+			break
+		}
+	}
+	if !enabled {
+		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
+	}
+
+	return true, normalizeTopRUItemInterval(cfg.GetItemIntervalSeconds())
+}
+
+// newPubSubDataSink creates a DataSink for PubSub subscription.
+//
+// Design: Subscription Lifecycle Management
+//   - Parses TopRU config from subscription request (collectors includes TOPRU, item_interval_seconds)
+//   - Enables global TopRU state if requested (activates collection)
+//   - State is disabled in run() defer when subscription ends
+//   - item_interval_seconds controls TopRURecordItem.timestamp_sec aggregation granularity (15s/30s/60s)
+//     and does not guarantee stream push cadence; push cadence is driven by reporter report tick.
+//
+// Protocol Compatibility:
+//   - Old clients without TopRU collector entry will not enable TopRU (backward compatible)
+//   - TopRU data is sent only when collectors include TOPRU
+func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer, registerer DataSinkRegisterer) *pubSubDataSink {
+	ctx, cancel := context.WithCancel(stream.Context())
+	enableTopRU, itemInterval := parseTopRUSubscription(req)
+
+	ds := &pubSubDataSink{
 		ctx:    ctx,
 		cancel: cancel,
 
@@ -75,6 +121,27 @@ func newPubSubDataSink(stream tipb.TopSQLPubSub_SubscribeServer, registerer Data
 		sendTaskCh: make(chan sendTask, 1),
 
 		registerer: registerer,
+
+		enableTopRU:  enableTopRU,
+		itemInterval: normalizeTopRUItemInterval(itemInterval),
+	}
+
+	return ds
+}
+
+func normalizeTopRUItemInterval(interval tipb.ItemInterval) tipb.ItemInterval {
+	if interval == tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED {
+		return interval
+	}
+	switch int32(interval) {
+	case 15, 30, 60:
+		return interval
+	default:
+		logutil.BgLogger().Warn(
+			"[top-sql] invalid top ru item interval, fallback to default",
+			zap.Int32("item_interval", int32(interval)),
+		)
+		return tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
 	}
 }
 
@@ -103,6 +170,10 @@ func (ds *pubSubDataSink) run() error {
 			logutil.BgLogger().Error("[top-sql] got panic in pub sub data sink, just ignore", zap.Error(util.GetRecoverError(r)))
 		}
 		ds.registerer.Deregister(ds)
+		// Disable TopRU if this sink enabled it
+		if ds.enableTopRU {
+			topsqlstate.DisableTopRU()
+		}
 		ds.cancel()
 	}()
 
@@ -160,6 +231,9 @@ func (ds *pubSubDataSink) doSend(ctx context.Context, data *ReportData) error {
 	if err := ds.sendTopSQLRecords(ctx, data.DataRecords); err != nil {
 		return err
 	}
+	if err := ds.sendTopRURecords(ctx, data.RURecords); err != nil {
+		return err
+	}
 	if err := ds.sendSQLMeta(ctx, data.SQLMetas); err != nil {
 		return err
 	}
@@ -187,6 +261,60 @@ func (ds *pubSubDataSink) sendTopSQLRecords(ctx context.Context, records []tipb.
 
 	for i := range records {
 		topSQLRecord.Record = &records[i]
+		if err = ds.stream.Send(r); err != nil {
+			return
+		}
+		sentCount++
+
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return
+		default:
+		}
+	}
+
+	return
+}
+
+// sendTopRURecords sends TopRU records to subscriber via PubSub stream.
+//
+// Design: Defense-in-depth gating
+//   - Early return if no records or TopRU disabled
+//   - Uses TopSQLSubResponse_RuRecord oneof (protocol field 4)
+//   - Parallel structure to sendTopSQLRecords for consistency
+//
+// Phase 2: Records will be populated after two-level TopN filtering in reporter.
+func (ds *pubSubDataSink) sendTopRURecords(ctx context.Context, records []tipb.TopRURecord) (err error) {
+	if len(records) == 0 {
+		return
+	}
+
+	// Defense-in-depth: Only send RU records if TopRU is enabled.
+	// Primary gate is in aggregator.aggregateRU().
+	if !ds.enableTopRU {
+		return
+	}
+	if !topsqlstate.TopRUEnabled() {
+		return
+	}
+
+	start := time.Now()
+	sentCount := 0
+	defer func() {
+		// TODO: add RU-specific metrics later
+		if err != nil {
+			reporter_metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		} else {
+			reporter_metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+		}
+	}()
+
+	topRURecord := &tipb.TopSQLSubResponse_RuRecord{}
+	r := &tipb.TopSQLSubResponse{RespOneof: topRURecord}
+
+	for i := range records {
+		topRURecord.RuRecord = &records[i]
 		if err = ds.stream.Send(r); err != nil {
 			return
 		}

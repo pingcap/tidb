@@ -16,12 +16,15 @@ package stmtstats
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // String is only used for debugging.
@@ -186,17 +189,17 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	m := stats.Take()
 	assert.Len(t, m, 0)
 	for range 1 {
-		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""), 0)
+		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""), &ExecBeginInfo{InNetworkBytes: 0})
 	}
 	for range 2 {
-		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""), 0)
-		stats.OnExecutionFinished([]byte("SQL-2"), []byte(""), time.Second, 0)
+		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""), &ExecBeginInfo{InNetworkBytes: 0})
+		stats.OnExecutionFinished([]byte("SQL-2"), []byte(""), &ExecFinishInfo{ExecDuration: time.Second})
 	}
 	for range 3 {
-		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""), 0)
-		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), time.Millisecond, 0)
+		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""), &ExecBeginInfo{InNetworkBytes: 0})
+		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), &ExecFinishInfo{ExecDuration: time.Millisecond})
 	}
-	stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), -time.Millisecond, 0)
+	stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), &ExecFinishInfo{ExecDuration: -time.Millisecond})
 	m = stats.Take()
 	assert.Len(t, m, 3)
 	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
@@ -216,9 +219,9 @@ func TestNetworkBytesAccumulation(t *testing.T) {
 
 	// Test NetworkInBytes accumulation in OnExecutionBegin
 	// Call OnExecutionBegin multiple times with different network input bytes
-	stats.OnExecutionBegin(sqlDigest, planDigest, 100)
-	stats.OnExecutionBegin(sqlDigest, planDigest, 200)
-	stats.OnExecutionBegin(sqlDigest, planDigest, 300)
+	stats.OnExecutionBegin(sqlDigest, planDigest, &ExecBeginInfo{InNetworkBytes: 100})
+	stats.OnExecutionBegin(sqlDigest, planDigest, &ExecBeginInfo{InNetworkBytes: 200})
+	stats.OnExecutionBegin(sqlDigest, planDigest, &ExecBeginInfo{InNetworkBytes: 300})
 
 	m := stats.Take()
 	assert.Len(t, m, 1)
@@ -231,9 +234,9 @@ func TestNetworkBytesAccumulation(t *testing.T) {
 
 	// Test NetworkOutBytes accumulation in OnExecutionFinished
 	// Call OnExecutionFinished multiple times with different network output bytes
-	stats.OnExecutionFinished(sqlDigest, planDigest, time.Second, 50)
-	stats.OnExecutionFinished(sqlDigest, planDigest, time.Second, 150)
-	stats.OnExecutionFinished(sqlDigest, planDigest, time.Second, 250)
+	stats.OnExecutionFinished(sqlDigest, planDigest, &ExecFinishInfo{ExecDuration: time.Second, OutNetworkBytes: 50})
+	stats.OnExecutionFinished(sqlDigest, planDigest, &ExecFinishInfo{ExecDuration: time.Second, OutNetworkBytes: 150})
+	stats.OnExecutionFinished(sqlDigest, planDigest, &ExecFinishInfo{ExecDuration: time.Second, OutNetworkBytes: 250})
 
 	m = stats.Take()
 	assert.Len(t, m, 1)
@@ -242,4 +245,543 @@ func TestNetworkBytesAccumulation(t *testing.T) {
 	// NetworkOutBytes should be accumulated: 50 + 150 + 250 = 450
 	assert.Equal(t, uint64(450), item.NetworkOutBytes)
 	assert.Equal(t, uint64(3), item.DurationCount)
+}
+
+func TestOnExecutionBeginFinishRU(t *testing.T) {
+	stats := CreateStatementStats()
+	stats.OnExecutionBegin([]byte("sql1"), []byte("plan1"), &ExecBeginInfo{
+		User:         "user1",
+		TopRUEnabled: true,
+	})
+	ru := util.NewRUDetailsWith(10.0, 20.0, time.Millisecond)
+	stats.OnExecutionFinished([]byte("sql1"), []byte("plan1"), &ExecFinishInfo{
+		User:         "user1",
+		TopRUEnabled: true,
+		RUDetails:    ru,
+		ExecDuration: time.Second,
+	})
+
+	m := stats.MergeRUInto()
+	require.Len(t, m, 1)
+	key := RUKey{User: "user1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
+	incr, ok := m[key]
+	require.True(t, ok)
+	require.Equal(t, uint64(1), incr.ExecCount)
+	require.Equal(t, 30.0, incr.TotalRU)
+	require.Equal(t, uint64(time.Second.Nanoseconds()), incr.ExecDuration)
+}
+
+func TestMergeRUIntoInFlightSamplingAndFinishDedup(t *testing.T) {
+	stats := CreateStatementStats()
+	ru := util.NewRUDetailsWith(0, 0, 0)
+	ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+	key := RUKey{User: "user1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
+
+	stats.OnExecutionBegin([]byte("sql1"), []byte("plan1"), &ExecBeginInfo{
+		User:         "user1",
+		TopRUEnabled: true,
+		Ctx:          ctx,
+	})
+
+	total := RUIncrementMap{}
+
+	ru.Merge(util.NewRUDetailsWith(10, 0, 0))
+	total.Merge(stats.MergeRUInto())
+
+	ru.Merge(util.NewRUDetailsWith(5, 0, 0))
+	total.Merge(stats.MergeRUInto())
+
+	ru.Merge(util.NewRUDetailsWith(7, 0, 0))
+	stats.OnExecutionFinished([]byte("sql1"), []byte("plan1"), &ExecFinishInfo{
+		User:         "user1",
+		TopRUEnabled: true,
+		RUDetails:    ru,
+		ExecDuration: 2 * time.Second,
+	})
+	total.Merge(stats.MergeRUInto())
+
+	incr, ok := total[key]
+	require.True(t, ok)
+	require.Equal(t, uint64(1), incr.ExecCount)
+	require.InDelta(t, 22.0, incr.TotalRU, 1e-9)
+	require.Equal(t, uint64((2 * time.Second).Nanoseconds()), incr.ExecDuration)
+
+	require.Nil(t, stats.execCtx)
+	ru.Merge(util.NewRUDetailsWith(3, 0, 0))
+	require.Len(t, stats.MergeRUInto(), 0)
+}
+
+func TestMergeRUIntoHandlesRUResetAndNilRUDetails(t *testing.T) {
+	stats := CreateStatementStats()
+	ru := util.NewRUDetailsWith(10, 0, 0)
+	ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+	key := RUKey{User: "user2", SQLDigest: BinaryDigest("sql2"), PlanDigest: BinaryDigest("plan2")}
+
+	stats.OnExecutionBegin([]byte("sql2"), []byte("plan2"), &ExecBeginInfo{
+		User:         "user2",
+		TopRUEnabled: true,
+		Ctx:          ctx,
+	})
+	first := stats.MergeRUInto()
+	require.Len(t, first, 1)
+	require.InDelta(t, 10.0, first[key].TotalRU, 1e-9)
+
+	stats.mu.Lock()
+	stats.execCtx.LastRUTotal = 100
+	stats.mu.Unlock()
+	require.Len(t, stats.MergeRUInto(), 0)
+
+	ru.Merge(util.NewRUDetailsWith(5, 0, 0))
+	next := stats.MergeRUInto()
+	require.Len(t, next, 1)
+	require.InDelta(t, 5.0, next[key].TotalRU, 1e-9)
+	require.GreaterOrEqual(t, next[key].TotalRU, 0.0)
+
+	stats.OnExecutionFinished([]byte("sql2"), []byte("plan2"), &ExecFinishInfo{
+		User:         "user2",
+		TopRUEnabled: true,
+		RUDetails:    nil,
+		ExecDuration: time.Second,
+	})
+	require.Nil(t, stats.execCtx)
+}
+
+func TestExecCountBeginBased_LongRunningAcrossTicks(t *testing.T) {
+	stats := CreateStatementStats()
+	ru := util.NewRUDetailsWith(0, 0, 0)
+	ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		Ctx:          ctx,
+	})
+
+	ru.Merge(util.NewRUDetailsWith(4, 0, 0))
+	tick1 := stats.MergeRUInto()
+	require.Len(t, tick1, 1)
+	require.InDelta(t, 4.0, tick1[key].TotalRU, 1e-9)
+	require.Equal(t, uint64(1), tick1[key].ExecCount)
+
+	ru.Merge(util.NewRUDetailsWith(6, 0, 0))
+	tick2 := stats.MergeRUInto()
+	require.Len(t, tick2, 1)
+	require.InDelta(t, 6.0, tick2[key].TotalRU, 1e-9)
+	require.Equal(t, uint64(0), tick2[key].ExecCount)
+
+	ru.Merge(util.NewRUDetailsWith(5, 0, 0))
+	stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		RUDetails:    ru,
+		ExecDuration: 3 * time.Second,
+	})
+	finish := stats.MergeRUInto()
+	require.Len(t, finish, 1)
+	require.InDelta(t, 5.0, finish[key].TotalRU, 1e-9)
+	require.Equal(t, uint64(0), finish[key].ExecCount)
+
+	total := RUIncrementMap{}
+	total.Merge(tick1)
+	total.Merge(tick2)
+	total.Merge(finish)
+	require.Equal(t, uint64(1), total[key].ExecCount)
+	require.InDelta(t, 15.0, total[key].TotalRU, 1e-9)
+}
+
+func TestExecCountBeginBased_ToggleMidExecution(t *testing.T) {
+	t.Run("begin-on-disable-mid-exec", func(t *testing.T) {
+		stats := CreateStatementStats()
+		ru := util.NewRUDetailsWith(3, 0, 0)
+		ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+		key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+			User:         "u1",
+			TopRUEnabled: true,
+			Ctx:          ctx,
+		})
+		stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+			User:         "u1",
+			TopRUEnabled: false,
+			RUDetails:    ru,
+			ExecDuration: time.Second,
+		})
+		require.Nil(t, stats.execCtx)
+		m := stats.MergeRUInto()
+		require.Len(t, m, 1)
+		incr, ok := m[key]
+		require.True(t, ok)
+		require.Equal(t, uint64(1), incr.ExecCount)
+		require.InDelta(t, 0.0, incr.TotalRU, 1e-9)
+
+		ru.Merge(util.NewRUDetailsWith(2, 0, 0))
+		require.Len(t, stats.MergeRUInto(), 0)
+	})
+
+	t.Run("late-enable", func(t *testing.T) {
+		stats := CreateStatementStats()
+		ru := util.NewRUDetailsWith(9, 0, 0)
+		key := RUKey{User: "u2", SQLDigest: BinaryDigest("sql2"), PlanDigest: BinaryDigest("plan2")}
+
+		stats.OnExecutionBegin([]byte("sql2"), []byte("plan2"), &ExecBeginInfo{
+			User:         "u2",
+			TopRUEnabled: false,
+		})
+		stats.OnExecutionFinished([]byte("sql2"), []byte("plan2"), &ExecFinishInfo{
+			User:         "u2",
+			TopRUEnabled: true,
+			RUDetails:    ru,
+			ExecDuration: time.Second,
+		})
+
+		m := stats.MergeRUInto()
+		require.Len(t, m, 1)
+		require.InDelta(t, 9.0, m[key].TotalRU, 1e-9)
+		// Late-enable has no begin signal, so RU is reported with ExecCount=0 by design.
+		require.Equal(t, uint64(0), m[key].ExecCount)
+	})
+}
+
+func TestExecCountBeginBased_RUZeroNoNoise(t *testing.T) {
+	stats := CreateStatementStats()
+	ru := util.NewRUDetailsWith(0, 0, 0)
+	ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+	key := RUKey{User: "u3", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+		User:         "u3",
+		TopRUEnabled: true,
+		Ctx:          ctx,
+	})
+	m := stats.MergeRUInto()
+	require.Len(t, m, 1)
+	incr, ok := m[key]
+	require.True(t, ok)
+	require.Equal(t, uint64(1), incr.ExecCount)
+	require.InDelta(t, 0.0, incr.TotalRU, 1e-9)
+
+	stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+		User:         "u3",
+		TopRUEnabled: true,
+		RUDetails:    ru,
+		ExecDuration: time.Second,
+	})
+	require.Len(t, stats.MergeRUInto(), 0)
+}
+
+func TestExecCountBeginBased_BucketMergeSameTick(t *testing.T) {
+	stats := CreateStatementStats()
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+	// Execution 1: finish first, data stays in finishedRUBuffer before next tick.
+	ru1 := util.NewRUDetailsWith(6, 0, 0)
+	ctx1 := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru1)
+	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		Ctx:          ctx1,
+	})
+	stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		RUDetails:    ru1,
+		ExecDuration: time.Second,
+	})
+
+	// Execution 2: active with positive delta before the same tick drains.
+	ru2 := util.NewRUDetailsWith(0, 0, 0)
+	ctx2 := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru2)
+	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		Ctx:          ctx2,
+	})
+	ru2.Merge(util.NewRUDetailsWith(4, 0, 0))
+
+	m := stats.MergeRUInto()
+	require.Len(t, m, 1)
+	require.InDelta(t, 10.0, m[key].TotalRU, 1e-9)
+	require.Equal(t, uint64(2), m[key].ExecCount)
+}
+
+func TestExecCountBeginBased_FinishAndTickConcurrent(t *testing.T) {
+	const rounds = 100
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+	for range rounds {
+		stats := CreateStatementStats()
+		ru := util.NewRUDetailsWith(0, 0, 0)
+		ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+			User:         "u1",
+			TopRUEnabled: true,
+			Ctx:          ctx,
+		})
+		ru.Merge(util.NewRUDetailsWith(10, 0, 0))
+
+		start := make(chan struct{})
+		tickDone := make(chan RUIncrementMap, 1)
+		finishDone := make(chan struct{})
+
+		go func() {
+			<-start
+			tickDone <- stats.MergeRUInto()
+		}()
+		go func() {
+			<-start
+			stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+				User:         "u1",
+				TopRUEnabled: true,
+				RUDetails:    ru,
+				ExecDuration: time.Second,
+			})
+			close(finishDone)
+		}()
+
+		close(start)
+		tickResult := <-tickDone
+		<-finishDone
+		tailResult := stats.MergeRUInto()
+		require.Len(t, tickResult, 1)
+		require.Len(t, tailResult, 0)
+
+		total := RUIncrementMap{}
+		total.Merge(tickResult)
+		total.Merge(tailResult)
+
+		require.Len(t, total, 1)
+		incr, ok := total[key]
+		require.True(t, ok)
+		require.InDelta(t, 10.0, incr.TotalRU, 1e-9)
+		require.Equal(t, uint64(1), incr.ExecCount)
+		require.Nil(t, stats.execCtx)
+	}
+}
+
+func TestExecCountBeginBased_FinishTickBucketSemantics(t *testing.T) {
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+	runCase := func(t *testing.T, tickFirst bool) {
+		stats := CreateStatementStats()
+		ru := util.NewRUDetailsWith(0, 0, 0)
+		ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+			User:         "u1",
+			TopRUEnabled: true,
+			Ctx:          ctx,
+		})
+		ru.Merge(util.NewRUDetailsWith(10, 0, 0))
+
+		var bucketA RUIncrementMap
+		if tickFirst {
+			bucketA = stats.MergeRUInto()
+		}
+		stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+			User:         "u1",
+			TopRUEnabled: true,
+			RUDetails:    ru,
+			ExecDuration: time.Second,
+		})
+		if !tickFirst {
+			bucketA = stats.MergeRUInto()
+		}
+		bucketB := stats.MergeRUInto()
+
+		require.Len(t, bucketA, 1)
+		incr, ok := bucketA[key]
+		require.True(t, ok)
+		require.InDelta(t, 10.0, incr.TotalRU, 1e-9)
+		require.Equal(t, uint64(1), incr.ExecCount)
+		require.Len(t, bucketB, 0)
+		require.Nil(t, stats.execCtx)
+	}
+
+	t.Run("tick-first", func(t *testing.T) {
+		runCase(t, true)
+	})
+	t.Run("finish-first", func(t *testing.T) {
+		runCase(t, false)
+	})
+}
+
+func TestExecCountBeginBased_TickThenGrowThenFinishAcrossBuckets(t *testing.T) {
+	stats := CreateStatementStats()
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+	ru := util.NewRUDetailsWith(0, 0, 0)
+	ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		Ctx:          ctx,
+	})
+
+	ru.Merge(util.NewRUDetailsWith(10, 0, 0))
+	bucketA := stats.MergeRUInto()
+	require.Len(t, bucketA, 1)
+	incrA, ok := bucketA[key]
+	require.True(t, ok)
+	require.InDelta(t, 10.0, incrA.TotalRU, 1e-9)
+	require.Equal(t, uint64(1), incrA.ExecCount)
+	require.Equal(t, uint64(0), incrA.ExecDuration)
+
+	ru.Merge(util.NewRUDetailsWith(5, 0, 0))
+	stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		RUDetails:    ru,
+		ExecDuration: 2 * time.Second,
+	})
+	bucketB := stats.MergeRUInto()
+	require.Len(t, bucketB, 1)
+	incrB, ok := bucketB[key]
+	require.True(t, ok)
+	require.InDelta(t, 5.0, incrB.TotalRU, 1e-9)
+	require.Equal(t, uint64(0), incrB.ExecCount)
+	require.Equal(t, uint64((2 * time.Second).Nanoseconds()), incrB.ExecDuration)
+
+	total := RUIncrementMap{}
+	total.Merge(bucketA)
+	total.Merge(bucketB)
+	require.InDelta(t, 15.0, total[key].TotalRU, 1e-9)
+	require.Equal(t, uint64(1), total[key].ExecCount)
+	require.Equal(t, uint64((2 * time.Second).Nanoseconds()), total[key].ExecDuration)
+	require.Len(t, stats.MergeRUInto(), 0)
+	require.Nil(t, stats.execCtx)
+}
+
+func TestExecCountBeginBased_TickThenDisableThenFinishNoBucketB(t *testing.T) {
+	stats := CreateStatementStats()
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+	ru := util.NewRUDetailsWith(0, 0, 0)
+	ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		Ctx:          ctx,
+	})
+
+	ru.Merge(util.NewRUDetailsWith(10, 0, 0))
+	bucketA := stats.MergeRUInto()
+	require.Len(t, bucketA, 1)
+	incrA, ok := bucketA[key]
+	require.True(t, ok)
+	require.InDelta(t, 10.0, incrA.TotalRU, 1e-9)
+	require.Equal(t, uint64(1), incrA.ExecCount)
+
+	ru.Merge(util.NewRUDetailsWith(5, 0, 0))
+	stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+		User:         "u1",
+		TopRUEnabled: false,
+		RUDetails:    ru,
+		ExecDuration: 2 * time.Second,
+	})
+	bucketB := stats.MergeRUInto()
+	require.Len(t, bucketB, 0)
+	require.Nil(t, stats.execCtx)
+}
+
+func TestExecCountBeginBased_TickThenResetThenFinishNoBucketB(t *testing.T) {
+	stats := CreateStatementStats()
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+	ru := util.NewRUDetailsWith(0, 0, 0)
+	ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		Ctx:          ctx,
+	})
+
+	ru.Merge(util.NewRUDetailsWith(10, 0, 0))
+	bucketA := stats.MergeRUInto()
+	require.Len(t, bucketA, 1)
+	incrA, ok := bucketA[key]
+	require.True(t, ok)
+	require.InDelta(t, 10.0, incrA.TotalRU, 1e-9)
+	require.Equal(t, uint64(1), incrA.ExecCount)
+
+	stats.mu.Lock()
+	stats.execCtx.LastRUTotal = 100
+	stats.mu.Unlock()
+	ru.Merge(util.NewRUDetailsWith(5, 0, 0))
+
+	stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		RUDetails:    ru,
+		ExecDuration: 2 * time.Second,
+	})
+	bucketB := stats.MergeRUInto()
+	require.Len(t, bucketB, 0)
+	require.Nil(t, stats.execCtx)
+}
+
+func TestExecCountBeginBased_KeySwitchNoCrossPollution(t *testing.T) {
+	stats := CreateStatementStats()
+	keyA := RUKey{User: "u1", SQLDigest: BinaryDigest("sqlA"), PlanDigest: BinaryDigest("planA")}
+	keyB := RUKey{User: "u1", SQLDigest: BinaryDigest("sqlB"), PlanDigest: BinaryDigest("planB")}
+
+	ruA := util.NewRUDetailsWith(0, 0, 0)
+	ctxA := context.WithValue(context.Background(), util.RUDetailsCtxKey, ruA)
+	stats.OnExecutionBegin([]byte("sqlA"), []byte("planA"), &ExecBeginInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		Ctx:          ctxA,
+	})
+
+	ruA.Merge(util.NewRUDetailsWith(10, 0, 0))
+	bucketA := stats.MergeRUInto()
+	require.Len(t, bucketA, 1)
+	incrA, ok := bucketA[keyA]
+	require.True(t, ok)
+	require.InDelta(t, 10.0, incrA.TotalRU, 1e-9)
+	require.Equal(t, uint64(1), incrA.ExecCount)
+
+	ruB := util.NewRUDetailsWith(0, 0, 0)
+	ctxB := context.WithValue(context.Background(), util.RUDetailsCtxKey, ruB)
+	stats.OnExecutionBegin([]byte("sqlB"), []byte("planB"), &ExecBeginInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		Ctx:          ctxB,
+	})
+
+	ruA.Merge(util.NewRUDetailsWith(5, 0, 0))
+	stats.OnExecutionFinished([]byte("sqlA"), []byte("planA"), &ExecFinishInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		RUDetails:    ruA,
+		ExecDuration: 2 * time.Second,
+	})
+	pseudoB := stats.MergeRUInto()
+	require.Len(t, pseudoB, 1)
+	// Stale finish for keyA should not contaminate keyB.
+	_, existsA := pseudoB[keyA]
+	require.False(t, existsA)
+	incrPseudoB, ok := pseudoB[keyB]
+	require.True(t, ok)
+	require.Equal(t, uint64(1), incrPseudoB.ExecCount)
+	require.InDelta(t, 0.0, incrPseudoB.TotalRU, 1e-9)
+
+	ruB.Merge(util.NewRUDetailsWith(7, 0, 0))
+	stats.OnExecutionFinished([]byte("sqlB"), []byte("planB"), &ExecFinishInfo{
+		User:         "u1",
+		TopRUEnabled: true,
+		RUDetails:    ruB,
+		ExecDuration: time.Second,
+	})
+	bucketB := stats.MergeRUInto()
+	require.Len(t, bucketB, 1)
+	incrB, ok := bucketB[keyB]
+	require.True(t, ok)
+	require.InDelta(t, 7.0, incrB.TotalRU, 1e-9)
+	require.Equal(t, uint64(0), incrB.ExecCount)
+	// Across buckets, keyB still has exactly one begin-based ExecCount.
+	total := RUIncrementMap{}
+	total.Merge(pseudoB)
+	total.Merge(bucketB)
+	require.Equal(t, uint64(1), total[keyB].ExecCount)
+	require.InDelta(t, 7.0, total[keyB].TotalRU, 1e-9)
+
+	require.Nil(t, stats.execCtx)
 }
