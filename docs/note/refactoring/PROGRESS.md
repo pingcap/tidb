@@ -36,19 +36,21 @@ Last updated: 2026-02-17 (benchmark validation complete)
   - Files: `pkg/executor/join/hash_join_v1.go` (1,458 lines), `hash_join_v2.go` (1,538 lines)
   - Target: Single implementation with full join type coverage
 
-- [~] **Hot-path allocation fixes** - Pool iterators, pre-allocate slices
+- [x] **Hot-path allocation fixes** - Pool iterators, pre-allocate slices
   - [x] `pkg/executor/select.go:259` - chunk iterator recreation per Next() → cached on struct
-  - [ ] `pkg/executor/adapter.go:122-157` - ResultField slice per Fields() call (already cached)
+  - [-] `pkg/executor/adapter.go:122-157` - ResultField slice per Fields() call (already cached, no action needed)
   - [x] `pkg/executor/select.go:728-729` - selected slice re-init → reuse backing array
   - [x] `pkg/executor/internal/exec/executor.go:457` - reflect.TypeOf().String() per Next() → cached in sync.Map
   - [x] `pkg/expression/builtin_string_vec.go` - 17 []rune allocations replaced with utf8 operations
-  - [x] `pkg/expression/builtin_string.go` - 10 []rune allocations replaced with utf8 operations
+  - [x] `pkg/expression/builtin_string.go` - 16 []rune allocations replaced with utf8 operations
+  - [x] `pkg/expression/builtin_encryption.go` - 1 []rune allocation replaced
 
-- [ ] **Panic elimination in production code** - Replace with error returns
-  - `pkg/kv/key.go` - 6 panics on critical data path
-  - `pkg/session/txnmanager.go` - panic on assertion
-  - `pkg/server/http_status.go` - 5 panics
-  - Total: 81 panics in non-test code
+- [x] **Panic elimination in production code** - Replace with error returns
+  - [x] 8 runtime panics replaced: builder.go, analyze.go, index_merge_reader.go,
+        aggfuncs/func_value.go, encode.go, rule_partition_processor.go, txn_info.go, summary.go
+  - [-] `pkg/kv/key.go` - 6 panics are intentional interface contract assertions (Handle)
+  - [-] `pkg/session/txnmanager.go` - panic is inside failpoint (test-only)
+  - [-] `pkg/server/http_status.go` - startup-time assertions (acceptable)
 
 ## P1 - High Priority
 
@@ -108,3 +110,5 @@ Last updated: 2026-02-17 (benchmark validation complete)
 - [x] **String function rune optimization** - 2026-02-17 - Replace 27 `[]rune(str)` allocations with `utf8.RuneCountInString` and `utf8.DecodeRuneInString` for zero-copy operations in LEFT, RIGHT, LOCATE, SUBSTR, INSERT, MID, LPAD, RPAD, CHAR_LENGTH
 - [x] **Planner panic elimination** - 2026-02-17 - Replace `panic("unreachable")` with error return in `exhaustPhysicalPlans`
 - [x] **Planner-executor dependency break** - 2026-02-17 - Move `joinversion` package from `executor/join/joinversion` to `util/joinversion`, eliminating planner→executor import
+- [x] **Runtime panic elimination (8 panics)** - 2026-02-17 - Replace panics in builder.go, analyze.go, index_merge_reader.go, aggfuncs/func_value.go, encode.go, rule_partition_processor.go, txn_info.go, summary.go
+- [x] **Additional rune optimizations (6 patterns)** - 2026-02-17 - SUBSTRING non-vec, INSERT non-vec, Quote, WeightString, ValidatePasswordStrength
