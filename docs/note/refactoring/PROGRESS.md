@@ -26,7 +26,8 @@ Last updated: 2026-02-17 (hot-path allocation fixes)
   - [ ] `pkg/executor/adapter.go:122-157` - ResultField slice per Fields() call (already cached)
   - [x] `pkg/executor/select.go:728-729` - selected slice re-init → reuse backing array
   - [x] `pkg/executor/internal/exec/executor.go:457` - reflect.TypeOf().String() per Next() → cached in sync.Map
-  - [ ] `pkg/expression/builtin_string_vec.go` - 20+ []rune allocations in loops
+  - [x] `pkg/expression/builtin_string_vec.go` - 17 []rune allocations replaced with utf8 operations
+  - [x] `pkg/expression/builtin_string.go` - 10 []rune allocations replaced with utf8 operations
 
 - [ ] **Panic elimination in production code** - Replace with error returns
   - `pkg/kv/key.go` - 6 panics on critical data path
@@ -63,7 +64,7 @@ Last updated: 2026-02-17 (hot-path allocation fixes)
 ## P2 - Medium Priority
 
 - [ ] **pkg/util/ reorganization** - Re-organize 111+ subdirectories
-- [ ] **String function rune optimization** - Use utf8 index-based operations
+- [x] **String function rune optimization** - Use utf8 index-based operations
 - [ ] **Goroutine pool for executors** - Aggregate, sort, projection worker pools
 - [ ] **Datum type optimization** - Eliminate interface{} fallback, use typed union
 - [ ] **Expression clone generation** - Auto-generate all Clone() methods
@@ -89,3 +90,4 @@ Last updated: 2026-02-17 (hot-path allocation fixes)
 - [x] **SelectLockExec iterator caching** - 2026-02-17 - Cache `chunk.Iterator4Chunk` on struct to avoid heap allocation per `Next()` call
 - [x] **SelectionExec selected slice reuse** - 2026-02-17 - Reuse `[]bool` backing array across `Open()`/`Close()` cycles instead of re-allocating
 - [x] **exec.Next reflect.TypeOf caching** - 2026-02-17 - Cache `reflect.TypeOf(e).String()+".Next"` in `sync.Map` to avoid per-call reflection + string concatenation
+- [x] **String function rune optimization** - 2026-02-17 - Replace 27 `[]rune(str)` allocations with `utf8.RuneCountInString` and `utf8.DecodeRuneInString` for zero-copy operations in LEFT, RIGHT, LOCATE, SUBSTR, INSERT, MID, LPAD, RPAD, CHAR_LENGTH
