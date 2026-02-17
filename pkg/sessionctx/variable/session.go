@@ -930,6 +930,42 @@ type StatsVars struct {
 	SkipMissingPartitionStats bool
 }
 
+// TransactionVars contains transaction-related configuration variables.
+type TransactionVars struct {
+	// RetryLimit is the maximum number of retries when committing a transaction.
+	RetryLimit int64
+	// DisableTxnAutoRetry disables transaction auto retry.
+	DisableTxnAutoRetry bool
+	// TxnMode indicates should be pessimistic or optimistic.
+	TxnMode string
+	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds.
+	LockWaitTimeout int64
+	// TxnScope indicates the scope of the transactions.
+	TxnScope kv.TxnScopeVar
+	// EnableAsyncCommit indicates whether to enable the async commit feature.
+	EnableAsyncCommit bool
+	// Enable1PC indicates whether to enable the one-phase commit feature.
+	Enable1PC bool
+	// GuaranteeLinearizability indicates whether to guarantee linearizability.
+	GuaranteeLinearizability bool
+	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
+	ConstraintCheckInPlace bool
+	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
+	ConstraintCheckInPlacePessimistic bool
+	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
+	ForeignKeyChecks bool
+	// ForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
+	ForeignKeyCheckInSharedLock bool
+	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC.
+	RcWriteCheckTS bool
+	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction is enabled.
+	PessimisticTransactionFairLocking bool
+	// SharedLockPromotion indicates whether select for lock statements would be executed as select for update.
+	SharedLockPromotion bool
+	// SlowTxnThreshold is the threshold of slow transaction logs.
+	SlowTxnThreshold uint64
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -941,11 +977,10 @@ type SessionVars struct {
 	PlanCacheVars
 	OptimizerVars
 	StatsVars
+	TransactionVars
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize        int
-	RetryLimit          int64
-	DisableTxnAutoRetry bool
+	DMLBatchSize int
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -1150,9 +1185,6 @@ type SessionVars struct {
 
 	writeStmtBufs WriteStmtBufs
 
-	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
-	ConstraintCheckInPlace bool
-
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
 
@@ -1170,9 +1202,6 @@ type SessionVars struct {
 	// SlowLogRules holds the set of user-defined rules that determine whether a SQL execution should be logged in the slow log.
 	// This allows flexible and fine-grained control over slow logging beyond the traditional single-threshold approach.
 	SlowLogRules *slowlogrule.SessionSlowLogRules
-
-	// TxnMode indicates should be pessimistic or optimistic.
-	TxnMode string
 
 	// lowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	// Do not use it directly, use the `UseLowResolutionTSO` method below.
@@ -1265,9 +1294,6 @@ type SessionVars struct {
 
 	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
 
-	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
-	LockWaitTimeout int64
-
 	// MetricSchemaStep indicates the step when query metric schema.
 	MetricSchemaStep int64
 
@@ -1334,20 +1360,8 @@ type SessionVars struct {
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
-	// TxnScope indicates the scope of the transactions. It should be `global` or equal to the value of key `zone` in config.Labels.
-	TxnScope kv.TxnScopeVar
-
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
-
-	// EnableAsyncCommit indicates whether to enable the async commit feature.
-	EnableAsyncCommit bool
-
-	// Enable1PC indicates whether to enable the one-phase commit feature.
-	Enable1PC bool
-
-	// GuaranteeLinearizability indicates whether to guarantee linearizability
-	GuaranteeLinearizability bool
 
 	// DisableHashJoin indicates whether to disable hash join.
 	DisableHashJoin bool
@@ -1418,8 +1432,6 @@ type SessionVars struct {
 	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
 	IndexJoinDoubleReadPenaltyCostRate float64
 
-	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
-	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
@@ -1443,18 +1455,8 @@ type SessionVars struct {
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
 
-	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
-	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
-	ConstraintCheckInPlacePessimistic bool
-
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
-
-	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
-	ForeignKeyChecks bool
-
-	// ForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
-	ForeignKeyCheckInSharedLock bool
 
 	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
@@ -1519,10 +1521,6 @@ type SessionVars struct {
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
 
-	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
-	// is enabled.
-	PessimisticTransactionFairLocking bool
-
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
@@ -1535,9 +1533,6 @@ type SessionVars struct {
 
 	// EnableRowLevelChecksum indicates whether row level checksum is enabled.
 	EnableRowLevelChecksum bool
-
-	// SlowTxnThreshold is the threshold of slow transaction logs
-	SlowTxnThreshold uint64
 
 	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
 	// If exceeding the threshold, try other stores using replica read.
@@ -1616,10 +1611,6 @@ type SessionVars struct {
 
 	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
 	EnableLazyCursorFetch bool
-
-	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
-	// `select for update` statements which do acquire pessimsitic locks.
-	SharedLockPromotion bool
 
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
@@ -2098,8 +2089,16 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AutoIncrementIncrement:        vardef.DefAutoIncrementIncrement,
 		AutoIncrementOffset:           vardef.DefAutoIncrementOffset,
 		StmtCtx:                       stmtctx.NewStmtCtx(),
-		RetryLimit:                    vardef.DefTiDBRetryLimit,
-		DisableTxnAutoRetry:           vardef.DefTiDBDisableTxnAutoRetry,
+		TransactionVars: TransactionVars{
+			RetryLimit:               vardef.DefTiDBRetryLimit,
+			DisableTxnAutoRetry:      vardef.DefTiDBDisableTxnAutoRetry,
+			LockWaitTimeout:          vardef.DefInnodbLockWaitTimeout * 1000,
+			TxnScope:                 kv.NewDefaultTxnScopeVar(),
+			EnableAsyncCommit:        vardef.DefTiDBEnableAsyncCommit,
+			Enable1PC:                vardef.DefTiDBEnable1PC,
+			GuaranteeLinearizability: vardef.DefTiDBGuaranteeLinearizability,
+			ForeignKeyChecks:         vardef.DefTiDBForeignKeyChecks,
+		},
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       vardef.DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               vardef.DefOptPreferRangeScan,
@@ -2146,7 +2145,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		UsePlanBaselines:              vardef.DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:           vardef.DefTiDBEvolvePlanBaselines,
 		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:               vardef.DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:              vardef.DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:     vardef.DefTiDBMetricSchemaRangeDuration,
 		SequenceState:                 NewSequenceState(),
@@ -2162,11 +2160,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ShardAllocateStep:             vardef.DefTiDBShardAllocateStep,
 		EnablePointGetCache:           vardef.DefTiDBPointGetCache,
 		PartitionPruneMode:            *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
-		TxnScope:                      kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:        vardef.DefTiDBEnableRateLimitAction,
-		EnableAsyncCommit:             vardef.DefTiDBEnableAsyncCommit,
-		Enable1PC:                     vardef.DefTiDBEnable1PC,
-		GuaranteeLinearizability:      vardef.DefTiDBGuaranteeLinearizability,
 		EnableIndexMergeJoin:          vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          vardef.DefCTEMaxRecursionDepth,
@@ -2175,7 +2169,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLegacyInstanceScope:     vardef.DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       vardef.DefTiDBRemoveOrderbyInSubquery,
 		MaxAllowedPacket:              vardef.DefMaxAllowedPacket,
-		ForeignKeyChecks:              vardef.DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseChunk:              vardef.DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              vardef.DefTiDBUseAlloc,
