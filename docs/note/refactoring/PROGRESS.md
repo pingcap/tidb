@@ -89,14 +89,14 @@ Last updated: 2026-02-17 (benchmark validation complete)
   - Files: `pkg/planner/core/plan_cost_ver1.go`, `plan_cost_ver2.go`
   - Target: Single cost model
 
-- [~] **SessionVars decomposition** - Split 350+ field mega-struct
+- [x] **SessionVars decomposition** - Split 350+ field mega-struct
   - File: `pkg/sessionctx/variable/session.go` (3,853 lines)
   - Target: Grouped sub-structs by concern
   - [x] Phase 1: Extracted `TiFlashVars` (27 fields) and `CostModelFactors` (28 fields) as embedded sub-structs
   - [x] Phase 2: Extracted `PlanCacheVars` (13 fields) and `OptimizerVars` (32 fields) as embedded sub-structs
   - [x] Phase 3a: Extracted `StatsVars` (16 statistics-related fields) as embedded sub-struct
   - [x] Phase 3b: Extracted `TransactionVars` (16 transaction-related fields) as embedded sub-struct
-  - [ ] Phase 4: Extract execution settings
+  - [x] Phase 4: Extracted `ExecutionVars` (11 execution-related fields) as embedded sub-struct
 
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
@@ -144,4 +144,5 @@ Last updated: 2026-02-17 (benchmark validation complete)
 - [x] **SessionVars Phase 3a (StatsVars)** - 2026-02-17 - Extract 16 statistics-related fields (EnableFastAnalyze, AnalyzeVersion, RegardNULLAsPoint, etc.) into embedded `StatsVars` sub-struct
 - [x] **SessionVars Phase 3b (TransactionVars)** - 2026-02-17 - Extract 16 transaction-related fields (RetryLimit, LockWaitTimeout, TxnScope, EnableAsyncCommit, etc.) into embedded `TransactionVars` sub-struct
 - [x] **session.go decomposition** - 2026-02-17 - Split into 9 focused files: `session_txn.go` (1,086), `session_bootstrap.go` (955), `session_execute.go` (836), `session_parse.go` (546), `session_auth.go` (413), `session_logging.go` (387), `session_restricted.go` (287), `session_states.go` (212), `session_sysvar.go` (157). Reduced session.go from 5,558 to 1,087 lines (80% reduction).
+- [x] **SessionVars Phase 4 (ExecutionVars)** - 2026-02-17 - Extract 11 execution-related fields (DMLBatchSize, BatchInsert, BatchDelete, BatchCommit, BulkDMLEnabled, EnableChunkRPC, EnablePaging, EnableReuseChunk, MaxExecutionTime, SelectLimit, StoreBatchSize) into embedded `ExecutionVars` sub-struct. Total: 7 sub-structs, ~143 fields organized.
 - [x] **DDL executor.go decomposition** - 2026-02-17 - Split into 8 focused files: `executor_partition.go` (1,084 lines), `executor_index.go` (967 lines), `executor_column.go` (472 lines), `executor_create.go` (565 lines), `executor_table.go` (532 lines), `executor_misc.go` (543 lines), `executor_schema.go` (680 lines), `executor_table_props.go` (683 lines). Reduced executor.go from 7,201 to 1,986 lines (72% reduction).
