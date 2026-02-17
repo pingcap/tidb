@@ -28,9 +28,12 @@ Last updated: 2026-02-17 (benchmark validation complete)
 
 ## P0 - Critical (Do First)
 
-- [ ] **executor/builder.go split** - Replace 103-case switch with registry/factory pattern
-  - File: `pkg/executor/builder.go` (6,222 lines)
+- [~] **executor/builder.go split** - Replace 103-case switch with registry/factory pattern
+  - File: `pkg/executor/builder.go` (6,222 lines → 4,266 lines)
   - Target: Split into per-operator-type builder files with auto-registration
+  - [x] Phase 1: Extract `buildMemTable` (292 lines) → `builder_memtable.go`
+  - [x] Phase 1: Extract reader builders (1,652 lines) → `builder_reader.go` (buildNoRangeTableReader, buildTableReader, buildIndexReader, buildIndexLookUpReader, buildIndexMergeReader, buildMPPGather, dataReaderBuilder, all index join reader builders)
+  - [ ] Phase 2: Extract join builders, analyze builders, remaining groups
 
 - [ ] **Hash Join V1 deprecation** - Complete V2 for all join types, remove V1
   - Files: `pkg/executor/join/hash_join_v1.go` (1,458 lines), `hash_join_v2.go` (1,538 lines)
@@ -70,9 +73,11 @@ Last updated: 2026-02-17 (benchmark validation complete)
   - Files: `pkg/planner/core/plan_cost_ver1.go`, `plan_cost_ver2.go`
   - Target: Single cost model
 
-- [ ] **SessionVars decomposition** - Split 350+ field mega-struct
+- [~] **SessionVars decomposition** - Split 350+ field mega-struct
   - File: `pkg/sessionctx/variable/session.go` (3,853 lines)
   - Target: Grouped sub-structs by concern
+  - [x] Phase 1: Extracted `TiFlashVars` (27 fields) and `CostModelFactors` (28 fields) as embedded sub-structs
+  - [ ] Phase 2: Extract plan cache, optimizer, transaction settings
 
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
@@ -112,3 +117,5 @@ Last updated: 2026-02-17 (benchmark validation complete)
 - [x] **Planner-executor dependency break** - 2026-02-17 - Move `joinversion` package from `executor/join/joinversion` to `util/joinversion`, eliminating planner→executor import
 - [x] **Runtime panic elimination (8 panics)** - 2026-02-17 - Replace panics in builder.go, analyze.go, index_merge_reader.go, aggfuncs/func_value.go, encode.go, rule_partition_processor.go, txn_info.go, summary.go
 - [x] **Additional rune optimizations (6 patterns)** - 2026-02-17 - SUBSTRING non-vec, INSERT non-vec, Quote, WeightString, ValidatePasswordStrength
+- [x] **SessionVars decomposition phase 1** - 2026-02-17 - Extract `TiFlashVars` (27 MPP/TiFlash fields) and `CostModelFactors` (28 cost factor fields) into embedded sub-structs, reducing SessionVars from 315 to ~260 direct fields
+- [x] **executor/builder.go split phase 1** - 2026-02-17 - Extract `buildMemTable` (292 lines) → `builder_memtable.go` and reader builders (1,652 lines) → `builder_reader.go`, reducing builder.go from 6,223 to 4,266 lines
