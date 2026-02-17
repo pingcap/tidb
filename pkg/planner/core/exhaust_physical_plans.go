@@ -96,7 +96,7 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *mockLogicalPlan4Test:
 		ops, hintCanWork, err = ExhaustPhysicalPlans4MockLogicalPlan(x, prop)
 	default:
-		panic("unreachable")
+		return nil, false, errors.Errorf("unknown logical plan type %T", lp)
 	}
 
 	if len(ops) == 0 || err != nil {
