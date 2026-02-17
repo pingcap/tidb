@@ -1944,7 +1944,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where f > 1",
-			result: "f,f_g",
+			result: "PRIMARY_KEY,f,f_g",
 		},
 		{
 			sql:    "select f from t where f > 1",
@@ -2016,7 +2016,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
-			result: "c_d_e,b_c_global", // will prune `b_c` and keep `c_d_e`
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c` and keep `c_d_e`
 		},
 		{
 			sql:    "select * from pt2_global_index where c > 1 and d > 1 and e > 1",

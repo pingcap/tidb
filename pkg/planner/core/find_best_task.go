@@ -1641,17 +1641,16 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 			if !c.path.IsFullRange {
-				indexFilters := len(c.path.TableFilters) < len(c.path.AccessConds)+len(c.path.IndexFilters)
+				hasEquals := c.equalPredicateCount() > 0
+				indexFilters := hasEquals || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				noSortPlan := (prop.IsSortItemEmpty() || c.matchPropResult.Matched())
 				if preferMerge || ((c.path.IsSingleScan || indexFilters) && noSortPlan) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				} else {
-					// hasEquals can be an expensive check - moved below other checks
-					// Don't set hasRangeScanPath however - so that plans with equals/IN predicates
-					// suvive. If an equals/IN plan matched a sort property or didn't require a sort
+					// Allow equals plans to survive. Don't set hasRangeScanPath however
+					// If an equals/IN plan matched a sort property or didn't require a sort
 					// it would already have triggered hasRangeScanPath above.
-					hasEquals := c.equalPredicateCount() > 0
 					if hasEquals {
 						preferredPaths = append(preferredPaths, c)
 					}
