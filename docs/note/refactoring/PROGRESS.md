@@ -107,7 +107,7 @@ Last updated: 2026-02-17 (benchmark validation complete)
 - [ ] **Remove old cascades code** - `pkg/planner/cascades/old/`
 - [ ] **Executor interface split** - Lifecycle, Execution, Debug interfaces
 - [ ] **Context propagation** - Replace 5,266 Background()/TODO() calls
-- [ ] **DDL executor.go split** - `pkg/ddl/executor.go` (7,201 lines)
+- [x] **DDL executor.go split** - `pkg/ddl/executor.go` (7,201 → 2,597 lines, 64% reduction)
 - [ ] **sessionctx.Context interface** - Split 76-method interface
 - [ ] **nolint audit** - Investigate 738 suppressed warnings
 
@@ -130,3 +130,4 @@ Last updated: 2026-02-17 (benchmark validation complete)
 - [x] **SessionVars decomposition phase 2** - 2026-02-17 - Extract `PlanCacheVars` (13 plan cache fields) and `OptimizerVars` (32 optimizer fields) into embedded sub-structs
 - [x] **executor/builder.go split phase 3** - 2026-02-17 - Extract `builder_ddl_admin.go` (474 lines) and `builder_sort_window.go` (411 lines), reducing builder.go from 3,172 to 2,360 lines (62% total reduction)
 - [x] **executor/builder.go split phase 4** - 2026-02-17 - Extract `builder_agg_project.go` (244 lines), `builder_cte_misc.go` (315 lines), `builder_stmt.go` (601 lines), and `builder_union_scan.go` (236 lines), reducing builder.go from 2,360 to 1,082 lines (83% total reduction). Split complete: 10 builder files total.
+- [x] **DDL executor.go decomposition** - 2026-02-17 - Split into 7 focused files: `executor_partition.go` (999 lines), `executor_index.go` (967 lines), `executor_column.go` (472 lines), `executor_table.go` (532 lines), `executor_misc.go` (543 lines), `executor_schema.go` (680 lines), `executor_table_props.go` (683 lines). Reduced executor.go from 7,201 to 2,597 lines (64% reduction).
