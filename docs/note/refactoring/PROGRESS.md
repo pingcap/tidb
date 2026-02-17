@@ -29,7 +29,7 @@ Last updated: 2026-02-17 (benchmark validation complete)
 ## P0 - Critical (Do First)
 
 - [x] **executor/builder.go split** - Replace 103-case switch with registry/factory pattern
-  - File: `pkg/executor/builder.go` (6,222 lines → 1,414 lines, 77% reduction)
+  - File: `pkg/executor/builder.go` (6,222 lines → 1,291 lines, 79% reduction)
   - Target: Split into per-operator-type builder files with auto-registration
   - [x] Phase 1: Extract `buildMemTable` (292 lines) → `builder_memtable.go`
   - [x] Phase 1: Extract reader builders (1,652 lines) → `builder_reader.go`
