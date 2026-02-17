@@ -45,9 +45,9 @@ Last updated: 2026-02-17 (hot-path allocation fixes)
   - File: `pkg/domain/domain.go` (2,739 lines, 89 fields)
   - Target: Composable service managers
 
-- [ ] **Planner-executor dependency break** - Remove executor imports from planner
-  - `pkg/planner/core/operator/physicalop/physical_hash_join.go` imports `executor/join/joinversion`
-  - Target: Interface boundary between planner and executor
+- [x] **Planner-executor dependency break** - Remove executor imports from planner
+  - Moved `pkg/executor/join/joinversion` → `pkg/util/joinversion`
+  - Updated all 11 Go importers; BUILD.bazel files need `make bazel_prepare`
 
 - [ ] **Cost model unification** - Deprecate one of ver1/ver2
   - Files: `pkg/planner/core/plan_cost_ver1.go`, `plan_cost_ver2.go`
@@ -91,3 +91,5 @@ Last updated: 2026-02-17 (hot-path allocation fixes)
 - [x] **SelectionExec selected slice reuse** - 2026-02-17 - Reuse `[]bool` backing array across `Open()`/`Close()` cycles instead of re-allocating
 - [x] **exec.Next reflect.TypeOf caching** - 2026-02-17 - Cache `reflect.TypeOf(e).String()+".Next"` in `sync.Map` to avoid per-call reflection + string concatenation
 - [x] **String function rune optimization** - 2026-02-17 - Replace 27 `[]rune(str)` allocations with `utf8.RuneCountInString` and `utf8.DecodeRuneInString` for zero-copy operations in LEFT, RIGHT, LOCATE, SUBSTR, INSERT, MID, LPAD, RPAD, CHAR_LENGTH
+- [x] **Planner panic elimination** - 2026-02-17 - Replace `panic("unreachable")` with error return in `exhaustPhysicalPlans`
+- [x] **Planner-executor dependency break** - 2026-02-17 - Move `joinversion` package from `executor/join/joinversion` to `util/joinversion`, eliminating planner→executor import

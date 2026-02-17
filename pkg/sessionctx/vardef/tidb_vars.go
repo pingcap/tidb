@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
+	"github.com/pingcap/tidb/pkg/util/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/util/memory"
