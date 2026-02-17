@@ -17,6 +17,7 @@ package exec
 import (
 	"context"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -437,6 +438,20 @@ func Open(ctx context.Context, e Executor) (err error) {
 	return e.Open(ctx)
 }
 
+// executorNextRegionNames caches the tracing region name for each executor type
+// to avoid repeated reflect.TypeOf().String() + ".Next" allocations on every Next() call.
+var executorNextRegionNames sync.Map // reflect.Type -> string
+
+func executorNextRegionName(e Executor) string {
+	t := reflect.TypeOf(e)
+	if name, ok := executorNextRegionNames.Load(t); ok {
+		return name.(string)
+	}
+	name := t.String() + ".Next"
+	executorNextRegionNames.Store(t, name)
+	return name
+}
+
 // Next is a wrapper function on e.Next(), it handles some common codes.
 func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	defer func() {
@@ -453,7 +468,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	r, ctx := tracing.StartRegionEx(ctx, reflect.TypeOf(e).String()+".Next")
+	r, ctx := tracing.StartRegionEx(ctx, executorNextRegionName(e))
 	defer r.End()
 
 	e.RegisterSQLAndPlanInExecForTopProfiling()

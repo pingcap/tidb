@@ -222,6 +222,9 @@ type SelectLockExec struct {
 	// due to issues with chunk handling between the TableReaderExecutor and the
 	// SelectReader result.
 	tblID2PhysTblIDColIdx map[int64]int
+
+	// iter is cached to avoid allocating a new Iterator4Chunk on every Next() call.
+	iter *chunk.Iterator4Chunk
 }
 
 // Open implements the Executor Open interface.
@@ -256,8 +259,10 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	if req.NumRows() > 0 {
-		iter := chunk.NewIterator4Chunk(req)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		if e.iter == nil {
+			e.iter = chunk.NewIterator4Chunk(req)
+		}
+		for row := e.iter.Begin(); row != e.iter.End(); row = e.iter.Next() {
 			for tblID, cols := range e.tblID2Handle {
 				for _, col := range cols {
 					handle, err := col.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
@@ -725,7 +730,11 @@ func (e *SelectionExec) open(context.Context) error {
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
-		e.selected = make([]bool, 0, chunk.InitialCapacity)
+		if cap(e.selected) > 0 {
+			e.selected = e.selected[:0]
+		} else {
+			e.selected = make([]bool, 0, chunk.InitialCapacity)
+		}
 	}
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
 	e.inputRow = e.inputIter.End()
@@ -738,7 +747,9 @@ func (e *SelectionExec) Close() error {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
 	}
-	e.selected = nil
+	if e.selected != nil {
+		e.selected = e.selected[:0]
+	}
 	return e.BaseExecutorV2.Close()
 }
 

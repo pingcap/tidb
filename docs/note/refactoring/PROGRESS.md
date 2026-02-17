@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-17
+Last updated: 2026-02-17 (hot-path allocation fixes)
 
 ## Status Legend
 
@@ -21,11 +21,12 @@ Last updated: 2026-02-17
   - Files: `pkg/executor/join/hash_join_v1.go` (1,458 lines), `hash_join_v2.go` (1,538 lines)
   - Target: Single implementation with full join type coverage
 
-- [ ] **Hot-path allocation fixes** - Pool iterators, pre-allocate slices
-  - `pkg/executor/select.go:259` - chunk iterator recreation per Next()
-  - `pkg/executor/adapter.go:122-157` - ResultField slice per Fields() call
-  - `pkg/executor/select.go:728-729` - selected slice re-init
-  - `pkg/expression/builtin_string_vec.go` - 20+ []rune allocations in loops
+- [~] **Hot-path allocation fixes** - Pool iterators, pre-allocate slices
+  - [x] `pkg/executor/select.go:259` - chunk iterator recreation per Next() → cached on struct
+  - [ ] `pkg/executor/adapter.go:122-157` - ResultField slice per Fields() call (already cached)
+  - [x] `pkg/executor/select.go:728-729` - selected slice re-init → reuse backing array
+  - [x] `pkg/executor/internal/exec/executor.go:457` - reflect.TypeOf().String() per Next() → cached in sync.Map
+  - [ ] `pkg/expression/builtin_string_vec.go` - 20+ []rune allocations in loops
 
 - [ ] **Panic elimination in production code** - Replace with error returns
   - `pkg/kv/key.go` - 6 panics on critical data path
@@ -85,6 +86,6 @@ Last updated: 2026-02-17
 
 (Move items here when done, with date and PR link)
 
-<!-- Example:
-- [x] **item name** - Completed 2026-02-20, PR #12345
--->
+- [x] **SelectLockExec iterator caching** - 2026-02-17 - Cache `chunk.Iterator4Chunk` on struct to avoid heap allocation per `Next()` call
+- [x] **SelectionExec selected slice reuse** - 2026-02-17 - Reuse `[]bool` backing array across `Open()`/`Close()` cycles instead of re-allocating
+- [x] **exec.Next reflect.TypeOf caching** - 2026-02-17 - Cache `reflect.TypeOf(e).String()+".Next"` in `sync.Map` to avoid per-call reflection + string concatenation
