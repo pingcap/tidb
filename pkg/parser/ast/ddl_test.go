@@ -54,7 +54,7 @@ func TestDDLVisitorCover(t *testing.T) {
 		{&DropMaterializedViewStmt{ViewName: &TableName{}}, 0, 0},
 		{&DropMaterializedViewLogStmt{Table: &TableName{}}, 0, 0},
 		{&RefreshMaterializedViewStmt{ViewName: &TableName{}}, 0, 0},
-		{&RefreshMaterializedViewInternalStmt{RefreshStmt: &RefreshMaterializedViewStmt{ViewName: &TableName{}}, LastSuccessfulRefreshReadTSO: 1}, 0, 0},
+		{&RefreshMaterializedViewImplementStmt{RefreshStmt: &RefreshMaterializedViewStmt{ViewName: &TableName{}}, LastSuccessfulRefreshReadTSO: 1}, 0, 0},
 		{&AlterTableSpec{}, 0, 0},
 		{&ColumnDef{Name: &ColumnName{}, Options: []*ColumnOption{{Expr: ce}}}, 1, 1},
 		{&ColumnOption{Expr: ce}, 1, 1},
@@ -75,8 +75,8 @@ func TestDDLVisitorCover(t *testing.T) {
 	}
 }
 
-func TestRefreshMaterializedViewInternalStmtRestore(t *testing.T) {
-	stmt := &RefreshMaterializedViewInternalStmt{
+func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
+	stmt := &RefreshMaterializedViewImplementStmt{
 		RefreshStmt: &RefreshMaterializedViewStmt{
 			ViewName: &TableName{
 				Schema: model.NewCIStr("test"),
