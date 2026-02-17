@@ -1,0 +1,90 @@
+# Refactoring Progress Tracker
+
+Last updated: 2026-02-17
+
+## Status Legend
+
+- `[ ]` Not started
+- `[~]` In progress
+- `[x]` Completed
+- `[-]` Skipped / Won't do
+
+---
+
+## P0 - Critical (Do First)
+
+- [ ] **executor/builder.go split** - Replace 103-case switch with registry/factory pattern
+  - File: `pkg/executor/builder.go` (6,222 lines)
+  - Target: Split into per-operator-type builder files with auto-registration
+
+- [ ] **Hash Join V1 deprecation** - Complete V2 for all join types, remove V1
+  - Files: `pkg/executor/join/hash_join_v1.go` (1,458 lines), `hash_join_v2.go` (1,538 lines)
+  - Target: Single implementation with full join type coverage
+
+- [ ] **Hot-path allocation fixes** - Pool iterators, pre-allocate slices
+  - `pkg/executor/select.go:259` - chunk iterator recreation per Next()
+  - `pkg/executor/adapter.go:122-157` - ResultField slice per Fields() call
+  - `pkg/executor/select.go:728-729` - selected slice re-init
+  - `pkg/expression/builtin_string_vec.go` - 20+ []rune allocations in loops
+
+- [ ] **Panic elimination in production code** - Replace with error returns
+  - `pkg/kv/key.go` - 6 panics on critical data path
+  - `pkg/session/txnmanager.go` - panic on assertion
+  - `pkg/server/http_status.go` - 5 panics
+  - Total: 81 panics in non-test code
+
+## P1 - High Priority
+
+- [ ] **session.go decomposition** - Extract transaction, variable, privilege management
+  - File: `pkg/session/session.go` (5,035 lines)
+  - Target: <1000 lines per file with clear sub-package boundaries
+
+- [ ] **domain.go decomposition** - Extract subsystem managers
+  - File: `pkg/domain/domain.go` (2,739 lines, 89 fields)
+  - Target: Composable service managers
+
+- [ ] **Planner-executor dependency break** - Remove executor imports from planner
+  - `pkg/planner/core/operator/physicalop/physical_hash_join.go` imports `executor/join/joinversion`
+  - Target: Interface boundary between planner and executor
+
+- [ ] **Cost model unification** - Deprecate one of ver1/ver2
+  - Files: `pkg/planner/core/plan_cost_ver1.go`, `plan_cost_ver2.go`
+  - Target: Single cost model
+
+- [ ] **SessionVars decomposition** - Split 350+ field mega-struct
+  - File: `pkg/sessionctx/variable/session.go` (3,853 lines)
+  - Target: Grouped sub-structs by concern
+
+- [ ] **DDL schema version lock** - Reduce global mutex scope
+  - File: `pkg/ddl/ddl.go:387-445`
+  - Target: Per-job or fine-grained locking
+
+## P2 - Medium Priority
+
+- [ ] **pkg/util/ reorganization** - Re-organize 111+ subdirectories
+- [ ] **String function rune optimization** - Use utf8 index-based operations
+- [ ] **Goroutine pool for executors** - Aggregate, sort, projection worker pools
+- [ ] **Datum type optimization** - Eliminate interface{} fallback, use typed union
+- [ ] **Expression clone generation** - Auto-generate all Clone() methods
+- [ ] **Aggregate executor map reduction** - Reduce O(P*F) map proliferation
+- [ ] **Concurrent hash map adaptive sharding** - Replace fixed ShardCount=320
+- [ ] **Statistics memoization in planner** - Cache selectivity calculations
+
+## P3 - Low Priority
+
+- [ ] **Remove old cascades code** - `pkg/planner/cascades/old/`
+- [ ] **Executor interface split** - Lifecycle, Execution, Debug interfaces
+- [ ] **Context propagation** - Replace 5,266 Background()/TODO() calls
+- [ ] **DDL executor.go split** - `pkg/ddl/executor.go` (7,201 lines)
+- [ ] **sessionctx.Context interface** - Split 76-method interface
+- [ ] **nolint audit** - Investigate 738 suppressed warnings
+
+---
+
+## Completed Items
+
+(Move items here when done, with date and PR link)
+
+<!-- Example:
+- [x] **item name** - Completed 2026-02-20, PR #12345
+-->
