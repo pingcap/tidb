@@ -215,6 +215,28 @@ func (s *deserializeHelper) deserializePartialResult4SumFloat64(dst *partialResu
 	return false
 }
 
+func (s *deserializeHelper) deserializePartialResult4SumInt64(dst *partialResult4SumInt64) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		dst.val = util.DeserializeInt64(s.pab)
+		dst.notNullRowCount = util.DeserializeInt64(s.pab)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *deserializeHelper) deserializePartialResult4SumUint64(dst *partialResult4SumUint64) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		dst.val = util.DeserializeUint64(s.pab)
+		dst.notNullRowCount = util.DeserializeInt64(s.pab)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
 func (s *deserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)

@@ -964,6 +964,7 @@ var btFuncTokenMap = map[string]int{
 	"SUBSTR":                builtinSubstring,
 	"SUBSTRING":             builtinSubstring,
 	"SUM":                   builtinSum,
+	"SUM_INT":               builtinSumInt,
 	"SYSDATE":               builtinSysDate,
 	"TRANSLATE":             builtinTranslate,
 	"TRIM":                  builtinTrim,

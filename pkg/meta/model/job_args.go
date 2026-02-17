@@ -265,6 +265,25 @@ func GetCreateMaterializedViewLogArgs(job *Job) (*CreateMaterializedViewLogArgs,
 	return getOrDecodeArgs[*CreateMaterializedViewLogArgs](&CreateMaterializedViewLogArgs{}, job)
 }
 
+// CreateMaterializedViewArgs is the arguments for create materialized view job.
+type CreateMaterializedViewArgs struct {
+	TableInfo *TableInfo `json:"table_info,omitempty"`
+}
+
+func (a *CreateMaterializedViewArgs) getArgsV1(*Job) []any {
+	return []any{a.TableInfo}
+}
+
+func (a *CreateMaterializedViewArgs) decodeV1(job *Job) error {
+	a.TableInfo = &TableInfo{}
+	return errors.Trace(job.decodeArgs(a.TableInfo))
+}
+
+// GetCreateMaterializedViewArgs gets the create materialized view args.
+func GetCreateMaterializedViewArgs(job *Job) (*CreateMaterializedViewArgs, error) {
+	return getOrDecodeArgs[*CreateMaterializedViewArgs](&CreateMaterializedViewArgs{}, job)
+}
+
 // BatchCreateTableArgs is the arguments for batch create table job.
 type BatchCreateTableArgs struct {
 	Tables []*CreateTableArgs `json:"tables,omitempty"`

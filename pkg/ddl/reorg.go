@@ -74,6 +74,8 @@ type reorgCtx struct {
 	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
+	// snapshotVer records reorg-specific read-ts produced by worker goroutine and consumed by main DDL loop.
+	snapshotVer uint64
 
 	mu struct {
 		sync.Mutex
@@ -303,6 +305,14 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
+func (rc *reorgCtx) setSnapshotVer(snapshotVer uint64) {
+	atomic.StoreUint64(&rc.snapshotVer, snapshotVer)
+}
+
+func (rc *reorgCtx) getSnapshotVer() uint64 {
+	return atomic.LoadUint64(&rc.snapshotVer)
+}
+
 // runReorgJob is used as a portal to do the reorganization work.
 // eg:
 // 1: add index
@@ -409,6 +419,9 @@ func (w *worker) runReorgJob(
 			}
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
+			if snapshotVer := rc.getSnapshotVer(); snapshotVer != 0 {
+				job.SnapshotVer = snapshotVer
+			}
 			if err != nil {
 				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
 			} else {

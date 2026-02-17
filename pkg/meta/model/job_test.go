@@ -358,6 +358,7 @@ func TestMayNeedReorg(t *testing.T) {
 		ActionAlterTablePartitioning,
 		ActionAddIndex,
 		ActionAddPrimaryKey,
+		ActionCreateMaterializedView,
 	}
 	generalJobTypes := []ActionType{
 		ActionCreateTable,
@@ -382,6 +383,18 @@ func TestMayNeedReorg(t *testing.T) {
 		job.Type = jobType
 		require.False(t, job.MayNeedReorg())
 	}
+}
+
+func TestCreateMaterializedViewRollbackable(t *testing.T) {
+	job := &Job{Type: ActionCreateMaterializedView}
+	job.SchemaState = StateNone
+	require.True(t, job.IsRollbackable())
+
+	job.SchemaState = StateWriteReorganization
+	require.True(t, job.IsRollbackable())
+
+	job.SchemaState = StatePublic
+	require.False(t, job.IsRollbackable())
 }
 
 func TestInFinalState(t *testing.T) {

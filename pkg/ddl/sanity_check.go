@@ -95,6 +95,11 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(args.OldPartitionIDs) + 1, nil
+	case model.ActionCreateMaterializedView:
+		if job.IsRollbackDone() && job.TableID != 0 {
+			return 1, nil
+		}
+		return 0, nil
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		args, err := model.GetFinishedTruncateTableArgs(job)
 		if err != nil {
@@ -244,6 +249,9 @@ func checkHistoryJobStmtType(jobType model.ActionType, st ast.StmtNode) bool {
 		return ok
 	case model.ActionCreateTable:
 		_, ok := st.(*ast.CreateTableStmt)
+		return ok
+	case model.ActionCreateMaterializedView:
+		_, ok := st.(*ast.CreateMaterializedViewStmt)
 		return ok
 	case model.ActionCreateMaterializedViewLog:
 		_, ok := st.(*ast.CreateMaterializedViewLogStmt)
