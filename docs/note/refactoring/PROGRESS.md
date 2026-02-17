@@ -64,16 +64,18 @@ Last updated: 2026-02-17 (benchmark validation complete)
 
 ## P1 - High Priority
 
-- [~] **session.go decomposition** - Extract transaction, variable, privilege management
-  - File: `pkg/session/session.go` (5,558 → 2,042 lines, 63% reduction)
+- [x] **session.go decomposition** - Extract transaction, variable, privilege management
+  - File: `pkg/session/session.go` (5,558 → 1,087 lines, 80% reduction)
   - Target: <1000 lines per file with clear sub-package boundaries
-  - [x] `session_txn.go` (768 lines) - transaction commit/rollback, retry logic
-  - [x] `session_bootstrap.go` (752 lines) - bootstrap, session factory, domain init
+  - [x] `session_txn.go` (1,086 lines) - transaction commit/rollback, retry logic, txn context, pipelined DML
+  - [x] `session_bootstrap.go` (955 lines) - bootstrap, session factory, domain init, session creation
   - [x] `session_auth.go` (413 lines) - authentication, privilege validation
   - [x] `session_execute.go` (836 lines) - statement execution, prepared stmts
   - [x] `session_parse.go` (546 lines) - SQL parsing, process info, internal exec
   - [x] `session_restricted.go` (287 lines) - restricted SQL execution
-  - [x] `session_logging.go` (251 lines) - query logging, metrics recording
+  - [x] `session_logging.go` (387 lines) - query logging, metrics, telemetry
+  - [x] `session_states.go` (212 lines) - encode/decode session states
+  - [x] `session_sysvar.go` (157 lines) - system variable management
 
 - [ ] **domain.go decomposition** - Extract subsystem managers
   - File: `pkg/domain/domain.go` (2,739 lines, 89 fields)
@@ -141,5 +143,5 @@ Last updated: 2026-02-17 (benchmark validation complete)
 - [x] **executor/builder.go split phase 4** - 2026-02-17 - Extract `builder_agg_project.go` (244 lines), `builder_cte_misc.go` (315 lines), `builder_stmt.go` (601 lines), and `builder_union_scan.go` (236 lines), reducing builder.go from 2,360 to 1,082 lines (83% total reduction). Split complete: 10 builder files total.
 - [x] **SessionVars Phase 3a (StatsVars)** - 2026-02-17 - Extract 16 statistics-related fields (EnableFastAnalyze, AnalyzeVersion, RegardNULLAsPoint, etc.) into embedded `StatsVars` sub-struct
 - [x] **SessionVars Phase 3b (TransactionVars)** - 2026-02-17 - Extract 16 transaction-related fields (RetryLimit, LockWaitTimeout, TxnScope, EnableAsyncCommit, etc.) into embedded `TransactionVars` sub-struct
-- [x] **session.go decomposition** - 2026-02-17 - Split into 7 focused files: `session_txn.go` (768), `session_bootstrap.go` (752), `session_execute.go` (836), `session_parse.go` (546), `session_auth.go` (413), `session_restricted.go` (287), `session_logging.go` (251). Reduced session.go from 5,558 to 2,042 lines (63% reduction).
+- [x] **session.go decomposition** - 2026-02-17 - Split into 9 focused files: `session_txn.go` (1,086), `session_bootstrap.go` (955), `session_execute.go` (836), `session_parse.go` (546), `session_auth.go` (413), `session_logging.go` (387), `session_restricted.go` (287), `session_states.go` (212), `session_sysvar.go` (157). Reduced session.go from 5,558 to 1,087 lines (80% reduction).
 - [x] **DDL executor.go decomposition** - 2026-02-17 - Split into 8 focused files: `executor_partition.go` (1,084 lines), `executor_index.go` (967 lines), `executor_column.go` (472 lines), `executor_create.go` (565 lines), `executor_table.go` (532 lines), `executor_misc.go` (543 lines), `executor_schema.go` (680 lines), `executor_table_props.go` (683 lines). Reduced executor.go from 7,201 to 1,986 lines (72% reduction).
