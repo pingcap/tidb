@@ -36,7 +36,6 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -961,90 +960,6 @@ func (e *executor) getSchemaAndTableByIdent(tableIdent ast.Ident) (dbInfo *model
 }
 
 
-// BuildAddedPartitionInfo build alter table add partition info
-func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
-	numParts := uint64(0)
-	switch meta.Partition.Type {
-	case ast.PartitionTypeNone:
-		// OK
-	case ast.PartitionTypeList:
-		if len(spec.PartDefinitions) == 0 {
-			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
-		}
-		err := checkListPartitions(spec.PartDefinitions)
-		if err != nil {
-			return nil, err
-		}
-
-	case ast.PartitionTypeRange:
-		if spec.Tp == ast.AlterTableAddLastPartition {
-			err := buildAddedPartitionDefs(ctx, meta, spec)
-			if err != nil {
-				return nil, err
-			}
-			spec.PartDefinitions = spec.Partition.Definitions
-		} else {
-			if len(spec.PartDefinitions) == 0 {
-				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
-			}
-		}
-	case ast.PartitionTypeHash, ast.PartitionTypeKey:
-		switch spec.Tp {
-		case ast.AlterTableRemovePartitioning:
-			numParts = 1
-		default:
-			return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
-		case ast.AlterTableCoalescePartitions:
-			if int(spec.Num) >= len(meta.Partition.Definitions) {
-				return nil, dbterror.ErrDropLastPartition
-			}
-			numParts = uint64(len(meta.Partition.Definitions)) - spec.Num
-		case ast.AlterTableAddPartitions:
-			if len(spec.PartDefinitions) > 0 {
-				numParts = uint64(len(meta.Partition.Definitions)) + uint64(len(spec.PartDefinitions))
-			} else {
-				numParts = uint64(len(meta.Partition.Definitions)) + spec.Num
-			}
-		}
-	default:
-		// we don't support ADD PARTITION for all other partition types yet.
-		return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
-	}
-
-	part := &model.PartitionInfo{
-		Type:    meta.Partition.Type,
-		Expr:    meta.Partition.Expr,
-		Columns: meta.Partition.Columns,
-		Enable:  meta.Partition.Enable,
-	}
-
-	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta, numParts)
-	if err != nil {
-		return nil, err
-	}
-
-	part.Definitions = defs
-	part.Num = uint64(len(defs))
-	return part, nil
-}
-
-func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) error {
-	partInterval := getPartitionIntervalFromTable(ctx, meta)
-	if partInterval == nil {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
-			"LAST PARTITION, does not seem like an INTERVAL partitioned table")
-	}
-	if partInterval.MaxValPart {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
-	}
-
-	spec.Partition.Interval = partInterval
-
-	if len(spec.PartDefinitions) > 0 {
-		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
-	}
-	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
-}
 
 // LockTables uses to execute lock tables statement.
 func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
