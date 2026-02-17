@@ -776,6 +776,37 @@ type SessionVarsProvider interface {
 // SessionVars should implement `SessionVarsProvider`
 var _ SessionVarsProvider = &SessionVars{}
 
+// PlanCacheVars contains settings related to prepared and non-prepared plan cache.
+type PlanCacheVars struct {
+	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
+	IgnorePreparedCacheCloseStmt bool
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
+	// PreparedPlanCacheSize controls the size of prepared plan cache.
+	PreparedPlanCacheSize uint64
+	// EnablePreparedPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor.
+	EnablePreparedPlanCacheMemoryMonitor bool
+	// EnablePlanCacheForParamLimit controls whether the prepare statement with parameterized limit can be cached
+	EnablePlanCacheForParamLimit bool
+	// EnablePlanCacheForSubquery controls whether the prepare statement with sub query can be cached
+	EnablePlanCacheForSubquery bool
+	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	EnableNonPreparedPlanCache bool
+	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
+	EnableNonPreparedPlanCacheForDML bool
+	// EnableFuzzyBinding indicates whether to enable fuzzy binding.
+	EnableFuzzyBinding bool
+	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
+	// related stats are analyzed after the plan cache is generated.
+	PlanCacheInvalidationOnFreshStats bool
+	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	NonPreparedPlanCacheSize uint64
+	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
+	PlanCacheMaxPlanSize uint64
+	// SessionPlanCacheSize controls the size of session plan cache.
+	SessionPlanCacheSize uint64
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -784,6 +815,7 @@ type SessionVars struct {
 	PipelinedDMLConfig
 	TiFlashVars
 	CostModelFactors
+	PlanCacheVars
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -1382,8 +1414,6 @@ type SessionVars struct {
 	EnableMutationChecker bool
 	// AssertionLevel controls how strict the assertions on data mutations should be.
 	AssertionLevel AssertionLevel
-	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
-	IgnorePreparedCacheCloseStmt bool
 	// CostModelVersion is a internal switch to indicates the Cost Model Version.
 	CostModelVersion int
 	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
@@ -1430,43 +1460,6 @@ type SessionVars struct {
 
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
-
-	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
-	EnablePreparedPlanCache bool
-
-	// PreparedPlanCacheSize controls the size of prepared plan cache.
-	PreparedPlanCacheSize uint64
-
-	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
-	EnablePreparedPlanCacheMemoryMonitor bool
-
-	// EnablePlanCacheForParamLimit controls whether the prepare statement with parameterized limit can be cached
-	EnablePlanCacheForParamLimit bool
-
-	// EnablePlanCacheForSubquery controls whether the prepare statement with sub query can be cached
-	EnablePlanCacheForSubquery bool
-
-	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
-	EnableNonPreparedPlanCache bool
-
-	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
-	EnableNonPreparedPlanCacheForDML bool
-
-	// EnableFuzzyBinding indicates whether to enable fuzzy binding.
-	EnableFuzzyBinding bool
-
-	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
-	// related stats are analyzed after the plan cache is generated.
-	PlanCacheInvalidationOnFreshStats bool
-
-	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
-	NonPreparedPlanCacheSize uint64
-
-	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
-	PlanCacheMaxPlanSize uint64
-
-	// SessionPlanCacheSize controls the size of session plan cache.
-	SessionPlanCacheSize uint64
 
 	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
 	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
