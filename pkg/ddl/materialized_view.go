@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/mvs"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -275,6 +276,45 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 
 	dropStmt := &ast.DropTableStmt{Tables: []*ast.TableName{{Schema: schemaName, Name: mlogName}}}
 	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)
+}
+
+func (e *executor) PurgeMaterializedViewLog(ctx sessionctx.Context, s *ast.PurgeMaterializedViewLogStmt) error {
+	is := e.infoCache.GetLatest()
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if ctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		s.Table.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	baseTable, err := is.TableByName(e.ctx, schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+	baseMeta := baseTable.Meta()
+	if baseMeta.IsView() || baseMeta.IsSequence() || baseMeta.TempTableType != model.TempTableNone {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+
+	mlogName := pmodel.NewCIStr("$mlog$" + baseMeta.Name.O)
+	mvBaseInfo := baseMeta.MaterializedViewBase
+	if mvBaseInfo == nil || mvBaseInfo.MLogID <= 0 {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
+	}
+
+	mlogTable, ok := is.TableByID(e.ctx, mvBaseInfo.MLogID)
+	if !ok || mlogTable.Meta() == nil || mlogTable.Meta().MaterializedViewLog == nil ||
+		mlogTable.Meta().MaterializedViewLog.BaseTableID != baseMeta.ID {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
+	}
+
+	_, err = mvs.PurgeMVLog(e.ctx, ctx, mvBaseInfo.MLogID, false)
+	return err
 }
 
 func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMaterializedViewStmt) error {

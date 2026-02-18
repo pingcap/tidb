@@ -763,19 +763,15 @@ const (
 	        primary key(module, name))`
 
 	// CreateTiDBMViewRefreshTable is a table to store current (latest) refresh state for each materialized view.
-	CreateTiDBMViewRefreshTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
+	CreateTiDBMViewRefreshTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh (
 		MVIEW_ID bigint(21) NOT NULL,
-		MVIEW_NAME varchar(64) NOT NULL,
-		REFRESH_METHOD varchar(32) NOT NULL,
 		LAST_SUCCESS_READ_TSO bigint(21) DEFAULT NULL,
 		NEXT_TIME datetime DEFAULT NULL,
 		PRIMARY KEY (MVIEW_ID))`
 
 	// CreateTiDBMLogPurgeTable is a table to store current (latest) purge state for each materialized view log.
-	CreateTiDBMLogPurgeTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
+	CreateTiDBMLogPurgeTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge (
 		MLOG_ID bigint(21) NOT NULL,
-		MLOG_NAME varchar(64) NOT NULL,
-		PURGE_METHOD varchar(32) NOT NULL,
 		NEXT_TIME datetime DEFAULT NULL,
 		PRIMARY KEY (MLOG_ID))`
 
@@ -3477,7 +3473,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
-	// create mysql.tidb_mview_refresh_info/mysql.tidb_mlog_purge_info/mysql.tidb_mview_refresh_hist/mysql.tidb_mlog_purge_hist
+	// create mysql.tidb_mview_refresh/mysql.tidb_mlog_purge/mysql.tidb_mview_refresh_hist/mysql.tidb_mlog_purge_hist
 	mustExecute(s, CreateTiDBMViewRefreshTable)
 	mustExecute(s, CreateTiDBMLogPurgeTable)
 	mustExecute(s, CreateTiDBMViewRefreshHistTable)

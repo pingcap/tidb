@@ -41,26 +41,33 @@ import (
 )
 
 const (
-	testSQLFetchMLogPurge      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
-	testSQLFetchMViews         = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMLogPurge      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMViews         = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh WHERE NEXT_TIME IS NOT NULL`
 	testSQLRefreshMV           = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
-	testSQLFindMVNextTime      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
-	testSQLFindMinRefreshRead  = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%?,%?)`
-	testSQLLockPurgeInfo       = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
+	testSQLFindMVNextTime      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLFindMinRefreshRead  = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID IN (%?,%?)`
+	testSQLLockPurgeInfo       = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge WHERE MLOG_ID = %? FOR UPDATE`
 	testSQLDeleteMLog          = `DELETE FROM %n.%n WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= %?`
-	testSQLUpdatePurgeInfo     = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
+	testSQLUpdatePurgeInfo     = `UPDATE mysql.tidb_mlog_purge SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 	testSQLClearNewestPurgeHis = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
 	testSQLInsertPurgeHist     = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
 )
 
 var (
-	testExpectedPurgeSQLSuccess = []string{
+	testExpectedAutoPurgeSQLSuccess = []string{
 		testSQLFindMinRefreshRead,
 		testSQLLockPurgeInfo,
 		testSQLDeleteMLog,
 		testSQLClearNewestPurgeHis,
 		testSQLInsertPurgeHist,
 		testSQLUpdatePurgeInfo,
+	}
+	testExpectedManualPurgeSQLSuccess = []string{
+		testSQLFindMinRefreshRead,
+		testSQLLockPurgeInfo,
+		testSQLDeleteMLog,
+		testSQLClearNewestPurgeHis,
+		testSQLInsertPurgeHist,
 	}
 	testExpectedPurgeSQLSkip = []string{
 		testSQLFindMinRefreshRead,
@@ -646,6 +653,11 @@ func TestRegisterMVSBootstrapAndDDLHandler(t *testing.T) {
 	require.NoError(t, mvLogEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionCreateMaterializedViewLog))))
 	require.NoError(t, gotHandler(context.Background(), nil, mvLogEvent))
 	require.Equal(t, int32(1), called.Load())
+
+	mvEvent := &notifier.SchemaChangeEvent{}
+	require.NoError(t, mvEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionCreateMaterializedView))))
+	require.NoError(t, gotHandler(context.Background(), nil, mvEvent))
+	require.Equal(t, int32(2), called.Load())
 }
 
 func TestCalcNextExecTime(t *testing.T) {
@@ -936,30 +948,25 @@ func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 	require.False(t, nextPurge.IsZero())
 	require.True(t, nextPurge.After(mvsNow().Add(-2*time.Second)))
 	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
-	require.Equal(t, testExpectedPurgeSQLSuccess, se.executedRestrictedSQL)
+	require.Equal(t, testExpectedAutoPurgeSQLSuccess, se.executedRestrictedSQL)
 }
 
 func TestPurgeMVLogSuccess(t *testing.T) {
 	installMockTimeForTest(t)
 	se := newRecordingSessionContext()
+	lockedNextTime := mvsNow().Add(time.Minute)
 	lockRows := []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{
-			types.NewIntDatum(mvsNow().Add(time.Minute).Unix()),
+			types.NewIntDatum(lockedNextTime.Unix()),
 		}).ToRow(),
 	}
 	setupPurgeMVLogMetaForTest(t, se, lockRows)
 
-	loc := time.Local
-	if vars := se.GetSessionVars(); vars != nil && vars.Location() != nil {
-		loc = vars.Location()
-	}
-	expectedNextPurge, parseErr := time.ParseInLocation("2006-01-02 15:04:05", "2026-01-02 03:04:05", loc)
-	require.NoError(t, parseErr)
 	nextPurge, err := PurgeMVLog(context.Background(), se, 201, false)
 	require.NoError(t, err)
-	require.Equal(t, expectedNextPurge.Unix(), nextPurge.Unix())
+	require.Equal(t, mvsUnix(lockedNextTime.Unix(), 0), nextPurge)
 	require.Equal(t, []string{"BEGIN PESSIMISTIC", "COMMIT"}, se.executedSQL)
-	require.Equal(t, testExpectedPurgeSQLSuccess, se.executedRestrictedSQL)
+	require.Equal(t, testExpectedManualPurgeSQLSuccess, se.executedRestrictedSQL)
 }
 
 func TestPurgeMVLogSkipWhenAutoPurge(t *testing.T) {

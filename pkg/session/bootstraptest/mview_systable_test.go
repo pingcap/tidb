@@ -29,18 +29,18 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	for _, tbl := range []string{
-		"tidb_mview_refresh_info",
-		"tidb_mlog_purge_info",
+		"tidb_mview_refresh",
+		"tidb_mlog_purge",
 		"tidb_mview_refresh_hist",
 		"tidb_mlog_purge_hist",
 	} {
 		tk.MustQuery("select count(*) from information_schema.tables where table_schema='mysql' and table_name='" + tbl + "'").Check(testkit.Rows("1"))
 	}
 
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_info' and index_name='PRIMARY' order by seq_in_index").
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mview_id"))
 
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_info' and index_name='PRIMARY' order by seq_in_index").
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mlog_id"))
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_newest' order by seq_in_index").
@@ -63,7 +63,7 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 	require.NoError(t, txn.Commit(ctx))
 
 	revertVersionAndVariables(t, seV220, 220)
-	session.MustExec(t, seV220, "drop table if exists mysql.tidb_mview_refresh_info, mysql.tidb_mlog_purge_info, mysql.tidb_mview_refresh_hist, mysql.tidb_mlog_purge_hist")
+	session.MustExec(t, seV220, "drop table if exists mysql.tidb_mview_refresh, mysql.tidb_mlog_purge, mysql.tidb_mview_refresh_hist, mysql.tidb_mlog_purge_hist")
 	session.MustExec(t, seV220, "commit")
 
 	session.UnsetStoreBootstrapped(store.UUID())
@@ -78,8 +78,8 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	for _, tbl := range []string{
-		"tidb_mview_refresh_info",
-		"tidb_mlog_purge_info",
+		"tidb_mview_refresh",
+		"tidb_mlog_purge",
 		"tidb_mview_refresh_hist",
 		"tidb_mlog_purge_hist",
 	} {

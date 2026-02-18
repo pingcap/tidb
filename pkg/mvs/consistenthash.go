@@ -16,7 +16,6 @@ package mvs
 
 import (
 	"hash/crc32"
-	"math"
 	"sort"
 	"strconv"
 )
@@ -80,7 +79,6 @@ func (c *ConsistentHash) doInsert(node string) bool {
 		// Create a virtual node identifier, e.g. "node1#0", "node1#1".
 		virtualKey := node + "#" + strconv.Itoa(i)
 		hash := c.hashFunc([]byte(virtualKey))
-		hash = min(hash, math.MaxUint32-1) // reserve MaxUint32 for deleted nodes
 		n := virtualNode(&virtualNodeImpl{hash: hash, node: node})
 		c.ring = append(c.ring, n)
 		nodes = append(nodes, n)
@@ -100,20 +98,26 @@ func (c *ConsistentHash) AddNode(node string) bool {
 
 // RemoveNode removes a real node (and all its virtual nodes).
 func (c *ConsistentHash) RemoveNode(node string) {
-	vnodes, ok := c.data[node]
-	if !ok {
+	if _, ok := c.data[node]; !ok {
 		return
 	}
 	delete(c.data, node)
-	for _, vnode := range vnodes {
-		vnode.hash = math.MaxUint32 // mark as deleted
+
+	// Compact in place to remove target node's virtual nodes in O(n).
+	ring := c.ring
+	write := 0
+	for _, vnode := range ring {
+		if vnode.node == node {
+			continue
+		}
+		ring[write] = vnode
+		write++
 	}
-	c.doResort()
-	// Trim the deleted nodes at the end of the ring.
-	idx := sort.Search(len(c.ring), func(i int) bool {
-		return c.ring[i].hash == math.MaxUint32
-	})
-	c.ring = c.ring[:idx]
+	// Clear removed slots to release references.
+	for i := write; i < len(ring); i++ {
+		ring[i] = nil
+	}
+	c.ring = ring[:write]
 }
 
 // GetNode returns the real node for the given key bytes.

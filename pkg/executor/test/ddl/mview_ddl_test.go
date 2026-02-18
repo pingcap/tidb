@@ -61,8 +61,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Equal(t, "FAST", mvTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "NOW()", mvTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "300", mvTable.Meta().MaterializedView.RefreshNext)
-	tk.MustQuery(fmt.Sprintf("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE, LAST_SUCCESSFUL_REFRESH_READ_TSO > 0, LAST_REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh where MVIEW_ID = %d", mvTable.Meta().ID)).
-		Check(testkit.Rows("success complete 1 1"))
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0, NEXT_TIME is not null from mysql.tidb_mview_refresh where MVIEW_ID = %d", mvTable.Meta().ID)).
+		Check(testkit.Rows("1 1"))
 
 	// Base table reverse mapping maintained by DDL.
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)

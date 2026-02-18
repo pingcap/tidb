@@ -124,14 +124,14 @@ func (*serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverInf
 // 1. Gets a system session from the pool and temporarily clears SQL mode.
 // 2. Resolves schema/table names from MVIEW_ID.
 // 3. Executes `REFRESH MATERIALIZED VIEW ... WITH SYNC MODE FAST`.
-// 4. Reads NEXT_TIME from mysql.tidb_mview_refresh_info.
+// 4. Reads NEXT_TIME from mysql.tidb_mview_refresh.
 //
 // The returned error only represents execution failures. A zero nextRefresh means
 // no further scheduling is needed (for example, the MV metadata was removed).
 func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
 	const (
 		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
-		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
 	startAt := mvsNow()
 	var schemaName, mviewName string
@@ -202,7 +202,7 @@ func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Session
 // 1. Resolve MV log and base table metadata from mvLogID, then parse scheduling fields.
 // 2. Query MIN(LAST_SUCCESS_READ_TSO) across dependent MVs as purge upper bound.
 // 3. In one transaction, lock purge state row and decide whether this round should run.
-// 4. Delete eligible rows, record history, update purge state, and calculate NEXT_TIME.
+// 4. Delete eligible rows, record history, and (only for auto purge) update NEXT_TIME.
 //
 // When autoPurge is true, missing/NULL NEXT_TIME is treated as "no future auto purge".
 // A zero nextPurge means no further scheduling is needed.
@@ -210,9 +210,9 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 	const (
 		purgeMethodManually      = "MANUALLY"
 		purgeMethodAutomatically = "AUTOMATICALLY"
-		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE`
+		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge WHERE MLOG_ID = %? FOR UPDATE`
 		deleteMLogSQL            = `DELETE FROM %n.%n WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= %?`
-		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
+		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 	)
 	var (
 		mvLogSchemaName   string
@@ -362,13 +362,15 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 		}
 		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
 		purgeEndTime := mvsNow()
-		nextPurge = calcNextExecTime(purgeStartWith, purgeNextSec, purgeEndTime)
 
 		if err = recordMLogPurgeHist(txnCtx, sctx, mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, affectedRows, "SUCCESS"); err != nil {
 			return err
 		}
-		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{nextPurge, mvLogID}); err != nil {
-			return err
+		if autoPurge {
+			nextPurge = calcNextExecTime(purgeStartWith, purgeNextSec, purgeEndTime)
+			if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{nextPurge, mvLogID}); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -413,10 +415,10 @@ func calcNextExecTime(start time.Time, intervalSec int64, last time.Time) time.T
 
 // fetchAllTiDBMLogPurge loads all scheduled MV log purge tasks from metadata.
 func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
-	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
-		logutil.BgLogger().Warn("fetch mysql.tidb_mlog_purge_info failed", zap.Error(err))
+		logutil.BgLogger().Warn("fetch mysql.tidb_mlog_purge failed", zap.Error(err))
 		return nil, err
 	}
 	newPending := make(map[int64]*mvLog, len(rows))
@@ -441,10 +443,10 @@ func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool b
 
 // fetchAllTiDBMViews loads all scheduled MV refresh tasks from metadata.
 func (*serverHelper) fetchAllTiDBMViews(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
-	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
-		logutil.BgLogger().Warn("fetch mysql.tidb_mview_refresh_info failed", zap.Error(err))
+		logutil.BgLogger().Warn("fetch mysql.tidb_mview_refresh failed", zap.Error(err))
 		return nil, err
 	}
 	newPending := make(map[int64]*mv, len(rows))
@@ -550,7 +552,7 @@ func getMinRefreshReadTSOFromInfo(ctx context.Context, sctx sessionctx.Context, 
 	}
 	var b strings.Builder
 	params := make([]any, 0, len(mvIDs))
-	b.WriteString(`SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (`)
+	b.WriteString(`SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID IN (`)
 	for i, id := range mvIDs {
 		if i > 0 {
 			b.WriteString(",")
@@ -629,7 +631,7 @@ func RegisterMVS(
 	registerHandler(notifier.MVServiceHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 		switch event.GetType() {
 		// TODO: Events related to materialized view metadata changes should also trigger refresh.
-		case meta.ActionCreateMaterializedViewLog:
+		case meta.ActionCreateMaterializedViewLog, meta.ActionCreateMaterializedView:
 			onDDLHandled()
 		}
 		return nil

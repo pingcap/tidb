@@ -42,6 +42,7 @@ var (
 	_ DDLNode = &AlterMaterializedViewLogStmt{}
 	_ DDLNode = &DropMaterializedViewStmt{}
 	_ DDLNode = &DropMaterializedViewLogStmt{}
+	_ DDLNode = &PurgeMaterializedViewLogStmt{}
 	_ DDLNode = &RefreshMaterializedViewStmt{}
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
@@ -2139,6 +2140,39 @@ func (n *DropMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// PurgeMaterializedViewLogStmt is a statement to trigger one manual purge on a materialized view log.
+type PurgeMaterializedViewLogStmt struct {
+	ddlNode
+
+	Table *TableName
+}
+
+// Restore implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PURGE MATERIALIZED VIEW LOG ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore PurgeMaterializedViewLogStmt.Table")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *PurgeMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PurgeMaterializedViewLogStmt)
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
