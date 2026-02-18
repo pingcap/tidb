@@ -109,6 +109,7 @@ type aggColInfo struct {
 type SelectOptimizer func(ctx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, types.NameSlice, error)
 
 func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema, mv *model.TableInfo, opt BuildOptions, optimize SelectOptimizer) (*BuildResult, error) {
+	// Stage 0: validate MV/MLoG metadata and locate all required tables.
 	if mv == nil {
 		return nil, errors.New("mv table info is nil")
 	}
@@ -147,6 +148,7 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		return nil, errors.Errorf("materialized view log %s missing required column %s", mlogTable.Name.O, model.MaterializedViewLogDMLTypeColumnName)
 	}
 
+	// Stage 1: parse MV definition and derive merge key/aggregate layout from it.
 	mvDBName, err := dbNameByTableID(is, mv.ID)
 	if err != nil {
 		return nil, err
@@ -164,6 +166,7 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 	if len(groupKeyOffsets) == 0 {
 		return nil, errors.New("materialized view definition has empty GROUP BY")
 	}
+	// Fast membership check when deciding whether an MV output column is a group key.
 	groupKeySet := make(map[int]struct{}, len(groupKeyOffsets))
 	for _, off := range groupKeyOffsets {
 		groupKeySet[off] = struct{}{}
@@ -179,6 +182,9 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		return nil, errors.Errorf("mv columns count %d does not match mv query output %d", len(mv.Columns), len(mvSel.Fields.Fields))
 	}
 
+	// Stage 2: build merge source SQL in two steps:
+	//   1) aggregate mlog rows into per-group deltas
+	//   2) left join those deltas with current MV snapshot
 	deltaSel, err := buildMLogDeltaSelect(mvDBName, mlogTable, mvSel, mv.Columns, groupKeyOffsets, aggCols, hasMinMax, opt)
 	if err != nil {
 		return nil, err
@@ -189,6 +195,7 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		return nil, err
 	}
 
+	// Stage 3: optimize the merge-source SELECT into a physical plan.
 	plan, outputNames, err := optimize(ctx, mergeSel)
 	if err != nil {
 		return nil, err
@@ -202,7 +209,7 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		return nil, errors.Errorf("unexpected merge-source output names length: got %d, expected %d", len(outputNames), expectedLen)
 	}
 
-	// Patch delta offsets into AggInfos.
+	// Patch delta offsets into AggInfos so executor can read delta payload by offset directly.
 	deltaOffsetByName := make(map[string]int, len(deltaColumns))
 	for _, dc := range deltaColumns {
 		deltaOffsetByName[dc.Name] = dc.Offset
@@ -432,6 +439,7 @@ func buildMLogDeltaSelect(
 		fields = append(fields, &ast.SelectField{Expr: baseColExpr, AsName: mvColName})
 	}
 
+	// old_new is signed delta marker in mlog rows: +1 for added/new row, -1 for removed/old row.
 	oldNewCol := colExpr(model.MaterializedViewLogOldNewColumnName)
 
 	// Always compute delta count(*) for stage-1.
@@ -441,6 +449,7 @@ func buildMLogDeltaSelect(
 	})
 
 	// Per aggregate column deltas.
+	// For normal aggs (COUNT/SUM), old_new sign naturally encodes add/remove contribution.
 	for _, ac := range aggCols {
 		switch ac.info.Kind {
 		case AggCountStar:
@@ -464,12 +473,14 @@ func buildMLogDeltaSelect(
 				AsName: pmodel.NewCIStr(ac.deltaName),
 			})
 		case AggMax:
+			// Track only candidates from added rows; removed rows are handled by detail update path.
 			argCol := colExpr(ac.info.ArgColName)
 			fields = append(fields, &ast.SelectField{
 				Expr:   aggMax(ifExpr(binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", "")), argCol, ast.NewValueExpr(nil, "", ""))),
 				AsName: pmodel.NewCIStr(ac.deltaName),
 			})
 		case AggMin:
+			// Same as MAX: only additions contribute to quick-update candidate.
 			argCol := colExpr(ac.info.ArgColName)
 			fields = append(fields, &ast.SelectField{
 				Expr:   aggMin(ifExpr(binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", "")), argCol, ast.NewValueExpr(nil, "", ""))),
@@ -493,7 +504,7 @@ func buildMLogDeltaSelect(
 		Source: &ast.TableName{Schema: dbName, Name: mlogTable.Name},
 	}}}
 
-	// WHERE commit_ts in (FromTS, ToTS] AND mv_where
+	// Restrict mlog scan to the incremental window (FromTS, ToTS], then apply MV predicate.
 	tsCol := colExpr(model.ExtraCommitTSName.L)
 	tsRange := andExpr(
 		binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", "")),
@@ -554,6 +565,7 @@ func buildMergeSourceSelect(
 		return nil, nil, nil, errors.New("empty join key for mvmerge")
 	}
 
+	// Use delta as left side so every changed group survives even when MV row doesn't exist yet.
 	join := &ast.Join{
 		Left:  deltaSrc,
 		Right: mvSrc,
@@ -566,6 +578,7 @@ func buildMergeSourceSelect(
 	for i, col := range mvCols {
 		if _, ok := groupKeySet[i]; ok {
 			fields = append(fields, &ast.SelectField{
+				// Group key may come from either side: missing MV row for new groups, missing delta row should not happen.
 				Expr:   coalesce(qualColExpr(mvTableAlias, col.Name.O), qualColExpr(deltaTableAlias, col.Name.O)),
 				AsName: col.Name,
 			})
@@ -580,6 +593,7 @@ func buildMergeSourceSelect(
 	deltaColumns := make([]DeltaColumn, 0, 1+len(aggCols)+1)
 	var removedDelta *DeltaColumn
 	nextOffset := len(mvCols)
+	// Keep all delta columns contiguous after MV columns, and track their absolute output offsets.
 	addDeltaCol := func(name string) int {
 		off := nextOffset
 		nextOffset++
