@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (builtin_time/string/compare/cast, tables, adapter decompositions)
+Last updated: 2026-02-18 (string_vec, time_vec, util, math, task, tikv_handler, preprocess decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -224,6 +224,48 @@ Last updated: 2026-02-18 (builtin_time/string/compare/cast, tables, adapter deco
   - [x] `adapter_observe.go` (622 lines) - FinishExecuteStmt, slow log, metrics
   - [x] `adapter_summary.go` (460 lines) - statement summary, plan cache, Top SQL
 
+- [x] **expression/builtin_string_vec.go decomposition** - Extract vectorized string function groups
+  - File: `pkg/expression/builtin_string_vec.go` (3,243 → 0 lines, fully replaced)
+  - [x] `builtin_string_vec_basic.go` (505 lines) - basic ops (LOWER, UPPER, CONCAT, LOCATE, HEX)
+  - [x] `builtin_string_vec_trim_pad.go` (864 lines) - trim/pad ops (LTRIM, RTRIM, LPAD, INSERT, CONVERT)
+  - [x] `builtin_string_vec_misc.go` (1,932 lines) - remaining ops (FORMAT, CHAR, SUBSTRING, TRANSLATE)
+
+- [x] **expression/builtin_time_vec.go decomposition** - Extract vectorized time function groups
+  - File: `pkg/expression/builtin_time_vec.go` (3,010 → 0 lines, fully replaced)
+  - [x] `builtin_time_vec_field.go` (1,034 lines) - field extractors and formatters
+  - [x] `builtin_time_vec_convert.go` (978 lines) - conversion functions
+  - [x] `builtin_time_vec_calc.go` (1,053 lines) - calculations and arithmetic
+
+- [x] **expression/util.go decomposition** - Extract utility function groups
+  - File: `pkg/expression/util.go` (2,374 → 0 lines, fully replaced)
+  - [x] `util_column.go` (689 lines) - column extraction and substitution
+  - [x] `util_transform.go` (637 lines) - expression transforms (NOT/cast elimination, DNF filters)
+  - [x] `util_misc.go` (584 lines) - row/constant/format utilities and plan cache helpers
+  - [x] `util_digest.go` (543 lines) - SQL digest retrieval and binary parameter parsing
+
+- [x] **expression/builtin_math.go decomposition** - Extract math function groups
+  - File: `pkg/expression/builtin_math.go` (2,219 → 116 lines, 95% reduction)
+  - [x] `builtin_math_rounding.go` (811 lines) - ABS, ROUND, CEIL, FLOOR
+  - [x] `builtin_math_algebra.go` (649 lines) - LOG, RAND, POW, CONV, CRC32, SIGN, SQRT
+  - [x] `builtin_math_trig.go` (743 lines) - trigonometric functions and TRUNCATE
+
+- [x] **planner/core/task.go decomposition** - Extract task attachment functions
+  - File: `pkg/planner/core/task.go` (2,241 → 30 lines, 99% reduction)
+  - [x] `task_join.go` (575 lines) - join operator attachments
+  - [x] `task_limit_topn.go` (870 lines) - limit, sort, and TopN push-down
+  - [x] `task_operators.go` (838 lines) - projection, aggregation, window, CTE, sequence
+
+- [x] **server/handler/tikvhandler/tikv_handler.go decomposition** - Extract handler groups
+  - File: `tikv_handler.go` (2,206 → 0 lines, fully replaced)
+  - [x] `tikv_handler_settings.go` (738 lines) - handler types, constructors, settings, flash replica
+  - [x] `tikv_handler_schema.go` (706 lines) - schema storage, schema handler, table handler, DDL
+  - [x] `tikv_handler_region.go` (848 lines) - region, MVCC, server info, profile, misc handlers
+
+- [x] **planner/core/preprocess.go decomposition** - Extract validation and resolution
+  - File: `pkg/planner/core/preprocess.go` (2,197 → 707 lines, 68% reduction)
+  - [x] `preprocess_check.go` (990 lines) - grammar validation and column/index checks
+  - [x] `preprocess_resolve.go` (557 lines) - table resolution, stale read, alias checker
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -290,3 +332,10 @@ Last updated: 2026-02-18 (builtin_time/string/compare/cast, tables, adapter deco
 - [x] **expression/builtin_cast.go decomposition** - 2026-02-18 - Split into 3 focused files: `builtin_cast_numeric.go` (771), `builtin_cast_string_time_json.go` (849), `builtin_cast_builders.go` (482). Reduced builtin_cast.go from 3,004 to 973 lines (67% reduction).
 - [x] **infoschema/tables.go decomposition** - 2026-02-18 - Split into 2 focused files: `tables_cols_standard.go` (686), `tables_cols_tidb.go` (797). Reduced tables.go from 2,911 to 1,472 lines (49% reduction).
 - [x] **executor/adapter.go decomposition** - 2026-02-18 - Split into 3 focused files: `adapter_pessimistic.go` (510), `adapter_observe.go` (622), `adapter_summary.go` (460). Reduced adapter.go from 2,417 to 944 lines (61% reduction).
+- [x] **expression/builtin_string_vec.go decomposition** - 2026-02-18 - Split into 3 focused files: `builtin_string_vec_basic.go` (505), `builtin_string_vec_trim_pad.go` (864), `builtin_string_vec_misc.go` (1,932). Original file fully replaced.
+- [x] **expression/builtin_time_vec.go decomposition** - 2026-02-18 - Split into 3 focused files: `builtin_time_vec_field.go` (1,034), `builtin_time_vec_convert.go` (978), `builtin_time_vec_calc.go` (1,053). Original file fully replaced.
+- [x] **expression/util.go decomposition** - 2026-02-18 - Split into 4 focused files: `util_column.go` (689), `util_transform.go` (637), `util_misc.go` (584), `util_digest.go` (543). Original file fully replaced.
+- [x] **expression/builtin_math.go decomposition** - 2026-02-18 - Split into 3 focused files: `builtin_math_rounding.go` (811), `builtin_math_algebra.go` (649), `builtin_math_trig.go` (743). Reduced builtin_math.go from 2,219 to 116 lines (95% reduction).
+- [x] **planner/core/task.go decomposition** - 2026-02-18 - Split into 3 focused files: `task_join.go` (575), `task_limit_topn.go` (870), `task_operators.go` (838). Reduced task.go from 2,241 to 30 lines (99% reduction).
+- [x] **server/handler/tikvhandler/tikv_handler.go decomposition** - 2026-02-18 - Split into 3 focused files: `tikv_handler_settings.go` (738), `tikv_handler_schema.go` (706), `tikv_handler_region.go` (848). Original file fully replaced.
+- [x] **planner/core/preprocess.go decomposition** - 2026-02-18 - Split into 2 focused files: `preprocess_check.go` (990), `preprocess_resolve.go` (557). Reduced preprocess.go from 2,197 to 707 lines (68% reduction).
