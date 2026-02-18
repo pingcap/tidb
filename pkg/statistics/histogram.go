@@ -1039,6 +1039,54 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
+// calculateLeftOverlapPercent calculates the percentage for an out-of-range overlap
+// on the left side of the histogram. The predicate range [l, r] overlaps with
+// the region (boundL, histL), and we calculate the percentage of the shaded area.
+func calculateLeftOverlapPercent(l, r, boundL, histL, histWidth float64) float64 {
+	if histWidth <= 0 {
+		return 0
+	}
+	// bound the left/right ranges of the predicates to the "left triangle" of the histogram.
+	l = max(l, boundL)
+	r = min(r, histL)
+	// If there's no overlap after bounding, return 0.
+	if l >= r {
+		return 0
+	}
+	// NOTE: Ranges are squared to determine a triangular (linear) distribution rather than uniform.
+	// Width of the histogram - squared to normalize to a percentage
+	histWidthSq := math.Pow(histWidth, 2)
+	// Right side of the predicate as distance from the left edge of the histogram
+	rightRange := math.Pow(r-boundL, 2)
+	// Left side of the predicate as distance from the left edge of the histogram
+	leftRange := math.Pow(l-boundL, 2)
+	return (rightRange - leftRange) / histWidthSq
+}
+
+// calculateRightOverlapPercent calculates the percentage for an out-of-range overlap
+// on the right side of the histogram. The predicate range [l, r] overlaps with
+// the region (histR, boundR), and we calculate the percentage of the shaded area.
+func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float64 {
+	if histWidth <= 0 {
+		return 0
+	}
+	// bound the left/right ranges of the predicates to the "right triangle" of the histogram.
+	l = max(l, histR)
+	r = min(r, boundR)
+	// If there's no overlap after bounding, return 0.
+	if l >= r {
+		return 0
+	}
+	// NOTE: Ranges are squared to determine a triangular (linear) distribution rather than uniform.
+	// Width of the histogram - squared to normalize to a percentage
+	histWidthSq := math.Pow(histWidth, 2)
+	// Left side of the predicate as distance from the right edge of the histogram.
+	leftRange := math.Pow(boundR-l, 2)
+	// Right side of the predicate as distance from the right edge of the histogram.
+	rightRange := math.Pow(boundR-r, 2)
+	return (leftRange - rightRange) / histWidthSq
+}
+
 // OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
 // The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
@@ -1149,12 +1197,11 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histWidth := histR - histL
 	// If we find that the histogram width is too small or too large - we still may need to consider
 	// the impact of modifications to the table
-	histInvalid := false
-	if histWidth <= 0 {
-		histInvalid = true
+	if histWidth < 0 {
+		histWidth = 0
 	}
 	if math.IsInf(histWidth, 1) {
-		histInvalid = true
+		histWidth = 0
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
