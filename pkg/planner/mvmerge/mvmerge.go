@@ -684,8 +684,9 @@ func buildMLogDeltaSelect(
 			if ac.argExpr == nil {
 				return nil, errors.New("SUM aggregate argument is nil for mvmerge")
 			}
+			addedCond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", ""))
 			fields = append(fields, &ast.SelectField{
-				Expr:   aggSum(binary(opcode.Mul, oldNewCol, ac.argExpr)),
+				Expr:   aggSum(ifExpr(addedCond, ac.argExpr, &ast.UnaryOperationExpr{Op: opcode.Minus, V: ac.argExpr})),
 				AsName: pmodel.NewCIStr(ac.deltaName),
 			})
 		case AggMax:
