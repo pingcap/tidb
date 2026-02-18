@@ -112,7 +112,7 @@ func buildMaxMinCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFu
 	case types.ETDecimal:
 		return &maxMinCount4Decimal{base}
 	case types.ETString:
-		return &maxMinCount4String{baseMaxMinCountAggFunc: base, collate: fieldType.GetCollate()}
+		return &maxMinCount4String{baseMaxMinCountAggFunc: base}
 	case types.ETDatetime, types.ETTimestamp:
 		return &maxMinCount4Time{base}
 	case types.ETDuration:
@@ -395,13 +395,14 @@ func buildMaxMinCountInWindowFunction(ctx expression.EvalContext, aggFuncDesc *a
 			func(v any) any { return v },
 		)
 	case *maxMinCount4String:
+		collation := b.args[0].GetType(ctx).GetCollate()
 		return build(b.baseMaxMinCountAggFunc,
 			func(sctx AggFuncUpdateContext, row chunk.Row) (any, bool, error) {
 				v, isNull, err := b.args[0].EvalString(sctx, row)
 				return v, isNull, err
 			},
 			func(i, j any) int {
-				return types.CompareString(i.(string), j.(string), b.collate)
+				return types.CompareString(i.(string), j.(string), collation)
 			},
 			func(v any) any { return stringutil.Copy(v.(string)) },
 		)
@@ -483,27 +484,6 @@ func buildMaxMinCountInWindowFunction(ctx expression.EvalContext, aggFuncDesc *a
 
 var _ SlidingWindowAggFunc = &maxMinCount4Sliding{}
 var _ MaxMinSlidingWindowAggFunc = &maxMinCount4Sliding{}
-
-type partialResult4MaxMinCount struct {
-	val    types.Datum
-	count  int64
-	isNull bool
-}
-
-func serializeTypedMaxMinCount(e *baseMaxMinCountAggFunc, p partialResult4MaxMinCount, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	resBuf := spillHelper.serializePartialResult4MaxMinCount(p)
-	chk.AppendBytes(e.ordinal, resBuf)
-}
-
-func deserializeTypedMaxMinCount(src *chunk.Chunk, ordinal int, decode func(*partialResult4MaxMinCount) (PartialResult, int64)) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, ordinal, func(helper *deserializeHelper) (PartialResult, int64) {
-		tmp := partialResult4MaxMinCount{}
-		if !helper.deserializePartialResult4MaxMinCount(&tmp) {
-			return nil, 0
-		}
-		return decode(&tmp)
-	})
-}
 
 type partialResult4MaxMinCountInt struct {
 	val    int64
@@ -589,25 +569,23 @@ func (e *maxMinCount4Int) MergePartialResult(_ AggFuncUpdateContext, src, dst Pa
 }
 
 func (e *maxMinCount4Int) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountInt)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetInt64(p.val)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountInt)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountInt(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4Int) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountInt)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetInt64()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4Int) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountInt)(pr)
+	success := helper.deserializePartialResult4MaxMinCountInt(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountUint struct {
@@ -695,25 +673,23 @@ func (e *maxMinCount4Uint) MergePartialResult(_ AggFuncUpdateContext, src, dst P
 }
 
 func (e *maxMinCount4Uint) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountUint)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetUint64(p.val)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountUint)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountUint(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4Uint) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountUint)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetUint64()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4Uint) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountUint)(pr)
+	success := helper.deserializePartialResult4MaxMinCountUint(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountFloat32 struct {
@@ -801,25 +777,23 @@ func (e *maxMinCount4Float32) MergePartialResult(_ AggFuncUpdateContext, src, ds
 }
 
 func (e *maxMinCount4Float32) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountFloat32)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetFloat32(p.val)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountFloat32)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountFloat32(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4Float32) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountFloat32)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetFloat32()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4Float32) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountFloat32)(pr)
+	success := helper.deserializePartialResult4MaxMinCountFloat32(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountFloat64 struct {
@@ -906,25 +880,23 @@ func (e *maxMinCount4Float64) MergePartialResult(_ AggFuncUpdateContext, src, ds
 }
 
 func (e *maxMinCount4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountFloat64)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetFloat64(p.val)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountFloat64(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountFloat64)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetFloat64()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4Float64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountFloat64)(pr)
+	success := helper.deserializePartialResult4MaxMinCountFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountDecimal struct {
@@ -1001,25 +973,23 @@ func (e *maxMinCount4Decimal) MergePartialResult(_ AggFuncUpdateContext, src, ds
 }
 
 func (e *maxMinCount4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountDecimal)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetMysqlDecimal(&p.val)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountDecimal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountDecimal(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountDecimal)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = *tmp.val.GetMysqlDecimal()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4Decimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountDecimal)(pr)
+	success := helper.deserializePartialResult4MaxMinCountDecimal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountString struct {
@@ -1030,7 +1000,6 @@ type partialResult4MaxMinCountString struct {
 
 type maxMinCount4String struct {
 	baseMaxMinCountAggFunc
-	collate string
 }
 
 func (*maxMinCount4String) AllocPartialResult() (PartialResult, int64) {
@@ -1069,7 +1038,8 @@ func (e *maxMinCount4String) UpdatePartialResult(sctx AggFuncUpdateContext, rows
 			memDelta += int64(len(input))
 			continue
 		}
-		cmp := types.CompareString(input, p.val, e.collate)
+		tp := e.args[0].GetType(sctx)
+		cmp := types.CompareString(input, p.val, tp.GetCollate())
 		if e.shouldReplace(cmp) {
 			oldLen := len(p.val)
 			p.val = stringutil.Copy(input)
@@ -1082,7 +1052,7 @@ func (e *maxMinCount4String) UpdatePartialResult(sctx AggFuncUpdateContext, rows
 	return memDelta, nil
 }
 
-func (e *maxMinCount4String) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (int64, error) {
+func (e *maxMinCount4String) MergePartialResult(ctx AggFuncUpdateContext, src, dst PartialResult) (int64, error) {
 	p1, p2 := (*partialResult4MaxMinCountString)(src), (*partialResult4MaxMinCountString)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -1091,7 +1061,8 @@ func (e *maxMinCount4String) MergePartialResult(_ AggFuncUpdateContext, src, dst
 		*p2 = *p1
 		return 0, nil
 	}
-	cmp := types.CompareString(p1.val, p2.val, e.collate)
+	tp := e.args[0].GetType(ctx)
+	cmp := types.CompareString(p1.val, p2.val, tp.GetCollate())
 	if e.shouldReplace(cmp) {
 		p2.val = p1.val
 		p2.count = p1.count
@@ -1103,25 +1074,23 @@ func (e *maxMinCount4String) MergePartialResult(_ AggFuncUpdateContext, src, dst
 }
 
 func (e *maxMinCount4String) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountString)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetString(p.val, e.collate)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountString)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountString(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4String) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountString)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetString()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4String) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountString)(pr)
+	success := helper.deserializePartialResult4MaxMinCountString(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountTime struct {
@@ -1198,25 +1167,23 @@ func (e *maxMinCount4Time) MergePartialResult(_ AggFuncUpdateContext, src, dst P
 }
 
 func (e *maxMinCount4Time) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountTime)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetMysqlTime(p.val)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountTime)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountTime(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4Time) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountTime)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetMysqlTime()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4Time) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountTime)(pr)
+	success := helper.deserializePartialResult4MaxMinCountTime(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountDuration struct {
@@ -1293,25 +1260,23 @@ func (e *maxMinCount4Duration) MergePartialResult(_ AggFuncUpdateContext, src, d
 }
 
 func (e *maxMinCount4Duration) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountDuration)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetMysqlDuration(p.val)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountDuration)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountDuration(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4Duration) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountDuration)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetMysqlDuration()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4Duration) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountDuration)(pr)
+	success := helper.deserializePartialResult4MaxMinCountDuration(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountJSON struct {
@@ -1392,25 +1357,23 @@ func (e *maxMinCount4JSON) MergePartialResult(_ AggFuncUpdateContext, src, dst P
 }
 
 func (e *maxMinCount4JSON) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountJSON)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetMysqlJSON(p.val)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountJSON)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountJSON(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4JSON) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountJSON)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetMysqlJSON()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4JSON) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountJSON)(pr)
+	success := helper.deserializePartialResult4MaxMinCountJSON(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountVectorFloat32 struct {
@@ -1491,25 +1454,23 @@ func (e *maxMinCount4VectorFloat32) MergePartialResult(_ AggFuncUpdateContext, s
 }
 
 func (e *maxMinCount4VectorFloat32) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountVectorFloat32)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetVectorFloat32(p.val)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountVectorFloat32)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountVectorFloat32(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4VectorFloat32) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountVectorFloat32)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetVectorFloat32()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4VectorFloat32) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountVectorFloat32)(pr)
+	success := helper.deserializePartialResult4MaxMinCountVectorFloat32(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountEnum struct {
@@ -1591,25 +1552,23 @@ func (e *maxMinCount4Enum) MergePartialResult(_ AggFuncUpdateContext, src, dst P
 }
 
 func (e *maxMinCount4Enum) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountEnum)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetMysqlEnum(p.val, mysql.DefaultCollationName)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountEnum)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountEnum(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4Enum) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountEnum)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetMysqlEnum()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4Enum) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountEnum)(pr)
+	success := helper.deserializePartialResult4MaxMinCountEnum(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type partialResult4MaxMinCountSet struct {
@@ -1691,23 +1650,21 @@ func (e *maxMinCount4Set) MergePartialResult(_ AggFuncUpdateContext, src, dst Pa
 }
 
 func (e *maxMinCount4Set) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	p := (*partialResult4MaxMinCountSet)(partialResult)
-	tmp := partialResult4MaxMinCount{count: p.count, isNull: p.isNull}
-	if !p.isNull {
-		tmp.val.SetMysqlSet(p.val, mysql.DefaultCollationName)
-	}
-	serializeTypedMaxMinCount(&e.baseMaxMinCountAggFunc, tmp, chk, spillHelper)
+	pr := (*partialResult4MaxMinCountSet)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinCountSet(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
 func (e *maxMinCount4Set) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializeTypedMaxMinCount(src, e.ordinal, func(tmp *partialResult4MaxMinCount) (PartialResult, int64) {
-		pr, memDelta := e.AllocPartialResult()
-		p := (*partialResult4MaxMinCountSet)(pr)
-		p.isNull = tmp.isNull
-		p.count = tmp.count
-		if !p.isNull {
-			p.val = tmp.val.GetMysqlSet()
-		}
-		return pr, memDelta
-	})
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMinCount4Set) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinCountSet)(pr)
+	success := helper.deserializePartialResult4MaxMinCountSet(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
