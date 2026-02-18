@@ -26,18 +26,30 @@ const (
 	// DefPartialResult4MaxMinCountSize is kept for compatibility.
 	DefPartialResult4MaxMinCountSize = int64(unsafe.Sizeof(partialResult4MaxMinCountInt{}))
 
-	DefPartialResult4MaxMinCountIntSize           = int64(unsafe.Sizeof(partialResult4MaxMinCountInt{}))
-	DefPartialResult4MaxMinCountUintSize          = int64(unsafe.Sizeof(partialResult4MaxMinCountUint{}))
-	DefPartialResult4MaxMinCountDecimalSize       = int64(unsafe.Sizeof(partialResult4MaxMinCountDecimal{}))
-	DefPartialResult4MaxMinCountFloat32Size       = int64(unsafe.Sizeof(partialResult4MaxMinCountFloat32{}))
-	DefPartialResult4MaxMinCountFloat64Size       = int64(unsafe.Sizeof(partialResult4MaxMinCountFloat64{}))
-	DefPartialResult4MaxMinCountTimeSize          = int64(unsafe.Sizeof(partialResult4MaxMinCountTime{}))
-	DefPartialResult4MaxMinCountDurationSize      = int64(unsafe.Sizeof(partialResult4MaxMinCountDuration{}))
-	DefPartialResult4MaxMinCountStringSize        = int64(unsafe.Sizeof(partialResult4MaxMinCountString{}))
-	DefPartialResult4MaxMinCountJSONSize          = int64(unsafe.Sizeof(partialResult4MaxMinCountJSON{}))
+	// DefPartialResult4MaxMinCountIntSize is the size of partialResult4MaxMinCountInt.
+	DefPartialResult4MaxMinCountIntSize = int64(unsafe.Sizeof(partialResult4MaxMinCountInt{}))
+	// DefPartialResult4MaxMinCountUintSize is the size of partialResult4MaxMinCountUint.
+	DefPartialResult4MaxMinCountUintSize = int64(unsafe.Sizeof(partialResult4MaxMinCountUint{}))
+	// DefPartialResult4MaxMinCountDecimalSize is the size of partialResult4MaxMinCountDecimal.
+	DefPartialResult4MaxMinCountDecimalSize = int64(unsafe.Sizeof(partialResult4MaxMinCountDecimal{}))
+	// DefPartialResult4MaxMinCountFloat32Size is the size of partialResult4MaxMinCountFloat32.
+	DefPartialResult4MaxMinCountFloat32Size = int64(unsafe.Sizeof(partialResult4MaxMinCountFloat32{}))
+	// DefPartialResult4MaxMinCountFloat64Size is the size of partialResult4MaxMinCountFloat64.
+	DefPartialResult4MaxMinCountFloat64Size = int64(unsafe.Sizeof(partialResult4MaxMinCountFloat64{}))
+	// DefPartialResult4MaxMinCountTimeSize is the size of partialResult4MaxMinCountTime.
+	DefPartialResult4MaxMinCountTimeSize = int64(unsafe.Sizeof(partialResult4MaxMinCountTime{}))
+	// DefPartialResult4MaxMinCountDurationSize is the size of partialResult4MaxMinCountDuration.
+	DefPartialResult4MaxMinCountDurationSize = int64(unsafe.Sizeof(partialResult4MaxMinCountDuration{}))
+	// DefPartialResult4MaxMinCountStringSize is the size of partialResult4MaxMinCountString.
+	DefPartialResult4MaxMinCountStringSize = int64(unsafe.Sizeof(partialResult4MaxMinCountString{}))
+	// DefPartialResult4MaxMinCountJSONSize is the size of partialResult4MaxMinCountJSON.
+	DefPartialResult4MaxMinCountJSONSize = int64(unsafe.Sizeof(partialResult4MaxMinCountJSON{}))
+	// DefPartialResult4MaxMinCountVectorFloat32Size is the size of partialResult4MaxMinCountVectorFloat32.
 	DefPartialResult4MaxMinCountVectorFloat32Size = int64(unsafe.Sizeof(partialResult4MaxMinCountVectorFloat32{}))
-	DefPartialResult4MaxMinCountEnumSize          = int64(unsafe.Sizeof(partialResult4MaxMinCountEnum{}))
-	DefPartialResult4MaxMinCountSetSize           = int64(unsafe.Sizeof(partialResult4MaxMinCountSet{}))
+	// DefPartialResult4MaxMinCountEnumSize is the size of partialResult4MaxMinCountEnum.
+	DefPartialResult4MaxMinCountEnumSize = int64(unsafe.Sizeof(partialResult4MaxMinCountEnum{}))
+	// DefPartialResult4MaxMinCountSetSize is the size of partialResult4MaxMinCountSet.
+	DefPartialResult4MaxMinCountSetSize = int64(unsafe.Sizeof(partialResult4MaxMinCountSet{}))
 )
 
 type baseMaxMinCountAggFunc struct {
@@ -56,13 +68,15 @@ func (e *baseMaxMinCountAggFunc) shouldReplace(cmp int) bool {
 	return e.isMax && cmp > 0 || !e.isMax && cmp < 0
 }
 
-func (e *baseMaxMinCountAggFunc) shouldAccumulate(cmp int) bool {
+func (*baseMaxMinCountAggFunc) shouldAccumulate(cmp int) bool {
 	return cmp == 0
 }
 
 const (
+	// DefPartialResult4MaxMinCountSlidingSize is the size of partialResult4MaxMinCountSliding.
 	DefPartialResult4MaxMinCountSlidingSize = int64(unsafe.Sizeof(partialResult4MaxMinCountSliding{}))
-	DefMaxMinCountDequeSize                 = int64(unsafe.Sizeof(minMaxCountDeque{}))
+	// DefMaxMinCountDequeSize is the size of minMaxCountDeque.
+	DefMaxMinCountDequeSize = int64(unsafe.Sizeof(minMaxCountDeque{}))
 )
 
 type maxMinCountDequeItem struct {
