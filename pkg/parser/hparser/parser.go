@@ -71,12 +71,9 @@ func NewHandParser() *HandParser {
 
 // Reset prepares the parser for reuse. Must be called before each parse.
 func (p *HandParser) Reset() {
-	// We cannot reset the arena (p.arena.Reset()) because the AST nodes returned
-	// by the previous Parse call might still be in use by the caller (e.g. in tests
-	// or if the application holds onto them). Reseting the arena would overwrite
-	// their memory.
-	// Instead, we allocate a fresh arena for the new parse. The old arena's memory
-	// will be garbage collected once all references to the old AST nodes are gone.
+	// NOTE: Alloc/AllocSlice currently use heap allocation (new/make) instead
+	// of the arena's bump-pointer. The arena is still created for API compat
+	// but its memory is not used. See arena.go for rationale.
 	p.arena = NewArena()
 
 	p.lexer = nil

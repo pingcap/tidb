@@ -101,28 +101,25 @@ func (a *Arena) alloc(size int) unsafe.Pointer {
 	return ptr
 }
 
-// Alloc allocates a zero-initialized value of type T from the arena.
-// T must not contain Go pointers to heap objects that the GC needs to trace
-// (slices, maps, interfaces, strings etc. are fine as top-level fields since
-// they are set after allocation and the arena block itself is GC-visible).
-func Alloc[T any](a *Arena) *T {
-	size := int(unsafe.Sizeof(*new(T)))
-	ptr := a.alloc(size)
-	// Zero-initialize. The alloc'd region may contain leftover data from
-	// a previous parse when the arena is reused.
-	clear(unsafe.Slice((*byte)(ptr), size))
-	return (*T)(ptr)
+// Alloc allocates a zero-initialized value of type T.
+//
+// NOTE: Currently uses heap allocation (new) instead of arena bump-pointer.
+// The original arena approach used unsafe.Pointer into []byte blocks, which
+// is invisible to Go's GC. When the parser goes out of scope but AST nodes
+// survive (e.g. in the plan cache), the GC collects the arena's []byte blocks
+// while AST nodes still reference them, causing SIGBUS. Using new() ensures
+// AST nodes are properly GC-tracked. The arena parameter is retained for API
+// compatibility and can be re-enabled once a GC-safe arena implementation
+// (e.g., Go's native arena package) is available.
+func Alloc[T any](_ *Arena) *T {
+	return new(T)
 }
 
-// AllocSlice allocates a slice of n elements of type T from the arena.
-// The returned slice is zero-initialized.
-func AllocSlice[T any](a *Arena, n int) []T {
+// AllocSlice allocates a slice of n elements of type T.
+// See Alloc for the rationale behind heap allocation.
+func AllocSlice[T any](_ *Arena, n int) []T {
 	if n == 0 {
 		return nil
 	}
-	elemSize := int(unsafe.Sizeof(*new(T)))
-	totalSize := elemSize * n
-	ptr := a.alloc(totalSize)
-	clear(unsafe.Slice((*byte)(ptr), totalSize))
-	return unsafe.Slice((*T)(ptr), n)
+	return make([]T, n)
 }

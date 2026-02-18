@@ -481,13 +481,42 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 			// These will be transferred to the outermost stmt below.
 			rhs = rhsSet // keep reference for ORDER BY / LIMIT extraction
 		} else {
-			// Set AfterSetOperator on RHS to bind it to the operator
+			// Set AfterSetOperator on RHS to bind it to the operator.
+			// If RHS is a SetOprStmt (parenthesized subquery), wrap it in a
+			// SetOprSelectList. The planner only handles *ast.SelectStmt and
+			// *ast.SetOprSelectList children in SetOprSelectList.Selects, not
+			// bare *ast.SetOprStmt. This matches goyacc's SubSelect rule where
+			// "(SelectStmtWithClause)" becomes SetOprSelectList{Selects:[...]}.
+			//
+			// Crucially, we flatten the inner SetOprStmt: instead of nesting the
+			// SetOprStmt itself as a child, we take its SelectList.Selects and
+			// put them directly into the wrapper. This produces the flat structure
+			// that the planner expects.
 			if s, ok := rhs.(*ast.SelectStmt); ok {
 				s.AfterSetOperator = opType
+				rhsNodes = []ast.Node{rhs}
 			} else if s, ok := rhs.(*ast.SetOprStmt); ok {
-				s.AfterSetOperator = opType
+				// Flatten: take the inner SelectList's Selects and wrap them
+				// in a new SetOprSelectList with the AfterSetOperator from
+				// the outer operator, plus any ORDER BY/LIMIT from the inner
+				// SetOprStmt.
+				wrapper := &ast.SetOprSelectList{
+					Selects:          s.SelectList.Selects,
+					AfterSetOperator: opType,
+				}
+				if s.OrderBy != nil {
+					wrapper.OrderBy = s.OrderBy
+				}
+				if s.Limit != nil {
+					wrapper.Limit = s.Limit
+				}
+				if s.With != nil {
+					wrapper.With = s.With
+				}
+				rhsNodes = []ast.Node{wrapper}
+			} else {
+				rhsNodes = []ast.Node{rhs}
 			}
-			rhsNodes = []ast.Node{rhs}
 		}
 
 		// If LHS is a parenthesized CTE subquery (has With + IsInBraces), wrap it in a
