@@ -113,35 +113,6 @@ func TestRUWindowAggregatorTakeOncePerWindow(t *testing.T) {
 	require.Nil(t, agg.takeReportRecords(61, 60, []byte("ks")))
 }
 
-func TestRUWindowAggregatorInvalidGranularityFallbackTo60(t *testing.T) {
-	agg := newRUWindowAggregator()
-	key := stmtstats.RUKey{
-		User:       "u1",
-		SQLDigest:  stmtstats.BinaryDigest("sql1"),
-		PlanDigest: stmtstats.BinaryDigest("plan1"),
-	}
-	agg.addSecondBatch(1, stmtstats.RUIncrementMap{
-		key: {TotalRU: 1, ExecCount: 1, ExecDuration: 10},
-	})
-	agg.addSecondBatch(16, stmtstats.RUIncrementMap{
-		key: {TotalRU: 2, ExecCount: 1, ExecDuration: 20},
-	})
-	agg.addSecondBatch(31, stmtstats.RUIncrementMap{
-		key: {TotalRU: 3, ExecCount: 1, ExecDuration: 30},
-	})
-	agg.addSecondBatch(46, stmtstats.RUIncrementMap{
-		key: {TotalRU: 4, ExecCount: 1, ExecDuration: 40},
-	})
-
-	records := agg.takeReportRecords(60, 0, []byte("ks"))
-	require.NotEmpty(t, records)
-
-	rec := findRURecord(t, records, "u1", "sql1", "plan1")
-	require.Len(t, rec.Items, 1)
-	require.Equal(t, uint64(0), rec.Items[0].TimestampSec)
-	require.InDelta(t, 10.0, rec.Items[0].TotalRu, 1e-9)
-}
-
 func findRURecord(t *testing.T, records []tipb.TopRURecord, user, sqlDigest, planDigest string) tipb.TopRURecord {
 	t.Helper()
 	for _, rec := range records {

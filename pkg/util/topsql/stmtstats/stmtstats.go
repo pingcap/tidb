@@ -94,7 +94,7 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte, info *Ex
 
 	item.ExecCount++
 	if info != nil {
-		item.NetworkInBytes = info.InNetworkBytes
+		item.NetworkInBytes += info.InNetworkBytes
 		if info.TopRUEnabled {
 			s.addRUOnBeginLocked(info.User, sqlDigest, planDigest, info.Ctx)
 		}
@@ -148,7 +148,7 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, info 
 
 	item.SumDurationNs += uint64(ns)
 	item.DurationCount++
-	item.NetworkOutBytes = info.OutNetworkBytes
+	item.NetworkOutBytes += info.OutNetworkBytes
 	if info.TopRUEnabled {
 		s.addRUOnFinishLocked(info.User, sqlDigest, planDigest, info.RUDetails, info.ExecDuration)
 	} else {
