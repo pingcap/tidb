@@ -758,7 +758,7 @@ type candidatePath struct {
 	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
 	indexJoinCols           int                              // how many index columns are used in access conditions in this IndexJoin.
 	isFullRange             bool                             // cached result of whether this path covers the full scan range.
-	eqOrInCount          int                              // cached result of equalPredicateCount().
+	equalPredCount          int                              // cached result of equalPredicateCount().
 }
 
 func compareBool(l, r bool) int {
