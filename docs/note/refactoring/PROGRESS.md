@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (domain.go decomposition 59%)
+Last updated: 2026-02-18 (domain.go decomposition complete, 67% reduction)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -77,12 +77,13 @@ Last updated: 2026-02-18 (domain.go decomposition 59%)
   - [x] `session_states.go` (212 lines) - encode/decode session states
   - [x] `session_sysvar.go` (157 lines) - system variable management
 
-- [~] **domain.go decomposition** - Extract subsystem managers
-  - File: `pkg/domain/domain.go` (3,023 → 1,245 lines, 59% reduction)
+- [x] **domain.go decomposition** - Extract subsystem managers
+  - File: `pkg/domain/domain.go` (3,023 → 997 lines, 67% reduction)
   - Target: Composable service managers
   - [x] `domain_stats.go` (723 lines) - statistics worker lifecycle, historical stats, analyze workers
-  - [x] `domain_privilege.go` (462 lines) - privilege events, binding management, sysvar cache, notifications
+  - [x] `domain_privilege.go` (467 lines) - privilege events, binding management, sysvar cache, notifications
   - [x] `domain_serverid.go` (356 lines) - server ID acquisition, renewal, keeper loop
+  - [x] `domain_workers.go` (285 lines) - telemetry, plan cache, TTL, workload learning workers
   - [x] `domain_disttask.go` (208 lines) - distributed task framework loop
   - [x] `domain_infra.go` (192 lines) - log backup advancer, replica read check loop
 
@@ -151,3 +152,4 @@ Last updated: 2026-02-18 (domain.go decomposition 59%)
 - [x] **session.go decomposition** - 2026-02-17 - Split into 9 focused files: `session_txn.go` (1,086), `session_bootstrap.go` (955), `session_execute.go` (836), `session_parse.go` (546), `session_auth.go` (413), `session_logging.go` (387), `session_restricted.go` (287), `session_states.go` (212), `session_sysvar.go` (157). Reduced session.go from 5,558 to 1,087 lines (80% reduction).
 - [x] **SessionVars Phase 4 (ExecutionVars)** - 2026-02-17 - Extract 11 execution-related fields (DMLBatchSize, BatchInsert, BatchDelete, BatchCommit, BulkDMLEnabled, EnableChunkRPC, EnablePaging, EnableReuseChunk, MaxExecutionTime, SelectLimit, StoreBatchSize) into embedded `ExecutionVars` sub-struct. Total: 7 sub-structs, ~143 fields organized.
 - [x] **DDL executor.go decomposition** - 2026-02-17 - Split into 8 focused files: `executor_partition.go` (1,084 lines), `executor_index.go` (967 lines), `executor_column.go` (472 lines), `executor_create.go` (565 lines), `executor_table.go` (532 lines), `executor_misc.go` (543 lines), `executor_schema.go` (680 lines), `executor_table_props.go` (683 lines). Reduced executor.go from 7,201 to 1,986 lines (72% reduction).
+- [x] **domain.go decomposition** - 2026-02-18 - Split into 6 focused files: `domain_stats.go` (723), `domain_privilege.go` (467), `domain_serverid.go` (356), `domain_workers.go` (285), `domain_disttask.go` (208), `domain_infra.go` (192). Reduced domain.go from 3,023 to 997 lines (67% reduction).
