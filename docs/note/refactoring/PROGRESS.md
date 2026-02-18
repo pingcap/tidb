@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (planbuilder.go decomposition complete, 68% reduction)
+Last updated: 2026-02-18 (logical_plan_builder.go decomposition, 47% reduction)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -116,6 +116,16 @@ Last updated: 2026-02-18 (planbuilder.go decomposition complete, 68% reduction)
   - [x] `planbuilder_bind.go` (343 lines) - SQL binding operations
   - [x] `planbuilder_explain.go` (247 lines) - EXPLAIN/TRACE statements
 
+- [x] **logical_plan_builder.go decomposition** - Extract functional builder groups
+  - File: `pkg/planner/core/logical_plan_builder.go` (7,362 → 3,897 lines, 47% reduction)
+  - Target: Focused files per functional area
+  - [x] `logical_plan_builder_window.go` (753 lines) - window function builders
+  - [x] `logical_plan_builder_dml.go` (903 lines) - UPDATE/DELETE plan builders
+  - [x] `logical_plan_builder_cte.go` (368 lines) - CTE plan builders
+  - [x] `logical_plan_builder_setops.go` (448 lines) - UNION/INTERSECT/EXCEPT builders
+  - [x] `logical_plan_builder_join.go` (394 lines) - JOIN plan builders
+  - [x] `logical_plan_builder_datasource.go` (804 lines) - data source, view, memtable builders
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -166,3 +176,4 @@ Last updated: 2026-02-18 (planbuilder.go decomposition complete, 68% reduction)
 - [x] **DDL executor.go decomposition** - 2026-02-17 - Split into 8 focused files: `executor_partition.go` (1,084 lines), `executor_index.go` (967 lines), `executor_column.go` (472 lines), `executor_create.go` (565 lines), `executor_table.go` (532 lines), `executor_misc.go` (543 lines), `executor_schema.go` (680 lines), `executor_table_props.go` (683 lines). Reduced executor.go from 7,201 to 1,986 lines (72% reduction).
 - [x] **domain.go decomposition** - 2026-02-18 - Split into 6 focused files: `domain_stats.go` (723), `domain_privilege.go` (467), `domain_serverid.go` (356), `domain_workers.go` (285), `domain_disttask.go` (208), `domain_infra.go` (192). Reduced domain.go from 3,023 to 997 lines (67% reduction).
 - [x] **planbuilder.go decomposition** - 2026-02-18 - Split into 8 focused files: `planbuilder_analyze.go` (1,296), `planbuilder_insert.go` (884), `planbuilder_admin.go` (570), `planbuilder_show.go` (539), `planbuilder_split.go` (449), `planbuilder_ddl.go` (368), `planbuilder_bind.go` (343), `planbuilder_explain.go` (247). Reduced planbuilder.go from 6,518 to 2,116 lines (68% reduction).
+- [x] **logical_plan_builder.go decomposition** - 2026-02-18 - Split into 6 focused files: `logical_plan_builder_window.go` (753), `logical_plan_builder_dml.go` (903), `logical_plan_builder_cte.go` (368), `logical_plan_builder_setops.go` (448), `logical_plan_builder_join.go` (394), `logical_plan_builder_datasource.go` (804). Reduced logical_plan_builder.go from 7,362 to 3,897 lines (47% reduction).
