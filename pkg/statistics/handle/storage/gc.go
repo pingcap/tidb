@@ -269,10 +269,6 @@ func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int
 	if _, err := util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
 		return err
 	}
-	// delete fm sketch from new merge data table
-	if err := DeleteFMSketchFromMergeData(sctx, physicalID, int64(isIndex), histID); err != nil {
-		return err
-	}
 	if isIndex == 0 {
 		// delete the record in mysql.column_stats_usage
 		if _, err = util.Exec(sctx, "delete from mysql.column_stats_usage where table_id = %? and column_id = %?", physicalID, histID); err != nil {

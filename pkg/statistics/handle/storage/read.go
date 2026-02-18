@@ -214,18 +214,8 @@ func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID i
 	return statistics.DecodeTopN(rows), nil
 }
 
-// FMSketchFromStorage reads FMSketch from storage.
-// It first tries the new stats_global_merge_data table, then falls back to the legacy stats_fm_sketch table.
+// FMSketchFromStorage reads FMSketch from storage
 func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
-	// Try new table first.
-	fms, err := FMSketchFromMergeData(sctx, tblID, isIndex, histID)
-	if err != nil {
-		return nil, err
-	}
-	if fms != nil {
-		return fms, nil
-	}
-	// Fall back to legacy stats_fm_sketch table.
 	rows, _, err := util.ExecRows(sctx, "select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil || len(rows) == 0 {
 		return nil, err

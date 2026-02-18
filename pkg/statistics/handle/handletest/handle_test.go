@@ -832,13 +832,13 @@ func TestDuplicateFMSketch(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1, 1)")
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_global_merge_data").Check(testkit.Rows("9"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("9"))
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_global_merge_data").Check(testkit.Rows("9"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("9"))
 
 	tk.MustExec("alter table t drop column b")
 	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), time.Duration(0)))
-	tk.MustQuery("select count(*) from mysql.stats_global_merge_data").Check(testkit.Rows("6"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 }
 
 func TestIndexFMSketch(t *testing.T) {
@@ -855,11 +855,11 @@ func TestIndexFMSketch(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	defer tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("analyze table t index ia")
-	tk.MustQuery("select count(*) from mysql.stats_global_merge_data").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
 	tk.MustExec("analyze table t index ibc")
-	tk.MustQuery("select count(*) from mysql.stats_global_merge_data").Check(testkit.Rows("6"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_global_merge_data").Check(testkit.Rows("15"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("15"))
 	tk.MustExec("drop table if exists t")
 	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
 
@@ -869,14 +869,14 @@ func TestIndexFMSketch(t *testing.T) {
 	tk.MustExec("create table t (a datetime, b datetime, primary key (a)) partition by hash(year(a)) partitions 3")
 	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_global_merge_data").Check(testkit.Rows("6"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 	tk.MustExec("drop table if exists t")
 	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
 
 	// test NDV
 	checkNDV := func(rows, ndv int) {
 		tk.MustExec("analyze table t")
-		rs := tk.MustQuery("select value from mysql.stats_global_merge_data").Rows()
+		rs := tk.MustQuery("select value from mysql.stats_fm_sketch").Rows()
 		require.Len(t, rs, rows)
 		for i := range rs {
 			fm, err := statistics.DecodeFMSketch([]byte(rs[i][0].(string)))
