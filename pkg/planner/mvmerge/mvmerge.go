@@ -17,6 +17,7 @@ package mvmerge
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -91,11 +93,12 @@ type AggInfo struct {
 	// ArgColName is the base-table column name used as the aggregate argument. Empty for COUNT(*).
 	ArgColName string
 
-	// DeltaOffset is the offset (0-based) in the full merge-source output schema.
-	DeltaOffset int
-
-	// NeedsDetailOnRemoval indicates executor must do detail update for groups with removals.
-	NeedsDetailOnRemoval bool
+	// Dependencies stores dependency offsets in merge-source output schema.
+	// The meaning depends on Kind:
+	//   - AggCountStar / AggCount: [self_delta]
+	//   - AggSum: [self_delta, matched_count_expr_mv, matched_count_expr_delta]
+	//   - AggMax / AggMin: [self_delta, removed_rows_delta]
+	Dependencies []int
 }
 
 type aggColInfo struct {
@@ -209,22 +212,54 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		return nil, errors.Errorf("unexpected merge-source output names length: got %d, expected %d", len(outputNames), expectedLen)
 	}
 
+	sumToCountExprIdx, err := mapSumToCountExprDependencies(aggCols)
+	if err != nil {
+		return nil, err
+	}
+
 	// Patch delta offsets into AggInfos so executor can read delta payload by offset directly.
 	deltaOffsetByName := make(map[string]int, len(deltaColumns))
 	for _, dc := range deltaColumns {
 		deltaOffsetByName[dc.Name] = dc.Offset
 	}
 	outAggInfos := make([]AggInfo, 0, len(aggCols))
-	for _, ac := range aggCols {
+	for i, ac := range aggCols {
 		di := ac.info
+		deps := make([]int, 0, 3)
 		if ac.deltaName != "" {
 			off, ok := deltaOffsetByName[ac.deltaName]
 			if !ok {
 				return nil, errors.Errorf("internal error: delta column %s not found in output", ac.deltaName)
 			}
-			di.DeltaOffset = off
+			deps = append(deps, off)
 		}
+		switch di.Kind {
+		case AggSum:
+			countIdx, ok := sumToCountExprIdx[i]
+			if !ok {
+				return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
+			}
+			countAgg := aggCols[countIdx]
+			countDeltaOff, ok := deltaOffsetByName[countAgg.deltaName]
+			if !ok {
+				return nil, errors.Errorf("internal error: COUNT(expr) delta column %s not found for SUM at mv offset %d", countAgg.deltaName, di.MVOffset)
+			}
+			deps = append(deps, countAgg.info.MVOffset, countDeltaOff)
+		case AggMax, AggMin:
+			if removedDelta == nil {
+				return nil, errors.Errorf("internal error: %v at mv offset %d requires %s delta", di.Kind, di.MVOffset, removedRowsName)
+			}
+			deps = append(deps, removedDelta.Offset)
+		}
+		di.Dependencies = deps
 		outAggInfos = append(outAggInfos, di)
+	}
+	removedRowsDeltaOff := -1
+	if removedDelta != nil {
+		removedRowsDeltaOff = removedDelta.Offset
+	}
+	if err := validateAggDependencies(outAggInfos, len(mv.Columns), expectedLen, removedRowsDeltaOff); err != nil {
+		return nil, err
 	}
 
 	res := &BuildResult{
@@ -355,10 +390,9 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 			hasMinMax = true
 			aggCols = append(aggCols, aggColInfo{
 				info: AggInfo{
-					Kind:                 AggMax,
-					MVOffset:             i,
-					ArgColName:           argCol.Name.Name.L,
-					NeedsDetailOnRemoval: true,
+					Kind:       AggMax,
+					MVOffset:   i,
+					ArgColName: argCol.Name.Name.L,
 				},
 				deltaName: fmt.Sprintf("__mvmerge_max_in_added_%d", i),
 			})
@@ -370,10 +404,9 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 			hasMinMax = true
 			aggCols = append(aggCols, aggColInfo{
 				info: AggInfo{
-					Kind:                 AggMin,
-					MVOffset:             i,
-					ArgColName:           argCol.Name.Name.L,
-					NeedsDetailOnRemoval: true,
+					Kind:       AggMin,
+					MVOffset:   i,
+					ArgColName: argCol.Name.Name.L,
 				},
 				deltaName: fmt.Sprintf("__mvmerge_min_in_added_%d", i),
 			})
@@ -382,6 +415,95 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 		}
 	}
 	return aggCols, hasMinMax, nil
+}
+
+func mapSumToCountExprDependencies(aggCols []aggColInfo) (map[int]int, error) {
+	sumToCountIdx := make(map[int]int)
+	for i, ac := range aggCols {
+		if ac.info.Kind != AggSum {
+			continue
+		}
+		if ac.argExpr == nil {
+			return nil, errors.Errorf("SUM aggregate argument is nil at mv offset %d", ac.info.MVOffset)
+		}
+		matchIdx := -1
+		for j, cand := range aggCols {
+			if cand.info.Kind != AggCount || cand.argExpr == nil {
+				continue
+			}
+			if !exprStructuralEqual(ac.argExpr, cand.argExpr) {
+				continue
+			}
+			if matchIdx >= 0 {
+				return nil, errors.Errorf(
+					"SUM expression %s at mv offset %d has multiple matching COUNT(expr) dependencies (offsets %d and %d)",
+					restoreExpr(ac.argExpr), ac.info.MVOffset, aggCols[matchIdx].info.MVOffset, cand.info.MVOffset,
+				)
+			}
+			matchIdx = j
+		}
+		if matchIdx < 0 {
+			return nil, errors.Errorf(
+				"SUM expression %s at mv offset %d requires matching COUNT(expr) in SELECT list",
+				restoreExpr(ac.argExpr), ac.info.MVOffset,
+			)
+		}
+		sumToCountIdx[i] = matchIdx
+	}
+	return sumToCountIdx, nil
+}
+
+func validateAggDependencies(aggInfos []AggInfo, mvColumnCount, schemaLen, removedRowsDeltaOff int) error {
+	for _, ai := range aggInfos {
+		for _, dep := range ai.Dependencies {
+			if dep < 0 || dep >= schemaLen {
+				return errors.Errorf("invalid dependency offset %d for %v at mv offset %d", dep, ai.Kind, ai.MVOffset)
+			}
+		}
+		switch ai.Kind {
+		case AggCountStar, AggCount:
+			if len(ai.Dependencies) != 1 {
+				return errors.Errorf("%v at mv offset %d expects dependencies [self_delta], got %v", ai.Kind, ai.MVOffset, ai.Dependencies)
+			}
+			if ai.Dependencies[0] < mvColumnCount {
+				return errors.Errorf("%v at mv offset %d has invalid self_delta offset %d", ai.Kind, ai.MVOffset, ai.Dependencies[0])
+			}
+		case AggSum:
+			// [self_delta, matched_count_expr_mv, matched_count_expr_delta]
+			if len(ai.Dependencies) != 3 {
+				return errors.Errorf("SUM at mv offset %d expects dependencies [self_delta, count_expr_mv, count_expr_delta], got %v", ai.MVOffset, ai.Dependencies)
+			}
+			if ai.Dependencies[0] < mvColumnCount {
+				return errors.Errorf("SUM at mv offset %d has invalid self_delta offset %d", ai.MVOffset, ai.Dependencies[0])
+			}
+			if ai.Dependencies[1] < 0 || ai.Dependencies[1] >= mvColumnCount {
+				return errors.Errorf("SUM at mv offset %d has invalid count_expr_mv offset %d", ai.MVOffset, ai.Dependencies[1])
+			}
+			if ai.Dependencies[2] < mvColumnCount {
+				return errors.Errorf("SUM at mv offset %d has invalid count_expr_delta offset %d", ai.MVOffset, ai.Dependencies[2])
+			}
+		case AggMax, AggMin:
+			// [self_delta, removed_rows_delta]
+			if len(ai.Dependencies) != 2 {
+				return errors.Errorf("%v at mv offset %d expects dependencies [self_delta, removed_rows_delta], got %v", ai.Kind, ai.MVOffset, ai.Dependencies)
+			}
+			if ai.Dependencies[0] < mvColumnCount {
+				return errors.Errorf("%v at mv offset %d has invalid self_delta offset %d", ai.Kind, ai.MVOffset, ai.Dependencies[0])
+			}
+			if removedRowsDeltaOff < 0 {
+				return errors.Errorf("internal error: %v at mv offset %d requires removed_rows delta", ai.Kind, ai.MVOffset)
+			}
+			if ai.Dependencies[1] != removedRowsDeltaOff {
+				return errors.Errorf("%v at mv offset %d has invalid removed_rows_delta offset %d, expected %d", ai.Kind, ai.MVOffset, ai.Dependencies[1], removedRowsDeltaOff)
+			}
+		default:
+			return errors.Errorf("unsupported aggregate kind %v", ai.Kind)
+		}
+		if len(ai.Dependencies) == 0 {
+			return errors.Errorf("%v at mv offset %d has empty Dependencies", ai.Kind, ai.MVOffset)
+		}
+	}
+	return nil
 }
 
 func isCountStarOrOneArg(arg ast.ExprNode) bool {
@@ -409,6 +531,100 @@ func stripColumnQualifier(expr ast.ExprNode) ast.ExprNode {
 		return nil
 	}
 	expr.Accept(&columnQualifierStripper{})
+	return stripAllParentheses(expr)
+}
+
+func exprStructuralEqual(lhs, rhs ast.ExprNode) bool {
+	lhs = stripParentheses(lhs)
+	rhs = stripParentheses(rhs)
+	return reflectStructuralEqual(reflect.ValueOf(lhs), reflect.ValueOf(rhs))
+}
+
+func stripParentheses(expr ast.ExprNode) ast.ExprNode {
+	for {
+		p, ok := expr.(*ast.ParenthesesExpr)
+		if !ok || p == nil || p.Expr == nil {
+			return expr
+		}
+		expr = p.Expr
+	}
+}
+
+func reflectStructuralEqual(lhs, rhs reflect.Value) bool {
+	if !lhs.IsValid() || !rhs.IsValid() {
+		return !lhs.IsValid() && !rhs.IsValid()
+	}
+	if lhs.Type() != rhs.Type() {
+		return false
+	}
+
+	switch lhs.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if lhs.IsNil() || rhs.IsNil() {
+			return lhs.IsNil() == rhs.IsNil()
+		}
+		return reflectStructuralEqual(lhs.Elem(), rhs.Elem())
+	case reflect.Struct:
+		typ := lhs.Type()
+		for i := 0; i < lhs.NumField(); i++ {
+			f := typ.Field(i)
+			// Ignore unexported fields (e.g. parser location/cache fields).
+			if f.PkgPath != "" {
+				continue
+			}
+			if !reflectStructuralEqual(lhs.Field(i), rhs.Field(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice, reflect.Array:
+		if lhs.Len() != rhs.Len() {
+			return false
+		}
+		for i := 0; i < lhs.Len(); i++ {
+			if !reflectStructuralEqual(lhs.Index(i), rhs.Index(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map:
+		if lhs.IsNil() || rhs.IsNil() {
+			return lhs.IsNil() == rhs.IsNil()
+		}
+		return reflect.DeepEqual(lhs.Interface(), rhs.Interface())
+	case reflect.Func:
+		return lhs.IsNil() && rhs.IsNil()
+	default:
+		if lhs.CanInterface() && rhs.CanInterface() {
+			return reflect.DeepEqual(lhs.Interface(), rhs.Interface())
+		}
+		return false
+	}
+}
+
+func restoreExpr(expr ast.ExprNode) string {
+	if expr == nil {
+		return "<nil>"
+	}
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := expr.Restore(ctx); err != nil {
+		return fmt.Sprintf("<restore error: %v>", err)
+	}
+	return sb.String()
+}
+
+func stripAllParentheses(expr ast.ExprNode) ast.ExprNode {
+	if expr == nil {
+		return nil
+	}
+	n, ok := expr.Accept(&parenthesesStripper{})
+	if !ok {
+		return expr
+	}
+	if e, ok := n.(ast.ExprNode); ok {
+		return e
+	}
 	return expr
 }
 
@@ -679,6 +895,19 @@ func (*columnQualifierStripper) Enter(n ast.Node) (ast.Node, bool) {
 }
 
 func (*columnQualifierStripper) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
+}
+
+type parenthesesStripper struct{}
+
+func (*parenthesesStripper) Enter(n ast.Node) (ast.Node, bool) {
+	return n, false
+}
+
+func (*parenthesesStripper) Leave(n ast.Node) (ast.Node, bool) {
+	if p, ok := n.(*ast.ParenthesesExpr); ok && p.Expr != nil {
+		return p.Expr, true
+	}
 	return n, true
 }
 

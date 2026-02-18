@@ -108,11 +108,12 @@ func TestBuildCountSum(t *testing.T) {
 		Columns: []*model.ColumnInfo{
 			mkCol(1, "x", 0, mysql.TypeLong),
 			mkCol(2, "cnt", 1, mysql.TypeLonglong),
-			mkCol(3, "s", 2, mysql.TypeLonglong),
+			mkCol(3, "cnt_b", 2, mysql.TypeLonglong),
+			mkCol(4, "s", 3, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
 			BaseTableIDs: []int64{baseID},
-			SQLContent:   "select a, count(1), sum(b) from t group by a",
+			SQLContent:   "select a, count(1), count(b), sum(b) from t group by a",
 		},
 	}
 
@@ -133,22 +134,27 @@ func TestBuildCountSum(t *testing.T) {
 
 	require.NotEmpty(t, res.DeltaColumns)
 	require.Contains(t, deltaColNames(res.DeltaColumns), deltaCntStarName)
-	require.Contains(t, deltaColNames(res.DeltaColumns), "__mvmerge_delta_sum_2")
+	require.Contains(t, deltaColNames(res.DeltaColumns), "__mvmerge_delta_cnt_2")
+	require.Contains(t, deltaColNames(res.DeltaColumns), "__mvmerge_delta_sum_3")
 
-	// COUNT(*) and SUM(b) should both reference delta columns.
-	var hasCount, hasSum bool
+	var hasCountStar, hasCountExpr, hasSum bool
 	for _, ai := range res.AggInfos {
 		switch ai.Kind {
 		case mvmerge.AggCountStar:
-			hasCount = true
-			require.GreaterOrEqual(t, ai.DeltaOffset, res.MVColumnCount)
+			hasCountStar = true
+			requireDependencies(t, ai, []int{4})
 		case mvmerge.AggSum:
 			hasSum = true
 			require.Equal(t, "b", ai.ArgColName)
-			require.GreaterOrEqual(t, ai.DeltaOffset, res.MVColumnCount)
+			requireDependencies(t, ai, []int{6, 2, 5})
+		case mvmerge.AggCount:
+			hasCountExpr = true
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{5})
 		}
 	}
-	require.True(t, hasCount)
+	require.True(t, hasCountStar)
+	require.True(t, hasCountExpr)
 	require.True(t, hasSum)
 
 	item, ok := is.TableItemByID(mv.ID)
@@ -158,9 +164,11 @@ func TestBuildCountSum(t *testing.T) {
 	requireMergePlanOutputNames(t, res, []fieldNameInfo{
 		{Pos: 0, Col: "x"},
 		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
-		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
-		{Pos: 3, Tbl: deltaTableAlias, Col: deltaCntStarName},
-		{Pos: 4, Tbl: deltaTableAlias, Col: "__mvmerge_delta_sum_2"},
+		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
+		{Pos: 3, DB: mvDBName, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
+		{Pos: 4, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 5, Tbl: deltaTableAlias, Col: "__mvmerge_delta_cnt_2"},
+		{Pos: 6, Tbl: deltaTableAlias, Col: "__mvmerge_delta_sum_3"},
 	})
 }
 
@@ -207,7 +215,7 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 		},
 		MaterializedView: &model.MaterializedViewInfo{
 			BaseTableIDs: []int64{baseID},
-			SQLContent:   "select a, count(b), sum(a+b) from t group by a",
+			SQLContent:   "select a, count(a+b), sum((a+b)) from t group by a",
 		},
 	}
 
@@ -234,12 +242,12 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 		switch ai.Kind {
 		case mvmerge.AggCount:
 			hasCount = true
-			require.Equal(t, "b", ai.ArgColName)
-			require.GreaterOrEqual(t, ai.DeltaOffset, res.MVColumnCount)
+			require.Empty(t, ai.ArgColName)
+			requireDependencies(t, ai, []int{4})
 		case mvmerge.AggSum:
 			hasSum = true
 			require.Empty(t, ai.ArgColName)
-			require.GreaterOrEqual(t, ai.DeltaOffset, res.MVColumnCount)
+			requireDependencies(t, ai, []int{5, 1, 4})
 		}
 	}
 	require.True(t, hasCount)
@@ -325,11 +333,14 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	for _, ai := range res.AggInfos {
 		if ai.Kind == mvmerge.AggMax {
 			hasMax = true
-			require.True(t, ai.NeedsDetailOnRemoval)
+			requireDependencies(t, ai, []int{5, 7})
 		}
 		if ai.Kind == mvmerge.AggMin {
 			hasMin = true
-			require.True(t, ai.NeedsDetailOnRemoval)
+			requireDependencies(t, ai, []int{6, 7})
+		}
+		if ai.Kind == mvmerge.AggCountStar {
+			requireDependencies(t, ai, []int{4})
 		}
 	}
 	require.True(t, hasMax)
@@ -349,6 +360,66 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 		{Pos: 6, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_added_3"},
 		{Pos: 7, Tbl: deltaTableAlias, Col: removedRowsName},
 	})
+}
+
+func TestBuildSumWithoutCountExpr(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(101)
+	mlogID := int64(202)
+	mvID := int64(303)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_sum_only_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "s", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	_, err := mvmerge.Build(
+		context.Background(),
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		optimizeForTest(sctx, is),
+	)
+	require.ErrorContains(t, err, "requires matching COUNT(expr)")
 }
 
 func TestBuildMissingOldNew(t *testing.T) {
@@ -425,6 +496,11 @@ func deltaColNames(cols []mvmerge.DeltaColumn) []string {
 		out = append(out, c.Name)
 	}
 	return out
+}
+
+func requireDependencies(t *testing.T, ai mvmerge.AggInfo, expected []int) {
+	t.Helper()
+	require.Equal(t, expected, ai.Dependencies)
 }
 
 type fieldNameInfo struct {
