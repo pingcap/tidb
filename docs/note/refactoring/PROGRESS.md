@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (find_best_task.go decomposition)
+Last updated: 2026-02-18 (exhaust_physical_plans.go decomposition)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -166,6 +166,13 @@ Last updated: 2026-02-18 (find_best_task.go decomposition)
   - [x] `find_best_task_property.go` (1,056 lines) - skyline pruning, candidate comparison, property matching
   - [x] `find_best_task_scan.go` (915 lines) - index/table/point-get scan conversion
 
+- [x] **planner/core/exhaust_physical_plans.go decomposition** - Extract MPP join, hints, and index join inner
+  - File: `pkg/planner/core/exhaust_physical_plans.go` (2,892 → 1,399 lines, 52% reduction)
+  - Target: Focused files per functional area
+  - [x] `exhaust_physical_plans_index_join_inner.go` (741 lines) - inner side task building for index joins
+  - [x] `exhaust_physical_plans_hints.go` (382 lines) - hint recording, prefer-task logic, force/filter hints
+  - [x] `exhaust_physical_plans_mpp_join.go` (367 lines) - MPP/TiFlash BCJ and shuffle join enumeration
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -223,3 +230,4 @@ Last updated: 2026-02-18 (find_best_task.go decomposition)
 - [x] **executor/simple.go decomposition** - 2026-02-18 - Split into 2 focused files: `simple_user.go` (1,296), `simple_role.go` (917). Reduced simple.go from 3,198 to 1,064 lines (67% reduction).
 - [x] **executor/show.go decomposition** - 2026-02-18 - Split into 2 focused files: `show_create.go` (714), `show_region.go` (771). Reduced show.go from 2,825 to 1,412 lines (50% reduction).
 - [x] **planner/core/find_best_task.go decomposition** - 2026-02-18 - Split into 2 focused files: `find_best_task_property.go` (1,056), `find_best_task_scan.go` (915). Reduced find_best_task.go from 3,030 to 1,118 lines (63% reduction).
+- [x] **planner/core/exhaust_physical_plans.go decomposition** - 2026-02-18 - Split into 3 focused files: `exhaust_physical_plans_index_join_inner.go` (741), `exhaust_physical_plans_hints.go` (382), `exhaust_physical_plans_mpp_join.go` (367). Reduced exhaust_physical_plans.go from 2,892 to 1,399 lines (52% reduction).
