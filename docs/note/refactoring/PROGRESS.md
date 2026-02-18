@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (show.go decomposition)
+Last updated: 2026-02-18 (find_best_task.go decomposition)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -160,6 +160,12 @@ Last updated: 2026-02-18 (show.go decomposition)
   - [x] `show_create.go` (714 lines) - SHOW CREATE TABLE/VIEW/DATABASE/SEQUENCE/POLICY/RESOURCE GROUP
   - [x] `show_region.go` (771 lines) - regions, distributions, import jobs, session states, builtins
 
+- [x] **planner/core/find_best_task.go decomposition** - Extract property matching and scan conversion
+  - File: `pkg/planner/core/find_best_task.go` (3,030 → 1,118 lines, 63% reduction)
+  - Target: Focused files per functional area
+  - [x] `find_best_task_property.go` (1,056 lines) - skyline pruning, candidate comparison, property matching
+  - [x] `find_best_task_scan.go` (915 lines) - index/table/point-get scan conversion
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -216,3 +222,4 @@ Last updated: 2026-02-18 (show.go decomposition)
 - [x] **ddl/index.go decomposition** - 2026-02-18 - Split into 4 focused files: `index_dist_task.go` (418), `index_backfill_worker.go` (619), `index_columnar.go` (261), `index_analyze.go` (289). Reduced index.go from 4,140 to 2,691 lines (35% reduction).
 - [x] **executor/simple.go decomposition** - 2026-02-18 - Split into 2 focused files: `simple_user.go` (1,296), `simple_role.go` (917). Reduced simple.go from 3,198 to 1,064 lines (67% reduction).
 - [x] **executor/show.go decomposition** - 2026-02-18 - Split into 2 focused files: `show_create.go` (714), `show_region.go` (771). Reduced show.go from 2,825 to 1,412 lines (50% reduction).
+- [x] **planner/core/find_best_task.go decomposition** - 2026-02-18 - Split into 2 focused files: `find_best_task_property.go` (1,056), `find_best_task_scan.go` (915). Reduced find_best_task.go from 3,030 to 1,118 lines (63% reduction).
