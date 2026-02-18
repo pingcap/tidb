@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (partition.go + infoschema_reader.go decomposition)
+Last updated: 2026-02-18 (index.go decomposition)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -140,6 +140,14 @@ Last updated: 2026-02-18 (partition.go + infoschema_reader.go decomposition)
   - [x] `infoschema_reader_tiflash.go` (277 lines) - TiFlashSystemTableRetriever
   - [x] `infoschema_reader_resource.go` (569 lines) - attributes, policies, resources, keywords, plan cache
 
+- [x] **ddl/index.go decomposition** - Extract index operation handlers
+  - File: `pkg/ddl/index.go` (4,140 → 2,691 lines, 35% reduction)
+  - Target: Focused files per index operation area
+  - [x] `index_dist_task.go` (418 lines) - distributed task execution, param tuning, row size estimation
+  - [x] `index_backfill_worker.go` (619 lines) - add-index txn worker, batch unique check, ingest write
+  - [x] `index_columnar.go` (261 lines) - TiFlash columnar index creation and progress monitoring
+  - [x] `index_analyze.go` (289 lines) - post-index-creation analyze workflow
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -193,3 +201,4 @@ Last updated: 2026-02-18 (partition.go + infoschema_reader.go decomposition)
 - [x] **logical_plan_builder.go decomposition** - 2026-02-18 - Split into 6 focused files: `logical_plan_builder_window.go` (753), `logical_plan_builder_dml.go` (903), `logical_plan_builder_cte.go` (368), `logical_plan_builder_setops.go` (448), `logical_plan_builder_join.go` (394), `logical_plan_builder_datasource.go` (804). Reduced logical_plan_builder.go from 7,362 to 3,897 lines (47% reduction).
 - [x] **ddl/partition.go decomposition** - 2026-02-18 - Split into 3 focused files: `partition_reorganize.go` (1,185), `partition_exchange.go` (725), `partition_truncate.go` (411). Reduced partition.go from 5,358 to 3,155 lines (41% reduction).
 - [x] **executor/infoschema_reader.go decomposition** - 2026-02-18 - Split into 3 focused files: `infoschema_reader_lock.go` (492), `infoschema_reader_tiflash.go` (277), `infoschema_reader_resource.go` (569). Reduced infoschema_reader.go from 4,213 to 2,990 lines (29% reduction).
+- [x] **ddl/index.go decomposition** - 2026-02-18 - Split into 4 focused files: `index_dist_task.go` (418), `index_backfill_worker.go` (619), `index_columnar.go` (261), `index_analyze.go` (289). Reduced index.go from 4,140 to 2,691 lines (35% reduction).
