@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/mvmerge"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -562,6 +563,52 @@ func (p *Delete) MemoryUsage() (sum int64) {
 	}
 	for _, colInfo := range p.TblColPosInfos {
 		sum += colInfo.MemoryUsage()
+	}
+	return
+}
+
+// MVMerge represents a fast-refresh merge plan for materialized view maintenance.
+// It consumes `Source` rows (MV snapshot + delta payload) and applies them to the MV table.
+type MVMerge struct {
+	baseSchemaProducer
+
+	// Source is the merge-source physical plan. Its row layout is:
+	//  1. MV output columns first (count = MVColumnCount)
+	//  2. delta columns after MV columns
+	Source base.PhysicalPlan
+
+	// SourceOutputNames matches the result schema of Source (MV columns first, then delta columns).
+	// Physical plans may not keep output names, so they are carried explicitly for executor-side usage/debug.
+	SourceOutputNames types.NameSlice `plan-cache-clone:"shallow"`
+
+	MVTableID   int64
+	BaseTableID int64
+	MLogTableID int64
+
+	MVColumnCount     int
+	GroupKeyMVOffsets []int `plan-cache-clone:"shallow"`
+	CountStarMVOffset int
+
+	AggInfos []mvmerge.AggInfo `plan-cache-clone:"shallow"`
+
+	RemovedRowCountDelta *mvmerge.DeltaColumn `plan-cache-clone:"shallow"`
+}
+
+// MemoryUsage returns the memory usage of MVMerge.
+func (p *MVMerge) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfInt64*3 + size.SizeOfInt*2 + size.SizeOfSlice*2 + size.SizeOfPointer
+	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
+	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
+	sum += int64(cap(p.SourceOutputNames)) * size.SizeOfPointer
+	for _, name := range p.SourceOutputNames {
+		sum += name.MemoryUsage()
+	}
+	if p.Source != nil {
+		sum += p.Source.MemoryUsage()
 	}
 	return
 }

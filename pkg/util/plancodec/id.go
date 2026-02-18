@@ -83,6 +83,8 @@ const (
 	TypeUpdate = "Update"
 	// TypeDelete is the type of Delete.
 	TypeDelete = "Delete"
+	// TypeMVMerge is the type of MVMerge.
+	TypeMVMerge = "MVMerge"
 	// TypeIndexLookUp is the type of IndexLookUp.
 	TypeIndexLookUp = "IndexLookUp"
 	// TypeTableReader is the type of TableReader.
@@ -204,6 +206,7 @@ const (
 	typeExpandID              int = 58
 	typeImportIntoID          int = 59
 	TypeScalarSubQueryID      int = 60
+	typeMVMergeID             int = 61
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -269,6 +272,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeUpdateID
 	case TypeDelete:
 		return typeDeleteID
+	case TypeMVMerge:
+		return typeMVMergeID
 	case TypeIndexLookUp:
 		return typeIndexLookUpID
 	case TypeTableReader:
@@ -397,6 +402,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeUpdate
 	case typeDeleteID:
 		return TypeDelete
+	case typeMVMergeID:
+		return TypeMVMerge
 	case typeIndexLookUpID:
 		return TypeIndexLookUp
 	case typeTableReaderID:
