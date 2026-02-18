@@ -126,7 +126,7 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource, underLim
 
 	// Generate PK filter conditions and track which indexes produced filters.
 	newConds := make([]expression.Expression, 0, len(qualifyingIndexes)*2)
-	var usedIndexes []*util.AccessPath
+	usedIndexes := make([]*util.AccessPath, 0, len(qualifyingIndexes))
 	for _, idxPath := range qualifyingIndexes {
 		eqConds := checkIndexQualifiesForPKFilter(ds, idxPath)
 		if eqConds == nil {
@@ -400,8 +400,21 @@ func buildPKFilterConditions(ctx context.Context, ds *logicalop.DataSource, idxP
 func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, eqConds []expression.Expression, aggFuncName string) (*expression.Constant, error) {
 	sctx := ds.SCtx()
 
-	// Clone the DataSource, ensuring the PK column is in the schema
+	// Clone the DataSource with the equality conditions on PushedDownConds
+	// (needed by stats/ranger for access condition computation).
 	clonedDS := cloneDataSourceForPKFilter(ds, idxPath, pkCol, eqConds)
+
+	// Also create a LogicalSelection carrying the equality conditions.
+	// MaxMinEliminate's checkColCanUseIndex traverses LogicalSelection nodes
+	// to collect conditions — it does NOT look at DataSource.PushedDownConds.
+	// Without a Selection, MaxMinEliminate can't verify the index can provide
+	// ordering after the equality prefix, resulting in IndexFullScan instead
+	// of IndexRangeScan.
+	sel := logicalop.LogicalSelection{
+		Conditions: make([]expression.Expression, len(eqConds)),
+	}.Init(sctx, ds.QueryBlockOffset())
+	copy(sel.Conditions, eqConds)
+	sel.SetChildren(clonedDS)
 
 	// Build the aggregation function
 	aggFunc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), aggFuncName, []expression.Expression{pkCol.Clone()}, false)
@@ -420,7 +433,7 @@ func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *
 		RetType:  aggFunc.RetTp,
 	}
 	agg.SetSchema(expression.NewSchema(aggCol))
-	agg.SetChildren(clonedDS)
+	agg.SetChildren(sel)
 
 	// Prune columns on the sub-plan
 	_, err = agg.PruneColumns([]*expression.Column{aggCol})
@@ -431,12 +444,21 @@ func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *
 	// Optimize the sub-plan to get a physical plan
 	nthPlanBackup := sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
 	sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
-	// Do NOT include FlagPredicatePushDown: PPD would clear the conditions
-	// we placed on the cloned DataSource (since the agg parent has none to push).
+	// Temporarily disable AllowGeneratePKFilter to prevent infinite recursion:
+	// adjustOptimizationFlags always adds FlagGeneratePKFilter, and after
+	// MaxMinEliminate adds a Limit node, the sub-plan's DataSource would
+	// pass all checks in tryGeneratePKFilter, creating another sub-plan, etc.
+	oldPKFilter := sctx.GetSessionVars().AllowGeneratePKFilter
+	sctx.GetSessionVars().AllowGeneratePKFilter = false
+	// Do NOT include FlagPredicatePushDown: conditions are already set on
+	// both the Selection (for MaxMinEliminate) and PushedDownConds (for
+	// stats/ranger). PPD would trigger constant propagation which can cause
+	// stack overflow with cast-wrapped expressions.
 	// Include FlagMaxMinEliminate so the optimizer can transform MIN/MAX(pk)
 	// into a single-row ordered index scan instead of a full aggregation.
 	optFlag := rule.FlagBuildKeyInfo | rule.FlagPruneColumns | rule.FlagMaxMinEliminate
 	physicalPlan, _, err := DoOptimize(ctx, sctx, optFlag, agg)
+	sctx.GetSessionVars().AllowGeneratePKFilter = oldPKFilter
 	sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 	if err != nil {
 		return nil, err
@@ -449,7 +471,7 @@ func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *
 	if err != nil {
 		return nil, err
 	}
-	if row == nil || len(row) == 0 || row[0].IsNull() {
+	if len(row) == 0 || row[0].IsNull() {
 		return nil, nil // no matching rows
 	}
 
