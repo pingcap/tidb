@@ -1,0 +1,415 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package hparser
+
+import (
+	"github.com/pingcap/tidb/pkg/parser/ast"
+)
+
+// ---------------------------------------------------------------------------
+// SHOW statement
+// ---------------------------------------------------------------------------
+
+// parseShowStmt parses SHOW variants.
+func (p *HandParser) parseShowStmt() ast.StmtNode {
+	p.expect(tokShow)
+
+	stmt := Alloc[ast.ShowStmt](p.arena)
+
+	switch p.peek().Tp {
+	case tokBinary:
+		// SHOW BINARY LOG STATUS
+		p.next()
+		if p.peek().IsKeyword("LOG") {
+			p.next()
+			if p.peekKeyword(tokStatus, "STATUS") {
+				p.next()
+				stmt.Tp = ast.ShowBinlogStatus
+				return stmt
+			}
+		}
+		return p.showSyntaxError()
+
+	case tokReplica:
+		// SHOW REPLICA STATUS
+		p.next()
+		if p.peekKeyword(tokStatus, "STATUS") {
+			p.next()
+			stmt.Tp = ast.ShowReplicaStatus
+			return stmt
+		}
+		return p.showSyntaxError()
+
+	case tokTables:
+		p.next()
+		stmt.Tp = ast.ShowTables
+		stmt.DBName = p.parseShowDatabaseNameOpt()
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+
+	case tokDistribution:
+		p.next()
+		isSingular := false
+		if _, ok := p.accept(tokJobs); !ok {
+			p.expect(tokJob)
+			isSingular = true
+		}
+		stmt.Tp = ast.ShowDistributionJobs
+
+		if isSingular {
+			val := p.parseExpression(precNone)
+			if val != nil {
+				if v, ok := val.(ast.ValueExpr); ok {
+					if i, ok := v.GetValue().(int64); ok {
+						stmt.DistributionJobID = &i
+					}
+				}
+			}
+		}
+
+		if stmt.DistributionJobID == nil {
+			p.parseShowLikeOrWhere(stmt)
+		}
+		return stmt
+
+	case tokFull:
+		p.next()
+		stmt.Full = true
+		switch p.peek().Tp {
+		case tokTables:
+			p.next()
+			stmt.Tp = ast.ShowTables
+			stmt.DBName = p.parseShowDatabaseNameOpt()
+			p.parseShowLikeOrWhere(stmt)
+			return stmt
+		case tokColumns, tokFields:
+			p.next()
+			stmt.Tp = ast.ShowColumns
+			p.parseShowTableClause(stmt)
+			p.parseShowLikeOrWhere(stmt)
+			return stmt
+		case tokProcesslist:
+			p.next()
+			stmt.Tp = ast.ShowProcessList
+			return stmt
+		default:
+			return p.showSyntaxError()
+		}
+
+	case tokColumns, tokFields:
+		p.next()
+		stmt.Tp = ast.ShowColumns
+		p.parseShowTableClause(stmt)
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+
+	case tokCreate:
+		p.next()
+		if result := p.parseShowCreate(); result != nil {
+			return result
+		}
+		return p.showSyntaxError()
+
+	case tokVariables, tokStatus, tokWarnings:
+		switch p.next().Tp {
+		case tokVariables:
+			stmt.Tp = ast.ShowVariables
+		case tokStatus:
+			stmt.Tp = ast.ShowStatus
+		default:
+			stmt.Tp = ast.ShowWarnings
+		}
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+
+	case tokGlobal:
+		p.next()
+		return p.parseShowScopedStmt(stmt, true)
+
+	case tokSession:
+		p.next()
+		return p.parseShowScopedStmt(stmt, false)
+
+	case tokProcesslist:
+		p.next()
+		stmt.Tp = ast.ShowProcessList
+		return stmt
+
+	case tokIndex, tokKeys:
+		// SHOW {INDEX|KEYS|INDEXES} {FROM|IN} tbl [{FROM|IN} db] [WHERE expr]
+		p.next()
+		p.parseShowIndexStmt(stmt)
+		return stmt
+
+	case tokCharacter:
+		// SHOW CHARACTER SET [LIKE|WHERE]
+		p.next()
+		p.expect(tokSet)
+		stmt.Tp = ast.ShowCharset
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+
+	case tokProcedure, tokFunction, tokAnalyze:
+		// SHOW {PROCEDURE|FUNCTION|ANALYZE} STATUS [LIKE|WHERE]
+		var tp ast.ShowStmtType
+		switch p.next().Tp {
+		case tokProcedure:
+			tp = ast.ShowProcedureStatus
+		case tokFunction:
+			tp = ast.ShowFunctionStatus
+		default:
+			tp = ast.ShowAnalyzeStatus
+		}
+		if p.peekKeyword(tokStatus, "STATUS") {
+			p.next()
+			stmt.Tp = tp
+			p.parseShowLikeOrWhere(stmt)
+			return stmt
+		}
+		return p.showSyntaxError()
+
+	case tokCancel:
+		return p.parseCancelStmt()
+	case tokTraffic:
+		return p.parseShowTrafficStmt()
+
+	case tokImport:
+		return p.parseShowImportStmt()
+
+	case tokDatabase, tokDatabases:
+		// SHOW DATABASES
+		p.next()
+		stmt.Tp = ast.ShowDatabases
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+
+	case tokPlacement:
+		p.next()
+		return p.parseShowPlacement(stmt)
+
+	case tokTable:
+		p.next()
+		if result := p.parseShowTable(stmt); result != nil {
+			return result
+		}
+		return p.showSyntaxError()
+
+	case tokGrants:
+		p.next()
+		return p.parseShowGrants()
+
+	case tokOpen:
+		p.next()
+		p.accept(tokTables)
+		stmt.Tp = ast.ShowOpenTables
+		stmt.DBName = p.parseShowDatabaseNameOpt()
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+
+	case tokBuiltins:
+		p.next()
+		stmt.Tp = ast.ShowBuiltins
+		return stmt
+
+	default:
+		if result := p.parseShowIdentBased(stmt); result != nil {
+			return result
+		}
+		return p.showSyntaxError()
+	}
+}
+
+// showSyntaxError generates a syntax error at the current position and returns nil.
+// Used when SHOW has been consumed but the following tokens don't form a valid SHOW statement.
+func (p *HandParser) showSyntaxError() ast.StmtNode {
+	pk := p.peek()
+	p.errorNear(pk.Offset+len(pk.Lit), pk.Offset)
+	return nil
+}
+
+// parseShowPlacement handles: SHOW PLACEMENT [LABELS | FOR {DATABASE|TABLE|PARTITION} ...] [LIKE|WHERE]
+// Caller already consumed SHOW and PLACEMENT tokens.
+func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
+	// SHOW PLACEMENT LABELS
+	if p.peek().IsKeyword("LABELS") {
+		p.next()
+		stmt.Tp = ast.ShowPlacementLabels
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+	}
+	stmt.Tp = ast.ShowPlacement
+
+	if _, ok := p.accept(tokFor); ok {
+		if _, ok := p.accept(tokDatabase); ok {
+			if tok, ok := p.expect(tokIdentifier); ok {
+				stmt.DBName = tok.Lit
+			} else {
+				return nil
+			}
+		} else if _, ok := p.accept(tokTable); ok {
+			stmt.Table = p.parseTableName()
+			if _, ok := p.accept(tokPartition); ok {
+				if tok, ok := p.expect(tokIdentifier); ok {
+					stmt.Partition = ast.NewCIStr(tok.Lit)
+				} else {
+					return nil
+				}
+			}
+		} else {
+			p.error(p.peek().Offset, "expected DATABASE, TABLE after FOR")
+			return nil
+		}
+		// After FOR clause, only LIKE/WHERE or statement end is valid.
+		// Reject unexpected trailing tokens like "TABLE tb1" after "DATABASE db1".
+		next := p.peek().Tp
+		if next != ';' && next != EOF && next != tokLike && next != tokWhere {
+			p.error(p.peek().Offset, "unexpected token after SHOW PLACEMENT FOR clause")
+			return nil
+		}
+	}
+
+	p.parseShowLikeOrWhere(stmt)
+	return stmt
+}
+
+// parseShowTable handles: SHOW TABLE {STATUS|t [PARTITION ...] [INDEX ...] {REGIONS|NEXT_ROW_ID|DISTRIBUTIONS}}
+// Caller already consumed SHOW and TABLE tokens.
+func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
+	// SHOW TABLE STATUS [FROM db] [LIKE ...]
+	if p.peekKeyword(tokStatus, "STATUS") {
+		p.next()
+		stmt.Tp = ast.ShowTableStatus
+		stmt.DBName = p.parseShowDatabaseNameOpt()
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+	}
+	table := p.parseTableName()
+	stmt.Table = table
+
+	// Optional PARTITION (p1, p2, ...)
+	if _, ok := p.accept(tokPartition); ok {
+		p.expect('(')
+		for {
+			tok, ok := p.accept(tokIdentifier)
+			if !ok {
+				p.error(p.peek().Offset, "expected partition name")
+				return nil
+			}
+			table.PartitionNames = append(table.PartitionNames, ast.NewCIStr(tok.Lit))
+
+			if _, ok := p.accept(','); !ok {
+				break
+			}
+		}
+		p.expect(')')
+	}
+
+	// Optional INDEX idx
+	if _, ok := p.accept(tokIndex); ok {
+		if tok, ok := p.accept(tokIdentifier); ok {
+			stmt.IndexName = ast.NewCIStr(tok.Lit)
+		} else {
+			p.error(p.peek().Offset, "expected index name")
+			return nil
+		}
+	}
+
+	// Check for REGIONS, NEXT_ROW_ID, or DISTRIBUTIONS
+	switch p.peek().Tp {
+	case tokRegions:
+		stmt.Tp = ast.ShowRegions
+	case tokNextRowID:
+		stmt.Tp = ast.ShowTableNextRowId
+	case tokDistributions:
+		stmt.Tp = ast.ShowDistributions
+	}
+	if stmt.Tp != 0 {
+		p.next()
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+	}
+	// Fallback: Check for TABLE STATUS
+	if p.peekKeyword(tokStatus, "STATUS") {
+		p.next()
+		stmt.Tp = ast.ShowTableStatus
+		stmt.Table = nil
+		stmt.DBName = p.parseShowDatabaseNameOpt()
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
+	}
+	p.error(p.peek().Offset, "expected REGIONS or NEXT_ROW_ID after SHOW TABLE")
+	return nil
+}
+
+func (p *HandParser) parseShowDatabaseNameOpt() string {
+	if name, ok := p.acceptFromOrIn(); ok {
+		return name
+	}
+	return ""
+}
+
+// parseShowTableClause parses: FROM|IN tablename [FROM|IN dbname]
+func (p *HandParser) parseShowTableClause(stmt *ast.ShowStmt) {
+	if _, ok := p.acceptAny(tokFrom, tokIn); ok {
+		stmt.Table = p.parseTableName()
+		stmt.DBName = p.parseShowDatabaseNameOpt()
+	}
+}
+
+// parseShowIndexStmt parses the common body of SHOW {INDEX|KEYS|INDEXES}:
+// {FROM|IN} tbl [{FROM|IN} db] [WHERE expr]
+func (p *HandParser) parseShowIndexStmt(stmt *ast.ShowStmt) {
+	stmt.Tp = ast.ShowIndex
+	p.expectFromOrIn()
+	stmt.Table = p.parseTableName()
+	if dbName, ok := p.acceptFromOrIn(); ok {
+		stmt.Table.Schema = ast.NewCIStr(dbName)
+	}
+	p.parseShowLikeOrWhere(stmt)
+}
+
+// parseShowLikeOrWhere parses optional: [LIKE 'pat' | WHERE expr]
+// parseShowScopedStmt handles SHOW {GLOBAL|SESSION} {VARIABLES|STATUS|BINDINGS} [LIKE|WHERE].
+func (p *HandParser) parseShowScopedStmt(stmt *ast.ShowStmt, isGlobal bool) ast.StmtNode {
+	stmt.GlobalScope = isGlobal
+	switch p.peek().Tp {
+	case tokVariables:
+		p.next()
+		stmt.Tp = ast.ShowVariables
+	case tokStatus:
+		p.next()
+		stmt.Tp = ast.ShowStatus
+	default:
+		if p.peek().IsKeyword("BINDINGS") {
+			p.next()
+			stmt.Tp = ast.ShowBindings
+		} else {
+			return nil
+		}
+	}
+	p.parseShowLikeOrWhere(stmt)
+	return stmt
+}
+
+func (p *HandParser) parseShowLikeOrWhere(stmt *ast.ShowStmt) {
+	if _, ok := p.accept(tokLike); ok {
+		pattern := Alloc[ast.PatternLikeOrIlikeExpr](p.arena)
+		pattern.Pattern = p.parseExpression(precNone)
+		pattern.IsLike = true
+		pattern.Escape = '\\'
+		stmt.Pattern = pattern
+	} else if _, ok := p.accept(tokWhere); ok {
+		stmt.Where = p.parseExpression(precNone)
+	}
+}
