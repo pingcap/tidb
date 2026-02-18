@@ -12,22 +12,62 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvmerge
+package mvmerge_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/mvmerge"
 	_ "github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
+
+const (
+	deltaTableAlias = "delta"
+	mvTableAlias    = "mv"
+
+	deltaCntStarName = "__mvmerge_delta_cnt_star"
+	removedRowsName  = "__mvmerge_removed_rows"
+)
+
+func optimizeForTest(sctx sessionctx.Context, is infoschema.InfoSchema) mvmerge.SelectOptimizer {
+	return func(ctx context.Context, sel *ast.SelectStmt) (corebase.PhysicalPlan, types.NameSlice, error) {
+		nodeW := resolve.NewNodeW(sel)
+		err := core.Preprocess(ctx, sctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		if err != nil {
+			return nil, nil, err
+		}
+		builder, _ := core.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+		p, err := builder.Build(ctx, nodeW)
+		if err != nil {
+			return nil, nil, err
+		}
+		names := p.OutputNames()
+		logic, ok := p.(corebase.LogicalPlan)
+		if !ok {
+			return nil, nil, fmt.Errorf("expected logical plan from select, got %T", p)
+		}
+		pp, _, err := core.DoOptimize(ctx, sctx.GetPlanCtx(), builder.GetOptFlag(), logic)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pp, names, nil
+	}
+}
 
 func TestBuildCountSum(t *testing.T) {
 	sctx := core.MockContext()
@@ -79,7 +119,14 @@ func TestBuildCountSum(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := Build(context.Background(), sctx, is, mv, BuildOptions{FromTS: 10, ToTS: 20})
+	res, err := mvmerge.Build(
+		context.Background(),
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		optimizeForTest(sctx, is),
+	)
 	require.NoError(t, err)
 	require.NotNil(t, res.Plan)
 	require.Equal(t, len(mv.Columns), res.MVColumnCount)
@@ -92,10 +139,10 @@ func TestBuildCountSum(t *testing.T) {
 	var hasCount, hasSum bool
 	for _, ai := range res.AggInfos {
 		switch ai.Kind {
-		case AggCountStar:
+		case mvmerge.AggCountStar:
 			hasCount = true
 			require.GreaterOrEqual(t, ai.DeltaOffset, res.MVColumnCount)
-		case AggSum:
+		case mvmerge.AggSum:
 			hasSum = true
 			require.Equal(t, "b", ai.ArgColName)
 			require.GreaterOrEqual(t, ai.DeltaOffset, res.MVColumnCount)
@@ -104,12 +151,14 @@ func TestBuildCountSum(t *testing.T) {
 	require.True(t, hasCount)
 	require.True(t, hasSum)
 
-	mvDBName, err := dbNameByTableID(is, mv.ID)
-	require.NoError(t, err)
+	item, ok := is.TableItemByID(mv.ID)
+	require.True(t, ok)
+	require.NotEmpty(t, item.DBName.O)
+	mvDBName := item.DBName.O
 	requireMergePlanOutputNames(t, res, []fieldNameInfo{
 		{Pos: 0, Col: "x"},
-		{Pos: 1, DB: mvDBName.O, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
-		{Pos: 2, DB: mvDBName.O, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
+		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
 		{Pos: 3, Tbl: deltaTableAlias, Col: deltaCntStarName},
 		{Pos: 4, Tbl: deltaTableAlias, Col: "__mvmerge_delta_sum_2"},
 	})
@@ -166,18 +215,25 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := Build(context.Background(), sctx, is, mv, BuildOptions{FromTS: 1, ToTS: 2})
+	res, err := mvmerge.Build(
+		context.Background(),
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		optimizeForTest(sctx, is),
+	)
 	require.NoError(t, err)
 	require.NotNil(t, res.RemovedRowCountDelta)
 	require.Contains(t, deltaColNames(res.DeltaColumns), removedRowsName)
 
 	var hasMax, hasMin bool
 	for _, ai := range res.AggInfos {
-		if ai.Kind == AggMax {
+		if ai.Kind == mvmerge.AggMax {
 			hasMax = true
 			require.True(t, ai.NeedsDetailOnRemoval)
 		}
-		if ai.Kind == AggMin {
+		if ai.Kind == mvmerge.AggMin {
 			hasMin = true
 			require.True(t, ai.NeedsDetailOnRemoval)
 		}
@@ -185,13 +241,15 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	require.True(t, hasMax)
 	require.True(t, hasMin)
 
-	mvDBName, err := dbNameByTableID(is, mv.ID)
-	require.NoError(t, err)
+	item, ok := is.TableItemByID(mv.ID)
+	require.True(t, ok)
+	require.NotEmpty(t, item.DBName.O)
+	mvDBName := item.DBName.O
 	requireMergePlanOutputNames(t, res, []fieldNameInfo{
 		{Pos: 0, Col: "x"},
-		{Pos: 1, DB: mvDBName.O, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
-		{Pos: 2, DB: mvDBName.O, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
-		{Pos: 3, DB: mvDBName.O, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
+		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
+		{Pos: 3, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
 		{Pos: 4, Tbl: deltaTableAlias, Col: deltaCntStarName},
 		{Pos: 5, Tbl: deltaTableAlias, Col: "__mvmerge_max_in_added_2"},
 		{Pos: 6, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_added_3"},
@@ -245,7 +303,14 @@ func TestBuildMissingOldNew(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	_, err := Build(context.Background(), sctx, is, mv, BuildOptions{FromTS: 1, ToTS: 2})
+	_, err := mvmerge.Build(
+		context.Background(),
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		optimizeForTest(sctx, is),
+	)
 	require.ErrorContains(t, err, model.MaterializedViewLogOldNewColumnName)
 }
 
@@ -260,7 +325,7 @@ func mkCol(id int64, name string, offset int, tp byte) *model.ColumnInfo {
 	}
 }
 
-func deltaColNames(cols []DeltaColumn) []string {
+func deltaColNames(cols []mvmerge.DeltaColumn) []string {
 	out := make([]string, 0, len(cols))
 	for _, c := range cols {
 		out = append(out, c.Name)
@@ -300,10 +365,10 @@ func nameSliceInfo(names types.NameSlice) []fieldNameInfo {
 	return out
 }
 
-func requireMergePlanOutputNames(t *testing.T, res *BuildResult, expected []fieldNameInfo) {
+func requireMergePlanOutputNames(t *testing.T, res *mvmerge.BuildResult, expected []fieldNameInfo) {
 	t.Helper()
 
-	outputNames := res.Plan.OutputNames()
+	outputNames := res.OutputNames
 	require.Len(t, outputNames, res.Plan.Schema().Len())
 	require.Len(t, outputNames, res.MVColumnCount+len(res.DeltaColumns))
 	require.Len(t, expected, len(outputNames))

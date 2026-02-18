@@ -26,11 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 const (
@@ -48,6 +45,9 @@ type BuildOptions struct {
 
 type BuildResult struct {
 	Plan base.PhysicalPlan
+	// OutputNames matches the result schema of Plan (MV columns first, then delta columns).
+	// Note: physical plans in TiDB may not keep output names; the caller should provide them via SelectOptimizer.
+	OutputNames types.NameSlice
 
 	MVTableID   int64
 	BaseTableID int64
@@ -97,9 +97,16 @@ type AggInfo struct {
 	NeedsDetailOnRemoval bool
 }
 
-func Build(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, mv *model.TableInfo, opt BuildOptions) (*BuildResult, error) {
+// SelectOptimizer converts the merge-source SELECT statement into a physical plan.
+// The caller usually does preprocess -> logical plan build -> optimize.
+type SelectOptimizer func(ctx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, types.NameSlice, error)
+
+func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema, mv *model.TableInfo, opt BuildOptions, optimize SelectOptimizer) (*BuildResult, error) {
 	if mv == nil {
 		return nil, errors.New("mv table info is nil")
+	}
+	if optimize == nil {
+		return nil, errors.New("mvmerge: optimize callback is nil")
 	}
 	if mv.MaterializedView == nil {
 		return nil, errors.Errorf("table %s is not a materialized view", mv.Name.O)
@@ -175,7 +182,7 @@ func Build(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchem
 		return nil, err
 	}
 
-	plan, err := buildPhysicalPlanFromSelect(ctx, sctx, is, mergeSel)
+	plan, outputNames, err := optimize(ctx, mergeSel)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +190,9 @@ func Build(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchem
 	expectedLen := len(mv.Columns) + len(deltaColumns)
 	if plan.Schema().Len() != expectedLen {
 		return nil, errors.Errorf("unexpected merge-source schema length: got %d, expected %d", plan.Schema().Len(), expectedLen)
+	}
+	if len(outputNames) > 0 && len(outputNames) != expectedLen {
+		return nil, errors.Errorf("unexpected merge-source output names length: got %d, expected %d", len(outputNames), expectedLen)
 	}
 
 	// Patch delta offsets into AggInfos.
@@ -205,6 +215,7 @@ func Build(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchem
 
 	res := &BuildResult{
 		Plan:              plan,
+		OutputNames:       outputNames,
 		MVTableID:         mv.ID,
 		BaseTableID:       baseTableID,
 		MLogTableID:       mlogTableID,
@@ -223,26 +234,7 @@ func Build(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchem
 	return res, nil
 }
 
-func buildPhysicalPlanFromSelect(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, sel *ast.SelectStmt) (base.PhysicalPlan, error) {
-	nodeW := resolve.NewNodeW(sel)
-	err := core.Preprocess(ctx, sctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
-	if err != nil {
-		return nil, err
-	}
-	builder, _ := core.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
-	p, err := builder.Build(ctx, nodeW)
-	if err != nil {
-		return nil, err
-	}
-	logic, ok := p.(base.LogicalPlan)
-	if !ok {
-		return nil, errors.Errorf("expected logical plan from select, got %T", p)
-	}
-	pp, _, err := core.DoOptimize(ctx, sctx.GetPlanCtx(), builder.GetOptFlag(), logic)
-	return pp, err
-}
-
-func parseSelectFromSQL(sctx sessionctx.Context, sql string) (*ast.SelectStmt, error) {
+func parseSelectFromSQL(sctx base.PlanContext, sql string) (*ast.SelectStmt, error) {
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
