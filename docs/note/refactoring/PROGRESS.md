@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (expression_rewriter.go decomposition)
+Last updated: 2026-02-18 (conn.go decomposition)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -180,6 +180,12 @@ Last updated: 2026-02-18 (expression_rewriter.go decomposition)
   - [x] `expression_rewriter_leave.go` (1,089 lines) - Leave visitor, AST-to-expression conversions
   - [x] `expression_rewriter_column.go` (289 lines) - column name resolution, DEFAULT expression evaluation
 
+- [x] **server/conn.go decomposition** - Extract handshake/auth and query handling
+  - File: `pkg/server/conn.go` (2,819 → 1,134 lines, 60% reduction)
+  - Target: Focused files per functional area
+  - [x] `conn_handshake.go` (869 lines) - handshake, authentication, session opening
+  - [x] `conn_query.go` (913 lines) - query handling, result set writing
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -239,3 +245,4 @@ Last updated: 2026-02-18 (expression_rewriter.go decomposition)
 - [x] **planner/core/find_best_task.go decomposition** - 2026-02-18 - Split into 2 focused files: `find_best_task_property.go` (1,056), `find_best_task_scan.go` (915). Reduced find_best_task.go from 3,030 to 1,118 lines (63% reduction).
 - [x] **planner/core/exhaust_physical_plans.go decomposition** - 2026-02-18 - Split into 3 focused files: `exhaust_physical_plans_index_join_inner.go` (741), `exhaust_physical_plans_hints.go` (382), `exhaust_physical_plans_mpp_join.go` (367). Reduced exhaust_physical_plans.go from 2,892 to 1,399 lines (52% reduction).
 - [x] **planner/core/expression_rewriter.go decomposition** - 2026-02-18 - Split into 3 focused files: `expression_rewriter_subquery.go` (1,049), `expression_rewriter_leave.go` (1,089), `expression_rewriter_column.go` (289). Reduced expression_rewriter.go from 2,792 to 479 lines (83% reduction).
+- [x] **server/conn.go decomposition** - 2026-02-18 - Split into 2 focused files: `conn_handshake.go` (869), `conn_query.go` (913). Reduced conn.go from 2,819 to 1,134 lines (60% reduction).
