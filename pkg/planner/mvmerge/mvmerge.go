@@ -45,6 +45,13 @@ type BuildOptions struct {
 	ToTS   uint64
 }
 
+// BuildResult is the optimizer-ready merge source produced by Build.
+// It includes the physical plan and all metadata needed by executor-side MV merge.
+// Row layout of Plan/OutputNames is fixed:
+//  1. MV output columns first (count = MVColumnCount)
+//  2. delta columns after MV columns (as listed in DeltaColumns)
+//
+// All offsets in AggInfos (MVOffset and Dependencies) are based on this layout.
 type BuildResult struct {
 	Plan base.PhysicalPlan
 	// OutputNames matches the result schema of Plan (MV columns first, then delta columns).
@@ -61,6 +68,10 @@ type BuildResult struct {
 
 	// GroupKeyMVOffsets are offsets (0-based) of the group key columns in the MV output schema.
 	GroupKeyMVOffsets []int
+
+	// CountStarMVOffset is the offset (0-based) of COUNT(*) in MV output columns.
+	// Build returns error when MV definition does not include COUNT(*).
+	CountStarMVOffset int
 
 	DeltaColumns []DeltaColumn
 	AggInfos     []AggInfo
@@ -96,7 +107,11 @@ type AggInfo struct {
 	// Dependencies stores dependency offsets in merge-source output schema.
 	// The meaning depends on Kind:
 	//   - AggCountStar / AggCount: [self_delta]
-	//   - AggSum: [self_delta, matched_count_expr_mv, matched_count_expr_delta]
+	//   - AggSum: [self_delta, matched_count_expr_mv]
+	//     - self_delta: offset of SUM(expr) delta column.
+	//     - matched_count_expr_mv: offset of matched COUNT(expr) in MV output.
+	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
+	//       The same matched COUNT(expr) can be a dependency for multiple aggregate functions.
 	//   - AggMax / AggMin: [self_delta, removed_rows_delta]
 	Dependencies []int
 }
@@ -212,6 +227,17 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		return nil, errors.Errorf("unexpected merge-source output names length: got %d, expected %d", len(outputNames), expectedLen)
 	}
 
+	countStarMVOffset := -1
+	for _, ac := range aggCols {
+		if ac.info.Kind == AggCountStar {
+			countStarMVOffset = ac.info.MVOffset
+			break
+		}
+	}
+	if countStarMVOffset < 0 {
+		return nil, errors.New("materialized view definition must include COUNT(*) for mvmerge")
+	}
+
 	sumToCountExprIdx, err := mapSumToCountExprDependencies(aggCols)
 	if err != nil {
 		return nil, err
@@ -240,11 +266,7 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 				return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
 			}
 			countAgg := aggCols[countIdx]
-			countDeltaOff, ok := deltaOffsetByName[countAgg.deltaName]
-			if !ok {
-				return nil, errors.Errorf("internal error: COUNT(expr) delta column %s not found for SUM at mv offset %d", countAgg.deltaName, di.MVOffset)
-			}
-			deps = append(deps, countAgg.info.MVOffset, countDeltaOff)
+			deps = append(deps, countAgg.info.MVOffset)
 		case AggMax, AggMin:
 			if removedDelta == nil {
 				return nil, errors.Errorf("internal error: %v at mv offset %d requires %s delta", di.Kind, di.MVOffset, removedRowsName)
@@ -270,6 +292,7 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		MLogTableID:       mlogTableID,
 		MVColumnCount:     len(mv.Columns),
 		GroupKeyMVOffsets: append([]int(nil), groupKeyOffsets...),
+		CountStarMVOffset: countStarMVOffset,
 		DeltaColumns:      deltaColumns,
 		AggInfos:          outAggInfos,
 		RemovedRowCountDelta: func() *DeltaColumn {
@@ -469,18 +492,15 @@ func validateAggDependencies(aggInfos []AggInfo, mvColumnCount, schemaLen, remov
 				return errors.Errorf("%v at mv offset %d has invalid self_delta offset %d", ai.Kind, ai.MVOffset, ai.Dependencies[0])
 			}
 		case AggSum:
-			// [self_delta, matched_count_expr_mv, matched_count_expr_delta]
-			if len(ai.Dependencies) != 3 {
-				return errors.Errorf("SUM at mv offset %d expects dependencies [self_delta, count_expr_mv, count_expr_delta], got %v", ai.MVOffset, ai.Dependencies)
+			// [self_delta, matched_count_expr_mv]
+			if len(ai.Dependencies) != 2 {
+				return errors.Errorf("SUM at mv offset %d expects dependencies [self_delta, matched_count_expr_mv], got %v", ai.MVOffset, ai.Dependencies)
 			}
 			if ai.Dependencies[0] < mvColumnCount {
 				return errors.Errorf("SUM at mv offset %d has invalid self_delta offset %d", ai.MVOffset, ai.Dependencies[0])
 			}
 			if ai.Dependencies[1] < 0 || ai.Dependencies[1] >= mvColumnCount {
-				return errors.Errorf("SUM at mv offset %d has invalid count_expr_mv offset %d", ai.MVOffset, ai.Dependencies[1])
-			}
-			if ai.Dependencies[2] < mvColumnCount {
-				return errors.Errorf("SUM at mv offset %d has invalid count_expr_delta offset %d", ai.MVOffset, ai.Dependencies[2])
+				return errors.Errorf("SUM at mv offset %d has invalid matched_count_expr_mv offset %d", ai.MVOffset, ai.Dependencies[1])
 			}
 		case AggMax, AggMin:
 			// [self_delta, removed_rows_delta]
