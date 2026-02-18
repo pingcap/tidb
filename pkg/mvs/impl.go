@@ -82,6 +82,13 @@ func newRunEventCounterCache(capacity int) runEventCounterCache {
 	}
 }
 
+const (
+	mvLogPurgeMethodManual        = "MANUALLY"
+	mvLogPurgeMethodAutomatically = "AUTOMATICALLY"
+	mvLogPurgeStatusSuccess       = "SUCCESS"
+	mvLogPurgeStatusFailed        = "FAILED"
+)
+
 // newServerHelper builds a default helper used by MVService.
 func newServerHelper() *serverHelper {
 	return &serverHelper{
@@ -208,11 +215,9 @@ func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Session
 // A zero nextPurge means no further scheduling is needed.
 func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, autoPurge bool) (nextPurge time.Time, err error) {
 	const (
-		purgeMethodManually      = "MANUALLY"
-		purgeMethodAutomatically = "AUTOMATICALLY"
-		lockPurgeSQL             = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge WHERE MLOG_ID = %? FOR UPDATE`
-		deleteMLogSQL            = `DELETE FROM %n.%n WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= %?`
-		updatePurgeSQL           = `UPDATE mysql.tidb_mlog_purge SET NEXT_TIME = %? WHERE MLOG_ID = %?`
+		lockPurgeSQL   = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge WHERE MLOG_ID = %? FOR UPDATE`
+		deleteMVLogSQL = `DELETE FROM %n.%n WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= %?`
+		updatePurgeSQL = `UPDATE mysql.tidb_mlog_purge SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 	)
 	var (
 		mvLogSchemaName   string
@@ -251,9 +256,9 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 	if mvLogID <= 0 {
 		return time.Time{}, errors.New("materialized view log id is invalid")
 	}
-	purgeMethod := purgeMethodManually
+	purgeMethod := mvLogPurgeMethodManual
 	if autoPurge {
-		purgeMethod = purgeMethodAutomatically
+		purgeMethod = mvLogPurgeMethodAutomatically
 	}
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	mvLogTable, ok := infoSchema.TableByID(ctx, mvLogID)
@@ -352,10 +357,10 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 		}
 
 		purgeTime := mvsNow()
-		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, deleteMLogSQL, []any{mvLogSchemaName, mvLogName, minRefreshReadTSO}); err != nil {
+		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, deleteMVLogSQL, []any{mvLogSchemaName, mvLogName, minRefreshReadTSO}); err != nil {
 			purgeEndTime := mvsNow()
 			purgeExecErr = err
-			if histErr := recordMLogPurgeHist(txnCtx, sctx, mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, 0, "FAILED"); histErr != nil {
+			if histErr := recordMVLogPurgeHistory(txnCtx, sctx, mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, 0, mvLogPurgeStatusFailed); histErr != nil {
 				return errors.Join(purgeExecErr, histErr)
 			}
 			return nil
@@ -363,7 +368,7 @@ func PurgeMVLog(ctx context.Context, sctx sessionctx.Context, mvLogID int64, aut
 		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
 		purgeEndTime := mvsNow()
 
-		if err = recordMLogPurgeHist(txnCtx, sctx, mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, affectedRows, "SUCCESS"); err != nil {
+		if err = recordMVLogPurgeHistory(txnCtx, sctx, mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, affectedRows, mvLogPurgeStatusSuccess); err != nil {
 			return err
 		}
 		if autoPurge {
@@ -413,8 +418,8 @@ func calcNextExecTime(start time.Time, intervalSec int64, last time.Time) time.T
 	return mvsUnix(nextSec, 0)
 }
 
-// fetchAllTiDBMLogPurge loads all scheduled MV log purge tasks from metadata.
-func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
+// fetchAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
+func (*serverHelper) fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
 	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
@@ -441,8 +446,8 @@ func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool b
 	return newPending, nil
 }
 
-// fetchAllTiDBMViews loads all scheduled MV refresh tasks from metadata.
-func (*serverHelper) fetchAllTiDBMViews(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
+// fetchAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
+func (*serverHelper) fetchAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
 	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
@@ -572,12 +577,12 @@ func getMinRefreshReadTSOFromInfo(ctx context.Context, sctx sessionctx.Context, 
 	return rows[0].GetInt64(0), nil
 }
 
-// recordMLogPurgeHist appends one purge history row and marks it as newest.
-func recordMLogPurgeHist(
+// recordMVLogPurgeHistory appends one purge history row and marks it as newest.
+func recordMVLogPurgeHistory(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	mvLogID int64,
-	mlogName string,
+	mvLogName string,
 	purgeMethod string,
 	purgeTime time.Time,
 	purgeEndTime time.Time,
@@ -590,12 +595,12 @@ func recordMLogPurgeHist(
 		return err
 	}
 	const insertHistSQL = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
-	_, err := execRCRestrictedSQLWithSession(ctx, sctx, insertHistSQL, []any{mvLogID, mlogName, purgeMethod, purgeTime, purgeEndTime, purgeRows, purgeStatus})
+	_, err := execRCRestrictedSQLWithSession(ctx, sctx, insertHistSQL, []any{mvLogID, mvLogName, purgeMethod, purgeTime, purgeEndTime, purgeRows, purgeStatus})
 	if err != nil {
 		logutil.BgLogger().Warn(
 			"insert mvlog purge history failed",
 			zap.Int64("mvlog_id", mvLogID),
-			zap.String("mvlog_name", mlogName),
+			zap.String("mvlog_name", mvLogName),
 			zap.String("purge_method", purgeMethod),
 			zap.String("purge_status", purgeStatus),
 			zap.Error(err),

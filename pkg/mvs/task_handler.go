@@ -41,8 +41,8 @@ type MVLogPurgeHandler interface {
 
 // MVMetaFetchHandler defines the metadata fetch contract for MV scheduler bootstrap.
 type MVMetaFetchHandler interface {
-	fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error)
-	fetchAllTiDBMViews(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error)
+	fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error)
+	fetchAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error)
 }
 
 // MVTaskHandler is a convenience interface that implements both refresh and purge.

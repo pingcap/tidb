@@ -100,24 +100,23 @@ const (
 
 	mvTaskDurationTypeRefresh = "mv_refresh"
 	mvTaskDurationTypePurge   = "mvlog_purge"
-	mvTaskDurationResultOK    = "success"
-	mvTaskDurationResultErr   = "failed"
 
-	mvFetchDurationTypeMLogPurge = "fetch_mlog"
-	mvFetchDurationTypeMViews    = "fetch_mviews"
-	mvFetchDurationResultOK      = "success"
-	mvFetchDurationResultErr     = "failed"
+	mvFetchDurationTypeMVLogPurge = "fetch_mlog"
+	mvFetchDurationTypeMVRefresh  = "fetch_mviews"
 
-	mvRunEventInitFailed         = "init_failed"
-	mvRunEventRecoveredPanic     = "mv_service_panic"
-	mvRunEventServerRefreshOK    = "server_refresh_ok"
-	mvRunEventServerRefreshError = "server_refresh_error"
-	mvRunEventFetchByDDL         = "fetch_meta_trigger_ddl"
-	mvRunEventFetchByInterval    = "fetch_meta_trigger_interval"
-	mvRunEventFetchMLogOK        = "fetch_mlog_ok"
-	mvRunEventFetchMLogError     = "fetch_mlog_error"
-	mvRunEventFetchMViewsOK      = "fetch_mviews_ok"
-	mvRunEventFetchMViewsError   = "fetch_mviews_error"
+	mvDurationResultSuccess = "success"
+	mvDurationResultFailed  = "failed"
+
+	mvRunEventInitFailed           = "init_failed"
+	mvRunEventRecoveredPanic       = "mv_service_panic"
+	mvRunEventServerRefreshOK      = "server_refresh_ok"
+	mvRunEventServerRefreshError   = "server_refresh_error"
+	mvRunEventFetchByDDL           = "fetch_meta_trigger_ddl"
+	mvRunEventFetchByInterval      = "fetch_meta_trigger_interval"
+	mvRunEventFetchMVLogPurgeOK    = "fetch_mlog_ok"
+	mvRunEventFetchMVLogPurgeError = "fetch_mlog_error"
+	mvRunEventFetchMVRefreshOK     = "fetch_mviews_ok"
+	mvRunEventFetchMVRefreshError  = "fetch_mviews_error"
 )
 
 type mv struct {
@@ -238,9 +237,9 @@ func (t *MVService) executePurgeTask(l *mvLog) error {
 }
 
 func (t *MVService) observeTaskDuration(taskType string, taskStart time.Time, err error) {
-	result := mvTaskDurationResultOK
+	result := mvDurationResultSuccess
 	if err != nil {
-		result = mvTaskDurationResultErr
+		result = mvDurationResultFailed
 	}
 	t.mh.observeTaskDuration(taskType, result, mvsSince(taskStart))
 }
@@ -383,13 +382,13 @@ func (t *MVService) rescheduleMVLogSuccess(l *mvLog, nextPurge time.Time) {
 	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 }
 
-// buildMLogPurgeTasks rebuilds purge task states from fetched metadata.
+// buildMVLogPurgeTasks rebuilds purge task states from fetched metadata.
 //
 // For each item in newPending:
 // 1. Update mutable metadata fields (purgeInterval, nextPurge).
 // 2. If nextPurge changed and the task is not currently running, update orderTs and heap position.
 // 3. If the task is currently running (orderTs == maxNextScheduleTs), defer heap adjustment until task completion.
-func (t *MVService) buildMLogPurgeTasks(newPending map[int64]*mvLog) {
+func (t *MVService) buildMVLogPurgeTasks(newPending map[int64]*mvLog) {
 	t.mvLogPurgeMu.Lock()         // guard mvlog purge queue
 	defer t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 
@@ -471,60 +470,60 @@ func filterUnownedTasks[T any](sch *ServerConsistentHash, newPending map[int64]T
 	sch.mu.RUnlock()
 }
 
-// fetchAllTiDBMLogPurge fetches purge metadata and filters out tasks not owned by this node.
-func (t *MVService) fetchAllTiDBMLogPurge() (map[int64]*mvLog, error) {
+// fetchAllTiDBMVLogPurge fetches purge metadata and filters out tasks not owned by this node.
+func (t *MVService) fetchAllTiDBMVLogPurge() (map[int64]*mvLog, error) {
 	start := mvsNow()
-	result := mvFetchDurationResultOK
+	result := mvDurationResultSuccess
 	defer func() {
-		t.mh.observeFetchDuration(mvFetchDurationTypeMLogPurge, result, mvsSince(start))
+		t.mh.observeFetchDuration(mvFetchDurationTypeMVLogPurge, result, mvsSince(start))
 	}()
 
-	newPending, err := t.mh.fetchAllTiDBMLogPurge(t.ctx, t.sysSessionPool)
+	newPending, err := t.mh.fetchAllTiDBMVLogPurge(t.ctx, t.sysSessionPool)
 	if err != nil {
-		result = mvFetchDurationResultErr
-		t.mh.observeRunEvent(mvRunEventFetchMLogError)
+		result = mvDurationResultFailed
+		t.mh.observeRunEvent(mvRunEventFetchMVLogPurgeError)
 		fields := append(t.runtimeLogFields(), zap.Error(err))
 		logutil.BgLogger().Warn("fetch all mvlog purge tasks failed", fields...)
 		return nil, err
 	}
-	t.mh.observeRunEvent(mvRunEventFetchMLogOK)
+	t.mh.observeRunEvent(mvRunEventFetchMVLogPurgeOK)
 	filterUnownedTasks(t.sch, newPending)
 	return newPending, nil
 }
 
-// fetchAllTiDBMViews fetches refresh metadata and filters out tasks not owned by this node.
-func (t *MVService) fetchAllTiDBMViews() (map[int64]*mv, error) {
+// fetchAllTiDBMVRefresh fetches refresh metadata and filters out tasks not owned by this node.
+func (t *MVService) fetchAllTiDBMVRefresh() (map[int64]*mv, error) {
 	start := mvsNow()
-	result := mvFetchDurationResultOK
+	result := mvDurationResultSuccess
 	defer func() {
-		t.mh.observeFetchDuration(mvFetchDurationTypeMViews, result, mvsSince(start))
+		t.mh.observeFetchDuration(mvFetchDurationTypeMVRefresh, result, mvsSince(start))
 	}()
 
-	newPending, err := t.mh.fetchAllTiDBMViews(t.ctx, t.sysSessionPool)
+	newPending, err := t.mh.fetchAllTiDBMVRefresh(t.ctx, t.sysSessionPool)
 	if err != nil {
-		result = mvFetchDurationResultErr
-		t.mh.observeRunEvent(mvRunEventFetchMViewsError)
+		result = mvDurationResultFailed
+		t.mh.observeRunEvent(mvRunEventFetchMVRefreshError)
 		fields := append(t.runtimeLogFields(), zap.Error(err))
 		logutil.BgLogger().Warn("fetch all materialized view refresh tasks failed", fields...)
 		return nil, err
 	}
-	t.mh.observeRunEvent(mvRunEventFetchMViewsOK)
+	t.mh.observeRunEvent(mvRunEventFetchMVRefreshOK)
 	filterUnownedTasks(t.sch, newPending)
 	return newPending, nil
 }
 
 // fetchAllMVMeta refreshes both purge and refresh task queues from metadata tables.
 func (t *MVService) fetchAllMVMeta() error {
-	newMLogPending, err := t.fetchAllTiDBMLogPurge()
+	newMVLogPending, err := t.fetchAllTiDBMVLogPurge()
 	if err != nil {
 		return fmt.Errorf("fetch mvlog purge metadata failed: %w", err)
 	}
-	newMViewPending, err := t.fetchAllTiDBMViews()
+	newMVRefreshPending, err := t.fetchAllTiDBMVRefresh()
 	if err != nil {
 		return fmt.Errorf("fetch mview refresh metadata failed: %w", err)
 	}
-	t.buildMLogPurgeTasks(newMLogPending)
-	t.buildMVRefreshTasks(newMViewPending)
+	t.buildMVLogPurgeTasks(newMVLogPending)
+	t.buildMVRefreshTasks(newMVRefreshPending)
 
 	t.lastRefresh.Store(mvsNow().UnixMilli())
 	return nil

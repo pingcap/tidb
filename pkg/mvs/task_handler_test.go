@@ -41,13 +41,13 @@ import (
 )
 
 const (
-	testSQLFetchMLogPurge      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge WHERE NEXT_TIME IS NOT NULL`
-	testSQLFetchMViews         = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVLogPurge     = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVRefresh      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh WHERE NEXT_TIME IS NOT NULL`
 	testSQLRefreshMV           = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
 	testSQLFindMVNextTime      = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	testSQLFindMinRefreshRead  = `SELECT MIN(LAST_SUCCESS_READ_TSO) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID IN (%?,%?)`
 	testSQLLockPurgeInfo       = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge WHERE MLOG_ID = %? FOR UPDATE`
-	testSQLDeleteMLog          = `DELETE FROM %n.%n WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= %?`
+	testSQLDeleteMVLog         = `DELETE FROM %n.%n WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= %?`
 	testSQLUpdatePurgeInfo     = `UPDATE mysql.tidb_mlog_purge SET NEXT_TIME = %? WHERE MLOG_ID = %?`
 	testSQLClearNewestPurgeHis = `UPDATE mysql.tidb_mlog_purge_hist SET IS_NEWEST_PURGE = 'NO' WHERE MLOG_ID = %? AND IS_NEWEST_PURGE = 'YES'`
 	testSQLInsertPurgeHist     = `INSERT INTO mysql.tidb_mlog_purge_hist (MLOG_ID, MLOG_NAME, IS_NEWEST_PURGE, PURGE_METHOD, PURGE_TIME, PURGE_ENDTIME, PURGE_ROWS, PURGE_STATUS) VALUES (%?, %?, 'YES', %?, %?, %?, %?, %?)`
@@ -57,7 +57,7 @@ var (
 	testExpectedAutoPurgeSQLSuccess = []string{
 		testSQLFindMinRefreshRead,
 		testSQLLockPurgeInfo,
-		testSQLDeleteMLog,
+		testSQLDeleteMVLog,
 		testSQLClearNewestPurgeHis,
 		testSQLInsertPurgeHist,
 		testSQLUpdatePurgeInfo,
@@ -65,7 +65,7 @@ var (
 	testExpectedManualPurgeSQLSuccess = []string{
 		testSQLFindMinRefreshRead,
 		testSQLLockPurgeInfo,
-		testSQLDeleteMLog,
+		testSQLDeleteMVLog,
 		testSQLClearNewestPurgeHis,
 		testSQLInsertPurgeHist,
 	}
@@ -149,7 +149,7 @@ func withMockInfoSchema(t *testing.T, tables ...*meta.TableInfo) {
 	})
 }
 
-func buildMockMVBaseAndMLogTables(baseTableID, mLogID int64, mViewIDs ...int64) (baseTable *meta.TableInfo, mlogTable *meta.TableInfo) {
+func buildMockMVBaseAndMVLogTables(baseTableID, mLogID int64, mViewIDs ...int64) (baseTable *meta.TableInfo, mlogTable *meta.TableInfo) {
 	baseInfo := &meta.MaterializedViewBaseInfo{
 		MLogID:   mLogID,
 		MViewIDs: mViewIDs,
@@ -190,7 +190,7 @@ func setupPurgeMVLogMetaForTest(t *testing.T, se *recordingSessionContext, lockR
 	}
 	se.restrictedRows[testSQLLockPurgeInfo] = lockRows
 
-	mvTable, mvlogTable := buildMockMVBaseAndMLogTables(101, 201, 101, 102)
+	mvTable, mvlogTable := buildMockMVBaseAndMVLogTables(101, 201, 101, 102)
 	withMockInfoSchema(t, mvTable, mvlogTable)
 }
 
@@ -236,7 +236,7 @@ func (m *mockMVServiceHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool,
 	return m.purgeNext, m.purgeErr
 }
 
-func (m *mockMVServiceHelper) fetchAllTiDBMLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
+func (m *mockMVServiceHelper) fetchAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
 	m.fetchLogsCalls.Add(1)
 	if m.fetchLogsErr != nil {
 		return nil, m.fetchLogsErr
@@ -244,7 +244,7 @@ func (m *mockMVServiceHelper) fetchAllTiDBMLogPurge(context.Context, basic.Sessi
 	return m.fetchLogs, nil
 }
 
-func (m *mockMVServiceHelper) fetchAllTiDBMViews(context.Context, basic.SessionPool) (map[int64]*mv, error) {
+func (m *mockMVServiceHelper) fetchAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
 	m.fetchViewCalls.Add(1)
 	if m.fetchViewsErr != nil {
 		return nil, m.fetchViewsErr
@@ -375,8 +375,8 @@ func TestMVServiceNotifyDDLChangeTriggersFetch(t *testing.T) {
 	}, time.Second, 20*time.Millisecond)
 	require.Eventually(t, func() bool {
 		return helper.runEventCount(mvRunEventFetchByDDL) > 0 &&
-			helper.runEventCount(mvRunEventFetchMLogOK) > 0 &&
-			helper.runEventCount(mvRunEventFetchMViewsOK) > 0
+			helper.runEventCount(mvRunEventFetchMVLogPurgeOK) > 0 &&
+			helper.runEventCount(mvRunEventFetchMVRefreshOK) > 0
 	}, time.Second, 20*time.Millisecond)
 }
 
@@ -389,10 +389,10 @@ func TestMVServiceFetchAllMVMetaReportsDuration(t *testing.T) {
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 
 	require.NoError(t, svc.fetchAllMVMeta())
-	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMLogPurge, mvFetchDurationResultOK))
-	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMViews, mvFetchDurationResultOK))
-	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMLogPurge, mvFetchDurationResultErr))
-	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMViews, mvFetchDurationResultErr))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMVLogPurge, mvDurationResultSuccess))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMVRefresh, mvDurationResultSuccess))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMVLogPurge, mvDurationResultFailed))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMVRefresh, mvDurationResultFailed))
 }
 
 func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
@@ -414,7 +414,7 @@ func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
 		nextPurge: mvsNow().Add(2 * time.Minute),
 	}
 	oldMLog.orderTs = oldMLog.nextPurge.UnixMilli()
-	svc.buildMLogPurgeTasks(map[int64]*mvLog{oldMLog.ID: oldMLog})
+	svc.buildMVLogPurgeTasks(map[int64]*mvLog{oldMLog.ID: oldMLog})
 
 	oldMV := &mv{
 		ID:          102,
@@ -426,14 +426,14 @@ func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
 	err := svc.fetchAllMVMeta()
 	require.Error(t, err)
 	require.Equal(t, int64(0), svc.lastRefresh.Load())
-	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMLogPurge, mvFetchDurationResultOK))
-	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMViews, mvFetchDurationResultErr))
-	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMLogPurge, mvFetchDurationResultErr))
-	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMViews, mvFetchDurationResultOK))
-	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMLogOK))
-	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMViewsError))
-	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMLogError))
-	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMViewsOK))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMVLogPurge, mvDurationResultSuccess))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMVRefresh, mvDurationResultFailed))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMVLogPurge, mvDurationResultFailed))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMVRefresh, mvDurationResultSuccess))
+	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMVLogPurgeOK))
+	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMVRefreshError))
+	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMVLogPurgeError))
+	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMVRefreshOK))
 
 	svc.mvLogPurgeMu.Lock()
 	_, hasOldMLog := svc.mvLogPurgeMu.pending[101]
@@ -459,7 +459,7 @@ func TestMVServicePurgeMVLogRemoveOnDeleted(t *testing.T) {
 		ID:        301,
 		nextPurge: mvsNow(),
 	}
-	svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l})
+	svc.buildMVLogPurgeTasks(map[int64]*mvLog{l.ID: l})
 
 	svc.purgeMVLog([]*mvLog{l})
 
@@ -490,7 +490,7 @@ func TestMVServicePurgeMVLogSuccessUpdatesNextPurgeAndOrderTS(t *testing.T) {
 		ID:        302,
 		nextPurge: mvsNow().Add(-time.Minute).Round(0),
 	}
-	svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l})
+	svc.buildMVLogPurgeTasks(map[int64]*mvLog{l.ID: l})
 
 	svc.purgeMVLog([]*mvLog{l})
 
@@ -583,16 +583,16 @@ func TestMVServiceTaskExecutionReportsDuration(t *testing.T) {
 		nextPurge: mvsNow().Add(-time.Minute).Round(0),
 	}
 	svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
-	svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l})
+	svc.buildMVLogPurgeTasks(map[int64]*mvLog{l.ID: l})
 
 	svc.refreshMV([]*mv{m})
 	svc.purgeMVLog([]*mvLog{l})
 
 	waitExecutorCompletedCount(t, svc, 2)
-	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultOK))
-	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultOK))
-	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultErr))
-	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultErr))
+	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
+	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultFailed))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultFailed))
 }
 
 func TestMVServiceTaskExecutionReportsDurationFailed(t *testing.T) {
@@ -614,16 +614,16 @@ func TestMVServiceTaskExecutionReportsDurationFailed(t *testing.T) {
 		nextPurge: mvsNow().Add(-time.Minute).Round(0),
 	}
 	svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
-	svc.buildMLogPurgeTasks(map[int64]*mvLog{l.ID: l})
+	svc.buildMVLogPurgeTasks(map[int64]*mvLog{l.ID: l})
 
 	svc.refreshMV([]*mv{m})
 	svc.purgeMVLog([]*mvLog{l})
 
 	waitExecutorCompletedCount(t, svc, 2)
-	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultErr))
-	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultErr))
-	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvTaskDurationResultOK))
-	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypePurge, mvTaskDurationResultOK))
+	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultFailed))
+	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultFailed))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
 }
 
 func TestRegisterMVSBootstrapAndDDLHandler(t *testing.T) {
@@ -725,7 +725,7 @@ func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 	nextPurgeSec2 := int64(720)
 
 	se := newRecordingSessionContext()
-	se.restrictedRows[testSQLFetchMLogPurge] = []chunk.Row{
+	se.restrictedRows[testSQLFetchMVLogPurge] = []chunk.Row{
 		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(nextPurgeSec1),
@@ -749,9 +749,9 @@ func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 	}
 	pool := recordingSessionPool{se: se}
 
-	got, err := (&serverHelper{}).fetchAllTiDBMLogPurge(context.Background(), pool)
+	got, err := (&serverHelper{}).fetchAllTiDBMVLogPurge(context.Background(), pool)
 	require.NoError(t, err)
-	require.Equal(t, []string{testSQLFetchMLogPurge}, se.executedRestrictedSQL)
+	require.Equal(t, []string{testSQLFetchMVLogPurge}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
 
 	l201 := got[int64(201)]
@@ -769,13 +769,13 @@ func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 	require.Equal(t, int64(0), int64(l202.purgeInterval))
 }
 
-func TestServerHelperFetchAllTiDBMViews(t *testing.T) {
+func TestServerHelperFetchAllTiDBMVRefresh(t *testing.T) {
 	installMockTimeForTest(t)
 	nextRefreshSec1 := int64(900)
 	nextRefreshSec2 := int64(1200)
 
 	se := newRecordingSessionContext()
-	se.restrictedRows[testSQLFetchMViews] = []chunk.Row{
+	se.restrictedRows[testSQLFetchMVRefresh] = []chunk.Row{
 		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(nextRefreshSec1),
@@ -799,9 +799,9 @@ func TestServerHelperFetchAllTiDBMViews(t *testing.T) {
 	}
 	pool := recordingSessionPool{se: se}
 
-	got, err := (&serverHelper{}).fetchAllTiDBMViews(context.Background(), pool)
+	got, err := (&serverHelper{}).fetchAllTiDBMVRefresh(context.Background(), pool)
 	require.NoError(t, err)
-	require.Equal(t, []string{testSQLFetchMViews}, se.executedRestrictedSQL)
+	require.Equal(t, []string{testSQLFetchMVRefresh}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
 
 	m101 := got[int64(101)]
