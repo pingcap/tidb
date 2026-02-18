@@ -31,10 +31,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func evalMaxMinCount(t *testing.T, funcName string, ft *types.FieldType, datums []types.Datum, hasDistinct bool) int64 {
+func evalMaxMinCount(t *testing.T, funcName string, ft *types.FieldType, datums []types.Datum) int64 {
 	ctx := mock.NewContext()
 	args := []expression.Expression{&expression.Column{RetType: ft, Index: 0}}
-	desc, err := aggregation.NewAggFuncDesc(ctx, funcName, args, hasDistinct)
+	desc, err := aggregation.NewAggFuncDesc(ctx, funcName, args, false)
 	require.NoError(t, err)
 
 	aggFunc := aggfuncs.Build(ctx, desc, 0)
@@ -87,10 +87,10 @@ func TestMaxMinCountAllMaxMinTypes(t *testing.T) {
 
 	for _, ft := range testTypes {
 		data := buildDataByType(ft, 5)
-		require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMaxCount, ft, data, false))
-		require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMinCount, ft, data, false))
-		require.Equal(t, int64(0), evalMaxMinCount(t, ast.AggFuncMaxCount, ft, nil, false))
-		require.Equal(t, int64(0), evalMaxMinCount(t, ast.AggFuncMinCount, ft, nil, false))
+		require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMaxCount, ft, data))
+		require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMinCount, ft, data))
+		require.Equal(t, int64(0), evalMaxMinCount(t, ast.AggFuncMaxCount, ft, nil))
+		require.Equal(t, int64(0), evalMaxMinCount(t, ast.AggFuncMinCount, ft, nil))
 	}
 }
 
@@ -104,8 +104,8 @@ func TestMaxMinCountSpecialTypes(t *testing.T) {
 		types.NewBinaryLiteralDatum(types.BinaryLiteral{0x02}),
 		{},
 	}
-	require.Equal(t, int64(2), evalMaxMinCount(t, ast.AggFuncMaxCount, bitType, bitData, false))
-	require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMinCount, bitType, bitData, false))
+	require.Equal(t, int64(2), evalMaxMinCount(t, ast.AggFuncMaxCount, bitType, bitData))
+	require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMinCount, bitType, bitData))
 
 	vectorType := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
 	vectorData := []types.Datum{
@@ -116,11 +116,11 @@ func TestMaxMinCountSpecialTypes(t *testing.T) {
 		types.NewVectorFloat32Datum(types.MustCreateVectorFloat32([]float32{3, 3})),
 		{},
 	}
-	require.Equal(t, int64(2), evalMaxMinCount(t, ast.AggFuncMaxCount, vectorType, vectorData, false))
-	require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMinCount, vectorType, vectorData, false))
+	require.Equal(t, int64(2), evalMaxMinCount(t, ast.AggFuncMaxCount, vectorType, vectorData))
+	require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMinCount, vectorType, vectorData))
 }
 
-func TestMaxMinCountDuplicateAndDistinctSemantics(t *testing.T) {
+func TestMaxMinCountDuplicateSemantics(t *testing.T) {
 	intType := types.NewFieldType(mysql.TypeLonglong)
 	data := []types.Datum{
 		types.NewIntDatum(0),
@@ -131,10 +131,8 @@ func TestMaxMinCountDuplicateAndDistinctSemantics(t *testing.T) {
 		types.NewIntDatum(4),
 		{},
 	}
-	require.Equal(t, int64(3), evalMaxMinCount(t, ast.AggFuncMaxCount, intType, data, false))
-	require.Equal(t, int64(2), evalMaxMinCount(t, ast.AggFuncMinCount, intType, data, false))
-	require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMaxCount, intType, data, true))
-	require.Equal(t, int64(1), evalMaxMinCount(t, ast.AggFuncMinCount, intType, data, true))
+	require.Equal(t, int64(3), evalMaxMinCount(t, ast.AggFuncMaxCount, intType, data))
+	require.Equal(t, int64(2), evalMaxMinCount(t, ast.AggFuncMinCount, intType, data))
 }
 
 func TestMergePartialResult4MaxMinCount(t *testing.T) {

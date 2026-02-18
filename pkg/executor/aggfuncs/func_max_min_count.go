@@ -46,7 +46,6 @@ const (
 
 type baseMaxMinCountAggFunc struct {
 	baseMaxMinAggFunc
-	hasDistinct bool
 }
 
 func (e *baseMaxMinCountAggFunc) appendFinalResult(isNull bool, count int64, chk *chunk.Chunk) {
@@ -62,7 +61,7 @@ func (e *baseMaxMinCountAggFunc) shouldReplace(cmp int) bool {
 }
 
 func (e *baseMaxMinCountAggFunc) shouldAccumulate(cmp int) bool {
-	return cmp == 0 && !e.hasDistinct
+	return cmp == 0
 }
 
 func buildMaxMinCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
@@ -81,7 +80,6 @@ func buildMaxMinCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFu
 			isMax:    isMax,
 			collator: collate.GetCollator(argTp.GetCollate()),
 		},
-		hasDistinct: aggFuncDesc.HasDistinct,
 	}
 
 	evalType, fieldType := argTp.EvalType(), argTp
