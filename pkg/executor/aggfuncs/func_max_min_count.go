@@ -17,12 +17,8 @@ package aggfuncs
 import (
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -62,66 +58,6 @@ func (e *baseMaxMinCountAggFunc) shouldReplace(cmp int) bool {
 
 func (e *baseMaxMinCountAggFunc) shouldAccumulate(cmp int) bool {
 	return cmp == 0
-}
-
-func buildMaxMinCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
-	if aggFuncDesc.Mode == aggregation.DedupMode {
-		return nil
-	}
-
-	argTp := aggFuncDesc.Args[0].GetType(ctx)
-	base := baseMaxMinCountAggFunc{
-		baseMaxMinAggFunc: baseMaxMinAggFunc{
-			baseAggFunc: baseAggFunc{
-				args:    aggFuncDesc.Args,
-				ordinal: ordinal,
-				retTp:   aggFuncDesc.RetTp,
-			},
-			isMax:    isMax,
-			collator: collate.GetCollator(argTp.GetCollate()),
-		},
-	}
-
-	evalType, fieldType := argTp.EvalType(), argTp
-	if fieldType.GetType() == mysql.TypeBit {
-		evalType = types.ETString
-	}
-
-	switch fieldType.GetType() {
-	case mysql.TypeEnum:
-		return &maxMinCount4Enum{base}
-	case mysql.TypeSet:
-		return &maxMinCount4Set{base}
-	}
-
-	switch evalType {
-	case types.ETInt:
-		if mysql.HasUnsignedFlag(fieldType.GetFlag()) {
-			return &maxMinCount4Uint{base}
-		}
-		return &maxMinCount4Int{base}
-	case types.ETReal:
-		switch fieldType.GetType() {
-		case mysql.TypeFloat:
-			return &maxMinCount4Float32{base}
-		case mysql.TypeDouble:
-			return &maxMinCount4Float64{base}
-		}
-	case types.ETDecimal:
-		return &maxMinCount4Decimal{base}
-	case types.ETString:
-		return &maxMinCount4String{baseMaxMinCountAggFunc: base}
-	case types.ETDatetime, types.ETTimestamp:
-		return &maxMinCount4Time{base}
-	case types.ETDuration:
-		return &maxMinCount4Duration{base}
-	case types.ETJson:
-		return &maxMinCount4JSON{base}
-	case types.ETVectorFloat32:
-		return &maxMinCount4VectorFloat32{base}
-	}
-
-	return nil
 }
 
 const (
@@ -1264,6 +1200,7 @@ func (e *maxMinCount4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr 
 func (e *maxMinCount4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4MaxMinCountString)(pr)
 	memDelta := int64(0)
+	tp := e.args[0].GetType(sctx)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
@@ -1279,7 +1216,6 @@ func (e *maxMinCount4String) UpdatePartialResult(sctx AggFuncUpdateContext, rows
 			memDelta += int64(len(input))
 			continue
 		}
-		tp := e.args[0].GetType(sctx)
 		cmp := types.CompareString(input, p.val, tp.GetCollate())
 		if e.shouldReplace(cmp) {
 			oldLen := len(p.val)
