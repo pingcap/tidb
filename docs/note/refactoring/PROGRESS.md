@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (index.go decomposition)
+Last updated: 2026-02-18 (simple.go decomposition)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -148,6 +148,12 @@ Last updated: 2026-02-18 (index.go decomposition)
   - [x] `index_columnar.go` (261 lines) - TiFlash columnar index creation and progress monitoring
   - [x] `index_analyze.go` (289 lines) - post-index-creation analyze workflow
 
+- [x] **executor/simple.go decomposition** - Extract user and role management
+  - File: `pkg/executor/simple.go` (3,198 → 1,064 lines, 67% reduction)
+  - Target: Focused files per functional area
+  - [x] `simple_user.go` (1,296 lines) - user creation, alteration, password management
+  - [x] `simple_role.go` (917 lines) - role grant/revoke, set default/active role, rename/drop user
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -202,3 +208,4 @@ Last updated: 2026-02-18 (index.go decomposition)
 - [x] **ddl/partition.go decomposition** - 2026-02-18 - Split into 3 focused files: `partition_reorganize.go` (1,185), `partition_exchange.go` (725), `partition_truncate.go` (411). Reduced partition.go from 5,358 to 3,155 lines (41% reduction).
 - [x] **executor/infoschema_reader.go decomposition** - 2026-02-18 - Split into 3 focused files: `infoschema_reader_lock.go` (492), `infoschema_reader_tiflash.go` (277), `infoschema_reader_resource.go` (569). Reduced infoschema_reader.go from 4,213 to 2,990 lines (29% reduction).
 - [x] **ddl/index.go decomposition** - 2026-02-18 - Split into 4 focused files: `index_dist_task.go` (418), `index_backfill_worker.go` (619), `index_columnar.go` (261), `index_analyze.go` (289). Reduced index.go from 4,140 to 2,691 lines (35% reduction).
+- [x] **executor/simple.go decomposition** - 2026-02-18 - Split into 2 focused files: `simple_user.go` (1,296), `simple_role.go` (917). Reduced simple.go from 3,198 to 1,064 lines (67% reduction).
