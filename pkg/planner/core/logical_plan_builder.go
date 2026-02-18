@@ -5402,7 +5402,9 @@ func pruneAndBuildColPositionInfoForDelete(
 		// Use a very relax check for foreign key cascades and checks.
 		// If there's one table containing foreign keys, all of the tables would not do pruning.
 		// It should be strict in the future or just support pruning column when there is foreign key.
-		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
+		// For base tables with mlog, disable delete column pruning to keep RemoveRecord row layout stable.
+		hasMLog := tblInfo.MaterializedViewBase != nil && tblInfo.MaterializedViewBase.MLogID != 0
+		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil || hasMLog {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
 			if err != nil {
 				return nil, nil, err

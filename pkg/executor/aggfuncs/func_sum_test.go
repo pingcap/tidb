@@ -19,17 +19,26 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMergePartialResult4Sum(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, types.NewDecFromInt(10), types.NewDecFromInt(9), types.NewDecFromInt(19)),
 		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, 10.0, 9.0, 19.0),
+		buildAggTester(ast.AggFuncSumInt, mysql.TypeLonglong, 5, 10, 9, 19),
 	}
+	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType.AddFlag(mysql.UnsignedFlag)
+	tests = append(tests, buildAggTesterWithFieldType(ast.AggFuncSumInt, unsignedType, 5, uint64(10), uint64(9), uint64(19)))
 
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
@@ -42,7 +51,11 @@ func TestSum(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(10)),
 		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, nil, 10.0),
+		buildAggTester(ast.AggFuncSumInt, mysql.TypeLonglong, 5, nil, 10),
 	}
+	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType.AddFlag(mysql.UnsignedFlag)
+	tests = append(tests, buildAggTesterWithFieldType(ast.AggFuncSumInt, unsignedType, 5, nil, uint64(10)))
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
 			testAggFunc(t, test)
@@ -56,10 +69,14 @@ func TestMemSum(t *testing.T) {
 			aggfuncs.DefPartialResult4SumFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4SumDecimalSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncSumInt, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4SumInt64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4SumDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4SumDistinctDecimalSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
+		buildAggMemTester(ast.AggFuncSumInt, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4SumDistinctInt64Size+hack.DefBucketMemoryUsageForSetInt64, distinctUpdateMemDeltaGens, true),
 	}
 
 	for i, test := range tests {
@@ -67,4 +84,91 @@ func TestMemSum(t *testing.T) {
 			testAggMemFunc(t, test)
 		})
 	}
+}
+
+func TestSlideSumUintProcessOutWindowFirstToAvoidOverflow(t *testing.T) {
+	ctx := mock.NewContext()
+
+	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType.AddFlag(mysql.UnsignedFlag)
+
+	// Prepare input rows:
+	// - last window: [maxUint64-1]
+	// - next window: [2]
+	//
+	// If we update by adding "in-window" values first, `maxUint64-1 + 2` will overflow even though the final
+	// result after removing the outgoing value does not overflow.
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{unsignedType}, 2)
+	maxUint64 := ^uint64(0)
+	srcChk.AppendUint64(0, maxUint64-1)
+	srcChk.AppendUint64(0, 2)
+
+	args := []expression.Expression{&expression.Column{RetType: unsignedType, Index: 0}}
+	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncSumInt, args, false)
+	require.NoError(t, err)
+
+	aggFunc := aggfuncs.Build(ctx, desc, 0)
+	slidingAggFunc, ok := aggFunc.(aggfuncs.SlidingWindowAggFunc)
+	require.True(t, ok)
+
+	pr, _ := aggFunc.AllocPartialResult()
+	aggFunc.ResetPartialResult(pr)
+	_, err = aggFunc.UpdatePartialResult(ctx, []chunk.Row{srcChk.GetRow(0)}, pr)
+	require.NoError(t, err)
+
+	getRow := func(i uint64) chunk.Row {
+		return srcChk.GetRow(int(i))
+	}
+	err = slidingAggFunc.Slide(ctx, getRow, 0, 1, 1, 1, pr)
+	require.NoError(t, err)
+
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	err = aggFunc.AppendFinalResult2Chunk(ctx, pr, resultChk)
+	require.NoError(t, err)
+	resultRow := resultChk.GetRow(0)
+	require.False(t, resultRow.IsNull(0))
+	require.Equal(t, uint64(2), resultRow.GetUint64(0))
+}
+
+func TestSlideSumIntProcessOutWindowFirstToAvoidOverflow(t *testing.T) {
+	ctx := mock.NewContext()
+
+	signedType := types.NewFieldType(mysql.TypeLonglong)
+
+	// Prepare input rows:
+	// - last window: [maxInt64-1]
+	// - next window: [2]
+	//
+	// If we update by adding "in-window" values first, `maxInt64-1 + 2` will overflow even though the final
+	// result after removing the outgoing value does not overflow.
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{signedType}, 2)
+	maxInt64 := int64(^uint64(0) >> 1)
+	srcChk.AppendInt64(0, maxInt64-1)
+	srcChk.AppendInt64(0, 2)
+
+	args := []expression.Expression{&expression.Column{RetType: signedType, Index: 0}}
+	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncSumInt, args, false)
+	require.NoError(t, err)
+
+	aggFunc := aggfuncs.Build(ctx, desc, 0)
+	slidingAggFunc, ok := aggFunc.(aggfuncs.SlidingWindowAggFunc)
+	require.True(t, ok)
+
+	pr, _ := aggFunc.AllocPartialResult()
+	aggFunc.ResetPartialResult(pr)
+	_, err = aggFunc.UpdatePartialResult(ctx, []chunk.Row{srcChk.GetRow(0)}, pr)
+	require.NoError(t, err)
+
+	getRow := func(i uint64) chunk.Row {
+		return srcChk.GetRow(int(i))
+	}
+	err = slidingAggFunc.Slide(ctx, getRow, 0, 1, 1, 1, pr)
+	require.NoError(t, err)
+
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	err = aggFunc.AppendFinalResult2Chunk(ctx, pr, resultChk)
+	require.NoError(t, err)
+	resultRow := resultChk.GetRow(0)
+	require.False(t, resultRow.IsNull(0))
+	require.Equal(t, int64(2), resultRow.GetInt64(0))
 }

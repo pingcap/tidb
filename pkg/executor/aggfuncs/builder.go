@@ -40,6 +40,8 @@ func Build(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordina
 		return buildCount(ctx.GetEvalCtx(), aggFuncDesc, ordinal)
 	case ast.AggFuncSum:
 		return buildSum(ctx, aggFuncDesc, ordinal)
+	case ast.AggFuncSumInt:
+		return buildSumInt(aggFuncDesc, ordinal)
 	case ast.AggFuncAvg:
 		return buildAvg(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncFirstRow:
@@ -299,6 +301,32 @@ func buildSum(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ord
 			}
 			return &sum4Float64{baseSum4Float64{base}}
 		}
+	}
+}
+
+// buildSumInt builds the AggFunc implementation for function "SUM_INT".
+func buildSumInt(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseSumIntAggFunc{
+		baseAggFunc: baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+			retTp:   aggFuncDesc.RetTp,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if mysql.HasUnsignedFlag(aggFuncDesc.RetTp.GetFlag()) {
+			if aggFuncDesc.HasDistinct {
+				return &sumDistinctUint64{base}
+			}
+			return &sumUint{base}
+		}
+		if aggFuncDesc.HasDistinct {
+			return &sumDistinctInt64{base}
+		}
+		return &sumInt{base}
 	}
 }
 

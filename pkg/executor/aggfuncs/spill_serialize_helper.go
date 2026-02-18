@@ -215,6 +215,18 @@ func (s *SerializeHelper) serializePartialResult4SumFloat64(value partialResult4
 	return util.SerializeInt64(value.notNullRowCount, s.buf)
 }
 
+func (s *SerializeHelper) serializePartialResult4SumInt64(value partialResult4SumInt64) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt64(value.val, s.buf)
+	return util.SerializeInt64(value.notNullRowCount, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4SumUint64(value partialResult4SumUint64) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeUint64(value.val, s.buf)
+	return util.SerializeInt64(value.notNullRowCount, s.buf)
+}
+
 func (s *SerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
 	s.buf = s.buf[:0]
 	if value.buffer != nil {

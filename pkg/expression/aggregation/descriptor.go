@@ -237,7 +237,7 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, sche
 	switch a.Name {
 	case ast.AggFuncCount, ast.AggFuncMaxCount, ast.AggFuncMinCount:
 		return a.evalNullValueInOuterJoin4Count(ctx, schema)
-	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncMax, ast.AggFuncMin,
 		ast.AggFuncFirstRow:
 		return a.evalNullValueInOuterJoin4Sum(ctx, schema)
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
@@ -257,6 +257,8 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation
 	switch a.Name {
 	case ast.AggFuncSum:
 		return &sumFunction{aggFunction: aggFunc}
+	case ast.AggFuncSumInt:
+		return &sumIntFunction{aggFunction: aggFunc}
 	case ast.AggFuncCount:
 		return &countFunction{aggFunction: aggFunc}
 	case ast.AggFuncAvg:
@@ -353,7 +355,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncJsonObjectAgg, ast.AggFuncJsonArrayagg,
 		ast.AggFuncVarSamp, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
 		removeNotNull = false
-	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		if !hasGroupBy {
 			removeNotNull = true
 		}

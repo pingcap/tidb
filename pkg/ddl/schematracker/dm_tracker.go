@@ -369,6 +369,36 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	return d.PutTable(schemaName, baseTable)
 }
 
+// CreateMaterializedView implements the DDL interface.
+func (*SchemaTracker) CreateMaterializedView(sessionctx.Context, *ast.CreateMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW is not supported in schema tracker")
+}
+
+// DropMaterializedView implements the DDL interface.
+func (*SchemaTracker) DropMaterializedView(sessionctx.Context, *ast.DropMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("DROP MATERIALIZED VIEW is not supported in schema tracker")
+}
+
+// DropMaterializedViewLog implements the DDL interface.
+func (*SchemaTracker) DropMaterializedViewLog(sessionctx.Context, *ast.DropMaterializedViewLogStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("DROP MATERIALIZED VIEW LOG is not supported in schema tracker")
+}
+
+// AlterMaterializedView implements the DDL interface.
+func (*SchemaTracker) AlterMaterializedView(sessionctx.Context, *ast.AlterMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW is not supported in schema tracker")
+}
+
+// AlterMaterializedViewLog implements the DDL interface.
+func (*SchemaTracker) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterializedViewLogStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG is not supported in schema tracker")
+}
+
+// RefreshMaterializedView implements the DDL interface.
+func (*SchemaTracker) RefreshMaterializedView(sessionctx.Context, *ast.RefreshMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW is not supported in schema tracker")
+}
+
 func restoreExprToCanonicalSQL(expr ast.ExprNode) (string, error) {
 	var sb strings.Builder
 	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreStringWithoutCharset, &sb)

@@ -24,6 +24,7 @@ go_library(
         "func_stddevpop.go",
         "func_stddevsamp.go",
         "func_sum.go",
+        "func_sum_int.go",
         "func_value.go",
         "func_varpop.go",
         "func_varsamp.go",

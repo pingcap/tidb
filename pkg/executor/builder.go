@@ -1009,9 +1009,18 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	baseExec := exec.NewBaseExecutor(b.ctx, nil, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
+	sourceStmt := tables.MLogSourceInsert
+	if v.IsReplace {
+		sourceStmt = tables.MLogSourceReplace
+	}
+	insertTable := b.wrapTableWithMLogIfExists(v.Table, sourceStmt)
+	if b.err != nil {
+		return nil
+	}
+
 	ivs := &InsertValues{
 		BaseExecutor:              baseExec,
-		Table:                     v.Table,
+		Table:                     insertTable,
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
 		GenExprs:                  v.GenCols.Exprs,
@@ -1057,6 +1066,13 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "IMPORT")
 		return nil
 	}
+	if meta := tbl.Meta(); meta.MaterializedViewBase != nil &&
+		meta.MaterializedViewBase.MLogID != 0 {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"IMPORT INTO on tables with materialized view log",
+		)
+		return nil
+	}
 
 	var (
 		selectExec exec.Executor
@@ -1087,6 +1103,10 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 	}
 	if !tbl.Meta().IsBaseTable() {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		return nil
+	}
+	tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceLoadData)
+	if b.err != nil {
 		return nil
 	}
 
@@ -2746,11 +2766,11 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
-		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {
 			multiUpdateOnSameTable[info.TblID] = true
+			continue
 		}
-		tblID2table[info.TblID] = tbl
+		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
 		if len(v.PartitionedTable) > 0 {
 			// The v.PartitionedTable collects the partitioned table.
 			// Replace the original table with the partitioned table to support partition selection.
@@ -2758,10 +2778,15 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 			// Using the table in v.PartitionedTable returns a proper error, while using the original table can't.
 			for _, p := range v.PartitionedTable {
 				if info.TblID == p.Meta().ID {
-					tblID2table[info.TblID] = p
+					tbl = p
 				}
 			}
 		}
+		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceUpdate)
+		if b.err != nil {
+			return nil
+		}
+		tblID2table[info.TblID] = tbl
 	}
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
@@ -2827,7 +2852,12 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 	b.inDeleteStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
-		tblID2table[info.TblID], _ = b.is.TableByID(context.Background(), info.TblID)
+		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
+		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceDelete)
+		if b.err != nil {
+			return nil
+		}
+		tblID2table[info.TblID] = tbl
 	}
 
 	if b.err = b.updateForUpdateTS(); b.err != nil {
@@ -2856,6 +2886,45 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 		return nil
 	}
 	return deleteExec
+}
+
+// wrapTableWithMLogIfExists wraps tbl with its materialized view log table if one exists.
+// It returns the original table unchanged when there is no associated MLog.
+func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, sourceStmt tables.MLogSourceStmt) table.Table {
+	if tbl == nil {
+		return nil
+	}
+	meta := tbl.Meta()
+	if meta == nil || meta.MaterializedViewBase == nil || meta.MaterializedViewBase.MLogID == 0 {
+		return tbl
+	}
+	// MV log DML write path doesn't support partitioned tables for now. This guard prevents
+	// accidentally writing inconsistent logs for partitions.
+	if meta.GetPartitionInfo() != nil {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"materialized view log on partitioned tables",
+		)
+		return nil
+	}
+
+	mlogID := meta.MaterializedViewBase.MLogID
+	mlogTbl, ok := b.is.TableByID(context.Background(), mlogID)
+	if !ok {
+		b.err = errors.Errorf(
+			"cannot get materialized view log table id=%d (base=%s id=%d)",
+			mlogID,
+			meta.Name.O,
+			meta.ID,
+		)
+		return nil
+	}
+
+	wrapped, err := tables.WrapTableWithMaterializedViewLog(tbl, mlogTbl, sourceStmt)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	return wrapped
 }
 
 func (b *executorBuilder) updateForUpdateTS() error {
@@ -3385,6 +3454,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		outerHashTypes[i] = outerTypes[col.Index].Clone()
 		outerHashTypes[i].SetFlag(col.RetType.GetFlag())
 	}
+	hashIsNullEQ := make([]bool, len(v.InnerHashKeys))
+	copy(hashIsNullEQ, v.IsNullEQ)
 
 	var (
 		outerFilter           []expression.Expression
@@ -3435,6 +3506,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			ReaderBuilder: readerBuilder,
 			RowTypes:      innerTypes,
 			HashTypes:     innerHashTypes,
+			HashIsNullEQ:  hashIsNullEQ,
 			ColLens:       v.IdxColLens,
 			HasPrefixCol:  hasPrefixCol,
 		},
@@ -3893,7 +3965,8 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 }
 
 func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, physPlanPartInfo *plannercore.PhysPlanPartInfo,
-	lookUpContent []*join.IndexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
+	lookUpContent []*join.IndexJoinLookUpContent,
+) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
 
 	// In index join, this is called by multiple goroutines simultaneously, but partitionPruning is not thread-safe.
@@ -5024,7 +5097,8 @@ func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*jo
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.RangerContext, tableID, indexID int64, lookUpContents []*join.IndexJoinLookUpContent,
-	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (_ []kv.KeyRange, err error) {
+	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (_ []kv.KeyRange, err error) {
 	kvRanges := make([]kv.KeyRange, 0, len(ranges)*len(lookUpContents))
 	if len(ranges) == 0 {
 		return []kv.KeyRange{}, nil
