@@ -15,6 +15,7 @@ package ast
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -57,6 +58,8 @@ var (
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 	_ DDLNode = &RepairTableStmt{}
+
+	_ StmtNode = &RefreshMaterializedViewImplementStmt{}
 
 	_ Node = &AlterTableSpec{}
 	_ Node = &ColumnDef{}
@@ -2156,6 +2159,52 @@ type RefreshMaterializedViewStmt struct {
 	ViewName     *TableName
 	WithSyncMode bool
 	Type         RefreshMaterializedViewType
+}
+
+// RefreshMaterializedViewImplementStmt is an internal-only statement that is constructed directly by the executor
+// (rather than parsed from SQL text) to execute a materialized view refresh implementation plan.
+//
+// It is mainly used to avoid string-concatenated SQL in refresh implementation (e.g. replacing `DELETE FROM` + `INSERT INTO`)
+// and to pass executor-only parameters (like `LAST_SUCCESSFUL_REFRESH_READ_TSO`) through the normal
+// parse/preprocess/plan/execute pipeline.
+//
+// NOTE: This statement is not exposed by the parser grammar, so Restore() is primarily used for logging / toString.
+type RefreshMaterializedViewImplementStmt struct {
+	stmtNode
+
+	RefreshStmt                  *RefreshMaterializedViewStmt
+	LastSuccessfulRefreshReadTSO int64
+}
+
+// Restore implements Node interface.
+func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("IMPLEMENT FOR ")
+	if n.RefreshStmt == nil {
+		return errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt")
+	}
+	if err := n.RefreshStmt.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewImplementStmt.RefreshStmt")
+	}
+	ctx.WriteKeyWord(" USING TIMESTAMP ")
+	ctx.WritePlain(strconv.FormatInt(n.LastSuccessfulRefreshReadTSO, 10))
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RefreshMaterializedViewImplementStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshMaterializedViewImplementStmt)
+	if n.RefreshStmt != nil {
+		node, ok := n.RefreshStmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.RefreshStmt = node.(*RefreshMaterializedViewStmt)
+	}
+	return v.Leave(n)
 }
 
 type RefreshMaterializedViewType int

@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -34,6 +35,8 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateMaterializedViewStmt) error {
@@ -335,8 +338,253 @@ func (*executor) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterial
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG ... PURGE is not supported")
 }
 
-func (*executor) RefreshMaterializedView(sessionctx.Context, *ast.RefreshMaterializedViewStmt) error {
-	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW is not supported")
+func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.RefreshMaterializedViewStmt) error {
+	if s == nil || s.ViewName == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: missing view name")
+	}
+
+	switch s.Type {
+	case ast.RefreshMaterializedViewTypeComplete:
+		// supported
+	case ast.RefreshMaterializedViewTypeFast:
+		// Framework is supported; actual execution happens via RefreshMaterializedViewImplementStmt.
+	default:
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unknown REFRESH MATERIALIZED VIEW type")
+	}
+	// In MVP, refresh is synchronous by nature. `WITH SYNC MODE` is accepted and behaves the same.
+	refreshType := strings.ToLower(s.Type.String())
+
+	is := e.infoCache.GetLatest()
+	schemaName := s.ViewName.Schema
+	if schemaName.O == "" {
+		if sctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(sctx.GetSessionVars().CurrentDB)
+		s.ViewName.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	tbl, err := is.TableByName(e.ctx, schemaName, s.ViewName.Name)
+	if err != nil {
+		return err
+	}
+	if tbl.Meta().MaterializedView == nil {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name.O, "MATERIALIZED VIEW")
+	}
+	if len(tbl.Meta().MaterializedView.SQLContent) == 0 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: invalid select sql")
+	}
+
+	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
+	sqlExec := sctx.GetSQLExecutor()
+	sessVars := sctx.GetSessionVars()
+
+	// Savepoint is required for transactional refresh-with-failure-record (rollback MV data changes but persist failure info).
+	// Savepoint is not supported in pessimistic txn when `tidb_constraint_check_in_place_pessimistic` is OFF, so we
+	// force it to ON for the duration of this statement and then restore it.
+	oldConstraintCheckInPlacePessimistic, err := sessVars.SetSystemVarWithOldValAsRet(variable.TiDBConstraintCheckInPlacePessimistic, variable.On)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		_ = sessVars.SetSystemVar(variable.TiDBConstraintCheckInPlacePessimistic, oldConstraintCheckInPlacePessimistic)
+	}()
+
+	txnStarted := false
+	txnCommitted := false
+	defer func() {
+		if !txnStarted || txnCommitted {
+			return
+		}
+		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
+	}()
+
+	// Use a pessimistic txn to ensure `FOR UPDATE NOWAIT` works as a mutex.
+	if _, err := sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
+		return errors.Trace(err)
+	}
+	txnStarted = true
+
+	mviewID := tbl.Meta().ID
+	lockRS, err := sqlExec.ExecuteInternal(kctx,
+		// Also select LAST_SUCCESSFUL_REFRESH_READ_TSO so FAST refresh can reuse this mutex/metadata load path.
+		"SELECT MVIEW_ID, LAST_SUCCESSFUL_REFRESH_READ_TSO FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
+		mviewID,
+	)
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if lockRS == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: cannot lock mysql.tidb_mview_refresh row")
+	}
+	lockRows, drainErr := sqlexec.DrainRecordSet(kctx, lockRS, 1)
+	closeErr := lockRS.Close()
+	if drainErr != nil {
+		return errors.Trace(drainErr)
+	}
+	if closeErr != nil {
+		return errors.Trace(closeErr)
+	}
+	if len(lockRows) == 0 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh")
+	}
+	var lastSuccessfulRefreshReadTSO int64
+	if s.Type == ast.RefreshMaterializedViewTypeFast {
+		// LAST_SUCCESSFUL_REFRESH_READ_TSO is BIGINT DEFAULT NULL. FAST refresh requires it to be non-NULL.
+		row := lockRows[0]
+		if row.IsNull(1) {
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view fast: LAST_SUCCESSFUL_REFRESH_READ_TSO is NULL")
+		}
+		lastSuccessfulRefreshReadTSO = row.GetInt64(1)
+	}
+
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	startTS := txn.StartTS()
+	if startTS == 0 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: invalid transaction start tso")
+	}
+
+	// Use a savepoint so we can keep the mutex lock, rollback MV data changes on failure,
+	// but still commit refresh metadata updates (failed reason) as requested.
+	const refreshSavepoint = "tidb_mview_refresh_sp"
+	if _, err := sqlExec.ExecuteInternal(kctx, "SAVEPOINT "+refreshSavepoint); err != nil {
+		return errors.Trace(err)
+	}
+
+	refreshErr := func() error {
+		// TiFlash read is blocked for write statements when sql_mode is strict. Refresh prefers TiFlash for the
+		// scan part, so we bypass this guard for MV maintenance statements.
+		origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
+		sessVars.InMaterializedViewMaintenance = true
+		defer func() {
+			sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+		}()
+
+		switch s.Type {
+		case ast.RefreshMaterializedViewTypeComplete:
+			deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM %n.%n", schemaName.O, s.ViewName.Name.O)
+			insertPrefix := sqlescape.MustEscapeSQL("INSERT INTO %n.%n ", schemaName.O, s.ViewName.Name.O)
+			/* #nosec G202: SQLContent is restored from AST (single SELECT statement, no user-provided placeholders). */
+			insertSQL := insertPrefix + tbl.Meta().MaterializedView.SQLContent
+			if _, err := sqlExec.ExecuteInternal(kctx, deleteSQL); err != nil {
+				return err
+			}
+			if _, err := sqlExec.ExecuteInternal(kctx, insertSQL); err != nil {
+				return err
+			}
+		case ast.RefreshMaterializedViewTypeFast:
+			implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+				RefreshStmt:                  s,
+				LastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
+			}
+			drainRecordSet := func(rs sqlexec.RecordSet) error {
+				chk := rs.NewChunk(nil)
+				for {
+					chk.Reset()
+					if err := rs.Next(kctx, chk); err != nil {
+						return err
+					}
+					if chk.NumRows() == 0 {
+						return nil
+					}
+				}
+			}
+			if internalExec, ok := sqlExec.(interface {
+				ExecuteInternalStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
+			}); ok {
+				rs, err := internalExec.ExecuteInternalStmt(kctx, implementStmt)
+				if rs == nil {
+					return err
+				}
+				if err == nil {
+					if drainErr := drainRecordSet(rs); drainErr != nil {
+						_ = rs.Close()
+						return errors.Trace(drainErr)
+					}
+				}
+				if closeErr := rs.Close(); closeErr != nil && err == nil {
+					return errors.Trace(closeErr)
+				}
+				return err
+			}
+			// Fallback: emulate ExecuteInternalStmt by flipping InRestrictedSQL around ExecuteStmt.
+			origRestricted := sessVars.InRestrictedSQL
+			sessVars.InRestrictedSQL = true
+			defer func() {
+				sessVars.InRestrictedSQL = origRestricted
+			}()
+			rs, err := sqlExec.ExecuteStmt(kctx, implementStmt)
+			if rs == nil {
+				return err
+			}
+			if err == nil {
+				if drainErr := drainRecordSet(rs); drainErr != nil {
+					_ = rs.Close()
+					return errors.Trace(drainErr)
+				}
+			}
+			if closeErr := rs.Close(); closeErr != nil && err == nil {
+				return errors.Trace(closeErr)
+			}
+			return err
+		default:
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unknown REFRESH MATERIALIZED VIEW type")
+		}
+		return nil
+	}()
+	if refreshErr != nil {
+		if _, err := sqlExec.ExecuteInternal(kctx, "ROLLBACK TO SAVEPOINT "+refreshSavepoint); err != nil {
+			return errors.Annotatef(err, "refresh materialized view: failed to rollback MV data changes after error %v", refreshErr)
+		}
+		updateFailedSQL := `UPDATE mysql.tidb_mview_refresh
+SET
+	LAST_REFRESH_RESULT = 'failed',
+	LAST_REFRESH_TYPE = %?,
+	LAST_REFRESH_TIME = NOW(6),
+	LAST_REFRESH_FAILED_REASON = %?
+WHERE MVIEW_ID = %?`
+		if _, err := sqlExec.ExecuteInternal(kctx, updateFailedSQL, refreshType, refreshErr.Error(), mviewID); err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) {
+				return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
+			}
+			return errors.Annotatef(err, "refresh materialized view: failed to persist refresh failure info (original error: %v)", refreshErr)
+		}
+		if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
+			return errors.Trace(err)
+		}
+		txnCommitted = true
+		return errors.Trace(refreshErr)
+	}
+
+	updateSQL := `UPDATE mysql.tidb_mview_refresh
+SET
+	LAST_REFRESH_RESULT = 'success',
+	LAST_REFRESH_TYPE = %?,
+	LAST_REFRESH_TIME = NOW(6),
+	LAST_SUCCESSFUL_REFRESH_READ_TSO = %?,
+	LAST_REFRESH_FAILED_REASON = NULL
+WHERE MVIEW_ID = %?`
+	if _, err := sqlExec.ExecuteInternal(kctx, updateSQL, refreshType, startTS, mviewID); err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
+		}
+		return errors.Trace(err)
+	}
+
+	if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
+		return errors.Trace(err)
+	}
+	txnCommitted = true
+	return nil
 }
 
 func buildMViewRefreshMeta(refresh *ast.MViewRefreshClause) (method, startWith, next string, _ error) {
@@ -494,20 +742,22 @@ func validateCreateMaterializedViewQuery(
 			if expr.Distinct {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support DISTINCT aggregate function")
 			}
-			if expr.F != ast.AggFuncCount && expr.F != ast.AggFuncSum && expr.F != ast.AggFuncMin && expr.F != ast.AggFuncMax {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW")
+			aggFunc := strings.ToLower(expr.F)
+			if aggFunc != ast.AggFuncCount && aggFunc != ast.AggFuncSum && aggFunc != ast.AggFuncMin && aggFunc != ast.AggFuncMax {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW" + " agg " + expr.F)
 			}
-			switch expr.F {
+			switch aggFunc {
 			case ast.AggFuncCount:
 				if len(expr.Args) != 1 {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("count(*)/count(1) must have exactly one argument in CREATE MATERIALIZED VIEW")
 				}
+				if _, ok := expr.Args[0].(*ast.ColumnNameExpr); ok {
+					// count(column) is supported
+					continue
+				}
 				if expr.Args[0] == nil {
 					hasCountStarOrOne = true
 					continue
-				}
-				if _, ok := expr.Args[0].(*ast.ColumnNameExpr); ok {
-					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports count(*)/count(1)")
 				}
 				if !isCountStarOrOne(expr.Args[0]) {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports count(*)/count(1)")
@@ -533,7 +783,7 @@ func validateCreateMaterializedViewQuery(
 				}
 				usedCols[colName] = struct{}{}
 			default:
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW")
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW" + " agg " + expr.F)
 			}
 		default:
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported SELECT expression in CREATE MATERIALIZED VIEW")

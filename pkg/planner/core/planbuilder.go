@@ -568,6 +568,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt, *ast.CancelDistributionJobStmt,
 		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt:
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
+	case *ast.RefreshMaterializedViewImplementStmt:
+		return b.buildRefreshMaterializedViewImplement(ctx, x)
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
 	case *ast.CreateBindingStmt:
@@ -3819,6 +3821,17 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 		}
 	}
 	return p, nil
+}
+
+func (b *PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
+	if stmt == nil || stmt.RefreshStmt == nil || stmt.RefreshStmt.ViewName == nil {
+		return nil, errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt/ViewName")
+	}
+	// Currently this internal statement is only used by FAST refresh.
+	if stmt.RefreshStmt.Type != ast.RefreshMaterializedViewTypeFast {
+		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: only FAST refresh is supported, got %s", stmt.RefreshStmt.Type.String())
+	}
+	return nil, plannererrors.ErrUnsupportedType.GenWithStack("RefreshMaterializedViewImplementStmt is not supported")
 }
 
 func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
