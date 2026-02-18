@@ -1378,7 +1378,7 @@ func (e *maxMin4TimeSliding) deserializeForSpill(helper *deserializeHelper) (Par
 	return pr, memDelta
 }
 
-var _ SlidingWindowAggFunc = &maxMin4DurationSliding{}
+var _ SlidingWindowAggFunc = &maxMin4TimeSliding{}
 
 func (e *maxMin4TimeSliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinTime)(pr)

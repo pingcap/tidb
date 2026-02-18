@@ -113,9 +113,9 @@ func BuildWindowFunctions(ctx AggFuncBuildContext, windowFuncDesc *aggregation.A
 	case ast.AggFuncMin:
 		return buildMaxMinInWindowFunction(ctx, windowFuncDesc, ordinal, false)
 	case ast.AggFuncMaxCount:
-		return buildMaxMinCountInWindowFunction(ctx.GetEvalCtx(), windowFuncDesc, ordinal, true)
+		return buildMaxMinCountInWindowFunction(ctx, windowFuncDesc, ordinal, true)
 	case ast.AggFuncMinCount:
-		return buildMaxMinCountInWindowFunction(ctx.GetEvalCtx(), windowFuncDesc, ordinal, false)
+		return buildMaxMinCountInWindowFunction(ctx, windowFuncDesc, ordinal, false)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -499,6 +499,31 @@ func buildMaxMinInWindowFunction(ctx AggFuncBuildContext, aggFuncDesc *aggregati
 		return &maxMin4TimeSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Duration:
 		return &maxMin4DurationSliding{*baseAggFunc, windowInfo{}}
+	}
+	return base
+}
+
+// buildMaxMinCountInWindowFunction builds the AggFunc implementation for function "MAX_COUNT" and "MIN_COUNT" used by window function.
+func buildMaxMinCountInWindowFunction(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	base := buildMaxMinCount(ctx.GetEvalCtx(), aggFuncDesc, ordinal, isMax)
+	// build max_count/min_count aggFunc for window function using sliding window
+	switch baseAggFunc := base.(type) {
+	case *maxMinCount4Int:
+		return &maxMinCount4IntSliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Uint:
+		return &maxMinCount4UintSliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Float32:
+		return &maxMinCount4Float32Sliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Float64:
+		return &maxMinCount4Float64Sliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Decimal:
+		return &maxMinCount4DecimalSliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4String:
+		return &maxMinCount4StringSliding{*baseAggFunc, windowInfo{}, baseAggFunc.args[0].GetType(ctx.GetEvalCtx()).GetCollate()}
+	case *maxMinCount4Time:
+		return &maxMinCount4TimeSliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Duration:
+		return &maxMinCount4DurationSliding{*baseAggFunc, windowInfo{}}
 	}
 	return base
 }
