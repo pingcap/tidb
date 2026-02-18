@@ -862,7 +862,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
-	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
+	eqOrInResult := compareEqOrIn(lhs, rhs)
 
 	// predicateResult is separated out. An index may "win" because it has a better
 	// accessResult - but that access has high risk.
@@ -878,10 +878,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
-		(lhsEqOrInCount > 0 || rhsEqOrInCount > 0) { // At least one index has equal/IN predicates
-		lhsFullMatch := isFullIndexMatch(lhs)
-		rhsFullMatch := isFullIndexMatch(rhs)
-		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount, preferRange)
+		(lhs.equalPredCount > 0 || rhs.equalPredCount > 0) { // At least one index has equal/IN predicates
+		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhs.isFullRange, rhs.isFullRange, eqOrInResult, lhs.equalPredCount, rhs.equalPredCount, preferRange)
 		if pseudoResult > 0 && totalSum >= 0 {
 			return pseudoResult, lhsPseudo
 		}
@@ -960,14 +958,14 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lh
 	return lhsPseudo, rhsPseudo
 }
 
-func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int, preferRange bool) int {
+func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqualPredCount, rhsEqualPredCount int, preferRange bool) int {
 	// TO-DO: Consider a separate set of rules for global indexes.
 	// If one index has statistics and the other does not, choose the index with statistics if it
 	// has the same or higher number of equal/IN predicates.
-	if !lhsPseudo && lhsEqOrInCount > 0 && eqOrInResult >= 0 {
+	if !lhsPseudo && lhsEqualPredCount > 0 && eqOrInResult >= 0 {
 		return 1 // left wins
 	}
-	if !rhsPseudo && rhsEqOrInCount > 0 && eqOrInResult <= 0 {
+	if !rhsPseudo && rhsEqualPredCount > 0 && eqOrInResult <= 0 {
 		return -1 // right wins
 	}
 	if preferRange {
@@ -975,11 +973,11 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 		// 1) there are at least 2 equal/INs
 		// 2) OR - it's a full index match for all index predicates
 		if lhsPseudo && eqOrInResult > 0 &&
-			(lhsEqOrInCount > 1 || lhsFullMatch) {
+			(lhsEqualPredCount > 1 || lhsFullMatch) {
 			return 1 // left wins
 		}
 		if rhsPseudo && eqOrInResult < 0 &&
-			(rhsEqOrInCount > 1 || rhsFullMatch) {
+			(rhsEqualPredCount > 1 || rhsFullMatch) {
 			return -1 // right wins
 		}
 	}
@@ -990,32 +988,21 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 // and the count for each. For example:
 //
 //	where a=1 and b=1 and c=1 and d=1
-//	lhs == idx(a, b, e) <-- lhsEqOrInCount == 2 (loser)
-//	rhs == idx(d, c, b) <-- rhsEqOrInCount == 3 (winner)
-func compareEqOrIn(lhs, rhs *candidatePath) (predCompare, lhsEqOrInCount, rhsEqOrInCount int) {
+//	lhs == idx(a, b, e) <-- lhsEqualPredCount == 2 (loser)
+//	rhs == idx(d, c, b) <-- rhsEqualPredCount == 3 (winner)
+func compareEqOrIn(lhs, rhs *candidatePath) (predCompare int) {
 	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
 		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
-		return 0, 0, 0
+		return 0
 	}
-	lhsEqOrInCount = lhs.equalPredCount
-	rhsEqOrInCount = rhs.equalPredCount
-	if lhsEqOrInCount > rhsEqOrInCount {
-		return 1, lhsEqOrInCount, rhsEqOrInCount
+	if lhs.equalPredCount > rhs.equalPredCount {
+		return 1
 	}
-	if lhsEqOrInCount < rhsEqOrInCount {
-		return -1, lhsEqOrInCount, rhsEqOrInCount
+	if lhs.equalPredCount < rhs.equalPredCount {
+		return -1
 	}
-	// We didn't find a winner, but return both counts for use by the caller
-	return 0, lhsEqOrInCount, rhsEqOrInCount
-}
-
-func isFullIndexMatch(candidate *candidatePath) bool {
-	// Check if the DNF condition is a full match
-	if candidate.path.IsDNFCond && candidate.hasOnlyEqualPredicatesInDNF() {
-		return candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns)
-	}
-	// Check if the index covers all access conditions for non-DNF conditions
-	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
+	// We didn't find a winner
+	return 0
 }
 
 func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
