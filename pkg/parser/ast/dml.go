@@ -16,6 +16,7 @@ package ast
 import (
 	"reflect"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -289,6 +290,9 @@ type TableName struct {
 	//   for example ```delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id```
 	//   ```tt1``` is a alias name. so we need to set IsAlias to true and restore the table name without database name.
 	IsAlias bool
+
+	// HasWildcard indicates if the table name was parsed with a `.*` suffix (e.g. `DELETE FROM t1.*`).
+	HasWildcard bool
 }
 
 func (*TableName) resultSet() {}
@@ -777,6 +781,17 @@ func (n *SelectField) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*SelectField)
 	if n.Expr != nil {
+		// Safety: detect typed nil interface (non-nil type pointer, nil data pointer).
+		// This can happen when arena-allocated AST nodes have stale memory or when
+		// the planner mutates the AST in-place leaving ExprNode fields corrupted.
+		type iface struct {
+			typ  uintptr
+			data uintptr
+		}
+		ei := *(*iface)(unsafe.Pointer(&n.Expr))
+		if ei.data == 0 {
+			return v.Leave(n)
+		}
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
@@ -1654,6 +1669,13 @@ func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 				return err
 			}
 			ctx.WritePlain(")")
+		case *SetOprStmt:
+			if i != 0 {
+				ctx.WriteKeyWord(" " + selectStmt.AfterSetOperator.String() + " ")
+			}
+			if err := selectStmt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SetOprSelectList.SetOprStmt")
+			}
 		}
 	}
 
@@ -1747,18 +1769,20 @@ func (s *SetOprType) String() string {
 type SetOprStmt struct {
 	dmlNode
 
-	IsInBraces bool
-	SelectList *SetOprSelectList
-	OrderBy    *OrderByClause
-	Limit      *Limit
-	With       *WithClause
+	IsInBraces       bool
+	WithBeforeBraces bool
+	SelectList       *SetOprSelectList
+	AfterSetOperator *SetOprType
+	OrderBy          *OrderByClause
+	Limit            *Limit
+	With             *WithClause
 }
 
 func (*SetOprStmt) resultSet() {}
 
 // Restore implements Node interface.
 func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
-	if n.With != nil {
+	if n.With != nil && n.WithBeforeBraces {
 		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SetOprStmt.With")
@@ -1769,6 +1793,12 @@ func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 		defer func() {
 			ctx.WritePlain(")")
 		}()
+	}
+	if n.With != nil && !n.WithBeforeBraces {
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
+		if err := n.With.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SetOprStmt.With")
+		}
 	}
 
 	if err := n.SelectList.Restore(ctx); err != nil {
@@ -3514,6 +3544,22 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IMPORTS")
 		case ShowPlacement:
 			ctx.WriteKeyWord("PLACEMENT")
+			if n.DBName != "" {
+				ctx.WriteKeyWord(" FOR DATABASE ")
+				ctx.WriteName(n.DBName)
+			} else if n.Table != nil {
+				ctx.WriteKeyWord(" FOR TABLE ")
+				if err := n.Table.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+				}
+				if n.Partition.O != "" {
+					ctx.WriteKeyWord(" PARTITION ")
+					ctx.WriteName(n.Partition.O)
+				}
+			} else if n.Partition.O != "" {
+				ctx.WriteKeyWord(" FOR PARTITION ")
+				ctx.WriteName(n.Partition.O)
+			}
 		case ShowPlacementLabels:
 			ctx.WriteKeyWord("PLACEMENT LABELS")
 		case ShowSessionStates:

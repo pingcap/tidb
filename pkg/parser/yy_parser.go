@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"slices"
 	"strconv"
 	"unicode"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/hparser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -92,6 +92,7 @@ type Parser struct {
 	src        string
 	lexer      Scanner
 	hintParser *hintParser
+	handParser *hparser.HandParser
 
 	explicitCharset       bool
 	strictDoubleFieldType bool
@@ -125,7 +126,8 @@ func New() *Parser {
 	}
 
 	p := &Parser{
-		cache: make([]yySymType, 200),
+		cache:      make([]yySymType, 200),
+		handParser: hparser.NewHandParser(),
 	}
 	p.reset()
 	return p
@@ -144,6 +146,7 @@ func (parser *Parser) reset() {
 	parser.SetStrictDoubleTypeCheck(true)
 	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	parser.SetSQLMode(mode)
+	parser.handParser.Reset() // Ensure clean state for hand parser
 }
 
 // SetStrictDoubleTypeCheck enables/disables strict double type check.
@@ -156,6 +159,10 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.EnableWindowFunc(config.EnableWindowFunction)
 	parser.SetStrictDoubleTypeCheck(config.EnableStrictDoubleTypeCheck)
 	parser.lexer.skipPositionRecording = config.SkipPositionRecording
+
+	// Sync config to hand parser
+	parser.handParser.EnableWindowFunc(config.EnableWindowFunction)
+	parser.handParser.SetStrictDoubleFieldTypeCheck(config.EnableStrictDoubleTypeCheck)
 }
 
 // ParseSQL parses a query string to raw ast.StmtNode.
@@ -170,22 +177,48 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 	parser.src = sql
 	parser.result = parser.result[:0]
 
-	var l yyLexer = &parser.lexer
-	yyParse(l, parser)
+	// Hand parser is the sole parser — no goyacc fallback.
+	parser.handParser.SetSQLMode(parser.lexer.GetSQLMode())
 
-	warns, errs := l.Errors()
-	if len(warns) > 0 {
-		warns = slices.Clone(warns)
-	} else {
-		warns = nil
+	// Inject hint parser callback so hand parser can parse optimizer hints.
+	parser.handParser.SetHintParse(func(input string) ([]*ast.TableOptimizerHint, []error) {
+		return parser.parseHint(input)
+	})
+
+	// Adapter closure: bridge Scanner (yySymType) to hand parser (LexFunc).
+	lexAdapter := func() (tok int, offset int, lit string, item interface{}) {
+		var lval yySymType
+		tok = parser.lexer.Lex(&lval)
+		return tok, lval.offset, lval.ident, lval.item
 	}
-	if len(errs) != 0 {
-		return nil, warns, errors.Trace(errs[0])
+	// Initialize hand parser: Reset + Init + set charset/collation.
+	// We don't call handParser.Parse() because its internal Reset() clears
+	// flags that we need to sync from the main parser.
+	parser.handParser.Reset()
+	parser.handParser.Init(lexAdapter, sql)
+	parser.handParser.SetCharsetCollation(parser.charset, parser.collation)
+
+	// Sync parser state to hand parser AFTER reset.
+	parser.handParser.SetStrictDoubleFieldTypeCheck(parser.strictDoubleFieldType)
+
+	hStmts, hWarns, hErr := parser.handParser.ParseSQL()
+
+	// Merge scanner-level warnings/errors.
+	scannerWarns, scannerErrs := parser.lexer.Errors()
+	warns = hWarns
+	if len(scannerWarns) > 0 {
+		warns = append(warns, scannerWarns...)
 	}
-	for _, stmt := range parser.result {
-		ast.SetFlag(stmt)
+
+	if len(scannerErrs) > 0 {
+		return nil, warns, errors.Trace(scannerErrs[0])
 	}
-	return parser.result, warns, nil
+	if hErr != nil {
+		return nil, warns, errors.Trace(hErr)
+	}
+
+	parser.result = hStmts
+	return hStmts, warns, nil
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -215,11 +248,13 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 // SetSQLMode sets the SQL mode for parser.
 func (parser *Parser) SetSQLMode(mode mysql.SQLMode) {
 	parser.lexer.SetSQLMode(mode)
+	parser.handParser.SetSQLMode(mode)
 }
 
 // EnableWindowFunc controls whether the parser to parse syntax related with window function.
 func (parser *Parser) EnableWindowFunc(val bool) {
 	parser.lexer.EnableWindowFunc(val)
+	parser.handParser.EnableWindowFunc(val)
 }
 
 // ParseErrorWith returns "You have a syntax error near..." error message compatible with mysql.

@@ -2821,6 +2821,7 @@ func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
+
 	failpoint.Inject("assertTxnManagerInRunStmt", func() {
 		sessiontxn.RecordAssert(se, "assertTxnManagerInRunStmt", true)
 		if stmt, ok := s.(*executor.ExecStmt); ok {
@@ -2927,6 +2928,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
+
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
 				se.StmtCommit(ctx)
