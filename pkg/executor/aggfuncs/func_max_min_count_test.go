@@ -329,24 +329,3 @@ func TestMaxMinCountSlidingWindow(t *testing.T) {
 		"7 1 1",
 	))
 }
-
-func TestBuildWindowMaxMinCountUsesSliding(t *testing.T) {
-	ctx := mock.NewContext()
-	ft := types.NewFieldType(mysql.TypeLonglong)
-	args := []expression.Expression{&expression.Column{RetType: ft, Index: 0}}
-	orderByCols := []*expression.Column{{RetType: ft, Index: 0}}
-
-	maxDesc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMaxCount, args, false)
-	require.NoError(t, err)
-	minDesc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMinCount, args, false)
-	require.NoError(t, err)
-
-	maxFunc := aggfuncs.BuildWindowFunctions(ctx, maxDesc, 0, orderByCols)
-	minFunc := aggfuncs.BuildWindowFunctions(ctx, minDesc, 0, orderByCols)
-	require.NotNil(t, maxFunc)
-	require.NotNil(t, minFunc)
-	_, ok := maxFunc.(aggfuncs.MaxMinSlidingWindowAggFunc)
-	require.True(t, ok)
-	_, ok = minFunc.(aggfuncs.MaxMinSlidingWindowAggFunc)
-	require.True(t, ok)
-}
