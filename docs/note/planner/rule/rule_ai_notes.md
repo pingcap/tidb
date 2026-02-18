@@ -1,6 +1,6 @@
 # Planner Rule AI Notes
 
-This file records planner rule related PR experience and pitfalls. Append a new entry after each relevant change.
+This file records planner rule related PR experience and pitfalls. Update an existing section when the topic overlaps; append a new dated entry only for a genuinely new topic.
 
 ## 2026-01-31 - NOT NOT in Outer Join ON / Double NOT handling
 
@@ -18,7 +18,7 @@ Implementation choice:
 
 Test and verification:
 - Add cases to `pkg/planner/core/casetest/rule/testdata/predicate_pushdown_suite_in.json`.
-- Run: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation -record -tags=intest`.
+- Run: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation -record -tags=intest,deadlock`.
 - Confirm `left outer join` keeps `equal:[eq(t0.k0, t2.k0)]`.
 
 Test data pattern used:
@@ -43,5 +43,5 @@ Implementation choice:
 
 Test and verification:
 - Add SQL-only case to `predicate_pushdown_suite_in.json`; keep DDL in the test setup, otherwise `explain` will try to run `DROP/CREATE`.
-- Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation --tags=intest -record`.
-- Add integration test to `tests/integrationtest/t/select.test` and record via `./run-tests.sh -r select` (integration tests use `-r`, not `-record`).
+- Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation -tags=intest,deadlock -record`.
+- Add integration test to `tests/integrationtest/t/select.test` and record via `pushd tests/integrationtest && ./run-tests.sh -r select && popd` (integration tests use `-r`, not `-record`).
