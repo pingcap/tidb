@@ -1147,11 +1147,11 @@ TableReader_8	3.00	130.42	root		data:Selection_7
   └─TableFullScan_6	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_13	1.00	105.07	root		offset:0, count:1
-└─TableReader_33	1.00	105.07	root		data:Limit_32
-  └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
-      └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
+Limit_9	1.00	105.07	root		offset:0, count:1
+└─TableReader_19	1.00	105.07	root		data:Limit_18
+  └─Limit_18	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_17	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_16	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
 Limit_9	1.00	105.07	root		offset:0, count:1
@@ -1167,11 +1167,11 @@ TableReader_8	3.00	130.42	root		data:Selection_7
   └─TableFullScan_6	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_13	1.00	105.07	root		offset:0, count:1
-└─TableReader_33	1.00	105.07	root		data:Limit_32
-  └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
-      └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
+Limit_9	1.00	105.07	root		offset:0, count:1
+└─TableReader_19	1.00	105.07	root		data:Limit_18
+  └─Limit_18	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_17	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_16	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
 Limit_9	1.00	105.07	root		offset:0, count:1
