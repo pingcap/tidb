@@ -20,8 +20,11 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -29,7 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -387,4 +392,76 @@ func randomDuration(minSeconds, maxSeconds int) time.Duration {
 	randomIntervalSeconds := rand.Intn(maxSeconds-minSeconds+1) + minSeconds
 	newDuration := time.Duration(randomIntervalSeconds) * time.Second
 	return newDuration
+}
+const (
+	privilegeKey          = "/tidb/privilege"
+	sysVarCacheKey        = "/tidb/sysvars"
+	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
+)
+
+// PrivilegeEvent is the message definition for NotifyUpdatePrivilege(), encoded in json.
+// TiDB old version do not use no such message.
+type PrivilegeEvent struct {
+	All      bool
+	ServerID uint64
+	UserList []string
+}
+
+// NotifyUpdateAllUsersPrivilege updates privilege key in etcd, TiDB client that watches
+// the key will get notification.
+func (do *Domain) NotifyUpdateAllUsersPrivilege() error {
+	return do.notifyUpdatePrivilege(PrivilegeEvent{All: true})
+}
+
+// NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
+// the key will get notification.
+func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
+	return do.notifyUpdatePrivilege(PrivilegeEvent{UserList: userList})
+}
+
+func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
+	// No matter skip-grant-table is configured or not, sending an etcd message is required.
+	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
+	// password using a special TiDB instance and want the new password to take effect.
+	if do.etcdClient != nil {
+		event.ServerID = do.serverID
+		data, err := json.Marshal(event)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if uint64(len(data)) > size.MB {
+			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
+		}
+		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, etcd.KeyOpDefaultRetryCnt, privilegeKey, string(data))
+		if err != nil {
+			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
+		}
+	}
+
+	// If skip-grant-table is configured, do not flush privileges.
+	// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
+	// the call to do.PrivilegeHandle().Update would panic.
+	if config.GetGlobalConfig().Security.SkipGrantTable {
+		return nil
+	}
+
+	return privReloadEvent(do.PrivilegeHandle(), &event)
+}
+
+// NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
+// clients are subscribed to for updates. For the caller, the cache is also built
+// synchronously so that the effect is immediate.
+func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
+	if do.etcdClient != nil {
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
+		if err != nil {
+			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
+		}
+	}
+	// update locally
+	if updateLocal {
+		if err := do.rebuildSysVarCache(nil); err != nil {
+			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
+		}
+	}
 }

@@ -16,11 +16,6 @@ package domain
 
 import (
 	"context"
-	"encoding/json"
-	"math"
-	"slices"
-	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,18 +23,13 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -81,7 +71,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/expensivequery"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -91,13 +80,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memoryusagealarm"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/workloadlearning"
-	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -895,158 +881,6 @@ func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
 }
 
-func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
-	cfg := config.GetGlobalConfig()
-	if pdClient == nil || do.etcdClient == nil {
-		log.Warn("pd / etcd client not provided, won't begin Advancer.")
-		return nil
-	}
-	tikvStore, ok := do.Store().(tikv.Storage)
-	if !ok {
-		log.Warn("non tikv store, stop begin Advancer.")
-		return nil
-	}
-	env, err := streamhelper.TiDBEnv(tikvStore, pdClient, do.etcdClient, cfg)
-	if err != nil {
-		return err
-	}
-	adv := streamhelper.NewTiDBCheckpointAdvancer(env)
-	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
-	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickTimeout())
-	loop, err := do.logBackupAdvancer.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	do.wg.Run(loop, "logBackupAdvancer")
-	return nil
-}
-
-// when tidb_replica_read = 'closest-adaptive', check tidb and tikv's zone label matches.
-// if not match, disable replica_read to avoid uneven read traffic distribution.
-func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.Client) {
-	defer util.Recover(metrics.LabelDomain, "closestReplicaReadCheckLoop", nil, false)
-
-	// trigger check once instantly.
-	if err := do.checkReplicaRead(ctx, pdClient); err != nil {
-		logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
-	}
-
-	ticker := time.NewTicker(time.Minute)
-	defer func() {
-		ticker.Stop()
-		logutil.BgLogger().Info("closestReplicaReadCheckLoop exited.")
-	}()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := do.checkReplicaRead(ctx, pdClient); err != nil {
-				logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
-			}
-		}
-	}
-}
-
-// Periodically check and update the replica-read status when `tidb_replica_read` is set to "closest-adaptive"
-// We disable "closest-adaptive" in following conditions to ensure the read traffic is evenly distributed across
-// all AZs:
-// - There are no TiKV servers in the AZ of this tidb instance
-// - The AZ if this tidb contains more tidb than other AZ and this tidb's id is the bigger one.
-func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) error {
-	do.sysVarCache.RLock()
-	replicaRead := do.sysVarCache.global[vardef.TiDBReplicaRead]
-	do.sysVarCache.RUnlock()
-
-	if !strings.EqualFold(replicaRead, "closest-adaptive") {
-		logutil.BgLogger().Debug("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
-		return nil
-	}
-
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return err
-	}
-	zone := ""
-	for k, v := range serverInfo.Labels {
-		if k == placement.DCLabelKey && v != "" {
-			zone = v
-			break
-		}
-	}
-	if zone == "" {
-		logutil.BgLogger().Debug("server contains no 'zone' label, disable closest replica read", zap.Any("labels", serverInfo.Labels))
-		variable.SetEnableAdaptiveReplicaRead(false)
-		return nil
-	}
-
-	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
-	if err != nil {
-		return err
-	}
-
-	storeZones := make(map[string]int)
-	for _, s := range stores {
-		// skip tumbstone stores or tiflash
-		if s.NodeState == metapb.NodeState_Removing || s.NodeState == metapb.NodeState_Removed || engine.IsTiFlash(s) {
-			continue
-		}
-		for _, label := range s.Labels {
-			if label.Key == placement.DCLabelKey && label.Value != "" {
-				storeZones[label.Value] = 0
-				break
-			}
-		}
-	}
-
-	// no stores in this AZ
-	if _, ok := storeZones[zone]; !ok {
-		variable.SetEnableAdaptiveReplicaRead(false)
-		return nil
-	}
-
-	servers, err := infosync.GetAllServerInfo(ctx)
-	if err != nil {
-		return err
-	}
-	svrIDsInThisZone := make([]string, 0)
-	for _, s := range servers {
-		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
-			if _, ok := storeZones[v]; ok {
-				storeZones[v]++
-				if v == zone {
-					svrIDsInThisZone = append(svrIDsInThisZone, s.ID)
-				}
-			}
-		}
-	}
-	enabledCount := math.MaxInt
-	for _, count := range storeZones {
-		if count < enabledCount {
-			enabledCount = count
-		}
-	}
-	// sort tidb in the same AZ by ID and disable the tidb with bigger ID
-	// because ID is unchangeable, so this is a simple and stable algorithm to select
-	// some instances across all tidb servers.
-	if enabledCount < len(svrIDsInThisZone) {
-		sort.Slice(svrIDsInThisZone, func(i, j int) bool {
-			return strings.Compare(svrIDsInThisZone[i], svrIDsInThisZone[j]) < 0
-		})
-	}
-	enabled := true
-	if slices.Contains(svrIDsInThisZone[enabledCount:], serverInfo.ID) {
-		enabled = false
-	}
-
-	if variable.SetEnableAdaptiveReplicaRead(enabled) {
-		logutil.BgLogger().Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", enabled))
-	}
-	return nil
-}
-
-// InitDistTaskLoop initializes the distributed task framework.
-// SysSessionPool returns the system session pool.
 // Deprecated: Use AdvancedSysSessionPool instead.
 func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
@@ -1190,78 +1024,6 @@ func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 	return do.serverMemoryLimitHandle
 }
 
-const (
-	privilegeKey          = "/tidb/privilege"
-	sysVarCacheKey        = "/tidb/sysvars"
-	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
-)
-
-// PrivilegeEvent is the message definition for NotifyUpdatePrivilege(), encoded in json.
-// TiDB old version do not use no such message.
-type PrivilegeEvent struct {
-	All      bool
-	ServerID uint64
-	UserList []string
-}
-
-// NotifyUpdateAllUsersPrivilege updates privilege key in etcd, TiDB client that watches
-// the key will get notification.
-func (do *Domain) NotifyUpdateAllUsersPrivilege() error {
-	return do.notifyUpdatePrivilege(PrivilegeEvent{All: true})
-}
-
-// NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
-// the key will get notification.
-func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
-	return do.notifyUpdatePrivilege(PrivilegeEvent{UserList: userList})
-}
-
-func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
-	// No matter skip-grant-table is configured or not, sending an etcd message is required.
-	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
-	// password using a special TiDB instance and want the new password to take effect.
-	if do.etcdClient != nil {
-		event.ServerID = do.serverID
-		data, err := json.Marshal(event)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if uint64(len(data)) > size.MB {
-			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
-		}
-		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, etcd.KeyOpDefaultRetryCnt, privilegeKey, string(data))
-		if err != nil {
-			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
-		}
-	}
-
-	// If skip-grant-table is configured, do not flush privileges.
-	// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
-	// the call to do.PrivilegeHandle().Update would panic.
-	if config.GetGlobalConfig().Security.SkipGrantTable {
-		return nil
-	}
-
-	return privReloadEvent(do.PrivilegeHandle(), &event)
-}
-
-// NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
-// clients are subscribed to for updates. For the caller, the cache is also built
-// synchronously so that the effect is immediate.
-func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
-	if do.etcdClient != nil {
-		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
-		if err != nil {
-			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
-		}
-	}
-	// update locally
-	if updateLocal {
-		if err := do.rebuildSysVarCache(nil); err != nil {
-			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
-		}
-	}
-}
 
 // LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
 func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
