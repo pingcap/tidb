@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (logical_plan_builder.go decomposition, 47% reduction)
+Last updated: 2026-02-18 (partition.go + infoschema_reader.go decomposition)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -126,6 +126,20 @@ Last updated: 2026-02-18 (logical_plan_builder.go decomposition, 47% reduction)
   - [x] `logical_plan_builder_join.go` (394 lines) - JOIN plan builders
   - [x] `logical_plan_builder_datasource.go` (804 lines) - data source, view, memtable builders
 
+- [x] **ddl/partition.go decomposition** - Extract partition operation handlers
+  - File: `pkg/ddl/partition.go` (5,358 → 3,155 lines, 41% reduction)
+  - Target: Focused files per partition operation
+  - [x] `partition_reorganize.go` (1,185 lines) - onReorganizePartition, reorgPartitionWorker, helpers
+  - [x] `partition_exchange.go` (725 lines) - onExchangeTablePartition, checkExchange*, buildCheckSQL*
+  - [x] `partition_truncate.go` (411 lines) - onTruncateTablePartition, replaceTruncatePartitions
+
+- [x] **executor/infoschema_reader.go decomposition** - Extract retriever types
+  - File: `pkg/executor/infoschema_reader.go` (4,213 → 2,990 lines, 29% reduction)
+  - Target: Focused files per retriever/functional area
+  - [x] `infoschema_reader_lock.go` (492 lines) - tidbTrxTable, dataLockWaits, deadlocks retrievers
+  - [x] `infoschema_reader_tiflash.go` (277 lines) - TiFlashSystemTableRetriever
+  - [x] `infoschema_reader_resource.go` (569 lines) - attributes, policies, resources, keywords, plan cache
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -177,3 +191,5 @@ Last updated: 2026-02-18 (logical_plan_builder.go decomposition, 47% reduction)
 - [x] **domain.go decomposition** - 2026-02-18 - Split into 6 focused files: `domain_stats.go` (723), `domain_privilege.go` (467), `domain_serverid.go` (356), `domain_workers.go` (285), `domain_disttask.go` (208), `domain_infra.go` (192). Reduced domain.go from 3,023 to 997 lines (67% reduction).
 - [x] **planbuilder.go decomposition** - 2026-02-18 - Split into 8 focused files: `planbuilder_analyze.go` (1,296), `planbuilder_insert.go` (884), `planbuilder_admin.go` (570), `planbuilder_show.go` (539), `planbuilder_split.go` (449), `planbuilder_ddl.go` (368), `planbuilder_bind.go` (343), `planbuilder_explain.go` (247). Reduced planbuilder.go from 6,518 to 2,116 lines (68% reduction).
 - [x] **logical_plan_builder.go decomposition** - 2026-02-18 - Split into 6 focused files: `logical_plan_builder_window.go` (753), `logical_plan_builder_dml.go` (903), `logical_plan_builder_cte.go` (368), `logical_plan_builder_setops.go` (448), `logical_plan_builder_join.go` (394), `logical_plan_builder_datasource.go` (804). Reduced logical_plan_builder.go from 7,362 to 3,897 lines (47% reduction).
+- [x] **ddl/partition.go decomposition** - 2026-02-18 - Split into 3 focused files: `partition_reorganize.go` (1,185), `partition_exchange.go` (725), `partition_truncate.go` (411). Reduced partition.go from 5,358 to 3,155 lines (41% reduction).
+- [x] **executor/infoschema_reader.go decomposition** - 2026-02-18 - Split into 3 focused files: `infoschema_reader_lock.go` (492), `infoschema_reader_tiflash.go` (277), `infoschema_reader_resource.go` (569). Reduced infoschema_reader.go from 4,213 to 2,990 lines (29% reduction).
