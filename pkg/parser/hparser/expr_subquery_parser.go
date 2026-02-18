@@ -18,6 +18,25 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
+// peeksThroughParensToSubquery checks whether nested '(' tokens eventually
+// lead to a subquery keyword (SELECT, WITH, TABLE, VALUES). This avoids
+// speculative parsing that can overflow the ring buffer (maxLookahead = 8)
+// when there are many levels of nested parentheses ((((expr)))).
+func (p *HandParser) peeksThroughParensToSubquery() bool {
+	for i := 0; i < maxLookahead-1; i++ {
+		tok := p.peekN(i)
+		switch tok.Tp {
+		case '(':
+			continue
+		case tokSelect, tokWith, tokTable, tokValues:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 // parseParenOrSubquery parses a parenthesized expression or subquery.
 func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 	p.next() // consume '('
@@ -43,8 +62,10 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 	}
 
 	// When next token is '(', it's ambiguous: could be ((SELECT ...)) subquery
-	// or ((expr)) nested parenthesized expression. Use speculative parsing.
-	if tp == '(' {
+	// or ((expr)) nested parenthesized expression. Peek through nested parens
+	// to check for a subquery keyword before attempting speculation, avoiding
+	// ring buffer overflow in the lexer bridge (maxLookahead = 8).
+	if tp == '(' && p.peeksThroughParensToSubquery() {
 		saved := p.mark()
 		savedErrs := len(p.errs)
 		startOffset := p.peek().Offset

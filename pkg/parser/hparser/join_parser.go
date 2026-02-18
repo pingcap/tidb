@@ -415,9 +415,9 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			}
 			res = inner
 			p.expect(')')
-		} else if p.peek().Tp == '(' {
+		} else if p.peek().Tp == '(' && p.peeksThroughParensToSubquery() {
 			// Ambiguous: could be nested subquery ((select ...)) or parenthesized join ((t1 join t2)).
-			// Speculate: try subquery first.
+			// peeksThroughParensToSubquery confirmed a subquery keyword exists; try subquery first.
 			saved := p.mark()
 			savedErrs := len(p.errs)
 			inner := p.parseSubquery()
