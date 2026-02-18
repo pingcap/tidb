@@ -76,6 +76,7 @@ type AggKind int
 
 const (
 	AggCountStar AggKind = iota
+	AggCount
 	AggSum
 	AggMin
 	AggMax
@@ -95,6 +96,12 @@ type AggInfo struct {
 
 	// NeedsDetailOnRemoval indicates executor must do detail update for groups with removals.
 	NeedsDetailOnRemoval bool
+}
+
+type aggColInfo struct {
+	info      AggInfo
+	deltaName string
+	argExpr   ast.ExprNode
 }
 
 // SelectOptimizer converts the merge-source SELECT statement into a physical plan.
@@ -276,10 +283,7 @@ func extractGroupKeyOffsetsFromMVSelect(sel *ast.SelectStmt) ([]int, error) {
 	return groupOffsets, nil
 }
 
-func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []struct {
-	info      AggInfo
-	deltaName string
-}, hasMinMax bool, _ error) {
+func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, hasMinMax bool, _ error) {
 	for i, f := range sel.Fields.Fields {
 		agg, ok := f.Expr.(*ast.AggregateFuncExpr)
 		if !ok {
@@ -290,34 +294,51 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []struct {
 			if len(agg.Args) != 1 {
 				return nil, false, errors.New("COUNT must have exactly one argument for mvmerge stage-1")
 			}
-			if !isCountStarOrOneArg(agg.Args[0]) {
-				return nil, false, errors.New("only COUNT(*)/COUNT(1) is supported in mvmerge stage-1")
+			if agg.Distinct {
+				return nil, false, errors.New("COUNT(DISTINCT ...) is not supported in mvmerge stage-1")
 			}
-			aggCols = append(aggCols, struct {
-				info      AggInfo
-				deltaName string
-			}{
-				info: AggInfo{
-					Kind:     AggCountStar,
-					MVOffset: i,
-				},
-				deltaName: deltaCntStarName,
+			if isCountStarOrOneArg(agg.Args[0]) {
+				aggCols = append(aggCols, aggColInfo{
+					info: AggInfo{
+						Kind:     AggCountStar,
+						MVOffset: i,
+					},
+					deltaName: deltaCntStarName,
+				})
+				continue
+			}
+			aggCols = append(aggCols, aggColInfo{
+				info: func() AggInfo {
+					ai := AggInfo{
+						Kind:     AggCount,
+						MVOffset: i,
+					}
+					if argCol, ok := agg.Args[0].(*ast.ColumnNameExpr); ok {
+						ai.ArgColName = argCol.Name.Name.L
+					}
+					return ai
+				}(),
+				deltaName: fmt.Sprintf("__mvmerge_delta_cnt_%d", i),
+				argExpr:   stripColumnQualifier(agg.Args[0]),
 			})
 		case ast.AggFuncSum:
-			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
-			if !ok {
-				return nil, false, errors.New("SUM argument must be a column name for mvmerge")
+			if len(agg.Args) != 1 {
+				return nil, false, errors.New("SUM must have exactly one argument for mvmerge stage-1")
 			}
-			aggCols = append(aggCols, struct {
-				info      AggInfo
-				deltaName string
-			}{
-				info: AggInfo{
-					Kind:       AggSum,
-					MVOffset:   i,
-					ArgColName: argCol.Name.Name.L,
-				},
+			if agg.Distinct {
+				return nil, false, errors.New("SUM(DISTINCT ...) is not supported in mvmerge stage-1")
+			}
+			ai := AggInfo{
+				Kind:     AggSum,
+				MVOffset: i,
+			}
+			if argCol, ok := agg.Args[0].(*ast.ColumnNameExpr); ok {
+				ai.ArgColName = argCol.Name.Name.L
+			}
+			aggCols = append(aggCols, aggColInfo{
+				info:      ai,
 				deltaName: fmt.Sprintf("__mvmerge_delta_sum_%d", i),
+				argExpr:   stripColumnQualifier(agg.Args[0]),
 			})
 		case ast.AggFuncMax:
 			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
@@ -325,10 +346,7 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []struct {
 				return nil, false, errors.New("MAX argument must be a column name for mvmerge")
 			}
 			hasMinMax = true
-			aggCols = append(aggCols, struct {
-				info      AggInfo
-				deltaName string
-			}{
+			aggCols = append(aggCols, aggColInfo{
 				info: AggInfo{
 					Kind:                 AggMax,
 					MVOffset:             i,
@@ -343,10 +361,7 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []struct {
 				return nil, false, errors.New("MIN argument must be a column name for mvmerge")
 			}
 			hasMinMax = true
-			aggCols = append(aggCols, struct {
-				info      AggInfo
-				deltaName string
-			}{
+			aggCols = append(aggCols, aggColInfo{
 				info: AggInfo{
 					Kind:                 AggMin,
 					MVOffset:             i,
@@ -382,16 +397,21 @@ func isCountStarOrOneArg(arg ast.ExprNode) bool {
 	}
 }
 
+func stripColumnQualifier(expr ast.ExprNode) ast.ExprNode {
+	if expr == nil {
+		return nil
+	}
+	expr.Accept(&columnQualifierStripper{})
+	return expr
+}
+
 func buildMLogDeltaSelect(
 	dbName pmodel.CIStr,
 	mlogTable *model.TableInfo,
 	mvSel *ast.SelectStmt,
 	mvCols []*model.ColumnInfo,
 	groupKeyOffsets []int,
-	aggCols []struct {
-		info      AggInfo
-		deltaName string
-	},
+	aggCols []aggColInfo,
 	hasMinMax bool,
 	opt BuildOptions,
 ) (*ast.SelectStmt, error) {
@@ -426,10 +446,21 @@ func buildMLogDeltaSelect(
 		case AggCountStar:
 			// already handled above.
 			continue
-		case AggSum:
-			argCol := colExpr(ac.info.ArgColName)
+		case AggCount:
+			if ac.argExpr == nil {
+				return nil, errors.New("COUNT aggregate argument is nil for mvmerge")
+			}
+			cond := &ast.IsNullExpr{Expr: ac.argExpr, Not: true} // expr IS NOT NULL
 			fields = append(fields, &ast.SelectField{
-				Expr:   aggSum(binary(opcode.Mul, oldNewCol, argCol)),
+				Expr:   aggSum(ifExpr(cond, oldNewCol, ast.NewValueExpr(int64(0), "", ""))),
+				AsName: pmodel.NewCIStr(ac.deltaName),
+			})
+		case AggSum:
+			if ac.argExpr == nil {
+				return nil, errors.New("SUM aggregate argument is nil for mvmerge")
+			}
+			fields = append(fields, &ast.SelectField{
+				Expr:   aggSum(binary(opcode.Mul, oldNewCol, ac.argExpr)),
 				AsName: pmodel.NewCIStr(ac.deltaName),
 			})
 		case AggMax:
@@ -497,10 +528,7 @@ func buildMergeSourceSelect(
 	groupKeySet map[int]struct{},
 	groupKeyOffsets []int,
 	deltaSel *ast.SelectStmt,
-	aggCols []struct {
-		info      AggInfo
-		deltaName string
-	},
+	aggCols []aggColInfo,
 	hasMinMax bool,
 ) (*ast.SelectStmt, []DeltaColumn, *DeltaColumn, error) {
 	deltaSrc := &ast.TableSource{Source: deltaSel, AsName: pmodel.NewCIStr(deltaTableAlias)}

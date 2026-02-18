@@ -164,6 +164,100 @@ func TestBuildCountSum(t *testing.T) {
 	})
 }
 
+func TestBuildCountExprSumExpr(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(11)
+	mlogID := int64(22)
+	mvID := int64(33)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_expr_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt_b", 1, mysql.TypeLonglong),
+			mkCol(3, "s_expr", 2, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(b), sum(a+b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.Build(
+		context.Background(),
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		optimizeForTest(sctx, is),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res.Plan)
+
+	require.Contains(t, deltaColNames(res.DeltaColumns), deltaCntStarName)
+	require.Contains(t, deltaColNames(res.DeltaColumns), "__mvmerge_delta_cnt_1")
+	require.Contains(t, deltaColNames(res.DeltaColumns), "__mvmerge_delta_sum_2")
+
+	var hasCount, hasSum bool
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mvmerge.AggCount:
+			hasCount = true
+			require.Equal(t, "b", ai.ArgColName)
+			require.GreaterOrEqual(t, ai.DeltaOffset, res.MVColumnCount)
+		case mvmerge.AggSum:
+			hasSum = true
+			require.Empty(t, ai.ArgColName)
+			require.GreaterOrEqual(t, ai.DeltaOffset, res.MVColumnCount)
+		}
+	}
+	require.True(t, hasCount)
+	require.True(t, hasSum)
+
+	item, ok := is.TableItemByID(mv.ID)
+	require.True(t, ok)
+	mvDBName := item.DBName.O
+	requireMergePlanOutputNames(t, res, []fieldNameInfo{
+		{Pos: 0, Col: "x"},
+		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
+		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "s_expr", OrigTbl: mv.Name.O, OrigCol: "s_expr"},
+		{Pos: 3, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 4, Tbl: deltaTableAlias, Col: "__mvmerge_delta_cnt_1"},
+		{Pos: 5, Tbl: deltaTableAlias, Col: "__mvmerge_delta_sum_2"},
+	})
+}
+
 func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	sctx := core.MockContext()
 
