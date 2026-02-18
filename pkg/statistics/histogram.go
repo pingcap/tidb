@@ -1143,25 +1143,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
-<<<<<<< HEAD
-	if debugTrace {
-		debugtrace.RecordAnyValuesWithNames(sctx,
-			"commonPrefix", commonPrefix,
-			"lScalar", l,
-			"rScalar", r,
-			"unsigned", unsigned,
-		)
-	}
-
-	// make sure l < r
-	if l >= r {
-		return DefaultRowEst(0)
-	}
-
-	// Convert the lower and upper bound of the histogram to scalar value(float64)
-=======
 	// Step 6: Convert the lower and upper bound of the histogram to scalar value(float64)
->>>>>>> 229a104ba41 (planner: bound the max out of range estimate (#65888))
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
@@ -1177,56 +1159,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-<<<<<<< HEAD
-	var leftPercent, rightPercent, avgRowCount float64
-	if debugTrace {
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx,
-				"histL", histL,
-				"histR", histR,
-				"boundL", boundL,
-				"boundR", boundR,
-				"lPercent", leftPercent,
-				"rPercent", rightPercent,
-				"avgRowCount", avgRowCount,
-			)
-		}()
-	}
-
-	// keep l and r unchanged, use actualL and actualR to calculate.
-	actualL := l
-	actualR := r
-	// Only attempt to calculate the ranges if the histogram is valid
-	if !histInvalid {
-		// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
-		if actualL < histL && actualR > boundL {
-			// make sure boundL <= actualL < actualR <= histL
-			if actualL < boundL {
-				actualL = boundL
-			}
-			if actualR > histL {
-				actualR = histL
-			}
-			// Calculate the percentage of "the shaded area" on the left side.
-			leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
-		}
-
-		actualL = l
-		actualR = r
-		// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
-		if actualL < boundR && actualR > histR {
-			// make sure histR <= actualL < actualR <= boundR
-			if actualL < histR {
-				actualL = histR
-			}
-			if actualR > boundR {
-				actualR = boundR
-			}
-			// Calculate the percentage of "the shaded area" on the right side.
-			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
-		}
-	}
-=======
 	// Step 7: Calculate the width of the predicate
 	// TODO: If predWidth == 0, it may be because the common prefix is too large.
 	// In future - out of range for equal predicates should also use this logic
@@ -1248,7 +1180,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	leftPercent := calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
 	// Calculate right overlap percentage if the range overlaps with (histR, boundR)
 	rightPercent := calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
->>>>>>> 229a104ba41 (planner: bound the max out of range estimate (#65888))
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
@@ -1258,18 +1189,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
-<<<<<<< HEAD
-	// percentInHist is the percentage of rows that were included in the histogram.
-	// This is used to scale back the out-of-range estimate.
-	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
-	addedOutOfRangePct := min(1.0-percentInHist, 0.5)
-	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	// Assume on average, half of newly added rows are within the histogram range, and the other
-	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
-=======
 	maxAddedRows := addedRows
->>>>>>> 229a104ba41 (planner: bound the max out of range estimate (#65888))
 
 	// Step 10: Calculate the estimated rows
 	estRows := oneValue
