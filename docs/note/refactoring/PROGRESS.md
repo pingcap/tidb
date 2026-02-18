@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (conn.go decomposition)
+Last updated: 2026-02-18 (builtin_time/string/compare/cast, tables, adapter decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -186,6 +186,44 @@ Last updated: 2026-02-18 (conn.go decomposition)
   - [x] `conn_handshake.go` (869 lines) - handshake, authentication, session opening
   - [x] `conn_query.go` (913 lines) - query handling, result set writing
 
+- [x] **expression/builtin_time.go decomposition** - Extract time function groups
+  - File: `pkg/expression/builtin_time.go` (7,260 → 2,050 lines, 72% reduction)
+  - [x] `builtin_time_extract.go` (956 lines) - date field extractors (HOUR, MONTH, WEEK, YEAR, etc.)
+  - [x] `builtin_time_current.go` (817 lines) - SYSDATE, NOW, CURRENT_DATE/TIME, UTC_*, EXTRACT
+  - [x] `builtin_time_arith.go` (1,392 lines) - baseDateArithmetical, DATE_ADD/DATE_SUB
+  - [x] `builtin_time_timestamp.go` (620 lines) - TIMESTAMPDIFF, UNIX_TIMESTAMP, TIMESTAMP
+  - [x] `builtin_time_addtime.go` (1,564 lines) - ADDTIME/SUBTIME, CONVERT_TZ, MAKE_DATE/TIME
+
+- [x] **expression/builtin_string.go decomposition** - Extract string function groups
+  - File: `pkg/expression/builtin_string.go` (4,421 → 175 lines, 96% reduction)
+  - [x] `builtin_string_basic.go` (821 lines) - LENGTH, ASCII, CONCAT, LEFT, RIGHT, REPEAT, etc.
+  - [x] `builtin_string_search.go` (921 lines) - STRCMP, REPLACE, CONVERT, SUBSTRING, LOCATE, HEX
+  - [x] `builtin_string_trim_pad.go` (1,193 lines) - TRIM, LPAD, RPAD, CHAR, FIND_IN_SET, FIELD, OCT
+  - [x] `builtin_string_misc.go` (1,425 lines) - ORD, QUOTE, FORMAT, BASE64, INSERT, WEIGHT_STRING
+
+- [x] **expression/builtin_compare.go decomposition** - Extract comparison function groups
+  - File: `pkg/expression/builtin_compare.go` (3,542 → 625 lines, 82% reduction)
+  - [x] `builtin_compare_greatest_least.go` (1,025 lines) - GREATEST, LEAST, INTERVAL
+  - [x] `builtin_compare_class.go` (847 lines) - compareFunctionClass, type resolution
+  - [x] `builtin_compare_ops.go` (1,121 lines) - typed comparison operator signatures
+
+- [x] **expression/builtin_cast.go decomposition** - Extract cast function groups
+  - File: `pkg/expression/builtin_cast.go` (3,004 → 973 lines, 67% reduction)
+  - [x] `builtin_cast_numeric.go` (771 lines) - Int/Real/Decimal cast signatures
+  - [x] `builtin_cast_string_time_json.go` (849 lines) - String/Time/Duration/JSON cast signatures
+  - [x] `builtin_cast_builders.go` (482 lines) - BuildCastFunction, WrapWithCast utilities
+
+- [x] **infoschema/tables.go decomposition** - Extract column definitions
+  - File: `pkg/infoschema/tables.go` (2,911 → 1,472 lines, 49% reduction)
+  - [x] `tables_cols_standard.go` (686 lines) - MySQL-compatible IS column definitions
+  - [x] `tables_cols_tidb.go` (797 lines) - TiDB-specific cluster/monitoring columns
+
+- [x] **executor/adapter.go decomposition** - Extract pessimistic, observability, summary
+  - File: `pkg/executor/adapter.go` (2,417 → 944 lines, 61% reduction)
+  - [x] `adapter_pessimistic.go` (510 lines) - pessimistic DML, lock error recovery
+  - [x] `adapter_observe.go` (622 lines) - FinishExecuteStmt, slow log, metrics
+  - [x] `adapter_summary.go` (460 lines) - statement summary, plan cache, Top SQL
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -246,3 +284,9 @@ Last updated: 2026-02-18 (conn.go decomposition)
 - [x] **planner/core/exhaust_physical_plans.go decomposition** - 2026-02-18 - Split into 3 focused files: `exhaust_physical_plans_index_join_inner.go` (741), `exhaust_physical_plans_hints.go` (382), `exhaust_physical_plans_mpp_join.go` (367). Reduced exhaust_physical_plans.go from 2,892 to 1,399 lines (52% reduction).
 - [x] **planner/core/expression_rewriter.go decomposition** - 2026-02-18 - Split into 3 focused files: `expression_rewriter_subquery.go` (1,049), `expression_rewriter_leave.go` (1,089), `expression_rewriter_column.go` (289). Reduced expression_rewriter.go from 2,792 to 479 lines (83% reduction).
 - [x] **server/conn.go decomposition** - 2026-02-18 - Split into 2 focused files: `conn_handshake.go` (869), `conn_query.go` (913). Reduced conn.go from 2,819 to 1,134 lines (60% reduction).
+- [x] **expression/builtin_time.go decomposition** - 2026-02-18 - Split into 5 focused files: `builtin_time_extract.go` (956), `builtin_time_current.go` (817), `builtin_time_arith.go` (1,392), `builtin_time_timestamp.go` (620), `builtin_time_addtime.go` (1,564). Reduced builtin_time.go from 7,260 to 2,050 lines (72% reduction).
+- [x] **expression/builtin_string.go decomposition** - 2026-02-18 - Split into 4 focused files: `builtin_string_basic.go` (821), `builtin_string_search.go` (921), `builtin_string_trim_pad.go` (1,193), `builtin_string_misc.go` (1,425). Reduced builtin_string.go from 4,421 to 175 lines (96% reduction).
+- [x] **expression/builtin_compare.go decomposition** - 2026-02-18 - Split into 3 focused files: `builtin_compare_greatest_least.go` (1,025), `builtin_compare_class.go` (847), `builtin_compare_ops.go` (1,121). Reduced builtin_compare.go from 3,542 to 625 lines (82% reduction).
+- [x] **expression/builtin_cast.go decomposition** - 2026-02-18 - Split into 3 focused files: `builtin_cast_numeric.go` (771), `builtin_cast_string_time_json.go` (849), `builtin_cast_builders.go` (482). Reduced builtin_cast.go from 3,004 to 973 lines (67% reduction).
+- [x] **infoschema/tables.go decomposition** - 2026-02-18 - Split into 2 focused files: `tables_cols_standard.go` (686), `tables_cols_tidb.go` (797). Reduced tables.go from 2,911 to 1,472 lines (49% reduction).
+- [x] **executor/adapter.go decomposition** - 2026-02-18 - Split into 3 focused files: `adapter_pessimistic.go` (510), `adapter_observe.go` (622), `adapter_summary.go` (460). Reduced adapter.go from 2,417 to 944 lines (61% reduction).
