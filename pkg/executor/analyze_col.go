@@ -268,14 +268,9 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		fms = append(fms, nil)
 	}
 	for i, col := range e.colsInfo {
-		skipTopN := e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, col.Offset)
 		if e.StatsVersion < 2 {
 			// In analyze version 2, we don't collect TopN this way. We will collect TopN from samples in `BuildColumnHistAndTopN()` below.
-			numTopN := uint32(e.opts[ast.AnalyzeOptNumTopN])
-			if skipTopN {
-				numTopN = 0
-			}
-			err := collectors[i].ExtractTopN(numTopN, e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
+			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
@@ -301,7 +296,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		} else {
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
-			if skipTopN {
+			if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, col.Offset) {
 				numTopN = 0
 			}
 			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, col.ID, collectors[i], &col.FieldType, true, nil, true)
