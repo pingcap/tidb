@@ -1728,6 +1728,26 @@ func (e *maxMin4VectorFloat32) MergePartialResult(_ AggFuncUpdateContext, src, d
 	return 0, nil
 }
 
+func (e *maxMin4VectorFloat32) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinVectorFloat32)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinVectorFloat32(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4VectorFloat32) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4VectorFloat32) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinVectorFloat32)(pr)
+	success := helper.deserializePartialResult4MaxMinVectorFloat32(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4Enum struct {
 	baseMaxMinAggFunc
 }

@@ -149,6 +149,17 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResu
 	return false
 }
 
+func (s *deserializeHelper) deserializePartialResult4MaxMinVectorFloat32(dst *partialResult4MaxMinVectorFloat32) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		s.pab.Reset(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeVectorFloat32(s.pab)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
 func (s *deserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResult4MaxMinEnum) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)

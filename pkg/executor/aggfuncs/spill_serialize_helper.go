@@ -91,6 +91,12 @@ func (s *SerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4
 	return s.buf
 }
 
+func (s *SerializeHelper) serializePartialResult4MaxMinVectorFloat32(value partialResult4MaxMinVectorFloat32) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	return util.SerializeVectorFloat32(value.val, s.buf)
+}
+
 func (s *SerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
 	s.buf = s.buf[:0]
 	s.buf = util.SerializeBool(value.isNull, s.buf)
