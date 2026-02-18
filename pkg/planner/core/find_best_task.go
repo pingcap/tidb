@@ -879,7 +879,9 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// Determine winner if one index doesn't have statistics and another has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
 		(lhs.equalPredCount > 0 || rhs.equalPredCount > 0) { // At least one index has equal/IN predicates
-		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhs.isFullRange, rhs.isFullRange, eqOrInResult, lhs.equalPredCount, rhs.equalPredCount, preferRange)
+		lhsFullMatch := isFullIndexMatch(lhs)
+		rhsFullMatch := isFullIndexMatch(rhs)
+		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.equalPredCount, rhs.equalPredCount, preferRange)
 		if pseudoResult > 0 && totalSum >= 0 {
 			return pseudoResult, lhsPseudo
 		}
@@ -1003,6 +1005,15 @@ func compareEqOrIn(lhs, rhs *candidatePath) (predCompare int) {
 	}
 	// We didn't find a winner
 	return 0
+}
+
+func isFullIndexMatch(candidate *candidatePath) bool {
+	// Check if the DNF condition is a full match
+	if candidate.path.IsDNFCond && candidate.hasOnlyEqualPredicatesInDNF() {
+		return candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns)
+	}
+	// Check if the index covers all access conditions for non-DNF conditions
+	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
 func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
