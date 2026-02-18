@@ -758,7 +758,7 @@ type candidatePath struct {
 	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
 	indexJoinCols           int                              // how many index columns are used in access conditions in this IndexJoin.
 	isFullRange             bool                             // cached result of whether this path covers the full scan range.
-	equalPredCount          int                              // cached result of equalPredicateCount().
+	eqOrInCount          int                              // cached result of equalPredicateCount().
 }
 
 func compareBool(l, r bool) int {
@@ -878,10 +878,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
-		(lhs.equalPredCount > 0 || rhs.equalPredCount > 0) { // At least one index has equal/IN predicates
+		(lhs.eqOrInCount > 0 || rhs.eqOrInCount > 0) { // At least one index has equal/IN predicates
 		lhsFullMatch := isFullIndexMatch(lhs)
 		rhsFullMatch := isFullIndexMatch(rhs)
-		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.equalPredCount, rhs.equalPredCount, preferRange)
+		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.eqOrInCount, rhs.eqOrInCount, preferRange)
 		if pseudoResult > 0 && totalSum >= 0 {
 			return pseudoResult, lhsPseudo
 		}
@@ -960,14 +960,14 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lh
 	return lhsPseudo, rhsPseudo
 }
 
-func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqualPredCount, rhsEqualPredCount int, preferRange bool) int {
+func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int, preferRange bool) int {
 	// TO-DO: Consider a separate set of rules for global indexes.
 	// If one index has statistics and the other does not, choose the index with statistics if it
 	// has the same or higher number of equal/IN predicates.
-	if !lhsPseudo && lhsEqualPredCount > 0 && eqOrInResult >= 0 {
+	if !lhsPseudo && lhsEqOrInCount > 0 && eqOrInResult >= 0 {
 		return 1 // left wins
 	}
-	if !rhsPseudo && rhsEqualPredCount > 0 && eqOrInResult <= 0 {
+	if !rhsPseudo && rhsEqOrInCount > 0 && eqOrInResult <= 0 {
 		return -1 // right wins
 	}
 	if preferRange {
@@ -975,32 +975,32 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 		// 1) there are at least 2 equal/INs
 		// 2) OR - it's a full index match for all index predicates
 		if lhsPseudo && eqOrInResult > 0 &&
-			(lhsEqualPredCount > 1 || lhsFullMatch) {
+			(lhsEqOrInCount > 1 || lhsFullMatch) {
 			return 1 // left wins
 		}
 		if rhsPseudo && eqOrInResult < 0 &&
-			(rhsEqualPredCount > 1 || rhsFullMatch) {
+			(rhsEqOrInCount > 1 || rhsFullMatch) {
 			return -1 // right wins
 		}
 	}
 	return 0
 }
 
-// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
-// and the count for each. For example:
+// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie).
+// For example:
 //
 //	where a=1 and b=1 and c=1 and d=1
-//	lhs == idx(a, b, e) <-- lhsEqualPredCount == 2 (loser)
-//	rhs == idx(d, c, b) <-- rhsEqualPredCount == 3 (winner)
+//	lhs == idx(a, b, e) <-- lhsEqOrInCount == 2 (loser)
+//	rhs == idx(d, c, b) <-- rhsEqOrInCount == 3 (winner)
 func compareEqOrIn(lhs, rhs *candidatePath) (predCompare int) {
 	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
 		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
 		return 0
 	}
-	if lhs.equalPredCount > rhs.equalPredCount {
+	if lhs.eqOrInCount > rhs.eqOrInCount {
 		return 1
 	}
-	if lhs.equalPredCount < rhs.equalPredCount {
+	if lhs.eqOrInCount < rhs.eqOrInCount {
 		return -1
 	}
 	// We didn't find a winner
@@ -1474,7 +1474,7 @@ func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	candidate.matchPropResult = matchProperty(ds, path, prop)
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
-	candidate.equalPredCount = candidate.equalPredicateCount()
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
@@ -1491,7 +1491,7 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
-	candidate.equalPredCount = candidate.equalPredicateCount()
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
@@ -1508,7 +1508,7 @@ func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPa
 		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
 	}
 	candidate.isFullRange = ranger.HasFullRange(path.Ranges, false)
-	candidate.equalPredCount = candidate.equalPredicateCount()
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
@@ -1520,7 +1520,7 @@ func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath
 	}
 	candidate := &candidatePath{path: possiblePath, matchPropResult: match}
 	candidate.isFullRange = possiblePath.IsFullScanRange(ds.TableInfo)
-	candidate.equalPredCount = candidate.equalPredicateCount()
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
@@ -1528,7 +1528,7 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = isMatchPropForIndexMerge(ds, path, prop)
 	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
-	candidate.equalPredCount = candidate.equalPredicateCount()
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
@@ -1647,7 +1647,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				continue
 			}
 			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-			indexFilters := c.equalPredCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+			indexFilters := c.eqOrInCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
 				if !c.isFullRange {
 					preferredPaths = append(preferredPaths, c)
