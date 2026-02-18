@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-17 (benchmark validation complete)
+Last updated: 2026-02-18 (domain.go decomposition 59%)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -77,9 +77,14 @@ Last updated: 2026-02-17 (benchmark validation complete)
   - [x] `session_states.go` (212 lines) - encode/decode session states
   - [x] `session_sysvar.go` (157 lines) - system variable management
 
-- [ ] **domain.go decomposition** - Extract subsystem managers
-  - File: `pkg/domain/domain.go` (2,739 lines, 89 fields)
+- [~] **domain.go decomposition** - Extract subsystem managers
+  - File: `pkg/domain/domain.go` (3,023 → 1,245 lines, 59% reduction)
   - Target: Composable service managers
+  - [x] `domain_stats.go` (723 lines) - statistics worker lifecycle, historical stats, analyze workers
+  - [x] `domain_privilege.go` (462 lines) - privilege events, binding management, sysvar cache, notifications
+  - [x] `domain_serverid.go` (356 lines) - server ID acquisition, renewal, keeper loop
+  - [x] `domain_disttask.go` (208 lines) - distributed task framework loop
+  - [x] `domain_infra.go` (192 lines) - log backup advancer, replica read check loop
 
 - [x] **Planner-executor dependency break** - Remove executor imports from planner
   - Moved `pkg/executor/join/joinversion` → `pkg/util/joinversion`
