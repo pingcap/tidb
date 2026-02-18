@@ -49,7 +49,7 @@ type BuildOptions struct {
 // It includes the physical plan and all metadata needed by executor-side MV merge.
 // Row layout of Plan/OutputNames is fixed:
 //  1. MV output columns first (count = MVColumnCount)
-//  2. delta columns after MV columns (as listed in DeltaColumns)
+//  2. delta columns after MV columns
 //
 // All offsets in AggInfos (MVOffset and Dependencies) are based on this layout.
 type BuildResult struct {
@@ -73,8 +73,7 @@ type BuildResult struct {
 	// Build returns error when MV definition does not include COUNT(*).
 	CountStarMVOffset int
 
-	DeltaColumns []DeltaColumn
-	AggInfos     []AggInfo
+	AggInfos []AggInfo
 
 	// RemovedRowCountDelta is non-nil when MV contains MIN/MAX, used by executor to gate quick-update.
 	RemovedRowCountDelta *DeltaColumn
@@ -293,7 +292,6 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		MVColumnCount:     len(mv.Columns),
 		GroupKeyMVOffsets: append([]int(nil), groupKeyOffsets...),
 		CountStarMVOffset: countStarMVOffset,
-		DeltaColumns:      deltaColumns,
 		AggInfos:          outAggInfos,
 		RemovedRowCountDelta: func() *DeltaColumn {
 			if removedDelta == nil {

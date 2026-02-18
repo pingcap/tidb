@@ -133,11 +133,6 @@ func TestBuildCountSum(t *testing.T) {
 	require.Equal(t, len(mv.Columns), res.MVColumnCount)
 	require.Equal(t, 1, res.CountStarMVOffset)
 
-	require.NotEmpty(t, res.DeltaColumns)
-	require.Contains(t, deltaColNames(res.DeltaColumns), deltaCntStarName)
-	require.Contains(t, deltaColNames(res.DeltaColumns), "__mvmerge_delta_cnt_2")
-	require.Contains(t, deltaColNames(res.DeltaColumns), "__mvmerge_delta_sum_3")
-
 	var hasCountStar, hasCountExpr, hasSum bool
 	for _, ai := range res.AggInfos {
 		switch ai.Kind {
@@ -236,10 +231,6 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 	require.NotNil(t, res.Plan)
 	require.Equal(t, 1, res.CountStarMVOffset)
 
-	require.Contains(t, deltaColNames(res.DeltaColumns), deltaCntStarName)
-	require.Contains(t, deltaColNames(res.DeltaColumns), "__mvmerge_delta_cnt_2")
-	require.Contains(t, deltaColNames(res.DeltaColumns), "__mvmerge_delta_sum_3")
-
 	var hasCountStar, hasCount, hasSum bool
 	for _, ai := range res.AggInfos {
 		switch ai.Kind {
@@ -336,7 +327,6 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res.RemovedRowCountDelta)
 	require.Equal(t, 1, res.CountStarMVOffset)
-	require.Contains(t, deltaColNames(res.DeltaColumns), removedRowsName)
 
 	var hasMax, hasMin bool
 	for _, ai := range res.AggInfos {
@@ -561,14 +551,6 @@ func mkCol(id int64, name string, offset int, tp byte) *model.ColumnInfo {
 	}
 }
 
-func deltaColNames(cols []mvmerge.DeltaColumn) []string {
-	out := make([]string, 0, len(cols))
-	for _, c := range cols {
-		out = append(out, c.Name)
-	}
-	return out
-}
-
 func requireDependencies(t *testing.T, ai mvmerge.AggInfo, expected []int) {
 	t.Helper()
 	require.Equal(t, expected, ai.Dependencies)
@@ -611,7 +593,6 @@ func requireMergePlanOutputNames(t *testing.T, res *mvmerge.BuildResult, expecte
 
 	outputNames := res.OutputNames
 	require.Len(t, outputNames, res.Plan.Schema().Len())
-	require.Len(t, outputNames, res.MVColumnCount+len(res.DeltaColumns))
 	require.Len(t, expected, len(outputNames))
 	require.Equal(t, expected, nameSliceInfo(outputNames))
 }
