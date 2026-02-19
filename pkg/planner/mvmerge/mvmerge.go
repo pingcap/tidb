@@ -860,7 +860,7 @@ func buildMLogDeltaSelect(
 
 	// Always compute delta count(*) for stage-1.
 	fields = append(fields, &ast.SelectField{
-		Expr:   aggSum(oldNewCol),
+		Expr:   aggSumInt(oldNewCol),
 		AsName: pmodel.NewCIStr(deltaCntStarName),
 	})
 
@@ -877,7 +877,7 @@ func buildMLogDeltaSelect(
 			}
 			cond := &ast.IsNullExpr{Expr: ac.argExpr, Not: true} // expr IS NOT NULL
 			fields = append(fields, &ast.SelectField{
-				Expr:   aggSum(ifExpr(cond, oldNewCol, ast.NewValueExpr(int64(0), "", ""))),
+				Expr:   aggSumInt(ifExpr(cond, oldNewCol, ast.NewValueExpr(int64(0), "", ""))),
 				AsName: pmodel.NewCIStr(ac.deltaName),
 			})
 		case AggSum:
@@ -1147,6 +1147,10 @@ func andExpr(l, r ast.ExprNode) ast.ExprNode {
 
 func aggSum(arg ast.ExprNode) *ast.AggregateFuncExpr {
 	return &ast.AggregateFuncExpr{F: ast.AggFuncSum, Args: []ast.ExprNode{arg}}
+}
+
+func aggSumInt(arg ast.ExprNode) *ast.AggregateFuncExpr {
+	return &ast.AggregateFuncExpr{F: ast.AggFuncSumInt, Args: []ast.ExprNode{arg}}
 }
 
 func aggMax(arg ast.ExprNode) *ast.AggregateFuncExpr {

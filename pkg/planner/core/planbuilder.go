@@ -3934,7 +3934,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		)
 	}
 
-	plan := MVMerge{
+	plan := MVDeltaMerge{
 		Source:            sourcePlan,
 		SourceOutputNames: sourceOutputNames,
 		MVTableID:         res.MVTableID,

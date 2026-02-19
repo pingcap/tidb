@@ -567,9 +567,9 @@ func (p *Delete) MemoryUsage() (sum int64) {
 	return
 }
 
-// MVMerge represents a fast-refresh merge plan for materialized view maintenance.
+// MVDeltaMerge represents a fast-refresh merge plan for materialized view maintenance.
 // It consumes `Source` rows (MV snapshot + delta payload) and applies them to the MV table.
-type MVMerge struct {
+type MVDeltaMerge struct {
 	baseSchemaProducer
 
 	// Source is the merge-source physical plan. Its row layout is:
@@ -594,8 +594,79 @@ type MVMerge struct {
 	RemovedRowCountDelta *mvmerge.DeltaColumn `plan-cache-clone:"shallow"`
 }
 
-// MemoryUsage returns the memory usage of MVMerge.
-func (p *MVMerge) MemoryUsage() (sum int64) {
+// ExplainInfo returns aggregate dependency information for MV delta merge.
+func (p *MVDeltaMerge) ExplainInfo() string {
+	if len(p.AggInfos) == 0 {
+		return "agg_deps:[]"
+	}
+
+	var builder strings.Builder
+	builder.WriteString("agg_deps:[")
+	for i := range p.AggInfos {
+		if i > 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString(formatMVDeltaMergeAggDependency(p.AggInfos[i]))
+	}
+	builder.WriteString("]")
+	return builder.String()
+}
+
+func formatMVDeltaMergeAggDependency(aggInfo mvmerge.AggInfo) string {
+	var builder strings.Builder
+	builder.WriteString(formatMVDeltaMergeAggName(aggInfo))
+	builder.WriteString("@")
+	builder.WriteString(strconv.Itoa(aggInfo.MVOffset))
+	builder.WriteString("->")
+	builder.WriteString(formatMVDeltaMergeOffsets(aggInfo.Dependencies))
+	return builder.String()
+}
+
+func formatMVDeltaMergeAggName(aggInfo mvmerge.AggInfo) string {
+	if aggInfo.Kind == mvmerge.AggCountStar {
+		return "count(*)"
+	}
+	aggKindName := formatMVDeltaMergeAggKind(aggInfo.Kind)
+	if aggInfo.ArgColName == "" {
+		return aggKindName
+	}
+	return aggKindName + "(" + aggInfo.ArgColName + ")"
+}
+
+func formatMVDeltaMergeAggKind(kind mvmerge.AggKind) string {
+	switch kind {
+	case mvmerge.AggCount:
+		return "count"
+	case mvmerge.AggSum:
+		return "sum"
+	case mvmerge.AggMin:
+		return "min"
+	case mvmerge.AggMax:
+		return "max"
+	default:
+		return fmt.Sprintf("agg(%d)", kind)
+	}
+}
+
+func formatMVDeltaMergeOffsets(offsets []int) string {
+	if len(offsets) == 0 {
+		return "[]"
+	}
+
+	var builder strings.Builder
+	builder.WriteByte('[')
+	for i := range offsets {
+		if i > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString(strconv.Itoa(offsets[i]))
+	}
+	builder.WriteByte(']')
+	return builder.String()
+}
+
+// MemoryUsage returns the memory usage of MVDeltaMerge.
+func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}
