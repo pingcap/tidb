@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-19 (meta, index_merge_reader, mydecimal, coprocessor, time, distsql, histogram decompositions)
+Last updated: 2026-02-19 (codec, cache, tables.go, builtin_other, partition_location/record decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -361,6 +361,41 @@ Last updated: 2026-02-19 (meta, index_merge_reader, mydecimal, coprocessor, time
   - [x] `histogram_merge.go` (545 lines) - bucket4Merging, MergePartitionHist2GlobalHist
   - [x] `histogram_estimation.go` (259 lines) - calculateLeftOverlapPercent, OutOfRangeRowCount
 
+- [x] **util/codec/codec.go decomposition** - Extract serialize, hash, and decode logic
+  - File: `pkg/util/codec/codec.go` (1,932 → 666 lines, 66% reduction)
+  - Target: Focused files per functional area
+  - [x] `codec_serialize_keys.go` (596 lines) - EncodeKey, EncodeValue, EncodeBytesExt, encodeInt/Uint/Float
+  - [x] `codec_hash_chunk.go` (379 lines) - HashCode, HashChunkRow, HashGroupKey, HashChunkColumns
+  - [x] `codec_decode.go` (372 lines) - Decode, DecodeOne, DecodeRange, decode typed helpers
+
+- [x] **privilege/privileges/cache.go decomposition** - Extract decoder, grants, and handle logic
+  - File: `pkg/privilege/privileges/cache.go` (2,229 → 1,165 lines, 48% reduction)
+  - Target: Focused files per functional area
+  - [x] `cache_decoder.go` (444 lines) - decodeUserTableRow, decodeGlobalPrivTableRow, decodeColumnPrivTableRow
+  - [x] `cache_grants.go` (545 lines) - showGrants, userPrivString, globalPrivString, dbPrivString
+  - [x] `cache_handle.go` (165 lines) - Handle type and core privilege handle operations
+
+- [x] **table/tables/tables.go decomposition** - Extract add/update/remove record and sequence logic
+  - File: `pkg/table/tables/tables.go` (1,962 → 1,063 lines, 46% reduction)
+  - Target: Focused files per functional area
+  - [x] `tables_add_record.go` (330 lines) - AddRecord, addRecord, addIndices, genIndexKeyStrs
+  - [x] `tables_update_record.go` (228 lines) - UpdateRecord, updateRecord, rebuildUpdateRecordIndices
+  - [x] `tables_remove_record.go` (157 lines) - RemoveRecord, removeRecord, removeRowData, removeRowIndices
+  - [x] `tables_sequence.go` (178 lines) - sequenceCommon struct and methods
+
+- [x] **expression/builtin_other.go decomposition** - Extract IN, user var, and VALUES functions
+  - File: `pkg/expression/builtin_other.go` (1,950 → 204 lines, 89% reduction)
+  - Target: Focused files per functional area
+  - [x] `builtin_in.go` (857 lines) - inFunctionClass with all 8 type-specific signatures
+  - [x] `builtin_user_var.go` (516 lines) - SET/GET user variable functions
+  - [x] `builtin_values.go` (359 lines) - VALUES() function with all type variants
+
+- [x] **table/tables/partition.go (tables pkg) decomposition** - Extract record mutation and location
+  - File: `pkg/table/tables/partition.go` (2,195 → 1,457 lines, 34% reduction)
+  - Target: Focused files per functional area
+  - [x] `partition_record.go` (431 lines) - AddRecord, UpdateRecord, RemoveRecord for partitioned tables
+  - [x] `partition_location.go` (306 lines) - partition location/routing, GetPartition, GetPartitionByRow
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -450,3 +485,8 @@ Last updated: 2026-02-19 (meta, index_merge_reader, mydecimal, coprocessor, time
 - [x] **types/time.go decomposition** - 2026-02-19 - Split into 3 focused files: `time_parse.go` (574), `time_str_to_date.go` (644), `time_interval.go` (473). Reduced time.go from 3,546 to 1,936 lines (45% reduction).
 - [x] **executor/distsql.go decomposition** - 2026-02-19 - Split into 2 focused files: `distsql_index_worker.go` (411), `distsql_table_worker.go` (490). Reduced distsql.go from 1,988 to 1,170 lines (41% reduction).
 - [x] **statistics/histogram.go decomposition** - 2026-02-19 - Split into 2 focused files: `histogram_merge.go` (545), `histogram_estimation.go` (259). Reduced histogram.go from 1,993 to 1,244 lines (38% reduction).
+- [x] **util/codec/codec.go decomposition** - 2026-02-19 - Split into 3 focused files: `codec_serialize_keys.go` (596), `codec_hash_chunk.go` (379), `codec_decode.go` (372). Reduced codec.go from 1,932 to 666 lines (66% reduction).
+- [x] **privilege/privileges/cache.go decomposition** - 2026-02-19 - Split into 3 focused files: `cache_decoder.go` (444), `cache_grants.go` (545), `cache_handle.go` (165). Reduced cache.go from 2,229 to 1,165 lines (48% reduction).
+- [x] **table/tables/tables.go decomposition** - 2026-02-19 - Split into 4 focused files: `tables_add_record.go` (330), `tables_update_record.go` (228), `tables_remove_record.go` (157), `tables_sequence.go` (178). Reduced tables.go from 1,962 to 1,063 lines (46% reduction).
+- [x] **expression/builtin_other.go decomposition** - 2026-02-19 - Split into 3 focused files: `builtin_in.go` (857), `builtin_user_var.go` (516), `builtin_values.go` (359). Reduced builtin_other.go from 1,950 to 204 lines (89% reduction).
+- [x] **table/tables/partition.go decomposition** - 2026-02-19 - Split into 2 focused files: `partition_record.go` (431), `partition_location.go` (306). Reduced partition.go from 2,195 to 1,457 lines (34% reduction).
