@@ -84,6 +84,6 @@ func GetCorrelateSuiteData() testdata.TestData {
 	return testDataMap["correlate_suite"]
 }
 
-  func GetCDCJoinReorderSuiteData() testdata.TestData {
+func GetCDCJoinReorderSuiteData() testdata.TestData {
 	return testDataMap["cdc_join_reorder_suite"]
 }

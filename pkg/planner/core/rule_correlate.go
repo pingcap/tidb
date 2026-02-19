@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -30,7 +31,15 @@ import (
 type CorrelateSolver struct{}
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (s *CorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
+func (s *CorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan) (retPlan base.LogicalPlan, retChanged bool, retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			// If correlate panics, return the original plan unchanged.
+			retPlan = p
+			retChanged = false
+			retErr = nil
+		}
+	}()
 	return s.correlate(ctx, p)
 }
 
@@ -58,9 +67,10 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 		return p, planChanged, nil
 	}
 
-	// Check if this node is a LogicalJoin with a semi-join type.
+	// Check if this node is a LogicalJoin with a semi-join type that was
+	// marked for re-correlation (from a non-correlated IN subquery).
 	join, isJoin := p.(*logicalop.LogicalJoin)
-	if !isJoin || !join.JoinType.IsSemiJoin() {
+	if !isJoin || !join.JoinType.IsSemiJoin() || !join.PreferCorrelate {
 		return p, planChanged, nil
 	}
 
@@ -94,10 +104,15 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	// Move RightConditions to the selection (they reference only the inner side).
 	selConds = append(selConds, join.RightConditions...)
 
-	// Build the LogicalSelection on the inner (right) child.
-	innerChild := join.Children()[1]
+	// Clone the inner subtree so PPD can modify the clone without affecting
+	// the Join's inner child (which must retain its original conditions).
+	// If the subtree contains an unhandled operator type, abort to avoid corruption.
+	clonedInner, ok := cloneLogicalSubtree(join.Children()[1])
+	if !ok {
+		return p, planChanged, nil
+	}
 	sel := logicalop.LogicalSelection{Conditions: selConds}.Init(join.SCtx(), join.QueryBlockOffset())
-	sel.SetChildren(innerChild)
+	sel.SetChildren(clonedInner)
 
 	// Run predicate push-down on the inner subtree so the new correlated
 	// predicates reach the DataSource (for index access path selection).
@@ -115,6 +130,17 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	// index access paths were built without them.
 	resetStatsForCorrelatedDS(innerPlan)
 
+	// For semi-join semantics (EXISTS/IN and NOT EXISTS/NOT IN), add Limit 1 on
+	// the inner side. The Apply executor materializes all inner rows per outer
+	// key via fetchAllInners; a Limit 1 enables early exit since semi/anti-semi
+	// joins only need to know whether any matching row exists.
+	// This mirrors what expression_rewriter does for NO_DECORRELATE EXISTS.
+	if !hasLimit(innerPlan) {
+		limit := logicalop.LogicalLimit{Count: 1}.Init(join.SCtx(), join.QueryBlockOffset())
+		limit.SetChildren(innerPlan)
+		innerPlan = limit
+	}
+
 	// Build the LogicalApply.
 	ap := logicalop.LogicalApply{}.Init(join.SCtx(), join.QueryBlockOffset())
 	ap.JoinType = join.JoinType
@@ -123,7 +149,10 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	ap.SetSchema(join.Schema().Clone())
 	ap.SetOutputNames(join.OutputNames())
 
-	return ap, true, nil
+	// Store the Apply alternative on the Join for cost-based selection during
+	// physical optimization, rather than unconditionally choosing Apply.
+	join.CorrelateAlternative = ap
+	return p, true, nil
 }
 
 // buildCorrelatedCond converts an equal condition from the join into a correlated condition
@@ -165,6 +194,160 @@ func (*CorrelateSolver) buildCorrelatedCond(
 	)
 
 	return cond, corCol
+}
+
+// cloneLogicalSubtree creates a shallow clone of the logical plan subtree,
+// ensuring each node has a fresh plan ID and independent mutable state (children,
+// conditions, AllConds). Immutable data (table info, column info, etc.) is shared.
+// This is used to build the Apply alternative's inner plan without modifying the
+// Join's original inner subtree when PPD pushes correlated conditions down.
+// Returns (clone, true) on success, or (nil, false) if an unhandled operator type
+// is encountered. In the failure case, the caller must abort the correlate
+// optimization to avoid corrupting the original subtree.
+func cloneLogicalSubtree(p base.LogicalPlan) (base.LogicalPlan, bool) {
+	switch op := p.(type) {
+	case *logicalop.DataSource:
+		return cloneDataSource(op), true
+	case *logicalop.LogicalJoin:
+		return cloneJoin(op)
+	case *logicalop.LogicalSelection:
+		return cloneSelection(op)
+	case *logicalop.LogicalProjection:
+		return cloneProjection(op)
+	case *logicalop.LogicalAggregation:
+		return cloneAggregation(op)
+	case *logicalop.LogicalLimit:
+		return cloneLimit(op)
+	default:
+		// Unknown operator type — cannot safely clone. Return failure
+		// so the caller aborts the correlate optimization.
+		return nil, false
+	}
+}
+
+func cloneWithChildren(p base.LogicalPlan) ([]base.LogicalPlan, bool) {
+	children := make([]base.LogicalPlan, len(p.Children()))
+	for i, child := range p.Children() {
+		cloned, ok := cloneLogicalSubtree(child)
+		if !ok {
+			return nil, false
+		}
+		children[i] = cloned
+	}
+	return children, true
+}
+
+func cloneDataSource(ds *logicalop.DataSource) *logicalop.DataSource {
+	clone := *ds
+	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
+		ds.SCtx(), ds.TP(), &clone, ds.QueryBlockOffset())
+	clone.SetSchema(ds.Schema().Clone())
+	// Independent slices that PPD replaces.
+	clone.AllConds = append([]expression.Expression(nil), ds.AllConds...)
+	clone.PushedDownConds = append([]expression.Expression(nil), ds.PushedDownConds...)
+	// Create fresh AccessPath objects for the clone so that fillIndexPath
+	// (called during DeriveStats) populates independent copies and does not
+	// corrupt the original DataSource's paths. Only structural identity
+	// fields are copied; analysis fields (Ranges, AccessConds, etc.) are
+	// left at zero so fillIndexPath starts from a clean state.
+	clone.AllPossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
+	for i, p := range ds.AllPossibleAccessPaths {
+		clone.AllPossibleAccessPaths[i] = freshAccessPath(p)
+	}
+	// PossibleAccessPaths must reference the same objects as AllPossibleAccessPaths
+	// so that fillIndexPath modifications during DeriveStats are visible. Without
+	// this, PossibleAccessPaths retains fresh paths with nil Ranges, causing
+	// the DataSource to be incorrectly converted to TableDual.
+	clone.PossibleAccessPaths = append([]*util.AccessPath(nil), clone.AllPossibleAccessPaths...)
+	return &clone
+}
+
+func cloneJoin(j *logicalop.LogicalJoin) (*logicalop.LogicalJoin, bool) {
+	children, ok := cloneWithChildren(j)
+	if !ok {
+		return nil, false
+	}
+	clone := *j
+	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
+		j.SCtx(), j.TP(), &clone, j.QueryBlockOffset())
+	clone.SetSchema(j.Schema().Clone())
+	// Independent condition slices that PPD may modify.
+	clone.EqualConditions = append([]*expression.ScalarFunction(nil), j.EqualConditions...)
+	clone.LeftConditions = append(expression.CNFExprs(nil), j.LeftConditions...)
+	clone.RightConditions = append(expression.CNFExprs(nil), j.RightConditions...)
+	clone.OtherConditions = append(expression.CNFExprs(nil), j.OtherConditions...)
+	clone.SetChildren(children...)
+	return &clone, true
+}
+
+func cloneSelection(s *logicalop.LogicalSelection) (*logicalop.LogicalSelection, bool) {
+	children, ok := cloneWithChildren(s)
+	if !ok {
+		return nil, false
+	}
+	clone := *s
+	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
+		s.SCtx(), s.TP(), &clone, s.QueryBlockOffset())
+	clone.Conditions = append(expression.CNFExprs(nil), s.Conditions...)
+	clone.SetChildren(children...)
+	return &clone, true
+}
+
+func cloneProjection(proj *logicalop.LogicalProjection) (*logicalop.LogicalProjection, bool) {
+	children, ok := cloneWithChildren(proj)
+	if !ok {
+		return nil, false
+	}
+	clone := *proj
+	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
+		proj.SCtx(), proj.TP(), &clone, proj.QueryBlockOffset())
+	clone.SetSchema(proj.Schema().Clone())
+	clone.SetChildren(children...)
+	return &clone, true
+}
+
+func cloneAggregation(agg *logicalop.LogicalAggregation) (*logicalop.LogicalAggregation, bool) {
+	children, ok := cloneWithChildren(agg)
+	if !ok {
+		return nil, false
+	}
+	clone := *agg
+	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
+		agg.SCtx(), agg.TP(), &clone, agg.QueryBlockOffset())
+	clone.SetSchema(agg.Schema().Clone())
+	clone.SetChildren(children...)
+	return &clone, true
+}
+
+func cloneLimit(lim *logicalop.LogicalLimit) (*logicalop.LogicalLimit, bool) {
+	children, ok := cloneWithChildren(lim)
+	if !ok {
+		return nil, false
+	}
+	clone := *lim
+	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
+		lim.SCtx(), lim.TP(), &clone, lim.QueryBlockOffset())
+	clone.SetSchema(lim.Schema().Clone())
+	clone.SetChildren(children...)
+	return &clone, true
+}
+
+// freshAccessPath creates a new AccessPath with only the structural identity
+// fields from the source path (Index, StoreType, handle flags, hint flags).
+// Analysis fields (Ranges, AccessConds, IdxCols, etc.) are left at zero so
+// that fillIndexPath / deriveTablePathStats start from a clean state.
+func freshAccessPath(src *util.AccessPath) *util.AccessPath {
+	return &util.AccessPath{
+		Index:              src.Index,
+		StoreType:          src.StoreType,
+		IsIntHandlePath:    src.IsIntHandlePath,
+		IsCommonHandlePath: src.IsCommonHandlePath,
+		Forced:             src.Forced,
+		ForceKeepOrder:     src.ForceKeepOrder,
+		ForceNoKeepOrder:   src.ForceNoKeepOrder,
+		ForcePartialOrder:  src.ForcePartialOrder,
+		IsUkShardIndexPath: src.IsUkShardIndexPath,
+	}
 }
 
 // resetStatsForCorrelatedDS walks the inner subtree and clears StatsInfo on

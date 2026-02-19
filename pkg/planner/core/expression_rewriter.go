@@ -1078,6 +1078,11 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	// Add LIMIT 1 when noDecorrelate is true for EXISTS subqueries to enable early exit
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingExistsSubquery)
+	// When EnableCorrelateSubquery is ON, prevent decorrelation of correlated
+	// subqueries so they stay as Apply with index lookups.
+	if !noDecorrelate && b.ctx.GetSessionVars().EnableCorrelateSubquery && len(corCols) > 0 {
+		noDecorrelate = true
+	}
 	if noDecorrelate {
 		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
 		if !hasLimit(np) {
@@ -1094,7 +1099,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	}
 	np = er.popExistsSubPlan(planCtx, np)
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
-	if semiJoinRewrite && noDecorrelate {
+	if semiJoinRewrite && hintFlags&hint.HintFlagNoDecorrelate > 0 {
 		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective.")
 		noDecorrelate = false
@@ -1280,6 +1285,11 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
+	// When EnableCorrelateSubquery is ON, prevent decorrelation of correlated
+	// IN subqueries so they stay as Apply with index lookups.
+	if !noDecorrelate && planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery && len(corCols) > 0 && !v.Not {
+		noDecorrelate = true
+	}
 
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
@@ -1323,6 +1333,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, semiRewrite, noDecorrelate)
 		if er.err != nil {
 			return v, true
+		}
+		// When EnableCorrelateSubquery is ON and the subquery is non-correlated,
+		// mark the join so that CorrelateSolver converts it to a correlated Apply.
+		if planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery && len(corCols) == 0 && !v.Not {
+			if ap, ok := planCtx.plan.(*logicalop.LogicalApply); ok {
+				ap.PreferCorrelate = true
+			}
 		}
 	}
 

@@ -3005,6 +3005,102 @@ func ExhaustPhysicalPlans4MockLogicalPlan(p *mockLogicalPlan4Test, prop *propert
 	return append(plan1, plan2...), true, nil
 }
 
+// findBestTask4LogicalJoin handles LogicalJoin nodes that have a CorrelateAlternative.
+// It compares the Join path and the Apply path via CBO and returns the cheaper one.
+// If any panic occurs, it falls back to the standard findBestTask behavior.
+func findBestTask4LogicalJoin(super base.LogicalPlan, prop *property.PhysicalProperty) (bestTask base.Task, retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("findBestTask4LogicalJoin panic, falling back to join task",
+				zap.Any("recover", r),
+				zap.Stack("stack"))
+			// Disable the correlate alternative so future calls use the standard path.
+			_, self := getGEAndSelf(super)
+			join := self.(*logicalop.LogicalJoin)
+			join.CorrelateAlternative = nil
+			// Return the cached join task if available (from step 1), otherwise invalid.
+			// Do NOT retry findBestTask here — the Apply alternative's DeriveStats may
+			// have corrupted shared AccessPath objects, making a retry unsafe.
+			p := self.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
+			if cached := p.GetTask(prop); cached != nil {
+				bestTask = cached
+				retErr = nil
+			} else {
+				bestTask = base.InvalidTask
+				retErr = nil
+			}
+		}
+	}()
+
+	_, self := getGEAndSelf(super)
+	join := self.(*logicalop.LogicalJoin)
+	p := self.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
+
+	if prop == nil {
+		return nil, nil
+	}
+
+	// Cache check: if winner was already computed for this prop, return it.
+	if cached := p.GetTask(prop); cached != nil {
+		return cached, nil
+	}
+
+	// Step 1: Get the Join path's best task (caches on p internally).
+	joinTask, err := findBestTask(super, prop)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: Try the Apply alternative. The Apply path may encounter issues
+	// (e.g., unsupported operator types in the inner subtree, correlated
+	// conditions that confuse the ranger, etc.). Use a recovery mechanism to
+	// ensure the Join path is always available as a safe fallback.
+	applyTask := tryCorrelateAlternative(join, prop)
+
+	// Step 3: Compare and cache the winner.
+	bestTask = joinTask
+	if applyTask != nil {
+		if applyIsBetter, err := compareTaskCost(applyTask, joinTask); err != nil {
+			return nil, err
+		} else if applyIsBetter {
+			bestTask = applyTask
+		}
+	}
+
+	// Overwrite cache with winner (findBestTask cached joinTask; overwrite if apply won).
+	p.StoreTask(prop, bestTask)
+	return bestTask, nil
+}
+
+// tryCorrelateAlternative evaluates the Apply alternative for a LogicalJoin.
+// Returns the Apply task on success, or nil if the Apply path fails for any reason.
+func tryCorrelateAlternative(join *logicalop.LogicalJoin, prop *property.PhysicalProperty) (result base.Task) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("correlate alternative failed, falling back to join",
+				zap.Any("recover", r),
+				zap.Stack("stack"))
+			result = nil
+		}
+	}()
+
+	ap := join.CorrelateAlternative
+
+	// Derive stats — inner child needs fresh stats (cleared by resetStatsForCorrelatedDS).
+	if _, _, err := ap.RecursiveDeriveStats(nil); err != nil {
+		return nil
+	}
+	preparePossibleProperties(ap)
+
+	// Get the Apply path's best task.
+	applyTask, err := physicalop.FindBestTask(ap, prop)
+	if err != nil {
+		return nil
+	}
+
+	return applyTask
+}
+
 type mockPhysicalPlan4Test struct {
 	physicalop.BasePhysicalPlan
 	// 1 or 2 for physicalPlan1 or physicalPlan2.
