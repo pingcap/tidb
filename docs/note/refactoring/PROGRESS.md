@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-19 (codec, cache, tables.go, builtin_other, partition_location/record decompositions)
+Last updated: 2026-02-19 (builtin_info, gc_worker, func_max_min, ddl/table decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -490,3 +490,7 @@ Last updated: 2026-02-19 (codec, cache, tables.go, builtin_other, partition_loca
 - [x] **table/tables/tables.go decomposition** - 2026-02-19 - Split into 4 focused files: `tables_add_record.go` (330), `tables_update_record.go` (228), `tables_remove_record.go` (157), `tables_sequence.go` (178). Reduced tables.go from 1,962 to 1,063 lines (46% reduction).
 - [x] **expression/builtin_other.go decomposition** - 2026-02-19 - Split into 3 focused files: `builtin_in.go` (857), `builtin_user_var.go` (516), `builtin_values.go` (359). Reduced builtin_other.go from 1,950 to 204 lines (89% reduction).
 - [x] **table/tables/partition.go decomposition** - 2026-02-19 - Split into 2 focused files: `partition_record.go` (431), `partition_location.go` (306). Reduced partition.go from 2,195 to 1,457 lines (34% reduction).
+- [x] **expression/builtin_info.go decomposition** - 2026-02-19 - Split into 2 focused files: `builtin_info_session.go` (449), `builtin_info_tidb.go` (906). Reduced builtin_info.go from 1,791 to 486 lines (73% reduction).
+- [x] **store/gcworker/gc_worker.go decomposition** - 2026-02-19 - Split into 2 focused files: `gc_delete_range.go` (358), `gc_rules.go` (321). Reduced gc_worker.go from 1,881 to 1,272 lines (32% reduction).
+- [x] **executor/aggfuncs/func_max_min.go decomposition** - 2026-02-19 - Split into 3 focused files: `func_max_min_numeric.go` (655), `func_max_min_complex.go` (704), `func_max_min_special.go` (351). Reduced func_max_min.go from 1,903 to 251 lines (87% reduction).
+- [x] **ddl/table.go decomposition** - 2026-02-19 - Split into 4 focused files: `table_rename.go` (267), `table_tiflash.go` (177), `table_placement.go` (250), `table_cache.go` (165). Reduced table.go from 1,798 to 1,040 lines (42% reduction).
