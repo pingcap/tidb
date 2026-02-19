@@ -60,6 +60,7 @@ func GetRowCountByIndexRanges(sctx context.PlanContext, coll *statistics.HistCol
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
+<<<<<<< HEAD
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -67,16 +68,33 @@ func GetRowCountByIndexRanges(sctx context.PlanContext, coll *statistics.HistCol
 		result, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
 			ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
+=======
+		if hasColumnStats(sctx, coll, idxCols) && !ranger.HasFullRange(indexRanges, false) {
+			count, maxCount, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
+			result = statistics.RowEstimate{Est: count, MinEst: count, MaxEst: maxCount}
+		} else {
+			colsLen := -1
+			if idx != nil && idx.Info.Unique {
+				colsLen = len(idx.Info.Columns)
+			}
+			count, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
+			result = statistics.DefaultRowEst(count)
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 		}
 		return result, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
+<<<<<<< HEAD
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", idx.Histogram.NotNullCount(),
 			"TopN total count", idx.TopN.TotalCount(),
 			"Increase Factor", idx.GetIncreaseFactor(realtimeCnt),
 		)
+=======
+	if canSkipIndexEstimation(idx, indexRanges) {
+		return statistics.DefaultRowEst(float64(realtimeCnt)), nil
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
@@ -592,3 +610,50 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 	}
 	return len(ran.LowVal)
 }
+<<<<<<< HEAD
+=======
+
+// canSkipIndexEstimation checks whether expensive index row count estimation
+// (V1/V2) can be skipped because the ranges cover all rows. Returns true only when:
+//  1. The ranges include a truly full range including NULLs ([NULL, +inf)),
+//     not just [MinNotNull, +inf) which excludes NULLs and would overestimate.
+//  2. The index is not a partial index (which only covers rows matching its predicate).
+//  3. The index is not an MV index (which can have multiple entries per row).
+func canSkipIndexEstimation(idx *statistics.Index, indexRanges []*ranger.Range) bool {
+	if idx.Info.ConditionExprString != "" || idx.Info.MVIndex {
+		return false
+	}
+	return slices.ContainsFunc(indexRanges, isFullRangeIncludingNulls)
+}
+
+// isFullRangeIncludingNulls checks if a single range covers all values including NULLs.
+// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull),
+// not KindMinNotNull, ensuring NULL rows are included in the count.
+func isFullRangeIncludingNulls(ran *ranger.Range) bool {
+	if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) == 0 {
+		return false
+	}
+	for i := range ran.LowVal {
+		if ran.LowVal[i].Kind() != types.KindNull {
+			return false
+		}
+		if ran.HighVal[i].Kind() != types.KindMaxValue {
+			return false
+		}
+	}
+	return true
+}
+
+// hasColumnStats checks if we have collected stats on any of the given columns.
+func hasColumnStats(sctx planctx.PlanContext, coll *statistics.HistColl, idxCols []*expression.Column) bool {
+	if idxCols == nil {
+		return false
+	}
+	for i := range idxCols {
+		if !statistics.ColumnStatsIsInvalid(coll.GetCol(idxCols[i].UniqueID), sctx, coll, idxCols[i].UniqueID) {
+			return true
+		}
+	}
+	return false
+}
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
