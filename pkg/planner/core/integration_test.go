@@ -2129,7 +2129,7 @@ func TestINListMatchPruning(t *testing.T) {
 		primary key(a, b, c, d, e) /*T![clustered_index] NONCLUSTERED */
 	)`)
 
-	// Insert 9K rows: a=1, b=1, c=1-200, d=1-500, e=0
+	// Insert 100K rows: a=1, b=1, c=1-200, d=1-500, e=0
 	tk.MustExec("set @@cte_max_recursion_depth=100000")
 	tk.MustExec(`insert into t1 (a, b, c, d, e)
 		select * from (
@@ -2148,7 +2148,15 @@ func TestINListMatchPruning(t *testing.T) {
 			select * from tt
 		) t
 	`)
-	tk.MustExec("analyze table t1")
+
+	// sleep(1) is necesary for statistics to reflect recently committed changes
+	tk.MustQuery("select sleep(1)")
+	tk.MustExec("analyze table t1 all columns")
+
+	rows := tk.MustQuery("show stats_meta where table_name = 't1'").Rows()
+	for _, row := range rows {
+		t.Logf("t1 stats_meta: %v", row)
+	}
 
 	// Helper function to build the query using different in conditions for c and d
 	buildQuery := func(cValues, dValues []string) string {
@@ -2200,8 +2208,8 @@ func TestINListMatchPruning(t *testing.T) {
 				}
 			},
 		},
-		// 10pct_c_exist_all_d_exist tests that when PRIMARY index is f, the ranges constructed
-		// are on [a, b, c] rather than [a, b, c, d]. Assuming that a seek is 30x as expensive
+		// 10pct_c_exist_all_d_exist tests the ranges constructed are on [a, b, c]
+		// rather than [a, b, c, d]. Assuming that a seek is 30x as expensive
 		// as a next operation, the cost is roughly as follows:
 		// - Ranges on PRIMARY[a, b, c, d]: 40,000 × 30 + 2,000 = 1,202,000
 		// - Ranges on PRIMARY[a, b, c]: 200 × 30 + 5,000 = 11,000
@@ -2255,4 +2263,50 @@ func TestINListMatchPruning(t *testing.T) {
 			tk.MustQuery("explain format='brief' "+query).CheckAt([]int{0, 2, 3, 4}, tt.expectedPlan(cValues, dValues))
 		})
 	}
+
+	// pruning_accounts_for_sort_cost tests that the sort cost is properly accounted for during
+	// in-list match pruning. Assuming that a seek is 30x as expensive as a next operation and a sort
+	// is 1/135x as expensive as a next operation, the cost is roughly as follows:
+	// - Ranges on [a, b]: 10 x 30 + 10 = 310
+	// - Ranges on [a]: 10 x 30 + 10 + 10/135 = 310.07
+	t.Run("pruning_accounts_for_sort_cost", func(t *testing.T) {
+		tk.MustExec(`create table t2 (
+			a int,
+			b int,
+			c int,
+			primary key(a, b, c) /*T![clustered_index] NONCLUSTERED */
+		)`)
+
+		// Insert 100 rows with b=1, c=0 for all: (1,1,0), (2,1,0), (3,1,0), ..., (100,1,0)
+		tk.MustExec(`insert into t2 (a, b, c)
+			select * from (
+				with recursive tt as (
+					select 1 as a, 1 as b, 0 as c
+					union all
+					select a + 1, 1, 0
+					from tt
+					where a < 100
+				)
+				select * from tt
+			) t
+		`)
+
+		// sleep(1) is necesary for statistics to reflect recently committed changes
+		tk.MustQuery("select sleep(1)")
+
+		tk.MustExec("analyze table t2 all columns")
+
+		var ranges []string
+		for i := 1; i <= 10; i++ {
+			ranges = append(ranges, fmt.Sprintf("[%d 1,%d 1]", i, i))
+		}
+
+		query := "select * from t2 where a in (1,2,3,4,5,6,7,8,9,10) and b in (1)"
+		expectedPlan := [][]any{
+			{"IndexReader", "root", "", "index:IndexRangeScan"},
+			{"└─IndexRangeScan", "cop[tikv]", "table:t2, index:PRIMARY(a, b, c)", fmt.Sprintf("range:%s, keep order:false", strings.Join(ranges, ", "))},
+		}
+
+		tk.MustQuery("explain format='brief' "+query).CheckAt([]int{0, 2, 3, 4}, expectedPlan)
+	})
 }

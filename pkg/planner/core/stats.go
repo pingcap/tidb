@@ -491,7 +491,7 @@ func detachCondAndBuildOptimalRangeForIndex(
 	bestScanCost := rowCount.Est
 	bestCost := bestSeekCost + bestScanCost
 
-	for cutoff := res.EqCondCount; cutoff < res.EqOrInCount; cutoff++ {
+	for cutoff := max(1, res.EqCondCount); cutoff < res.EqOrInCount; cutoff++ {
 		altIndexCols := indexCols[:cutoff]
 		altIndexColLens := colLens[:cutoff]
 
