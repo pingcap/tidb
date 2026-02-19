@@ -149,6 +149,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		Table:       s.ViewName,
 		Cols:        colDefs,
 		Constraints: constraints,
+		Options:     s.Options,
 	}
 	mvTableInfo, err := BuildTableInfoWithStmt(
 		NewMetaBuildContextWithSctx(ctx),

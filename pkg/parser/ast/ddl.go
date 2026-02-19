@@ -1689,6 +1689,7 @@ type CreateMaterializedViewStmt struct {
 	Cols     []model.CIStr
 	Comment  string
 	Refresh  *MViewRefreshClause
+	Options  []*TableOption
 	Select   ResultSetNode
 }
 
@@ -1715,6 +1716,12 @@ func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		if err := n.Refresh.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Refresh")
+		}
+	}
+	for i, option := range n.Options {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateMaterializedViewStmt.TableOption[%d]", i)
 		}
 	}
 	ctx.WriteKeyWord(" AS ")
@@ -1753,6 +1760,13 @@ func (n *CreateMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 			}
 			n.Refresh.Next = node.(ExprNode)
 		}
+	}
+	for i, option := range n.Options {
+		node, ok := option.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Options[i] = node.(*TableOption)
 	}
 	if n.Select != nil {
 		node, ok := n.Select.Accept(v)
