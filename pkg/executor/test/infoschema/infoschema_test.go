@@ -787,22 +787,22 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	} else {
 		tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-			"30|add index|public|23|28|t1|synced",
-			"29|create table|public|23|28|t1|synced",
-			"16|add index|public|9|14|t1|synced",
-			"15|create table|public|9|14|t1|synced",
+			"28|add index|public|21|26|t1|synced",
+			"27|create table|public|21|26|t1|synced",
+			"14|add index|public|7|12|t1|synced",
+			"13|create table|public|7|12|t1|synced",
 		))
 		tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-			"36|add index|public|23|34|t3|synced",
-			"33|add index|public|23|31|t2|synced",
-			"30|add index|public|23|28|t1|synced",
-			"27|add index|public|23|25|t0|synced",
+			"34|add index|public|21|32|t3|synced",
+			"31|add index|public|21|29|t2|synced",
+			"28|add index|public|21|26|t1|synced",
+			"25|add index|public|21|23|t0|synced",
 		))
 		tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-			"22|add index|public|9|20|t3|synced",
-			"21|create table|public|9|20|t3|synced",
+			"20|add index|public|7|18|t3|synced",
+			"19|create table|public|7|18|t3|synced",
 		))
 	}
 
@@ -862,8 +862,8 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	} else {
 		tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-			"46|create table|public|43|45|t1|synced",
-			"41|create table|public|38|40|t1|synced",
+			"44|create table|public|41|43|t1|synced",
+			"39|create table|public|36|38|t1|synced",
 		))
 	}
 
