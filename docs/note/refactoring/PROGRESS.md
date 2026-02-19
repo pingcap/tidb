@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-19 (job_args, coprocessor, ddl/index, ddl/executor decompositions)
+Last updated: 2026-02-19 (create_table, ddl.go, time.go decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -351,7 +351,7 @@ Last updated: 2026-02-19 (job_args, coprocessor, ddl/index, ddl/executor decompo
   - [x] `coprocessor_ratelimit.go` (244 lines) - rateLimitAction, copErrorResponse, protocol helpers
 
 - [x] **types/time.go decomposition** - Extract parsing, StrToDate, and interval functions
-  - File: `pkg/types/time.go` (3,546 → 1,936 lines, 45% reduction)
+  - File: `pkg/types/time.go` (3,546 → 917 lines, 74% total reduction)
   - Target: Focused files per functional area
   - [x] `time_parse.go` (574 lines) - TimestampDiff, ParseDateFormat, GetTimezone, parseDatetime
   - [x] `time_str_to_date.go` (644 lines) - StrToDate, format token parsing, DateFSP
@@ -403,6 +403,25 @@ Last updated: 2026-02-19 (job_args, coprocessor, ddl/index, ddl/executor decompo
   - Target: Focused files per functional area
   - [x] `partition_record.go` (431 lines) - AddRecord, UpdateRecord, RemoveRecord for partitioned tables
   - [x] `partition_location.go` (306 lines) - partition location/routing, GetPartition, GetPartitionByRow
+
+- [x] **ddl/create_table.go decomposition** - Extract validation, constraints, and hidden columns
+  - File: `pkg/ddl/create_table.go` (1,764 → 1,077 lines, 39% reduction)
+  - Target: Focused files per functional area
+  - [x] `create_table_validate.go` (280 lines) - table info validation, generated columns, TiFlash checks
+  - [x] `create_table_constraints.go` (243 lines) - constraint building, naming, dedup, column flags
+  - [x] `create_table_hidden.go` (254 lines) - hidden columns, PK helpers, clustered index, view info
+
+- [x] **ddl/ddl.go decomposition** - Extract table lock and job control
+  - File: `pkg/ddl/ddl.go` (1,702 → 1,171 lines, 31% reduction)
+  - Target: Focused files per functional area
+  - [x] `ddl_table_lock.go` (154 lines) - dead table lock cleanup, MDL switching, async commit delay
+  - [x] `ddl_job_control.go` (409 lines) - job cancel/pause/resume, batch processing, query/iteration
+
+- [x] **types/time.go further decomposition** - Extract duration and conversion functions
+  - File: `pkg/types/time.go` (1,932 → 917 lines, 53% reduction)
+  - Target: Focused files per functional area
+  - [x] `time_duration.go` (610 lines) - Duration struct, methods, formatting, parsing, helpers
+  - [x] `time_convert.go` (457 lines) - time parsing from numbers/strings/floats/decimals
 
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
