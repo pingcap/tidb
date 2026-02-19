@@ -20,7 +20,6 @@ package tables
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strings"
 	"time"

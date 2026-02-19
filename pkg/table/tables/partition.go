@@ -16,16 +16,13 @@ package tables
 
 import (
 	"bytes"
-	"context"
 	stderr "errors"
 	"fmt"
 	"hash/crc32"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
