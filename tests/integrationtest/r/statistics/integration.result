@@ -49,3 +49,16 @@ Sort	root		statistics__integration.t1.a, statistics__integration.t2.a
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false
+drop table if exists t;
+set @@session.tidb_analyze_version = 2;
+create table t(a int, b int, index idx_a(a), unique index uidx_b(b));
+insert into t values (1,1),(1,2),(2,3);
+analyze table t with 5 topn;
+show stats_topn where table_name = 't';
+Db_name	Table_name	Partition_name	Column_name	Is_index	Value	Count
+statistics__integration	t		a	0	1	2
+statistics__integration	t		a	0	2	1
+statistics__integration	t		idx_a	1	1	2
+statistics__integration	t		idx_a	1	2	1
+set @@session.tidb_analyze_version = default;
+drop table if exists t,t1,t2;
