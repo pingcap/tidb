@@ -325,3 +325,94 @@ func TestStoreWriteLimiter(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+type splitAndScatterCounterClient struct {
+	split.SplitClient
+	splitCount atomic.Int32
+}
+
+func (c *splitAndScatterCounterClient) SplitKeysAndScatter(_ context.Context, _ [][]byte) ([]*split.RegionInfo, error) {
+	c.splitCount.Inc()
+	return []*split.RegionInfo{
+		{
+			Region: &metapb.Region{Id: 1},
+		},
+	}, nil
+}
+
+func (*splitAndScatterCounterClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
+}
+
+type splitAndScatterErrClient struct {
+	split.SplitClient
+	splitCount atomic.Int32
+	failAt     int32
+}
+
+func (c *splitAndScatterErrClient) SplitKeysAndScatter(_ context.Context, _ [][]byte) ([]*split.RegionInfo, error) {
+	cnt := c.splitCount.Inc()
+	if cnt == c.failAt {
+		return nil, errors.New("mock split error")
+	}
+	return []*split.RegionInfo{
+		{
+			Region: &metapb.Region{Id: 1},
+		},
+	}, nil
+}
+
+func (*splitAndScatterErrClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
+}
+
+func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
+	makeSplitKeys := func(n int) [][]byte {
+		keys := make([][]byte, n)
+		for i := 0; i < n; i++ {
+			keys[i] = []byte{byte(i >> 8), byte(i)}
+		}
+		return keys
+	}
+
+	t.Run("large split keys trigger coarse and fine layers", func(t *testing.T) {
+		splitCli := &splitAndScatterCounterClient{}
+		local := &Backend{splitCli: splitCli}
+
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
+		require.NoError(t, err)
+		// 121 keys => coarse pass(11 keys, 1 batch) + fine pass(121 keys, 3 batches) = 4 calls.
+		require.Equal(t, int32(4), splitCli.splitCount.Load())
+	})
+
+	t.Run("small split keys only use fine layer", func(t *testing.T) {
+		splitCli := &splitAndScatterCounterClient{}
+		local := &Backend{splitCli: splitCli}
+
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(100), 50, 0)
+		require.NoError(t, err)
+		require.Equal(t, int32(2), splitCli.splitCount.Load())
+	})
+
+	t.Run("coarse layer error returns immediately", func(t *testing.T) {
+		splitCli := &splitAndScatterErrClient{failAt: 1}
+		local := &Backend{splitCli: splitCli}
+
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
+		require.ErrorContains(t, err, "mock split error")
+		require.Equal(t, int32(1), splitCli.splitCount.Load())
+	})
+
+	t.Run("limiter is still enforced after restoring two levels", func(t *testing.T) {
+		splitCli := &splitAndScatterCounterClient{}
+		local := &Backend{splitCli: splitCli}
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		// maxCntPerSec=0.5 => burstPerSec=1, so after first batch, limiter blocks
+		// and should hit context deadline before entering fine-grained stage.
+		err := local.splitAndScatterRegionInBatches(ctx, makeSplitKeys(121), 50, 0.5)
+		require.ErrorContains(t, err, "context deadline")
+		require.Equal(t, int32(1), splitCli.splitCount.Load())
+	})
+}
