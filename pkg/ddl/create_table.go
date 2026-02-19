@@ -18,8 +18,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -253,6 +255,9 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if err = w.upsertCreateMaterializedViewLogPurgeInfo(jobCtx, mlogTblInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: baseTblInfo})
 	if err != nil {
@@ -415,7 +420,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 		}
 
-		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID, job.SnapshotVer, true, ""); err != nil {
+		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo, job.SnapshotVer, true); err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
@@ -578,6 +583,56 @@ func (w *worker) setCreateMaterializedViewBuildReadTSInReorgCtx(jobID int64, rea
 	return nil
 }
 
+func parseMaterializedViewLogInitialNextTime(purgeMethod, purgeStartWith string) any {
+	if !strings.EqualFold(purgeMethod, "DEFERRED") {
+		return nil
+	}
+	purgeStartWith = strings.TrimSpace(purgeStartWith)
+	if len(purgeStartWith) < 2 || purgeStartWith[0] != '\'' || purgeStartWith[len(purgeStartWith)-1] != '\'' {
+		return nil
+	}
+	purgeStartWith = strings.Trim(purgeStartWith, "'")
+	nextTime, err := time.ParseInLocation("2006-01-02 15:04:05", purgeStartWith, time.Local)
+	if err != nil {
+		return nil
+	}
+	return nextTime
+}
+
+func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogTblInfo *model.TableInfo) error {
+	if mlogTblInfo == nil || mlogTblInfo.MaterializedViewLog == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: invalid table info")
+	}
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+
+	nextTime := parseMaterializedViewLogInitialNextTime(
+		mlogTblInfo.MaterializedViewLog.PurgeMethod,
+		mlogTblInfo.MaterializedViewLog.PurgeStartWith,
+	)
+	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mlog_purge (
+		MLOG_ID,
+		NEXT_TIME
+	) VALUES (%?, %?)
+	ON DUPLICATE KEY UPDATE
+		NEXT_TIME = VALUES(NEXT_TIME)`,
+		mlogTblInfo.ID,
+		nextTime,
+	)
+	_, err := w.sess.Execute(ctx, upsertSQL, "mlog-purge-info-upsert")
+	failpoint.Inject("mockUpsertCreateMaterializedViewLogPurgeInfoTableNotExists", func(val failpoint.Value) {
+		if val.(bool) {
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge")
+		}
+	})
+	if infoschema.ErrTableNotExists.Equal(err) {
+		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: required system table mysql.tidb_mlog_purge does not exist")
+	}
+	return errors.Trace(err)
+}
+
 func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {
 	sessCtx, err := w.sessPool.Get()
 	if err != nil {
@@ -660,12 +715,15 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 	return w.buildCreateMaterializedViewDataByImport(ctx, job, mvTblInfo)
 }
 
-func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64, readTS uint64, success bool, failedReason string) error {
+func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvTblInfo *model.TableInfo, readTS uint64, success bool) error {
+	if mvTblInfo == nil || mvTblInfo.MaterializedView == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid table info")
+	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, success, failedReason)
+	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mvTblInfo, readTS, success)
 	_, err := w.sess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
@@ -696,35 +754,68 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	return errors.Trace(err)
 }
 
-func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, success bool, failedReason string) string {
-	result := "failed"
-	refreshType := "complete"
-	var successfulReadTS any
-	var refreshFailedReason any = failedReason
-	if success {
-		result = "success"
-		successfulReadTS = readTS
-		refreshFailedReason = nil
+func parseMaterializedViewRefreshStartWith(raw string, fallback time.Time) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "NOW()") {
+		return fallback, true
 	}
+	if len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'' {
+		parsed, err := time.ParseInLocation("2006-01-02 15:04:05", strings.Trim(raw, "'"), time.Local)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return parsed, true
+	}
+	return time.Time{}, false
+}
+
+func calcMaterializedViewNextExecTime(start time.Time, intervalSec int64, last time.Time) time.Time {
+	if intervalSec <= 0 {
+		return last
+	}
+	startSec := start.Unix()
+	lastSec := last.Unix()
+	if lastSec < startSec {
+		return time.Unix(startSec, 0)
+	}
+	elapsed := lastSec - startSec
+	intervals := elapsed / intervalSec
+	nextSec := startSec + (intervals+1)*intervalSec
+	return time.Unix(nextSec, 0)
+}
+
+func buildCreateMaterializedViewRefreshInitialNextTime(mvInfo *model.MaterializedViewInfo, now time.Time) any {
+	if mvInfo == nil || !strings.EqualFold(mvInfo.RefreshMethod, "FAST") {
+		return nil
+	}
+	nextSec, err := strconv.ParseInt(strings.TrimSpace(mvInfo.RefreshNext), 10, 64)
+	if err != nil || nextSec <= 0 {
+		return nil
+	}
+	startWith, ok := parseMaterializedViewRefreshStartWith(mvInfo.RefreshStartWith, now)
+	if !ok {
+		return nil
+	}
+	return calcMaterializedViewNextExecTime(startWith, nextSec, now)
+}
+
+func buildCreateMaterializedViewRefreshInfoUpsertSQL(mvTblInfo *model.TableInfo, readTS uint64, success bool) string {
+	var successfulReadTS any
+	if success {
+		successfulReadTS = readTS
+	}
+	nextTime := buildCreateMaterializedViewRefreshInitialNextTime(mvTblInfo.MaterializedView, time.Now())
 	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
 		MVIEW_ID,
-		LAST_REFRESH_RESULT,
-		LAST_REFRESH_TYPE,
-		LAST_REFRESH_TIME,
-		LAST_SUCCESSFUL_REFRESH_READ_TSO,
-		LAST_REFRESH_FAILED_REASON
-	) VALUES (%?, %?, %?, NOW(6), %?, %?)
+		LAST_SUCCESS_READ_TSO,
+		NEXT_TIME
+	) VALUES (%?, %?, %?)
 	ON DUPLICATE KEY UPDATE
-		LAST_REFRESH_RESULT = VALUES(LAST_REFRESH_RESULT),
-		LAST_REFRESH_TYPE = VALUES(LAST_REFRESH_TYPE),
-		LAST_REFRESH_TIME = VALUES(LAST_REFRESH_TIME),
-		LAST_SUCCESSFUL_REFRESH_READ_TSO = VALUES(LAST_SUCCESSFUL_REFRESH_READ_TSO),
-		LAST_REFRESH_FAILED_REASON = VALUES(LAST_REFRESH_FAILED_REASON)`,
-		mviewID,
-		result,
-		refreshType,
+		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO),
+		NEXT_TIME = VALUES(NEXT_TIME)`,
+		mvTblInfo.ID,
 		successfulReadTS,
-		refreshFailedReason,
+		nextTime,
 	)
 	return upsertSQL
 }

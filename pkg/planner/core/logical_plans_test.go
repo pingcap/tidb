@@ -1442,6 +1442,18 @@ func TestVisitInfo(t *testing.T) {
 			},
 		},
 		{
+			sql: "purge materialized view log on t",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "refresh materialized view mv fast",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "mv", "", nil, false, nil, false},
+			},
+		},
+		{
 			sql: "flush privileges",
 			ans: []visitInfo{
 				{mysql.ReloadPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},

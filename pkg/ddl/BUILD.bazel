@@ -116,6 +116,7 @@ go_library(
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/mvs",
         "//pkg/owner",
         "//pkg/parser",
         "//pkg/parser/ast",
