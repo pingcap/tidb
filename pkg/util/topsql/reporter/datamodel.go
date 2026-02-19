@@ -86,12 +86,14 @@ func zeroTsItem() tsItem {
 // toProto converts the tsItem to the corresponding protobuf representation.
 func (i *tsItem) toProto() *tipb.TopSQLRecordItem {
 	return &tipb.TopSQLRecordItem{
-		TimestampSec:      i.timestamp,
-		CpuTimeMs:         i.cpuTimeMs,
-		StmtExecCount:     i.stmtStats.ExecCount,
-		StmtKvExecCount:   i.stmtStats.KvStatsItem.KvExecCount,
-		StmtDurationSumNs: i.stmtStats.SumDurationNs,
-		StmtDurationCount: i.stmtStats.DurationCount,
+		TimestampSec:        i.timestamp,
+		CpuTimeMs:           i.cpuTimeMs,
+		StmtExecCount:       i.stmtStats.ExecCount,
+		StmtKvExecCount:     i.stmtStats.KvStatsItem.KvExecCount,
+		StmtDurationSumNs:   i.stmtStats.SumDurationNs,
+		StmtDurationCount:   i.stmtStats.DurationCount,
+		StmtNetworkInBytes:  i.stmtStats.NetworkInBytes,
+		StmtNetworkOutBytes: i.stmtStats.NetworkOutBytes,
 		// Convert more indicators here.
 	}
 }
@@ -200,20 +202,25 @@ func (r *record) appendCPUTime(timestamp uint64, cpuTimeMs uint32) {
 		// Before:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [0]
-		//   stmtStats.ExecCount: [?]
-		// stmtStats.KvExecCount: [map{"?": ?}]
-		// stmtStats.DurationSum: [?]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [0]
+		//   stmtStats.ExecCount:     [?]
+		// stmtStats.KvExecCount:     [map{"?": ?}]
+		// stmtStats.DurationSum:     [?]
+		// stmtStats.NetworkInBytes:  [?]
+		// stmtStats.NetworkOutBytes: [?]
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [123]
-		//   stmtStats.ExecCount: [?]
-		// stmtStats.KvExecCount: [map{"?": ?}]
-		// stmtStats.DurationSum: [?]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [123]
+		//   stmtStats.ExecCount:     [?]
+		// stmtStats.KvExecCount:     [map{"?": ?}]
+		// stmtStats.DurationSum:     [?]
+		// stmtStats.DurationSum:     [?]
+		// stmtStats.NetworkInBytes:  [?]
+		// stmtStats.NetworkOutBytes: [?]
 		//
 		r.tsItems[index].cpuTimeMs += cpuTimeMs
 	} else {
@@ -225,20 +232,24 @@ func (r *record) appendCPUTime(timestamp uint64, cpuTimeMs uint32) {
 		// Before:
 		//     tsIndex: []
 		//     tsItems:
-		//             timestamp: []
-		//             cpuTimeMs: []
-		//   stmtStats.ExecCount: []
-		// stmtStats.KvExecCount: []
-		// stmtStats.DurationSum: []
+		//             timestamp:     []
+		//             cpuTimeMs:     []
+		//   stmtStats.ExecCount:     []
+		// stmtStats.KvExecCount:     []
+		// stmtStats.DurationSum:     []
+		// stmtStats.NetworkInBytes:  []
+		// stmtStats.NetworkOutBytes: []
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [123]
-		//   stmtStats.ExecCount: [0]
-		// stmtStats.KvExecCount: [map{}]
-		// stmtStats.DurationSum: [0]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [123]
+		//   stmtStats.ExecCount:     [0]
+		// stmtStats.KvExecCount:     [map{}]
+		// stmtStats.DurationSum:     [0]
+		// stmtStats.NetworkInBytes:  [0]
+		// stmtStats.NetworkOutBytes: [0]
 		//
 		newItem := zeroTsItem()
 		newItem.timestamp = timestamp
@@ -258,25 +269,29 @@ func (r *record) appendStmtStatsItem(timestamp uint64, item stmtstats.StatementS
 		// corresponding stmtStats has been set to 0 (or other values,
 		// although impossible), so we merge it.
 		//
-		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456
-		//
+		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456,
+		//    networkInBytes = 10, networkOutBytes = 20
 		// Before:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [?]
-		//   stmtStats.ExecCount: [0]
-		// stmtStats.KvExecCount: [map{}]
-		// stmtStats.DurationSum: [0]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [?]
+		//   stmtStats.ExecCount:     [0]
+		// stmtStats.KvExecCount:     [map{}]
+		// stmtStats.DurationSum:     [0]
+		// stmtStats.NetworkInBytes:  [0]
+		// stmtStats.NetworkOutBytes: [0]
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [?]
-		//   stmtStats.ExecCount: [123]
-		// stmtStats.KvExecCount: [map{"1.1.1.1:1": 123}]
-		// stmtStats.DurationSum: [456]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [?]
+		//   stmtStats.ExecCount:     [123]
+		// stmtStats.KvExecCount:     [map{"1.1.1.1:1": 123}]
+		// stmtStats.DurationSum:     [456]
+		// stmtStats.NetworkInBytes:  [10]
+		// stmtStats.NetworkOutBytes: [20]
 		//
 		r.tsItems[index].stmtStats.Merge(&item)
 	} else {
@@ -284,24 +299,29 @@ func (r *record) appendStmtStatsItem(timestamp uint64, item stmtstats.StatementS
 		// Other fields in tsItem except stmtStats will be initialized to 0.
 		//
 		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456
+		//    networkInBytes = 10, networkOutBytes = 20
 		//
 		// Before:
 		//     tsIndex: []
 		//     tsItems:
-		//             timestamp: []
-		//             cpuTimeMs: []
-		//   stmtStats.ExecCount: []
-		// stmtStats.KvExecCount: []
-		// stmtStats.DurationSum: []
+		//             timestamp:     []
+		//             cpuTimeMs:     []
+		//   stmtStats.ExecCount:     []
+		// stmtStats.KvExecCount:     []
+		// stmtStats.DurationSum:     []
+		// stmtStats.NetworkInBytes:  []
+		// stmtStats.NetworkOutBytes: []
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [0]
-		//   stmtStats.ExecCount: [123]
-		// stmtStats.KvExecCount: [map{"1.1.1.1:1": 123}]
-		// stmtStats.DurationSum: [456]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [0]
+		//   stmtStats.ExecCount:     [123]
+		// stmtStats.KvExecCount:     [map{"1.1.1.1:1": 123}]
+		// stmtStats.DurationSum:     [456]
+		// stmtStats.NetworkInBytes:  [10]
+		// stmtStats.NetworkOutBytes: [20]
 		//
 		newItem := zeroTsItem()
 		newItem.timestamp = timestamp
@@ -543,7 +563,7 @@ func (c *collecting) getReportRecords() records {
 	for _, v := range c.records {
 		rs = append(rs, *v)
 	}
-	if others != nil && others.totalCPUTimeMs > 0 {
+	if others != nil {
 		rs = append(rs, *others)
 	}
 	return rs
