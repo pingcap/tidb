@@ -12,6 +12,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/format",
         "//pkg/parser/model",
+        "//pkg/parser/mysql",
         "//pkg/parser/opcode",
         "//pkg/planner/planctx",
         "@com_github_pingcap_errors//:errors",
