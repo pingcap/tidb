@@ -274,7 +274,124 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	statsTbl = h.GetTableStats(table.Meta())
 
 	colID = table.Meta().Columns[0].ID
+<<<<<<< HEAD
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
+=======
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2), false)
+	count = countEst.Est
+	require.NoError(t, err)
+	require.Equal(t, 0.001, count)
+
+	idxID = table.Meta().Indices[0].ID
+	countResult, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2), nil)
+	require.NoError(t, err)
+	require.Equal(t, 1.0, countResult.Est)
+}
+
+// TestCanSkipIndexEstimation verifies that GetRowCountByIndexRanges uses the fast path
+// (canSkipIndexEstimation) when ranges include a full range with NULLs [NULL, +inf),
+// returning RealtimeCount directly without expensive histogram estimation.
+func TestCanSkipIndexEstimation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Use mock stats so Idx2ColUniqueIDs is populated (required by getIndexRowCountForStatsV2).
+	realtimeCount := int64(51) // 50 rows + 1 NULL
+	statsTbl := mockStatsTable(tblInfo, realtimeCount)
+	colValues, err := generateIntDatum(1, 51)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		statsTbl.SetCol(int64(i), &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	// Index histogram must store encoded key bytes (same as getIndexRowCountForStatsV2 uses for l/r).
+	idxValues := make([]types.Datum, 51)
+	for i := 0; i < 51; i++ {
+		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
+		require.NoError(t, err)
+		idxValues[i].SetBytes(enc)
+	}
+	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
+		Histogram: *mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob)),
+		Info:      tblInfo.Indices[0],
+		StatsVer:  2,
+	})
+	generateMapsForMockStatsTbl(statsTbl)
+
+	idxID := tblInfo.Indices[0].ID
+	sctx := mock.NewContext()
+
+	// Full range including NULLs [NULL, +inf) triggers canSkipIndexEstimation fast path.
+	// Result should equal RealtimeCount exactly (no histogram estimation).
+	fullRanges := ranger.FullRange()
+	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges, nil)
+	require.NoError(t, err)
+	require.Equal(t, float64(realtimeCount), countResult.Est,
+		"full range [NULL,+inf) should use fast path and return RealtimeCount")
+
+	// Full range excluding NULLs [MinNotNull, +inf) should NOT use fast path.
+	// It goes through histogram estimation.
+	fullNotNullRanges := ranger.FullNotNullRange()
+	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges, nil)
+	require.NoError(t, err)
+	require.LessOrEqual(t, countResult2.Est, float64(realtimeCount),
+		"full not-null range excludes NULLs, estimate should be <= RealtimeCount")
+
+	// Bounded range should NOT use fast path.
+	boundedRanges := getRange(1, 10)
+	countResult3, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, boundedRanges, nil)
+	require.NoError(t, err)
+	require.Less(t, countResult3.Est, float64(realtimeCount),
+		"bounded range should use histogram estimation, not fast path")
+}
+
+func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, key idx(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	for i := 1; i <= 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t select a from t where a = %d", i))
+	}
+	testKit.MustExec("analyze table t")
+	h := dom.StatsHandle()
+	testKit.MustExec("flush stats_delta")
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
+
+	// Search for a found value == 10.0
+	sctx := mock.NewContext()
+	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
+	countEst, err := getColumnRowCount(sctx, col, getRange(5, 5), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	count := countEst.Est
+	require.NoError(t, err)
+	require.Equal(t, 10.0, count)
+
+	// Search for a not found value with zero modifyCount. Defaults to count == 1.0
+	countEst, err = getColumnRowCount(sctx, col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	count = countEst.Est
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
