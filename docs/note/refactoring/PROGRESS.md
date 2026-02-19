@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-19 (datum, tablecodec, builtin_json, builtin_time further decompositions)
+Last updated: 2026-02-19 (misc, modify_column, cast_vec, partition_processor, logical_join decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -287,6 +287,35 @@ Last updated: 2026-02-19 (datum, tablecodec, builtin_json, builtin_time further 
   - [x] `builtin_json_search.go` (722 lines) - jsonContainsPath, jsonMemberOf, jsonContains, jsonOverlaps, jsonValid, jsonArrayAppend
   - [x] `builtin_json_inspect.go` (665 lines) - jsonPretty, jsonQuote, jsonSearch, jsonDepth, jsonKeys, jsonLength, jsonSchemaValid
 
+- [x] **expression/builtin_miscellaneous.go decomposition** - Extract miscellaneous function groups
+  - File: `pkg/expression/builtin_miscellaneous.go` (2,021 → 97 lines, 95% reduction)
+  - [x] `builtin_misc_lock.go` (751 lines) - sleep, advisory locks, anyValue, default, inet
+  - [x] `builtin_misc_validate.go` (671 lines) - IP validation, lock status, UUID validation, nameConst
+  - [x] `builtin_misc_uuid.go` (573 lines) - UUID generation/conversion, vitess hash, tidb shard
+
+- [x] **ddl/modify_column.go decomposition** - Extract reorg, execution, and validation
+  - File: `pkg/ddl/modify_column.go` (2,202 → 16 lines, 99% reduction)
+  - [x] `modify_column_reorg.go` (899 lines) - helpers, handler, rollback, reorg functions
+  - [x] `modify_column_execute.go` (513 lines) - type change execution with state management
+  - [x] `modify_column_validate.go` (854 lines) - validation and public API functions
+
+- [x] **expression/builtin_cast_vec.go decomposition** - Extract vectorized cast functions
+  - File: `pkg/expression/builtin_cast_vec.go` (2,080 → 16 lines, 99% reduction)
+  - [x] `builtin_cast_vec_part1.go` (742 lines) - Int/Real/Time/Duration cast vec functions
+  - [x] `builtin_cast_vec_part2.go` (669 lines) - Real/String/Decimal/JSON cast vec functions
+  - [x] `builtin_cast_vec_part3.go` (722 lines) - Duration/Decimal/String/JSON cast vec functions
+
+- [x] **planner/core/rule/rule_partition_processor.go decomposition** - Extract partition processing
+  - File: `pkg/planner/core/rule/rule_partition_processor.go` (2,144 → 145 lines, 93% reduction)
+  - [x] `rule_partition_hash_list.go` (784 lines) - hash/key partition pruning and list partition pruning
+  - [x] `rule_partition_range.go` (1,269 lines) - range types, range pruning, range columns, hints
+
+- [x] **planner/core/operator/logicalop/logical_join.go decomposition** - Extract join planning functions
+  - File: `logical_join.go` (2,172 → 105 lines, 95% reduction)
+  - [x] `logical_join_stats.go` (655 lines) - predicate pushdown, pruning, key building, stats
+  - [x] `logical_join_fd.go` (665 lines) - FD extraction, correlated cols, join keys, decorrelate
+  - [x] `logical_join_rewrite.go` (837 lines) - NDV, preferences, condition extraction, rewrite
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -364,3 +393,8 @@ Last updated: 2026-02-19 (datum, tablecodec, builtin_json, builtin_time further 
 - [x] **tablecodec/tablecodec.go decomposition** - 2026-02-19 - Split into 3 focused files: `tablecodec_keyrow.go` (654), `tablecodec_index.go` (539), `tablecodec_genindex.go` (856). Reduced tablecodec.go from 2,050 to 74 lines (96% reduction).
 - [x] **expression/builtin_json.go decomposition** - 2026-02-19 - Split into 3 focused files: `builtin_json_basic.go` (742), `builtin_json_search.go` (722), `builtin_json_inspect.go` (665). Reduced builtin_json.go from 2,138 to 76 lines (96% reduction).
 - [x] **expression/builtin_time.go further decomposition** - 2026-02-19 - Split remaining 2,050 lines into 3 additional files: `builtin_time_diff.go` (597), `builtin_time_format.go` (722), `builtin_time_misc.go` (585). Reduced builtin_time.go from 2,050 to 229 lines (89% reduction, 97% total from original 7,260).
+- [x] **expression/builtin_miscellaneous.go decomposition** - 2026-02-19 - Split into 3 focused files: `builtin_misc_lock.go` (751), `builtin_misc_validate.go` (671), `builtin_misc_uuid.go` (573). Reduced builtin_miscellaneous.go from 2,021 to 97 lines (95% reduction).
+- [x] **ddl/modify_column.go decomposition** - 2026-02-19 - Split into 3 focused files: `modify_column_reorg.go` (899), `modify_column_execute.go` (513), `modify_column_validate.go` (854). Reduced modify_column.go from 2,202 to 16 lines (99% reduction).
+- [x] **expression/builtin_cast_vec.go decomposition** - 2026-02-19 - Split into 3 focused files: `builtin_cast_vec_part1.go` (742), `builtin_cast_vec_part2.go` (669), `builtin_cast_vec_part3.go` (722). Reduced builtin_cast_vec.go from 2,080 to 16 lines (99% reduction).
+- [x] **planner/core/rule/rule_partition_processor.go decomposition** - 2026-02-19 - Split into 2 focused files: `rule_partition_hash_list.go` (784), `rule_partition_range.go` (1,269). Reduced rule_partition_processor.go from 2,144 to 145 lines (93% reduction).
+- [x] **planner/core/operator/logicalop/logical_join.go decomposition** - 2026-02-19 - Split into 3 focused files: `logical_join_stats.go` (655), `logical_join_fd.go` (665), `logical_join_rewrite.go` (837). Reduced logical_join.go from 2,172 to 105 lines (95% reduction).
