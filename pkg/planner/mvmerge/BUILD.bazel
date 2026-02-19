@@ -13,8 +13,7 @@ go_library(
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/opcode",
-        "//pkg/planner/core/base",
-        "//pkg/types",
+        "//pkg/planner/planctx",
         "@com_github_pingcap_errors//:errors",
     ],
 )

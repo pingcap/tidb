@@ -44,7 +44,7 @@ const (
 	removedRowsName  = "__mvmerge_removed_rows"
 )
 
-func optimizeForTest(sctx sessionctx.Context, is infoschema.InfoSchema) mvmerge.SelectOptimizer {
+func optimizeForTest(sctx sessionctx.Context, is infoschema.InfoSchema) func(ctx context.Context, sel *ast.SelectStmt) (corebase.PhysicalPlan, types.NameSlice, error) {
 	return func(ctx context.Context, sel *ast.SelectStmt) (corebase.PhysicalPlan, types.NameSlice, error) {
 		nodeW := resolve.NewNodeW(sel)
 		err := core.Preprocess(ctx, sctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
@@ -121,15 +121,15 @@ func TestBuildCountSum(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	res, err := mvmerge.Build(
-		context.Background(),
 		sctx.GetPlanCtx(),
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
-		optimizeForTest(sctx, is),
 	)
 	require.NoError(t, err)
-	require.NotNil(t, res.Plan)
+	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
 	require.Equal(t, len(mv.Columns), res.MVColumnCount)
 	require.Equal(t, 1, res.CountStarMVOffset)
 
@@ -157,7 +157,7 @@ func TestBuildCountSum(t *testing.T) {
 	require.True(t, ok)
 	require.NotEmpty(t, item.DBName.O)
 	mvDBName := item.DBName.O
-	requireMergePlanOutputNames(t, res, []fieldNameInfo{
+	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
 		{Pos: 0, Col: "x"},
 		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
 		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
@@ -220,15 +220,15 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	res, err := mvmerge.Build(
-		context.Background(),
 		sctx.GetPlanCtx(),
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
-		optimizeForTest(sctx, is),
 	)
 	require.NoError(t, err)
-	require.NotNil(t, res.Plan)
+	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
 	require.Equal(t, 1, res.CountStarMVOffset)
 
 	var hasCountStar, hasCount, hasSum bool
@@ -254,7 +254,7 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 	item, ok := is.TableItemByID(mv.ID)
 	require.True(t, ok)
 	mvDBName := item.DBName.O
-	requireMergePlanOutputNames(t, res, []fieldNameInfo{
+	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
 		{Pos: 0, Col: "x"},
 		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_star", OrigTbl: mv.Name.O, OrigCol: "cnt_star"},
 		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
@@ -317,13 +317,13 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	res, err := mvmerge.Build(
-		context.Background(),
 		sctx.GetPlanCtx(),
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
-		optimizeForTest(sctx, is),
 	)
+	require.NoError(t, err)
+	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
 	require.NoError(t, err)
 	require.NotNil(t, res.RemovedRowCountDelta)
 	require.Equal(t, 1, res.CountStarMVOffset)
@@ -349,7 +349,7 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	require.True(t, ok)
 	require.NotEmpty(t, item.DBName.O)
 	mvDBName := item.DBName.O
-	requireMergePlanOutputNames(t, res, []fieldNameInfo{
+	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
 		{Pos: 0, Col: "x"},
 		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
 		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
@@ -412,12 +412,10 @@ func TestBuildSumWithoutCountExpr(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	_, err := mvmerge.Build(
-		context.Background(),
 		sctx.GetPlanCtx(),
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
-		optimizeForTest(sctx, is),
 	)
 	require.ErrorContains(t, err, "requires matching COUNT(expr)")
 }
@@ -473,12 +471,10 @@ func TestBuildMissingCountStar(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	_, err := mvmerge.Build(
-		context.Background(),
 		sctx.GetPlanCtx(),
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
-		optimizeForTest(sctx, is),
 	)
 	require.ErrorContains(t, err, "must include COUNT(*)")
 }
@@ -530,12 +526,10 @@ func TestBuildMissingOldNew(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	_, err := mvmerge.Build(
-		context.Background(),
 		sctx.GetPlanCtx(),
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
-		optimizeForTest(sctx, is),
 	)
 	require.ErrorContains(t, err, model.MaterializedViewLogOldNewColumnName)
 }
@@ -588,11 +582,10 @@ func nameSliceInfo(names types.NameSlice) []fieldNameInfo {
 	return out
 }
 
-func requireMergePlanOutputNames(t *testing.T, res *mvmerge.BuildResult, expected []fieldNameInfo) {
+func requireMergePlanOutputNames(t *testing.T, plan corebase.PhysicalPlan, outputNames types.NameSlice, expected []fieldNameInfo) {
 	t.Helper()
 
-	outputNames := res.OutputNames
-	require.Len(t, outputNames, res.Plan.Schema().Len())
+	require.Len(t, outputNames, plan.Schema().Len())
 	require.Len(t, expected, len(outputNames))
 	require.Equal(t, expected, nameSliceInfo(outputNames))
 }

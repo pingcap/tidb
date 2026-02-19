@@ -3902,14 +3902,36 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return pp, names, nil
 	}
 
-	res, err := mvmerge.Build(ctx, b.ctx, b.is, mvInfo, mvmerge.BuildOptions{FromTS: fromTS, ToTS: toTS}, optimizeSelect)
+	res, err := mvmerge.Build(b.ctx, b.is, mvInfo, mvmerge.BuildOptions{FromTS: fromTS, ToTS: toTS})
 	if err != nil {
 		return nil, err
 	}
 
+	if res.MergeSourceSelect == nil {
+		return nil, errors.New("mvmerge: merge source select is nil")
+	}
+	sourcePlan, sourceOutputNames, err := optimizeSelect(ctx, res.MergeSourceSelect)
+	if err != nil {
+		return nil, err
+	}
+	if sourcePlan.Schema().Len() != res.SourceColumnCount {
+		return nil, errors.Errorf(
+			"unexpected merge-source schema length: got %d, expected %d",
+			sourcePlan.Schema().Len(),
+			res.SourceColumnCount,
+		)
+	}
+	if len(sourceOutputNames) > 0 && len(sourceOutputNames) != res.SourceColumnCount {
+		return nil, errors.Errorf(
+			"unexpected merge-source output names length: got %d, expected %d",
+			len(sourceOutputNames),
+			res.SourceColumnCount,
+		)
+	}
+
 	plan := MVMerge{
-		Source:            res.Plan,
-		SourceOutputNames: res.OutputNames,
+		Source:            sourcePlan,
+		SourceOutputNames: sourceOutputNames,
 		MVTableID:         res.MVTableID,
 		BaseTableID:       res.BaseTableID,
 		MLogTableID:       res.MLogTableID,

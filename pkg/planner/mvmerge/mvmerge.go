@@ -15,7 +15,6 @@
 package mvmerge
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -28,8 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 )
 
 const (
@@ -46,24 +44,23 @@ type BuildOptions struct {
 	ToTS   uint64
 }
 
-// BuildResult is the optimizer-ready merge source produced by Build.
-// It includes the physical plan and all metadata needed by executor-side MV merge.
-// Row layout of Plan/OutputNames is fixed:
+// BuildResult is the merge source produced by Build.
+// It includes the merge-source SELECT statement and all metadata needed by executor-side MV merge.
+// Row layout of MergeSourceSelect output is fixed:
 //  1. MV output columns first (count = MVColumnCount)
 //  2. delta columns after MV columns
 //
 // All offsets in AggInfos (MVOffset and Dependencies) are based on this layout.
 type BuildResult struct {
-	Plan base.PhysicalPlan
-	// OutputNames matches the result schema of Plan (MV columns first, then delta columns).
-	// Note: physical plans in TiDB may not keep output names; the caller should provide them via SelectOptimizer.
-	OutputNames types.NameSlice
+	MergeSourceSelect *ast.SelectStmt
+	// SourceColumnCount is the expected number of output columns of MergeSourceSelect after optimization.
+	SourceColumnCount int
 
 	MVTableID   int64
 	BaseTableID int64
 	MLogTableID int64
 
-	// MVColumnCount indicates how many columns in Plan.Schema() belong to the MV row shape.
+	// MVColumnCount indicates how many columns in the merge-source output schema belong to the MV row shape.
 	// The MV columns are always put in the front.
 	MVColumnCount int
 
@@ -130,25 +127,16 @@ type aggColInfo struct {
 	argExpr   ast.ExprNode
 }
 
-// SelectOptimizer converts the merge-source SELECT statement into a physical plan.
-// The caller usually does preprocess -> logical plan build -> optimize.
-type SelectOptimizer func(ctx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, types.NameSlice, error)
-
 // Build constructs the merge-source plan and metadata for one MV incremental merge window.
 func Build(
-	ctx context.Context,
-	sctx base.PlanContext,
+	sctx planctx.PlanContext,
 	is infoschema.InfoSchema,
 	mv *model.TableInfo,
 	opt BuildOptions,
-	optimize SelectOptimizer,
 ) (*BuildResult, error) {
 	// Stage 0: validate MV/MLoG metadata and locate all required tables.
 	if mv == nil {
 		return nil, errors.New("mv table info is nil")
-	}
-	if optimize == nil {
-		return nil, errors.New("mvmerge: optimize callback is nil")
 	}
 	if mv.MaterializedView == nil {
 		return nil, errors.Errorf("table %s is not a materialized view", mv.Name.O)
@@ -258,27 +246,7 @@ func Build(
 		return nil, err
 	}
 
-	// Stage 3: optimize the merge-source SELECT into a physical plan.
-	plan, outputNames, err := optimize(ctx, mergeSel)
-	if err != nil {
-		return nil, err
-	}
-
 	expectedLen := len(mv.Columns) + len(deltaColumns)
-	if plan.Schema().Len() != expectedLen {
-		return nil, errors.Errorf(
-			"unexpected merge-source schema length: got %d, expected %d",
-			plan.Schema().Len(),
-			expectedLen,
-		)
-	}
-	if len(outputNames) > 0 && len(outputNames) != expectedLen {
-		return nil, errors.Errorf(
-			"unexpected merge-source output names length: got %d, expected %d",
-			len(outputNames),
-			expectedLen,
-		)
-	}
 
 	countStarMVOffset := -1
 	for _, ac := range aggCols {
@@ -343,8 +311,8 @@ func Build(
 	}
 
 	res := &BuildResult{
-		Plan:              plan,
-		OutputNames:       outputNames,
+		MergeSourceSelect: mergeSel,
+		SourceColumnCount: expectedLen,
 		MVTableID:         mv.ID,
 		BaseTableID:       baseTableID,
 		MLogTableID:       mlogTableID,
@@ -363,7 +331,7 @@ func Build(
 	return res, nil
 }
 
-func parseSelectFromSQL(sctx base.PlanContext, sql string) (*ast.SelectStmt, error) {
+func parseSelectFromSQL(sctx planctx.PlanContext, sql string) (*ast.SelectStmt, error) {
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
