@@ -723,7 +723,17 @@ type candidatePath struct {
 	path              *util.AccessPath
 	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
 	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
+<<<<<<< HEAD
 	isMatchProp       bool
+=======
+	matchPropResult   property.PhysicalPropMatchResult
+	// partialOrderMatch records the partial order match result for TopN optimization.
+	// When the matched is true, it means this path can provide partial order using prefix index.
+	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
+	indexJoinCols           int                              // how many index columns are used in access conditions in this IndexJoin.
+	isFullRange             bool                             // cached result of whether this path covers the full scan range.
+	eqOrInCount             int                              // cached result of equalPredicateCount().
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 }
 
 func compareBool(l, r bool) int {
@@ -761,6 +771,7 @@ func compareCandidates(sctx context.PlanContext, statisticTable *statistics.Tabl
 	if lhs.path.Index != nil {
 		lhsHasStatistics = statisticTable != nil && statisticTable.Indices[lhs.path.Index.ID] != nil
 	}
+<<<<<<< HEAD
 	rhsHasStatistics := false
 	if rhs.path.Index != nil {
 		rhsHasStatistics = statisticTable != nil && statisticTable.Indices[rhs.path.Index.ID] != nil
@@ -773,6 +784,44 @@ func compareCandidates(sctx context.PlanContext, statisticTable *statistics.Tabl
 		rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
 		if lhsHasStatistics && lhsTotalEqual > 0 && lhsTotalEqual >= rhsTotalEqual {
 			return 1
+=======
+	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
+	// globalResult: comparison result of global index vs local index preference (1=LHS better, -1=RHS better, 0=equal)
+	matchResult, globalResult := compareBool(lhs.matchPropResult.Matched(), rhs.matchPropResult.Matched()), compareGlobalIndex(lhs, rhs)
+	// accessResult: comparison result of access condition coverage (1=LHS better, -1=RHS better, 0=equal)
+	// comparable1: whether the access conditions are comparable between LHS and RHS
+	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
+	// scanResult: comparison result of index back scan efficiency (1=LHS better, -1=RHS better, 0=equal)
+	//             scanResult will always be true for a table scan (because it is a single scan).
+	//             This has the effect of allowing the table scan plan to not be pruned.
+	// comparable2: whether the index back scan characteristics are comparable between LHS and RHS
+	scanResult, comparable2 := compareIndexBack(lhs, rhs)
+	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
+	riskResult, _ := compareRiskRatio(lhs, rhs)
+	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
+	eqOrInResult := compareEqOrIn(lhs, rhs)
+
+	// predicateResult is separated out. An index may "win" because it has a better
+	// accessResult - but that access has high risk.
+	// accessResult does not differentiate between range or equal/IN predicates.
+	// Summing these 3 metrics ensures that a "high risk" index wont win ONLY on
+	// accessResult. The high risk will negate that accessResult with erOrIn being the
+	// tiebreaker or equalizer.
+	predicateResult := accessResult + riskResult + eqOrInResult
+
+	// totalSum is the aggregate score of all comparison metrics
+	totalSum := accessResult + scanResult + matchResult + globalResult
+
+	pseudoResult := 0
+	// Determine winner if one index doesn't have statistics and another has statistics
+	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
+		(lhs.eqOrInCount > 0 || rhs.eqOrInCount > 0) { // At least one index has equal/IN predicates
+		lhsFullMatch := isFullIndexMatch(lhs)
+		rhsFullMatch := isFullIndexMatch(rhs)
+		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.eqOrInCount, rhs.eqOrInCount, preferRange)
+		if pseudoResult > 0 && totalSum >= 0 {
+			return pseudoResult, lhsPseudo
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 		}
 		if rhsHasStatistics && rhsTotalEqual > 0 && rhsTotalEqual >= lhsTotalEqual {
 			return -1
@@ -820,8 +869,43 @@ func compareCandidates(sctx context.PlanContext, statisticTable *statistics.Tabl
 	return 0
 }
 
+<<<<<<< HEAD
 func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.PhysicalProperty) bool {
 	if ds.table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
+=======
+// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie).
+// For example:
+//
+//	where a=1 and b=1 and c=1 and d=1
+//	lhs == idx(a, b, e) <-- lhsEqOrInCount == 2 (loser)
+//	rhs == idx(d, c, b) <-- rhsEqOrInCount == 3 (winner)
+func compareEqOrIn(lhs, rhs *candidatePath) (predCompare int) {
+	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
+		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
+		return 0
+	}
+	if lhs.eqOrInCount > rhs.eqOrInCount {
+		return 1
+	}
+	if lhs.eqOrInCount < rhs.eqOrInCount {
+		return -1
+	}
+	// We didn't find a winner
+	return 0
+}
+
+func isFullIndexMatch(candidate *candidatePath) bool {
+	// Check if the DNF condition is a full match
+	if candidate.path.IsDNFCond && candidate.hasOnlyEqualPredicatesInDNF() {
+		return candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns)
+	}
+	// Check if the index covers all access conditions for non-DNF conditions
+	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
+}
+
+func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
+	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 		// TableScan with cluster table can't keep order.
 		return false
 	}
@@ -1126,6 +1210,8 @@ func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.Ph
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
+	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
@@ -1134,22 +1220,57 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
+<<<<<<< HEAD
 func (ds *DataSource) convergeIndexMergeCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+=======
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
+	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
+	candidate.matchPropResult = property.PropNotMatched
+	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	// AccessConds could miss some predicates since the DataSource can't see join predicates.
+	// For example, `where t1.a=t2.a and t2.b=1`, `t1=a=t2.a` is not pushed down to t2's accessConds since it's a join
+	// predicate. We need to set columns used as join keys to accessCondsColMap/indexCondsColMap manually.
+	for i := range indexJoinCols {
+		candidate.accessCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+	}
+	candidate.isFullRange = ranger.HasFullRange(path.Ranges, false)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
+	return candidate
+}
+
+func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 	// since the all index path alternative paths is collected and undetermined, and we should determine a possible and concrete path for this prop.
 	possiblePath, match := ds.matchPropForIndexMergeAlternatives(path, prop)
 	if possiblePath == nil {
 		return nil
 	}
+<<<<<<< HEAD
 	candidate := &candidatePath{path: possiblePath, isMatchProp: match}
+=======
+	candidate := &candidatePath{path: possiblePath, matchPropResult: match}
+	candidate.isFullRange = possiblePath.IsFullScanRange(ds.TableInfo)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 	return candidate
 }
 
 func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
+<<<<<<< HEAD
 	candidate.isMatchProp = ds.isMatchPropForIndexMerge(path, prop)
+=======
+	candidate.matchPropResult = isMatchPropForIndexMerge(ds, path, prop)
+	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 	return candidate
 }
 
@@ -1221,10 +1342,19 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
+<<<<<<< HEAD
 			var unsignedIntHandle bool
 			if c.path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
 				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
 					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+=======
+			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+			indexFilters := c.eqOrInCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
+				if !c.isFullRange {
+					preferredPaths = append(preferredPaths, c)
+					hasRangeScanPath = true
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
