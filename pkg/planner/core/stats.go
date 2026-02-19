@@ -398,7 +398,7 @@ func detachCondAndBuildRangeForPath(
 		path.TableFilters = conds
 		return nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
+	res, countAfterAccess, err := detachCondAndBuildOptimalRangeForIndex(sctx, histColl, conds, path.IdxCols, path.IdxColLens, path.Index.ID)
 	if err != nil {
 		return err
 	}
@@ -419,9 +419,96 @@ func detachCondAndBuildRangeForPath(
 	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols
 		indexCols = indexCols[0:len(path.Index.Columns)]
 	}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
-	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
-	return err
+	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = countAfterAccess.Est, countAfterAccess.MinEst, countAfterAccess.MaxEst
+	return nil
+}
+
+// detachCondAndBuildOptimalRangeForIndex attempts to build the optimal ranges for an index
+// by taking into account the seek cost associated with large IN lists. When the IN list
+// is sufficiently large, it may be more optimal to apply "IN-list match pruning" and apply
+// the IN list as a filter afterwards rather than using it to build the ranges. See
+// https://github.com/pingcap/tidb/issues/63487#issue-3409186280 for an example.
+func detachCondAndBuildOptimalRangeForIndex(
+	sctx base.PlanContext,
+	histColl *statistics.HistColl,
+	conds []expression.Expression,
+	cols []*expression.Column,
+	colLens []int,
+	indexID int64,
+) (*ranger.DetachRangeResult, statistics.RowEstimate, error) {
+	// Build ranges with all IN-lists first
+	res, err := ranger.DetachCondAndBuildRangeForIndex(
+		sctx.GetRangerCtx(), conds, cols, colLens,
+		sctx.GetSessionVars().RangeMaxSize)
+	if err != nil {
+		return nil, statistics.RowEstimate{}, err
+	}
+
+	indexCols := cols
+	if len(indexCols) > len(colLens) {
+		indexCols = indexCols[0:len(colLens)]
+	}
+
+	// Calculate estimated row count for this configuration
+	rowCount, err := cardinality.GetRowCountByIndexRanges(
+		sctx, histColl, indexID, res.Ranges, indexCols)
+	if err != nil {
+		return nil, statistics.RowEstimate{}, err
+	}
+
+	// If there are no IN-lists to optimize (all are equality conditions), return early
+	if res.EqOrInCount <= res.EqCondCount {
+		return res, rowCount, nil
+	}
+
+	// Save original ColumnValues to preserve full-length array with all column information
+	origColumnValues := res.ColumnValues
+
+	bestRes := res
+	bestRowCount := rowCount
+
+	bestSeekCost := cost.SeekFactor * float64(len(res.Ranges))
+	bestScanCost := rowCount.Est
+	bestCost := bestSeekCost + bestScanCost
+
+	for cutoff := max(1, res.EqCondCount); cutoff < res.EqOrInCount; cutoff++ {
+		altIndexCols := indexCols[:cutoff]
+		altIndexColLens := colLens[:cutoff]
+
+		altRes, err := ranger.DetachCondAndBuildRangeForIndex(
+			sctx.GetRangerCtx(), conds, altIndexCols, altIndexColLens,
+			sctx.GetSessionVars().RangeMaxSize)
+		if err != nil {
+			continue
+		}
+
+		altRowCount, err := cardinality.GetRowCountByIndexRanges(
+			sctx, histColl, indexID, altRes.Ranges, altIndexCols)
+		if err != nil {
+			continue
+		}
+
+		// Total cost = seek cost + scan cost + sort cost
+		// Note that because we don't have access to PhysicalProperty, we can't determine
+		// whether performing IN-list match pruning would prevent scanning the
+		// the entries in the index in order to satisfy an ORDER BY. Instead, we assume
+		// the worst-case scenario, which would require us to sort all of the rows
+		// afterwards.
+		altSeekCost := cost.SeekFactor * float64(len(altRes.Ranges))
+		altScanCost := altRowCount.Est
+		altSortCost := altRowCount.MaxEst * cost.SortFactor
+		altCost := altSeekCost + altScanCost + altSortCost
+
+		if altCost < bestCost {
+			bestRes = altRes
+			bestRowCount = altRowCount
+			bestCost = altCost
+		}
+	}
+
+	// Restore original ColumnValues to maintain full-length array consistent with fallback pattern.
+	bestRes.ColumnValues = origColumnValues
+	return bestRes, bestRowCount, nil
 }
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
