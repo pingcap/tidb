@@ -767,42 +767,42 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	if kerneltype.IsClassic() {
 		tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-			"135|add index|public|128|133|t1|synced",
-			"134|create table|public|128|133|t1|synced",
-			"121|add index|public|114|119|t1|synced",
-			"120|create table|public|114|119|t1|synced",
+			"137|add index|public|130|135|t1|synced",
+			"136|create table|public|130|135|t1|synced",
+			"123|add index|public|116|121|t1|synced",
+			"122|create table|public|116|121|t1|synced",
 		))
 		tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-			"141|add index|public|128|139|t3|synced",
-			"138|add index|public|128|136|t2|synced",
-			"135|add index|public|128|133|t1|synced",
-			"132|add index|public|128|130|t0|synced",
+			"143|add index|public|130|141|t3|synced",
+			"140|add index|public|130|138|t2|synced",
+			"137|add index|public|130|135|t1|synced",
+			"134|add index|public|130|132|t0|synced",
 		))
 		tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-			"127|add index|public|114|125|t3|synced",
-			"126|create table|public|114|125|t3|synced",
+			"129|add index|public|116|127|t3|synced",
+			"128|create table|public|116|127|t3|synced",
 		))
 	} else {
 		tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-			"28|add index|public|21|26|t1|synced",
-			"27|create table|public|21|26|t1|synced",
-			"14|add index|public|7|12|t1|synced",
-			"13|create table|public|7|12|t1|synced",
+			"30|add index|public|23|28|t1|synced",
+			"29|create table|public|23|28|t1|synced",
+			"16|add index|public|9|14|t1|synced",
+			"15|create table|public|9|14|t1|synced",
 		))
 		tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-			"34|add index|public|21|32|t3|synced",
-			"31|add index|public|21|29|t2|synced",
-			"28|add index|public|21|26|t1|synced",
-			"25|add index|public|21|23|t0|synced",
+			"36|add index|public|23|34|t3|synced",
+			"33|add index|public|23|31|t2|synced",
+			"30|add index|public|23|28|t1|synced",
+			"27|add index|public|23|25|t0|synced",
 		))
 		tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-			"20|add index|public|7|18|t3|synced",
-			"19|create table|public|7|18|t3|synced",
+			"22|add index|public|9|20|t3|synced",
+			"21|create table|public|9|20|t3|synced",
 		))
 	}
 
@@ -816,28 +816,28 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 			if kerneltype.IsClassic() {
 				tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-					"142 add index write only 114 116 t0 running",
+					"144 add index write only 116 118 t0 running",
 				))
 				tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-					"142 add index write only 114 116 t0 running",
+					"144 add index write only 116 118 t0 running",
 				))
 				tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-					"142 add index write only 114 116 t0 running",
+					"144 add index write only 116 118 t0 running",
 				))
 			} else {
 				tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-					"35 add index write only 7 9 t0 running",
+					"37 add index write only 9 11 t0 running",
 				))
 				tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-					"35 add index write only 7 9 t0 running",
+					"37 add index write only 9 11 t0 running",
 				))
 				tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-					"35 add index write only 7 9 t0 running",
+					"37 add index write only 9 11 t0 running",
 				))
 			}
 		}
@@ -856,14 +856,14 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	if kerneltype.IsClassic() {
 		tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-			"151|create table|public|148|150|t1|synced",
-			"146|create table|public|143|145|t1|synced",
+			"153|create table|public|150|152|t1|synced",
+			"148|create table|public|145|147|t1|synced",
 		))
 	} else {
 		tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-			"44|create table|public|41|43|t1|synced",
-			"39|create table|public|36|38|t1|synced",
+			"46|create table|public|43|45|t1|synced",
+			"41|create table|public|38|40|t1|synced",
 		))
 	}
 
