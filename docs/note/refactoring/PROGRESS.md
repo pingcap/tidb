@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-19 (job_args, coprocessor decompositions)
+Last updated: 2026-02-19 (job_args, coprocessor, ddl/index, ddl/executor decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -141,12 +141,16 @@ Last updated: 2026-02-19 (job_args, coprocessor decompositions)
   - [x] `infoschema_reader_resource.go` (569 lines) - attributes, policies, resources, keywords, plan cache
 
 - [x] **ddl/index.go decomposition** - Extract index operation handlers
-  - File: `pkg/ddl/index.go` (4,140 → 2,691 lines, 35% reduction)
+  - File: `pkg/ddl/index.go` (4,140 → 1,062 lines, 74% reduction)
   - Target: Focused files per index operation area
   - [x] `index_dist_task.go` (418 lines) - distributed task execution, param tuning, row size estimation
   - [x] `index_backfill_worker.go` (619 lines) - add-index txn worker, batch unique check, ingest write
   - [x] `index_columnar.go` (261 lines) - TiFlash columnar index creation and progress monitoring
   - [x] `index_analyze.go` (289 lines) - post-index-creation analyze workflow
+  - [x] `index_build_info.go` (518 lines) - buildIndexColumns, BuildIndexInfo, column validation
+  - [x] `index_drop.go` (318 lines) - onDropIndex, checkDropIndex, rename/visibility checks
+  - [x] `index_reorg_dispatch.go` (494 lines) - reorg initialization, backfill type selection, ingest dispatch
+  - [x] `index_partition_reorg.go` (423 lines) - partition iteration, cleanup workers, global index cleanup
 
 - [x] **executor/simple.go decomposition** - Extract user and role management
   - File: `pkg/executor/simple.go` (3,198 → 1,064 lines, 67% reduction)
@@ -420,7 +424,11 @@ Last updated: 2026-02-19 (job_args, coprocessor decompositions)
 - [ ] **Remove old cascades code** - `pkg/planner/cascades/old/`
 - [ ] **Executor interface split** - Lifecycle, Execution, Debug interfaces
 - [ ] **Context propagation** - Replace 5,266 Background()/TODO() calls
-- [x] **DDL executor.go split** - `pkg/ddl/executor.go` (7,201 → 1,986 lines, 72% reduction)
+- [x] **DDL executor.go split** - `pkg/ddl/executor.go` (7,201 → 1,113 lines, 85% reduction)
+  - [x] Phase 1 (prior): 8 extracted files (72% reduction)
+  - [x] Phase 2: `executor_lock.go` (253 lines) - LockTables, UnlockTables, AlterTableMode, CleanupTableLock
+  - [x] Phase 2: `executor_placement.go` (252 lines) - AlterIndexVisibility, AlterTableAttributes, partition placement
+  - [x] Phase 2: `executor_job.go` (449 lines) - DoDDLJob, DoDDLJobWrapper, job polling, reorg meta helpers
 - [ ] **sessionctx.Context interface** - Split 76-method interface
 - [ ] **nolint audit** - Investigate 738 suppressed warnings
 
