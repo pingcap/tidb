@@ -16,15 +16,13 @@ package types
 
 import (
 	"fmt"
-	"regexp"
+	"io"
 	"strconv"
 	"strings"
 	gotime "time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.

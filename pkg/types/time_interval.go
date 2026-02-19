@@ -15,14 +15,12 @@
 package types
 
 import (
-	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	gotime "time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // ExtractDatetimeNum extracts time value number from datetime unit and format.

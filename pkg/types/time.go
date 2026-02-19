@@ -18,13 +18,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
 	gotime "time"
-	"unicode"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -32,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
 )

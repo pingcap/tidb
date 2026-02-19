@@ -15,12 +15,13 @@
 package types
 
 import (
-	"strconv"
+	"regexp"
 	"strings"
 	gotime "time"
 	"unicode"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 // StrToDate converts date string according to format.
