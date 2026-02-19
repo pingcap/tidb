@@ -33,17 +33,17 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 
 ## Reference files
 
-- **Package case maps**: `references/<pkg>-case-map.md` for each top-level directory under `pkg/`
+- **Package case maps** (when available): `references/<pkg>-case-map.md`
 - **Planner core placement guide**: `references/planner-guide.md`
 
 ## Notes
 
 - Apply the same rules (placement, shard_count, naming) to other packages beyond `pkg/planner`.
-- Use existing testdata patterns (`*_in.json`, `*_out.json`, `*_xut.json`) in the same directory when extending suites. When tests use testdata, run with `-record --tags=intest` as needed.
+- Use existing testdata patterns (`*_in.json`, `*_out.json`, `*_xut.json`) in the same directory when extending suites. Use `-record -tags=intest,deadlock` only when the Go test suite explicitly supports `-record` and you need to regenerate outputs. For `tests/integrationtest`, use `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd` (not `-record`).
 - For `pkg/planner/core/casetest/rule` predicate pushdown cases, keep SQL in `predicate_pushdown_suite_in.json` and record both `EXPLAIN format='brief'` and query results via the test runner (see `rule_predicate_pushdown_test.go`).
 - When moving benchmarks between packages, update any `TestBenchDaily` wrappers that list them and keep `Makefile` `bench-daily` entries aligned with the new package location.
-- When updating tests in any `pkg/*` package, ask AI to update the corresponding case map under `references/`.
-- When updating tests in any other directory, also update this skill: add or extend a case map under `references/` and add guidance in this `SKILL.md` so future changes stay consistent.
+- When updating tests in any `pkg/*` package, update the corresponding case map under `references/` if it exists; do not block on missing case maps.
+- When updating tests in any other directory and the placement rules are non-obvious or recurring, consider adding/extending a case map under `references/` and updating this `SKILL.md`.
 - When merging issue regression tests into existing behavior tests, keep the issue id in SQL comments (e.g. `/* issue:12345 */`) or nearby comments for traceability.
 - Prefer unit tests over `tests/integrationtest` for end-to-end coverage unless you need to avoid union-storage executor differences or require full workflow validation.
 - When tests read source files under Bazel, use `go/runfiles` and ensure the target file is exported via `exports_files()` in its owning `BUILD.bazel`.
