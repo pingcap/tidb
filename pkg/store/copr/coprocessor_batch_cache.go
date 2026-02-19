@@ -15,27 +15,25 @@
 package copr
 
 import (
-	"bytes"
-	"context"
+	"fmt"
+	"slices"
+	"strings"
 	"time"
-	"unsafe"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
+	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/paging"
-	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 

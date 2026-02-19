@@ -18,9 +18,10 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 func calculateLeftOverlapPercent(l, r, boundL, histL, histWidth float64) float64 {
