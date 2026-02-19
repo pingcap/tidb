@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-19 (builtin_info, gc_worker, func_max_min, ddl/table decompositions)
+Last updated: 2026-02-19 (job_args, coprocessor decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -336,11 +336,15 @@ Last updated: 2026-02-19 (builtin_info, gc_worker, func_max_min, ddl/table decom
   - [x] `mydecimal_convert.go` (588 lines) - string/int/float conversion
   - [x] `mydecimal_arithmetic.go` (804 lines) - add, subtract, multiply, divide
 
-- [x] **store/copr/coprocessor.go decomposition** - Extract handler and batch/cache logic
-  - File: `pkg/store/copr/coprocessor.go` (2,904 → 1,912 lines, 34% reduction)
+- [x] **store/copr/coprocessor.go decomposition** - Extract handler, batch/cache, task, iter, lifecycle, ratelimit
+  - File: `pkg/store/copr/coprocessor.go` (2,904 → 229 lines, 92% reduction)
   - Target: Focused files per functional area
   - [x] `coprocessor_handler.go` (679 lines) - handleTask, handleTaskOnce, logTimeCopTask
   - [x] `coprocessor_batch_cache.go` (413 lines) - handleBatchCopResponse, handleLockErr, buildCacheKey
+  - [x] `coprocessor_task.go` (718 lines) - copTask, buildCopTasks, taskBuilder, legacy/batch builders
+  - [x] `coprocessor_iter.go` (199 lines) - copIterator, copIteratorWorker, copResponse, CopInfo
+  - [x] `coprocessor_iter_lifecycle.go` (639 lines) - open, run, Next, Close, lite worker, retry/error
+  - [x] `coprocessor_ratelimit.go` (244 lines) - rateLimitAction, copErrorResponse, protocol helpers
 
 - [x] **types/time.go decomposition** - Extract parsing, StrToDate, and interval functions
   - File: `pkg/types/time.go` (3,546 → 1,936 lines, 45% reduction)
@@ -481,7 +485,7 @@ Last updated: 2026-02-19 (builtin_info, gc_worker, func_max_min, ddl/table decom
 - [x] **meta/meta.go decomposition** - 2026-02-19 - Split into 3 focused files: `meta_crud.go` (850), `meta_query.go` (608), `meta_history.go` (482). Reduced meta.go from 2,064 to 206 lines (90% reduction).
 - [x] **executor/index_merge_reader.go decomposition** - 2026-02-19 - Split into 2 focused files: `index_merge_reader_worker.go` (731), `index_merge_reader_intersect.go` (807). Reduced index_merge_reader.go from 2,057 to 599 lines (71% reduction).
 - [x] **types/mydecimal.go decomposition** - 2026-02-19 - Split into 3 focused files: `mydecimal_shift_round.go` (539), `mydecimal_convert.go` (588), `mydecimal_arithmetic.go` (804). Reduced mydecimal.go from 2,515 to 646 lines (74% reduction).
-- [x] **store/copr/coprocessor.go decomposition** - 2026-02-19 - Split into 2 focused files: `coprocessor_handler.go` (679), `coprocessor_batch_cache.go` (413). Reduced coprocessor.go from 2,904 to 1,912 lines (34% reduction).
+- [x] **store/copr/coprocessor.go decomposition** - 2026-02-19 - Split into 6 focused files: `coprocessor_handler.go` (679), `coprocessor_batch_cache.go` (413), `coprocessor_task.go` (718), `coprocessor_iter.go` (199), `coprocessor_iter_lifecycle.go` (639), `coprocessor_ratelimit.go` (244). Reduced coprocessor.go from 2,904 to 229 lines (92% reduction).
 - [x] **types/time.go decomposition** - 2026-02-19 - Split into 3 focused files: `time_parse.go` (574), `time_str_to_date.go` (644), `time_interval.go` (473). Reduced time.go from 3,546 to 1,936 lines (45% reduction).
 - [x] **executor/distsql.go decomposition** - 2026-02-19 - Split into 2 focused files: `distsql_index_worker.go` (411), `distsql_table_worker.go` (490). Reduced distsql.go from 1,988 to 1,170 lines (41% reduction).
 - [x] **statistics/histogram.go decomposition** - 2026-02-19 - Split into 2 focused files: `histogram_merge.go` (545), `histogram_estimation.go` (259). Reduced histogram.go from 1,993 to 1,244 lines (38% reduction).
@@ -494,3 +498,5 @@ Last updated: 2026-02-19 (builtin_info, gc_worker, func_max_min, ddl/table decom
 - [x] **store/gcworker/gc_worker.go decomposition** - 2026-02-19 - Split into 2 focused files: `gc_delete_range.go` (358), `gc_rules.go` (321). Reduced gc_worker.go from 1,881 to 1,272 lines (32% reduction).
 - [x] **executor/aggfuncs/func_max_min.go decomposition** - 2026-02-19 - Split into 3 focused files: `func_max_min_numeric.go` (655), `func_max_min_complex.go` (704), `func_max_min_special.go` (351). Reduced func_max_min.go from 1,903 to 251 lines (87% reduction).
 - [x] **ddl/table.go decomposition** - 2026-02-19 - Split into 4 focused files: `table_rename.go` (267), `table_tiflash.go` (177), `table_placement.go` (250), `table_cache.go` (165). Reduced table.go from 1,798 to 1,040 lines (42% reduction).
+- [x] **meta/model/job_args.go decomposition** - 2026-02-19 - Split into 8 focused files: `job_args_schema.go` (104), `job_args_table.go` (219), `job_args_partition.go` (189), `job_args_column.go` (262), `job_args_misc.go` (218), `job_args_table_alter.go` (159), `job_args_cluster.go` (236), `job_args_index.go` (500). Reduced job_args.go from 1,844 to 122 lines (93% reduction).
+- [x] **store/copr/coprocessor.go further decomposition** - 2026-02-19 - Split 4 additional files: `coprocessor_task.go` (718), `coprocessor_iter.go` (199), `coprocessor_iter_lifecycle.go` (639), `coprocessor_ratelimit.go` (244). Reduced coprocessor.go from 1,911 to 229 lines (88% further, 92% total from 2,904).
