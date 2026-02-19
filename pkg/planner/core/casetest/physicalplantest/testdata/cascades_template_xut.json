@@ -99,7 +99,7 @@
         "Plan": [
           "Projection root  test.t1.id1, test.t1.id2, Column",
           "└─Projection root  1->Column, test.t1.id1, test.t1.id2",
-          "  └─HashJoin root  inner join, equal:[eq(test.t2.id2, test.t1.id2) eq(test.t2.id1, Column)]",
+          "  └─HashJoin root  inner join, equal:[eq(test.t1.id2, test.t2.id2) eq(Column, test.t2.id1)]",
           "    ├─Projection(Build) root  test.t1.id1, test.t1.id2, abs(test.t1.id1)->Column",
           "    │ └─TableReader root  data:TableFullScan",
           "    │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
