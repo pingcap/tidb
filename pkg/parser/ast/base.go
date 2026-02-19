@@ -15,17 +15,29 @@ package ast
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
+// Text transform states for node.textState.
+const (
+	textStateUnset uint32 = 0 // No text set; Text() returns n.text directly.
+	textStateDirty uint32 = 1 // SetText called; transform pending.
+	textStateDone  uint32 = 2 // Transform complete; utf8Text is valid.
+)
+
+// textTransformMu protects the lazy text encoding transform.
+// This replaces *sync.Once per node, eliminating a heap allocation per SetText call.
+var textTransformMu sync.Mutex
+
 // node is the struct implements Node interface except for Accept method.
 // Node implementations should embed it in.
 type node struct {
-	utf8Text string
-	enc      charset.Encoding
-	once     *sync.Once
+	utf8Text  string
+	enc       charset.Encoding
+	textState uint32 // atomic: textStateUnset / textStateDirty / textStateDone
 
 	text   string
 	offset int
@@ -45,22 +57,33 @@ func (n *node) OriginTextPosition() int {
 func (n *node) SetText(enc charset.Encoding, text string) {
 	n.enc = enc
 	n.text = text
-	n.once = &sync.Once{}
+	n.utf8Text = "" // Clear stale cached value.
+	atomic.StoreUint32(&n.textState, textStateDirty)
 }
 
 // Text implements Node interface.
 func (n *node) Text() string {
-	if n.once == nil {
+	state := atomic.LoadUint32(&n.textState)
+	if state == textStateUnset {
 		return n.text
 	}
-	n.once.Do(func() {
-		if n.enc == nil {
-			n.utf8Text = n.text
-			return
-		}
+	if state == textStateDone {
+		return n.utf8Text
+	}
+	// state == textStateDirty: need to transform.
+	textTransformMu.Lock()
+	defer textTransformMu.Unlock()
+	// Double-check after acquiring lock.
+	if atomic.LoadUint32(&n.textState) == textStateDone {
+		return n.utf8Text
+	}
+	if n.enc == nil {
+		n.utf8Text = n.text
+	} else {
 		utf8Lit, _ := n.enc.Transform(nil, charset.HackSlice(n.text), charset.OpDecodeReplace)
 		n.utf8Text = charset.HackString(utf8Lit)
-	})
+	}
+	atomic.StoreUint32(&n.textState, textStateDone)
 	return n.utf8Text
 }
 

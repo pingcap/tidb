@@ -104,6 +104,11 @@ func (s *Scanner) reset(sql string) {
 	s.identifierDot = false
 }
 
+// ResetTo resets the scanner to scan a new SQL string, reusing internal buffers.
+func (s *Scanner) ResetTo(sql string) {
+	s.reset(sql)
+}
+
 func (s *Scanner) stmtText() string {
 	endPos := s.r.pos().Offset
 	if s.r.s[endPos-1] == '\n' {

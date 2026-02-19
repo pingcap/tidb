@@ -37,12 +37,15 @@ func BenchmarkHandParser(b *testing.B) {
 	for name, sql := range benchSQLs {
 		b.Run(name, func(b *testing.B) {
 			hp := hparser.NewHandParser()
+			// Pre-create Scanner + LexFunc to match Goyacc's reuse pattern.
+			scanner := parser.NewScanner(sql)
+			lexFunc := parser.ScannerLexFunc(scanner)
 			b.ResetTimer()
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				hp.Reset()
-				scanner := parser.NewScanner(sql)
-				hp.Init(parser.ScannerLexFunc(scanner), sql)
+				scanner.ResetTo(sql)
+				hp.Init(lexFunc, sql)
 				stmts, _, err := hp.ParseSQL()
 				if err != nil {
 					b.Fatal(err)
