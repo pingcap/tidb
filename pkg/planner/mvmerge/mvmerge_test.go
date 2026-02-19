@@ -125,6 +125,7 @@ func TestBuildCountSum(t *testing.T) {
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		nil,
 	)
 	require.NoError(t, err)
 	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
@@ -224,6 +225,7 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		nil,
 	)
 	require.NoError(t, err)
 	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
@@ -321,6 +323,7 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		nil,
 	)
 	require.NoError(t, err)
 	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
@@ -416,6 +419,7 @@ func TestBuildSumWithoutCountExpr(t *testing.T) {
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		nil,
 	)
 	require.ErrorContains(t, err, "requires matching COUNT(expr)")
 }
@@ -475,6 +479,7 @@ func TestBuildMissingCountStar(t *testing.T) {
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		nil,
 	)
 	require.ErrorContains(t, err, "must include COUNT(*)")
 }
@@ -530,6 +535,7 @@ func TestBuildMissingOldNew(t *testing.T) {
 		is,
 		mv,
 		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		nil,
 	)
 	require.ErrorContains(t, err, model.MaterializedViewLogOldNewColumnName)
 }

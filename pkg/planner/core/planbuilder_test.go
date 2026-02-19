@@ -1120,6 +1120,110 @@ func TestBuildRefreshMaterializedViewImplementFastBuildsMVMergePlan(t *testing.T
 	require.True(t, hasSum)
 }
 
+func TestBuildRefreshMaterializedViewImplementFastSumNotNullDoesNotRequireCountExpr(t *testing.T) {
+	sctx := MockContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(11)
+	mlogID := int64(22)
+	mvID := int64(33)
+
+	baseColA := mkTestCol(1, "a", 0, mysql.TypeLong)
+	baseColB := mkTestCol(2, "b", 1, mysql.TypeLong)
+	baseColB.FieldType.AddFlag(mysql.NotNullFlag)
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			baseColA,
+			baseColB,
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+
+	mlogColA := mkTestCol(1, "a", 0, mysql.TypeLong)
+	mlogColB := mkTestCol(2, "b", 1, mysql.TypeLong)
+	mlogColB.FieldType.AddFlag(mysql.NotNullFlag)
+	mlogTbl := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mlogColA,
+			mlogColB,
+			mkTestCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkTestCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl_not_null"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "x", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkTestCol(3, "s", 2, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{Name: mvTbl.Name},
+			Type:     ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	mergePlan, ok := p.(*MVMerge)
+	require.True(t, ok)
+	require.NotNil(t, mergePlan.Source)
+	require.Equal(t, mvID, mergePlan.MVTableID)
+	require.Equal(t, baseID, mergePlan.BaseTableID)
+	require.Equal(t, mlogID, mergePlan.MLogTableID)
+	require.Equal(t, len(mvTbl.Columns), mergePlan.MVColumnCount)
+	require.Equal(t, []int{0}, mergePlan.GroupKeyMVOffsets)
+	require.Equal(t, 1, mergePlan.CountStarMVOffset)
+	require.Len(t, mergePlan.SourceOutputNames, 5)
+	require.Len(t, mergePlan.AggInfos, 2)
+
+	var hasCountStar, hasSum bool
+	for _, ai := range mergePlan.AggInfos {
+		switch ai.Kind {
+		case mvmerge.AggCountStar:
+			hasCountStar = true
+			require.Equal(t, []int{3}, ai.Dependencies)
+		case mvmerge.AggSum:
+			hasSum = true
+			require.Equal(t, "b", ai.ArgColName)
+			require.Equal(t, []int{4}, ai.Dependencies)
+		}
+	}
+	require.True(t, hasCountStar)
+	require.True(t, hasSum)
+}
+
 func mkTestCol(id int64, name string, offset int, tp byte) *model.ColumnInfo {
 	ft := types.NewFieldType(tp)
 	return &model.ColumnInfo{

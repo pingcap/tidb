@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 )
@@ -112,7 +113,10 @@ type AggInfo struct {
 	// Dependencies stores dependency offsets in merge-source output schema.
 	// The meaning depends on Kind:
 	//   - AggCountStar / AggCount: [self_delta]
-	//   - AggSum: [self_delta, matched_count_expr_mv]
+	//   - AggSum:
+	//     - [self_delta] when the SUM argument is NOT NULL (inferred from base table schema or passed by caller),
+	//       no COUNT(expr) dependency needed.
+	//     - [self_delta, matched_count_expr_mv] otherwise.
 	//     - self_delta: offset of SUM(expr) delta column.
 	//     - matched_count_expr_mv: offset of matched COUNT(expr) in MV output.
 	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
@@ -127,13 +131,51 @@ type aggColInfo struct {
 	argExpr   ast.ExprNode
 }
 
+// BuildLocalResult contains the parsed MV definition and all metadata derived from it.
+// It is used to decouple MV-definition parsing/analysis from building the merge-source SQL.
+//
+// The caller may further build/optimize the MV definition logical plan based on MVSelect.
+// After that, BuildFromLocal can be used to construct the final merge-source SELECT.
+type BuildLocalResult struct {
+	// MVSelect is the parsed MV definition SELECT statement.
+	// Note: BuildFromLocal may mutate parts of this AST (e.g. strip column qualifiers in WHERE).
+	MVSelect *ast.SelectStmt
+
+	mvDBName     pmodel.CIStr
+	mv           *model.TableInfo
+	baseTableID  int64
+	mlogTableID  int64
+	baseTable    *model.TableInfo
+	mlogTable    *model.TableInfo
+	groupKeySet  map[int]struct{}
+	groupKeyOffs []int
+	aggCols      []aggColInfo
+	hasMinMax    bool
+
+	countStarMVOffset int
+}
+
 // Build constructs the merge-source plan and metadata for one MV incremental merge window.
 func Build(
 	sctx planctx.PlanContext,
 	is infoschema.InfoSchema,
 	mv *model.TableInfo,
 	opt BuildOptions,
+	sumArgNotNullByOffset map[int]bool,
 ) (*BuildResult, error) {
+	local, err := BuildLocal(sctx, is, mv)
+	if err != nil {
+		return nil, err
+	}
+	return BuildFromLocal(local, opt, sumArgNotNullByOffset)
+}
+
+// BuildLocal validates MV/MLoG metadata, parses the MV definition, and derives local layout metadata.
+func BuildLocal(
+	sctx planctx.PlanContext,
+	is infoschema.InfoSchema,
+	mv *model.TableInfo,
+) (*BuildLocalResult, error) {
 	// Stage 0: validate MV/MLoG metadata and locate all required tables.
 	if mv == nil {
 		return nil, errors.New("mv table info is nil")
@@ -224,30 +266,6 @@ func Build(
 		)
 	}
 
-	// Stage 2: build merge source SQL in two steps:
-	//   1) aggregate mlog rows into per-group deltas
-	//   2) left join those deltas with current MV snapshot
-	deltaSel, err := buildMLogDeltaSelect(mvDBName, mlogTable, mvSel, mv.Columns, groupKeyOffsets, aggCols, hasMinMax, opt)
-	if err != nil {
-		return nil, err
-	}
-
-	mergeSel, deltaColumns, removedDelta, err := buildMergeSourceSelect(
-		mvDBName,
-		mv,
-		mv.Columns,
-		groupKeySet,
-		groupKeyOffsets,
-		deltaSel,
-		aggCols,
-		hasMinMax,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	expectedLen := len(mv.Columns) + len(deltaColumns)
-
 	countStarMVOffset := -1
 	for _, ac := range aggCols {
 		if ac.info.Kind == AggCountStar {
@@ -259,7 +277,72 @@ func Build(
 		return nil, errors.New("materialized view definition must include COUNT(*) for mvmerge")
 	}
 
-	sumToCountExprIdx, err := mapSumToCountExprDependencies(aggCols)
+	return &BuildLocalResult{
+		MVSelect:          mvSel,
+		mvDBName:          mvDBName,
+		mv:                mv,
+		baseTableID:       baseTableID,
+		mlogTableID:       mlogTableID,
+		baseTable:         baseTable,
+		mlogTable:         mlogTable,
+		groupKeySet:       groupKeySet,
+		groupKeyOffs:      groupKeyOffsets,
+		aggCols:           aggCols,
+		hasMinMax:         hasMinMax,
+		countStarMVOffset: countStarMVOffset,
+	}, nil
+}
+
+// BuildFromLocal constructs the merge-source SQL and dependency metadata from BuildLocalResult.
+func BuildFromLocal(
+	local *BuildLocalResult,
+	opt BuildOptions,
+	sumArgNotNullByOffset map[int]bool,
+) (*BuildResult, error) {
+	if local == nil {
+		return nil, errors.New("mvmerge: local result is nil")
+	}
+	if local.MVSelect == nil {
+		return nil, errors.New("mvmerge: local MVSelect is nil")
+	}
+	if sumArgNotNullByOffset == nil {
+		sumArgNotNullByOffset = inferSumArgNotNullByOffset(local)
+	}
+
+	// Stage 2: build merge source SQL in two steps:
+	//   1) aggregate mlog rows into per-group deltas
+	//   2) left join those deltas with current MV snapshot
+	deltaSel, err := buildMLogDeltaSelect(
+		local.mvDBName,
+		local.mlogTable,
+		local.MVSelect,
+		local.mv.Columns,
+		local.groupKeyOffs,
+		local.aggCols,
+		local.hasMinMax,
+		opt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	mergeSel, deltaColumns, removedDelta, err := buildMergeSourceSelect(
+		local.mvDBName,
+		local.mv,
+		local.mv.Columns,
+		local.groupKeySet,
+		local.groupKeyOffs,
+		deltaSel,
+		local.aggCols,
+		local.hasMinMax,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	expectedLen := len(local.mv.Columns) + len(deltaColumns)
+
+	sumToCountExprIdx, err := mapSumToCountExprDependencies(local.aggCols, sumArgNotNullByOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -269,8 +352,8 @@ func Build(
 	for _, dc := range deltaColumns {
 		deltaOffsetByName[dc.Name] = dc.Offset
 	}
-	outAggInfos := make([]AggInfo, 0, len(aggCols))
-	for i, ac := range aggCols {
+	outAggInfos := make([]AggInfo, 0, len(local.aggCols))
+	for i, ac := range local.aggCols {
 		di := ac.info
 		deps := make([]int, 0, 3)
 		if ac.deltaName != "" {
@@ -282,12 +365,14 @@ func Build(
 		}
 		switch di.Kind {
 		case AggSum:
-			countIdx, ok := sumToCountExprIdx[i]
-			if !ok {
-				return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
+			if !sumArgNotNullByOffset[di.MVOffset] {
+				countIdx, ok := sumToCountExprIdx[i]
+				if !ok {
+					return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
+				}
+				countAgg := local.aggCols[countIdx]
+				deps = append(deps, countAgg.info.MVOffset)
 			}
-			countAgg := aggCols[countIdx]
-			deps = append(deps, countAgg.info.MVOffset)
 		case AggMax, AggMin:
 			if removedDelta == nil {
 				return nil, errors.Errorf(
@@ -306,19 +391,19 @@ func Build(
 	if removedDelta != nil {
 		removedRowsDeltaOff = removedDelta.Offset
 	}
-	if err := validateAggDependencies(outAggInfos, len(mv.Columns), expectedLen, removedRowsDeltaOff); err != nil {
+	if err := validateAggDependencies(outAggInfos, len(local.mv.Columns), expectedLen, removedRowsDeltaOff); err != nil {
 		return nil, err
 	}
 
 	res := &BuildResult{
 		MergeSourceSelect: mergeSel,
 		SourceColumnCount: expectedLen,
-		MVTableID:         mv.ID,
-		BaseTableID:       baseTableID,
-		MLogTableID:       mlogTableID,
-		MVColumnCount:     len(mv.Columns),
-		GroupKeyMVOffsets: append([]int(nil), groupKeyOffsets...),
-		CountStarMVOffset: countStarMVOffset,
+		MVTableID:         local.mv.ID,
+		BaseTableID:       local.baseTableID,
+		MLogTableID:       local.mlogTableID,
+		MVColumnCount:     len(local.mv.Columns),
+		GroupKeyMVOffsets: append([]int(nil), local.groupKeyOffs...),
+		CountStarMVOffset: local.countStarMVOffset,
 		AggInfos:          outAggInfos,
 		RemovedRowCountDelta: func() *DeltaColumn {
 			if removedDelta == nil {
@@ -329,6 +414,37 @@ func Build(
 		}(),
 	}
 	return res, nil
+}
+
+func inferSumArgNotNullByOffset(local *BuildLocalResult) map[int]bool {
+	if local == nil || local.baseTable == nil {
+		return nil
+	}
+	if len(local.baseTable.Columns) == 0 || len(local.aggCols) == 0 {
+		return nil
+	}
+
+	baseColNotNull := make(map[string]bool, len(local.baseTable.Columns))
+	for _, c := range local.baseTable.Columns {
+		if c == nil {
+			continue
+		}
+		baseColNotNull[c.Name.L] = mysql.HasNotNullFlag(c.GetFlag())
+	}
+
+	out := make(map[int]bool)
+	for _, ac := range local.aggCols {
+		if ac.info.Kind != AggSum || ac.info.ArgColName == "" {
+			continue
+		}
+		if baseColNotNull[ac.info.ArgColName] {
+			out[ac.info.MVOffset] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func parseSelectFromSQL(sctx planctx.PlanContext, sql string) (*ast.SelectStmt, error) {
@@ -465,10 +581,13 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 	return aggCols, hasMinMax, nil
 }
 
-func mapSumToCountExprDependencies(aggCols []aggColInfo) (map[int]int, error) {
+func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset map[int]bool) (map[int]int, error) {
 	sumToCountIdx := make(map[int]int)
 	for i, ac := range aggCols {
 		if ac.info.Kind != AggSum {
+			continue
+		}
+		if sumArgNotNullByOffset[ac.info.MVOffset] {
 			continue
 		}
 		if ac.argExpr == nil {
@@ -527,10 +646,10 @@ func validateAggDependencies(aggInfos []AggInfo, mvColumnCount, schemaLen, remov
 				)
 			}
 		case AggSum:
-			// [self_delta, matched_count_expr_mv]
-			if len(ai.Dependencies) != 2 {
+			// [self_delta] when SUM argument is NOT NULL; otherwise [self_delta, matched_count_expr_mv].
+			if len(ai.Dependencies) != 1 && len(ai.Dependencies) != 2 {
 				return errors.Errorf(
-					"SUM at mv offset %d expects dependencies [self_delta, matched_count_expr_mv], got %v",
+					"SUM at mv offset %d expects dependencies [self_delta] or [self_delta, matched_count_expr_mv], got %v",
 					ai.MVOffset,
 					ai.Dependencies,
 				)
@@ -538,12 +657,14 @@ func validateAggDependencies(aggInfos []AggInfo, mvColumnCount, schemaLen, remov
 			if ai.Dependencies[0] < mvColumnCount {
 				return errors.Errorf("SUM at mv offset %d has invalid self_delta offset %d", ai.MVOffset, ai.Dependencies[0])
 			}
-			if ai.Dependencies[1] < 0 || ai.Dependencies[1] >= mvColumnCount {
-				return errors.Errorf(
-					"SUM at mv offset %d has invalid matched_count_expr_mv offset %d",
-					ai.MVOffset,
-					ai.Dependencies[1],
-				)
+			if len(ai.Dependencies) == 2 {
+				if ai.Dependencies[1] < 0 || ai.Dependencies[1] >= mvColumnCount {
+					return errors.Errorf(
+						"SUM at mv offset %d has invalid matched_count_expr_mv offset %d",
+						ai.MVOffset,
+						ai.Dependencies[1],
+					)
+				}
 			}
 		case AggMax, AggMin:
 			// [self_delta, removed_rows_delta]
