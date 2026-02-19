@@ -60,7 +60,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 27,
+=======
+    shard_count = 45,
+>>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
     deps = [
         "//pkg/config",
         "//pkg/domain",
