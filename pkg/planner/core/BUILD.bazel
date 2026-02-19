@@ -55,6 +55,7 @@ go_library(
         "rule_eliminate_projection.go",
         "rule_eliminate_unionall_dual_item.go",
         "rule_generate_column_substitute.go",
+        "rule_generate_pk_filter.go",
         "rule_inject_extra_projection.go",
         "rule_join_elimination.go",
         "rule_join_reorder.go",

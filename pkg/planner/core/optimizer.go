@@ -102,6 +102,7 @@ var optRuleList = []base.LogicalOptRule{
 	&DeriveTopNFromWindow{},
 	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
+	&GeneratePKFilterOptimizer{},
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
 	&rule.OuterJoinToSemiJoin{},
@@ -363,6 +364,7 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
 	}
+	flag |= rule.FlagGeneratePKFilter
 	return flag
 }
 
