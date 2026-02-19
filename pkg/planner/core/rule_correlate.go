@@ -109,6 +109,12 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 		return nil, false, err
 	}
 
+	// Reset stats on DataSources that received correlated conditions so DeriveStats
+	// re-runs during physical optimization. This is necessary because the original
+	// DeriveStats ran before the correlate rule added correlated conditions, so the
+	// index access paths were built without them.
+	resetStatsForCorrelatedDS(innerPlan)
+
 	// Build the LogicalApply.
 	ap := logicalop.LogicalApply{}.Init(join.SCtx(), join.QueryBlockOffset())
 	ap.JoinType = join.JoinType
@@ -159,6 +165,44 @@ func (*CorrelateSolver) buildCorrelatedCond(
 	)
 
 	return cond, corCol
+}
+
+// resetStatsForCorrelatedDS walks the inner subtree and clears StatsInfo on
+// DataSources that have correlated conditions in AllConds, plus all ancestor
+// plan nodes up to the root. This forces DeriveStats to re-run during physical
+// optimization so that index access paths are rebuilt with the correlated
+// conditions. Only DataSources with correlated conditions are reset to avoid
+// issues with other DataSources that had their conditions overwritten by the
+// second PPD pass.
+func resetStatsForCorrelatedDS(p base.LogicalPlan) bool {
+	hasCorrelated := false
+
+	// Check if this is a DataSource with correlated conditions.
+	if ds, ok := p.(*logicalop.DataSource); ok {
+		for _, cond := range ds.AllConds {
+			if len(expression.ExtractCorColumns(cond)) > 0 {
+				hasCorrelated = true
+				break
+			}
+		}
+	}
+
+	// Recurse into children.
+	for _, child := range p.Children() {
+		if resetStatsForCorrelatedDS(child) {
+			hasCorrelated = true
+		}
+	}
+
+	// Reset stats on this node if it or any descendant has correlated conditions.
+	// This ensures DeriveStats re-runs for the affected subtree path.
+	if hasCorrelated {
+		if blp, ok := p.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan); ok {
+			blp.SetStats(nil)
+		}
+	}
+
+	return hasCorrelated
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

@@ -24,11 +24,13 @@ import (
 func TestCorrelate(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("drop table if exists t1, t2, t3")
 		tk.MustExec("create table t1 (a int, b int, key(a))")
 		tk.MustExec("create table t2 (a int, b int, key(a))")
+		tk.MustExec("create table t3 (a int, b int, key(a))")
 		tk.MustExec("insert into t1 values (1,1),(2,2),(3,3)")
 		tk.MustExec("insert into t2 values (1,10),(2,20)")
+		tk.MustExec("insert into t3 values (10,1),(20,2)")
 
 		// Enable the correlate rule.
 		tk.MustExec("set tidb_opt_enable_correlate_subquery = ON")

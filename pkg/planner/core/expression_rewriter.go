@@ -1285,7 +1285,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
 	// and don't need to append a scalar value, we can rewrite it to inner join.
-	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag {
+	// When EnableCorrelateSubquery is ON, skip the InnerJoin+Agg rewrite so that a SemiJoin is built
+	// instead; the CorrelateSolver rule can then convert it to a correlated Apply with index lookups.
+	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag &&
+		!planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		planCtx.builder.optFlag |= rule.FlagEliminateAgg
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
