@@ -40,6 +40,7 @@ const (
 	removedRowsName  = "__mvmerge_removed_rows"
 )
 
+// BuildOptions defines the commit-ts window (FromTS, ToTS] used to read incremental mv-log rows.
 type BuildOptions struct {
 	FromTS uint64
 	ToTS   uint64
@@ -79,21 +80,29 @@ type BuildResult struct {
 	RemovedRowCountDelta *DeltaColumn
 }
 
+// DeltaColumn describes one delta payload column in merge-source output.
 type DeltaColumn struct {
 	Name   string
 	Offset int
 }
 
+// AggKind classifies supported aggregate functions in MV merge.
 type AggKind int
 
 const (
+	// AggCountStar represents COUNT(*).
 	AggCountStar AggKind = iota
+	// AggCount represents COUNT(expr).
 	AggCount
+	// AggSum represents SUM(expr).
 	AggSum
+	// AggMin represents MIN(expr).
 	AggMin
+	// AggMax represents MAX(expr).
 	AggMax
 )
 
+// AggInfo describes one aggregate output column and dependency offsets used in update order.
 type AggInfo struct {
 	Kind AggKind
 
@@ -125,7 +134,15 @@ type aggColInfo struct {
 // The caller usually does preprocess -> logical plan build -> optimize.
 type SelectOptimizer func(ctx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, types.NameSlice, error)
 
-func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema, mv *model.TableInfo, opt BuildOptions, optimize SelectOptimizer) (*BuildResult, error) {
+// Build constructs the merge-source plan and metadata for one MV incremental merge window.
+func Build(
+	ctx context.Context,
+	sctx base.PlanContext,
+	is infoschema.InfoSchema,
+	mv *model.TableInfo,
+	opt BuildOptions,
+	optimize SelectOptimizer,
+) (*BuildResult, error) {
 	// Stage 0: validate MV/MLoG metadata and locate all required tables.
 	if mv == nil {
 		return nil, errors.New("mv table info is nil")
@@ -137,7 +154,11 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		return nil, errors.Errorf("table %s is not a materialized view", mv.Name.O)
 	}
 	if len(mv.MaterializedView.BaseTableIDs) != 1 {
-		return nil, errors.Errorf("materialized view %s has invalid base table list size %d", mv.Name.O, len(mv.MaterializedView.BaseTableIDs))
+		return nil, errors.Errorf(
+			"materialized view %s has invalid base table list size %d",
+			mv.Name.O,
+			len(mv.MaterializedView.BaseTableIDs),
+		)
 	}
 	baseTableID := mv.MaterializedView.BaseTableIDs[0]
 	baseTable, ok := is.TableInfoByID(baseTableID)
@@ -156,13 +177,25 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		return nil, errors.Errorf("table %s is not a materialized view log", mlogTable.Name.O)
 	}
 	if mlogTable.MaterializedViewLog.BaseTableID != baseTableID {
-		return nil, errors.Errorf("materialized view log %s does not belong to base table id %d", mlogTable.Name.O, baseTableID)
+		return nil, errors.Errorf(
+			"materialized view log %s does not belong to base table id %d",
+			mlogTable.Name.O,
+			baseTableID,
+		)
 	}
 	if !hasColumn(mlogTable, model.MaterializedViewLogOldNewColumnName) {
-		return nil, errors.Errorf("materialized view log %s missing required column %s", mlogTable.Name.O, model.MaterializedViewLogOldNewColumnName)
+		return nil, errors.Errorf(
+			"materialized view log %s missing required column %s",
+			mlogTable.Name.O,
+			model.MaterializedViewLogOldNewColumnName,
+		)
 	}
 	if !hasColumn(mlogTable, model.MaterializedViewLogDMLTypeColumnName) {
-		return nil, errors.Errorf("materialized view log %s missing required column %s", mlogTable.Name.O, model.MaterializedViewLogDMLTypeColumnName)
+		return nil, errors.Errorf(
+			"materialized view log %s missing required column %s",
+			mlogTable.Name.O,
+			model.MaterializedViewLogDMLTypeColumnName,
+		)
 	}
 
 	// Stage 1: parse MV definition and derive merge key/aggregate layout from it.
@@ -196,7 +229,11 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 
 	if len(mv.Columns) != len(mvSel.Fields.Fields) {
 		// This should never happen for valid MV metadata. Keep it as a guard to avoid mismatched join schema.
-		return nil, errors.Errorf("mv columns count %d does not match mv query output %d", len(mv.Columns), len(mvSel.Fields.Fields))
+		return nil, errors.Errorf(
+			"mv columns count %d does not match mv query output %d",
+			len(mv.Columns),
+			len(mvSel.Fields.Fields),
+		)
 	}
 
 	// Stage 2: build merge source SQL in two steps:
@@ -207,7 +244,16 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 		return nil, err
 	}
 
-	mergeSel, deltaColumns, removedDelta, err := buildMergeSourceSelect(mvDBName, mv, mv.Columns, groupKeySet, groupKeyOffsets, deltaSel, aggCols, hasMinMax)
+	mergeSel, deltaColumns, removedDelta, err := buildMergeSourceSelect(
+		mvDBName,
+		mv,
+		mv.Columns,
+		groupKeySet,
+		groupKeyOffsets,
+		deltaSel,
+		aggCols,
+		hasMinMax,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -220,10 +266,18 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 
 	expectedLen := len(mv.Columns) + len(deltaColumns)
 	if plan.Schema().Len() != expectedLen {
-		return nil, errors.Errorf("unexpected merge-source schema length: got %d, expected %d", plan.Schema().Len(), expectedLen)
+		return nil, errors.Errorf(
+			"unexpected merge-source schema length: got %d, expected %d",
+			plan.Schema().Len(),
+			expectedLen,
+		)
 	}
 	if len(outputNames) > 0 && len(outputNames) != expectedLen {
-		return nil, errors.Errorf("unexpected merge-source output names length: got %d, expected %d", len(outputNames), expectedLen)
+		return nil, errors.Errorf(
+			"unexpected merge-source output names length: got %d, expected %d",
+			len(outputNames),
+			expectedLen,
+		)
 	}
 
 	countStarMVOffset := -1
@@ -268,7 +322,12 @@ func Build(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema,
 			deps = append(deps, countAgg.info.MVOffset)
 		case AggMax, AggMin:
 			if removedDelta == nil {
-				return nil, errors.Errorf("internal error: %v at mv offset %d requires %s delta", di.Kind, di.MVOffset, removedRowsName)
+				return nil, errors.Errorf(
+					"internal error: %v at mv offset %d requires %s delta",
+					di.Kind,
+					di.MVOffset,
+					removedRowsName,
+				)
 			}
 			deps = append(deps, removedDelta.Offset)
 		}
@@ -484,35 +543,69 @@ func validateAggDependencies(aggInfos []AggInfo, mvColumnCount, schemaLen, remov
 		switch ai.Kind {
 		case AggCountStar, AggCount:
 			if len(ai.Dependencies) != 1 {
-				return errors.Errorf("%v at mv offset %d expects dependencies [self_delta], got %v", ai.Kind, ai.MVOffset, ai.Dependencies)
+				return errors.Errorf(
+					"%v at mv offset %d expects dependencies [self_delta], got %v",
+					ai.Kind,
+					ai.MVOffset,
+					ai.Dependencies,
+				)
 			}
 			if ai.Dependencies[0] < mvColumnCount {
-				return errors.Errorf("%v at mv offset %d has invalid self_delta offset %d", ai.Kind, ai.MVOffset, ai.Dependencies[0])
+				return errors.Errorf(
+					"%v at mv offset %d has invalid self_delta offset %d",
+					ai.Kind,
+					ai.MVOffset,
+					ai.Dependencies[0],
+				)
 			}
 		case AggSum:
 			// [self_delta, matched_count_expr_mv]
 			if len(ai.Dependencies) != 2 {
-				return errors.Errorf("SUM at mv offset %d expects dependencies [self_delta, matched_count_expr_mv], got %v", ai.MVOffset, ai.Dependencies)
+				return errors.Errorf(
+					"SUM at mv offset %d expects dependencies [self_delta, matched_count_expr_mv], got %v",
+					ai.MVOffset,
+					ai.Dependencies,
+				)
 			}
 			if ai.Dependencies[0] < mvColumnCount {
 				return errors.Errorf("SUM at mv offset %d has invalid self_delta offset %d", ai.MVOffset, ai.Dependencies[0])
 			}
 			if ai.Dependencies[1] < 0 || ai.Dependencies[1] >= mvColumnCount {
-				return errors.Errorf("SUM at mv offset %d has invalid matched_count_expr_mv offset %d", ai.MVOffset, ai.Dependencies[1])
+				return errors.Errorf(
+					"SUM at mv offset %d has invalid matched_count_expr_mv offset %d",
+					ai.MVOffset,
+					ai.Dependencies[1],
+				)
 			}
 		case AggMax, AggMin:
 			// [self_delta, removed_rows_delta]
 			if len(ai.Dependencies) != 2 {
-				return errors.Errorf("%v at mv offset %d expects dependencies [self_delta, removed_rows_delta], got %v", ai.Kind, ai.MVOffset, ai.Dependencies)
+				return errors.Errorf(
+					"%v at mv offset %d expects dependencies [self_delta, removed_rows_delta], got %v",
+					ai.Kind,
+					ai.MVOffset,
+					ai.Dependencies,
+				)
 			}
 			if ai.Dependencies[0] < mvColumnCount {
-				return errors.Errorf("%v at mv offset %d has invalid self_delta offset %d", ai.Kind, ai.MVOffset, ai.Dependencies[0])
+				return errors.Errorf(
+					"%v at mv offset %d has invalid self_delta offset %d",
+					ai.Kind,
+					ai.MVOffset,
+					ai.Dependencies[0],
+				)
 			}
 			if removedRowsDeltaOff < 0 {
 				return errors.Errorf("internal error: %v at mv offset %d requires removed_rows delta", ai.Kind, ai.MVOffset)
 			}
 			if ai.Dependencies[1] != removedRowsDeltaOff {
-				return errors.Errorf("%v at mv offset %d has invalid removed_rows_delta offset %d, expected %d", ai.Kind, ai.MVOffset, ai.Dependencies[1], removedRowsDeltaOff)
+				return errors.Errorf(
+					"%v at mv offset %d has invalid removed_rows_delta offset %d, expected %d",
+					ai.Kind,
+					ai.MVOffset,
+					ai.Dependencies[1],
+					removedRowsDeltaOff,
+				)
 			}
 		default:
 			return errors.Errorf("unsupported aggregate kind %v", ai.Kind)
@@ -711,14 +804,22 @@ func buildMLogDeltaSelect(
 			// Track only candidates from added rows; removed rows are handled by detail update path.
 			argCol := colExpr(ac.info.ArgColName)
 			fields = append(fields, &ast.SelectField{
-				Expr:   aggMax(ifExpr(binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", "")), argCol, ast.NewValueExpr(nil, "", ""))),
+				Expr: aggMax(ifExpr(
+					binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", "")),
+					argCol,
+					ast.NewValueExpr(nil, "", ""),
+				)),
 				AsName: pmodel.NewCIStr(ac.deltaName),
 			})
 		case AggMin:
 			// Same as MAX: only additions contribute to quick-update candidate.
 			argCol := colExpr(ac.info.ArgColName)
 			fields = append(fields, &ast.SelectField{
-				Expr:   aggMin(ifExpr(binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", "")), argCol, ast.NewValueExpr(nil, "", ""))),
+				Expr: aggMin(ifExpr(
+					binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", "")),
+					argCol,
+					ast.NewValueExpr(nil, "", ""),
+				)),
 				AsName: pmodel.NewCIStr(ac.deltaName),
 			})
 		default:
