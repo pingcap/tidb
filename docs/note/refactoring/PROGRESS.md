@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-19 (misc, modify_column, cast_vec, partition_processor, logical_join decompositions)
+Last updated: 2026-02-19 (meta, index_merge_reader, mydecimal, coprocessor, time, distsql, histogram decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -316,6 +316,51 @@ Last updated: 2026-02-19 (misc, modify_column, cast_vec, partition_processor, lo
   - [x] `logical_join_fd.go` (665 lines) - FD extraction, correlated cols, join keys, decorrelate
   - [x] `logical_join_rewrite.go` (837 lines) - NDV, preferences, condition extraction, rewrite
 
+- [x] **meta/meta.go decomposition** - Extract CRUD, query, and history functions
+  - File: `pkg/meta/meta.go` (2,064 → 206 lines, 90% reduction)
+  - Target: Focused files per functional area
+  - [x] `meta_crud.go` (850 lines) - CRUD operations for tables, databases, policies, sequences
+  - [x] `meta_query.go` (608 lines) - listing/querying metadata (tables, databases, policies)
+  - [x] `meta_history.go` (482 lines) - DDL history and schema diff operations
+
+- [x] **executor/index_merge_reader.go decomposition** - Extract worker and intersection logic
+  - File: `pkg/executor/index_merge_reader.go` (2,057 → 599 lines, 71% reduction)
+  - Target: Focused files per functional area
+  - [x] `index_merge_reader_worker.go` (731 lines) - index merge worker, partial task execution
+  - [x] `index_merge_reader_intersect.go` (807 lines) - intersection logic, hash-based intersection
+
+- [x] **types/mydecimal.go decomposition** - Extract shift/round, convert, and arithmetic
+  - File: `pkg/types/mydecimal.go` (2,515 → 646 lines, 74% reduction)
+  - Target: Focused files per functional area
+  - [x] `mydecimal_shift_round.go` (539 lines) - shift, round, truncate operations
+  - [x] `mydecimal_convert.go` (588 lines) - string/int/float conversion
+  - [x] `mydecimal_arithmetic.go` (804 lines) - add, subtract, multiply, divide
+
+- [x] **store/copr/coprocessor.go decomposition** - Extract handler and batch/cache logic
+  - File: `pkg/store/copr/coprocessor.go` (2,904 → 1,912 lines, 34% reduction)
+  - Target: Focused files per functional area
+  - [x] `coprocessor_handler.go` (679 lines) - handleTask, handleTaskOnce, logTimeCopTask
+  - [x] `coprocessor_batch_cache.go` (413 lines) - handleBatchCopResponse, handleLockErr, buildCacheKey
+
+- [x] **types/time.go decomposition** - Extract parsing, StrToDate, and interval functions
+  - File: `pkg/types/time.go` (3,546 → 1,936 lines, 45% reduction)
+  - Target: Focused files per functional area
+  - [x] `time_parse.go` (574 lines) - TimestampDiff, ParseDateFormat, GetTimezone, parseDatetime
+  - [x] `time_str_to_date.go` (644 lines) - StrToDate, format token parsing, DateFSP
+  - [x] `time_interval.go` (473 lines) - ExtractDatetimeNum, ParseDurationValue, IsClockUnit
+
+- [x] **executor/distsql.go decomposition** - Extract index and table worker logic
+  - File: `pkg/executor/distsql.go` (1,988 → 1,170 lines, 41% reduction)
+  - Target: Focused files per functional area
+  - [x] `distsql_index_worker.go` (411 lines) - indexWorker struct, fetchHandles, buildTableTask
+  - [x] `distsql_table_worker.go` (490 lines) - tableWorker struct, executeTask, IndexLookUpRunTimeStats
+
+- [x] **statistics/histogram.go decomposition** - Extract merge and estimation logic
+  - File: `pkg/statistics/histogram.go` (1,993 → 1,244 lines, 38% reduction)
+  - Target: Focused files per functional area
+  - [x] `histogram_merge.go` (545 lines) - bucket4Merging, MergePartitionHist2GlobalHist
+  - [x] `histogram_estimation.go` (259 lines) - calculateLeftOverlapPercent, OutOfRangeRowCount
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -398,3 +443,10 @@ Last updated: 2026-02-19 (misc, modify_column, cast_vec, partition_processor, lo
 - [x] **expression/builtin_cast_vec.go decomposition** - 2026-02-19 - Split into 3 focused files: `builtin_cast_vec_part1.go` (742), `builtin_cast_vec_part2.go` (669), `builtin_cast_vec_part3.go` (722). Reduced builtin_cast_vec.go from 2,080 to 16 lines (99% reduction).
 - [x] **planner/core/rule/rule_partition_processor.go decomposition** - 2026-02-19 - Split into 2 focused files: `rule_partition_hash_list.go` (784), `rule_partition_range.go` (1,269). Reduced rule_partition_processor.go from 2,144 to 145 lines (93% reduction).
 - [x] **planner/core/operator/logicalop/logical_join.go decomposition** - 2026-02-19 - Split into 3 focused files: `logical_join_stats.go` (655), `logical_join_fd.go` (665), `logical_join_rewrite.go` (837). Reduced logical_join.go from 2,172 to 105 lines (95% reduction).
+- [x] **meta/meta.go decomposition** - 2026-02-19 - Split into 3 focused files: `meta_crud.go` (850), `meta_query.go` (608), `meta_history.go` (482). Reduced meta.go from 2,064 to 206 lines (90% reduction).
+- [x] **executor/index_merge_reader.go decomposition** - 2026-02-19 - Split into 2 focused files: `index_merge_reader_worker.go` (731), `index_merge_reader_intersect.go` (807). Reduced index_merge_reader.go from 2,057 to 599 lines (71% reduction).
+- [x] **types/mydecimal.go decomposition** - 2026-02-19 - Split into 3 focused files: `mydecimal_shift_round.go` (539), `mydecimal_convert.go` (588), `mydecimal_arithmetic.go` (804). Reduced mydecimal.go from 2,515 to 646 lines (74% reduction).
+- [x] **store/copr/coprocessor.go decomposition** - 2026-02-19 - Split into 2 focused files: `coprocessor_handler.go` (679), `coprocessor_batch_cache.go` (413). Reduced coprocessor.go from 2,904 to 1,912 lines (34% reduction).
+- [x] **types/time.go decomposition** - 2026-02-19 - Split into 3 focused files: `time_parse.go` (574), `time_str_to_date.go` (644), `time_interval.go` (473). Reduced time.go from 3,546 to 1,936 lines (45% reduction).
+- [x] **executor/distsql.go decomposition** - 2026-02-19 - Split into 2 focused files: `distsql_index_worker.go` (411), `distsql_table_worker.go` (490). Reduced distsql.go from 1,988 to 1,170 lines (41% reduction).
+- [x] **statistics/histogram.go decomposition** - 2026-02-19 - Split into 2 focused files: `histogram_merge.go` (545), `histogram_estimation.go` (259). Reduced histogram.go from 1,993 to 1,244 lines (38% reduction).
