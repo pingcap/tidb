@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-18 (string_vec, time_vec, util, math, task, tikv_handler, preprocess decompositions)
+Last updated: 2026-02-19 (datum, tablecodec, builtin_json, builtin_time further decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -187,12 +187,15 @@ Last updated: 2026-02-18 (string_vec, time_vec, util, math, task, tikv_handler, 
   - [x] `conn_query.go` (913 lines) - query handling, result set writing
 
 - [x] **expression/builtin_time.go decomposition** - Extract time function groups
-  - File: `pkg/expression/builtin_time.go` (7,260 → 2,050 lines, 72% reduction)
+  - File: `pkg/expression/builtin_time.go` (7,260 → 229 lines, 97% reduction)
   - [x] `builtin_time_extract.go` (956 lines) - date field extractors (HOUR, MONTH, WEEK, YEAR, etc.)
   - [x] `builtin_time_current.go` (817 lines) - SYSDATE, NOW, CURRENT_DATE/TIME, UTC_*, EXTRACT
   - [x] `builtin_time_arith.go` (1,392 lines) - baseDateArithmetical, DATE_ADD/DATE_SUB
   - [x] `builtin_time_timestamp.go` (620 lines) - TIMESTAMPDIFF, UNIX_TIMESTAMP, TIMESTAMP
   - [x] `builtin_time_addtime.go` (1,564 lines) - ADDTIME/SUBTIME, CONVERT_TZ, MAKE_DATE/TIME
+  - [x] `builtin_time_diff.go` (597 lines) - date/dateLiteral/dateDiff, timeDiff with 8 typed sigs
+  - [x] `builtin_time_format.go` (722 lines) - fromUnixTime, getFormat, strToDate, sysDate, addTime, timeFormat
+  - [x] `builtin_time_misc.go` (585 lines) - toDays, toSeconds, utcTime, lastDay, tidbParseTso, tidbBoundedStaleness
 
 - [x] **expression/builtin_string.go decomposition** - Extract string function groups
   - File: `pkg/expression/builtin_string.go` (4,421 → 175 lines, 96% reduction)
@@ -265,6 +268,24 @@ Last updated: 2026-02-18 (string_vec, time_vec, util, math, task, tikv_handler, 
   - File: `pkg/planner/core/preprocess.go` (2,197 → 707 lines, 68% reduction)
   - [x] `preprocess_check.go` (990 lines) - grammar validation and column/index checks
   - [x] `preprocess_resolve.go` (557 lines) - table resolution, stale read, alias checker
+
+- [x] **types/datum.go decomposition** - Extract compare, convert, and factory functions
+  - File: `pkg/types/datum.go` (2,760 → 1,091 lines, 60% reduction)
+  - [x] `datum_compare.go` (349 lines) - Equals, Compare, and all type-specific comparers
+  - [x] `datum_convert.go` (883 lines) - ConvertTo dispatcher and all type-specific converters
+  - [x] `datum_factory.go` (518 lines) - NewDatum constructors, MakeDatums, SortDatums, utilities
+
+- [x] **tablecodec/tablecodec.go decomposition** - Extract key/row, index, and genindex functions
+  - File: `pkg/tablecodec/tablecodec.go` (2,050 → 74 lines, 96% reduction)
+  - [x] `tablecodec_keyrow.go` (654 lines) - EncodeRowKey, DecodeRecordKey, EncodeRow, DecodeRow, Unflatten
+  - [x] `tablecodec_index.go` (539 lines) - EncodeIndexSeekKey, DecodeIndexKV, DecodeIndexHandle, GenTablePrefix
+  - [x] `tablecodec_genindex.go` (856 lines) - GenIndexKey, TempIndexValue, GenIndexValuePortal, TruncateIndexValues
+
+- [x] **expression/builtin_json.go decomposition** - Extract JSON function groups
+  - File: `pkg/expression/builtin_json.go` (2,138 → 76 lines, 96% reduction)
+  - [x] `builtin_json_basic.go` (742 lines) - jsonType, jsonExtract, jsonUnquote, jsonSet, jsonInsert, jsonRemove, jsonObject, jsonArray
+  - [x] `builtin_json_search.go` (722 lines) - jsonContainsPath, jsonMemberOf, jsonContains, jsonOverlaps, jsonValid, jsonArrayAppend
+  - [x] `builtin_json_inspect.go` (665 lines) - jsonPretty, jsonQuote, jsonSearch, jsonDepth, jsonKeys, jsonLength, jsonSchemaValid
 
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
@@ -339,3 +360,7 @@ Last updated: 2026-02-18 (string_vec, time_vec, util, math, task, tikv_handler, 
 - [x] **planner/core/task.go decomposition** - 2026-02-18 - Split into 3 focused files: `task_join.go` (575), `task_limit_topn.go` (870), `task_operators.go` (838). Reduced task.go from 2,241 to 30 lines (99% reduction).
 - [x] **server/handler/tikvhandler/tikv_handler.go decomposition** - 2026-02-18 - Split into 3 focused files: `tikv_handler_settings.go` (738), `tikv_handler_schema.go` (706), `tikv_handler_region.go` (848). Original file fully replaced.
 - [x] **planner/core/preprocess.go decomposition** - 2026-02-18 - Split into 2 focused files: `preprocess_check.go` (990), `preprocess_resolve.go` (557). Reduced preprocess.go from 2,197 to 707 lines (68% reduction).
+- [x] **types/datum.go decomposition** - 2026-02-19 - Split into 3 focused files: `datum_compare.go` (349), `datum_convert.go` (883), `datum_factory.go` (518). Reduced datum.go from 2,760 to 1,091 lines (60% reduction).
+- [x] **tablecodec/tablecodec.go decomposition** - 2026-02-19 - Split into 3 focused files: `tablecodec_keyrow.go` (654), `tablecodec_index.go` (539), `tablecodec_genindex.go` (856). Reduced tablecodec.go from 2,050 to 74 lines (96% reduction).
+- [x] **expression/builtin_json.go decomposition** - 2026-02-19 - Split into 3 focused files: `builtin_json_basic.go` (742), `builtin_json_search.go` (722), `builtin_json_inspect.go` (665). Reduced builtin_json.go from 2,138 to 76 lines (96% reduction).
+- [x] **expression/builtin_time.go further decomposition** - 2026-02-19 - Split remaining 2,050 lines into 3 additional files: `builtin_time_diff.go` (597), `builtin_time_format.go` (722), `builtin_time_misc.go` (585). Reduced builtin_time.go from 2,050 to 229 lines (89% reduction, 97% total from original 7,260).
