@@ -982,6 +982,55 @@ func TestBootstrapSQLWithExtension(t *testing.T) {
 	dom.Close()
 }
 
+func TestInitSQLFileSelectDrain(t *testing.T) {
+	// Regression test for #63450: SELECT statements in --initialize-sql-file
+	// must have their result sets drained. Otherwise, functions with side
+	// effects called via SELECT (e.g. audit_log_create_filter) are never
+	// executed because their evaluation happens lazily during row iteration.
+	initializeSQLFile, err := os.CreateTemp("", "init-select-drain.sql")
+	require.NoError(t, err)
+	defer func() {
+		path := initializeSQLFile.Name()
+		err = initializeSQLFile.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+	// The init file mixes DDL, DML, and SELECT statements. The SELECT
+	// statements produce result sets that must be drained before closing.
+	_, err = initializeSQLFile.WriteString(
+		"CREATE TABLE test.init_drain (id INT, val VARCHAR(64));\n" +
+			"INSERT INTO test.init_drain VALUES (1, 'before');\n" +
+			"SELECT * FROM test.init_drain;\n" +
+			"SELECT 1;\n" +
+			"INSERT INTO test.init_drain VALUES (2, 'after');\n")
+	require.NoError(t, err)
+
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = initializeSQLFile.Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	se := session.CreateSessionAndSetID(t, store)
+	ctx := context.Background()
+	// Both rows should exist, confirming the SELECT result sets were
+	// properly drained and did not interfere with subsequent statements.
+	r := session.MustExecToRecodeSet(t, se, `SELECT COUNT(*) FROM test.init_drain`)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, int64(2), req.GetRow(0).GetInt64(0))
+	require.NoError(t, r.Close())
+}
+
 func TestErrorHappenWhileInit(t *testing.T) {
 	// 1. parser error in sql file (1.sql) makes the bootstrap panic
 	// 2. other errors in sql file (2.sql) will be ignored
