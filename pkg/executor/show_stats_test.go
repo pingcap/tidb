@@ -529,3 +529,29 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, "merge global stats for test.t2's index idx", rows[0][3])
 }
+
+func TestShowStatsTopNVarcharCollation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) collate utf8mb4_0900_ai_ci, b varchar(10) collate utf8mb4_bin, index idx_a (a), index idx_b(b))")
+	tk.MustExec("insert into t values ('1','1'), ('1','1'), ('1','1'), ('2','2')")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("analyze table t all columns with 1 topn, 2 buckets")
+	// Wait for stats to be loaded.
+	tk.MustExec("select * from t where a = '9'")
+	tk.MustExec("select * from t where b = '9'")
+	// Before the fix, column 'a' with utf8mb4_0900_ai_ci showed '>' because
+	// codec.DecodeRange misinterpreted the collation sort key bytes.
+	// Now collation sort keys are decoded back to human-readable representative
+	// strings using a reverse lookup table. For case-insensitive collations the
+	// decoded value may differ in case from the original (e.g. 'a' -> 'A').
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 1 3",
+		"test t  b 0 1 3",
+		"test t  idx_a 1 1 3",
+		"test t  idx_b 1 1 3",
+	))
+}

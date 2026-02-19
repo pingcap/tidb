@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -332,9 +334,15 @@ func IsColumnAnalyzedOrSynthesized(statsVer int64, ndv int64, nullCount int64) b
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
-func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {
+// The optional collations parameter provides per-column collation names, used to decode
+// non-printable collation sort keys into human-readable representative strings.
+func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte, collations ...string) (string, error) {
 	if idxCols == 0 {
-		return value.ToString()
+		var coll string
+		if len(collations) > 0 {
+			coll = collations[0]
+		}
+		return datumToDisplayString(value, coll)
 	}
 	var loc *time.Location
 	if vars != nil {
@@ -347,8 +355,137 @@ func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, 
 	if len(remained) > 0 {
 		decodedVals = append(decodedVals, types.NewBytesDatum(remained))
 	}
-	str, err := types.DatumsToString(decodedVals, true)
-	return str, err
+	return datumsToDisplayString(decodedVals, collations)
+}
+
+// datumToDisplayString converts a datum to a display string, formatting
+// non-printable byte values (e.g. collation sort keys) as human-readable strings
+// when possible, or as hex otherwise.
+func datumToDisplayString(d *types.Datum, collation string) (string, error) {
+	switch d.Kind() {
+	case types.KindNull:
+		return "NULL", nil
+	case types.KindMinNotNull:
+		return "-inf", nil
+	case types.KindMaxValue:
+		return "+inf", nil
+	}
+	s, err := d.ToString()
+	if err != nil {
+		return s, err
+	}
+	if (d.Kind() == types.KindBytes || d.Kind() == types.KindString) && !isPrintableUTF8(s) {
+		if decoded, ok := tryDecodeSortKey(d.GetBytes(), collation); ok {
+			return decoded, nil
+		}
+		return fmt.Sprintf("0x%X", d.GetBytes()), nil
+	}
+	return s, nil
+}
+
+// datumsToDisplayString converts decoded datums to a display string,
+// formatting non-printable byte values as human-readable strings when possible,
+// or as hex otherwise.
+func datumsToDisplayString(datums []types.Datum, collations []string) (string, error) {
+	if len(datums) == 1 {
+		var coll string
+		if len(collations) > 0 {
+			coll = collations[0]
+		}
+		return datumToDisplayString(&datums[0], coll)
+	}
+	strs := make([]string, 0, len(datums))
+	for i := range datums {
+		var coll string
+		if i < len(collations) {
+			coll = collations[i]
+		}
+		s, err := datumToDisplayString(&datums[i], coll)
+		if err != nil {
+			return "", err
+		}
+		strs = append(strs, s)
+	}
+	return "(" + strings.Join(strs, ", ") + ")", nil
+}
+
+// sortKeyReverseMaps caches per-collation reverse lookup tables mapping
+// 2-byte sort key weights back to representative runes.
+var sortKeyReverseMaps sync.Map // collation name -> map[uint16]rune
+
+// getSortKeyReverseMap returns (or lazily builds) a reverse lookup table for the
+// given collation, mapping each 2-byte sort key weight to a representative rune.
+func getSortKeyReverseMap(coll string) map[uint16]rune {
+	if v, ok := sortKeyReverseMaps.Load(coll); ok {
+		return v.(map[uint16]rune)
+	}
+	collator := collate.GetCollator(coll)
+	m := make(map[uint16]rune)
+	// Iterate over common character ranges and record the first rune that
+	// produces each single-uint16 weight. This covers ASCII, Latin-1,
+	// Latin Extended, Greek, and Cyrillic — enough for most practical stats values.
+	for _, r := range [2]rune{0x0020, 0x00A0} {
+		end := r + 0x0160 // covers 0x0020-0x017F and 0x00A0-0x01FF
+		if r == 0x0020 {
+			end = 0x007E // ASCII printable
+		}
+		if r == 0x00A0 {
+			end = 0x04FF // Latin Extended through Cyrillic
+		}
+		for ; r <= end; r++ {
+			key := collator.KeyWithoutTrimRightSpace(string(r))
+			if len(key) == 2 {
+				w := uint16(key[0])<<8 | uint16(key[1])
+				if _, exists := m[w]; !exists {
+					m[w] = r
+				}
+			}
+		}
+	}
+	sortKeyReverseMaps.Store(coll, m)
+	return m
+}
+
+// tryDecodeSortKey attempts to decode collation sort key bytes into a human-readable
+// representative string using a reverse lookup table. Each pair of bytes is looked up
+// as a uint16 weight in the table to find a representative rune. The result is verified
+// by re-encoding with the collation to ensure correctness.
+// The decoded string may differ from the original value (e.g. 'a' -> 'A' for case-insensitive
+// collations) but is a valid representative that produces the same sort key.
+func tryDecodeSortKey(sortKeyBytes []byte, coll string) (string, bool) {
+	if len(sortKeyBytes) == 0 || len(sortKeyBytes)%2 != 0 || coll == "" {
+		return "", false
+	}
+	reverseMap := getSortKeyReverseMap(coll)
+	runes := make([]rune, 0, len(sortKeyBytes)/2)
+	for i := 0; i < len(sortKeyBytes); i += 2 {
+		w := uint16(sortKeyBytes[i])<<8 | uint16(sortKeyBytes[i+1])
+		r, ok := reverseMap[w]
+		if !ok {
+			return "", false
+		}
+		runes = append(runes, r)
+	}
+	candidate := string(runes)
+	collator := collate.GetCollator(coll)
+	if bytes.Equal(collator.KeyWithoutTrimRightSpace(candidate), sortKeyBytes) {
+		return candidate, true
+	}
+	return "", false
+}
+
+// isPrintableUTF8 checks whether a string is valid UTF-8 and contains
+// only printable (non-control) characters.
+func isPrintableUTF8(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // BucketToString change the given bucket to string format.
