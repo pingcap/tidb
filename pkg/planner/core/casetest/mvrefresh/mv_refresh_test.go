@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildRefreshMaterializedViewImplementFastBuildsMVDeltaMergePlan(t *testing.T) {
+func TestBuildRefreshMVFastPlan(t *testing.T) {
 	sctx := plannercore.MockContext()
 	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
 	savedStore := sctx.Store
@@ -152,7 +152,7 @@ func TestBuildRefreshMaterializedViewImplementFastBuildsMVDeltaMergePlan(t *test
 	)
 }
 
-func TestExplainRefreshMaterializedViewImplementFastOutputsFullPlanTree(t *testing.T) {
+func TestExplainRefreshMVFastPlanTree(t *testing.T) {
 	sctx := plannercore.MockContext()
 	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
 	savedStore := sctx.Store
@@ -244,7 +244,7 @@ func TestExplainRefreshMaterializedViewImplementFastOutputsFullPlanTree(t *testi
 	}, explain.Rows)
 }
 
-func TestBuildRefreshMaterializedViewImplementFastSumNotNullDoesNotRequireCountExpr(t *testing.T) {
+func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 	sctx := plannercore.MockContext()
 	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
 	savedStore := sctx.Store
