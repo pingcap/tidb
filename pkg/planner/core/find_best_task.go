@@ -605,7 +605,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(self)
+		pass := admitIndexJoinInnerChildPattern(self, prop.IndexJoinProp)
 		if !pass {
 			// even enforce hint can not work with this.
 			return base.InvalidTask, nil
@@ -1184,12 +1184,19 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 	// Check if index columns can match ORDER BY columns (allowing prefix index)
 	//
 	// NOTE: We use path.Index.Columns to get the actual index definition columns count,
-	// because path.IdxCols may include additional handle columns (e.g., primary key `id`)
+	// because path.FullIdxCols may include additional handle columns (e.g., primary key `id`)
 	// appended for non-unique indexes on tables with PKIsHandle.
 	// For example, for `index idx_name_prefix (name(10))` on a table with `id int primary key`,
-	// path.IdxCols = [name, id] but path.Index.Columns only contains [name].
+	// path.FullIdxCols = [name, id] but path.Index.Columns only contains [name].
 	// We should only consider the actual index definition columns for partial order matching.
 	indexColCount := len(path.Index.Columns)
+
+	// Constraint 0: The full idx cols length must >= all the index definition columns length, no matter column is pruned or not
+	// Theoretically, the preceding function logic ”IndexInfo2FullCols“ can guarantee that this constraint will always hold.
+	// Therefore, this is merely a defensive check to prevent the array from going out of bounds in the subsequent for loop.
+	if len(path.FullIdxCols) < indexColCount || len(path.FullIdxColLens) < indexColCount {
+		return emptyResult
+	}
 
 	// Constraint 1: The number of index definition columns must be <= the number of ORDER BY columns
 	if indexColCount > len(sortItems) {
@@ -1209,13 +1216,17 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 
 	// Only iterate over the actual index definition columns, not the appended handle columns
 	for i := range indexColCount {
+		idxCol := path.FullIdxCols[i]
+		if idxCol == nil {
+			return emptyResult
+		}
 		// check if the same column
-		if !orderByCols[i].EqualColumn(path.IdxCols[i]) {
+		if !orderByCols[i].EqualColumn(idxCol) {
 			return emptyResult
 		}
 
 		// meet prefix index column, match termination
-		if path.IdxColLens[i] != types.UnspecifiedLength {
+		if path.FullIdxColLens[i] != types.UnspecifiedLength {
 			// If we meet a prefix column but it's not the last index definition column, it's not supported.
 			// e.g. prefix(a), b cannot provide partial order for ORDER BY a, b.
 			if i != indexColCount-1 {
@@ -1225,8 +1236,8 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 			// This prefix index column can provide partial order, but subsequent columns cannot match.
 			return property.PartialOrderMatchResult{
 				Matched:   true,
-				PrefixCol: path.IdxCols[i],
-				PrefixLen: path.IdxColLens[i],
+				PrefixCol: idxCol,
+				PrefixLen: path.FullIdxColLens[i],
 			}
 		}
 	}
@@ -1813,7 +1824,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(ds)
+		pass := admitIndexJoinInnerChildPattern(ds, prop.IndexJoinProp)
 		if !pass {
 			// even enforce hint can not work with this.
 			return base.InvalidTask, nil
