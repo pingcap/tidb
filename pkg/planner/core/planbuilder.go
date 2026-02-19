@@ -3823,7 +3823,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	return p, nil
 }
 
-func (b *PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
+func (*PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
 	if stmt == nil || stmt.RefreshStmt == nil || stmt.RefreshStmt.ViewName == nil {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt/ViewName")
 	}
