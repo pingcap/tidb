@@ -20,7 +20,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"math"
-	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -75,11 +73,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
 
@@ -130,125 +124,6 @@ var (
 	ForcePartitionRegionThreshold = 100
 )
 
-// importClientFactory is factory to create new import client for specific store.
-type importClientFactory interface {
-	create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error)
-	close()
-}
-
-type importClientFactoryImpl struct {
-	conns           *common.GRPCConns
-	splitCli        split.SplitClient
-	tls             *common.TLS
-	tcpConcurrency  int
-	compressionType config.CompressionType
-}
-
-func newImportClientFactoryImpl(
-	splitCli split.SplitClient,
-	tls *common.TLS,
-	tcpConcurrency int,
-	compressionType config.CompressionType,
-) *importClientFactoryImpl {
-	return &importClientFactoryImpl{
-		conns:           common.NewGRPCConns(),
-		splitCli:        splitCli,
-		tls:             tls,
-		tcpConcurrency:  tcpConcurrency,
-		compressionType: compressionType,
-	}
-}
-
-func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	store, err := f.splitCli.GetStore(ctx, storeID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var opts []grpc.DialOption
-	if f.tls.TLSConfig() != nil {
-		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig())))
-	} else {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	}
-	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
-	defer cancel()
-
-	bfConf := backoff.DefaultConfig
-	bfConf.MaxDelay = gRPCBackOffMaxDelay
-	// we should use peer address for tiflash. for tikv, peer address is empty
-	addr := store.GetPeerAddress()
-	if addr == "" {
-		addr = store.GetAddress()
-	}
-	opts = append(opts,
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(unlimitedRPCRecvMsgSize)),
-		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                gRPCKeepAliveTime,
-			Timeout:             gRPCKeepAliveTimeout,
-			PermitWithoutStream: true,
-		}),
-	)
-	switch f.compressionType {
-	case config.CompressionNone:
-		// do nothing
-	case config.CompressionGzip:
-		// Use custom compressor/decompressor to speed up compression/decompression.
-		// Note that here we don't use grpc.UseCompressor option although it's the recommended way.
-		// Because gprc-go uses a global registry to store compressor/decompressor, we can't make sure
-		// the compressor/decompressor is not registered by other components.
-		opts = append(opts, grpc.WithCompressor(&gzipCompressor{}), grpc.WithDecompressor(&gzipDecompressor{}))
-	default:
-		return nil, common.ErrInvalidConfig.GenWithStack("unsupported compression type %s", f.compressionType)
-	}
-
-	failpoint.Inject("LoggingImportBytes", func() {
-		opts = append(opts, grpc.WithContextDialer(func(ctx context.Context, target string) (net.Conn, error) {
-			conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", target)
-			if err != nil {
-				return nil, err
-			}
-			return &loggingConn{Conn: conn}, nil
-		}))
-	})
-
-	conn, err := grpc.DialContext(ctx, addr, opts...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return conn, nil
-}
-
-func (f *importClientFactoryImpl) getGrpcConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	return f.conns.GetGrpcConn(ctx, storeID, f.tcpConcurrency,
-		func(ctx context.Context) (*grpc.ClientConn, error) {
-			return f.makeConn(ctx, storeID)
-		})
-}
-
-// create creates a new import client for specific store.
-func (f *importClientFactoryImpl) create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
-	conn, err := f.getGrpcConn(ctx, storeID)
-	if err != nil {
-		return nil, err
-	}
-	return sst.NewImportSSTClient(conn), nil
-}
-
-// close closes the factory.
-func (f *importClientFactoryImpl) close() {
-	f.conns.Close()
-}
-
-type loggingConn struct {
-	net.Conn
-}
-
-// Write implements net.Conn.Write
-func (c loggingConn) Write(b []byte) (int, error) {
-	log.L().Debug("import write", zap.Int("bytes", len(b)))
-	return c.Conn.Write(b)
-}
 
 type encodingBuilder struct {
 	metrics *metric.Metrics
@@ -861,140 +736,6 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
-// forceTableSplitRange turns on force_partition_range for importing.
-// See https://github.com/tikv/tikv/pull/18866 for detail.
-// It returns a resetter to turn off.
-func (local *Backend) forceTableSplitRange(ctx context.Context,
-	startKey, endKey kv.Key, stores []*metapb.Store) (resetter func()) {
-	subctx, cancel := context.WithCancel(ctx)
-	var wg util.WaitGroupWrapper
-	clients := make([]sst.ImportSSTClient, 0, len(stores))
-	storeAddrs := make([]string, 0, len(stores))
-	const ttlSecond = uint64(3600) // default 1 hour
-	addReq := &sst.AddPartitionRangeRequest{
-		Range: &sst.Range{
-			Start: startKey,
-			End:   endKey,
-		},
-		TtlSeconds: ttlSecond,
-	}
-	removeReq := &sst.RemovePartitionRangeRequest{
-		Range: &sst.Range{
-			Start: startKey,
-			End:   endKey,
-		},
-	}
-
-	for _, store := range stores {
-		if store.StatusAddress == "" || engine.IsTiFlash(store) {
-			continue
-		}
-		importCli, err := local.importClientFactory.create(subctx, store.Id)
-		if err != nil {
-			tidblogutil.Logger(subctx).Warn("create import client failed", zap.Error(err), zap.String("store", store.StatusAddress))
-			continue
-		}
-		clients = append(clients, importCli)
-		storeAddrs = append(storeAddrs, store.StatusAddress)
-	}
-
-	addTableSplitRange := func() {
-		var (
-			firstErr      error
-			mu            sync.Mutex
-			successStores = make([]string, 0, len(clients))
-			failedStores  = make([]string, 0, len(clients))
-		)
-		concurrency := int(local.WorkerConcurrency.Load())
-		if concurrency <= 0 {
-			concurrency = 1
-		}
-		eg, _ := util.NewErrorGroupWithRecoverWithCtx(subctx)
-		eg.SetLimit(concurrency)
-		for i, c := range clients {
-			client, addr := c, storeAddrs[i]
-			eg.Go(func() error {
-				failpoint.InjectCall("AddPartitionRangeForTable")
-				_, err := client.AddForcePartitionRange(subctx, addReq)
-				mu.Lock()
-				defer mu.Unlock()
-				if err == nil {
-					successStores = append(successStores, addr)
-				} else {
-					failedStores = append(failedStores, addr)
-					if firstErr == nil {
-						firstErr = err
-					}
-				}
-				return nil
-			})
-		}
-		_ = eg.Wait()
-		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
-			zap.Strings("success stores", successStores),
-			zap.Strings("failed stores", failedStores),
-			zap.Error(firstErr),
-		)
-	}
-
-	addTableSplitRange()
-	wg.Run(func() {
-		timeout := time.Duration(ttlSecond) * time.Second / 5 // 12min
-		ticker := time.NewTicker(timeout)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-subctx.Done():
-				return
-			case <-ticker.C:
-				addTableSplitRange()
-			}
-		}
-	})
-
-	resetter = func() {
-		cancel()
-		wg.Wait()
-
-		var (
-			firstErr      error
-			mu            sync.Mutex
-			successStores = make([]string, 0, len(clients))
-			failedStores  = make([]string, 0, len(clients))
-		)
-		concurrency := int(local.WorkerConcurrency.Load())
-		if concurrency <= 0 {
-			concurrency = 1
-		}
-		eg, _ := util.NewErrorGroupWithRecoverWithCtx(ctx)
-		eg.SetLimit(concurrency)
-		for i, c := range clients {
-			client, addr := c, storeAddrs[i]
-			eg.Go(func() error {
-				failpoint.InjectCall("RemovePartitionRangeRequest")
-				_, err := client.RemoveForcePartitionRange(ctx, removeReq)
-				mu.Lock()
-				defer mu.Unlock()
-				if err == nil {
-					successStores = append(successStores, addr)
-				} else {
-					failedStores = append(failedStores, addr)
-					if firstErr == nil {
-						firstErr = err
-					}
-				}
-				return nil
-			})
-		}
-		_ = eg.Wait()
-		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
-			zap.Strings("success stores", successStores),
-			zap.Strings("failed stores", failedStores),
-			zap.Error(firstErr),
-		)
-	}
-	return resetter
-}
 
 func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {
 	ranges := make([]engineapi.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
