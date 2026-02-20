@@ -219,7 +219,27 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		// For example, the schema is `[a, b, physTblID, c]`, `value` is `[v_a, v_b, v_c]`, `outputOffset` is `[0, 1, 2, 3]`
 		// when we want the value of `c`, we should recalculate the offset of `c` by `offset - 1`.
 		if m.physTblIDIdx == i {
-			tid, _, _, _ := tablecodec.DecodeKeyHead(key)
+			// For global indexes, extract the partition ID from the index key/value,
+			// not the table ID from the key head. DecodeKeyHead returns the global
+			// index table ID, not the partition ID.
+			var tid int64
+			if m.index.Global {
+				if !m.index.Unique && m.index.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+					// V2 non-unique global index: partition ID is in the key
+					tid, err = tablecodec.DecodePartitionIDFromGlobalIndexKey(key, len(m.index.Columns))
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					// V0/V1 or unique global index: partition ID is in the value
+					_, tid, err = codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+					if err != nil {
+						return nil, err
+					}
+				}
+			} else {
+				tid, _, _, _ = tablecodec.DecodeKeyHead(key)
+			}
 			ds = append(ds, types.NewIntDatum(tid))
 			continue
 		}
@@ -1000,9 +1020,17 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			continue
 		}
 
-		// filter key/value by partitition id
+		// filter key/value by partition id
 		if iter.index.Global {
-			_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+			var pid int64
+			var err error
+			// For V2+ non-unique global indexes, the partition ID is in the key, not the value.
+			// For unique global indexes or legacy (V0/V1) indexes, partition ID is in the value.
+			if !iter.index.Unique && iter.index.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+				pid, err = tablecodec.DecodePartitionIDFromGlobalIndexKey(key, len(iter.index.Columns))
+			} else {
+				_, pid, err = codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+			}
 			if err != nil {
 				return nil, err
 			}
