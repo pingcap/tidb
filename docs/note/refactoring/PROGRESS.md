@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (Batches 2-12: regexp through lexer_scanners decompositions)
+Last updated: 2026-02-20 (Batches 2-14: regexp through FK cascade AST decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -639,3 +639,9 @@ Last updated: 2026-02-20 (Batches 2-12: regexp through lexer_scanners decomposit
 - [x] **statistics/table.go decomposition** - 2026-02-20 - Extracted `table_memory.go` (170 lines) with TableMemoryUsage, TableCacheItem, ColumnMemUsage, IndexMemUsage types. Reduced table.go from 1,146 to 991 lines (14% reduction).
 - [x] **util/stmtsummary/statement_summary.go decomposition** - 2026-02-20 - Extracted `stmt_summary_stats.go` (240 lines) with stmtSummaryStats.add() method. Reduced statement_summary.go from 1,100 to 879 lines (20% reduction).
 - [x] **parser/lexer.go decomposition** - 2026-02-20 - Extracted `lexer_scanners.go` (300 lines) with token scanner functions (startWithXx/Nn/Bb/Dash/Slash/Star/At, scanIdentifier, scanQuotedIdent). Reduced lexer.go from 1,107 to 827 lines (25% reduction).
+- [x] **ddl/executor_partition.go decomposition** - 2026-02-20 - Extracted `executor_partition_exchange.go` (259 lines) with checkFieldTypeCompatible, checkTiFlashReplicaCompatible, checkTableDefCompatible, checkExchangePartition, ExchangeTablePartition. Reduced executor_partition.go from 1,084 to 856 lines (21% reduction).
+- [x] **executor/simple_user.go decomposition** - 2026-02-20 - Extracted `simple_user_options.go` (236 lines) with loadResourceOptions, whetherSavePasswordHistory, alterUserPasswordLocking, loadOptions, createUserFailedLoginJSON, alterUserFailedLoginJSON, readPasswordLockingInfo, deletePasswordLockingAttribute, isValidatePasswordEnabled. Reduced simple_user.go from 1,065 to 860 lines (19% reduction).
+- [x] **util/ranger/points.go decomposition** - 2026-02-20 - Extracted `points_scalar_builder.go` (440 lines) with buildFromIsTrue, buildFromIsFalse, buildFromIn, newBuildFromPatternLike, buildFromNot, buildFromScalarFunc. Reduced points.go from 1,069 to 656 lines (39% reduction).
+- [x] **expression/builtin_encryption.go decomposition** - 2026-02-20 - Extracted `builtin_encryption_compress.go` (331 lines) with deflate, inflate, compress/uncompress/uncompressedLength/validatePasswordStrength function classes and sigs. Reduced builtin_encryption.go from 1,095 to 789 lines (28% reduction).
+- [x] **util/execdetails/runtime_stats.go decomposition** - 2026-02-20 - Extracted `runtime_stats_commit.go` (279 lines) with RuntimeStatsWithCommit struct, Tp, MergeCommitDetails, Merge, Clone, String, formatBackoff, formatLockKeysDetails. Reduced runtime_stats.go from 1,016 to 762 lines (25% reduction).
+- [x] **executor/foreign_key.go decomposition** - 2026-02-20 - Extracted `foreign_key_cascade_ast.go` (204 lines) with GenCascadeDeleteAST, GenCascadeSetNullAST, GenCascadeUpdateAST, genTableRefsAST, genWhereConditionAst, FKCheckRuntimeStats/FKCascadeRuntimeStats methods. Reduced foreign_key.go from 1,017 to 836 lines (18% reduction).
