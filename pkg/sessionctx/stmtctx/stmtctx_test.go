@@ -515,10 +515,6 @@ func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
 	var buf bytes.Buffer
 	sPseudo.WriteToSlowLog(&buf)
 	out := buf.String()
-	require.Contains(t, out, "t1:")
-	require.Contains(t, out, "stats_meta_version=pseudo")
-	require.Contains(t, out, "realtime_count=1000")
-	require.Contains(t, out, "modify_count=100")
 	// pseudo returns early, so no "[index][column]" part
 	require.NotContains(t, out, "][")
 	require.Equal(t, "t1:stats_meta_version=pseudo[realtime_count=1000;modify_count=100]", out)
