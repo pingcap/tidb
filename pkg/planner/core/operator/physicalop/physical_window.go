@@ -232,23 +232,33 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i := range len(p.Schema().Columns) - len(p.WindowFuncDescs) {
+	if childSchema := p.Children()[0].Schema(); childSchema != nil && p.Schema().Len() >= childSchema.Len() {
+		for i := range childSchema.Len() {
+			p.Schema().Columns[i] = childSchema.Columns[i]
+		}
+	}
+	for i := range p.Schema().Columns[:len(p.Schema().Columns)-len(p.WindowFuncDescs)] {
 		col := p.Schema().Columns[i]
 		newCol, err := col.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
+			newCol, ok := tryResolveWindowColumn(p.SCtx().GetExprCtx().GetEvalCtx(), col, p.Children()[0].Schema())
+			if ok {
+				p.Schema().Columns[i] = newCol
+				continue
+			}
 			return err
 		}
 		p.Schema().Columns[i] = newCol.(*expression.Column)
 	}
 	for i, item := range p.PartitionBy {
-		newCol, err := item.Col.ResolveIndices(p.Children()[0].Schema())
+		newCol, err := resolveWindowColumn(p.SCtx().GetExprCtx().GetEvalCtx(), item.Col, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
 	}
 	for i, item := range p.OrderBy {
-		newCol, err := item.Col.ResolveIndices(p.Children()[0].Schema())
+		newCol, err := resolveWindowColumn(p.SCtx().GetExprCtx().GetEvalCtx(), item.Col, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -256,7 +266,7 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	}
 	for _, desc := range p.WindowFuncDescs {
 		for i, arg := range desc.Args {
-			desc.Args[i], err = arg.ResolveIndices(p.Children()[0].Schema())
+			desc.Args[i], err = resolveWindowExpr(p.SCtx().GetExprCtx().GetEvalCtx(), arg, p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
@@ -264,19 +274,75 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	}
 	if p.Frame != nil {
 		for i := range p.Frame.Start.CalcFuncs {
-			p.Frame.Start.CalcFuncs[i], err = p.Frame.Start.CalcFuncs[i].ResolveIndices(p.Children()[0].Schema())
+			p.Frame.Start.CalcFuncs[i], err = resolveWindowExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.Frame.Start.CalcFuncs[i], p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
 		}
 		for i := range p.Frame.End.CalcFuncs {
-			p.Frame.End.CalcFuncs[i], err = p.Frame.End.CalcFuncs[i].ResolveIndices(p.Children()[0].Schema())
+			p.Frame.End.CalcFuncs[i], err = resolveWindowExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.Frame.End.CalcFuncs[i], p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func resolveWindowExpr(evalCtx expression.EvalContext, expr expression.Expression, schema *expression.Schema) (expression.Expression, error) {
+	newExpr, err := expr.ResolveIndices(schema)
+	if err == nil {
+		return newExpr, nil
+	}
+	col, ok := expr.(*expression.Column)
+	if !ok {
+		return nil, err
+	}
+	newCol, ok := tryResolveWindowColumn(evalCtx, col, schema)
+	if !ok {
+		return nil, err
+	}
+	return newCol, nil
+}
+
+func resolveWindowColumn(evalCtx expression.EvalContext, col *expression.Column, schema *expression.Schema) (expression.Expression, error) {
+	newCol, err := col.ResolveIndices(schema)
+	if err == nil {
+		return newCol, nil
+	}
+	fallback, ok := tryResolveWindowColumn(evalCtx, col, schema)
+	if !ok {
+		return nil, err
+	}
+	return fallback, nil
+}
+
+func tryResolveWindowColumn(evalCtx expression.EvalContext, col *expression.Column, schema *expression.Schema) (*expression.Column, bool) {
+	if schema == nil || col == nil {
+		return nil, false
+	}
+	if newCol, ok := col.ResolveIndicesByVirtualExpr(evalCtx, schema); ok {
+		return newCol.(*expression.Column), true
+	}
+	if col.ID != 0 {
+		for _, c := range schema.Columns {
+			if c.ID == col.ID {
+				newCol := col.Clone().(*expression.Column)
+				newCol.Index = c.Index
+				return newCol, true
+			}
+		}
+	}
+	if col.OrigName != "" {
+		for _, c := range schema.Columns {
+			if c.OrigName == col.OrigName {
+				newCol := col.Clone().(*expression.Column)
+				newCol.Index = c.Index
+				return newCol, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // Attach2Task implements the PhysicalPlan interface.
