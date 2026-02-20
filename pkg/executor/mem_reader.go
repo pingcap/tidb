@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	transaction "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -315,93 +314,6 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 	}
 }
 
-// txnMemBufferIter implements a kv.Iterator, it is an iterator that combines the membuffer data and snapshot data.
-type txnMemBufferIter struct {
-	sctx       sessionctx.Context
-	kvRanges   []kv.KeyRange
-	cacheTable kv.MemBuffer
-	txn        kv.Transaction
-	idx        int
-	curr       kv.Iterator
-	reverse    bool
-	err        error
-}
-
-func newTxnMemBufferIter(sctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool) (*txnMemBufferIter, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &txnMemBufferIter{
-		sctx:       sctx,
-		txn:        txn,
-		kvRanges:   kvRanges,
-		cacheTable: cacheTable,
-		reverse:    reverse,
-	}, nil
-}
-
-func (iter *txnMemBufferIter) Valid() bool {
-	if iter.curr != nil {
-		if iter.curr.Valid() {
-			return true
-		}
-		iter.idx++
-	}
-	for iter.idx < len(iter.kvRanges) {
-		rg := iter.kvRanges[iter.idx]
-		var tmp kv.Iterator
-		if !iter.reverse {
-			tmp = iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-		} else {
-			tmp = iter.txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
-		}
-		snapCacheIter, err := getSnapIter(iter.sctx, iter.cacheTable, rg, iter.reverse)
-		if err != nil {
-			iter.err = errors.Trace(err)
-			return true
-		}
-		if snapCacheIter != nil {
-			tmp, err = transaction.NewUnionIter(tmp, snapCacheIter, iter.reverse)
-			if err != nil {
-				iter.err = errors.Trace(err)
-				return true
-			}
-		}
-		iter.curr = tmp
-		if iter.curr.Valid() {
-			return true
-		}
-		iter.idx++
-	}
-	return false
-}
-
-func (iter *txnMemBufferIter) Next() error {
-	if iter.err != nil {
-		return errors.Trace(iter.err)
-	}
-	if iter.curr != nil {
-		if iter.curr.Valid() {
-			return iter.curr.Next()
-		}
-	}
-	return nil
-}
-
-func (iter *txnMemBufferIter) Key() kv.Key {
-	return iter.curr.Key()
-}
-
-func (iter *txnMemBufferIter) Value() []byte {
-	return iter.curr.Value()
-}
-
-func (iter *txnMemBufferIter) Close() {
-	if iter.curr != nil {
-		iter.curr.Close()
-	}
-}
 
 func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
 	// If we need an extra to keep order, txnMemBufferIter is not supported.
@@ -580,74 +492,6 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 	return false
 }
 
-type processKVFunc func(key, value []byte) error
-
-func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool, fn processKVFunc) error {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
-	for _, rg := range kvRanges {
-		var iter kv.Iterator
-		if !reverse {
-			iter = txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-		} else {
-			iter = txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
-		}
-		snapCacheIter, err := getSnapIter(ctx, cacheTable, rg, reverse)
-		if err != nil {
-			return err
-		}
-		if snapCacheIter != nil {
-			iter, err = transaction.NewUnionIter(iter, snapCacheIter, reverse)
-			if err != nil {
-				return err
-			}
-		}
-		for ; iter.Valid(); err = iter.Next() {
-			if err != nil {
-				return err
-			}
-			// check whether the key was been deleted.
-			if len(iter.Value()) == 0 {
-				continue
-			}
-			err = fn(iter.Key(), iter.Value())
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange, reverse bool) (snapCacheIter kv.Iterator, err error) {
-	var cacheIter, snapIter kv.Iterator
-	tempTableData := ctx.GetSessionVars().TemporaryTableData
-	if tempTableData != nil {
-		if !reverse {
-			snapIter, err = tempTableData.Iter(rg.StartKey, rg.EndKey)
-		} else {
-			snapIter, err = tempTableData.IterReverse(rg.EndKey, rg.StartKey)
-		}
-		if err != nil {
-			return nil, err
-		}
-		snapCacheIter = snapIter
-	} else if cacheTable != nil {
-		if !reverse {
-			cacheIter, err = cacheTable.Iter(rg.StartKey, rg.EndKey)
-		} else {
-			cacheIter, err = cacheTable.IterReverse(rg.EndKey, rg.StartKey)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		snapCacheIter = cacheIter
-	}
-	return snapCacheIter, nil
-}
 
 func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 	handles := make([]kv.Handle, 0, m.addedRowsLen)
