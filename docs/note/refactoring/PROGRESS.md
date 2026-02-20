@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (insert_common, slow_query, batch_coprocessor decompositions)
+Last updated: 2026-02-20 (field_type, stmtctx, detacher, import, checkpoints decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -459,6 +459,34 @@ Last updated: 2026-02-20 (insert_common, slow_query, batch_coprocessor decomposi
   - Target: Focused files per functional area
   - [x] `batch_coprocessor_balance.go` (192 lines) - region balancing between TiFlash stores
   - [x] `batch_coprocessor_task.go` (382 lines) - task execution, response handling, and PD dispatch
+
+- [x] **types/field_type.go decomposition** - Extract merge rules and modify functions
+  - File: `pkg/types/field_type.go` (1,626 → 380 lines, 77% reduction)
+  - Target: Focused files per functional area
+  - [x] `field_type_merge_rules.go` (1,078 lines) - mergeFieldType, mergeTypeFlag, fieldTypeMergeRules table
+  - [x] `field_type_modify.go` (166 lines) - SetBinChsClnFlag, CheckModifyTypeCompatible, checkTypeChangeSupported
+
+- [x] **sessionctx/stmtctx/stmtctx.go decomposition** - Extract counters, warnings, and stats info
+  - File: `pkg/sessionctx/stmtctx/stmtctx.go` (1,532 → 1,093 lines, 29% reduction)
+  - Target: Focused files per functional area
+  - [x] `stmtctx_counters.go` (223 lines) - row counters, warning methods, reset for retry
+  - [x] `stmtctx_stats.go` (206 lines) - UsedStatsInfoForTable, UsedStatsInfo, StatsLoadResult, stmtLabel
+
+- [x] **util/ranger/detacher.go decomposition** - Extract shard index functions
+  - File: `pkg/util/ranger/detacher.go` (1,600 → 1,210 lines, 24% reduction)
+  - Target: Focused files per functional area
+  - [x] `detacher_shard.go` (389 lines) - AddGcColumnCond, AddExpr4EqAndInCondition, IsValidShardIndex, etc.
+
+- [x] **executor/importer/import.go decomposition** - Extract plan options
+  - File: `pkg/executor/importer/import.go` (1,849 → 1,490 lines, 19% reduction)
+  - Target: Focused files per functional area
+  - [x] `import_options.go` (358 lines) - initDefaultOptions, initOptions, adjustOptions, initParameters
+
+- [x] **lightning/checkpoints/checkpoints.go decomposition** - Extract MySQL and File checkpoint ops
+  - File: `pkg/lightning/checkpoints/checkpoints.go` (2,005 → 1,548 lines, 23% reduction)
+  - Target: Focused files per functional area
+  - [x] `checkpoint_mysql_ops.go` (317 lines) - MySQL checkpoint management methods
+  - [x] `checkpoint_file_ops.go` (138 lines) - File checkpoint management methods
 
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
