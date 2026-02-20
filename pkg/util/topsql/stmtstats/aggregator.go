@@ -65,8 +65,6 @@ func (m *aggregator) start() {
 
 // run will block the current goroutine and execute the main loop of aggregator.
 func (m *aggregator) run() {
-	// Run order matters: aggregateRU() must run before aggregate() to avoid
-	// dropping RU increments from finished sessions.
 	tick := time.NewTicker(time.Second)
 	defer func() {
 		tick.Stop()
@@ -77,15 +75,23 @@ func (m *aggregator) run() {
 		case <-m.ctx.Done():
 			return
 		case <-tick.C:
-			m.aggregateRU()
-			m.aggregate()
+			m.aggregateAll()
 		}
 	}
 }
 
-// aggregate collects TopSQL data (CPU + stmt stats) from all associated StatementStats.
-// If StatementStats has been closed, collect will remove it from the map.
-func (m *aggregator) aggregate() {
+// aggregateAll performs a single tick of data collection. It calls drainAndPushRU
+// first, then drainAndPushStmtStats. The ordering matters: RU must be drained
+// before stmt stats to avoid losing RU deltas from sessions that become Finished()
+// and get unregistered during the stmt stats phase.
+func (m *aggregator) aggregateAll() {
+	m.drainAndPushRU()
+	m.drainAndPushStmtStats()
+}
+
+// drainAndPushStmtStats collects TopSQL data (CPU + stmt stats) from all
+// associated StatementStats. Finished sessions are unregistered here.
+func (m *aggregator) drainAndPushStmtStats() {
 	total := StatementStatsMap{}
 	m.statsSet.Range(func(statsR, _ any) bool {
 		stats := statsR.(*StatementStats)
@@ -95,7 +101,6 @@ func (m *aggregator) aggregate() {
 		total.Merge(stats.Take())
 		return true
 	})
-	// If TopSQL is not enabled, just drop them.
 	if len(total) > 0 && state.TopSQLEnabled() {
 		m.collectors.Range(func(c, _ any) bool {
 			c.(Collector).CollectStmtStatsMap(total)
@@ -104,36 +109,23 @@ func (m *aggregator) aggregate() {
 	}
 }
 
-// aggregateRU collects RU increment data from all associated StatementStats.
-//
-// Behavior:
-//  1. Iterates all registered StatementStats
-//  2. Calls MergeRUInto() to drain RU increments from each session
-//  3. Merges all increments into single RUIncrementMap
-//  4. Applies hard cap on distinct keys (Phase 2 Decision E - backpressure)
-//  5. Pushes to all registered RUCollectors (gated on TopRUEnabled())
-func (m *aggregator) aggregateRU() {
-	topRUEnabled := state.TopRUEnabled()
-	// Always drain RU increments to avoid keeping stale data when TopRU is disabled.
-	// Disabled means no RU output (no-op on reporting), while housekeeping drain is still allowed.
+// drainAndPushRU drains RU increments from all sessions, applies backpressure caps,
+// then pushes the merged data to all registered RUCollectors when TopRU is enabled.
+// Same pattern as drainAndPushStmtStats: always drain (to avoid stale data), push
+// only when the feature is on.
+func (m *aggregator) drainAndPushRU() {
 	total := RUIncrementMap{}
 	var droppedKeys int64
 	var droppedRU float64
 	m.statsSet.Range(func(statsAny, _ any) bool {
 		stats := statsAny.(*StatementStats)
-		// No need to check Finished() again - already checked in aggregate()
 		sessionRU := stats.MergeRUInto()
-		// Phase 2 Decision E: Apply hard cap on distinct RU keys.
-		// When approaching the limit, stop merging new keys to protect hot paths.
 		for key, incr := range sessionRU {
-			// Under capacity - normal merge
 			if existing, ok := total[key]; ok {
 				existing.Merge(incr)
 				continue
 			}
-
 			if len(total) >= maxRUKeysPerAggregate {
-				// At capacity - only merge into existing keys
 				droppedKeys++
 				droppedRU += incr.TotalRU
 			} else {
@@ -143,13 +135,12 @@ func (m *aggregator) aggregateRU() {
 		return true
 	})
 
-	// Record backpressure metrics outside the hot loop.
 	if droppedKeys > 0 {
 		reporter_metrics.IgnoreExceedRUKeysCounter.Add(float64(droppedKeys))
 		reporter_metrics.IgnoreExceedRUAmountCounter.Add(droppedRU)
 	}
 
-	if topRUEnabled && len(total) > 0 {
+	if state.TopRUEnabled() && len(total) > 0 {
 		m.ruCollectors.Range(func(c, _ any) bool {
 			c.(RUCollector).CollectRUIncrements(total)
 			return true

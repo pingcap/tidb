@@ -279,5 +279,6 @@ func TestNormalizeTopRUItemIntervalInvalid(t *testing.T) {
 		},
 	}
 	ds := newPubSubDataSink(req, &mockPubSubDataSinkStream{}, &mockPubSubDataSinkRegisterer{})
-	require.Equal(t, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED, ds.itemInterval)
+	// pubsub stores the raw interval; normalization happens in state.SetTopRUItemInterval.
+	require.Equal(t, tipb.ItemInterval(99), ds.itemInterval)
 }

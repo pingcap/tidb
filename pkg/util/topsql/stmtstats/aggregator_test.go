@@ -64,7 +64,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
 		total.Merge(data)
 	}))
-	a.aggregate()
+	a.drainAndPushStmtStats()
 	assert.NotEmpty(t, total)
 	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
@@ -105,8 +105,8 @@ func TestAggregatorDisableAggregate(t *testing.T) {
 		finished: atomic.NewBool(false),
 	}
 	a.register(stats)
-	a.aggregate()
-	require.Empty(t, stats.data) // a.aggregate() will take all data even if TopSQL is not enabled.
+	a.drainAndPushStmtStats()
+	require.Empty(t, stats.data) // drainAndPushStmtStats() will take all data even if TopSQL is not enabled.
 	require.Empty(t, total)      // But just drop them.
 
 	state.EnableTopSQL()
@@ -117,7 +117,7 @@ func TestAggregatorDisableAggregate(t *testing.T) {
 		finished: atomic.NewBool(false),
 	}
 	a.register(stats)
-	a.aggregate()
+	a.drainAndPushStmtStats()
 	require.Empty(t, stats.data)
 	require.Len(t, total, 1)
 	state.DisableTopSQL()
@@ -137,7 +137,7 @@ func TestAggregatorDisableAggregateRU(t *testing.T) {
 	stats.finishedRUBuffer[RUKey{User: "u1", SQLDigest: BinaryDigest("s1")}] = &RUIncrement{TotalRU: 1}
 	a.register(stats)
 
-	a.aggregateRU()
+	a.drainAndPushRU()
 	require.Len(t, stats.finishedRUBuffer, 0)
 }
 
@@ -165,7 +165,7 @@ func TestAggregatorDisableAggregateRUNoEmit(t *testing.T) {
 		},
 	})
 
-	a.aggregateRU()
+	a.drainAndPushRU()
 
 	require.Len(t, stats.finishedRUBuffer, 0) // housekeeping drain is allowed
 	require.Equal(t, 0, callCnt)              // disabled => no RU output
@@ -195,13 +195,62 @@ func TestAggregatorRunOrderKeepsFinishedRU(t *testing.T) {
 
 	collected := RUIncrementMap{}
 	a.registerRUCollector(&mockRUCollector{f: func(m RUIncrementMap) { collected.Merge(m) }})
-	a.aggregateRU()
-	a.aggregate()
+	a.aggregateAll()
 
 	require.Len(t, collected, 1)
 	require.Equal(t, 1.0, collected[key].TotalRU)
 	_, ok := a.statsSet.Load(stats)
 	require.False(t, ok)
+}
+
+// Test gap 4: When TopSQL is disabled but TopRU is enabled, RU data should still
+// flow to RUCollectors, while TopSQL stmt stats should NOT flow to Collectors.
+func TestAggregatorTopRUOnlyDataFlow(t *testing.T) {
+	state.DisableTopSQL()
+	for state.TopRUEnabled() {
+		state.DisableTopRU()
+	}
+	state.EnableTopRU()
+	defer func() {
+		for state.TopRUEnabled() {
+			state.DisableTopRU()
+		}
+	}()
+
+	a := newAggregator()
+	stats := &StatementStats{
+		data: StatementStatsMap{
+			SQLPlanDigest{SQLDigest: "sql1"}: &StatementStatsItem{ExecCount: 1},
+		},
+		finished:         atomic.NewBool(false),
+		finishedRUBuffer: RUIncrementMap{},
+	}
+	ruKey := RUKey{User: "u1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
+	stats.finishedRUBuffer[ruKey] = &RUIncrement{TotalRU: 42, ExecCount: 1}
+	a.register(stats)
+
+	// StmtStats collector: should NOT receive data (TopSQL disabled)
+	stmtCollected := StatementStatsMap{}
+	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
+		stmtCollected.Merge(data)
+	}))
+
+	// RU collector: SHOULD receive data (TopRU enabled)
+	ruCollected := RUIncrementMap{}
+	a.registerRUCollector(&mockRUCollector{f: func(m RUIncrementMap) {
+		ruCollected.Merge(m)
+	}})
+
+	a.aggregateAll()
+
+	// TopSQL data is drained from stats but NOT forwarded
+	require.Empty(t, stmtCollected)
+	require.Empty(t, stats.data)
+
+	// TopRU data IS forwarded
+	require.Len(t, ruCollected, 1)
+	require.InDelta(t, 42.0, ruCollected[ruKey].TotalRU, 1e-9)
+	require.Equal(t, uint64(1), ruCollected[ruKey].ExecCount)
 }
 
 type mockRUCollector struct {

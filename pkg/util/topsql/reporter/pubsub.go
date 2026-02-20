@@ -94,7 +94,7 @@ func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval
 		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
 	}
 
-	return true, normalizeTopRUItemInterval(cfg.GetItemIntervalSeconds())
+	return true, cfg.GetItemIntervalSeconds()
 }
 
 // newPubSubDataSink creates a DataSink for PubSub subscription.
@@ -123,26 +123,10 @@ func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_Subs
 		registerer: registerer,
 
 		enableTopRU:  enableTopRU,
-		itemInterval: normalizeTopRUItemInterval(itemInterval),
+		itemInterval: itemInterval,
 	}
 
 	return ds
-}
-
-func normalizeTopRUItemInterval(interval tipb.ItemInterval) tipb.ItemInterval {
-	if interval == tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED {
-		return interval
-	}
-	switch int32(interval) {
-	case 15, 30, 60:
-		return interval
-	default:
-		logutil.BgLogger().Warn(
-			"[top-sql] invalid top ru item interval, fallback to default",
-			zap.Int32("item_interval", int32(interval)),
-		)
-		return tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
-	}
 }
 
 var _ DataSink = &pubSubDataSink{}

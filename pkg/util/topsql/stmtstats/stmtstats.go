@@ -158,12 +158,18 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, info 
 }
 
 func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest []byte, ru *util.RUDetails, execDuration time.Duration) {
+	if s.execCtx == nil {
+		// No matching begin was recorded (e.g. TopRU enabled mid-execution).
+		// Without a begin-time baseline (LastRUTotal), we cannot compute a correct
+		// delta. Skip to avoid reporting the entire cumulative RU as a spike.
+		return
+	}
 	key := RUKey{
 		User:       user,
 		SQLDigest:  BinaryDigest(sqlDigest),
 		PlanDigest: BinaryDigest(planDigest),
 	}
-	if s.execCtx != nil && s.execCtx.Key != key {
+	if s.execCtx.Key != key {
 		// A newer execution has already replaced the active context.
 		// Ignore stale finish signal to avoid cross-key contamination.
 		return
@@ -178,11 +184,8 @@ func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest 
 		return
 	}
 
-	lastTotalRU := 0.0
-	if s.execCtx != nil {
-		lastTotalRU = s.execCtx.LastRUTotal
-		s.execCtx.LastRUTotal = currentTotalRU
-	}
+	lastTotalRU := s.execCtx.LastRUTotal
+	s.execCtx.LastRUTotal = currentTotalRU
 	deltaRU := currentTotalRU - lastTotalRU
 	if deltaRU <= 0 {
 		// Counter reset or already sampled by previous tick.

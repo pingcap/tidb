@@ -19,13 +19,36 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
+	"go.uber.org/zap"
 )
 
 // TopN limits for RU aggregation (Phase 2 Decision A: Hybrid TopN).
 // These values are implementation-defined per design doc.
+//
+// "Others" bucket semantics:
+//
+// Two levels of "others" aggregation exist to bound output cardinality:
+//
+//  1. "Others user" (keyRUOthersUser = "<others>"):
+//     When the number of distinct users exceeds maxTopUsers (at report time)
+//     or maxPreTopNUsers (during collection), evicted users' entire RU data
+//     is merged into a single virtual user named "<others>". The agent/dashboard
+//     displays this as an aggregated row representing all non-top users.
+//
+//  2. "Others SQL" (nil sqlDigest + nil planDigest):
+//     Within each user (including "<others>"), when the number of distinct
+//     SQL+Plan combinations exceeds maxTopSQLsPerUser (at report time) or
+//     maxPreTopNSQLsPerUser (during collection), evicted SQLs' RU data is
+//     merged into a single record with nil digests. This represents all
+//     non-top SQLs for that user.
+//
+// The two levels are independent: a top user can have an "others SQL" bucket,
+// and the "<others>" user itself also has an "others SQL" bucket aggregating
+// all evicted SQLs from all evicted users.
 const (
 	// maxTopUsers is the maximum number of users to keep in global TopN.
 	maxTopUsers = 200
@@ -148,6 +171,8 @@ func (rs ruRecords) topN(n int) (top, evicted ruRecords) {
 		return rs, nil
 	}
 	if err := quickselect.QuickSelect(rs, n); err != nil {
+		logutil.BgLogger().Warn("[top-sql] quickselect failed on all ru records, returning unsorted",
+			zap.Int("total", len(rs)), zap.Int("topN", n), zap.Error(err))
 		return rs, nil
 	}
 	return rs[:n], rs[n:]
@@ -295,6 +320,8 @@ func (us userRUCollectings) topN(n int) (top, evicted userRUCollectings) {
 		return us, nil
 	}
 	if err := quickselect.QuickSelect(us, n); err != nil {
+		logutil.BgLogger().Warn("[top-sql] quickselect failed on all ru records, returning unsorted",
+			zap.Int("total", len(us)), zap.Int("topN", n), zap.Error(err))
 		return us, nil
 	}
 	return us[:n], us[n:]

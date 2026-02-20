@@ -423,7 +423,7 @@ func TestExecCountBeginBased_ToggleMidExecution(t *testing.T) {
 	t.Run("late-enable", func(t *testing.T) {
 		stats := CreateStatementStats()
 		ru := util.NewRUDetailsWith(9, 0, 0)
-		key := RUKey{User: "u2", SQLDigest: BinaryDigest("sql2"), PlanDigest: BinaryDigest("plan2")}
+		_ = RUKey{User: "u2", SQLDigest: BinaryDigest("sql2"), PlanDigest: BinaryDigest("plan2")}
 
 		stats.OnExecutionBegin([]byte("sql2"), []byte("plan2"), &ExecBeginInfo{
 			User:         "u2",
@@ -437,10 +437,9 @@ func TestExecCountBeginBased_ToggleMidExecution(t *testing.T) {
 		})
 
 		m := stats.MergeRUInto()
-		require.Len(t, m, 1)
-		require.InDelta(t, 9.0, m[key].TotalRU, 1e-9)
-		// Late-enable has no begin signal, so RU is reported with ExecCount=0 by design.
-		require.Equal(t, uint64(0), m[key].ExecCount)
+		// Late-enable: no begin signal means execCtx == nil at finish time.
+		// Without a baseline, finish skips to avoid reporting cumulative RU as a spike.
+		require.Len(t, m, 0)
 	})
 }
 
@@ -784,4 +783,140 @@ func TestExecCountBeginBased_KeySwitchNoCrossPollution(t *testing.T) {
 	require.InDelta(t, 7.0, total[keyB].TotalRU, 1e-9)
 
 	require.Nil(t, stats.execCtx)
+}
+
+// Test gap 1: Multiple ticks sample active SQL deltas, then finish samples the
+// remaining delta. Verifies sum(all deltas) == final total RU.
+func TestMultiTickDeltaSumEqualsFinalTotal(t *testing.T) {
+	stats := CreateStatementStats()
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+	ru := util.NewRUDetailsWith(0, 0, 0)
+	ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+
+	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+		User: "u1", TopRUEnabled: true, Ctx: ctx,
+	})
+
+	var allDeltas RUIncrementMap
+
+	// Tick 1: RU grows to 10
+	ru.Merge(util.NewRUDetailsWith(10, 0, 0))
+	m1 := stats.MergeRUInto()
+	require.InDelta(t, 10.0, m1[key].TotalRU, 1e-9)
+	allDeltas = m1
+
+	// Tick 2: RU grows to 25
+	ru.Merge(util.NewRUDetailsWith(15, 0, 0))
+	m2 := stats.MergeRUInto()
+	require.InDelta(t, 15.0, m2[key].TotalRU, 1e-9)
+	allDeltas.Merge(m2)
+
+	// Tick 3: RU grows to 33
+	ru.Merge(util.NewRUDetailsWith(8, 0, 0))
+	m3 := stats.MergeRUInto()
+	require.InDelta(t, 8.0, m3[key].TotalRU, 1e-9)
+	allDeltas.Merge(m3)
+
+	// Finish: RU grows to 50
+	ru.Merge(util.NewRUDetailsWith(17, 0, 0))
+	stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+		User: "u1", TopRUEnabled: true, RUDetails: ru, ExecDuration: 5 * time.Second,
+	})
+	mFinal := stats.MergeRUInto()
+	allDeltas.Merge(mFinal)
+
+	// sum(all deltas) must equal the final cumulative total
+	require.InDelta(t, 50.0, allDeltas[key].TotalRU, 1e-9)
+	require.Equal(t, uint64(1), allDeltas[key].ExecCount)
+	require.Nil(t, stats.execCtx)
+	require.Len(t, stats.MergeRUInto(), 0)
+}
+
+// Test gap 2: TopRU is enabled mid-execution, then disabled, verifying no
+// double-count or data loss across state transitions.
+func TestTopRUEnableDisableMidExecution(t *testing.T) {
+	t.Run("enable-mid-exec", func(t *testing.T) {
+		stats := CreateStatementStats()
+		key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+		ru := util.NewRUDetailsWith(20, 0, 0)
+
+		// Begin without TopRU
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+			User: "u1", TopRUEnabled: false,
+		})
+
+		// Tick while TopRU is off: no RU data
+		m1 := stats.MergeRUInto()
+		require.Len(t, m1, 0)
+
+		// Finish with TopRU enabled but no execCtx (begin was without TopRU)
+		stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+			User: "u1", TopRUEnabled: true, RUDetails: ru, ExecDuration: time.Second,
+		})
+		m2 := stats.MergeRUInto()
+		// execCtx == nil guard: skip to avoid cumulative spike
+		require.Len(t, m2, 0)
+		_ = key
+	})
+
+	t.Run("disable-mid-exec", func(t *testing.T) {
+		stats := CreateStatementStats()
+		key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+		ru := util.NewRUDetailsWith(0, 0, 0)
+		ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+
+		// Begin with TopRU enabled
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+			User: "u1", TopRUEnabled: true, Ctx: ctx,
+		})
+
+		// Tick: RU grows to 10
+		ru.Merge(util.NewRUDetailsWith(10, 0, 0))
+		m1 := stats.MergeRUInto()
+		require.InDelta(t, 10.0, m1[key].TotalRU, 1e-9)
+
+		// RU grows more
+		ru.Merge(util.NewRUDetailsWith(5, 0, 0))
+
+		// Finish with TopRU disabled: clears execCtx, does NOT report delta
+		stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+			User: "u1", TopRUEnabled: false, RUDetails: ru, ExecDuration: time.Second,
+		})
+		m2 := stats.MergeRUInto()
+		require.Len(t, m2, 0)
+		require.Nil(t, stats.execCtx)
+
+		// Total from ticked data only; the 5 RU after disable is lost by design
+		require.InDelta(t, 10.0, m1[key].TotalRU, 1e-9)
+	})
+
+	t.Run("toggle-no-double-count", func(t *testing.T) {
+		stats := CreateStatementStats()
+		key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+		ru := util.NewRUDetailsWith(0, 0, 0)
+		ctx := context.WithValue(context.Background(), util.RUDetailsCtxKey, ru)
+
+		// SQL 1: begin+finish with TopRU on
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+			User: "u1", TopRUEnabled: true, Ctx: ctx,
+		})
+		ru.Merge(util.NewRUDetailsWith(10, 0, 0))
+		stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+			User: "u1", TopRUEnabled: true, RUDetails: ru, ExecDuration: time.Second,
+		})
+
+		// SQL 2: begin with TopRU off, finish with TopRU on (no execCtx)
+		ru2 := util.NewRUDetailsWith(20, 0, 0)
+		stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+			User: "u1", TopRUEnabled: false,
+		})
+		stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+			User: "u1", TopRUEnabled: true, RUDetails: ru2, ExecDuration: time.Second,
+		})
+
+		m := stats.MergeRUInto()
+		require.Len(t, m, 1)
+		require.InDelta(t, 10.0, m[key].TotalRU, 1e-9)
+		require.Equal(t, uint64(1), m[key].ExecCount)
+	})
 }

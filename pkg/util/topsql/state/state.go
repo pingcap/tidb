@@ -162,7 +162,7 @@ func normalizeTopRUItemIntervalSeconds(intervalSeconds tipb.ItemInterval) int64 
 func SetTopRUItemInterval(itemIntervalSeconds tipb.ItemInterval) {
 	intervalSeconds := normalizeTopRUItemIntervalSeconds(itemIntervalSeconds)
 	current := GlobalState.TopRUItemIntervalSeconds.Load()
-	logutil.BgLogger().Warn(
+	logutil.BgLogger().Info(
 		"[top-sql] top ru item interval overridden by later subscription",
 		zap.Int64("current_interval_seconds", current),
 		zap.Int64("new_interval_seconds", intervalSeconds),

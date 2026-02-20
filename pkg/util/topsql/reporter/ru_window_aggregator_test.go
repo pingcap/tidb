@@ -113,6 +113,68 @@ func TestRUWindowAggregatorTakeOncePerWindow(t *testing.T) {
 	require.Nil(t, agg.takeReportRecords(61, 60, []byte("ks")))
 }
 
+// Test gap 3: Concurrent pressure test for ruWindowAggregator.
+// Verifies that under high goroutine contention, addSecondBatch does not panic
+// or lose structural integrity (records still produce valid reports).
+func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
+	const (
+		numWriters    = 16
+		batchesPerWriter = 100
+		numUsers      = 50
+	)
+	agg := newRUWindowAggregator()
+
+	// Concurrent writers: each goroutine sends batches for ts in [0..14] (first 15s bucket)
+	done := make(chan int, numWriters)
+	for w := 0; w < numWriters; w++ {
+		go func(writerID int) {
+			dropped := 0
+			for i := 0; i < batchesPerWriter; i++ {
+				ts := uint64(i % 15)
+				batch := make(stmtstats.RUIncrementMap, numUsers)
+				for u := 0; u < numUsers; u++ {
+					batch[stmtstats.RUKey{
+						User:       fmt.Sprintf("u%d", u),
+						SQLDigest:  stmtstats.BinaryDigest(fmt.Sprintf("sql%d_%d", writerID, i)),
+						PlanDigest: stmtstats.BinaryDigest("plan"),
+					}] = &stmtstats.RUIncrement{TotalRU: 1, ExecCount: 1, ExecDuration: 1}
+				}
+				agg.addSecondBatch(ts, batch)
+			}
+			done <- dropped
+		}(w)
+	}
+
+	totalDropped := 0
+	for range numWriters {
+		totalDropped += <-done
+	}
+
+	// Also inject data for 15..59 so we have a full 60s window
+	for ts := uint64(15); ts < 60; ts += 15 {
+		agg.addSecondBatch(ts, stmtstats.RUIncrementMap{
+			stmtstats.RUKey{
+				User:       "u0",
+				SQLDigest:  stmtstats.BinaryDigest("sql_filler"),
+				PlanDigest: stmtstats.BinaryDigest("plan"),
+			}: {TotalRU: 1, ExecCount: 1, ExecDuration: 1},
+		})
+	}
+
+	records := agg.takeReportRecords(60, 60, []byte("ks"))
+	require.NotNil(t, records, "concurrent writes should produce non-nil report")
+
+	// Verify structural integrity: all records have valid items
+	totalRU := 0.0
+	for _, rec := range records {
+		for _, item := range rec.Items {
+			require.True(t, item.TotalRu >= 0, "negative RU in output")
+			totalRU += item.TotalRu
+		}
+	}
+	require.Greater(t, totalRU, 0.0, "total reported RU should be positive")
+}
+
 func findRURecord(t *testing.T, records []tipb.TopRURecord, user, sqlDigest, planDigest string) tipb.TopRURecord {
 	t.Helper()
 	for _, rec := range records {
