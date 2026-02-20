@@ -15,6 +15,7 @@
 package hparser
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -293,9 +294,6 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 			}
 		}
 		tp := types.NewFieldType(mysql.TypeLonglong)
-		flen, dec := mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeLonglong)
-		tp.SetFlen(flen)
-		tp.SetDecimal(dec)
 		if isUnsigned {
 			tp.AddFlag(mysql.UnsignedFlag)
 		}
@@ -342,6 +340,32 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		tp.SetFlen(defFlen)
 		tp.SetDecimal(defDec)
 		setBinaryCastType(tp)
+		return tp, false
+
+	case tokVector:
+		p.next()
+		// OptVectorElementType: <FLOAT> or <DOUBLE>
+		if p.peek().Tp == '<' {
+			p.next()
+			switch p.peek().Tp {
+			case tokFloat, tokFloat4:
+				p.next()
+			case tokDouble, tokFloat8:
+				p.next()
+				p.errs = append(p.errs, fmt.Errorf("Only VECTOR is supported for now"))
+				p.expect('>')
+				return nil, false
+			default:
+				p.error(p.peek().Offset, "expected FLOAT or DOUBLE inside VECTOR")
+				return nil, false
+			}
+			p.expect('>')
+		}
+		tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
+		tp.SetFlen(p.parseOptFieldLen())
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
 		return tp, false
 
 	default:
