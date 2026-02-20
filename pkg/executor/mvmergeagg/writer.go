@@ -32,10 +32,9 @@ func (noopWriter) WriteChunk(context.Context, *MVMergeAggChunkResult) error {
 type tableResultWriter struct {
 	exec *MVMergeAggExec
 
-	writableCols         []*table.Column
-	writableOldColIDs    []int
-	writableInsertColIDs []int
-	aggWritableIDs       []int
+	writableCols   []*table.Column
+	writableColIDs []int
+	aggWritableIDs []int
 
 	oldRow  []types.Datum
 	newRow  []types.Datum
@@ -62,23 +61,15 @@ func (e *MVMergeAggExec) buildTableResultWriter() (MVMergeAggResultWriter, error
 		return nil, errors.New("MVMergeAggExec stage1 does not support target table with non-public writable columns")
 	}
 
-	oldColIDs := e.TargetWritableOldColIDs
-	if len(oldColIDs) == 0 {
-		oldColIDs = make([]int, len(writableCols))
+	colIDs := e.TargetWritableColIDs
+	if len(colIDs) == 0 {
+		colIDs = make([]int, len(writableCols))
 		for i := range writableCols {
-			oldColIDs[i] = e.DeltaAggColCount + writableCols[i].Offset
+			colIDs[i] = e.DeltaAggColCount + writableCols[i].Offset
 		}
 	}
-	if len(oldColIDs) != len(writableCols) {
-		return nil, errors.Errorf("TargetWritableOldColIDs size %d does not match target writable columns %d", len(oldColIDs), len(writableCols))
-	}
-
-	insertColIDs := e.TargetWritableInsertColIDs
-	if len(insertColIDs) == 0 {
-		insertColIDs = oldColIDs
-	}
-	if len(insertColIDs) != len(writableCols) {
-		return nil, errors.Errorf("TargetWritableInsertColIDs size %d does not match target writable columns %d", len(insertColIDs), len(writableCols))
+	if len(colIDs) != len(writableCols) {
+		return nil, errors.Errorf("TargetWritableColIDs size %d does not match target writable columns %d", len(colIDs), len(writableCols))
 	}
 	for i := 0; i < e.TargetHandleCols.NumCols(); i++ {
 		handleDatumIdx := e.TargetHandleCols.GetCol(i).Index
@@ -91,16 +82,11 @@ func (e *MVMergeAggExec) buildTableResultWriter() (MVMergeAggResultWriter, error
 	for i := range output2Writable {
 		output2Writable[i] = -1
 	}
-	for writableIdx, colID := range oldColIDs {
+	for writableIdx, colID := range colIDs {
 		if colID < 0 || colID >= len(childTypes) {
-			return nil, errors.Errorf("TargetWritableOldColIDs[%d]=%d out of range [0,%d)", writableIdx, colID, len(childTypes))
+			return nil, errors.Errorf("TargetWritableColIDs[%d]=%d out of range [0,%d)", writableIdx, colID, len(childTypes))
 		}
 		output2Writable[colID] = writableIdx
-	}
-	for writableIdx, colID := range insertColIDs {
-		if colID < 0 || colID >= len(childTypes) {
-			return nil, errors.Errorf("TargetWritableInsertColIDs[%d]=%d out of range [0,%d)", writableIdx, colID, len(childTypes))
-		}
 	}
 
 	aggWritableIDs := make([]int, 0, len(e.aggOutputColIDs))
@@ -120,14 +106,13 @@ func (e *MVMergeAggExec) buildTableResultWriter() (MVMergeAggResultWriter, error
 	}
 
 	return &tableResultWriter{
-		exec:                 e,
-		writableCols:         writableCols,
-		writableOldColIDs:    oldColIDs,
-		writableInsertColIDs: insertColIDs,
-		aggWritableIDs:       aggWritableIDs,
-		oldRow:               make([]types.Datum, len(writableCols)),
-		newRow:               make([]types.Datum, len(writableCols)),
-		touched:              make([]bool, len(writableCols)),
+		exec:           e,
+		writableCols:   writableCols,
+		writableColIDs: colIDs,
+		aggWritableIDs: aggWritableIDs,
+		oldRow:         make([]types.Datum, len(writableCols)),
+		newRow:         make([]types.Datum, len(writableCols)),
+		touched:        make([]bool, len(writableCols)),
 	}, nil
 }
 
@@ -185,18 +170,13 @@ func (w *tableResultWriter) buildRows(result *MVMergeAggChunkResult, rowIdx int)
 	row := result.Input.GetRow(rowIdx)
 	for writableIdx, col := range w.writableCols {
 		retType := &col.FieldType
-		oldColID := w.writableOldColIDs[writableIdx]
-		insertColID := w.writableInsertColIDs[writableIdx]
+		colID := w.writableColIDs[writableIdx]
 
-		oldDatum := row.GetDatum(oldColID, retType)
+		oldDatum := row.GetDatum(colID, retType)
 		w.oldRow[writableIdx] = oldDatum
 
-		if computedCol := result.ComputedCols[oldColID]; computedCol != nil {
+		if computedCol := result.ComputedCols[colID]; computedCol != nil {
 			w.newRow[writableIdx] = chunkRowColDatum(computedCol, rowIdx, retType)
-			continue
-		}
-		if oldDatum.IsNull() && insertColID != oldColID {
-			w.newRow[writableIdx] = row.GetDatum(insertColID, retType)
 			continue
 		}
 		w.newRow[writableIdx] = oldDatum

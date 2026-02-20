@@ -107,12 +107,10 @@ type MVMergeAggExec struct {
 	TargetInfo  *model.TableInfo
 	// TargetHandleCols is used to build row handle for update/delete.
 	TargetHandleCols plannerutil.HandleCols
-	// TargetWritableOldColIDs maps target writable col index -> input chunk col index
-	// for old-value extraction.
-	TargetWritableOldColIDs []int
-	// TargetWritableInsertColIDs maps target writable col index -> input chunk col index
-	// for insert-value extraction when old-value side is null.
-	TargetWritableInsertColIDs []int
+	// TargetWritableColIDs maps target writable col index -> input chunk col index.
+	// The mapped input column provides old/new base values for this writable column.
+	// For aggregate writable columns, new values are taken from computed result when available.
+	TargetWritableColIDs []int
 
 	compiledMergers      []aggMerger
 	compiledOutputColCnt int
