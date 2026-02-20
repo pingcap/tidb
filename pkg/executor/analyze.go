@@ -711,6 +711,8 @@ func serializePrunedSamples(rc statistics.RowSampleCollector, targetSize int) []
 		pb := pruned.Base().ToProto()
 		data, err := pb.Marshal()
 		if err != nil {
+			statslogutil.StatsLogger().Warn("failed to marshal pruned sample collector",
+				zap.Int("targetSize", targetSize), zap.Error(err))
 			return nil
 		}
 		return data
@@ -723,6 +725,8 @@ func serializePrunedSamples(rc statistics.RowSampleCollector, targetSize int) []
 	}
 	data, err := pb.Marshal()
 	if err != nil {
+		statslogutil.StatsLogger().Warn("failed to marshal sample collector",
+			zap.Int("targetSize", targetSize), zap.Error(err))
 		return nil
 	}
 	return data

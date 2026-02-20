@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
@@ -96,7 +97,8 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
 	e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
 	keepSamplesForGlobal := e.tableID.IsPartitionTable() &&
-		e.ctx.GetSessionVars().EnableSampleBasedGlobalStats
+		e.ctx.GetSessionVars().EnableSampleBasedGlobalStats &&
+		variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	count, hists, topNs, fmSketches, extStats, rootCollector, err := e.buildSamplingStats(gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency, keepSamplesForGlobal)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
