@@ -2260,7 +2260,6 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 	fn := func() error {
 		switch n.Tp {
 		case PlacementOptionPrimaryRegion:
-
 			ctx.WriteKeyWord("PRIMARY_REGION ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
@@ -2956,7 +2955,6 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		return placementOpt.Restore(ctx)
 	case TableOptionStatsBuckets:
-
 		ctx.WriteKeyWord("STATS_BUCKETS ")
 		ctx.WritePlain("= ")
 		if n.Default {
