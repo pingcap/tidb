@@ -260,9 +260,11 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 				// VECTOR<FLOAT> — default, already TypeTiDBVectorFloat32
 				p.next()
 			case tokDouble, tokFloat8:
-				// VECTOR<DOUBLE> — parsed but produces warning per parser.y
+				// VECTOR<DOUBLE> — parsed but rejected per parser.y (AppendError is fatal)
 				p.next()
-				p.warn("Only VECTOR is supported for now")
+				p.errs = append(p.errs, fmt.Errorf("Only VECTOR is supported for now"))
+				p.expect('>')
+				return nil
 			default:
 				p.error(p.peek().Offset, "expected FLOAT or DOUBLE inside VECTOR")
 				return nil
