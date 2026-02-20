@@ -3151,3 +3151,48 @@ func TestNonClusteredReorgUpdateHash(t *testing.T) {
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
+
+func TestMultiSchemaModifyColumnConcurrentDMLInWriteStates(t *testing.T) {
+	createSQL := `create table t (
+		id int not null,
+		b varchar(32) not null,
+		primary key (id),
+		key k_b (b)
+	)`
+	initFn := func(tkO *testkit.TestKit) {
+		tkO.MustExec(`insert into t values (1,'100'),(2,'200'),(3,'300')`)
+	}
+	alterSQL := `alter table t modify column b int not null`
+	var writeOnlyDMLDone atomic.Bool
+	var writeReorgDMLDone atomic.Bool
+	loopFn := func(tkO, _ *testkit.TestKit) {
+		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+		schemaState := res.Rows()[0][0].(string)
+		switch schemaState {
+		case model.StateWriteOnly.String():
+			if writeOnlyDMLDone.CompareAndSwap(false, true) {
+				tkO.MustExec(`insert into t values (4,'400')`)
+				tkO.MustExec(`update t set b = '301' where id = 3`)
+			}
+		case model.StateWriteReorganization.String():
+			if writeReorgDMLDone.CompareAndSwap(false, true) {
+				tkO.MustExec(`delete from t where id = 2`)
+				tkO.MustExec(`insert into t values (5,'500')`)
+			}
+		}
+	}
+	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
+		require.True(t, writeOnlyDMLDone.Load())
+		require.True(t, writeReorgDMLDone.Load())
+		tkO.MustExec(`set session tidb_enable_fast_table_check = off`)
+		tkO.MustExec(`admin check table t`)
+		tkO.MustQuery(`select data_type from information_schema.columns where table_schema = 'test' and table_name = 't' and column_name = 'b'`).Check(testkit.Rows("int"))
+		tkO.MustQuery(`select id, b from t order by id`).Check(testkit.Rows(
+			"1 100",
+			"3 301",
+			"4 400",
+			"5 500",
+		))
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
+}
