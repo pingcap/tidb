@@ -166,6 +166,23 @@ func (p *HandParser) parsePlanReplayerDump(stmt *ast.PlanReplayerStmt) ast.StmtN
 		return stmt
 	}
 
+	// Check for parenthesized string list: PLAN REPLAYER DUMP EXPLAIN ('sql1' [, 'sql2' ...])
+	if p.peek().Tp == '(' && p.peekN(1).Tp == tokStringLit {
+		p.next() // consume '('
+		for {
+			tok, ok := p.expect(tokStringLit)
+			if !ok {
+				return nil
+			}
+			stmt.StmtList = append(stmt.StmtList, tok.Lit)
+			if _, ok := p.accept(','); !ok {
+				break
+			}
+		}
+		p.expect(')')
+		return stmt
+	}
+
 	// Capture start offset for nested statement text
 	start := p.peek().Offset
 	nested := p.parseStatement()
