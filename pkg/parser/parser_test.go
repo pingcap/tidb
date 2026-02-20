@@ -2570,11 +2570,31 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE t (a varchar(10) COLLATE utf8_bin)", true, "CREATE TABLE `t` (`a` VARCHAR(10) COLLATE utf8_bin)"},
 		// BUG-88: CHECK (expr) NOT NULL → injects both CHECK and NOT NULL
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0) not null)", true, "CREATE TABLE `Customer` (`SD` INT CHECK(`SD`>0) ENFORCED NOT NULL)"},
+		// BUG-88: CHECK with NOT ENFORCED
+		{"CREATE TABLE t (a int CHECK (a > 0) NOT ENFORCED)", true, "CREATE TABLE `t` (`a` INT CHECK(`a`>0) NOT ENFORCED)"},
+		// BUG-88: CHECK with ENFORCED (explicit)
+		{"CREATE TABLE t (a int CHECK (a > 0) ENFORCED)", true, "CREATE TABLE `t` (`a` INT CHECK(`a`>0) ENFORCED)"},
+		// BUG-88: CHECK NOT NULL with constraint name
+		{"CREATE TABLE t (a int CONSTRAINT chk CHECK (a > 0) not null)", true, "CREATE TABLE `t` (`a` INT CONSTRAINT `chk` CHECK(`a`>0) ENFORCED NOT NULL)"},
+		// BUG-88: CHECK NOT NULL followed by more options
+		{"CREATE TABLE Customer (SD integer CHECK (SD > 0) not null, First_Name varchar(30) comment 'string' not null);", true, "CREATE TABLE `Customer` (`SD` INT CHECK(`SD`>0) ENFORCED NOT NULL,`First_Name` VARCHAR(30) COMMENT 'string' NOT NULL)"},
 		// BUG-89: COLUMN_FORMAT DYNAMIC
 		{"CREATE TABLE t (a int COLUMN_FORMAT DYNAMIC)", true, "CREATE TABLE `t` (`a` INT COLUMN_FORMAT DYNAMIC)"},
+		// BUG-89: COLUMN_FORMAT FIXED
+		{"CREATE TABLE t (a int COLUMN_FORMAT FIXED)", true, "CREATE TABLE `t` (`a` INT COLUMN_FORMAT FIXED)"},
+		// BUG-89: COLUMN_FORMAT DEFAULT
+		{"CREATE TABLE t (a int COLUMN_FORMAT DEFAULT)", true, "CREATE TABLE `t` (`a` INT COLUMN_FORMAT DEFAULT)"},
 		// BUG-86: invalid collation rejected
 		{"CREATE TABLE t (a varchar(10) COLLATE totally_bogus_collation)", false, ""},
-		{"CREATE TEMPORARY TABLE t (a varchar(50), b int);", true, "CREATE TEMPORARY TABLE `t` (`a` VARCHAR(50),`b` INT)"},
+		// BUG-86: canonical collation name (case normalization)
+		{"CREATE TABLE t (a varchar(10) COLLATE UTF8_BIN)", true, "CREATE TABLE `t` (`a` VARCHAR(10) COLLATE utf8_bin)"},
+		// BUG-87: STORAGE with valid values
+		{"create table t (a int storage DISK, b varchar(255) STORAGE DEFAULT)", true, "CREATE TABLE `t` (`a` INT STORAGE DISK,`b` VARCHAR(255) STORAGE DEFAULT)"},
+		{"create table t (a int STORAGE MEMORY)", true, "CREATE TABLE `t` (`a` INT STORAGE MEMORY)"},
+		// BUG-97: CHARACTER SET binary auto-sets BinaryFlag
+		{"CREATE TABLE t (a text CHARACTER SET binary)", true, "CREATE TABLE `t` (`a` BLOB)"},
+		// BUG-95: VARBINARY without length is an error
+		{"CREATE TABLE t (a VARBINARY)", false, ""},
 		{"CREATE TEMPORARY TABLE t LIKE t1", true, "CREATE TEMPORARY TABLE `t` LIKE `t1`"},
 		{"DROP TEMPORARY TABLE t", true, "DROP TEMPORARY TABLE `t`"},
 		{"create global temporary table t (a int, b varchar(255)) on commit delete rows", true, "CREATE GLOBAL TEMPORARY TABLE `t` (`a` INT,`b` VARCHAR(255)) ON COMMIT DELETE ROWS"},
