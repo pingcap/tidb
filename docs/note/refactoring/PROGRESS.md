@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (Batches 2-10: regexp through selectivity_filter decompositions)
+Last updated: 2026-02-20 (Batches 2-12: regexp through lexer_scanners decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -633,3 +633,9 @@ Last updated: 2026-02-20 (Batches 2-10: regexp through selectivity_filter decomp
 - [x] **ddl/reorg.go decomposition** - 2026-02-20 - Extracted `reorg_table_scan.go` (258 lines) with table scan DAG builders, GetTableMaxHandle, buildHandleCols, getTableRange. Reduced reorg.go from 1,193 to 968 lines (19% reduction).
 - [x] **distsql/select_result.go decomposition** - 2026-02-20 - Extracted `select_result_iter.go` (440 lines) with channel iter, selectResultIter, CopRuntimeStats, selectResultRuntimeStats. Reduced select_result.go from 1,166 to 754 lines (35% reduction).
 - [x] **planner/cardinality/selectivity.go decomposition** - 2026-02-20 - Extracted `selectivity_filter.go` (376 lines) with GetSelectivityByFilter, crossValidationSelectivity, outOfRange functions, MVIndex vars. Reduced selectivity.go from 1,196 to 846 lines (29% reduction).
+- [x] **ddl/ddl.go decomposition** - 2026-02-20 - Extracted `ddl_job_ctx.go` (222 lines) with job context and reorg context management methods. Reduced ddl.go from 1,171 to 973 lines (17% reduction).
+- [x] **dxf/framework/storage/task_table.go decomposition** - 2026-02-20 - Extracted `task_table_subtask.go` (262 lines) with subtask query/update/error operations. Reduced task_table.go from 1,174 to 940 lines (20% reduction).
+- [x] **store/mockstore/unistore/tikv/mvcc.go decomposition** - 2026-02-20 - Extracted `mvcc_read.go` (267 lines) with Get, GetPair, BatchGet, Scan, collectRangeLock. Reduced mvcc.go from 1,173 to 930 lines (21% reduction).
+- [x] **statistics/table.go decomposition** - 2026-02-20 - Extracted `table_memory.go` (170 lines) with TableMemoryUsage, TableCacheItem, ColumnMemUsage, IndexMemUsage types. Reduced table.go from 1,146 to 991 lines (14% reduction).
+- [x] **util/stmtsummary/statement_summary.go decomposition** - 2026-02-20 - Extracted `stmt_summary_stats.go` (240 lines) with stmtSummaryStats.add() method. Reduced statement_summary.go from 1,100 to 879 lines (20% reduction).
+- [x] **parser/lexer.go decomposition** - 2026-02-20 - Extracted `lexer_scanners.go` (300 lines) with token scanner functions (startWithXx/Nn/Bb/Dash/Slash/Star/At, scanIdentifier, scanQuotedIdent). Reduced lexer.go from 1,107 to 827 lines (25% reduction).
