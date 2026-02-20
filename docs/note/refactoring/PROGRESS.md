@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (json_binary, transformation_rules, arithmetic, regexp, common_plans, json_vec, point_get, distsql_builtin, show, exhaust, indexmerge, time_arith decompositions)
+Last updated: 2026-02-20 (Batches 2-7: regexp, common_plans, json_vec, point_get, distsql_builtin, show, exhaust, indexmerge, time_arith, builtin_op, expression, plan_cost_v1/v2, optimizer, inspection, math_vec, simple_user, planbuilder_analyze decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -616,3 +616,12 @@ Last updated: 2026-02-20 (json_binary, transformation_rules, arithmetic, regexp,
 - [x] **planner/core/exhaust_physical_plans.go further decomposition** - 2026-02-20 - Extracted `exhaust_physical_plans_join.go` (~334 lines) with tryToEnumerateIndexJoin, tryToGetIndexJoin, exhaustPhysicalPlans4LogicalJoin, exhaustPhysicalPlans4LogicalApply. Reduced exhaust_physical_plans.go from 1,399 to 1,094 lines (22% reduction).
 - [x] **planner/core/indexmerge_path.go decomposition** - 2026-02-20 - Extracted `indexmerge_path_mvindex.go` (~631 lines) with MV index path building functions. Reduced indexmerge_path.go from 1,394 to 790 lines (43% reduction).
 - [x] **expression/builtin_time_arith.go decomposition** - 2026-02-20 - Extracted `builtin_time_arith_vec.go` (~679 lines) with addSubDate function class and all date add/sub signature types. Reduced builtin_time_arith.go from 1,392 to 735 lines (47% reduction).
+- [x] **expression/builtin_op.go decomposition** - 2026-02-20 - Extracted `builtin_op_istrue_isnull.go` (~910 lines) with isTrueOrFalse, unaryNot, bitNeg, unaryMinus, isNull function classes. Reduced builtin_op.go from 1,344 to 458 lines (66% reduction).
+- [x] **expression/expression.go decomposition** - 2026-02-20 - Extracted `expression_compose.go` (~501 lines) with Assignment, VarAssignment, CNF/DNF split, EvaluateExprWithNull, TableInfo2Schema. Reduced expression.go from 1,331 to 855 lines (36% reduction).
+- [x] **planner/core/plan_cost_ver2.go decomposition** - 2026-02-20 - Extracted `plan_cost_ver2_helpers.go` (~340 lines) with cost helper functions and factors. Reduced plan_cost_ver2.go from 1,300 to 989 lines (24% reduction).
+- [x] **planner/core/plan_cost_ver1.go decomposition** - 2026-02-20 - Extracted `plan_cost_ver1_join.go` (~523 lines) with reader/join cost functions. Reduced plan_cost_ver1.go from 1,234 to 739 lines (40% reduction).
+- [x] **executor/simple_user.go decomposition** - 2026-02-20 - Extracted `simple_user_password.go` (~267 lines) with password reuse/history verification functions. Reduced simple_user.go from 1,296 to 1,065 lines (18% reduction).
+- [x] **planner/core/planbuilder_analyze.go decomposition** - 2026-02-20 - Extracted `planbuilder_analyze_options.go` (~474 lines) with analyze options management, build/index functions. Reduced planbuilder_analyze.go from 1,296 to 853 lines (34% reduction).
+- [x] **planner/core/optimizer.go decomposition** - 2026-02-20 - Extracted `optimizer_shuffle.go` (~370 lines) with TiFlash fine-grained shuffle logic. Reduced optimizer.go from 1,260 to 917 lines (27% reduction).
+- [x] **executor/inspection_result.go decomposition** - 2026-02-20 - Extracted `inspection_result_threshold.go` (~537 lines) with threshold check inspection functions. Reduced inspection_result.go from 1,255 to 744 lines (41% reduction).
+- [x] **expression/builtin_math_vec.go decomposition** - 2026-02-20 - Extracted `builtin_math_vec_int.go` (~643 lines) with int/decimal/conversion vectorized math ops. Reduced builtin_math_vec.go from 1,224 to 605 lines (51% reduction).
