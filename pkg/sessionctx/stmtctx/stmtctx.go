@@ -1374,14 +1374,14 @@ func (s *UsedStatsInfoForTable) FormatForExplain() string {
 }
 
 // WriteToSlowLog format the content in the format expected to be printed to the slow log, then write to w.
-// The format is table name partition name:version[realtime row count;modify count][index load status][column load status].
+// The format is table name partition name:stats_meta_version=<ver>[realtime_count=<n>;modify_count=<m>][index load status][column load status].
 func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
 	ver := "pseudo"
 	// statistics.PseudoVersion == 0
 	if s.Version != 0 {
 		ver = strconv.FormatUint(s.Version, 10)
 	}
-	fmt.Fprintf(w, "%s:version=%s[realtime_count=%d;modify_count=%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
+	fmt.Fprintf(w, "%s:stats_meta_version=%s[realtime_count=%d;modify_count=%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
 	if ver == "pseudo" {
 		return
 	}

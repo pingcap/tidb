@@ -516,12 +516,12 @@ func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
 	sPseudo.WriteToSlowLog(&buf)
 	out := buf.String()
 	require.Contains(t, out, "t1:")
-	require.Contains(t, out, "version=pseudo")
+	require.Contains(t, out, "stats_meta_version=pseudo")
 	require.Contains(t, out, "realtime_count=1000")
 	require.Contains(t, out, "modify_count=100")
 	// pseudo returns early, so no "[index][column]" part
 	require.NotContains(t, out, "][")
-	require.Equal(t, "t1:version=pseudo[realtime_count=1000;modify_count=100]", out)
+	require.Equal(t, "t1:stats_meta_version=pseudo[realtime_count=1000;modify_count=100]", out)
 
 	// real stats: Version != 0
 	buf.Reset()
@@ -534,10 +534,10 @@ func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
 	sReal.WriteToSlowLog(&buf)
 	out = buf.String()
 	require.Contains(t, out, "orders:")
-	require.Contains(t, out, "version=5")
+	require.Contains(t, out, "stats_meta_version=5")
 	require.Contains(t, out, "realtime_count=1000000")
 	require.Contains(t, out, "modify_count=500")
-	require.Equal(t, "orders:version=5[realtime_count=1000000;modify_count=500]", out)
+	require.Equal(t, "orders:stats_meta_version=5[realtime_count=1000000;modify_count=500]", out)
 
 	// real stats with column/index load status
 	buf.Reset()
@@ -551,10 +551,10 @@ func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
 	}
 	sWithStatus.WriteToSlowLog(&buf)
 	out = buf.String()
-	require.True(t, strings.HasPrefix(out, "t2:version=10[realtime_count=2000;modify_count=0]"))
+	require.True(t, strings.HasPrefix(out, "t2:stats_meta_version=10[realtime_count=2000;modify_count=0]"))
 	require.Contains(t, out, "[")
 	// TblInfo is nil so column/index names fall back to "ID <id>"; order: [index][column]
-	require.Equal(t, "t2:version=10[realtime_count=2000;modify_count=0][ID 1:allLoaded][ID 2:onlyCmsEvicted]", out)
+	require.Equal(t, "t2:stats_meta_version=10[realtime_count=2000;modify_count=0][ID 1:allLoaded][ID 2:onlyCmsEvicted]", out)
 }
 
 func BenchmarkErrCtx(b *testing.B) {
