@@ -2568,6 +2568,12 @@ func TestDDL(t *testing.T) {
 		{"CREATE GLOBAL TEMPORARY TABLE t1 (id int) ON COMMIT PRESERVE ROWS", true, "CREATE GLOBAL TEMPORARY TABLE `t1` (`id` INT) ON COMMIT PRESERVE ROWS"},
 		{"CREATE TABLE t (t.a int)", true, "CREATE TABLE `t` (`t`.`a` INT)"},
 		{"CREATE TABLE t (a varchar(10) COLLATE utf8_bin)", true, "CREATE TABLE `t` (`a` VARCHAR(10) COLLATE utf8_bin)"},
+		// BUG-88: CHECK (expr) NOT NULL → injects both CHECK and NOT NULL
+		{"CREATE TABLE Customer (SD integer CHECK (SD > 0) not null)", true, "CREATE TABLE `Customer` (`SD` INT CHECK(`SD`>0) ENFORCED NOT NULL)"},
+		// BUG-89: COLUMN_FORMAT DYNAMIC
+		{"CREATE TABLE t (a int COLUMN_FORMAT DYNAMIC)", true, "CREATE TABLE `t` (`a` INT COLUMN_FORMAT DYNAMIC)"},
+		// BUG-86: invalid collation rejected
+		{"CREATE TABLE t (a varchar(10) COLLATE totally_bogus_collation)", false, ""},
 		{"CREATE TEMPORARY TABLE t (a varchar(50), b int);", true, "CREATE TEMPORARY TABLE `t` (`a` VARCHAR(50),`b` INT)"},
 		{"CREATE TEMPORARY TABLE t LIKE t1", true, "CREATE TEMPORARY TABLE `t` LIKE `t1`"},
 		{"DROP TEMPORARY TABLE t", true, "DROP TEMPORARY TABLE `t`"},

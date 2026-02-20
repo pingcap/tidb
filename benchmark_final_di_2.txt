@@ -1,0 +1,25 @@
+goos: darwin
+goarch: arm64
+cpu: Apple M4 Max
+BenchmarkHandParser/SimpleInsert-16         	  861648	      1347 ns/op	    1377 B/op	      16 allocs/op
+BenchmarkHandParser/SimpleUpdate-16         	 1233831	       976.2 ns/op	     825 B/op	       8 allocs/op
+BenchmarkHandParser/SelectComplex-16        	  385329	      2915 ns/op	    1602 B/op	      22 allocs/op
+BenchmarkHandParser/SelectWhere3-16         	  813216	      1490 ns/op	     856 B/op	      10 allocs/op
+BenchmarkHandParser/BulkInsert-16           	  407946	      2869 ns/op	    2137 B/op	      30 allocs/op
+BenchmarkHandParser/TPCH_Query-16           	  330164	      3701 ns/op	    1865 B/op	      24 allocs/op
+BenchmarkHandParser/DeepNested-16           	  260860	      4510 ns/op	    5020 B/op	      30 allocs/op
+BenchmarkHandParser/SimpleSelect-16         	 1263211	       948.5 ns/op	     857 B/op	      10 allocs/op
+BenchmarkHandParser/SimpleDelete-16         	 1658688	       716.7 ns/op	     544 B/op	       5 allocs/op
+BenchmarkHandParser/PointGet-16             	 1244601	       949.7 ns/op	     857 B/op	      10 allocs/op
+BenchmarkGoyaccParser/DeepNested-16         	  268863	      4471 ns/op	    4680 B/op	      29 allocs/op
+BenchmarkGoyaccParser/SimpleSelect-16       	 1317769	       911.8 ns/op	     520 B/op	       9 allocs/op
+BenchmarkGoyaccParser/SimpleDelete-16       	 1790896	       669.7 ns/op	     208 B/op	       4 allocs/op
+BenchmarkGoyaccParser/PointGet-16           	 1308459	       918.1 ns/op	     520 B/op	       9 allocs/op
+BenchmarkGoyaccParser/SimpleInsert-16       	  928576	      1313 ns/op	    1040 B/op	      15 allocs/op
+BenchmarkGoyaccParser/SimpleUpdate-16       	 1322185	       908.8 ns/op	     488 B/op	       7 allocs/op
+BenchmarkGoyaccParser/SelectComplex-16      	  421690	      2859 ns/op	    1264 B/op	      21 allocs/op
+BenchmarkGoyaccParser/SelectWhere3-16       	  832532	      1441 ns/op	     520 B/op	       9 allocs/op
+BenchmarkGoyaccParser/BulkInsert-16         	  427306	      2801 ns/op	    1800 B/op	      29 allocs/op
+BenchmarkGoyaccParser/TPCH_Query-16         	  333901	      3617 ns/op	    1528 B/op	      23 allocs/op
+PASS
+ok  	command-line-arguments	31.839s

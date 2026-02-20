@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -457,11 +458,23 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 			p.expect('(')
 			option.Expr = p.parseExpression(precNone)
 			p.expect(')')
-			// Optional: [NOT] ENFORCED
-			if p.peek().Tp == tokNot && p.peekN(1).IsKeyword("ENFORCED") {
-				p.next() // consume NOT
-				p.next() // consume ENFORCED
-				option.Enforced = false
+			// EnforcedOrNotOrNotNullOpt: parser.y line 3732
+			// NOT NULL → injects both CHECK and a separate ColumnOptionNotNull
+			// NOT ENFORCED → sets Enforced = false
+			// ENFORCED → sets Enforced = true (default)
+			if p.peek().Tp == tokNot {
+				if p.peekN(1).Tp == tokNull {
+					// CHECK (expr) NOT NULL → inject separate NOT NULL option
+					p.next() // consume NOT
+					p.next() // consume NULL
+					options = append(options, option)
+					options = append(options, &ast.ColumnOption{Tp: ast.ColumnOptionNotNull})
+					continue
+				} else if p.peekN(1).IsKeyword("ENFORCED") {
+					p.next() // consume NOT
+					p.next() // consume ENFORCED
+					option.Enforced = false
+				}
 			} else if p.peek().IsKeyword("ENFORCED") {
 				p.next()
 				option.Enforced = true
@@ -488,10 +501,15 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 			option.Tp = ast.ColumnOptionCollate
 			tok := p.peek()
 			if isIdentLike(tok.Tp) || tok.Tp == tokStringLit {
-				option.StrValue = tok.Lit
+				info, err := charset.GetCollationByName(tok.Lit)
+				if err != nil {
+					p.errs = append(p.errs, err)
+					return nil
+				}
+				option.StrValue = info.Name
 				p.next()
 			} else if tok.Tp == tokBinary || tok.Tp == tokByte {
-				option.StrValue = "binary"
+				option.StrValue = charset.CollationBin
 				p.next()
 			} else {
 				p.error(tok.Offset, "expected collation name")
@@ -500,16 +518,19 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 		case tokColumnFormat:
 			p.next()
 			option.Tp = ast.ColumnOptionColumnFormat
-			switch p.peek().Tp {
-			case tokDefault:
+			switch {
+			case p.peek().Tp == tokDefault:
 				p.next()
 				option.StrValue = "DEFAULT"
-			case tokFixed:
+			case p.peek().Tp == tokFixed:
 				p.next()
 				option.StrValue = "FIXED"
+			case p.peek().IsKeyword("DYNAMIC"):
+				p.next()
+				option.StrValue = "DYNAMIC"
 			default:
-				tok := p.next()
-				option.StrValue = strings.ToUpper(tok.Lit) // DYNAMIC etc.
+				p.error(p.peek().Offset, "expected DEFAULT, FIXED, or DYNAMIC for COLUMN_FORMAT")
+				return nil
 			}
 		case tokStorage:
 			p.next()
@@ -525,8 +546,10 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 				p.next()
 				option.StrValue = "MEMORY"
 			default:
-				p.next() // consume whatever is there
+				p.error(p.peek().Offset, "expected DEFAULT, DISK, or MEMORY for STORAGE")
+				return nil
 			}
+			p.warn("The STORAGE clause is parsed but ignored by all storage engines.")
 		case tokAutoRandom:
 			p.next()
 			option.Tp = ast.ColumnOptionAutoRandom
