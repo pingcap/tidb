@@ -829,15 +829,15 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 			} else {
 				tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-					"37 add index write only 9 11 t0 running",
+					"35 add index write only 7 9 t0 running",
 				))
 				tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-					"37 add index write only 9 11 t0 running",
+					"35 add index write only 7 9 t0 running",
 				))
 				tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-					"37 add index write only 9 11 t0 running",
+					"35 add index write only 7 9 t0 running",
 				))
 			}
 		}
