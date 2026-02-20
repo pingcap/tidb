@@ -9,7 +9,7 @@
 1. **事务性（all-or-nothing）**：一次 refresh 的数据替换与 refresh 元信息更新必须在同一个事务里提交/回滚。
 2. **并发互斥**：对同一个 MV，多个 session 同时 refresh 时，只允许一个成功进入执行路径，其他直接报“正在 refresh/无法立即获得锁”的错误。
 3. **更新 refresh 元信息**：成功提交前，更新 `mysql.tidb_mview_refresh` 中该 MV 行的状态，尤其是：
-   - `LAST_SUCCESSFUL_REFRESH_READ_TSO = <本次 refresh 事务 start_ts>`
+   - `LAST_SUCCESSFUL_REFRESH_READ_TSO = <本次 COMPLETE refresh 事务 for_update_ts>`
 4. **失败也要落元信息**：如果 refresh 执行失败，也要把 `LAST_REFRESH_RESULT='failed'` 以及失败原因写回 `mysql.tidb_mview_refresh`（并保证 MV 表数据不被部分写入）。
 5. **COMPLETE refresh 可用**：事务内 `DELETE + INSERT` 完整替换 MV 数据。
 6. **FAST refresh 先搭框架路径**：通过构造 internal-only AST 走 `ExecuteInternalStmt`，以便后续接入真正的增量刷新执行计划（当前仍会报 not supported）。
@@ -52,17 +52,19 @@ REFRESH MATERIALIZED VIEW mv WITH SYNC MODE FAST; -- 当前等同普通 refresh�
 
 1. 开启一个事务（建议 **pessimistic**，以保证 `FOR UPDATE NOWAIT` 立即生效）。
 2. 在事务内，用 `SELECT ... FOR UPDATE NOWAIT` 对 refresh 信息行加锁（作为 refresh mutex）。
-3. 设置一个 savepoint（用于失败时回滚 MV 数据变更，但仍可提交失败元信息）。
-4. 根据 refresh type 执行刷新实现：
+3. 再用普通 `SELECT` 把 `LAST_SUCCESSFUL_REFRESH_READ_TSO` 读一遍，与第 2 步的值对比：
+   - 如果不一致，将本次 refresh 视为失败：更新 `LAST_REFRESH_RESULT='failed'` / `LAST_REFRESH_FAILED_REASON` 等并 `COMMIT`，然后返回错误终止 refresh（避免在同一事务里同时观察到 `start_ts` / `for_update_ts` 两个快照下不一致的 refresh 元信息）。
+4. 设置一个 savepoint（用于失败时回滚 MV 数据变更，但仍可提交失败元信息）。
+5. 根据 refresh type 执行刷新实现：
    - `COMPLETE`：`DELETE FROM <mv_table>` + `INSERT INTO <mv_table> <mv_select_sql>`。
    - `FAST`：构造 internal statement（见下文），走 `ExecuteInternalStmt`（当前 planner/build 会直接报 not supported 占位）。
-5. 在提交前更新 `mysql.tidb_mview_refresh` 该行（成功场景）：
+6. 在提交前更新 `mysql.tidb_mview_refresh` 该行（成功场景）：
    - `LAST_REFRESH_RESULT='success'`
    - `LAST_REFRESH_TYPE = <'complete' | 'fast'>`
    - `LAST_REFRESH_TIME=NOW(6)`
-   - `LAST_SUCCESSFUL_REFRESH_READ_TSO = <txn start_ts>`
+   - `LAST_SUCCESSFUL_REFRESH_READ_TSO = <COMPLETE refresh: txn for_update_ts>`
    - `LAST_REFRESH_FAILED_REASON = NULL`
-6. 提交事务。
+7. 提交事务。
 
 失败场景（例如 `INSERT INTO ... SELECT ...` 报错）：
 
@@ -86,6 +88,11 @@ SELECT MVIEW_ID, LAST_SUCCESSFUL_REFRESH_READ_TSO
  WHERE MVIEW_ID = <mview_id>
  FOR UPDATE NOWAIT;
 
+-- (A2) consistency check：普通 SELECT 读出来的值必须与 (A) 一致，否则直接报错终止 refresh
+SELECT LAST_SUCCESSFUL_REFRESH_READ_TSO
+  FROM mysql.tidb_mview_refresh
+ WHERE MVIEW_ID = <mview_id>;
+
 SAVEPOINT tidb_mview_refresh_sp;
 
 -- (B) 全量替换
@@ -102,7 +109,7 @@ UPDATE mysql.tidb_mview_refresh
    SET LAST_REFRESH_RESULT = 'success',
        LAST_REFRESH_TYPE = <refresh_type>,
        LAST_REFRESH_TIME = NOW(6),
-       LAST_SUCCESSFUL_REFRESH_READ_TSO = <start_ts>,
+       LAST_SUCCESSFUL_REFRESH_READ_TSO = <for_update_ts>,
        LAST_REFRESH_FAILED_REASON = NULL
  WHERE MVIEW_ID = <mview_id>;
 
@@ -125,19 +132,26 @@ COMMIT;
 `FOR UPDATE NOWAIT` 的目的就是“立刻失败而不是等待”，并且必须在事务里才有意义。
 显式 `BEGIN PESSIMISTIC` 能保证锁在第一时间被获取并且冲突能立刻暴露出来，符合“mutex”的直觉语义。
 
-### start_ts 的获取方式
+### COMPLETE refresh 的 read tso（for_update_ts）获取方式
 
-需求是 `LAST_SUCCESSFUL_REFRESH_READ_TSO` 写入“本次 refresh 事务的 start_ts（read tso）”。
+需求是：COMPLETE refresh 成功时，`LAST_SUCCESSFUL_REFRESH_READ_TSO` 写入“本次 refresh 事务的 for_update_ts（read tso）”。
+
+原因是：在 `BEGIN PESSIMISTIC` 里，`INSERT INTO ... SELECT ...` 这类 DML 语句的读会使用 `for_update_ts`，
+因此 MV 表里写入的数据快照也对应 `for_update_ts`。如果只写入 `start_ts`，就可能出现 “MV 数据包含了 `LAST_SUCCESSFUL_REFRESH_READ_TSO` 之后的数据” 的表象，
+并且会误导后续基于该 tso 的增量刷新/校验逻辑。
+
+FAST refresh 目前尚未实现真正的增量刷新执行逻辑（planner 仍会报 not supported），因此这里先只定义 COMPLETE refresh 的 read tso 语义。
 
 实现上有两种简单办法：
 
-1. **从事务对象拿**：`txn, _ := sctx.Txn(true)` 然后读 `txn.StartTS()`。
-2. **复用现有模式**：在事务内执行完第一条语句（建议就是那条 `SELECT ... FOR UPDATE`）后，
-   通过 `@@tidb_last_query_info` 的 JSON 字段取 `start_ts`（CREATE MV build 已经在用同样的方式）。
+1. **从 Session 的 TxnCtx 拿**：在完成 refresh 的 DML（`DELETE` / `INSERT ... SELECT ...`）之后，
+   通过 `sctx.GetSessionVars().TxnCtx.GetForUpdateTS()` 取 `for_update_ts`。
+2. **复用 last_query_info**：在事务内执行完关键 DML（例如 `INSERT ... SELECT ...`）后，
+   通过 `@@tidb_last_query_info` 的 JSON 字段取 `for_update_ts`。
 
-建议优先选 (1)（更直接、少一次 SQL），但 (2) 与现有 create-mview build 逻辑更一致。
+建议优先选 (1)（更直接、少一次 SQL），并且能保证取到的是事务上下文的 `for_update_ts`（而不是某条语句的临时值）。
 
-当前实现采用 (1)：直接从事务对象读取 `txn.StartTS()`。
+当前实现采用 (1)：在 COMPLETE refresh 的 DML 执行完成后，从 `TxnCtx` 读取 `for_update_ts` 并写入 `LAST_SUCCESSFUL_REFRESH_READ_TSO`。
 
 ## 代码落点建议（实现方式）
 

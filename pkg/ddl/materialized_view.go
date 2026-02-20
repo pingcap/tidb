@@ -408,7 +408,31 @@ func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.Refre
 	}
 	txnStarted = true
 
+	failpoint.InjectCall("refreshMaterializedViewAfterBegin")
+	failpoint.Inject("pauseRefreshMaterializedViewAfterBegin", func() {})
+
 	mviewID := tbl.Meta().ID
+	persistRefreshFailureAndCommit := func(refreshErr error) error {
+		updateFailedSQL := `UPDATE mysql.tidb_mview_refresh
+SET
+	LAST_REFRESH_RESULT = 'failed',
+	LAST_REFRESH_TYPE = %?,
+	LAST_REFRESH_TIME = NOW(6),
+	LAST_REFRESH_FAILED_REASON = %?
+WHERE MVIEW_ID = %?`
+		if _, err := sqlExec.ExecuteInternal(kctx, updateFailedSQL, refreshType, refreshErr.Error(), mviewID); err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) {
+				return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
+			}
+			return errors.Annotatef(err, "refresh materialized view: failed to persist refresh failure info (original error: %v)", refreshErr)
+		}
+		if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
+			return errors.Trace(err)
+		}
+		txnCommitted = true
+		return errors.Trace(refreshErr)
+	}
+
 	lockRS, err := sqlExec.ExecuteInternal(kctx,
 		// Also select LAST_SUCCESSFUL_REFRESH_READ_TSO so FAST refresh can reuse this mutex/metadata load path.
 		"SELECT MVIEW_ID, LAST_SUCCESSFUL_REFRESH_READ_TSO FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
@@ -434,14 +458,54 @@ func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.Refre
 	if len(lockRows) == 0 {
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh")
 	}
+
+	// In pessimistic txn, `SELECT ... FOR UPDATE` reads at txn's `for_update_ts`, while normal `SELECT`
+	// reads at txn's `start_ts`. Re-check LAST_SUCCESSFUL_REFRESH_READ_TSO using a normal SELECT to
+	// ensure the refresh info row is consistent between these 2 read timestamps.
+	lockedRow := lockRows[0]
+	lockedReadTSONull := lockedRow.IsNull(1)
+	var lockedReadTSO int64
+	if !lockedReadTSONull {
+		lockedReadTSO = lockedRow.GetInt64(1)
+	}
+	recheckRS, err := sqlExec.ExecuteInternal(kctx,
+		"SELECT LAST_SUCCESSFUL_REFRESH_READ_TSO FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %?",
+		mviewID,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if recheckRS == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: cannot re-check mysql.tidb_mview_refresh row")
+	}
+	recheckRows, drainErr := sqlexec.DrainRecordSet(kctx, recheckRS, 1)
+	closeErr = recheckRS.Close()
+	if drainErr != nil {
+		return errors.Trace(drainErr)
+	}
+	if closeErr != nil {
+		return errors.Trace(closeErr)
+	}
+	if len(recheckRows) == 0 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh")
+	}
+	recheckRow := recheckRows[0]
+	recheckReadTSONull := recheckRow.IsNull(0)
+	var recheckReadTSO int64
+	if !recheckReadTSONull {
+		recheckReadTSO = recheckRow.GetInt64(0)
+	}
+	if lockedReadTSONull != recheckReadTSONull || (!lockedReadTSONull && lockedReadTSO != recheckReadTSO) {
+		return persistRefreshFailureAndCommit(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: inconsistent LAST_SUCCESSFUL_REFRESH_READ_TSO between locking read and snapshot read"))
+	}
+
 	var lastSuccessfulRefreshReadTSO int64
 	if s.Type == ast.RefreshMaterializedViewTypeFast {
 		// LAST_SUCCESSFUL_REFRESH_READ_TSO is BIGINT DEFAULT NULL. FAST refresh requires it to be non-NULL.
-		row := lockRows[0]
-		if row.IsNull(1) {
+		if lockedReadTSONull {
 			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view fast: LAST_SUCCESSFUL_REFRESH_READ_TSO is NULL")
 		}
-		lastSuccessfulRefreshReadTSO = row.GetInt64(1)
+		lastSuccessfulRefreshReadTSO = lockedReadTSO
 	}
 
 	txn, err := sctx.Txn(true)
@@ -545,24 +609,21 @@ func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.Refre
 		if _, err := sqlExec.ExecuteInternal(kctx, "ROLLBACK TO SAVEPOINT "+refreshSavepoint); err != nil {
 			return errors.Annotatef(err, "refresh materialized view: failed to rollback MV data changes after error %v", refreshErr)
 		}
-		updateFailedSQL := `UPDATE mysql.tidb_mview_refresh
-SET
-	LAST_REFRESH_RESULT = 'failed',
-	LAST_REFRESH_TYPE = %?,
-	LAST_REFRESH_TIME = NOW(6),
-	LAST_REFRESH_FAILED_REASON = %?
-WHERE MVIEW_ID = %?`
-		if _, err := sqlExec.ExecuteInternal(kctx, updateFailedSQL, refreshType, refreshErr.Error(), mviewID); err != nil {
-			if infoschema.ErrTableNotExists.Equal(err) {
-				return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
-			}
-			return errors.Annotatef(err, "refresh materialized view: failed to persist refresh failure info (original error: %v)", refreshErr)
+		return persistRefreshFailureAndCommit(refreshErr)
+	}
+
+	// COMPLETE refresh uses `DELETE + INSERT INTO ... SELECT ...` and the SELECT part reads at txn's
+	// `for_update_ts` in pessimistic txn, so record `for_update_ts` to ensure
+	// LAST_SUCCESSFUL_REFRESH_READ_TSO matches the MV data snapshot.
+	//
+	// For FAST refresh, the actual execution is not implemented yet; keep the original behavior and
+	// record txn start_ts when it succeeds in the future.
+	refreshReadTSO := startTS
+	if s.Type == ast.RefreshMaterializedViewTypeComplete {
+		refreshReadTSO = sessVars.TxnCtx.GetForUpdateTS()
+		if refreshReadTSO == 0 {
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: invalid refresh read tso")
 		}
-		if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
-			return errors.Trace(err)
-		}
-		txnCommitted = true
-		return errors.Trace(refreshErr)
 	}
 
 	updateSQL := `UPDATE mysql.tidb_mview_refresh
@@ -573,7 +634,7 @@ SET
 	LAST_SUCCESSFUL_REFRESH_READ_TSO = %?,
 	LAST_REFRESH_FAILED_REASON = NULL
 WHERE MVIEW_ID = %?`
-	if _, err := sqlExec.ExecuteInternal(kctx, updateSQL, refreshType, startTS, mviewID); err != nil {
+	if _, err := sqlExec.ExecuteInternal(kctx, updateSQL, refreshType, refreshReadTSO, mviewID); err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
 		}
