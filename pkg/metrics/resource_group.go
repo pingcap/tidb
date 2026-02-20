@@ -29,6 +29,11 @@ var (
 	RunawayFlusherBatchSizeHistogram *prometheus.HistogramVec
 	RunawayFlusherDurationHistogram  *prometheus.HistogramVec
 	RunawayFlusherIntervalHistogram  *prometheus.HistogramVec
+
+	RunawaySyncerDurationHistogram *prometheus.HistogramVec
+	RunawaySyncerIntervalHistogram *prometheus.HistogramVec
+	RunawaySyncerCheckpointGauge   *prometheus.GaugeVec
+	RunawaySyncerCounter           *prometheus.CounterVec
 )
 
 // InitResourceGroupMetrics initializes resource group metrics.
@@ -83,4 +88,38 @@ func InitResourceGroupMetrics() {
 			Help:      "Interval between runaway flusher operations in seconds.",
 			Buckets:   prometheus.ExponentialBuckets(0.1, 2, 12), // 0.1s ~ 200s
 		}, []string{LblName})
+
+	RunawaySyncerDurationHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_syncer_duration_seconds",
+			Help:      "Duration of runaway syncer read operations in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15), // 1ms ~ 16s
+		}, []string{LblType})
+
+	RunawaySyncerIntervalHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_syncer_interval_seconds",
+			Help:      "Interval between runaway syncer read operations in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.1, 2, 12), // 0.1s ~ 200s
+		}, []string{LblType})
+
+	RunawaySyncerCheckpointGauge = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_syncer_checkpoint",
+			Help:      "Current checkpoint (last synced record ID) of runaway syncer.",
+		}, []string{LblType})
+
+	RunawaySyncerCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "runaway_syncer_total",
+			Help:      "Counter of runaway syncer operations.",
+		}, []string{LblType, LblResult})
 }
