@@ -834,7 +834,7 @@ workLoop:
 				}
 			} else {
 				idx := e.indexes[task.slicePos-colLen]
-				if isSingleColNonPrefixUniqueIndex(idx) {
+				if idx.IsSingleColumnUniqueIndex() {
 					numTopN = 0
 				}
 			}
