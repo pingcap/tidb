@@ -903,3 +903,14 @@ drop table t1, t2;
 # Issue65521
 SELECT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.TIFLASH_REPLICA);
 SELECT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.TIFLASH_REPLICA WHERE TABLE_ID = 1);
+
+# Issue65929
+drop table if exists t1, t2;
+create table t1(a int);
+create table t2(a int);
+create index idx on t1((a+1));
+create index idx on t2((a+2));
+insert into t1 values (1);
+insert into t2 values (1);
+select * from t1 natural join t2 order by t1.a;
+drop table t1, t2;
