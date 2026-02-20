@@ -393,6 +393,50 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 			"      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
 	})
 
+	t.Run("any-subquery-with-stats-load-runtime-panic", func(t *testing.T) {
+		tk := newTestKit(t)
+		oriLease := dom.StatsHandle().Lease()
+		dom.StatsHandle().SetLease(1)
+		defer dom.StatsHandle().SetLease(oriLease)
+
+		tk.MustExec(`CREATE TABLE t4 (
+  id bigint NOT NULL,
+  c0 timestamp NOT NULL,
+  c1 timestamp NULL DEFAULT NULL,
+  c2 int NOT NULL,
+  c3 double DEFAULT NULL,
+  c4 tinyint(1) NOT NULL,
+  c5 double NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY idx_c0 (c0),
+  KEY idx_c3 (c3),
+  KEY idx_c4 (c4),
+  KEY idx_c5_16 (c5),
+  KEY idx_c1_24 (c1),
+  KEY idx_id_28 (id),
+  KEY idx_c2_30 (c2),
+  KEY idx_c2_c0_34 (c2, c0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+
+		tk.MustExec(`INSERT INTO t4 (id, c0, c1, c2, c3, c4, c5) VALUES
+(87, '2026-11-13 23:53:41', '2025-01-05 16:22:34', 72, 14.97, 0, 32.4),
+(88, '2026-11-13 23:53:41', '2026-09-07 01:19:42', 89, 60.37, 1, 84.95),
+(89, '2026-11-13 23:53:41', '2024-12-19 00:21:07', 68, 49.84, 1, 74.67),
+(90, '2026-11-13 23:53:41', '2025-07-30 05:34:28', 97, 77.5, 1, 7.11),
+(91, '2026-11-13 23:53:41', '2024-04-29 02:35:53', 17, 44.02, 1, 59.08)`)
+		tk.MustExec("analyze table t4 all columns")
+
+		q1 := "SELECT t4.id AS id FROM t4 WHERE ((((t4.c2 = 89) AND (t4.c0 = '2026-11-13 23:53:41')) AND (t4.c4 = true)) AND (t4.id = ANY (SELECT t4.id AS c0 FROM t4 WHERE (t4.id = 88))))"
+		q2 := "SELECT 1 FROM (SELECT t4.id AS id FROM t4 WHERE ((((t4.c2 = 89) AND (t4.c0 = '2026-11-13 23:53:41')) AND (t4.c4 = true)) AND (t4.id = ANY (SELECT t4.id AS c0 FROM t4 WHERE (t4.id = 88))))) pqs WHERE (id = 88) LIMIT 1"
+
+		tk.MustQuery(q1).Check(testkit.Rows("88"))
+		tk.MustQuery(q2).Check(testkit.Rows("1"))
+		for range 300 {
+			tk.MustQuery(q1).Check(testkit.Rows("88"))
+			tk.MustQuery(q2).Check(testkit.Rows("1"))
+		}
+	})
+
 	t.Run("plan-cache-explain-for-connection", func(t *testing.T) {
 		tk := newTestKit(t)
 		tk.MustExec("create table t(a int, b int, c int)")
