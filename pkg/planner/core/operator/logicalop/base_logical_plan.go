@@ -115,6 +115,17 @@ func (p *BaseLogicalPlan) SetOutputNames(names types.NameSlice) {
 
 // *************************** implementation of logicalPlan interface ***************************
 
+// DeepClone implements LogicalPlan.DeepClone interface.
+func (p *BaseLogicalPlan) DeepClone() base.LogicalPlan {
+	source := p.self
+	if source != nil && source != p {
+		return source.DeepClone()
+	}
+	cloned := new(BaseLogicalPlan)
+	*cloned = cloneBaseLogicalPlan(p, cloned)
+	return cloned
+}
+
 // HashCode implements LogicalPlan.<0th> interface.
 func (p *BaseLogicalPlan) HashCode() []byte {
 	// We use PlanID for the default hash, so if two plans do not have

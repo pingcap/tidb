@@ -18,8 +18,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
@@ -104,6 +108,308 @@ func TestLogicalApplyClone(t *testing.T) {
 	clonedApply.EqualConditions[1] = tmp
 	require.True(t, clonedApply.EqualConditions[0].FuncName.L == "f2")
 	require.True(t, apply.EqualConditions[0].FuncName.L == "f2")
+}
+
+func TestLogicalPlanDeepClone(t *testing.T) {
+	ctx := mock.NewContext()
+	left := logicalop.LogicalTableDual{}.Init(ctx, 0)
+	left.SetSchema(expression.NewSchema(&expression.Column{ID: 1}))
+	right := logicalop.LogicalTableDual{}.Init(ctx, 0)
+	right.SetSchema(expression.NewSchema(&expression.Column{ID: 2}))
+
+	join := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join.SetSchema(expression.NewSchema(&expression.Column{ID: 3}))
+	join.LeftConditions = expression.CNFExprs{&expression.Column{
+		ID:      6,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+		VirtualExpr: &expression.Constant{
+			Value:   types.NewBytesDatum([]byte("abc")),
+			RetType: types.NewFieldType(mysql.TypeString),
+		},
+	}}
+	join.DefaultValues = []types.Datum{types.NewStringDatum("origin")}
+	join.SetChildren(left, right)
+
+	cloned := join.DeepClone().(*logicalop.LogicalJoin)
+	require.NotSame(t, join, cloned)
+	require.NotSame(t, join.Schema(), cloned.Schema())
+	require.NotSame(t, join.Children()[0], cloned.Children()[0])
+	require.NotSame(t, join.LeftConditions[0], cloned.LeftConditions[0])
+	require.NotSame(t, join.LeftConditions[0].(*expression.Column).RetType, cloned.LeftConditions[0].(*expression.Column).RetType)
+	require.NotSame(t, join.LeftConditions[0].(*expression.Column).VirtualExpr, cloned.LeftConditions[0].(*expression.Column).VirtualExpr)
+	require.Same(t, cloned, cloned.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).Self())
+
+	cloned.LeftConditions[0].(*expression.Column).ID = 7
+	cloned.LeftConditions[0].(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	cloned.LeftConditions[0].(*expression.Column).VirtualExpr.(*expression.Constant).Value.GetBytes()[0] = 'z'
+	cloned.Schema().Append(&expression.Column{ID: 4})
+	cloned.DefaultValues[0].SetInt64(42)
+	cloned.Children()[0].Schema().Append(&expression.Column{ID: 5})
+
+	require.Equal(t, int64(6), join.LeftConditions[0].(*expression.Column).ID)
+	require.Equal(t, mysql.TypeLonglong, join.LeftConditions[0].(*expression.Column).RetType.GetType())
+	require.Equal(t, byte('a'), join.LeftConditions[0].(*expression.Column).VirtualExpr.(*expression.Constant).Value.GetBytes()[0])
+	require.Equal(t, 1, join.Schema().Len())
+	require.Equal(t, "origin", join.DefaultValues[0].GetString())
+	require.Equal(t, 1, left.Schema().Len())
+}
+
+func TestLogicalPlanDeepCloneComplexTree(t *testing.T) {
+	ctx := mock.NewContext()
+
+	newMutableColumn := func(id, uniqueID int64, marker byte) *expression.Column {
+		return &expression.Column{
+			ID:       id,
+			UniqueID: uniqueID,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			VirtualExpr: &expression.Constant{
+				Value:   types.NewBytesDatum([]byte{marker, marker + 1}),
+				RetType: types.NewFieldType(mysql.TypeString),
+			},
+		}
+	}
+	mustScalarFunc := func(expr expression.Expression) *expression.ScalarFunction {
+		sf, ok := expr.(*expression.ScalarFunction)
+		require.True(t, ok)
+		return sf
+	}
+
+	leftDSBaseCol := newMutableColumn(1, 101, 'a')
+	leftDSAuxCol := newMutableColumn(2, 102, 'c')
+	leftDS := logicalop.DataSource{
+		PushedDownConds: []expression.Expression{newMutableColumn(11, 111, 'e')},
+		AllConds:        []expression.Expression{newMutableColumn(12, 112, 'g')},
+		TblCols:         []*expression.Column{leftDSBaseCol, leftDSAuxCol},
+		TblColsByID: map[int64]*expression.Column{
+			leftDSBaseCol.ID: leftDSBaseCol,
+			leftDSAuxCol.ID:  leftDSAuxCol,
+		},
+		AskedColumnGroup:   [][]*expression.Column{{leftDSBaseCol, leftDSAuxCol}},
+		InterestingColumns: []*expression.Column{leftDSBaseCol},
+	}.Init(ctx, 0)
+	leftDS.SetSchema(expression.NewSchema(
+		leftDSBaseCol.Clone().(*expression.Column),
+		leftDSAuxCol.Clone().(*expression.Column),
+	))
+
+	leftSelCond := mustScalarFunc(expression.NewFunctionInternal(ctx, ast.GT, types.NewFieldType(mysql.TypeTiny),
+		leftDS.Schema().Columns[0].Clone().(*expression.Column),
+		&expression.Constant{Value: types.NewIntDatum(10), RetType: types.NewFieldType(mysql.TypeLonglong)},
+	))
+	leftSel := logicalop.LogicalSelection{
+		Conditions: []expression.Expression{leftSelCond},
+	}.Init(ctx, 0)
+	leftSel.SetChildren(leftDS)
+
+	leftProj := logicalop.LogicalProjection{
+		Exprs: []expression.Expression{
+			leftDS.Schema().Columns[0].Clone().(*expression.Column),
+			leftDS.Schema().Columns[1].Clone().(*expression.Column),
+		},
+	}.Init(ctx, 0)
+	leftProj.SetSchema(expression.NewSchema(
+		newMutableColumn(21, 121, 'i'),
+		newMutableColumn(22, 122, 'k'),
+	))
+	leftProj.SetChildren(leftSel)
+
+	aggDesc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{
+		leftProj.Exprs[0].Clone(),
+	}, false)
+	require.NoError(t, err)
+	aggDesc.OrderByItems = []*plannerutil.ByItems{
+		{Expr: leftProj.Exprs[1].Clone(), Desc: true},
+	}
+	leftAgg := logicalop.LogicalAggregation{
+		AggFuncs:           []*aggregation.AggFuncDesc{aggDesc},
+		GroupByItems:       []expression.Expression{leftProj.Exprs[1].Clone()},
+		PossibleProperties: [][]*expression.Column{{leftProj.Schema().Columns[0].Clone().(*expression.Column)}},
+	}.Init(ctx, 0)
+	leftAgg.SetSchema(expression.NewSchema(newMutableColumn(31, 131, 'm')))
+	leftAgg.SetChildren(leftProj)
+
+	leftSort := logicalop.LogicalSort{
+		ByItems: []*plannerutil.ByItems{
+			{Expr: leftAgg.Schema().Columns[0].Clone().(*expression.Column), Desc: true},
+		},
+	}.Init(ctx, 0)
+	leftSort.SetChildren(leftAgg)
+
+	leftLimit := logicalop.LogicalLimit{
+		Offset: 1,
+		Count:  9,
+		PartitionBy: []property.SortItem{
+			{Col: leftAgg.Schema().Columns[0].Clone().(*expression.Column), Desc: true},
+		},
+	}.Init(ctx, 0)
+	leftLimit.SetSchema(leftAgg.Schema().Clone())
+	leftLimit.SetChildren(leftSort)
+
+	rightDSBaseCol := newMutableColumn(41, 141, 'o')
+	rightDSAuxCol := newMutableColumn(42, 142, 'q')
+	rightDS := logicalop.DataSource{
+		PushedDownConds: []expression.Expression{newMutableColumn(51, 151, 's')},
+		AllConds:        []expression.Expression{newMutableColumn(52, 152, 'u')},
+		TblCols:         []*expression.Column{rightDSBaseCol, rightDSAuxCol},
+		TblColsByID: map[int64]*expression.Column{
+			rightDSBaseCol.ID: rightDSBaseCol,
+			rightDSAuxCol.ID:  rightDSAuxCol,
+		},
+		AskedColumnGroup:   [][]*expression.Column{{rightDSBaseCol}},
+		InterestingColumns: []*expression.Column{rightDSBaseCol},
+	}.Init(ctx, 0)
+	rightDS.SetSchema(expression.NewSchema(
+		rightDSBaseCol.Clone().(*expression.Column),
+		rightDSAuxCol.Clone().(*expression.Column),
+	))
+
+	rightSelCond := mustScalarFunc(expression.NewFunctionInternal(ctx, ast.LE, types.NewFieldType(mysql.TypeTiny),
+		rightDS.Schema().Columns[0].Clone().(*expression.Column),
+		&expression.Constant{Value: types.NewIntDatum(20), RetType: types.NewFieldType(mysql.TypeLonglong)},
+	))
+	rightSel := logicalop.LogicalSelection{
+		Conditions: []expression.Expression{rightSelCond},
+	}.Init(ctx, 0)
+	rightSel.SetChildren(rightDS)
+
+	rightProj := logicalop.LogicalProjection{
+		Exprs: []expression.Expression{
+			rightDS.Schema().Columns[0].Clone().(*expression.Column),
+			rightDS.Schema().Columns[1].Clone().(*expression.Column),
+		},
+	}.Init(ctx, 0)
+	rightProj.SetSchema(expression.NewSchema(
+		newMutableColumn(61, 161, 'w'),
+		newMutableColumn(62, 162, 'y'),
+	))
+	rightProj.SetChildren(rightSel)
+
+	rightSort := logicalop.LogicalSort{
+		ByItems: []*plannerutil.ByItems{
+			{Expr: rightProj.Schema().Columns[0].Clone().(*expression.Column), Desc: false},
+		},
+	}.Init(ctx, 0)
+	rightSort.SetChildren(rightProj)
+
+	rightLimit := logicalop.LogicalLimit{
+		Offset: 0,
+		Count:  20,
+		PartitionBy: []property.SortItem{
+			{Col: rightProj.Schema().Columns[0].Clone().(*expression.Column), Desc: false},
+		},
+	}.Init(ctx, 0)
+	rightLimit.SetSchema(rightProj.Schema().Clone())
+	rightLimit.SetChildren(rightSort)
+
+	joinEq := mustScalarFunc(expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny),
+		leftLimit.Schema().Columns[0].Clone().(*expression.Column),
+		rightLimit.Schema().Columns[0].Clone().(*expression.Column),
+	))
+	joinOther := mustScalarFunc(expression.NewFunctionInternal(ctx, ast.GE, types.NewFieldType(mysql.TypeTiny),
+		leftLimit.Schema().Columns[0].Clone().(*expression.Column),
+		&expression.Constant{Value: types.NewIntDatum(1), RetType: types.NewFieldType(mysql.TypeLonglong)},
+	))
+	join := logicalop.LogicalJoin{
+		EqualConditions: []*expression.ScalarFunction{joinEq},
+		LeftConditions: expression.CNFExprs{
+			newMutableColumn(71, 171, 'A'),
+		},
+		RightConditions: expression.CNFExprs{
+			newMutableColumn(72, 172, 'C'),
+		},
+		OtherConditions: expression.CNFExprs{joinOther},
+		DefaultValues:   []types.Datum{types.NewBytesDatum([]byte("dv"))},
+		FullNames: types.NameSlice{
+			&types.FieldName{ColName: ast.NewCIStr("c1")},
+			&types.FieldName{ColName: ast.NewCIStr("c2")},
+		},
+	}.Init(ctx, 0)
+	join.SetSchema(expression.NewSchema(
+		newMutableColumn(81, 181, 'E'),
+		newMutableColumn(82, 182, 'G'),
+	))
+	join.FullSchema = expression.NewSchema(
+		newMutableColumn(83, 183, 'I'),
+		newMutableColumn(84, 184, 'K'),
+	)
+	join.SetChildren(leftLimit, rightLimit)
+
+	clonedJoin := join.DeepClone().(*logicalop.LogicalJoin)
+	clonedLeftLimit := clonedJoin.Children()[0].(*logicalop.LogicalLimit)
+	clonedLeftSort := clonedLeftLimit.Children()[0].(*logicalop.LogicalSort)
+	clonedLeftAgg := clonedLeftSort.Children()[0].(*logicalop.LogicalAggregation)
+	clonedLeftProj := clonedLeftAgg.Children()[0].(*logicalop.LogicalProjection)
+	clonedLeftSel := clonedLeftProj.Children()[0].(*logicalop.LogicalSelection)
+	clonedLeftDS := clonedLeftSel.Children()[0].(*logicalop.DataSource)
+	clonedRightLimit := clonedJoin.Children()[1].(*logicalop.LogicalLimit)
+	clonedRightSort := clonedRightLimit.Children()[0].(*logicalop.LogicalSort)
+	clonedRightProj := clonedRightSort.Children()[0].(*logicalop.LogicalProjection)
+	clonedRightSel := clonedRightProj.Children()[0].(*logicalop.LogicalSelection)
+	clonedRightDS := clonedRightSel.Children()[0].(*logicalop.DataSource)
+
+	require.NotSame(t, join, clonedJoin)
+	require.NotSame(t, leftLimit, clonedLeftLimit)
+	require.NotSame(t, leftSort, clonedLeftSort)
+	require.NotSame(t, leftAgg, clonedLeftAgg)
+	require.NotSame(t, leftProj, clonedLeftProj)
+	require.NotSame(t, leftSel, clonedLeftSel)
+	require.NotSame(t, leftDS, clonedLeftDS)
+	require.NotSame(t, rightLimit, clonedRightLimit)
+	require.NotSame(t, rightSort, clonedRightSort)
+	require.NotSame(t, rightProj, clonedRightProj)
+	require.NotSame(t, rightSel, clonedRightSel)
+	require.NotSame(t, rightDS, clonedRightDS)
+	require.NotSame(t, join.LeftConditions[0], clonedJoin.LeftConditions[0])
+	require.NotSame(t, &join.DefaultValues[0], &clonedJoin.DefaultValues[0])
+	require.NotSame(t, leftSort.ByItems[0], clonedLeftSort.ByItems[0])
+	require.NotSame(t, leftAgg.AggFuncs[0], clonedLeftAgg.AggFuncs[0])
+	require.NotSame(t, leftDS.PushedDownConds[0], clonedLeftDS.PushedDownConds[0])
+	require.NotSame(t, leftDS.Schema(), clonedLeftDS.Schema())
+	require.Same(t, clonedJoin, clonedJoin.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).Self())
+
+	clonedJoin.LeftConditions[0].(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	clonedJoin.LeftConditions[0].(*expression.Column).VirtualExpr.(*expression.Constant).Value.GetBytes()[0] = 'Z'
+	clonedJoin.DefaultValues[0].GetBytes()[0] = 'x'
+	clonedJoin.Schema().Columns[0].RetType.SetType(mysql.TypeDouble)
+	clonedJoin.FullSchema.Columns[0].RetType.SetType(mysql.TypeDouble)
+
+	clonedLeftLimit.PartitionBy[0].Col.RetType.SetType(mysql.TypeDouble)
+	clonedLeftSort.ByItems[0].Expr.(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	clonedLeftAgg.GroupByItems[0].(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	clonedLeftAgg.AggFuncs[0].OrderByItems[0].Expr.(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	clonedLeftProj.Exprs[0].(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	clonedLeftSel.Conditions[0].(*expression.ScalarFunction).GetArgs()[0].(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	clonedLeftDS.PushedDownConds[0].(*expression.Column).VirtualExpr.(*expression.Constant).Value.GetBytes()[0] = 'Y'
+	clonedLeftDS.TblColsByID[leftDSBaseCol.ID].RetType.SetType(mysql.TypeDouble)
+	clonedLeftDS.Schema().Columns[0].RetType.SetType(mysql.TypeDouble)
+
+	clonedRightLimit.PartitionBy[0].Col.RetType.SetType(mysql.TypeDouble)
+	clonedRightSort.ByItems[0].Expr.(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	clonedRightProj.Exprs[0].(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	clonedRightSel.Conditions[0].(*expression.ScalarFunction).GetArgs()[0].(*expression.Column).RetType.SetType(mysql.TypeDouble)
+	clonedRightDS.AllConds[0].(*expression.Column).VirtualExpr.(*expression.Constant).Value.GetBytes()[0] = 'X'
+
+	require.Equal(t, mysql.TypeLonglong, join.LeftConditions[0].(*expression.Column).RetType.GetType())
+	require.Equal(t, byte('A'), join.LeftConditions[0].(*expression.Column).VirtualExpr.(*expression.Constant).Value.GetBytes()[0])
+	require.Equal(t, byte('d'), join.DefaultValues[0].GetBytes()[0])
+	require.Equal(t, mysql.TypeLonglong, join.Schema().Columns[0].RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, join.FullSchema.Columns[0].RetType.GetType())
+
+	require.Equal(t, mysql.TypeLonglong, leftLimit.PartitionBy[0].Col.RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, leftSort.ByItems[0].Expr.(*expression.Column).RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, leftAgg.GroupByItems[0].(*expression.Column).RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, leftAgg.AggFuncs[0].OrderByItems[0].Expr.(*expression.Column).RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, leftProj.Exprs[0].(*expression.Column).RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, leftSel.Conditions[0].(*expression.ScalarFunction).GetArgs()[0].(*expression.Column).RetType.GetType())
+	require.Equal(t, byte('e'), leftDS.PushedDownConds[0].(*expression.Column).VirtualExpr.(*expression.Constant).Value.GetBytes()[0])
+	require.Equal(t, mysql.TypeLonglong, leftDS.TblColsByID[leftDSBaseCol.ID].RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, leftDS.Schema().Columns[0].RetType.GetType())
+
+	require.Equal(t, mysql.TypeLonglong, rightLimit.PartitionBy[0].Col.RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, rightSort.ByItems[0].Expr.(*expression.Column).RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, rightProj.Exprs[0].(*expression.Column).RetType.GetType())
+	require.Equal(t, mysql.TypeLonglong, rightSel.Conditions[0].(*expression.ScalarFunction).GetArgs()[0].(*expression.Column).RetType.GetType())
+	require.Equal(t, byte('u'), rightDS.AllConds[0].(*expression.Column).VirtualExpr.(*expression.Constant).Value.GetBytes()[0])
 }
 
 func TestLogicalProjectionPushDownTopN(t *testing.T) {
