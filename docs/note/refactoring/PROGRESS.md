@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (field_type, stmtctx, detacher, import, checkpoints decompositions)
+Last updated: 2026-02-20 (engine, mpp_exec, local, hash_join_v2, config, builder_reader decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -598,3 +598,9 @@ Last updated: 2026-02-20 (field_type, stmtctx, detacher, import, checkpoints dec
 - [x] **planner/core/memtable_predicate_extractor.go decomposition** - 2026-02-20 - Extracted `memtable_predicate_helper.go` (683 lines) with extractHelper struct and all methods. Reduced memtable_predicate_extractor.go from 1,740 to 1,089 lines (37% reduction).
 - [x] **infoschema/infoschema_v2.go decomposition** - 2026-02-20 - Split into 2 focused files: `infoschema_v2_reset.go` (246), `infoschema_v2_builder.go` (309). Reduced infoschema_v2.go from 1,788 to 1,281 lines (28% reduction).
 - [x] **store/mockstore/unistore/tikv/mvcc.go decomposition** - 2026-02-20 - Split into 2 focused files: `mvcc_pessimistic_lock.go` (566), `mvcc_prewrite.go` (505). Reduced mvcc.go from 2,182 to 1,176 lines (46% reduction).
+- [x] **lightning/backend/local/engine.go decomposition** - 2026-02-20 - Split into 2 focused files: `engine_range_properties.go` (~215), `engine_sst.go` (~343). Reduced engine.go from 1,750 to 1,216 lines (30% reduction).
+- [x] **store/mockstore/unistore/cophandler/mpp_exec.go decomposition** - 2026-02-20 - Extracted `mpp_exec_scan.go` (~594 lines) with tableScanExec, indexScanExec, indexLookUpExec. Reduced mpp_exec.go from 1,500 to 903 lines (40% reduction).
+- [x] **lightning/backend/local/local.go decomposition** - 2026-02-20 - Split into 2 focused files: `local_import_client.go` (~137), `local_partition_range.go` (~150). Reduced local.go from 1,960 to 1,701 lines (13% reduction).
+- [x] **executor/join/hash_join_v2.go decomposition** - 2026-02-20 - Extracted `hash_table_context.go` (~206 lines) with hashTableContext struct and all methods. Reduced hash_join_v2.go from 1,538 to 1,348 lines (12% reduction).
+- [x] **lightning/config/config.go decomposition** - 2026-02-20 - Extracted `enums.go` (~402 lines) with PostOpLevel, CheckpointKeepStrategy, MaxError, DuplicateResolutionAlgorithm, CompressionType. Reduced config.go from 1,660 to 1,274 lines (23% reduction).
+- [x] **executor/builder_reader.go decomposition** - 2026-02-20 - Extracted `builder_reader_indexjoin.go` (~577 lines) with dataReaderBuilder, index join executor building, KV range construction. Reduced builder_reader.go from 1,710 to 1,145 lines (33% reduction).
