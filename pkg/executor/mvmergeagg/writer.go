@@ -86,6 +86,17 @@ func (e *MVMergeAggExec) buildTableResultWriter() (MVMergeAggResultWriter, error
 		if colID < 0 || colID >= len(childTypes) {
 			return nil, errors.Errorf("TargetWritableColIDs[%d]=%d out of range [0,%d)", writableIdx, colID, len(childTypes))
 		}
+		inputTp := childTypes[colID]
+		if inputTp == nil {
+			return nil, errors.Errorf("TargetWritableColIDs[%d]=%d type is unavailable", writableIdx, colID)
+		}
+		targetTp := &writableCols[writableIdx].FieldType
+		if !targetTp.Equal(inputTp) {
+			return nil, errors.Errorf(
+				"TargetWritableColIDs[%d]=%d type mismatch, target col `%s` expects %s but input is %s",
+				writableIdx, colID, writableCols[writableIdx].Name.O, targetTp.String(), inputTp.String(),
+			)
+		}
 		output2Writable[colID] = writableIdx
 	}
 
