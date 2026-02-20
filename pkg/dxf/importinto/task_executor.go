@@ -28,11 +28,9 @@ import (
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
@@ -53,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -118,7 +115,6 @@ func getTableImporter(
 func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.logger.Info("init subtask env")
 	var tableImporter *importer.TableImporter
-	var taskManager *dxfstorage.TaskManager
 	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store, s.logger)
 	if err != nil {
 		return err
@@ -136,26 +132,6 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		}
 	}()
 
-	if kerneltype.IsClassic() {
-		taskManager, err = dxfstorage.GetTaskManager()
-		if err != nil {
-			return err
-		}
-		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			// User can write table between precheck and alter table mode to Import,
-			// so check table emptyness again.
-			isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
-			if err2 != nil {
-				return err2
-			}
-			if !isEmpty {
-				return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
