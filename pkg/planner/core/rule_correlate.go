@@ -111,6 +111,16 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	if !ok {
 		return p, planChanged, nil
 	}
+
+	// Lift DataSource conditions back into Selection nodes. The original PPD
+	// pushed conditions all the way into DataSource.AllConds and cleared them
+	// from ancestor operators (e.g., Join.RightConditions). When we re-run PPD
+	// below, the Join re-collects conditions from its own fields (not from
+	// DataSource.AllConds), so conditions that were pushed past the Join would
+	// be lost. Wrapping each DataSource in a Selection restores the pre-PPD
+	// state so the re-run can properly redistribute all conditions.
+	clonedInner = liftDataSourceConds(clonedInner)
+
 	sel := logicalop.LogicalSelection{Conditions: selConds}.Init(join.SCtx(), join.QueryBlockOffset())
 	sel.SetChildren(clonedInner)
 
@@ -121,7 +131,9 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	// side could only do full scans.
 	_, innerPlan, err := sel.PredicatePushDown(nil)
 	if err != nil {
-		return nil, false, err
+		// PPD failed (e.g., conditions reference columns pruned from the
+		// DataSource schema); abort the correlate optimization.
+		return p, planChanged, nil
 	}
 
 	// Reset stats on DataSources that received correlated conditions so DeriveStats
@@ -245,20 +257,19 @@ func cloneDataSource(ds *logicalop.DataSource) *logicalop.DataSource {
 	// Independent slices that PPD replaces.
 	clone.AllConds = append([]expression.Expression(nil), ds.AllConds...)
 	clone.PushedDownConds = append([]expression.Expression(nil), ds.PushedDownConds...)
-	// Create fresh AccessPath objects for the clone so that fillIndexPath
-	// (called during DeriveStats) populates independent copies and does not
-	// corrupt the original DataSource's paths. Only structural identity
-	// fields are copied; analysis fields (Ranges, AccessConds, etc.) are
-	// left at zero so fillIndexPath starts from a clean state.
-	clone.AllPossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
-	for i, p := range ds.AllPossibleAccessPaths {
-		clone.AllPossibleAccessPaths[i] = freshAccessPath(p)
+	// Share the original AccessPaths. DeriveStats returns early for DataSources
+	// with preserved stats (below), so these paths won't be modified. For
+	// DataSources that receive correlated conditions, resetStatsForCorrelatedDS
+	// creates fresh AccessPaths and clears stats before DeriveStats re-runs.
+	clone.AllPossibleAccessPaths = append([]*util.AccessPath(nil), ds.AllPossibleAccessPaths...)
+	clone.PossibleAccessPaths = append([]*util.AccessPath(nil), ds.PossibleAccessPaths...)
+	// Preserve original stats so DeriveStats returns early for DataSources
+	// that don't receive correlated conditions. Without this, DeriveStats
+	// re-runs fillIndexPath on all DataSources, which fails when conditions
+	// reference columns that column pruning removed from the schema.
+	if origStats := ds.StatsInfo(); origStats != nil {
+		clone.SetStats(origStats)
 	}
-	// PossibleAccessPaths must reference the same objects as AllPossibleAccessPaths
-	// so that fillIndexPath modifications during DeriveStats are visible. Without
-	// this, PossibleAccessPaths retains fresh paths with nil Ranges, causing
-	// the DataSource to be incorrectly converted to TableDual.
-	clone.PossibleAccessPaths = append([]*util.AccessPath(nil), clone.AllPossibleAccessPaths...)
 	return &clone
 }
 
@@ -350,13 +361,49 @@ func freshAccessPath(src *util.AccessPath) *util.AccessPath {
 	}
 }
 
+// liftDataSourceConds walks the plan tree and for each DataSource with
+// non-empty AllConds, wraps it in a Selection node containing those conditions.
+// This "un-pushes" conditions that the original PPD pushed into DataSources,
+// so that a subsequent PPD re-run (in correlate()) can properly redistribute
+// all conditions — including those that would otherwise be silently dropped
+// when DataSource.PredicatePushDown overwrites AllConds.
+func liftDataSourceConds(p base.LogicalPlan) base.LogicalPlan {
+	// Recurse into children first, potentially replacing them.
+	for i, child := range p.Children() {
+		newChild := liftDataSourceConds(child)
+		if newChild != child {
+			p.Children()[i] = newChild
+		}
+	}
+
+	// If this is a DataSource with AllConds, wrap it in a Selection.
+	if ds, ok := p.(*logicalop.DataSource); ok && len(ds.AllConds) > 0 {
+		sel := logicalop.LogicalSelection{
+			Conditions: ds.AllConds,
+		}.Init(ds.SCtx(), ds.QueryBlockOffset())
+		sel.SetChildren(ds)
+
+		// Clear DataSource conditions; the PPD re-run will push them back.
+		ds.AllConds = nil
+		ds.PushedDownConds = nil
+
+		return sel
+	}
+
+	return p
+}
+
 // resetStatsForCorrelatedDS walks the inner subtree and clears StatsInfo on
 // DataSources that have correlated conditions in AllConds, plus all ancestor
 // plan nodes up to the root. This forces DeriveStats to re-run during physical
 // optimization so that index access paths are rebuilt with the correlated
-// conditions. Only DataSources with correlated conditions are reset to avoid
-// issues with other DataSources that had their conditions overwritten by the
-// second PPD pass.
+// conditions.
+//
+// For correlated DataSources, fresh AccessPaths are created so fillIndexPath
+// starts from a clean state with the new correlated conditions. Non-correlated
+// DataSources retain their original AccessPaths and stats (set during cloning)
+// so DeriveStats returns early — this avoids failures when conditions reference
+// columns that column pruning removed from the DataSource's schema.
 func resetStatsForCorrelatedDS(p base.LogicalPlan) bool {
 	hasCorrelated := false
 
@@ -367,6 +414,17 @@ func resetStatsForCorrelatedDS(p base.LogicalPlan) bool {
 				hasCorrelated = true
 				break
 			}
+		}
+		if hasCorrelated {
+			// Create fresh AccessPaths so fillIndexPath rebuilds them with the
+			// correlated conditions. The original paths (shared from the clone)
+			// must not be modified to avoid corrupting the original DataSource.
+			origPaths := ds.AllPossibleAccessPaths
+			ds.AllPossibleAccessPaths = make([]*util.AccessPath, len(origPaths))
+			for i, ap := range origPaths {
+				ds.AllPossibleAccessPaths[i] = freshAccessPath(ap)
+			}
+			ds.PossibleAccessPaths = append([]*util.AccessPath(nil), ds.AllPossibleAccessPaths...)
 		}
 	}
 

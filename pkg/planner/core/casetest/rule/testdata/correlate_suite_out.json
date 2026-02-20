@@ -36,14 +36,12 @@
       {
         "SQL": "select * from t1 where a in (select a from t2)",
         "Plan": [
-          "Apply 9990.00 root  CARTESIAN semi join, left side:TableReader",
-          "├─TableReader(Build) 9990.00 root  data:Selection",
-          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─Limit(Probe) 9990.00 root  offset:0, count:1",
-          "  └─IndexReader 9990.00 root  index:Limit",
-          "    └─Limit 9990.00 cop[tikv]  offset:0, count:1",
-          "      └─IndexRangeScan 9990.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+          "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1",
@@ -152,15 +150,13 @@
         "SQL": "select * from t1 where a in (select a from t2) order by a limit 10",
         "Plan": [
           "Limit 10.00 root  offset:0, count:10",
-          "└─Apply 10.00 root  CARTESIAN semi join, left side:Projection",
-          "  ├─Projection(Build) 10.00 root  test.t1.a, test.t1.b",
-          "  │ └─IndexLookUp 10.00 root  ",
-          "  │   ├─IndexFullScan(Build) 10.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
-          "  │   └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─Limit(Probe) 10.00 root  offset:0, count:1",
-          "    └─IndexReader 10.00 root  index:Limit",
-          "      └─Limit 10.00 cop[tikv]  offset:0, count:1",
-          "        └─IndexRangeScan 10.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+          "└─MergeJoin 10.00 root  semi join, left side:Projection, left key:test.t1.a, right key:test.t2.a",
+          "  ├─IndexReader(Build) 12.50 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 12.50 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "  └─Projection(Probe) 12.50 root  test.t1.a, test.t1.b",
+          "    └─IndexLookUp 12.50 root  ",
+          "      ├─IndexFullScan(Build) 12.50 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
+          "      └─TableRowIDScan(Probe) 12.50 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1",

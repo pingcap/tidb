@@ -1080,8 +1080,11 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingExistsSubquery)
 	// When EnableCorrelateSubquery is ON, prevent decorrelation of correlated
 	// subqueries so they stay as Apply with index lookups.
-	if !noDecorrelate && b.ctx.GetSessionVars().EnableCorrelateSubquery && len(corCols) > 0 {
-		noDecorrelate = true
+	if !noDecorrelate && len(corCols) > 0 {
+		b.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableCorrelateSubquery)
+		if b.ctx.GetSessionVars().EnableCorrelateSubquery {
+			noDecorrelate = true
+		}
 	}
 	if noDecorrelate {
 		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
@@ -1287,8 +1290,11 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
 	// When EnableCorrelateSubquery is ON, prevent decorrelation of correlated
 	// IN subqueries so they stay as Apply with index lookups.
-	if !noDecorrelate && planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery && len(corCols) > 0 && !v.Not {
-		noDecorrelate = true
+	if !noDecorrelate && len(corCols) > 0 && !v.Not {
+		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableCorrelateSubquery)
+		if planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
+			noDecorrelate = true
+		}
 	}
 
 	// If it's not the form of `not in (SUBQUERY)`,
@@ -1297,8 +1303,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// and don't need to append a scalar value, we can rewrite it to inner join.
 	// When EnableCorrelateSubquery is ON, skip the InnerJoin+Agg rewrite so that a SemiJoin is built
 	// instead; the CorrelateSolver rule can then convert it to a correlated Apply with index lookups.
-	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag &&
-		!planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
+	canRewriteToJoinAgg := planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag
+	if canRewriteToJoinAgg {
+		// Record that the correlate variable is relevant — toggling it changes
+		// whether we take the InnerJoin+Agg path or the SemiApply path.
+		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableCorrelateSubquery)
+	}
+	if canRewriteToJoinAgg && !planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		planCtx.builder.optFlag |= rule.FlagEliminateAgg
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
@@ -1336,9 +1347,12 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		}
 		// When EnableCorrelateSubquery is ON and the subquery is non-correlated,
 		// mark the join so that CorrelateSolver converts it to a correlated Apply.
-		if planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery && len(corCols) == 0 && !v.Not {
-			if ap, ok := planCtx.plan.(*logicalop.LogicalApply); ok {
-				ap.PreferCorrelate = true
+		if len(corCols) == 0 && !v.Not {
+			planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableCorrelateSubquery)
+			if planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
+				if ap, ok := planCtx.plan.(*logicalop.LogicalApply); ok {
+					ap.PreferCorrelate = true
+				}
 			}
 		}
 	}
