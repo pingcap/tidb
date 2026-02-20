@@ -22,7 +22,6 @@ import (
 	"math/rand"
 	"reflect"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
