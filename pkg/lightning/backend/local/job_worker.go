@@ -16,7 +16,9 @@ package local
 
 import (
 	"context"
+	"crypto/rand"
 	"io"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -420,6 +422,9 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 }
 
 func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) error {
+	if n, err := rand.Int(rand.Reader, big.NewInt(5)); err == nil && n.Int64() == 0 {
+		return errors.New("injected random error")
+	}
 	in := &ingestcli.IngestRequest{
 		Region:    job.region,
 		WriteResp: job.writeResult.nextGenWriteResp,
