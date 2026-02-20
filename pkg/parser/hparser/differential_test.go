@@ -844,6 +844,115 @@ func collectDMLTestCases() []string {
 		"SELECT INSERT('hello', 2, 3, 'xyz')",
 		"SELECT CHAR(65, 66, 67)",
 		"SELECT WEIGHT_STRING('test')",
+
+		// ===== Charset/Binary interaction edge cases =====
+		"CREATE TABLE t (a VARCHAR(50) CHARACTER SET utf8 BINARY)",
+		"CREATE TABLE t (a VARCHAR(50) BINARY CHARACTER SET utf8)",
+		"CREATE TABLE t (a CHAR(10) CHARACTER SET BINARY)",
+		"CREATE TABLE t (a VARCHAR(50) CHARACTER SET utf8 COLLATE utf8_bin)",
+		"CREATE TABLE t (a CHAR(10) BYTE)",
+		"CREATE TABLE t (a CHAR(10) ASCII)",
+
+		// ===== ON UPDATE CURRENT_TIMESTAMP =====
+		"CREATE TABLE t (a TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+		"CREATE TABLE t (a DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+		"CREATE TABLE t (a TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3))",
+
+		// ===== FOREIGN KEY with referential actions =====
+		"CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES t2 (id) ON DELETE CASCADE)",
+		"CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES t2 (id) ON UPDATE SET NULL)",
+		"CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES t2 (id) ON DELETE CASCADE ON UPDATE SET NULL)",
+		"CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES t2 (id) ON DELETE NO ACTION)",
+		"CREATE TABLE t (a INT, FOREIGN KEY (a) REFERENCES t2 (id) ON DELETE RESTRICT)",
+
+		// ===== Complex table constraints =====
+		"CREATE TABLE t (a INT, b INT, c INT, PRIMARY KEY (a, b))",
+		"CREATE TABLE t (a INT, b INT, UNIQUE KEY idx_ab (a, b))",
+		"CREATE TABLE t (a INT, INDEX idx_a (a) USING BTREE)",
+		"CREATE TABLE t (a INT, INDEX idx_a (a) COMMENT 'idx comment')",
+
+		// ===== Complex CREATE TABLE =====
+		"CREATE TABLE t (id INT AUTO_INCREMENT, name VARCHAR(100) NOT NULL, email VARCHAR(200) UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (id), INDEX idx_name (name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='users table'",
+
+		// ===== INTERVAL expression edge cases =====
+		"SELECT DATE_ADD('2020-01-01', INTERVAL 1 HOUR)",
+		"SELECT DATE_ADD('2020-01-01', INTERVAL 1 MINUTE)",
+		"SELECT DATE_ADD('2020-01-01', INTERVAL 1 SECOND)",
+		"SELECT DATE_ADD('2020-01-01', INTERVAL 1 WEEK)",
+		"SELECT DATE_ADD('2020-01-01', INTERVAL 1 QUARTER)",
+		"SELECT DATE_ADD('2020-01-01', INTERVAL 1 YEAR)",
+		"SELECT DATE_ADD('2020-01-01', INTERVAL '1:30' HOUR_MINUTE)",
+		"SELECT DATE_ADD('2020-01-01', INTERVAL '1 12' DAY_HOUR)",
+
+		// ===== Variable expressions =====
+		"SELECT @a",
+		"SELECT @@version",
+		"SELECT @@global.max_connections",
+		"SELECT @@session.sql_mode",
+		"SELECT @a := 1",
+
+		// ===== Complex SELECT features =====
+		"SELECT SQL_CALC_FOUND_ROWS * FROM t LIMIT 10",
+		"SELECT DISTINCT a, b FROM t",
+		"SELECT ALL a FROM t",
+		"SELECT a FROM t GROUP BY a HAVING COUNT(*) > 1",
+		"SELECT a FROM t GROUP BY a WITH ROLLUP",
+		"SELECT a, b FROM t ORDER BY a ASC, b DESC",
+		"SELECT a FROM t LIMIT 10 OFFSET 20",
+		"SELECT a FROM t LIMIT 20, 10",
+
+		// ===== Subquery in FROM =====
+		"SELECT * FROM (SELECT a, b FROM t) AS sub WHERE sub.a > 1",
+
+		// ===== BETWEEN with complex expressions =====
+		"SELECT * FROM t WHERE a BETWEEN 1 AND 10 AND b > 0",
+		"SELECT * FROM t WHERE a NOT BETWEEN 1 AND 10 OR b = 0",
+
+		// ===== Multiple SET operations =====
+		"(SELECT 1) UNION ALL (SELECT 2) UNION ALL (SELECT 3)",
+		"SELECT a FROM t UNION SELECT b FROM t2 ORDER BY 1 LIMIT 10",
+
+		// ===== INSERT with multiple rows =====
+		"INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+		"INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y')",
+
+		// ===== UPDATE with subquery =====
+		"UPDATE t SET a = (SELECT MAX(b) FROM t2) WHERE c = 1",
+
+		// ===== DELETE with subquery =====
+		"DELETE FROM t WHERE a IN (SELECT b FROM t2)",
+
+		// ===== Complex ALTER TABLE =====
+		"ALTER TABLE t ADD FOREIGN KEY (a) REFERENCES t2 (id) ON DELETE CASCADE",
+		"ALTER TABLE t ADD CONSTRAINT chk CHECK (a > 0)",
+		"ALTER TABLE t DEFAULT CHARSET=utf8mb4",
+		"ALTER TABLE t CONVERT TO CHARACTER SET utf8mb4",
+
+		// ===== CREATE VIEW =====
+		"CREATE VIEW v AS SELECT * FROM t",
+		"CREATE OR REPLACE VIEW v AS SELECT * FROM t WHERE a > 0",
+		"CREATE VIEW v (col1, col2) AS SELECT a, b FROM t",
+		"DROP VIEW v",
+		"DROP VIEW IF EXISTS v",
+
+		// ===== ANALYZE / table maintenance =====
+		"ANALYZE TABLE t",
+
+		// ===== Multi-table UPDATE/DELETE =====
+		"UPDATE t1, t2 SET t1.a = t2.b WHERE t1.id = t2.id",
+		"DELETE t1, t2 FROM t1 JOIN t2 ON t1.id = t2.id WHERE t1.a > 0",
+
+		// ===== Complex expression patterns =====
+		"SELECT CAST('2020-01-01' AS DATE) + INTERVAL 1 DAY",
+		"SELECT 1 + 2, 3 * 4, 5 / 2, 7 DIV 3, 8 MOD 5",
+		"SELECT a COLLATE utf8mb4_bin FROM t",
+		"SELECT * FROM t WHERE a = 1 AND b = 2 OR c = 3",
+		"SELECT * FROM t WHERE (a = 1 OR b = 2) AND c = 3",
+		"SELECT HEX(a), UNHEX('48656C6C6F'), BIN(255), OCT(255)",
+
+		// ===== Backtick-quoted identifiers =====
+		"SELECT `select` FROM `from` WHERE `where` = 1",
+		"CREATE TABLE `table` (`column` INT, `index` VARCHAR(100))",
 	}
 }
 
