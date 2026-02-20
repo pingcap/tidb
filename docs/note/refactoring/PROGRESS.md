@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (engine, mpp_exec, local, hash_join_v2, config, builder_reader decompositions)
+Last updated: 2026-02-20 (json_binary, transformation_rules, arithmetic, regexp, common_plans, json_vec, point_get, distsql_builtin, show, exhaust, indexmerge, time_arith decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -604,3 +604,15 @@ Last updated: 2026-02-20 (engine, mpp_exec, local, hash_join_v2, config, builder
 - [x] **executor/join/hash_join_v2.go decomposition** - 2026-02-20 - Extracted `hash_table_context.go` (~206 lines) with hashTableContext struct and all methods. Reduced hash_join_v2.go from 1,538 to 1,348 lines (12% reduction).
 - [x] **lightning/config/config.go decomposition** - 2026-02-20 - Extracted `enums.go` (~402 lines) with PostOpLevel, CheckpointKeepStrategy, MaxError, DuplicateResolutionAlgorithm, CompressionType. Reduced config.go from 1,660 to 1,274 lines (23% reduction).
 - [x] **executor/builder_reader.go decomposition** - 2026-02-20 - Extracted `builder_reader_indexjoin.go` (~577 lines) with dataReaderBuilder, index join executor building, KV range construction. Reduced builder_reader.go from 1,710 to 1,145 lines (33% reduction).
+- [x] **types/json_binary_functions.go decomposition** - 2026-02-20 - Split into 2 focused files: `json_binary_modify.go` (~499), `json_binary_search.go` (~714). Reduced json_binary_functions.go from 1,417 to 259 lines (82% reduction).
+- [x] **planner/cascades/old/transformation_rules.go decomposition** - 2026-02-20 - Split into 2 focused files: `transformation_rules_scan.go` (~345), `transformation_rules_transform.go` (~791). Reduced transformation_rules.go from 2,625 to 1,553 lines (41% reduction).
+- [x] **expression/builtin_arithmetic.go decomposition** - 2026-02-20 - Extracted `builtin_arithmetic_mul_div.go` (~875 lines) with multiply, divide, int-divide, mod functions. Reduced builtin_arithmetic.go from 1,386 to 540 lines (61% reduction).
+- [x] **expression/builtin_regexp.go decomposition** - 2026-02-20 - Extracted `builtin_regexp_instr_replace.go` (~843 lines) with regexpInStr and regexpReplace functions. Reduced builtin_regexp.go from 1,435 to 618 lines (57% reduction).
+- [x] **planner/core/common_plans.go decomposition** - 2026-02-20 - Extracted `common_plans_explain.go` (~783 lines) with Explain struct and all rendering/binary plan methods. Reduced common_plans.go from 1,444 to 699 lines (52% reduction).
+- [x] **expression/builtin_json_vec.go decomposition** - 2026-02-20 - Extracted `builtin_json_vec_modify.go` (~790 lines) with vectorized JSON modify/set/replace/insert functions. Reduced builtin_json_vec.go from 1,451 to 691 lines (52% reduction).
+- [x] **planner/core/point_get_plan.go decomposition** - 2026-02-20 - Extracted `point_get_plan_dml.go` (~363 lines) with update/delete point plan builders, subquery checker, utility helpers. Reduced point_get_plan.go from 1,447 to 1,117 lines (23% reduction).
+- [x] **expression/distsql_builtin.go decomposition** - 2026-02-20 - Extracted `distsql_builtin_convert.go` (~278 lines) with PBToExprs, PBToExpr, and all convert* functions. Reduced distsql_builtin.go from 1,417 to 1,162 lines (18% reduction).
+- [x] **executor/show.go further decomposition** - 2026-02-20 - Extracted `show_extra.go` (~702 lines) with fetchShowIndex, fetchShowCharset, fetchShowVariables, fetchShowCollation, fetchShowCreateUser, fetchShowGrants, fetchShowWarnings. Reduced show.go from 1,412 to 745 lines (47% reduction).
+- [x] **planner/core/exhaust_physical_plans.go further decomposition** - 2026-02-20 - Extracted `exhaust_physical_plans_join.go` (~334 lines) with tryToEnumerateIndexJoin, tryToGetIndexJoin, exhaustPhysicalPlans4LogicalJoin, exhaustPhysicalPlans4LogicalApply. Reduced exhaust_physical_plans.go from 1,399 to 1,094 lines (22% reduction).
+- [x] **planner/core/indexmerge_path.go decomposition** - 2026-02-20 - Extracted `indexmerge_path_mvindex.go` (~631 lines) with MV index path building functions. Reduced indexmerge_path.go from 1,394 to 790 lines (43% reduction).
+- [x] **expression/builtin_time_arith.go decomposition** - 2026-02-20 - Extracted `builtin_time_arith_vec.go` (~679 lines) with addSubDate function class and all date add/sub signature types. Reduced builtin_time_arith.go from 1,392 to 735 lines (47% reduction).
