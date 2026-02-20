@@ -56,7 +56,11 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		p.parseIntegerType(tp, mysql.TypeLonglong)
 	case tokReal:
 		p.next()
-		tp.SetType(mysql.TypeDouble)
+		if p.sqlMode.HasRealAsFloatMode() {
+			tp.SetType(mysql.TypeFloat)
+		} else {
+			tp.SetType(mysql.TypeDouble)
+		}
 		p.parseFloatOptions(tp)
 	case tokDouble, tokFloat8:
 		p.next()
@@ -168,9 +172,9 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		p.parseOptionalFieldLen(tp)
 		p.parseStringOptions(tp)
 	case tokBinary:
-		p.parseBinaryFieldType(tp, mysql.TypeString)
+		p.parseBinaryFieldType(tp, mysql.TypeString, false)
 	case tokVarbinary:
-		p.parseBinaryFieldType(tp, mysql.TypeVarchar)
+		p.parseBinaryFieldType(tp, mysql.TypeVarchar, true)
 	case tokTinyBlob:
 		p.parseBlobType(tp, mysql.TypeTinyBlob)
 	case tokBlob:
@@ -228,6 +232,9 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 	case tokJson:
 		p.next()
 		tp.SetType(mysql.TypeJSON)
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
 	case tokGeometry, tokPoint:
 		p.next()
 		tp.SetType(mysql.TypeGeometry)
@@ -258,6 +265,9 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		if p.peek().Tp == '(' {
 			tp.SetFlen(p.parseFieldLen())
 		}
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
 	case tokBoolean, tokBool:
 		p.next()
 		tp.SetType(mysql.TypeTiny)
@@ -473,10 +483,20 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 
 func (p *HandParser) parseEnumSetOptions(tp *types.FieldType) {
 	p.expect('(')
+
+	// Collect elements into local slices first, then batch-set with IsBinaryLit metadata.
+	type enumElem struct {
+		val         string
+		isBinaryLit bool
+	}
+	var elems []enumElem
+
 	for {
 		tok := p.peek()
+		var elemVal string
+		isBinaryLit := false
 		if tok.Tp == tokStringLit {
-			tp.SetElems(append(tp.GetElems(), strings.TrimRight(tok.Lit, " ")))
+			elemVal = strings.TrimRight(tok.Lit, " ")
 			p.next()
 		} else if tok.Tp == tokHexLit {
 			s := tok.Lit
@@ -490,11 +510,11 @@ func (p *HandParser) parseEnumSetOptions(tp *types.FieldType) {
 			}
 			b, err := hex.DecodeString(s)
 			if err == nil {
-				tp.SetElems(append(tp.GetElems(), string(b)))
+				elemVal = string(b)
 			} else {
-				// Fallback to raw if decode fails, though lexer ensures validity usually
-				tp.SetElems(append(tp.GetElems(), tok.Lit))
+				elemVal = tok.Lit
 			}
+			isBinaryLit = true
 			p.next()
 		} else if tok.Tp == tokBitLit {
 			s := tok.Lit
@@ -514,11 +534,13 @@ func (p *HandParser) parseEnumSetOptions(tp *types.FieldType) {
 					b[i/8] = byte(val)
 				}
 			}
-			tp.SetElems(append(tp.GetElems(), string(b)))
+			elemVal = string(b)
+			isBinaryLit = true
 			p.next()
 		} else {
 			break
 		}
+		elems = append(elems, enumElem{val: elemVal, isBinaryLit: isBinaryLit})
 		if p.peek().Tp != ',' {
 			break
 		}
@@ -526,12 +548,19 @@ func (p *HandParser) parseEnumSetOptions(tp *types.FieldType) {
 	}
 	p.expect(')')
 
+	// Pre-allocate elems slice and set each element with IsBinaryLit metadata
+	strs := make([]string, len(elems))
+	tp.SetElems(strs)
+	for i, e := range elems {
+		tp.SetElemWithIsBinaryLit(i, e.val, e.isBinaryLit)
+	}
+
 	// Compute flen from element list (matching goyacc behavior).
-	elems := tp.GetElems()
+	finalElems := tp.GetElems()
 	if tp.GetType() == mysql.TypeEnum {
 		// ENUM: flen = max element string length
 		maxLen := 0
-		for _, e := range elems {
+		for _, e := range finalElems {
 			if len(e) > maxLen {
 				maxLen = len(e)
 			}
@@ -540,11 +569,11 @@ func (p *HandParser) parseEnumSetOptions(tp *types.FieldType) {
 	} else if tp.GetType() == mysql.TypeSet {
 		// SET: flen = sum of all element lengths + (n-1) commas
 		totalLen := 0
-		for _, e := range elems {
+		for _, e := range finalElems {
 			totalLen += len(e)
 		}
-		if len(elems) > 1 {
-			totalLen += len(elems) - 1 // commas between elements
+		if len(finalElems) > 1 {
+			totalLen += len(finalElems) - 1 // commas between elements
 		}
 		tp.SetFlen(totalLen)
 	}
@@ -576,13 +605,24 @@ func (p *HandParser) parseTextType(tp *types.FieldType, mysqlType byte) {
 func (p *HandParser) parseFspType(tp *types.FieldType, mysqlType byte) {
 	p.next()
 	tp.SetType(mysqlType)
+	// Set base Flen per parser.y: DateAndTimeType
+	switch mysqlType {
+	case mysql.TypeDatetime, mysql.TypeTimestamp:
+		tp.SetFlen(mysql.MaxDatetimeWidthNoFsp)
+	case mysql.TypeDuration:
+		tp.SetFlen(mysql.MaxDurationWidthNoFsp)
+	}
 	if p.peek().Tp == '(' {
 		tp.SetDecimal(p.parseFieldLen())
+		if tp.GetDecimal() > 0 {
+			tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())
+		}
 	}
 }
 
-// parseBinaryFieldType parses BINARY/VARBINARY: sets binary charset/collation/flag + optional (N).
-func (p *HandParser) parseBinaryFieldType(tp *types.FieldType, mysqlType byte) {
+// parseBinaryFieldType parses BINARY/VARBINARY: sets binary charset/collation/flag.
+// For VARBINARY, FieldLen is mandatory per parser.y; for BINARY, it's optional.
+func (p *HandParser) parseBinaryFieldType(tp *types.FieldType, mysqlType byte, requireLen bool) {
 	p.next()
 	tp.SetType(mysqlType)
 	tp.SetCharset(charset.CharsetBin)
@@ -590,5 +630,7 @@ func (p *HandParser) parseBinaryFieldType(tp *types.FieldType, mysqlType byte) {
 	tp.SetFlag(mysql.BinaryFlag)
 	if p.peek().Tp == '(' {
 		tp.SetFlen(p.parseFieldLen())
+	} else if requireLen {
+		p.error(p.peek().Offset, "missing length for VARBINARY")
 	}
 }
