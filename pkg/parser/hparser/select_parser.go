@@ -417,9 +417,16 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 	}
 
 	// Optional alias: [AS] identifier
+	// In goyacc, only Identifier (non-reserved keywords) is valid after AS.
 	if _, ok := p.accept(tokAs); ok {
-		aliasTok := p.next()
-		sf.AsName = ast.NewCIStr(aliasTok.Lit)
+		aliasTok := p.peek()
+		if aliasTok.Tp == tokIdentifier || aliasTok.Tp == tokStringLit || (aliasTok.Tp >= tokIdentifier && !IsReserved(aliasTok.Tp)) {
+			p.next()
+			sf.AsName = ast.NewCIStr(aliasTok.Lit)
+		} else {
+			p.errorNear(aliasTok.Offset, aliasTok.Offset)
+			return nil
+		}
 	} else if p.CanBeImplicitAlias(p.peek()) {
 		// Implicit alias (without AS).
 		aliasTok := p.next()
