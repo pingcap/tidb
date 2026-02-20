@@ -251,15 +251,22 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 	case tokVector:
 		p.next()
 		tp.SetType(mysql.TypeTiDBVectorFloat32)
-		// Check for <FLOAT>
+		// Check for <FLOAT> or <DOUBLE>
 		if p.peek().Tp == '<' {
 			p.next()
-			// Consume type (e.g. FLOAT)
-			if p.peek().Tp != tokFloat && p.peek().Tp != tokFloat4 {
-				p.error(p.peek().Offset, "expected FLOAT inside VECTOR")
+			// Consume element type
+			switch p.peek().Tp {
+			case tokFloat, tokFloat4:
+				// VECTOR<FLOAT> — default, already TypeTiDBVectorFloat32
+				p.next()
+			case tokDouble, tokFloat8:
+				// VECTOR<DOUBLE> — parsed but produces warning per parser.y
+				p.next()
+				p.warn("Only VECTOR is supported for now")
+			default:
+				p.error(p.peek().Offset, "expected FLOAT or DOUBLE inside VECTOR")
 				return nil
 			}
-			p.next()
 			p.expect('>')
 		}
 		if p.peek().Tp == '(' {
@@ -425,7 +432,12 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 		return
 	case tokUnicode:
 		p.next()
-		tp.SetCharset("ucs2")
+		cs, err := charset.GetCharsetInfo("ucs2")
+		if err != nil {
+			p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: 'ucs2'"))
+			return
+		}
+		tp.SetCharset(cs.Name)
 		// Fall through to charset validation below
 	case tokBinary:
 		// BINARY [CHARACTER SET charset]
@@ -437,6 +449,15 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 	default:
 		if p.acceptCharsetKw() {
 			p.parseCharsetName(tp)
+		}
+	}
+
+	// Auto-set BinaryFlag and CollationBin when charset is binary.
+	// parser.y does this in TextType+OptCharsetWithOptBinary and LONG+OptCharsetWithOptBinary.
+	if tp.GetCharset() == charset.CharsetBin {
+		tp.AddFlag(mysql.BinaryFlag)
+		if tp.GetCollate() == "" {
+			tp.SetCollate(charset.CollationBin)
 		}
 	}
 
