@@ -290,8 +290,10 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 		if tok.IsKeyword("FETCH") {
 			return false // FETCH is reserved for Limit clause
 		}
-		if tok.IsKeyword("WINDOW") {
-			return false // WINDOW introduces a window clause
+		// WINDOW is an unreserved keyword and valid as alias (e.g., `select 1 WINDOW`).
+		// But when followed by `identifier AS`, it introduces a WINDOW clause.
+		if tok.IsKeyword("WINDOW") && p.peekN(1).Tp == tokIdentifier && p.peekN(2).Tp == tokAs {
+			return false
 		}
 		return true
 	}
