@@ -720,13 +720,17 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 	return nil
 }
 
+const idxlookupAllowPendingTasks = 1
+
 func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
 	// indexWorker will submit lookup-table tasks (processed by tableWorker) to the pool,
 	// so fetching index and getting table data can run concurrently.
 	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
 	e.pool = &workerPool{
 		needSpawn: func(workers, tasks uint32) bool {
-			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
+			// Since the index worker and table workers share the same pool, the total number of workers is limited by
+			// indexLookupConcurrency+1 (1 for index worker).
+			return workers < uint32(e.indexLookupConcurrency+1) && tasks > idxlookupAllowPendingTasks
 		},
 	}
 	if err := e.startIndexWorker(ctx, initBatchSize); err != nil {
@@ -1255,6 +1259,11 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		}
 	}
 	taskID := 0
+	// rateLimit is used to limit the number of pending tasks in the pool so that the index worker won't be too far
+	// ahead of table workers. Since the pool won't start new goroutine when the number of pending tasks is less or
+	// equal to idxlookupAllowPendingTasks, we set the capacity to idxlookupAllowPendingTasks+1 to make sure the pool
+	// can grow the number of workers when needed.
+	rateLimit := make(chan struct{}, idxlookupAllowPendingTasks+1)
 	for i := 0; i < len(results); {
 		curResultIdx := i
 		result := results[curResultIdx]
@@ -1315,7 +1324,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			return nil
 		case <-w.finished:
 			return nil
-		default:
+		case rateLimit <- struct{}{}:
 			if completedTask != nil {
 				w.resultCh <- completedTask
 			}
@@ -1324,6 +1333,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 				e := w.idxLookup
 				e.tblWorkerWg.Add(1)
 				e.pool.submit(func() {
+					<-rateLimit
 					defer e.tblWorkerWg.Done()
 					select {
 					case <-e.finished:
@@ -1334,6 +1344,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 					}
 				})
 				w.resultCh <- tableLookUpTask
+			} else {
+				<-rateLimit
 			}
 		}
 		if w.idxLookup.stats != nil {
