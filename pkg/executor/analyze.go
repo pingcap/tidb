@@ -66,6 +66,17 @@ type AnalyzeExec struct {
 	gp         *gp.Pool
 	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
 	errExitCh chan struct{}
+	// globalSampleCollectors accumulates per-partition sample collectors keyed by table ID
+	// for building global stats from merged samples. Only populated when
+	// tidb_enable_sample_based_global_stats is enabled.
+	globalSampleCollectors map[int64]*statistics.ReservoirRowSampleCollector
+	// partitionSamplesToSave stores serialized (proto-marshalled) pruned per-partition
+	// sample collectors keyed by partition physical ID, to persist after analysis completes.
+	partitionSamplesToSave map[int64][]byte
+	// samplePruners stores per-table sample pruners for proportional pruning.
+	samplePruners map[int64]*statistics.SamplePruner
+	// analyzedPartitions tracks freshly analyzed partition IDs per table.
+	analyzedPartitions map[int64]map[int64]struct{} // tableID → set of partitionIDs
 }
 
 var (
@@ -138,6 +149,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]statstypes.GlobalStatsInfo)
+	if needGlobalStats && sessionVars.EnableSampleBasedGlobalStats {
+		e.globalSampleCollectors = make(map[int64]*statistics.ReservoirRowSampleCollector)
+		e.partitionSamplesToSave = make(map[int64][]byte)
+		e.samplePruners = make(map[int64]*statistics.SamplePruner)
+		e.analyzedPartitions = make(map[int64]map[int64]struct{})
+	}
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return e.handleResultsError(buildStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
@@ -185,6 +202,15 @@ TASKLOOP:
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
+		// Release accumulated sample collectors to free memory.
+		for id, c := range e.globalSampleCollectors {
+			if c != nil {
+				c.DestroyAndPutToPool()
+			}
+			delete(e.globalSampleCollectors, id)
+		}
+		e.globalSampleCollectors = nil
+		e.partitionSamplesToSave = nil
 		if err != nil {
 			return err
 		}
@@ -479,6 +505,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		e.mergePartitionSamplesForGlobal(results)
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		saveResultsCh <- results
 	}
@@ -609,6 +636,113 @@ func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, an
 				zap.String("sample rate reason", job.SampleRateReason))
 		}
 	}
+}
+
+// mergePartitionSamplesForGlobal incrementally merges per-partition sample collectors into
+// the global sample collector for sample-based global stats. Only operates when the feature
+// is enabled and results carry a RowCollector.
+// It also prunes and stashes a copy for later persistence.
+func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.AnalyzeResults) {
+	if e.globalSampleCollectors == nil || results.RowCollector == nil || !results.TableID.IsPartitionTable() {
+		return
+	}
+	rc := results.RowCollector
+	tableID := results.TableID.TableID
+	partitionID := results.TableID.PartitionID
+
+	// Track the analyzed partition.
+	if e.analyzedPartitions[tableID] == nil {
+		e.analyzedPartitions[tableID] = make(map[int64]struct{})
+	}
+	e.analyzedPartitions[tableID][partitionID] = struct{}{}
+
+	// Initialize SamplePruner for the table if not yet done.
+	if _, ok := e.samplePruners[tableID]; !ok {
+		totalPartitions := 1
+		is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+		if tbl, ok := is.TableByID(context.Background(), tableID); ok {
+			if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+				totalPartitions = len(pi.Definitions)
+			}
+		}
+		e.samplePruners[tableID] = statistics.NewSamplePruner(totalPartitions, statistics.DefaultSampleBudget)
+	}
+
+	// Prune and serialize a copy for later persistence. We serialize immediately
+	// to avoid shared-pointer issues with FMSketches when the original collector
+	// is destroyed during merge.
+	pruner := e.samplePruners[tableID]
+	target := pruner.PruneCount(rc.Base().Count)
+	data := serializePrunedSamples(rc, target)
+	if data != nil {
+		e.partitionSamplesToSave[partitionID] = data
+	}
+	pruner.Observe(rc.Base().Count)
+
+	// Merge into the global collector.
+	globalCollector, ok := e.globalSampleCollectors[tableID]
+	if !ok {
+		// First partition for this table — create a Reservoir accumulator with
+		// initialized FMSketches so that MergeCollector can merge into them.
+		totalLen := len(rc.Base().FMSketches)
+		global := statistics.NewReservoirRowSampleCollector(statistics.DefaultSampleBudget, totalLen)
+		for range totalLen {
+			global.Base().FMSketches = append(global.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
+		}
+		global.MergeCollector(rc)
+		e.globalSampleCollectors[tableID] = global
+		rc.DestroyAndPutToPool()
+		results.RowCollector = nil
+		return
+	}
+	globalCollector.MergeCollector(rc)
+	rc.DestroyAndPutToPool()
+	results.RowCollector = nil
+}
+
+// serializePrunedSamples prunes the collector's samples to targetSize and
+// serializes the result to protobuf bytes. Works with any RowSampleCollector type.
+// Serializing immediately avoids shared-pointer issues with FMSketches when the
+// original collector is later destroyed during merge.
+func serializePrunedSamples(rc statistics.RowSampleCollector, targetSize int) []byte {
+	// For ReservoirRowSampleCollector, use PruneTo for proper A-Res sub-sampling.
+	if reservoir, ok := rc.(*statistics.ReservoirRowSampleCollector); ok && targetSize > 0 && targetSize < len(rc.Base().Samples) {
+		pruned := reservoir.PruneTo(targetSize)
+		pb := pruned.Base().ToProto()
+		data, err := pb.Marshal()
+		if err != nil {
+			statslogutil.StatsLogger().Warn("failed to marshal pruned sample collector",
+				zap.Int("targetSize", targetSize), zap.Error(err))
+			return nil
+		}
+		return data
+	}
+	// For Bernoulli or when no pruning is needed, serialize via ToProto() which
+	// creates safe copies of FMSketches. Then truncate samples in the proto if needed.
+	pb := rc.Base().ToProto()
+	if targetSize > 0 && targetSize < len(pb.Samples) {
+		pb.Samples = pb.Samples[:targetSize]
+	}
+	data, err := pb.Marshal()
+	if err != nil {
+		statslogutil.StatsLogger().Warn("failed to marshal sample collector",
+			zap.Int("targetSize", targetSize), zap.Error(err))
+		return nil
+	}
+	return data
+}
+
+// countPartitionTasks counts distinct partition tasks (tasks whose TableID
+// indicates a partitioned table).
+func countPartitionTasks(tasks []*analyzeTask) int {
+	seen := make(map[int64]struct{})
+	for _, task := range tasks {
+		tid := getTableIDFromTask(task)
+		if tid.IsPartitionTable() {
+			seen[tid.PartitionID] = struct{}{}
+		}
+	}
+	return len(seen)
 }
 
 func handleGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, results *statistics.AnalyzeResults) {

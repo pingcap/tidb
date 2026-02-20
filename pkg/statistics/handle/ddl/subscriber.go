@@ -433,10 +433,22 @@ func updateGlobalTableStats4ExchangePartition(
 	originalPartInfo *model.PartitionInfo,
 	originalTableInfo *model.TableInfo,
 ) error {
+	// Clean up saved per-partition samples for both the exchanged partition and
+	// table, since their physical IDs now reference different data.
+	partDefID := originalPartInfo.Definitions[0].ID
+	if err := storage.DeletePartitionSamples(sctx, partDefID); err != nil {
+		logutil.StatsLogger().Warn("failed to delete partition samples during exchange partition",
+			zap.Int64("partitionID", partDefID), zap.Error(err))
+	}
+	if err := storage.DeletePartitionSamples(sctx, originalTableInfo.ID); err != nil {
+		logutil.StatsLogger().Warn("failed to delete partition samples during exchange partition",
+			zap.Int64("tableID", originalTableInfo.ID), zap.Error(err))
+	}
+
 	partCount, partModifyCount, tableCount, tableModifyCount, err := getCountsAndModifyCounts(
 		ctx,
 		sctx,
-		originalPartInfo.Definitions[0].ID,
+		partDefID,
 		originalTableInfo.ID,
 	)
 	if err != nil {

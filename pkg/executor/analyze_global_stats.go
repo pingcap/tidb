@@ -20,8 +20,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -42,6 +45,11 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 	for globalStatsID := range globalStatsMap {
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
+
+	// Load saved samples for non-analyzed partitions and merge into global collectors.
+	e.loadAndMergeSavedSamples(globalStatsTableIDs)
+	// Save pruned samples for freshly analyzed partitions.
+	e.savePartitionSamplesToStorage()
 
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
 	for tableID := range globalStatsTableIDs {
@@ -65,6 +73,16 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 						globalOpts = v2Options.FilledOpts
 					}
 				}
+
+				// Try sample-based path first.
+				if gs, err := e.buildGlobalStatsFromSamples(globalStatsID, &info, globalOpts); err != nil {
+					logutil.ErrVerboseLogger().Warn("build sample-based global stats failed, falling back to merge",
+						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
+				} else if gs != nil {
+					return globalstats.WriteGlobalStatsToStorage(statsHandle, gs, &info, globalStatsID.tableID)
+				}
+
+				// Fallback to existing merge-based path.
 				err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
@@ -89,6 +107,111 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 	}
 
 	return nil
+}
+
+// buildGlobalStatsFromSamples attempts to build global stats from the accumulated
+// sample collector. Returns (nil, nil) if sample-based path is not available for
+// this particular stats entry, signaling the caller to fall back.
+func (e *AnalyzeExec) buildGlobalStatsFromSamples(
+	key globalStatsKey,
+	info *statstypes.GlobalStatsInfo,
+	opts map[ast.AnalyzeOptionType]uint64,
+) (*globalstats.GlobalStats, error) {
+	if e.globalSampleCollectors == nil {
+		return nil, nil
+	}
+	collector, ok := e.globalSampleCollectors[key.tableID]
+	if !ok || collector == nil || collector.Base().Count == 0 {
+		return nil, nil
+	}
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	table, ok := is.TableByID(context.Background(), key.tableID)
+	if !ok {
+		return nil, nil
+	}
+	colsInfo := table.Meta().Columns
+	indexes := table.Meta().Indices
+
+	isIndex := info.IsIndex == 1
+	return globalstats.BuildGlobalStatsFromSamples(
+		e.Ctx(), collector, opts,
+		colsInfo, indexes, info.HistIDs, isIndex,
+	)
+}
+
+// loadAndMergeSavedSamples loads persisted sample collectors for partitions
+// that were NOT freshly analyzed and merges them into the global collectors.
+func (e *AnalyzeExec) loadAndMergeSavedSamples(tableIDs map[int64]struct{}) {
+	if e.globalSampleCollectors == nil {
+		return
+	}
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	sctx := e.Ctx()
+
+	for tableID := range tableIDs {
+		globalCollector, ok := e.globalSampleCollectors[tableID]
+		if !ok || globalCollector == nil {
+			continue
+		}
+
+		tbl, ok := is.TableByID(context.Background(), tableID)
+		if !ok {
+			continue
+		}
+		pi := tbl.Meta().GetPartitionInfo()
+		if pi == nil {
+			continue
+		}
+
+		analyzed := e.analyzedPartitions[tableID]
+		// If all partitions were analyzed, no loading needed.
+		if len(analyzed) >= len(pi.Definitions) {
+			continue
+		}
+
+		for _, def := range pi.Definitions {
+			if _, freshlyAnalyzed := analyzed[def.ID]; freshlyAnalyzed {
+				continue
+			}
+			saved, err := storage.LoadPartitionSample(sctx, def.ID)
+			if err != nil {
+				logutil.BgLogger().Warn("failed to load saved partition samples",
+					zap.Int64("partitionID", def.ID), zap.Error(err))
+				continue
+			}
+			if saved == nil {
+				continue
+			}
+			// Validate schema compatibility by FM sketch count.
+			if len(saved.Base().FMSketches) != len(globalCollector.Base().FMSketches) {
+				logutil.BgLogger().Warn("saved partition sample schema mismatch, skipping",
+					zap.Int64("partitionID", def.ID),
+					zap.Int("savedCols", len(saved.Base().FMSketches)),
+					zap.Int("expectedCols", len(globalCollector.Base().FMSketches)))
+				saved.DestroyAndPutToPool()
+				continue
+			}
+			globalCollector.MergeCollector(saved)
+			saved.DestroyAndPutToPool()
+		}
+	}
+}
+
+// savePartitionSamplesToStorage persists the pre-serialized per-partition
+// sample data to mysql.stats_global_merge_data.
+func (e *AnalyzeExec) savePartitionSamplesToStorage() {
+	if len(e.partitionSamplesToSave) == 0 {
+		return
+	}
+	sctx := e.Ctx()
+	for partitionID, data := range e.partitionSamplesToSave {
+		if err := storage.SavePartitionSampleData(sctx, partitionID, data); err != nil {
+			logutil.BgLogger().Warn("failed to save partition samples",
+				zap.Int64("partitionID", partitionID), zap.Error(err))
+		}
+		delete(e.partitionSamplesToSave, partitionID)
+	}
 }
 
 func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statistics.AnalyzeJob {
