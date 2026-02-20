@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (memtable_predicate_extractor, infoschema_v2, mvcc decompositions)
+Last updated: 2026-02-20 (insert_common, slow_query, batch_coprocessor decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -439,6 +439,26 @@ Last updated: 2026-02-20 (memtable_predicate_extractor, infoschema_v2, mvcc deco
   - Target: Focused files per transaction phase
   - [x] `mvcc_pessimistic_lock.go` (566 lines) - pessimistic lock, rollback, heartbeat, status checks
   - [x] `mvcc_prewrite.go` (505 lines) - optimistic/pessimistic prewrite, flush, 1PC
+
+- [x] **executor/insert_common.go decomposition** - Extract auto-ID, duplicate key, and runtime stat
+  - File: `pkg/executor/insert_common.go` (1,587 → 816 lines, 49% reduction)
+  - Target: Focused files per functional area
+  - [x] `insert_autoid.go` (388 lines) - auto-increment, auto-random, and implicit row ID handling
+  - [x] `insert_dupkey.go` (310 lines) - duplicate key detection, batch check/insert, row removal
+  - [x] `insert_runtime_stat.go` (149 lines) - InsertRuntimeStat type and methods
+
+- [x] **executor/slow_query.go decomposition** - Extract reverse scanner, column factories, and file ops
+  - File: `pkg/executor/slow_query.go` (1,554 → 820 lines, 47% reduction)
+  - Target: Focused files per functional area
+  - [x] `slow_query_reverse_scanner.go` (289 lines) - reverse log scanning for dashboard queries
+  - [x] `slow_query_column.go` (186 lines) - column value factory functions and time parsing
+  - [x] `slow_query_file.go` (350 lines) - log file discovery, time detection, and runtime stats
+
+- [x] **store/copr/batch_coprocessor.go decomposition** - Extract task balancing and execution
+  - File: `pkg/store/copr/batch_coprocessor.go` (1,727 → 1,213 lines, 30% reduction)
+  - Target: Focused files per functional area
+  - [x] `batch_coprocessor_balance.go` (192 lines) - region balancing between TiFlash stores
+  - [x] `batch_coprocessor_task.go` (382 lines) - task execution, response handling, and PD dispatch
 
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
