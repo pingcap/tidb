@@ -656,6 +656,194 @@ func collectDMLTestCases() []string {
 		"CREATE TABLE t (a LONG VARBINARY)",
 		// Multi-column
 		"CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(100) NOT NULL, age INT DEFAULT 0, bio TEXT)",
+
+		// ===== DDL constraints and table options =====
+		"CREATE TABLE t (a INT, b INT, PRIMARY KEY (a))",
+		"CREATE TABLE t (a INT, UNIQUE KEY idx_a (a))",
+		"CREATE TABLE t (a INT, INDEX idx_a (a))",
+		"CREATE TABLE t (a INT, KEY idx_a (a))",
+		"CREATE TABLE t (a INT, b INT, FOREIGN KEY (b) REFERENCES t2 (id))",
+		"CREATE TABLE t (a INT, b INT, CONSTRAINT chk CHECK (a > 0))",
+		"CREATE TABLE t (a INT) ENGINE=InnoDB",
+		"CREATE TABLE t (a INT) DEFAULT CHARSET=utf8mb4",
+		"CREATE TABLE t (a INT) COMMENT='test table'",
+		"CREATE TABLE t (a INT) AUTO_INCREMENT=100",
+		"CREATE TABLE IF NOT EXISTS t (a INT)",
+		"CREATE TABLE t LIKE t2",
+		"CREATE TABLE t AS SELECT * FROM t2",
+		"CREATE TEMPORARY TABLE t (a INT)",
+
+		// ===== ALTER TABLE =====
+		"ALTER TABLE t ADD COLUMN c VARCHAR(100)",
+		"ALTER TABLE t ADD INDEX idx_a (a)",
+		"ALTER TABLE t ADD UNIQUE INDEX idx_a (a)",
+		"ALTER TABLE t ADD PRIMARY KEY (a)",
+		"ALTER TABLE t DROP COLUMN b",
+		"ALTER TABLE t DROP INDEX idx_a",
+		"ALTER TABLE t DROP PRIMARY KEY",
+		"ALTER TABLE t MODIFY COLUMN a BIGINT",
+		"ALTER TABLE t CHANGE COLUMN a b INT",
+		"ALTER TABLE t RENAME TO t2",
+		"ALTER TABLE t ADD COLUMN c INT AFTER b",
+		"ALTER TABLE t ADD COLUMN c INT FIRST",
+		"ALTER TABLE t ENGINE=InnoDB",
+		"ALTER TABLE t COMMENT='new comment'",
+
+		// ===== DROP / TRUNCATE =====
+		"DROP TABLE t",
+		"DROP TABLE IF EXISTS t",
+		"DROP TABLE t, t2",
+		"TRUNCATE TABLE t",
+		"TRUNCATE t",
+		"DROP INDEX idx_a ON t",
+		"DROP DATABASE IF EXISTS mydb",
+		"CREATE DATABASE mydb",
+		"CREATE DATABASE IF NOT EXISTS mydb",
+
+		// ===== CREATE/DROP INDEX =====
+		"CREATE INDEX idx_a ON t (a)",
+		"CREATE UNIQUE INDEX idx_a ON t (a)",
+		"CREATE INDEX idx_ab ON t (a, b)",
+
+		// ===== Complex JOIN types =====
+		"SELECT * FROM t NATURAL JOIN t2",
+		"SELECT * FROM t NATURAL LEFT JOIN t2",
+		"SELECT * FROM t NATURAL RIGHT JOIN t2",
+		"SELECT * FROM t JOIN t2 USING (id)",
+		"SELECT * FROM t LEFT JOIN t2 USING (id)",
+		"SELECT * FROM t1 JOIN t2 ON t1.id = t2.id JOIN t3 ON t2.id = t3.id",
+		"SELECT * FROM t1 STRAIGHT_JOIN t2 ON t1.id = t2.id",
+
+		// ===== Index hints =====
+		"SELECT * FROM t USE INDEX (idx_a)",
+		"SELECT * FROM t FORCE INDEX (idx_a, idx_b)",
+		"SELECT * FROM t IGNORE INDEX (idx_a)",
+		"SELECT * FROM t USE INDEX (idx_a) WHERE a > 1",
+
+		// ===== Complex UPDATE/DELETE =====
+		"UPDATE t SET a = 1, b = 2 WHERE c > 3",
+		"UPDATE t1 JOIN t2 ON t1.id = t2.id SET t1.a = t2.b",
+		"DELETE t1 FROM t1 JOIN t2 ON t1.id = t2.id WHERE t2.a > 0",
+		"DELETE FROM t ORDER BY a LIMIT 10",
+		"UPDATE t SET a = a + 1 ORDER BY a LIMIT 10",
+
+		// ===== INSERT variants =====
+		"INSERT INTO t SELECT * FROM t2",
+		"INSERT INTO t (a, b) SELECT c, d FROM t2 WHERE c > 1",
+		"INSERT INTO t SET a = 1, b = 2",
+
+		// ===== SHOW statements =====
+		"SHOW DATABASES",
+		"SHOW TABLES",
+		"SHOW TABLES FROM mydb",
+		"SHOW COLUMNS FROM t",
+		"SHOW FULL COLUMNS FROM t",
+		"SHOW CREATE TABLE t",
+		"SHOW INDEX FROM t",
+		"SHOW TABLE STATUS",
+		"SHOW TABLE STATUS FROM mydb",
+		"SHOW VARIABLES",
+		"SHOW GLOBAL VARIABLES",
+		"SHOW SESSION VARIABLES",
+		"SHOW VARIABLES LIKE 'innodb%'",
+		"SHOW WARNINGS",
+		"SHOW ERRORS",
+		"SHOW PROCESSLIST",
+		"SHOW FULL PROCESSLIST",
+		"SHOW STATUS",
+		"SHOW GLOBAL STATUS",
+		"SHOW GRANTS",
+		"SHOW GRANTS FOR 'user'@'host'",
+		"SHOW COLLATION",
+		"SHOW CHARACTER SET",
+		"SHOW ENGINES",
+		"SHOW PLUGINS",
+
+		// ===== SET statements =====
+		"SET @a = 1",
+		"SET @@session.sql_mode = 'STRICT_TRANS_TABLES'",
+		"SET @@global.max_connections = 100",
+		"SET NAMES utf8mb4",
+		"SET NAMES utf8mb4 COLLATE utf8mb4_general_ci",
+		"SET CHARACTER SET utf8mb4",
+		"SET autocommit = 1",
+		"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+		"SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+
+		// ===== EXPLAIN / DESCRIBE =====
+		"EXPLAIN SELECT * FROM t",
+		"EXPLAIN FORMAT='brief' SELECT * FROM t",
+		"EXPLAIN ANALYZE SELECT * FROM t",
+		"DESC t",
+		"DESCRIBE t",
+
+		// ===== PREPARE / EXECUTE / DEALLOCATE =====
+		"PREPARE stmt FROM 'SELECT ?'",
+		"EXECUTE stmt USING @a",
+		"DEALLOCATE PREPARE stmt",
+
+		// ===== Complex expressions =====
+		"SELECT COALESCE(a, b, c) FROM t",
+		"SELECT IFNULL(a, 0) FROM t",
+		"SELECT NULLIF(a, b) FROM t",
+		"SELECT IF(a > 0, 'yes', 'no') FROM t",
+		"SELECT GREATEST(a, b, c) FROM t",
+		"SELECT LEAST(a, b, c) FROM t",
+		"SELECT CONCAT(a, b, c) FROM t",
+		"SELECT CONCAT_WS(',', a, b) FROM t",
+		"SELECT GROUP_CONCAT(a ORDER BY a SEPARATOR ',') FROM t",
+		"SELECT GROUP_CONCAT(DISTINCT a ORDER BY a DESC SEPARATOR '|') FROM t",
+		"SELECT COUNT(DISTINCT a) FROM t",
+		"SELECT COUNT(*) FROM t",
+
+		// ===== Date/time functions =====
+		"SELECT NOW()",
+		"SELECT CURRENT_TIMESTAMP()",
+		"SELECT CURDATE()",
+		"SELECT CURRENT_DATE()",
+		"SELECT CURTIME()",
+		"SELECT DATE_ADD('2020-01-01', INTERVAL 1 DAY)",
+		"SELECT DATE_SUB('2020-01-01', INTERVAL 1 MONTH)",
+		"SELECT TIMESTAMPDIFF(DAY, '2020-01-01', '2020-02-01')",
+
+		// ===== Generated columns =====
+		"CREATE TABLE t (a INT, b INT GENERATED ALWAYS AS (a * 2) STORED)",
+		"CREATE TABLE t (a INT, b INT GENERATED ALWAYS AS (a + 1) VIRTUAL)",
+		"CREATE TABLE t (a INT, b INT AS (a * 2))",
+
+		// ===== Complex WHERE clauses =====
+		"SELECT * FROM t WHERE a IS NULL",
+		"SELECT * FROM t WHERE a IS NOT NULL",
+		"SELECT * FROM t WHERE a IS TRUE",
+		"SELECT * FROM t WHERE a IS NOT FALSE",
+		"SELECT * FROM t WHERE a BETWEEN 1 AND 10",
+		"SELECT * FROM t WHERE a NOT BETWEEN 1 AND 10",
+		"SELECT * FROM t WHERE a IN (1, 2, 3)",
+		"SELECT * FROM t WHERE a NOT IN (1, 2, 3)",
+		"SELECT * FROM t WHERE a LIKE 'test%'",
+		"SELECT * FROM t WHERE a NOT LIKE 'test%'",
+		"SELECT * FROM t WHERE a REGEXP '^test'",
+
+		// ===== ADMIN statements =====
+		"ADMIN SHOW DDL",
+		"ADMIN SHOW DDL JOBS",
+		"ADMIN CHECK TABLE t",
+
+		// ===== DO statement =====
+		"DO 1",
+		"DO SLEEP(1)",
+
+		// ===== Nested expressions =====
+		"SELECT (1 + 2) * 3",
+		"SELECT -(a + b) FROM t",
+		"SELECT NOT (a > 0 AND b > 0) FROM t",
+		"SELECT a + b * c - d / e FROM t",
+
+		// ===== String functions =====
+		"SELECT REPLACE('hello', 'l', 'r')",
+		"SELECT INSERT('hello', 2, 3, 'xyz')",
+		"SELECT CHAR(65, 66, 67)",
+		"SELECT WEIGHT_STRING('test')",
 	}
 }
 
