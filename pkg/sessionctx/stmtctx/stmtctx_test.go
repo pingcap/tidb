@@ -529,10 +529,6 @@ func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
 	}
 	sReal.WriteToSlowLog(&buf)
 	out = buf.String()
-	require.Contains(t, out, "orders:")
-	require.Contains(t, out, "stats_meta_version=5")
-	require.Contains(t, out, "realtime_count=1000000")
-	require.Contains(t, out, "modify_count=500")
 	require.Equal(t, "orders:stats_meta_version=5[realtime_count=1000000;modify_count=500]", out)
 
 	// real stats with column/index load status
