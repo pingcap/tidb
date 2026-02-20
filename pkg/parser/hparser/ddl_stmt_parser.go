@@ -633,7 +633,7 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	case tokSelect, tokInsert, tokReplace, tokUpdate, tokDelete,
 		tokAlter, tokCreate, tokDrop, tokSet, tokShow, tokWith, tokTruncate,
 		tokRename, tokAnalyze, tokLoad, tokGrant, tokRevoke, tokTable, tokValues,
-		'(':
+		tokImport, '(':
 		sub = p.parseStatement()
 	default:
 		// EXPLAIN|DESCRIBE tablename → maps to SHOW COLUMNS
