@@ -75,6 +75,12 @@ func (*generalCICollator) Clone() Collator {
 	return new(generalCICollator)
 }
 
+// ImmutablePrefixKey implements Collator interface
+func (gc *generalCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+	truncatedStr := truncateTailingSpace(str)
+	return gc.ImmutableKey(truncatedStr[:stringutil.GetCharsByteCount(truncatedStr, prefixCharCount)])
+}
+
 type ciPattern struct {
 	patChars []rune
 	patTypes []byte
