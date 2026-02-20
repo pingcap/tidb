@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (Batches 2-7: regexp, common_plans, json_vec, point_get, distsql_builtin, show, exhaust, indexmerge, time_arith, builtin_op, expression, plan_cost_v1/v2, optimizer, inspection, math_vec, simple_user, planbuilder_analyze decompositions)
+Last updated: 2026-02-20 (Batches 2-10: regexp through selectivity_filter decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -627,3 +627,9 @@ Last updated: 2026-02-20 (Batches 2-7: regexp, common_plans, json_vec, point_get
 - [x] **expression/builtin_math_vec.go decomposition** - 2026-02-20 - Extracted `builtin_math_vec_int.go` (~643 lines) with int/decimal/conversion vectorized math ops. Reduced builtin_math_vec.go from 1,224 to 605 lines (51% reduction).
 - [x] **expression/builtin_control.go decomposition** - 2026-02-20 - Split into 2 focused files: `builtin_casewhen.go` (411), `builtin_control_if.go` (505). Reduced builtin_control.go from 1,180 to 309 lines (74% reduction).
 - [x] **server/server.go decomposition** - 2026-02-20 - Extracted `server_conn_mgmt.go` (311 lines) with connection management, Kill, TLS, DrainClients. Reduced server.go from 1,271 to 989 lines (22% reduction).
+- [x] **ddl/backfilling.go decomposition** - 2026-02-20 - Extracted `backfilling_range.go` (264 lines) with loadTableRanges, splitRangesByKeys, validateAndFillRanges, getBatchTasks, getActualEndKey, sendTasks. Reduced backfilling.go from 1,275 to 1,043 lines (18% reduction).
+- [x] **executor/mem_reader.go decomposition** - 2026-02-20 - Extracted `mem_buffer_iter.go` (178 lines) with txnMemBufferIter, iterTxnMemBuffer, getSnapIter. Reduced mem_reader.go from 1,191 to 1,035 lines (13% reduction).
+- [x] **sessionctx/variable/slow_log.go decomposition** - 2026-02-20 - Extracted `slow_log_accessors.go` (427 lines) with SlowLogFieldAccessor, parsing functions, SlowLogRuleFieldAccessors. Reduced slow_log.go from 1,154 to 753 lines (35% reduction).
+- [x] **ddl/reorg.go decomposition** - 2026-02-20 - Extracted `reorg_table_scan.go` (258 lines) with table scan DAG builders, GetTableMaxHandle, buildHandleCols, getTableRange. Reduced reorg.go from 1,193 to 968 lines (19% reduction).
+- [x] **distsql/select_result.go decomposition** - 2026-02-20 - Extracted `select_result_iter.go` (440 lines) with channel iter, selectResultIter, CopRuntimeStats, selectResultRuntimeStats. Reduced select_result.go from 1,166 to 754 lines (35% reduction).
+- [x] **planner/cardinality/selectivity.go decomposition** - 2026-02-20 - Extracted `selectivity_filter.go` (376 lines) with GetSelectivityByFilter, crossValidationSelectivity, outOfRange functions, MVIndex vars. Reduced selectivity.go from 1,196 to 846 lines (29% reduction).
