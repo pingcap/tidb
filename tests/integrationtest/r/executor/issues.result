@@ -1016,6 +1016,13 @@ result
 select ((exists (select 1)) * -5) as c1;
 c1
 -5
+CREATE TABLE test_59483 (c2 BIT(1));
+INSERT INTO test_59483 VALUES (0);
+SELECT 1 FROM test_59483
+WHERE INET6_NTOA(
+CASE WHEN test_59483.c2 = 0 THEN test_59483.c2 END
+);
+1
 SELECT IS_UUID(' 6ccd780c-baba-1026-8567-4cc3505b2a62 ');
 IS_UUID(' 6ccd780c-baba-1026-8567-4cc3505b2a62 ')
 0
