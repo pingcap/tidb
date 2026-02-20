@@ -16,9 +16,12 @@ package reporter
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -239,6 +242,52 @@ func TestRUCollectingTake(t *testing.T) {
 	taken := collecting.take()
 	require.Len(t, taken.users, 1)
 	require.Len(t, collecting.users, 0) // Original should be reset
+}
+
+func TestRUCollectingCompactAndReportConsistency(t *testing.T) {
+	collecting := newRUCollecting()
+	add := func(user, sql, plan string, ts uint64, ru float64) {
+		collecting.add(ts, stmtstats.RUKey{
+			User:       user,
+			SQLDigest:  stmtstats.BinaryDigest(sql),
+			PlanDigest: stmtstats.BinaryDigest(plan),
+		}, &stmtstats.RUIncrement{
+			TotalRU:      ru,
+			ExecCount:    1,
+			ExecDuration: 10,
+		})
+	}
+	add("u1", "s1", "p1", 0, 100)
+	add("u1", "s2", "p2", 15, 80)
+	add("u2", "s1", "p1", 0, 70)
+	add("u2", "s2", "p2", 30, 60)
+	add("u3", "s1", "p1", 0, 50) // evicted by maxUsers=2
+	add("u4", "s1", "p1", 0, 10) // evicted by maxUsers=2
+
+	maxUsers := 2
+	maxSQLsPerUser := 1
+	keyspace := []byte("ks")
+
+	compacted := collecting.compactWithLimits(maxUsers, maxSQLsPerUser)
+	require.NotNil(t, compacted)
+
+	fromCompact := compacted.toTopRURecords(keyspace)
+	fromWrapper := collecting.getReportRecordsWithLimits(keyspace, maxUsers, maxSQLsPerUser)
+	require.Equal(t, normalizeTopRURecords(fromWrapper), normalizeTopRURecords(fromCompact))
+}
+
+func normalizeTopRURecords(records []tipb.TopRURecord) []string {
+	out := make([]string, 0, len(records))
+	for _, rec := range records {
+		items := make([]string, 0, len(rec.Items))
+		for _, item := range rec.Items {
+			items = append(items, fmt.Sprintf("%d|%.6f|%d|%d", item.TimestampSec, item.TotalRu, item.ExecCount, item.ExecDuration))
+		}
+		sort.Strings(items)
+		out = append(out, fmt.Sprintf("%s|%x|%x|%x|%s", rec.User, rec.SqlDigest, rec.PlanDigest, rec.KeyspaceName, strings.Join(items, ",")))
+	}
+	sort.Strings(out)
+	return out
 }
 
 func TestRUItemsSort(t *testing.T) {

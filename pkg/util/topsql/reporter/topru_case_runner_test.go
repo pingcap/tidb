@@ -107,7 +107,7 @@ func runTopRUCase(t *testing.T, cs caseSpec) {
 	}
 
 	const sampleTs = uint64(1700000000)
-	tsr.ruAggregator.addSecondBatch(sampleTs, batch)
+	tsr.ruAggregator.addBatchToBucket(sampleTs, batch)
 	reportTs := alignToInterval(sampleTs, ruReportWindowSeconds) + ruReportWindowSeconds
 	tsr.doReport(&ReportData{
 		RURecords: tsr.ruAggregator.takeReportRecords(reportTs, 60, []byte("topru-gen-keyspace")),

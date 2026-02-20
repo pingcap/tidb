@@ -47,18 +47,10 @@ const (
 	ruReportOutputMaxSQLsPerUser = int(ruReportWindowSeconds/ruBaseBucketSeconds) * ruReportTopNSQLsPerUser
 )
 
-type ruBucketState uint8
-
-const (
-	ruBucketStateCollecting ruBucketState = iota
-	ruBucketStateCompacted
-)
-
 type ruPointBucket struct {
-	startTs    uint64
-	state      ruBucketState
-	collecting *ruCollecting
-	records    []tipb.TopRURecord
+	startTs             uint64
+	collecting          *ruCollecting // non-nil = actively collecting; nil = compacted
+	compactedCollecting *ruCollecting // read-only snapshot, valid only when collecting == nil
 }
 
 // ruWindowAggregator keeps online 15s buckets:
@@ -84,7 +76,7 @@ func alignToInterval(ts, interval uint64) uint64 {
 	return ts - ts%interval
 }
 
-func (a *ruWindowAggregator) addSecondBatch(ts uint64, increments stmtstats.RUIncrementMap) {
+func (a *ruWindowAggregator) addBatchToBucket(ts uint64, increments stmtstats.RUIncrementMap) {
 	if len(increments) == 0 {
 		return
 	}
@@ -98,18 +90,17 @@ func (a *ruWindowAggregator) addSecondBatch(ts uint64, increments stmtstats.RUIn
 		return
 	}
 
-	a.rotateBucketsBeforeLocked(bucketStart)
+	a.rotateBucketsBefore(bucketStart)
 
 	bucket, ok := a.buckets[bucketStart]
 	if !ok {
 		bucket = &ruPointBucket{
 			startTs:    bucketStart,
-			state:      ruBucketStateCollecting,
 			collecting: newRUCollectingWithCaps(ruOpenPreTopNUsers, ruOpenPreTopNSQLsPerUser),
 		}
 		a.buckets[bucketStart] = bucket
 	}
-	if bucket.state != ruBucketStateCollecting || bucket.collecting == nil {
+	if bucket.collecting == nil {
 		// Out-of-order data hitting an already compacted bucket.
 		return
 	}
@@ -128,6 +119,21 @@ func (a *ruWindowAggregator) takeReportRecords(nowTs, granularitySec uint64, key
 		return nil
 	}
 
+	// Phase 1: Take buckets under lock (fast path).
+	takenBuckets := a.takeBucketsForWindow(windowEnd)
+	if takenBuckets == nil {
+		return nil
+	}
+
+	// Phase 2: Build report records outside lock (slow path: merge + TopN + proto).
+	windowStart := windowEnd - ruReportWindowSeconds
+	return buildReportRecords(takenBuckets, windowStart, windowEnd, granularitySec, keyspaceName)
+}
+
+// takeBucketsForWindow extracts buckets for the given window under lock.
+// Returns nil if the window has already been reported or is not ready.
+// The returned map is owned by the caller; original buckets are removed from aggregator.
+func (a *ruWindowAggregator) takeBucketsForWindow(windowEnd uint64) map[uint64]*ruPointBucket {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -136,14 +142,17 @@ func (a *ruWindowAggregator) takeReportRecords(nowTs, granularitySec uint64, key
 	}
 
 	// Rotate all buckets that are no longer writable for this report boundary.
-	a.rotateBucketsBeforeLocked(windowEnd)
+	a.rotateBucketsBefore(windowEnd)
 
 	windowStart := windowEnd - ruReportWindowSeconds
-	records := a.buildReportRecordsLocked(windowStart, windowEnd, granularitySec, keyspaceName)
 
-	// Consume the current 60s window.
+	// Take buckets for this window (move ownership to caller).
+	takenBuckets := make(map[uint64]*ruPointBucket, int(ruReportWindowSeconds/ruBaseBucketSeconds))
 	for ts := windowStart; ts < windowEnd; ts += ruBaseBucketSeconds {
-		delete(a.buckets, ts)
+		if bucket, ok := a.buckets[ts]; ok {
+			takenBuckets[ts] = bucket
+			delete(a.buckets, ts)
+		}
 	}
 	a.lastReportedEndTs = windowEnd
 
@@ -154,65 +163,41 @@ func (a *ruWindowAggregator) takeReportRecords(nowTs, granularitySec uint64, key
 		}
 	}
 
-	return records
+	return takenBuckets
 }
 
-func (a *ruWindowAggregator) rotateBucketsBeforeLocked(boundaryStart uint64) {
+func (a *ruWindowAggregator) rotateBucketsBefore(boundaryStart uint64) {
 	for _, bucket := range a.buckets {
-		if bucket.state != ruBucketStateCollecting {
+		if bucket.collecting == nil {
 			continue
 		}
+
 		if bucket.startTs+ruBaseBucketSeconds <= boundaryStart {
-			a.rotateBucketLocked(bucket)
+			// Compact to internal snapshot (avoids proto conversion).
+			bucket.compactedCollecting = bucket.collecting.compactWithLimits(ruCompactedTopNUsers, ruCompactedTopNSQLsPerUser)
+			bucket.collecting = nil
 		}
 	}
 }
 
-func (a *ruWindowAggregator) rotateBucketLocked(bucket *ruPointBucket) {
-	if bucket == nil || bucket.state != ruBucketStateCollecting {
-		return
-	}
-	if bucket.collecting == nil {
-		bucket.state = ruBucketStateCompacted
-		return
-	}
-	bucket.records = bucket.collecting.getReportRecordsWithLimits(nil, ruCompactedTopNUsers, ruCompactedTopNSQLsPerUser)
-	bucket.collecting = nil
-	bucket.state = ruBucketStateCompacted
-}
-
-func (a *ruWindowAggregator) buildReportRecordsLocked(windowStart, windowEnd, granularitySec uint64, keyspaceName []byte) []tipb.TopRURecord {
+// buildReportRecords merges taken buckets and produces final proto records.
+// This function does NOT require any lock; it operates on owned bucket data.
+func buildReportRecords(buckets map[uint64]*ruPointBucket, windowStart, windowEnd, granularitySec uint64, keyspaceName []byte) []tipb.TopRURecord {
 	mergedOutput := newRUCollectingWithCaps(ruReportMergePreTopNUsers, ruReportMergePreTopNSQLsPerUser)
 	for groupStart := windowStart; groupStart < windowEnd; groupStart += granularitySec {
 		groupCollecting := newRUCollectingWithCaps(ruReportMergePreTopNUsers, ruReportMergePreTopNSQLsPerUser)
 		for ts := groupStart; ts < groupStart+granularitySec; ts += ruBaseBucketSeconds {
-			bucket, ok := a.buckets[ts]
-			if !ok || len(bucket.records) == 0 {
+			bucket, ok := buckets[ts]
+			if !ok || bucket.compactedCollecting == nil {
 				continue
 			}
-			mergeRURecordsIntoCollecting(groupCollecting, bucket.records, groupStart, true)
+			// Merge internal structure directly (no proto conversion).
+			groupCollecting.mergeFrom(bucket.compactedCollecting, groupStart, true)
 		}
-		groupRecords := groupCollecting.getReportRecordsWithLimits(keyspaceName, ruReportTopNUsers, ruReportTopNSQLsPerUser)
-		mergeRURecordsIntoCollecting(mergedOutput, groupRecords, 0, false)
+		// Apply TopN and merge into output (still internal).
+		groupCompacted := groupCollecting.compactWithLimits(ruReportTopNUsers, ruReportTopNSQLsPerUser)
+		mergedOutput.mergeFrom(groupCompacted, 0, false)
 	}
+	// Final proto conversion only at output.
 	return mergedOutput.getReportRecordsWithLimits(keyspaceName, ruReportOutputMaxUsers, ruReportOutputMaxSQLsPerUser)
-}
-
-func mergeRURecordsIntoCollecting(dst *ruCollecting, records []tipb.TopRURecord, timestamp uint64, rewriteTimestamp bool) {
-	if dst == nil || len(records) == 0 {
-		return
-	}
-	for _, rec := range records {
-		for _, item := range rec.Items {
-			ts := item.TimestampSec
-			if rewriteTimestamp {
-				ts = timestamp
-			}
-			dst.addRecordItem(ts, rec.User, rec.SqlDigest, rec.PlanDigest, &stmtstats.RUIncrement{
-				TotalRU:      item.TotalRu,
-				ExecCount:    item.ExecCount,
-				ExecDuration: item.ExecDuration,
-			})
-		}
-	}
 }

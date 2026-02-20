@@ -31,16 +31,16 @@ func TestRUWindowAggregatorReportGranularity(t *testing.T) {
 			SQLDigest:  stmtstats.BinaryDigest("sql1"),
 			PlanDigest: stmtstats.BinaryDigest("plan1"),
 		}
-		agg.addSecondBatch(1, stmtstats.RUIncrementMap{
+		agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
 			key: {TotalRU: 1, ExecCount: 1, ExecDuration: 10},
 		})
-		agg.addSecondBatch(16, stmtstats.RUIncrementMap{
+		agg.addBatchToBucket(16, stmtstats.RUIncrementMap{
 			key: {TotalRU: 2, ExecCount: 1, ExecDuration: 20},
 		})
-		agg.addSecondBatch(31, stmtstats.RUIncrementMap{
+		agg.addBatchToBucket(31, stmtstats.RUIncrementMap{
 			key: {TotalRU: 3, ExecCount: 1, ExecDuration: 30},
 		})
-		agg.addSecondBatch(46, stmtstats.RUIncrementMap{
+		agg.addBatchToBucket(46, stmtstats.RUIncrementMap{
 			key: {TotalRU: 4, ExecCount: 1, ExecDuration: 40},
 		})
 
@@ -74,8 +74,8 @@ func TestRUWindowAggregatorCompactTo200(t *testing.T) {
 			ExecDuration: 1,
 		}
 	}
-	agg.addSecondBatch(1, batch)
-	agg.addSecondBatch(16, stmtstats.RUIncrementMap{
+	agg.addBatchToBucket(1, batch)
+	agg.addBatchToBucket(16, stmtstats.RUIncrementMap{
 		stmtstats.RUKey{
 			User:       "next",
 			SQLDigest:  stmtstats.BinaryDigest("sql"),
@@ -85,22 +85,17 @@ func TestRUWindowAggregatorCompactTo200(t *testing.T) {
 
 	bucket := agg.buckets[0]
 	require.NotNil(t, bucket)
-	require.Equal(t, ruBucketStateCompacted, bucket.state)
 	require.Nil(t, bucket.collecting)
-	require.NotEmpty(t, bucket.records)
+	require.NotNil(t, bucket.compactedCollecting)
 
-	normalUsers := 0
-	for _, rec := range bucket.records {
-		if rec.User != keyRUOthersUser {
-			normalUsers++
-		}
-	}
+	// Count normal users in compacted snapshot
+	normalUsers := len(bucket.compactedCollecting.users)
 	require.LessOrEqual(t, normalUsers, ruCompactedTopNUsers)
 }
 
 func TestRUWindowAggregatorTakeOncePerWindow(t *testing.T) {
 	agg := newRUWindowAggregator()
-	agg.addSecondBatch(1, stmtstats.RUIncrementMap{
+	agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
 		stmtstats.RUKey{
 			User:       "u1",
 			SQLDigest:  stmtstats.BinaryDigest("sql1"),
@@ -114,13 +109,13 @@ func TestRUWindowAggregatorTakeOncePerWindow(t *testing.T) {
 }
 
 // Test gap 3: Concurrent pressure test for ruWindowAggregator.
-// Verifies that under high goroutine contention, addSecondBatch does not panic
+// Verifies that under high goroutine contention, addBatchToBucket does not panic
 // or lose structural integrity (records still produce valid reports).
 func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 	const (
-		numWriters    = 16
+		numWriters       = 16
 		batchesPerWriter = 100
-		numUsers      = 50
+		numUsers         = 50
 	)
 	agg := newRUWindowAggregator()
 
@@ -139,7 +134,7 @@ func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 						PlanDigest: stmtstats.BinaryDigest("plan"),
 					}] = &stmtstats.RUIncrement{TotalRU: 1, ExecCount: 1, ExecDuration: 1}
 				}
-				agg.addSecondBatch(ts, batch)
+				agg.addBatchToBucket(ts, batch)
 			}
 			done <- dropped
 		}(w)
@@ -152,7 +147,7 @@ func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 
 	// Also inject data for 15..59 so we have a full 60s window
 	for ts := uint64(15); ts < 60; ts += 15 {
-		agg.addSecondBatch(ts, stmtstats.RUIncrementMap{
+		agg.addBatchToBucket(ts, stmtstats.RUIncrementMap{
 			stmtstats.RUKey{
 				User:       "u0",
 				SQLDigest:  stmtstats.BinaryDigest("sql_filler"),

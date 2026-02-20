@@ -47,7 +47,7 @@ func TestTopRUReporter_MockDataSinkStructured(t *testing.T) {
 	tsr.RegisterPlan(planDigest, "point_get", false)
 
 	ts := uint64(1700000000)
-	tsr.ruAggregator.addSecondBatch(ts, stmtstats.RUIncrementMap{
+	tsr.ruAggregator.addBatchToBucket(ts, stmtstats.RUIncrementMap{
 		{
 			User:       "root",
 			SQLDigest:  stmtstats.BinaryDigest(sqlDigest),

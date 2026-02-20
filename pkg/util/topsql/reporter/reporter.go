@@ -253,7 +253,7 @@ func (tsr *RemoteTopSQLReporter) collectRUWorker() {
 			return
 		case data := <-tsr.collectRUIncrementsChan:
 			timestamp := uint64(nowFunc().Unix())
-			tsr.ruAggregator.addSecondBatch(timestamp, data)
+			tsr.ruAggregator.addBatchToBucket(timestamp, data)
 		}
 	}
 }
