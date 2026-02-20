@@ -439,12 +439,18 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 	if p.peek().Tp == tokCollate {
 		p.lastFieldTypeExplicitCollate = true // track explicit COLLATE for duplicate detection
 		p.next()
-		if s := p.peek().Lit; s != "" {
+		tok := p.peek()
+		if s := tok.Lit; s != "" {
 			tp.SetCollate(strings.ToLower(s))
 			p.next()
-		} else if s, ok := p.peek().Item.(string); ok {
+		} else if s, ok := tok.Item.(string); ok && s != "" {
 			tp.SetCollate(strings.ToLower(s))
 			p.next()
+		} else if tok.Tp == tokBinary || tok.Tp == tokByte {
+			tp.SetCollate("binary")
+			p.next()
+		} else {
+			p.error(tok.Offset, "expected collation name")
 		}
 	}
 

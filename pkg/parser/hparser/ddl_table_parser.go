@@ -210,11 +210,12 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 	// Keywords with Tp >= tokIdentifier can be used as column names since the context
 	// is unambiguous (always followed by a data type).
 	tok := p.peek()
-	if tok.Tp == tokStringLit || (tok.Tp >= tokIdentifier && !IsReserved(tok.Tp)) {
-		col.Name = Alloc[ast.ColumnName](p.arena)
-		col.Name.Name = ast.NewCIStr(p.next().Lit)
-	} else {
+	if !isIdentLike(tok.Tp) {
 		p.error(tok.Offset, "expected column name, got %d", tok.Tp)
+		return nil
+	}
+	col.Name = p.parseColumnName()
+	if col.Name == nil {
 		return nil
 	}
 
@@ -485,8 +486,16 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 			}
 			p.next()
 			option.Tp = ast.ColumnOptionCollate
-			if tok, ok := p.expectAny(tokIdentifier, tokStringLit); ok {
+			tok := p.peek()
+			if isIdentLike(tok.Tp) || tok.Tp == tokStringLit {
 				option.StrValue = tok.Lit
+				p.next()
+			} else if tok.Tp == tokBinary || tok.Tp == tokByte {
+				option.StrValue = "binary"
+				p.next()
+			} else {
+				p.error(tok.Offset, "expected collation name")
+				return nil
 			}
 		case tokColumnFormat:
 			p.next()

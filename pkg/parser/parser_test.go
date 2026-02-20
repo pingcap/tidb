@@ -2565,6 +2565,9 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE tmp CACHE", true, "ALTER TABLE `tmp` CACHE"},
 		{"ALTER TABLE tmp NOCACHE", true, "ALTER TABLE `tmp` NOCACHE"},
 		// for create temporary table
+		{"CREATE GLOBAL TEMPORARY TABLE t1 (id int) ON COMMIT PRESERVE ROWS", true, "CREATE GLOBAL TEMPORARY TABLE `t1` (`id` INT) ON COMMIT PRESERVE ROWS"},
+		{"CREATE TABLE t (t.a int)", true, "CREATE TABLE `t` (`t`.`a` INT)"},
+		{"CREATE TABLE t (a varchar(10) COLLATE utf8_bin)", true, "CREATE TABLE `t` (`a` VARCHAR(10) COLLATE utf8_bin)"},
 		{"CREATE TEMPORARY TABLE t (a varchar(50), b int);", true, "CREATE TEMPORARY TABLE `t` (`a` VARCHAR(50),`b` INT)"},
 		{"CREATE TEMPORARY TABLE t LIKE t1", true, "CREATE TEMPORARY TABLE `t` LIKE `t1`"},
 		{"DROP TEMPORARY TABLE t", true, "DROP TEMPORARY TABLE `t`"},
