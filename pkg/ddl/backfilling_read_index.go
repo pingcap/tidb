@@ -476,7 +476,7 @@ func newDistTaskRowCntCollector(
 	dbName, tblName, idxName string,
 	meterRec *metering.Recorder,
 ) *distTaskRowCntCollector {
-	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
+	counter := getBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
 	return &distTaskRowCntCollector{
 		summary:  summary,
 		counter:  counter,
