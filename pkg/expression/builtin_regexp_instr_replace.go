@@ -15,13 +15,18 @@
 package expression
 
 import (
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // https://dev.mysql.com/doc/refman/8.0/en/regexp.html#function_regexp-instr

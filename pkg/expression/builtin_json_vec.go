@@ -17,15 +17,11 @@ package expression
 import (
 	"bytes"
 	goJSON "encoding/json"
-	"fmt"
-	"hash/crc32"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 //revive:disable:defer
