@@ -119,6 +119,28 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan) ([]*expression.C
 // DecorrelateSolver tries to convert apply plan to join plan.
 type DecorrelateSolver struct{}
 
+func pickVisibleUniqueKey(schema *expression.Schema) []*expression.Column {
+	if schema == nil {
+		return nil
+	}
+	for _, key := range schema.PKOrUK {
+		if len(key) == 0 {
+			continue
+		}
+		allVisible := true
+		for _, keyCol := range key {
+			if keyCol == nil || !schema.Contains(keyCol) {
+				allVisible = false
+				break
+			}
+		}
+		if allVisible {
+			return key
+		}
+	}
+	return nil
+}
+
 func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {
@@ -314,11 +336,15 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			}
 		} else if agg, ok := innerPlan.(*logicalop.LogicalAggregation); ok {
 			if apply.CanPullUpAgg() && agg.CanPullUp() {
+				visibleKey := pickVisibleUniqueKey(outerPlan.Schema())
+				if len(visibleKey) == 0 {
+					goto NoOptimize
+				}
 				innerPlan = agg.Children()[0]
 				apply.JoinType = base.LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
-				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().PKOrUK[0])
+				agg.GroupByItems = expression.Column2Exprs(visibleKey)
 				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
 
 				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
