@@ -27,10 +27,12 @@ import (
 
 var (
 	_ DDLNode = &AlterTableStmt{}
+	_ DDLNode = &AlterModelStmt{}
 	_ DDLNode = &AlterSequenceStmt{}
 	_ DDLNode = &AlterPlacementPolicyStmt{}
 	_ DDLNode = &AlterResourceGroupStmt{}
 	_ DDLNode = &CreateDatabaseStmt{}
+	_ DDLNode = &CreateModelStmt{}
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
 	_ DDLNode = &CreateViewStmt{}
@@ -40,6 +42,7 @@ var (
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &FlashBackDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
+	_ DDLNode = &DropModelStmt{}
 	_ DDLNode = &DropTableStmt{}
 	_ DDLNode = &DropSequenceStmt{}
 	_ DDLNode = &DropPlacementPolicyStmt{}
@@ -1859,6 +1862,159 @@ func (n *CreateSequenceStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateSequenceStmt)
+	node, ok := n.Name.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Name = node.(*TableName)
+	return v.Leave(n)
+}
+
+// CreateModelStmt is a statement to create a model.
+type CreateModelStmt struct {
+	ddlNode
+
+	IfNotExists bool
+	Name        *TableName
+	InputCols   []*ColumnDef
+	OutputCols  []*ColumnDef
+	Engine      string
+	Location    string
+	Checksum    string
+}
+
+// Restore implements Node interface.
+func (n *CreateModelStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE MODEL ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	if err := n.Name.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateModelStmt Name")
+	}
+	ctx.WritePlain(" (")
+	ctx.WriteKeyWord("INPUT (")
+	for i, col := range n.InputCols {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
+		if err := col.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateModelStmt InputCols[%d]", i)
+		}
+	}
+	ctx.WritePlain(") ")
+	ctx.WriteKeyWord("OUTPUT (")
+	for i, col := range n.OutputCols {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
+		if err := col.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateModelStmt OutputCols[%d]", i)
+		}
+	}
+	ctx.WritePlain(")) ")
+	ctx.WriteKeyWord("USING ")
+	ctx.WriteKeyWord(n.Engine)
+	ctx.WriteKeyWord(" LOCATION ")
+	ctx.WriteString(n.Location)
+	ctx.WriteKeyWord(" CHECKSUM ")
+	ctx.WriteString(n.Checksum)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateModelStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateModelStmt)
+	node, ok := n.Name.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Name = node.(*TableName)
+	for i, col := range n.InputCols {
+		node, ok = col.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.InputCols[i] = node.(*ColumnDef)
+	}
+	for i, col := range n.OutputCols {
+		node, ok = col.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.OutputCols[i] = node.(*ColumnDef)
+	}
+	return v.Leave(n)
+}
+
+// AlterModelStmt is a statement to alter a model.
+type AlterModelStmt struct {
+	ddlNode
+
+	Name     *TableName
+	Location string
+	Checksum string
+}
+
+// Restore implements Node interface.
+func (n *AlterModelStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER MODEL ")
+	if err := n.Name.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore AlterModelStmt Name")
+	}
+	ctx.WriteKeyWord(" SET LOCATION ")
+	ctx.WriteString(n.Location)
+	ctx.WriteKeyWord(" CHECKSUM ")
+	ctx.WriteString(n.Checksum)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterModelStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterModelStmt)
+	node, ok := n.Name.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Name = node.(*TableName)
+	return v.Leave(n)
+}
+
+// DropModelStmt is a statement to drop a model.
+type DropModelStmt struct {
+	ddlNode
+
+	IfExists bool
+	Name     *TableName
+}
+
+// Restore implements Node interface.
+func (n *DropModelStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP MODEL ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	if err := n.Name.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore DropModelStmt Name")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropModelStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropModelStmt)
 	node, ok := n.Name.Accept(v)
 	if !ok {
 		return n, false

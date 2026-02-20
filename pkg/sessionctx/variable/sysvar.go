@@ -3268,6 +3268,24 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableResourceControl.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableModelDDL, Value: BoolToOnOff(vardef.DefTiDBEnableModelDDL), Type: vardef.TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			vardef.EnableModelDDL.Store(TiDBOptOn(s))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableModelDDL.Load()), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableModelInference, Value: BoolToOnOff(vardef.DefTiDBEnableModelInference), Type: vardef.TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			vardef.EnableModelInference.Store(TiDBOptOn(s))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableModelInference.Load()), nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBResourceControlStrictMode, Value: BoolToOnOff(vardef.DefTiDBResourceControlStrictMode), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		opOn := TiDBOptOn(s)
 		if opOn != vardef.EnableResourceControlStrictMode.Load() {

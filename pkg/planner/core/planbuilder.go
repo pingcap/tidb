@@ -3674,6 +3674,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	case ast.ShowConfig:
 		privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
+	case ast.ShowCreateModel:
+		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or MODEL_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"MODEL_ADMIN"}, false, err)
 	case ast.ShowCreateView:
 		var err error
 		user := b.ctx.GetSessionVars().User
@@ -5690,6 +5693,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
+	case *ast.CreateModelStmt, *ast.AlterModelStmt, *ast.DropModelStmt:
+		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or MODEL_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"MODEL_ADMIN"}, false, err)
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
 	}
@@ -6050,6 +6056,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		} else {
 			names = []string{"Table", "Create Table"}
 		}
+	case ast.ShowCreateModel:
+		names = []string{"Model", "Create Model"}
 	case ast.ShowCreatePlacementPolicy:
 		names = []string{"Policy", "Create Policy"}
 	case ast.ShowCreateResourceGroup:

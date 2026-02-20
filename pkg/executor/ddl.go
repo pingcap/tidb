@@ -215,6 +215,12 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeDropSequence(x)
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
+	case *ast.CreateModelStmt:
+		err = e.executeCreateModel(x)
+	case *ast.AlterModelStmt:
+		err = e.executeAlterModel(x)
+	case *ast.DropModelStmt:
+		err = e.executeDropModel(x)
 	case *ast.CreatePlacementPolicyStmt:
 		err = e.executeCreatePlacementPolicy(x)
 	case *ast.DropPlacementPolicyStmt:
@@ -769,6 +775,27 @@ func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {
 
 func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {
 	return e.ddlExecutor.AlterSequence(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeCreateModel(s *ast.CreateModelStmt) error {
+	if !vardef.EnableModelDDL.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		return infoschema.ErrModelDDLDisabled
+	}
+	return e.ddlExecutor.CreateModel(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeAlterModel(s *ast.AlterModelStmt) error {
+	if !vardef.EnableModelDDL.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		return infoschema.ErrModelDDLDisabled
+	}
+	return e.ddlExecutor.AlterModel(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeDropModel(s *ast.DropModelStmt) error {
+	if !vardef.EnableModelDDL.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		return infoschema.ErrModelDDLDisabled
+	}
+	return e.ddlExecutor.DropModel(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeCreatePlacementPolicy(s *ast.CreatePlacementPolicyStmt) error {

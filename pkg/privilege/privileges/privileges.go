@@ -76,6 +76,8 @@ var dynamicPrivs = []string{
 	"RESTRICTED_SQL_ADMIN",            // Can execute restricted SQL statements
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
+	"MODEL_ADMIN",                     // Create/Alter/Drop MODEL
+	"MODEL_EXECUTE",                   // Execute MODEL_PREDICT
 	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
 	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
 }

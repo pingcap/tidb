@@ -1150,6 +1150,9 @@ const (
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 	ErrInvalidAffinityOption              = 8266
 	ErrForbiddenDDL                       = 8267
+	ErrModelExists                        = 8274
+	ErrModelNotExists                     = 8275
+	ErrModelDDLDisabled                   = 8276
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

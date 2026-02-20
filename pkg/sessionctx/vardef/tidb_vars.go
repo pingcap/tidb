@@ -1241,6 +1241,10 @@ const (
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBEnableModelDDL indicates whether model DDL statements are enabled
+	TiDBEnableModelDDL = "tidb_enable_model_ddl"
+	// TiDBEnableModelInference indicates whether model inference is enabled
+	TiDBEnableModelInference = "tidb_enable_model_inference"
 	// TiDBResourceControlStrictMode indicates whether resource control strict mode is enabled.
 	// When strict mode is enabled, user need certain privilege to change session or statement resource group.
 	TiDBResourceControlStrictMode = "tidb_resource_control_strict_mode"
@@ -1711,6 +1715,8 @@ const (
 	DefTiDBTTLDeleteWorkerCount                       = 4
 	DefaultExchangeCompressionMode                    = ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                      = true
+	DefTiDBEnableModelDDL                             = false
+	DefTiDBEnableModelInference                       = false
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
@@ -1890,6 +1896,8 @@ var (
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl           = atomic.NewBool(false)
 	EnableResourceControlStrictMode = atomic.NewBool(true)
+	EnableModelDDL                  = atomic.NewBool(DefTiDBEnableModelDDL)
+	EnableModelInference            = atomic.NewBool(DefTiDBEnableModelInference)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
