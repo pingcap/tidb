@@ -179,11 +179,6 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 			zap.Error(err))
 		return nil, err
 	}
-	// Keep the parser alive so its hparser arena blocks are not GC'd.
-	// Arena-allocated AST nodes reference []byte blocks via unsafe.Pointer,
-	// which Go's GC cannot trace; without this the blocks can be freed while
-	// AST nodes are still in use (e.g. during finishStmt → IsReadOnly).
-	sessVars.StmtCtx.SetParserKeepAlive(p)
 	return stmts, nil
 }
 

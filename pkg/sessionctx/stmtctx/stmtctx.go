@@ -494,14 +494,6 @@ type StatementContext struct {
 
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
-
-	// parserKeepAlive holds a reference to the parser that produced the current
-	// statement's AST nodes. The hparser arena allocates AST nodes via
-	// unsafe.Pointer into []byte blocks. Go's GC does not trace pointers inside
-	// []byte, so if the parser (which owns the arena) becomes unreachable, the
-	// arena blocks can be collected while AST nodes still reference them. Storing
-	// the parser here keeps the arena alive for the statement's entire lifetime.
-	parserKeepAlive any
 }
 
 // DefaultStmtErrLevels is the default error levels for statement
@@ -805,12 +797,6 @@ func (sc *StatementContext) SetUseChunkAlloc() {
 // ClearUseChunkAlloc clear useChunkAlloc status
 func (sc *StatementContext) ClearUseChunkAlloc() {
 	sc.useChunkAlloc = false
-}
-
-// SetParserKeepAlive stores a reference to the parser to prevent its hparser
-// arena from being garbage collected while arena-allocated AST nodes are in use.
-func (sc *StatementContext) SetParserKeepAlive(p any) {
-	sc.parserKeepAlive = p
 }
 
 // GetUseChunkAllocStatus returns useChunkAlloc status

@@ -1202,9 +1202,6 @@ func (n *UnaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Op.Restore(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if n.Op == opcode.Binary {
-		ctx.WriteKeyWord(" ")
-	}
 	if err := n.V.Restore(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1214,9 +1211,6 @@ func (n *UnaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 // Format the ExprNode into a Writer.
 func (n *UnaryOperationExpr) Format(w io.Writer) {
 	n.Op.Format(w)
-	if n.Op == opcode.Binary {
-		io.WriteString(w, " ")
-	}
 	n.V.Format(w)
 }
 
