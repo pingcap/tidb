@@ -351,6 +351,12 @@ func (b *WriterBuilder) BuildOneFile(
 	return ret
 }
 
+type condenseLocation struct {
+	bufIndex int32
+	offset   int32
+	keyHint  uint32
+}
+
 // MultipleFilesStat is the statistic information of multiple files (currently
 // every 500 files). It is used to estimate the data overlapping, and per-file
 // statistic information maybe too big to loaded into memory.
@@ -435,8 +441,10 @@ type Writer struct {
 	rc *rangePropertiesCollector
 
 	kvBuffer    *membuf.Buffer
-	kvLocations []membuf.SliceLocation
-	kvSize      int64
+	kvLocations []condenseLocation
+
+	// commonPrefix is a shallow copy of the common prefix of all keys written.
+	commonPrefix []byte
 
 	onClose OnWriterCloseFunc
 	onDup   engineapi.OnDuplicateKey
@@ -463,6 +471,37 @@ type Writer struct {
 	conflictInfo engineapi.ConflictInfo
 }
 
+func (w *Writer) updateCommonPrefix(key []byte) {
+	// We can guarantee that common prefix length must be > 0, so we use 0 to
+	// determine if it's the first key.
+	if len(w.commonPrefix) == 0 {
+		w.commonPrefix = key
+		return
+	}
+
+	commonLen := min(len(w.commonPrefix), len(key))
+	for i := range commonLen {
+		if w.commonPrefix[i] != key[i] {
+			w.commonPrefix = w.commonPrefix[:i]
+			return
+		}
+	}
+	w.commonPrefix = w.commonPrefix[:commonLen]
+}
+
+func (w *Writer) updateKeyHints() {
+	for i, loc := range w.kvLocations {
+		key := w.kvBuffer.GetUnboundedSlice(loc.bufIndex, loc.offset+2*lengthBytes)[:loc.keyHint]
+		if len(key) >= len(w.commonPrefix)+4 {
+			w.kvLocations[i].keyHint = binary.BigEndian.Uint32(key[len(w.commonPrefix):])
+		} else {
+			var tempBuf [4]byte
+			copy(tempBuf[:], key[len(w.commonPrefix):])
+			w.kvLocations[i].keyHint = binary.BigEndian.Uint32(tempBuf[:])
+		}
+	}
+}
+
 // WriteRow implements ingest.Writer.
 func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Handle) error {
 	if w.tikvCodec != nil {
@@ -487,9 +526,10 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	copy(dataBuf[2*lengthBytes:], key)
 	copy(dataBuf[2*lengthBytes+keyLen:], val)
 
-	w.kvLocations = append(w.kvLocations, loc)
-	// TODO: maybe we can unify the size calculation during write to store.
-	w.kvSize += int64(keyLen + len(val))
+	w.updateCommonPrefix(dataBuf[2*lengthBytes : 2*lengthBytes+keyLen])
+	// Temporarily store keyLen in keyHint, will update it in updateKeyHints.
+	w.kvLocations = append(w.kvLocations, condenseLocation{
+		bufIndex: loc.BufIdx, offset: loc.Offset, keyHint: uint32(keyLen)})
 	w.batchSize += uint64(length)
 	return nil
 }
@@ -499,11 +539,6 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 // this is implemented as noop.
 func (w *Writer) LockForWrite() func() {
 	return func() {}
-}
-
-// WrittenBytes returns the number of bytes written by this writer.
-func (w *Writer) WrittenBytes() int64 {
-	return int64(w.totalSize)
 }
 
 // Close closes the writer.
@@ -568,10 +603,19 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortStart := time.Now()
 	var (
 		dupFound bool
-		dupLoc   membuf.SliceLocation
+		dupLoc   condenseLocation
 	)
-	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
+	w.updateKeyHints()
+	slices.SortFunc(w.kvLocations, func(i, j condenseLocation) int {
+		if i.keyHint != j.keyHint {
+			if i.keyHint < j.keyHint {
+				return -1
+			}
+			return 1
+		}
+		res := bytes.Compare(
+			w.getKeyByLoc(&i)[len(w.commonPrefix):],
+			w.getKeyByLoc(&j)[len(w.commonPrefix):])
 		if res == 0 && !dupFound {
 			dupFound = true
 			dupLoc = i
@@ -584,7 +628,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	batchKVCnt := len(w.kvLocations)
 	var (
-		dupLocs []membuf.SliceLocation
+		dupLocs []condenseLocation
 		dupCnt  int
 	)
 	if dupFound {
@@ -594,10 +638,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			// we don't have a global view, so need to keep duplicates with duplicate
 			// count <= 2, so later we can find them.
 			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
-			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyRemove:
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
-			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
 			dupKey := slices.Clone(w.getKeyByLoc(&dupLoc))
 			dupValue := slices.Clone(w.getValueByLoc(&dupLoc))
@@ -643,7 +685,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	// maintain 500-batch statistics
 	if len(w.kvLocations) > 0 {
 		w.totalCnt += uint64(len(w.kvLocations))
-		w.totalSize += uint64(w.kvSize)
 		w.kvFileCount++
 
 		minKey, maxKey := w.getKeyByLoc(&w.kvLocations[0]), w.getKeyByLoc(&w.kvLocations[len(w.kvLocations)-1])
@@ -664,7 +705,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	w.kvLocations = w.kvLocations[:0]
-	w.kvSize = 0
+	w.commonPrefix = nil
 	w.kvBuffer.Reset()
 	w.batchSize = 0
 	w.currentSeq++
@@ -693,7 +734,7 @@ func (w *Writer) addNewKVFile2MultiFileStats(dataFile, statFile string, minKey, 
 	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(maxKey).Clone())
 }
 
-func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocation) (string, string, string, error) {
+func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []condenseLocation) (string, string, string, error) {
 	logger := logutil.Logger(ctx).With(
 		zap.String("writer-id", w.writerID),
 		zap.Int("sequence-number", w.currentSeq),
@@ -716,8 +757,11 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 	w.rc.reset()
 	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
 
+	var kvSize uint64
 	for _, pair := range w.kvLocations {
-		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
+		s := w.getSlice(pair)
+		kvSize += uint64(len(s) - 2*lengthBytes)
+		err = kvStore.addEncodedData(s)
 		if err != nil {
 			return "", "", "", err
 		}
@@ -759,10 +803,11 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("write").Observe(writeDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / writeDuration.Seconds())
 
+	w.totalSize += kvSize
 	return dataFile, statFile, dupPath, nil
 }
 
-func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation) (string, error) {
+func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []condenseLocation) (string, error) {
 	dupPath, dupWriter, err := w.createDupWriter(ctx)
 	if err != nil {
 		return "", err
@@ -776,7 +821,7 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 	}()
 	dupStore := NewKeyValueStore(ctx, dupWriter, nil)
 	for _, pair := range kvLocs {
-		err = dupStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
+		err = dupStore.addEncodedData(w.getSlice(pair))
 		if err != nil {
 			return "", err
 		}
@@ -790,24 +835,24 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 	return dupPath, nil
 }
 
-func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
-	block := w.kvBuffer.GetSlice(loc)
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+func (w *Writer) getKeyByLoc(loc *condenseLocation) []byte {
+	block := w.kvBuffer.GetUnboundedSlice(loc.bufIndex, loc.offset)
+	keyLen := binary.BigEndian.Uint32(block[4:lengthBytes])
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
 }
 
-func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
-	block := w.kvBuffer.GetSlice(loc)
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
-	return block[2*lengthBytes+keyLen:]
+func (w *Writer) getValueByLoc(loc *condenseLocation) []byte {
+	block := w.kvBuffer.GetUnboundedSlice(loc.bufIndex, loc.offset)
+	keyLen := binary.BigEndian.Uint32(block[4:lengthBytes])
+	valLen := binary.BigEndian.Uint32(block[lengthBytes+4 : 2*lengthBytes])
+	return block[2*lengthBytes+keyLen : 2*lengthBytes+keyLen+valLen]
 }
 
-func (w *Writer) reCalculateKVSize() int64 {
-	s := int64(0)
-	for _, loc := range w.kvLocations {
-		s += int64(loc.Length) - 2*lengthBytes
-	}
-	return s
+func (w *Writer) getSlice(loc condenseLocation) []byte {
+	block := w.kvBuffer.GetUnboundedSlice(loc.bufIndex, loc.offset)
+	valLen := binary.BigEndian.Uint32(block[lengthBytes+4 : 2*lengthBytes])
+	keyLen := binary.BigEndian.Uint32(block[4:lengthBytes])
+	return block[:2*lengthBytes+keyLen+valLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
