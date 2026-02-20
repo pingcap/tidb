@@ -22,10 +22,35 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCreateMaterializedViewBuildReadTSQueryTypeAlignment(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1)")
+
+	ddlSe := ddlsess.NewSession(tk.Session())
+	ctx := context.Background()
+
+	tk.MustExec("select * from t")
+	expected := tk.Session().GetSessionVars().LastQueryInfo.StartTS
+	require.NotZero(t, expected)
+
+	rows, err := ddlSe.Execute(ctx,
+		"SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@@tidb_last_query_info, '$.start_ts')) AS UNSIGNED), CAST(0 AS UNSIGNED))",
+		"create-materialized-view-build-read-ts-ut",
+	)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	readTS := rows[0].GetUint64(0)
+	require.Equal(t, expected, readTS)
+}
 
 func TestMaterializedViewDDLBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -73,9 +98,15 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	err = tk.ExecToErr("create materialized view mv_bad (a, s) as select a, sum(b) from t group by a")
 	require.ErrorContains(t, err, "must contain count(*)/count(1)")
 
-	// Count(column), non-deterministic WHERE and unsupported aggregate should fail.
-	err = tk.ExecToErr("create materialized view mv_bad_count_col (a, c) as select a, count(b) from t group by a")
-	require.ErrorContains(t, err, "only supports count(*)/count(1)")
+	// count(column) is supported (but CREATE MATERIALIZED VIEW still requires count(*|1) in the SELECT list).
+	tk.MustExec("create materialized view mv_count_col (a, cnt_b, cnt) as select a, count(b), count(1) from t group by a")
+	tk.MustQuery("select a, cnt_b, cnt from mv_count_col order by a").Check(testkit.Rows("1 2 2", "2 1 1"))
+
+	// Aggregate function names are case-insensitive in CREATE MATERIALIZED VIEW.
+	tk.MustExec("create materialized view mv_upper_agg (a, s, cnt) as select a, SUM(b), COUNT(1) from t group by a")
+	tk.MustQuery("select a, s, cnt from mv_upper_agg order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	// Non-deterministic WHERE and unsupported aggregate should fail.
 	err = tk.ExecToErr("create materialized view mv_bad_avg (a, avgv, c) as select a, avg(b), count(1) from t group by a")
 	require.ErrorContains(t, err, "unsupported aggregate function")
 	err = tk.ExecToErr("create materialized view mv_bad_where (a, c) as select a, count(1) from t where rand() > 0 group by a")
@@ -91,6 +122,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("create table t_minmax_bad (a int not null, b int not null, c int not null, index idx_cab(c, a, b))")
 	tk.MustExec("create materialized view log on t_minmax_bad (a, b, c) purge immediate")
 	err = tk.ExecToErr("create materialized view mv_bad_minmax_index (a, b, minc, c1) as select a, b, min(c), count(1) from t_minmax_bad group by a, b")
+	require.ErrorContains(t, err, "requires base table index whose leading columns cover all GROUP BY columns")
+	err = tk.ExecToErr("create materialized view mv_bad_minmax_index_upper (a, b, minc, c1) as select a, b, MIN(c), COUNT(1) from t_minmax_bad group by a, b")
 	require.ErrorContains(t, err, "requires base table index whose leading columns cover all GROUP BY columns")
 	tk.MustExec("create table t_minmax_ok (a int not null, b int not null, c int not null, index idx_bac(b, a, c))")
 	tk.MustExec("create materialized view log on t_minmax_ok (a, b, c) purge immediate")
@@ -116,6 +149,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("create table t_mlog_missing (a int not null, b int not null)")
 	tk.MustExec("create materialized view log on t_mlog_missing (a) purge immediate")
 	err = tk.ExecToErr("create materialized view mv_bad_mlog_cols (a, s, c) as select a, sum(b), count(1) from t_mlog_missing group by a")
+	require.ErrorContains(t, err, "does not contain column b")
+	err = tk.ExecToErr("create materialized view mv_bad_mlog_cols_count (a, cnt_b, cnt) as select a, count(b), count(1) from t_mlog_missing group by a")
 	require.ErrorContains(t, err, "does not contain column b")
 
 	// Nullable group-by key should use UNIQUE KEY.
@@ -148,6 +183,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 
 	// Drop MV and then drop MV LOG.
 	tk.MustExec("drop materialized view mv")
+	tk.MustExec("drop materialized view mv_count_col")
+	tk.MustExec("drop materialized view mv_upper_agg")
 	tk.MustExec("drop materialized view mv_alias")
 	tk.MustExec("drop materialized view mv_nullable")
 	tk.MustExec("drop materialized view mv_minmax_ok")
