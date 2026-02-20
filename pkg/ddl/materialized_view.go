@@ -503,8 +503,13 @@ func validateCreateMaterializedViewQuery(
 				if len(expr.Args) != 1 {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("count(*)/count(1) must have exactly one argument in CREATE MATERIALIZED VIEW")
 				}
-				if _, ok := expr.Args[0].(*ast.ColumnNameExpr); ok {
-					// count(column) is supported
+				if argCol, ok := expr.Args[0].(*ast.ColumnNameExpr); ok {
+					// count(column) is supported.
+					colName, err := resolveMViewColumnName(argCol.Name, baseTableName, fromAlias, baseColMap)
+					if err != nil {
+						return nil, err
+					}
+					usedCols[colName] = struct{}{}
 					continue
 				}
 				if expr.Args[0] == nil {
@@ -530,7 +535,7 @@ func validateCreateMaterializedViewQuery(
 				if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports SUM/MIN/MAX on NOT NULL column")
 				}
-				if expr.F == ast.AggFuncMin || expr.F == ast.AggFuncMax {
+				if aggFunc == ast.AggFuncMin || aggFunc == ast.AggFuncMax {
 					hasMinOrMax = true
 				}
 				usedCols[colName] = struct{}{}
