@@ -290,6 +290,9 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 		if tok.IsKeyword("FETCH") {
 			return false // FETCH is reserved for Limit clause
 		}
+		if tok.IsKeyword("WINDOW") {
+			return false // WINDOW introduces a window clause
+		}
 		return true
 	}
 	// Exclude ASCII single-char tokens (parens, commas, operators, etc.)
