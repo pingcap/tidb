@@ -2035,16 +2035,27 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockSlowAnalyzeIndex"))
 				}()
 			}
+			startAt := time.Now()
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			if status != "finished" {
+				require.Less(t, time.Since(startAt), 10*time.Second, comment)
+			}
 			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
 				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
-				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment, 10)
+				// Killed analyze jobs might be left in `pending` / `running` state.
+				// Let CleanupCorruptedAnalyzeJobsOnCurrentInstance finalize them.
+				tk.MustExec("update mysql.analyze_jobs set update_time = '2000-01-01 00:00:00' where state in ('pending', 'running')")
+				require.NoError(t, h.CleanupCorruptedAnalyzeJobsOnCurrentInstance(map[uint64]struct{}{}), comment)
+
+				rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
+				require.Equal(t, 1, len(rows), comment)
+				require.Equal(t, jobInfo, rows[0][3], comment)
+				require.Equal(t, "failed", rows[0][7], comment)
+				require.NotEqual(t, "<nil>", rows[0][8], comment)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
