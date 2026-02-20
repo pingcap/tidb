@@ -2595,6 +2595,12 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE t (a text CHARACTER SET binary)", true, "CREATE TABLE `t` (`a` BLOB)"},
 		// BUG-95: VARBINARY without length is an error
 		{"CREATE TABLE t (a VARBINARY)", false, ""},
+		// BUG-100: invalid charset rejected via GetCharsetInfo
+		{"CREATE TABLE t (a varchar(10) CHARACTER SET totally_bogus)", false, ""},
+		// BUG-100: CHARACTER SET BINARY keyword
+		{"CREATE TABLE t (a varchar(10) CHARACTER SET BINARY)", true, "CREATE TABLE `t` (`a` VARBINARY(10))"},
+		// BUG-100: CHARACTER SET canonical name (uppercase → lowercase)
+		{"CREATE TABLE t (a varchar(10) CHARACTER SET UTF8)", true, "CREATE TABLE `t` (`a` VARCHAR(10) CHARACTER SET UTF8)"},
 		{"CREATE TEMPORARY TABLE t LIKE t1", true, "CREATE TEMPORARY TABLE `t` LIKE `t1`"},
 		{"DROP TEMPORARY TABLE t", true, "DROP TEMPORARY TABLE `t`"},
 		{"create global temporary table t (a int, b varchar(255)) on commit delete rows", true, "CREATE GLOBAL TEMPORARY TABLE `t` (`a` INT,`b` VARCHAR(255)) ON COMMIT DELETE ROWS"},

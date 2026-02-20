@@ -403,12 +403,29 @@ func (p *HandParser) parseDecimalOptions(tp *types.FieldType) {
 }
 
 // parseCharsetName reads a charset name after CHARACTER SET has been consumed.
+// Matches parser.y CharsetName: StringName { GetCharsetInfo($1) } | binaryType { CharsetBin }
 func (p *HandParser) parseCharsetName(tp *types.FieldType) {
-	if s := p.peek().Lit; s != "" {
-		tp.SetCharset(strings.ToLower(s))
+	tok := p.peek()
+	// binaryType → charset.CharsetBin
+	if tok.Tp == tokBinary {
+		tp.SetCharset(charset.CharsetBin)
 		p.next()
-	} else if s, ok := p.peek().Item.(string); ok {
-		tp.SetCharset(strings.ToLower(s))
+		return
+	}
+	// StringName → validate via GetCharsetInfo and use canonical cs.Name
+	var name string
+	if s := tok.Lit; s != "" {
+		name = s
+	} else if s, ok := tok.Item.(string); ok {
+		name = s
+	}
+	if name != "" {
+		cs, err := charset.GetCharsetInfo(name)
+		if err != nil {
+			p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: '%s'", name))
+			return
+		}
+		tp.SetCharset(cs.Name)
 		p.next()
 	}
 }
@@ -440,7 +457,7 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 			return
 		}
 		tp.SetCharset(cs.Name)
-		// Fall through to charset validation below
+		// Fall through to auto-flag below
 	case tokBinary:
 		// BINARY [CHARACTER SET charset]
 		p.next()
@@ -460,13 +477,6 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 		tp.AddFlag(mysql.BinaryFlag)
 		if tp.GetCollate() == "" {
 			tp.SetCollate(charset.CollationBin)
-		}
-	}
-
-	// Validate charset if set
-	if cs := tp.GetCharset(); cs != "" {
-		if _, err := charset.GetCharsetInfo(cs); err != nil {
-			p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: '%s'", cs))
 		}
 	}
 	if p.peek().Tp == tokCollate {
