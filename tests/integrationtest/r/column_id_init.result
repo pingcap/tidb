@@ -1,0 +1,7 @@
+USE test;
+drop table if exists t2;
+create table t2 like metrics_schema.up;
+insert into t2 values (NULL, 'aa', 'aa', '11');
+select * from t2;
+time	instance	job	value
+NULL	aa	aa	11
