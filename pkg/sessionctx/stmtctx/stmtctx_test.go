@@ -543,8 +543,6 @@ func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
 	}
 	sWithStatus.WriteToSlowLog(&buf)
 	out = buf.String()
-	require.True(t, strings.HasPrefix(out, "t2:stats_meta_version=10[realtime_count=2000;modify_count=0]"))
-	require.Contains(t, out, "[")
 	// TblInfo is nil so column/index names fall back to "ID <id>"; order: [index][column]
 	require.Equal(t, "t2:stats_meta_version=10[realtime_count=2000;modify_count=0][ID 1:allLoaded][ID 2:onlyCmsEvicted]", out)
 }
