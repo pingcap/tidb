@@ -91,7 +91,9 @@ func TestArenaReset(t *testing.T) {
 func TestArenaBlockGrowth(t *testing.T) {
 	a := NewArena()
 
-	// Force multiple block allocations by exceeding defaultBlockSize.
+	// Alloc currently uses heap (new) instead of arena bump-pointer
+	// for GC safety (see Alloc comment). Verify that all pointers are
+	// valid and distinct, which matters regardless of the backing allocator.
 	type item struct {
 		data [4096]byte
 	}
@@ -107,7 +109,6 @@ func TestArenaBlockGrowth(t *testing.T) {
 		require.False(t, seen[ptr], "duplicate pointer from arena")
 		seen[ptr] = true
 	}
-	require.True(t, len(a.blocks) > 1, "expected multiple blocks, got %d", len(a.blocks))
 }
 
 func TestArenaOversizedAlloc(t *testing.T) {
