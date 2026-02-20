@@ -6154,6 +6154,32 @@ func TestParseShowOpenTables(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestModelStatements(t *testing.T) {
+	cases := []testCase{
+		{
+			"create model m (input (a int) output (score double)) using onnx location 's3://models/m/v1.onnx' checksum 'sha256:abc'",
+			true,
+			"CREATE MODEL `m` (INPUT (`a` INT) OUTPUT (`score` DOUBLE)) USING ONNX LOCATION 's3://models/m/v1.onnx' CHECKSUM 'sha256:abc'",
+		},
+		{
+			"alter model m set location 's3://models/m/v2.onnx' checksum 'sha256:def'",
+			true,
+			"ALTER MODEL `m` SET LOCATION 's3://models/m/v2.onnx' CHECKSUM 'sha256:def'",
+		},
+		{
+			"drop model m",
+			true,
+			"DROP MODEL `m`",
+		},
+		{
+			"show create model m",
+			true,
+			"SHOW CREATE MODEL `m`",
+		},
+	}
+	RunTest(t, cases, false)
+}
+
 func TestSQLModeANSIQuotes(t *testing.T) {
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)

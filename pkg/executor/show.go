@@ -189,6 +189,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowClusterConfigs()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateModel:
+		return e.fetchShowCreateModel()
 	case ast.ShowCreateSequence:
 		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
@@ -1520,6 +1522,93 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 	var buf bytes.Buffer
 	ConstructResultOfShowCreateSequence(e.Ctx(), tableInfo, &buf)
 	e.appendRow([]any{tableInfo.Name.O, buf.String()})
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateModel() error {
+	if e.Table == nil {
+		return errors.New("model name is required")
+	}
+	schema := e.Table.Schema
+	if schema.L == "" {
+		schema = e.DBName
+	}
+	modelName := e.Table.Name
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	var snapshot uint64
+	txn, err := e.Ctx().Txn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if txn.Valid() {
+		snapshot = txn.StartTS()
+	}
+	if e.Ctx().GetSessionVars().SnapshotTS != 0 {
+		snapshot = e.Ctx().GetSessionVars().SnapshotTS
+	}
+	var execOpts []sqlexec.OptionFuncAlias
+	if snapshot != 0 {
+		execOpts = append(execOpts, sqlexec.ExecOptionWithSnapshot(snapshot))
+	}
+
+	rows, _, err := exec.ExecRestrictedSQL(ctx, execOpts,
+		"SELECT id FROM mysql.tidb_model WHERE db_name = %? AND model_name = %? AND deleted_at IS NULL",
+		schema.L, modelName.L,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return infoschema.ErrModelNotExists.GenWithStackByArgs(schema.O, modelName.O)
+	}
+	modelID := rows[0].GetInt64(0)
+
+	rows, _, err = exec.ExecRestrictedSQL(ctx, execOpts,
+		"SELECT engine, location, checksum, input_schema, output_schema FROM mysql.tidb_model_version WHERE model_id = %? AND deleted_at IS NULL ORDER BY version DESC LIMIT 1",
+		modelID,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return infoschema.ErrModelNotExists.GenWithStackByArgs(schema.O, modelName.O)
+	}
+
+	engine := rows[0].GetString(0)
+	location := rows[0].GetString(1)
+	checksum := rows[0].GetString(2)
+	inputJSON := rows[0].GetJSON(3)
+	outputJSON := rows[0].GetJSON(4)
+
+	inputRaw, err := inputJSON.MarshalJSON()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	outputRaw, err := outputJSON.MarshalJSON()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var inputCols []string
+	if err := gjson.Unmarshal(inputRaw, &inputCols); err != nil {
+		return errors.Trace(err)
+	}
+	var outputCols []string
+	if err := gjson.Unmarshal(outputRaw, &outputCols); err != nil {
+		return errors.Trace(err)
+	}
+
+	showCreate := fmt.Sprintf(
+		"CREATE MODEL `%s` (INPUT (%s) OUTPUT (%s)) USING %s LOCATION '%s' CHECKSUM '%s'",
+		modelName.O,
+		strings.Join(inputCols, ","),
+		strings.Join(outputCols, ","),
+		strings.ToUpper(engine),
+		location,
+		checksum,
+	)
+	e.appendRow([]any{modelName.O, showCreate})
 	return nil
 }
 
