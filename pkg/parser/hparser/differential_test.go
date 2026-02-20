@@ -406,7 +406,86 @@ func collectDMLTestCases() []string {
 		"SELECT SUBSTRING(a FROM 1 FOR 3) FROM t",
 		"SELECT SUBSTRING('hello', 2, 3) FROM t",
 
-		// ===== Literals =====
+		// ===== Window functions =====
+		"SELECT a, ROW_NUMBER() OVER (ORDER BY a) FROM t",
+		"SELECT a, ROW_NUMBER() OVER (PARTITION BY b ORDER BY a) FROM t",
+		"SELECT a, SUM(b) OVER (PARTITION BY c ORDER BY a ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t",
+		"SELECT a, RANK() OVER w FROM t WINDOW w AS (ORDER BY a)",
+		"SELECT a, DENSE_RANK() OVER (ORDER BY a DESC) FROM t",
+		"SELECT a, LAG(a, 1) OVER (ORDER BY a) FROM t",
+		"SELECT a, LEAD(a, 1, 0) OVER (ORDER BY a) FROM t",
+		"SELECT a, NTILE(4) OVER (ORDER BY a) FROM t",
+		"SELECT a, FIRST_VALUE(a) OVER (ORDER BY a) FROM t",
+		"SELECT a, NTH_VALUE(a, 2) OVER (ORDER BY a) FROM t",
+
+		// ===== CTE (WITH clause) =====
+		"WITH cte AS (SELECT 1 AS n) SELECT * FROM cte",
+		"WITH cte(n) AS (SELECT 1) SELECT * FROM cte",
+		"WITH cte1 AS (SELECT 1), cte2 AS (SELECT 2) SELECT * FROM cte1, cte2",
+		"WITH RECURSIVE cte(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM cte WHERE n < 10) SELECT * FROM cte",
+
+		// ===== Subqueries =====
+		"SELECT * FROM (SELECT 1) AS t",
+		"SELECT * FROM t WHERE a IN (SELECT b FROM t2)",
+		"SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t2 WHERE t.id = t2.id)",
+		"SELECT (SELECT MAX(a) FROM t2) AS max_val FROM t",
+		"SELECT * FROM t WHERE a > ANY (SELECT b FROM t2)",
+		"SELECT * FROM t WHERE a > ALL (SELECT b FROM t2)",
+
+		// ===== Set operations =====
+		"SELECT 1 UNION SELECT 2",
+		"SELECT 1 UNION ALL SELECT 2",
+		"SELECT 1 UNION SELECT 2 UNION SELECT 3",
+		"SELECT a FROM t EXCEPT SELECT a FROM t2",
+		"SELECT a FROM t INTERSECT SELECT a FROM t2",
+		"(SELECT 1) UNION (SELECT 2) ORDER BY 1",
+
+		// ===== CONVERT =====
+		"SELECT CONVERT('test', CHAR CHARACTER SET utf8)",
+		"SELECT CONVERT('test' USING utf8)",
+		"SELECT CONVERT(1, SIGNED)",
+		"SELECT CONVERT(1, UNSIGNED INTEGER)",
+
+		// ===== FOR UPDATE / LOCK =====
+		"SELECT * FROM t FOR UPDATE",
+		"SELECT * FROM t FOR SHARE",
+		"SELECT * FROM t LOCK IN SHARE MODE",
+
+		// ===== REPLACE =====
+		"REPLACE INTO t VALUES (1, 2)",
+		"REPLACE INTO t (a, b) VALUES (1, 2)",
+
+		// ===== INSERT ON DUPLICATE KEY UPDATE =====
+		"INSERT INTO t VALUES (1, 2) ON DUPLICATE KEY UPDATE a = VALUES(a)",
+
+		// ===== TRIM =====
+		"SELECT TRIM('  hello  ')",
+		"SELECT TRIM(LEADING ' ' FROM '  hello  ')",
+		"SELECT TRIM(TRAILING ' ' FROM '  hello  ')",
+		"SELECT TRIM(BOTH ' ' FROM '  hello  ')",
+
+		// ===== POSITION / EXTRACT =====
+		"SELECT POSITION('a' IN 'abc')",
+		"SELECT EXTRACT(YEAR FROM '2020-01-01')",
+
+		// ===== CASE WHEN =====
+		"SELECT CASE WHEN a = 1 THEN 'one' WHEN a = 2 THEN 'two' ELSE 'other' END FROM t",
+		"SELECT CASE a WHEN 1 THEN 'one' WHEN 2 THEN 'two' END FROM t",
+
+		// ===== Complex expressions =====
+		"SELECT a DIV b FROM t",
+		"SELECT a MOD b FROM t",
+		"SELECT a XOR b FROM t",
+		"SELECT ~a FROM t",
+		"SELECT a & b FROM t",
+		"SELECT a | b FROM t",
+		"SELECT a ^ b FROM t",
+		"SELECT a << 2 FROM t",
+		"SELECT a >> 2 FROM t",
+		"SELECT a REGEXP 'pattern' FROM t",
+		"SELECT a LIKE 'pat%' ESCAPE '\\\\' FROM t",
+		"SELECT BINARY 'hello'",
+		"SELECT DEFAULT(a) FROM t",
 		"SELECT 42",
 		"SELECT 3.14",
 		"SELECT 'hello'",

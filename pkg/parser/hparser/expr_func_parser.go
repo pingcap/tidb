@@ -80,7 +80,12 @@ func (p *HandParser) parseFuncCall(name string) ast.ExprNode {
 	}
 
 	// Check for window function: func(...) OVER (...)
-	if _, ok := p.accept(tokOver); ok {
+	// The scanner may tokenize OVER as either tokOver (reserved keyword) or
+	// tokIdentifier (non-reserved keyword — MySQL treats OVER as non-reserved).
+	if _, ok := p.accept(tokOver); ok || p.peek().IsKeyword("OVER") {
+		if !ok {
+			p.next() // consume the identifier "OVER" token
+		}
 		wf := p.parseWindowFuncExpr(name, result)
 		if wfExpr, ok := wf.(*ast.WindowFuncExpr); ok {
 			wfExpr.FromLast = fromLast
