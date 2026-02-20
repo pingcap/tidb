@@ -442,6 +442,10 @@ func NewFileChunkProcessor(
 	groupChecksum *verify.KVGroupChecksum,
 	collector execute.Collector,
 ) ChunkProcessor {
+	if parquetParser, ok := parser.(*mydump.ParquetParser); ok {
+		encoder.SetSkipCastInfos(parquetParser.SkipCastInfos())
+	}
+
 	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
 	deliver := &dataDeliver{
 		logger:        chunkLogger,
