@@ -1,0 +1,2 @@
+PASS
+ok  	command-line-arguments	0.696s

@@ -1,0 +1,25 @@
+goos: darwin
+goarch: arm64
+cpu: Apple M4 Max
+BenchmarkHandParser/SelectComplex-16         	  334057	      2996 ns/op	    2370 B/op	      25 allocs/op
+BenchmarkHandParser/SimpleInsert-16          	  822859	      1422 ns/op	    2145 B/op	      19 allocs/op
+BenchmarkHandParser/SimpleDelete-16          	 1612294	       742.7 ns/op	     800 B/op	       6 allocs/op
+BenchmarkHandParser/SelectWhere3-16          	  755845	      1574 ns/op	    1625 B/op	      13 allocs/op
+BenchmarkHandParser/PointGet-16              	 1215474	       970.1 ns/op	    1113 B/op	      11 allocs/op
+BenchmarkHandParser/BulkInsert-16            	  364998	      3283 ns/op	    5981 B/op	      45 allocs/op
+BenchmarkHandParser/TPCH_Query-16            	  322708	      3759 ns/op	    2378 B/op	      26 allocs/op
+BenchmarkHandParser/DeepNested-16            	  228044	      5212 ns/op	   10144 B/op	      50 allocs/op
+BenchmarkHandParser/SimpleSelect-16          	 1226236	       972.7 ns/op	    1113 B/op	      11 allocs/op
+BenchmarkHandParser/SimpleUpdate-16          	 1000000	      1022 ns/op	    1337 B/op	      10 allocs/op
+BenchmarkGoyaccParser/SimpleSelect-16        	 1287988	       937.4 ns/op	     776 B/op	      10 allocs/op
+BenchmarkGoyaccParser/SimpleUpdate-16        	 1213365	       994.8 ns/op	    1000 B/op	       9 allocs/op
+BenchmarkGoyaccParser/SelectComplex-16       	  403492	      3016 ns/op	    2032 B/op	      24 allocs/op
+BenchmarkGoyaccParser/SimpleInsert-16        	  847786	      1428 ns/op	    1808 B/op	      18 allocs/op
+BenchmarkGoyaccParser/SimpleDelete-16        	 1708027	       710.7 ns/op	     464 B/op	       5 allocs/op
+BenchmarkGoyaccParser/SelectWhere3-16        	  756133	      1559 ns/op	    1288 B/op	      12 allocs/op
+BenchmarkGoyaccParser/PointGet-16            	 1257402	       947.5 ns/op	     776 B/op	      10 allocs/op
+BenchmarkGoyaccParser/BulkInsert-16          	  364962	      3333 ns/op	    5640 B/op	      44 allocs/op
+BenchmarkGoyaccParser/TPCH_Query-16          	  321628	      3774 ns/op	    2040 B/op	      25 allocs/op
+BenchmarkGoyaccParser/DeepNested-16          	  223272	      5146 ns/op	    9800 B/op	      49 allocs/op
+PASS
+ok  	command-line-arguments	30.735s

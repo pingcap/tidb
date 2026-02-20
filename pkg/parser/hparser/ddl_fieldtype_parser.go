@@ -441,13 +441,23 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 		p.next()
 		tok := p.peek()
 		if s := tok.Lit; s != "" {
-			tp.SetCollate(strings.ToLower(s))
+			info, err := charset.GetCollationByName(s)
+			if err != nil {
+				p.errs = append(p.errs, err)
+				return
+			}
+			tp.SetCollate(info.Name)
 			p.next()
 		} else if s, ok := tok.Item.(string); ok && s != "" {
-			tp.SetCollate(strings.ToLower(s))
+			info, err := charset.GetCollationByName(s)
+			if err != nil {
+				p.errs = append(p.errs, err)
+				return
+			}
+			tp.SetCollate(info.Name)
 			p.next()
 		} else if tok.Tp == tokBinary || tok.Tp == tokByte {
-			tp.SetCollate("binary")
+			tp.SetCollate(charset.CollationBin)
 			p.next()
 		} else {
 			p.error(tok.Offset, "expected collation name")

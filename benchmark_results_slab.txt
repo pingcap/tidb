@@ -1,0 +1,27 @@
+panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation code=0x2 addr=0x18 pc=0x1010fabc8]
+
+goroutine 21 [running]:
+github.com/pingcap/tidb/pkg/parser/hparser.(*Arena).AllocSelectField(...)
+	/Users/qiliu/projects/tidb/pkg/parser/hparser/arena.go:117
+github.com/pingcap/tidb/pkg/parser/hparser.(*HandParser).parseSelectField(0x5e5182a0320)
+	/Users/qiliu/projects/tidb/pkg/parser/hparser/select_parser.go:370 +0x28
+github.com/pingcap/tidb/pkg/parser/hparser.(*HandParser).parseFieldList(0x5e5182a0320)
+	/Users/qiliu/projects/tidb/pkg/parser/hparser/select_parser.go:345 +0x3c
+github.com/pingcap/tidb/pkg/parser/hparser.(*HandParser).parseSelectStmt(0x5e5182a0320)
+	/Users/qiliu/projects/tidb/pkg/parser/hparser/select_parser.go:38 +0x54
+github.com/pingcap/tidb/pkg/parser/hparser.(*HandParser).parseStatement(0x5e5182a0320)
+	/Users/qiliu/projects/tidb/pkg/parser/hparser/stmt_parser.go:100 +0x8f8
+github.com/pingcap/tidb/pkg/parser/hparser.(*HandParser).ParseSQL(0x5e5182a0320)
+	/Users/qiliu/projects/tidb/pkg/parser/hparser/stmt_parser.go:45 +0x1a8
+command-line-arguments_test.BenchmarkHandParser.func1(0x5e5183ea608)
+	/Users/qiliu/projects/tidb/pkg/parser/hparser/bench_test.go:48 +0x1f4
+testing.(*B).runN(0x5e5183ea608, 0x1)
+	/opt/homebrew/Cellar/go/1.26.0/libexec/src/testing/benchmark.go:219 +0x180
+testing.(*B).run1.func1()
+	/opt/homebrew/Cellar/go/1.26.0/libexec/src/testing/benchmark.go:245 +0x48
+created by testing.(*B).run1 in goroutine 20
+	/opt/homebrew/Cellar/go/1.26.0/libexec/src/testing/benchmark.go:238 +0x88
+exit status 2
+FAIL	command-line-arguments	1.009s
+FAIL
