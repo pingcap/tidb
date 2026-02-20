@@ -895,7 +895,7 @@ func TestIndexFMSketch(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
 
-	// clustered index
+	// clustered inde
 	tk.MustExec("set @@tidb_enable_clustered_index=ON")
 	tk.MustExec("create table t (a datetime, b datetime, primary key (a)) partition by hash(year(a)) partitions 3")
 	tk.MustExec("insert into t values ('2000-01-01', '2001-01-01'), ('2001-01-01', '2001-01-01'), ('2002-01-01', '2001-01-01')")
