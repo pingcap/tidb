@@ -21,6 +21,47 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
+// TestEliminateProjectionWithNestedJoinInCorrelatedSubquery tests that projection
+// elimination works correctly with nested JOINs inside correlated subqueries.
+// This is a regression test for https://github.com/pingcap/tidb/issues/65454
+func TestEliminateProjectionWithNestedJoinInCorrelatedSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2, t3;")
+	tk.MustExec(`CREATE TABLE t1 (
+		id bigint NOT NULL,
+		hcode text COLLATE utf8mb4_general_ci NOT NULL,
+		PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+	);`)
+	tk.MustExec(`CREATE TABLE t2 (
+		id bigint NOT NULL,
+		bid bigint NOT NULL,
+		cid bigint NOT NULL,
+		PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+	);`)
+	tk.MustExec(`CREATE TABLE t3 (
+		id bigint NOT NULL,
+		user_id bigint NOT NULL,
+		PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+	);`)
+
+	tk.MustExec("INSERT INTO t1 VALUES (1, 'code1'), (2, 'code2');")
+	tk.MustExec("INSERT INTO t2 VALUES (1, 1, 1), (2, 2, 2);")
+	tk.MustExec("INSERT INTO t3 VALUES (1, 100), (2, 200);")
+
+	// This query has nested JOINs inside a correlated subquery.
+	// The projection elimination rule should correctly rebuild JOIN schemas
+	// using BuildLogicalJoinSchema instead of ResolveColumnAndReplace.
+	tk.MustQuery(`SELECT (SELECT COUNT(t3.user_id) FROM t2
+		LEFT JOIN t1 AS cm ON t2.cid = cm.id
+		LEFT JOIN t3 ON t2.bid = t3.id
+		WHERE cm.hcode = t1.hcode) AS tt
+	FROM t1
+	WHERE t1.id IN (SELECT MIN(id) FROM t1);`).Check(testkit.Rows("1"))
+}
+
 func TestElinimateProjectionWithExpressionIndex(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
