@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -1730,13 +1731,16 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if err != nil {
 		return err
 	}
-	defer e.ReleaseSysSession(ctx, sysSession)
+	defer func() {
+		failpoint.InjectCall("checkUserMgmtSysSessionTxnIsolationBeforePut", ctx, sysSession)
+		e.ReleaseSysSession(ctx, sysSession)
+	}()
 	sqlExecutor := sysSession.GetSQLExecutor()
-	// session isolation level changed to READ-COMMITTED.
+	// Use one-shot isolation level to avoid polluting the reusable sys session in sys session pool.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
 	// When operating the same user concurrently, it may happen that historical versions are read.
-	// In order to avoid this risk, change the isolation level to RC.
-	_, err = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'READ-COMMITTED'")
+	// In order to avoid this risk, change the transaction isolation level to RC.
+	_, err = sqlExecutor.ExecuteInternal(ctx, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
 	if err != nil {
 		return err
 	}
@@ -2497,14 +2501,17 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
-	defer e.ReleaseSysSession(ctx, sysSession)
+	defer func() {
+		failpoint.InjectCall("checkUserMgmtSysSessionTxnIsolationBeforePut", ctx, sysSession)
+		e.ReleaseSysSession(ctx, sysSession)
+	}()
 
 	sqlExecutor := sysSession.GetSQLExecutor()
-	// session isolation level changed to READ-COMMITTED.
+	// Use one-shot isolation level to avoid polluting the reusable sys session in sys session pool.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
 	// When operating the same user concurrently, it may happen that historical versions are read.
-	// In order to avoid this risk, change the isolation level to RC.
-	_, err = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'READ-COMMITTED'")
+	// In order to avoid this risk, change the transaction isolation level to RC.
+	_, err = sqlExecutor.ExecuteInternal(ctx, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
 	if err != nil {
 		return err
 	}
