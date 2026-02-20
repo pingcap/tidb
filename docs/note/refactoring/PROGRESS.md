@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-19 (create_table, ddl.go, time.go decompositions)
+Last updated: 2026-02-20 (memtable_predicate_extractor, infoschema_v2, mvcc decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -423,6 +423,23 @@ Last updated: 2026-02-19 (create_table, ddl.go, time.go decompositions)
   - [x] `time_duration.go` (610 lines) - Duration struct, methods, formatting, parsing, helpers
   - [x] `time_convert.go` (457 lines) - time parsing from numbers/strings/floats/decimals
 
+- [x] **planner/core/memtable_predicate_extractor.go decomposition** - Extract helper methods
+  - File: `pkg/planner/core/memtable_predicate_extractor.go` (1,740 → 1,089 lines, 37% reduction)
+  - Target: Separate helper from extractor types
+  - [x] `memtable_predicate_helper.go` (683 lines) - extractHelper struct and all methods
+
+- [x] **infoschema/infoschema_v2.go decomposition** - Extract reset and builder functions
+  - File: `pkg/infoschema/infoschema_v2.go` (1,788 → 1,281 lines, 28% reduction)
+  - Target: Focused files per functional area
+  - [x] `infoschema_v2_reset.go` (246 lines) - btree reset-before-full-load functions
+  - [x] `infoschema_v2_builder.go` (309 lines) - builder integration functions (apply*, bundle update)
+
+- [x] **store/mockstore/unistore/tikv/mvcc.go decomposition** - Extract pessimistic lock and prewrite
+  - File: `pkg/store/mockstore/unistore/tikv/mvcc.go` (2,182 → 1,176 lines, 46% reduction)
+  - Target: Focused files per transaction phase
+  - [x] `mvcc_pessimistic_lock.go` (566 lines) - pessimistic lock, rollback, heartbeat, status checks
+  - [x] `mvcc_prewrite.go` (505 lines) - optimistic/pessimistic prewrite, flush, 1PC
+
 - [ ] **DDL schema version lock** - Reduce global mutex scope
   - File: `pkg/ddl/ddl.go:387-445`
   - Target: Per-job or fine-grained locking
@@ -527,3 +544,9 @@ Last updated: 2026-02-19 (create_table, ddl.go, time.go decompositions)
 - [x] **ddl/table.go decomposition** - 2026-02-19 - Split into 4 focused files: `table_rename.go` (267), `table_tiflash.go` (177), `table_placement.go` (250), `table_cache.go` (165). Reduced table.go from 1,798 to 1,040 lines (42% reduction).
 - [x] **meta/model/job_args.go decomposition** - 2026-02-19 - Split into 8 focused files: `job_args_schema.go` (104), `job_args_table.go` (219), `job_args_partition.go` (189), `job_args_column.go` (262), `job_args_misc.go` (218), `job_args_table_alter.go` (159), `job_args_cluster.go` (236), `job_args_index.go` (500). Reduced job_args.go from 1,844 to 122 lines (93% reduction).
 - [x] **store/copr/coprocessor.go further decomposition** - 2026-02-19 - Split 4 additional files: `coprocessor_task.go` (718), `coprocessor_iter.go` (199), `coprocessor_iter_lifecycle.go` (639), `coprocessor_ratelimit.go` (244). Reduced coprocessor.go from 1,911 to 229 lines (88% further, 92% total from 2,904).
+- [x] **ddl/create_table.go decomposition** - 2026-02-19 - Split into 3 focused files: `create_table_validate.go` (280), `create_table_constraints.go` (243), `create_table_hidden.go` (254). Reduced create_table.go from 1,764 to 1,077 lines (39% reduction).
+- [x] **ddl/ddl.go decomposition** - 2026-02-19 - Split into 2 focused files: `ddl_table_lock.go` (154), `ddl_job_control.go` (409). Reduced ddl.go from 1,702 to 1,171 lines (31% reduction).
+- [x] **types/time.go further decomposition** - 2026-02-19 - Split into 2 additional files: `time_duration.go` (610), `time_convert.go` (457). Reduced time.go from 1,932 to 917 lines (53% reduction, 74% total from original 3,546).
+- [x] **planner/core/memtable_predicate_extractor.go decomposition** - 2026-02-20 - Extracted `memtable_predicate_helper.go` (683 lines) with extractHelper struct and all methods. Reduced memtable_predicate_extractor.go from 1,740 to 1,089 lines (37% reduction).
+- [x] **infoschema/infoschema_v2.go decomposition** - 2026-02-20 - Split into 2 focused files: `infoschema_v2_reset.go` (246), `infoschema_v2_builder.go` (309). Reduced infoschema_v2.go from 1,788 to 1,281 lines (28% reduction).
+- [x] **store/mockstore/unistore/tikv/mvcc.go decomposition** - 2026-02-20 - Split into 2 focused files: `mvcc_pessimistic_lock.go` (566), `mvcc_prewrite.go` (505). Reduced mvcc.go from 2,182 to 1,176 lines (46% reduction).
