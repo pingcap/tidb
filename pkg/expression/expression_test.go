@@ -323,3 +323,55 @@ func TestExpressionMemeoryUsage(t *testing.T) {
 	c4 := Constant{Value: types.NewStringDatum("11")}
 	require.Greater(t, c4.MemoryUsage(), c3.MemoryUsage())
 }
+
+func TestLazyCopyInResolveIndices(t *testing.T) {
+	c1 := &Column{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	c2 := &Column{UniqueID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	schema := NewSchema(c1, c2)
+
+	// case 1, Column.ResolveIndices always return cloned column
+	c3, cloned, err := c1.ResolveIndices(schema)
+	require.NoError(t, err)
+	require.True(t, cloned)
+	require.False(t, c3.(*Column) == c1) // double check if cloned
+	require.Equal(t, 0, c1.Index)
+
+	// case 2, ScalarFunction.ResolveIndices use lazy clone
+	func1 := newFunctionWithMockCtx(ast.EQ, c2, NewOne())
+	func2, cloned, err := func1.ResolveIndices(schema)
+	require.NoError(t, err)
+	require.False(t, cloned)
+	require.True(t, func2.(*ScalarFunction) == func1.(*ScalarFunction)) // double check if cloned
+	require.True(t, func2.(*ScalarFunction).indexResolved.Load())
+	require.True(t, func2.(*ScalarFunction).GetArgs()[0].(*Column).Index == 1)
+
+	schema1 := NewSchema(c2, c1)
+	func3, cloned, err := func2.ResolveIndices(schema1)
+	require.NoError(t, err)
+	require.True(t, cloned)
+	require.False(t, func2.(*ScalarFunction) == func3.(*ScalarFunction)) // double check if cloned
+	require.True(t, func3.(*ScalarFunction).indexResolved.Load())
+	// args is updated
+	require.True(t, func3.(*ScalarFunction).GetArgs()[0].(*Column).Index == 0)
+	// func2 is not affected
+	require.True(t, func2.(*ScalarFunction).GetArgs()[0].(*Column).Index == 1)
+
+	// case 3, nested function
+	func1 = newFunctionWithMockCtx(ast.EQ, c2, NewOne())
+	func2 = newFunctionWithMockCtx(ast.EQ, func1, NewZero())
+
+	func3, cloned, err = func2.ResolveIndices(schema)
+	require.NoError(t, err)
+	require.False(t, cloned)
+	require.True(t, func2.(*ScalarFunction) == func3.(*ScalarFunction)) // double check if cloned
+	require.True(t, func3.(*ScalarFunction).indexResolved.Load())
+	require.True(t, func3.(*ScalarFunction).GetArgs()[0].(*ScalarFunction).GetArgs()[0].(*Column).Index == 1)
+
+	func4, cloned, err := func3.ResolveIndices(schema1)
+	require.NoError(t, err)
+	require.True(t, cloned)
+	require.False(t, func4.(*ScalarFunction) == func3.(*ScalarFunction)) // double check if cloned
+	require.True(t, func4.(*ScalarFunction).indexResolved.Load())
+	require.True(t, func4.(*ScalarFunction).GetArgs()[0].(*ScalarFunction).GetArgs()[0].(*Column).Index == 0)
+	require.True(t, func3.(*ScalarFunction).GetArgs()[0].(*ScalarFunction).GetArgs()[0].(*Column).Index == 1)
+}
