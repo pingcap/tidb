@@ -29,6 +29,11 @@ type planContextImpl struct {
 	*plannersession.PlanCtxExtended
 }
 
+// UnwrapAsInternalSctx returns the underlying internal session context as `any`.
+func (s *planContextImpl) UnwrapAsInternalSctx() any {
+	return s.session
+}
+
 // NewPlanContextImpl creates a new PlanContextImpl.
 func newPlanContextImpl(s *session) *planContextImpl {
 	return &planContextImpl{
