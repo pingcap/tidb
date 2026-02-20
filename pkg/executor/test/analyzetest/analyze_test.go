@@ -572,16 +572,16 @@ func TestIssue20874(t *testing.T) {
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 \x02\xd2 1",
-		"test t  a 0 \x0e\x0f 1",
-		"test t  a 0 \x0e3 1",
-		"test t  b 0 \x00A 1",
-		"test t  b 0 \x00C 2",
-		"test t  idxa 1 \x02\xd2 1",
-		"test t  idxa 1 \x0e\x0f 1",
-		"test t  idxa 1 \x0e3 1",
-		"test t  idxb 1 \x00A 1",
-		"test t  idxb 1 \x00C 2",
+		"test t  a 0 # 1",
+		"test t  a 0 $ 1",
+		"test t  a 0 A 1",
+		"test t  b 0 A 1",
+		"test t  b 0 C 2",
+		"test t  idxa 1 # 1",
+		"test t  idxa 1 $ 1",
+		"test t  idxa 1 A 1",
+		"test t  idxb 1 A 1",
+		"test t  idxb 1 C 2",
 	))
 	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
 		"0 1 3 0 6 2 1",
