@@ -449,6 +449,27 @@ func collectDMLTestCases() []string {
 		"DELETE FROM sbtest1 WHERE id = 1",
 		"INSERT INTO sbtest1 (id, k, c, pad) VALUES (1, 2, 'c', 'pad')",
 
+		// ===== CAST type edge cases =====
+		"SELECT CAST(1 AS SIGNED)",
+		"SELECT CAST(1 AS UNSIGNED)",
+		"SELECT CAST(1 AS SIGNED INTEGER)",
+		"SELECT CAST(1 AS UNSIGNED INTEGER)",
+		"SELECT CAST('2020-01-01' AS DATE)",
+		"SELECT CAST('2020-01-01' AS DATETIME)",
+		"SELECT CAST('2020-01-01' AS DATETIME(3))",
+		"SELECT CAST('10:00:00' AS TIME)",
+		"SELECT CAST('10:00:00' AS TIME(3))",
+		"SELECT CAST(1.5 AS DECIMAL(10,2))",
+		"SELECT CAST(1 AS DOUBLE)",
+		"SELECT CAST(1 AS FLOAT)",
+		"SELECT CAST('hello' AS CHAR(10))",
+		"SELECT CAST('hello' AS CHAR(10) CHARACTER SET utf8)",
+		"SELECT CAST('hello' AS BINARY(10))",
+		"SELECT CAST(1 AS JSON)",
+		"SELECT CAST('[1,2,3]' AS VECTOR(3))",
+		"SELECT CAST('[1,2,3]' AS VECTOR<FLOAT>(3))",
+		"SELECT CAST('[1,2,3]' AS VECTOR)",
+
 		// ===== DDL basics =====
 		"CREATE TABLE t (a INT)",
 		"DROP TABLE t",
