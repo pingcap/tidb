@@ -545,7 +545,7 @@ func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
 		Name:                  "t2",
 		Version:               10,
 		RealtimeCount:         2000,
-		ModifyCount:            0,
+		ModifyCount:           0,
 		IndexStatsLoadStatus:  map[int64]string{1: "allLoaded"},
 		ColumnStatsLoadStatus: map[int64]string{2: "onlyCmsEvicted"},
 	}
