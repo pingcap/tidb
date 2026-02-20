@@ -904,6 +904,8 @@ type PatternLikeOrIlikeExpr struct {
 	IsLike bool
 
 	Escape byte
+	// EscapeExplicit indicates whether ESCAPE clause is specified explicitly.
+	EscapeExplicit bool
 
 	PatChars []byte
 	PatTypes []byte
@@ -933,10 +935,9 @@ func (n *PatternLikeOrIlikeExpr) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while restore PatternLikeOrIlikeExpr.Pattern")
 	}
 
-	escape := string(n.Escape)
-	if escape != "\\" {
+	if n.EscapeExplicit && n.Escape != '\\' {
 		ctx.WriteKeyWord(" ESCAPE ")
-		ctx.WriteString(escape)
+		ctx.WriteString(string(n.Escape))
 	}
 	return nil
 }
@@ -959,7 +960,7 @@ func (n *PatternLikeOrIlikeExpr) Format(w io.Writer) {
 	}
 
 	n.Pattern.Format(w)
-	if n.Escape != '\\' {
+	if n.EscapeExplicit && n.Escape != '\\' {
 		fmt.Fprint(w, " ESCAPE ")
 		fmt.Fprintf(w, "'%c'", n.Escape)
 	}
