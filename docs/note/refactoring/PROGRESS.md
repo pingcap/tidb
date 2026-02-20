@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (Batches 2-14: regexp through FK cascade AST decompositions)
+Last updated: 2026-02-20 (Batches 2-16: regexp through txn prepare decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -645,3 +645,9 @@ Last updated: 2026-02-20 (Batches 2-14: regexp through FK cascade AST decomposit
 - [x] **expression/builtin_encryption.go decomposition** - 2026-02-20 - Extracted `builtin_encryption_compress.go` (331 lines) with deflate, inflate, compress/uncompress/uncompressedLength/validatePasswordStrength function classes and sigs. Reduced builtin_encryption.go from 1,095 to 789 lines (28% reduction).
 - [x] **util/execdetails/runtime_stats.go decomposition** - 2026-02-20 - Extracted `runtime_stats_commit.go` (279 lines) with RuntimeStatsWithCommit struct, Tp, MergeCommitDetails, Merge, Clone, String, formatBackoff, formatLockKeysDetails. Reduced runtime_stats.go from 1,016 to 762 lines (25% reduction).
 - [x] **executor/foreign_key.go decomposition** - 2026-02-20 - Extracted `foreign_key_cascade_ast.go` (204 lines) with GenCascadeDeleteAST, GenCascadeSetNullAST, GenCascadeUpdateAST, genTableRefsAST, genWhereConditionAst, FKCheckRuntimeStats/FKCascadeRuntimeStats methods. Reduced foreign_key.go from 1,017 to 836 lines (18% reduction).
+- [x] **expression/constant_propagation.go decomposition** - 2026-02-20 - Extracted `constant_propagation_outer_join.go` (462 lines) with propOuterJoinConstSolver, propagateConstantDNF, PropConstForOuterJoin, PropagateConstantSolver, cloneJoinKeys, isJoinKey. Reduced constant_propagation.go from 1,038 to 607 lines (42% reduction).
+- [x] **ddl/index.go decomposition** - 2026-02-20 - Extracted `index_condition.go` (268 lines) with CheckAndBuildIndexConditionString, checkIndexCondition, buildAffectColumn, buildIndexConditionChecker. Reduced index.go from 1,062 to 822 lines (23% reduction).
+- [x] **types/json_binary.go decomposition** - 2026-02-20 - Extracted `json_binary_encode.go` (359 lines) with CalculateBinaryJSONSize, appendBinaryJSON, appendZero, appendUint32, calculateBinary*, appendBinary*, field struct. Reduced json_binary.go from 1,044 to 714 lines (32% reduction).
+- [x] **executor/simple.go decomposition** - 2026-02-20 - Extracted `simple_misc.go` (277 lines) with executeAlterInstance, executeDropStats, autoNewTxn, executeShutdown, executeSetSessionStates, executeAdmin*, executeSetResourceGroupName, executeAlterRange. Reduced simple.go from 1,064 to 818 lines (23% reduction).
+- [x] **store/helper/helper.go decomposition** - 2026-02-20 - Extracted `helper_region.go` (328 lines) with TableInfoWithKeyRange, GetRegionsTableInfo, GetTablesInfoWithKeyRange, ParseRegionsTableInfos, GetPDAddr, GetPDRegionStats, CollectTiFlashStatus, SyncTableSchemaToTiFlash. Reduced helper.go from 937 to 642 lines (31% reduction).
+- [x] **session/session_txn.go decomposition** - 2026-02-20 - Extracted `session_txn_prepare.go` (299 lines) with PrepareTxnCtx, decideTxnMode, shouldUsePessimisticAutoCommit, isDMLStatement, PrepareTSFuture, GetPreparedTxnFuture, RefreshTxnCtx, GetStore, usePipelinedDmlOrWarn. Reduced session_txn.go from 1,086 to 819 lines (25% reduction).
