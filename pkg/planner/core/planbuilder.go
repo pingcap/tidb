@@ -3823,7 +3823,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	return p, nil
 }
 
-func (b *PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
+func (*PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
 	if stmt == nil || stmt.RefreshStmt == nil || stmt.RefreshStmt.ViewName == nil {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt/ViewName")
 	}
@@ -5580,8 +5580,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if dbName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
-		// Refresh privileges will be checked when the statement is fully implemented.
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, v.ViewName.Name.L, "", authErr)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, v.ViewName.Name.L, "", authErr)
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
 	}

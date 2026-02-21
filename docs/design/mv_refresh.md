@@ -13,6 +13,7 @@
 4. **失败也要落元信息**：如果 refresh 执行失败，也要把 `LAST_REFRESH_RESULT='failed'` 以及失败原因写回 `mysql.tidb_mview_refresh`（并保证 MV 表数据不被部分写入）。
 5. **COMPLETE refresh 可用**：事务内 `DELETE + INSERT` 完整替换 MV 数据。
 6. **FAST refresh 先搭框架路径**：通过构造 internal-only AST 走 `ExecuteInternalStmt`，以便后续接入真正的增量刷新执行计划（当前仍会报 not supported）。
+7. **权限语义先收敛到 MVP**：外层语句只做 `ALTER` on MV 的权限检查；refresh 执行时改用 internal session，避免把 `mysql.tidb_mview_refresh` 的系统表权限暴露给业务用户。
 
 ## 非目标（先不做）
 
@@ -46,11 +47,17 @@ REFRESH MATERIALIZED VIEW mv WITH SYNC MODE FAST; -- 当前等同普通 refresh�
 
 当前限制：`FAST` 会在 planner/build 阶段返回不支持错误（占位），但 internal statement + ExecuteInternalStmt 的执行链路已经铺通。
 
+当前权限语义（MVP）：
+
+- 执行 `REFRESH MATERIALIZED VIEW` 需要目标 MV 的 `ALTER` 权限（外层语义权限）。
+- refresh 内部会切到 internal session 执行 `DELETE/INSERT` 与 `mysql.tidb_mview_refresh` 更新，因此不要求调用用户对 `mysql.tidb_mview_refresh` 具有直接 DML 权限。
+- 未来如果引入更细粒度权限模型（例如同时校验 base table 的 `SELECT`），再在此基础上扩展。
+
 ## 核心执行流程（事务性 refresh 框架）
 
 最直观的实现就是“事务 + mutex 行锁 + savepoint + 数据刷新 + 元信息更新”。当前 `COMPLETE` 与 `FAST` 共享同一套外层框架，差异只在“刷新实现”步骤：
 
-1. 开启一个事务（建议 **pessimistic**，以保证 `FOR UPDATE NOWAIT` 立即生效）。
+1. 从 DDL 的 session pool 获取一个 internal session，并在该 internal session 上开启事务（建议 **pessimistic**，以保证 `FOR UPDATE NOWAIT` 立即生效）。
 2. 在事务内，用 `SELECT ... FOR UPDATE NOWAIT` 对 refresh 信息行加锁（作为 refresh mutex）。
 3. 再用普通 `SELECT` 把 `LAST_SUCCESSFUL_REFRESH_READ_TSO` 读一遍，与第 2 步的值对比：
    - 如果不一致，将本次 refresh 视为失败：更新 `LAST_REFRESH_RESULT='failed'` / `LAST_REFRESH_FAILED_REASON` 等并 `COMMIT`，然后返回错误终止 refresh（避免在同一事务里同时观察到 `start_ts` / `for_update_ts` 两个快照下不一致的 refresh 元信息）。
@@ -80,6 +87,7 @@ REFRESH MATERIALIZED VIEW mv WITH SYNC MODE FAST; -- 当前等同普通 refresh�
 伪 SQL（仅展示关键点）：
 
 ```sql
+-- 下面 SQL 在 internal session 内执行
 BEGIN PESSIMISTIC;
 
 -- (A) mutex：锁住这一行，NOWAIT 失败则直接返回
@@ -98,7 +106,7 @@ SAVEPOINT tidb_mview_refresh_sp;
 -- (B) 全量替换
 DELETE FROM <db>.<mv>;
 -- 说明：TiDB 在 sql_mode 严格模式下会阻止“写入语句的 SELECT 部分”走 TiFlash/MPP。
--- 对 refresh 这种内部维护语句，更推荐在 internal session 上设置一个 flag（例如 `SessionVars.InMaterializedViewMaintenance`），
+-- 对 refresh 这种内部维护语句，在 internal session 上设置一个 flag（例如 `SessionVars.InMaterializedViewMaintenance`），
 -- 让优化器跳过这段 strict-mode guard，从而允许 INSERT ... SELECT 的 SELECT 部分走 TiFlash/MPP。
 INSERT INTO <db>.<mv> <SQLContent>;
   -- SQLContent 是 MV 定义的 SELECT（失败则回滚到 savepoint）
@@ -159,6 +167,7 @@ FAST refresh 目前尚未实现真正的增量刷新执行逻辑（planner 仍�
 
 - `pkg/executor/ddl.go` 会把 `*ast.RefreshMaterializedViewStmt` 转发到 `ddl.Executor.RefreshMaterializedView`。
 - 实际执行在 `pkg/ddl/materialized_view.go` 的 `(*executor).RefreshMaterializedView(...)`：
+  - 先从 DDL `sessPool` 获取 internal session，再在该 session 内跑整段 refresh 事务。
   - `COMPLETE`：事务内执行 `DELETE FROM` + `INSERT INTO ... SQLContent`（`ExecuteInternal`）。
   - `FAST`：读取 `LAST_SUCCESSFUL_REFRESH_READ_TSO`，构造 `*ast.RefreshMaterializedViewImplementStmt` 并走 `ExecuteInternalStmt`（当前 planner/build 返回 not supported，占位）。
 
@@ -179,6 +188,7 @@ FAST refresh 目前尚未实现真正的增量刷新执行逻辑（planner 仍�
 当前实现位于 `pkg/ddl/materialized_view.go` 的 `RefreshMaterializedView`，核心做法是“同步执行 + 显式事务封装”：
 
 - 不新引入 DDL job（因为不改 schema、也不需要 reorg/checkpoint）。
+- 刷新逻辑统一在 internal session 上执行，避免复用当前用户 session 的事务/变量/权限环境。
 - 通过 `BEGIN PESSIMISTIC` + `SELECT ... FOR UPDATE NOWAIT` 对 `mysql.tidb_mview_refresh` 做 mutex。
 - 用 `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` 保证失败时 MV 数据不部分写入，但失败元信息可 `COMMIT` 落盘。
 - 运行期间会临时将 `tidb_constraint_check_in_place_pessimistic=ON`（避免 pessimistic txn 下 savepoint 受限）。
