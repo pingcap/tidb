@@ -9,7 +9,6 @@ go_library(
     name = "parser",
     srcs = [
         "digester.go",
-        "generate.go",
         "hintparser.go",
         "hintparserimpl.go",
         "hparser_bridge.go",
