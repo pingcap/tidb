@@ -20,7 +20,7 @@ import (
 )
 
 // ParseSQL parses one or more SQL statements and returns the AST nodes.
-// Callers should first call Init() with a LexFunc and source SQL string.
+// Callers should first call Init() with a Lexer and source SQL string.
 func (p *HandParser) ParseSQL() ([]ast.StmtNode, []error, error) {
 	p.result = p.result[:0]
 	p.errs = p.errs[:0]

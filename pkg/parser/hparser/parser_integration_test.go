@@ -28,7 +28,7 @@ func parseWithHandParser(t *testing.T, sql string) []ast.StmtNode {
 	t.Helper()
 	scanner := parser.NewScanner(sql)
 	hp := hparser.NewHandParser()
-	hp.Init(parser.ScannerLexFunc(scanner), sql)
+	hp.Init(scanner, sql)
 	stmts, warns, err := hp.ParseSQL()
 	require.NoError(t, err, "hand parser error for: %s", sql)
 	if len(warns) > 0 {

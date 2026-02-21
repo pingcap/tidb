@@ -37,15 +37,14 @@ func BenchmarkHandParser(b *testing.B) {
 	for name, sql := range benchSQLs {
 		b.Run(name, func(b *testing.B) {
 			hp := hparser.NewHandParser()
-			// Pre-create Scanner + LexFunc to reuse across iterations.
+			// Pre-create Scanner to reuse across iterations.
 			scanner := parser.NewScanner(sql)
-			lexFunc := parser.ScannerLexFunc(scanner)
 			b.ResetTimer()
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				hp.Reset()
 				scanner.ResetTo(sql)
-				hp.Init(lexFunc, sql)
+				hp.Init(scanner, sql)
 				stmts, _, err := hp.ParseSQL()
 				if err != nil {
 					b.Fatal(err)

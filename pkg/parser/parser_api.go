@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/hparser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -91,14 +90,10 @@ type Parser struct {
 	src        string
 	lexer      Scanner
 	hintParser *hintParser
-	handParser *hparser.HandParser
+	handParser ParserEngine
 
 	explicitCharset       bool
 	strictDoubleFieldType bool
-
-	// Stored method references to avoid per-ParseSQL heap-escaping closures.
-	lexBridgeFn  hparser.LexFunc
-	hintBridgeFn hparser.HintParseFn
 }
 
 // New returns a Parser object with default SQL mode.
@@ -109,13 +104,13 @@ func New() *Parser {
 		ast.NewBitLiteral == nil {
 		panic("no parser driver (forgotten import?) https://github.com/pingcap/parser/issues/43")
 	}
+	if newEngineFunc == nil {
+		panic("no parser engine registered (forgotten import of hparser?)")
+	}
 
 	p := &Parser{
-		handParser: hparser.NewHandParser(),
+		handParser: newEngineFunc(),
 	}
-	// Bind method references once to avoid per-call closure allocations.
-	p.lexBridgeFn = p.lexBridge
-	p.hintBridgeFn = p.hintBridge
 	p.reset()
 	return p
 }
@@ -151,16 +146,7 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.handParser.SetStrictDoubleFieldTypeCheck(config.EnableStrictDoubleTypeCheck)
 }
 
-// lexBridge is a bound method that bridges Scanner to LexFunc.
-// Stored as parser.lexBridgeFn to avoid per-ParseSQL closure allocation.
-func (parser *Parser) lexBridge() (tok int, offset int, lit string, item interface{}) {
-	var lval Token
-	tok = parser.lexer.Lex(&lval)
-	return tok, lval.Offset, lval.Lit, lval.Item
-}
-
 // hintBridge is a bound method that parses optimizer hints.
-// Stored as parser.hintBridgeFn to avoid per-ParseSQL closure allocation.
 func (parser *Parser) hintBridge(input string) ([]*ast.TableOptimizerHint, []error) {
 	return parser.parseHint(input)
 }
@@ -181,14 +167,12 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 	// Configure the hand-written parser.
 	parser.handParser.SetSQLMode(parser.lexer.GetSQLMode())
 
-	// Use stored method references to avoid per-call closure allocations.
-	parser.handParser.SetHintParse(parser.hintBridgeFn)
+	// Set hint parse callback.
+	parser.handParser.SetHintParse(parser.hintBridge)
 
 	// Initialize hand parser: Reset + Init + set charset/collation.
-	// We don't call handParser.Parse() because its internal Reset() clears
-	// flags that we need to sync from the main parser.
 	parser.handParser.Reset()
-	parser.handParser.Init(parser.lexBridgeFn, sql)
+	parser.handParser.Init(&parser.lexer, sql)
 	parser.handParser.SetCharsetCollation(parser.charset, parser.collation)
 
 	// Sync parser state to hand parser AFTER reset.
