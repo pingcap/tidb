@@ -154,9 +154,9 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 // lexBridge is a bound method that bridges Scanner to LexFunc.
 // Stored as parser.lexBridgeFn to avoid per-ParseSQL closure allocation.
 func (parser *Parser) lexBridge() (tok int, offset int, lit string, item interface{}) {
-	var lval yySymType
+	var lval Token
 	tok = parser.lexer.Lex(&lval)
-	return tok, lval.offset, lval.ident, lval.item
+	return tok, lval.Offset, lval.Lit, lval.Item
 }
 
 // hintBridge is a bound method that parses optimizer hints.
@@ -263,7 +263,7 @@ func (parser *Parser) parseHint(input string) ([]*ast.TableOptimizerHint, []erro
 
 // ---------- Literal conversion helpers (used by Scanner.Lex in lexer.go) ----------
 
-func toInt(l yyLexer, lval *yySymType, str string) int {
+func toInt(l Lexer, lval *Token, str string) int {
 	n, err := strconv.ParseUint(str, 10, 64)
 	if err != nil {
 		e := err.(*strconv.NumError)
@@ -276,14 +276,14 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 
 	switch {
 	case n <= math.MaxInt64:
-		lval.item = int64(n)
+		lval.Item = int64(n)
 	default:
-		lval.item = n
+		lval.Item = n
 	}
 	return intLit
 }
 
-func toDecimal(l yyLexer, lval *yySymType, str string) int {
+func toDecimal(l Lexer, lval *Token, str string) int {
 	dec, err := ast.NewDecimal(str)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrDataOutOfRange) {
@@ -293,11 +293,11 @@ func toDecimal(l yyLexer, lval *yySymType, str string) int {
 			l.AppendError(l.Errorf("decimal literal: %v", err))
 		}
 	}
-	lval.item = dec
+	lval.Item = dec
 	return decLit
 }
 
-func toFloat(l yyLexer, lval *yySymType, str string) int {
+func toFloat(l Lexer, lval *Token, str string) int {
 	n, err := strconv.ParseFloat(str, 64)
 	if err != nil {
 		e := err.(*strconv.NumError)
@@ -309,29 +309,29 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 		return invalid
 	}
 
-	lval.item = n
+	lval.Item = n
 	return floatLit
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
-func toHex(l yyLexer, lval *yySymType, str string) int {
+func toHex(l Lexer, lval *Token, str string) int {
 	h, err := ast.NewHexLiteral(str)
 	if err != nil {
 		l.AppendError(l.Errorf("hex literal: %v", err))
 		return invalid
 	}
-	lval.item = h
+	lval.Item = h
 	return hexLit
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
-func toBit(l yyLexer, lval *yySymType, str string) int {
+func toBit(l Lexer, lval *Token, str string) int {
 	b, err := ast.NewBitLiteral(str)
 	if err != nil {
 		l.AppendError(l.Errorf("bit literal: %v", err))
 		return invalid
 	}
-	lval.item = b
+	lval.Item = b
 	return bitLit
 }
 

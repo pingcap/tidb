@@ -26,6 +26,8 @@ import (
 )
 
 // Token represents a lexed token with its metadata.
+// It mirrors parser.Token but is a separate type to avoid an import cycle
+// (parser imports hparser, so hparser cannot import parser).
 type Token struct {
 	// Tp is the token type (matches token constants in tokens.go).
 	Tp int
