@@ -16,8 +16,10 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
