@@ -101,11 +101,6 @@ type Parser struct {
 	hintBridgeFn hparser.HintParseFn
 }
 
-// yyhintSetOffset is a no-op required by the hint parser (hintparser.go).
-// The hint parser doesn't need position offsets tracked on its symbols.
-func yyhintSetOffset(_ *yyhintSymType, _ int) {
-}
-
 // New returns a Parser object with default SQL mode.
 func New() *Parser {
 	if ast.NewValueExpr == nil ||

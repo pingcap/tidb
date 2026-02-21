@@ -34,12 +34,8 @@ var (
 
 //revive:enable:exported
 
-// yyhintSymType holds the semantic value for a hint token.
-// The struct name and fields are kept for compatibility with hintTokenMap
-// lookups that reference hint token constants.
-type yyhintSymType struct {
-	yys    int
-	offset int
+// hintLexVal holds the semantic value for a hint token.
+type hintLexVal struct {
 	ident  string
 	number uint64
 }
@@ -54,7 +50,7 @@ func (hs *hintScanner) Errorf(format string, args ...interface{}) error {
 	return ErrParse.GenWithStackByArgs("Optimizer hint syntax error at", inner)
 }
 
-func (hs *hintScanner) Lex(lval *yyhintSymType) int {
+func (hs *hintScanner) Lex(lval *hintLexVal) int {
 	tok, pos, lit := hs.scan()
 	hs.lastScanOffset = pos.Offset
 	var errorTokenType string
