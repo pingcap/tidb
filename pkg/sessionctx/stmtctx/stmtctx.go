@@ -677,6 +677,8 @@ const (
 	StmtSafeTSCacheKey
 	// StmtExternalTSCacheKey is a variable for externalTS calculation/cache of one stmt.
 	StmtExternalTSCacheKey
+	// StmtModelInferenceStatsCacheKey is a variable for model inference stats aggregation.
+	StmtModelInferenceStatsCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
@@ -721,6 +723,15 @@ func (sc *StatementContext) ResetStmtCache() {
 	sc.stmtCache.mu.Lock()
 	defer sc.stmtCache.mu.Unlock()
 	sc.stmtCache.data = make(map[StmtCacheKey]any)
+}
+
+// ModelInferenceStats returns the per-statement model inference stats collector.
+func (sc *StatementContext) ModelInferenceStats() *ModelInferenceStats {
+	if sc == nil {
+		return nil
+	}
+	stats := sc.GetOrStoreStmtCache(StmtModelInferenceStatsCacheKey, NewModelInferenceStats())
+	return stats.(*ModelInferenceStats)
 }
 
 // SQLDigest gets normalized and digest for provided sql.

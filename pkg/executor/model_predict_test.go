@@ -19,13 +19,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/modelruntime"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/yalue/onnxruntime_go"
 )
@@ -256,6 +260,215 @@ func TestModelPredictNullBehaviorReturnNull(t *testing.T) {
 	defer restoreIO()
 
 	tk.MustQuery("select model_predict(test.m1, null).score").Check(testkit.Rows("<nil>"))
+}
+
+func TestModelPredictInferenceStatsRecorded(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_model_ddl = on")
+
+	modelDir := t.TempDir()
+	modelPath := filepath.Join(modelDir, "model.onnx")
+	modelBytes := []byte("dummy-model")
+	require.NoError(t, os.WriteFile(modelPath, modelBytes, 0o600))
+	checksum := fmt.Sprintf("sha256:%x", sha256.Sum256(modelBytes))
+	location := "file://" + modelPath
+
+	tk.MustExec(fmt.Sprintf(
+		"create model m1 (input (a double) output (score double)) using onnx location '%s' checksum '%s'",
+		location, checksum,
+	))
+	tk.MustExec("set global tidb_enable_model_inference = on")
+
+	restoreIO := modelruntime.SetInspectModelIOInfoHookForTest(func([]byte) ([]onnxruntime_go.InputOutputInfo, []onnxruntime_go.InputOutputInfo, error) {
+		return []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "a",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "score",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, nil
+	})
+	defer restoreIO()
+
+	restorePredict := expression.SetModelPredictOutputHookForTest(func(modelName, outputName string, inputs []float32) (float64, error) {
+		if modelName != "m1" || outputName != "score" {
+			return 0, fmt.Errorf("unexpected request")
+		}
+		if len(inputs) != 1 || inputs[0] != 1.0 {
+			return 0, fmt.Errorf("unexpected inputs")
+		}
+		return 0.5, nil
+	})
+	defer restorePredict()
+
+	tk.MustQuery("select model_predict(test.m1, 1.0).score").Check(testkit.Rows("0.5"))
+
+	stats := tk.Session().GetSessionVars().StmtCtx.ModelInferenceStats().SlowLogSummaries()
+	require.Len(t, stats, 1)
+	entry := stats[0]
+	require.Equal(t, int64(1), entry.Calls)
+	require.Equal(t, int64(0), entry.Errors)
+	require.Equal(t, int64(1), entry.TotalBatchSize)
+	require.Equal(t, int64(1), entry.MaxBatchSize)
+	require.Equal(t, stmtctx.ModelInferenceRoleProjection, entry.Role)
+}
+
+func TestExplainAnalyzeIncludesModelInferenceStats(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_model_ddl = on")
+
+	modelDir := t.TempDir()
+	modelPath := filepath.Join(modelDir, "model.onnx")
+	modelBytes := []byte("dummy-model")
+	require.NoError(t, os.WriteFile(modelPath, modelBytes, 0o600))
+	checksum := fmt.Sprintf("sha256:%x", sha256.Sum256(modelBytes))
+	location := "file://" + modelPath
+
+	tk.MustExec(fmt.Sprintf(
+		"create model m1 (input (a double) output (score double)) using onnx location '%s' checksum '%s'",
+		location, checksum,
+	))
+	tk.MustExec("set global tidb_enable_model_inference = on")
+
+	restoreIO := modelruntime.SetInspectModelIOInfoHookForTest(func([]byte) ([]onnxruntime_go.InputOutputInfo, []onnxruntime_go.InputOutputInfo, error) {
+		return []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "a",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "score",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, nil
+	})
+	defer restoreIO()
+
+	restorePredict := expression.SetModelPredictOutputHookForTest(func(modelName, outputName string, inputs []float32) (float64, error) {
+		if modelName != "m1" || outputName != "score" {
+			return 0, fmt.Errorf("unexpected request")
+		}
+		if len(inputs) != 1 || inputs[0] != 1.0 {
+			return 0, fmt.Errorf("unexpected inputs")
+		}
+		return 0.9, nil
+	})
+	defer restorePredict()
+
+	rows := tk.MustQuery("explain analyze select model_predict(test.m1, 1.0).score").Rows()
+	found := false
+	for _, row := range rows {
+		for _, col := range row {
+			value, ok := col.(string)
+			if !ok {
+				continue
+			}
+			if strings.Contains(value, "model_inference:") && strings.Contains(value, "role=projection") {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	require.True(t, found)
+}
+
+func TestSlowLogModelInferencePayload(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", newCfg.Log.SlowQueryFile))
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+	}()
+
+	tk.MustExec("set global tidb_enable_model_ddl = on")
+
+	modelDir := t.TempDir()
+	modelPath := filepath.Join(modelDir, "model.onnx")
+	modelBytes := []byte("dummy-model")
+	require.NoError(t, os.WriteFile(modelPath, modelBytes, 0o600))
+	checksum := fmt.Sprintf("sha256:%x", sha256.Sum256(modelBytes))
+	location := "file://" + modelPath
+
+	tk.MustExec(fmt.Sprintf(
+		"create model m1 (input (a double) output (score double)) using onnx location '%s' checksum '%s'",
+		location, checksum,
+	))
+	tk.MustExec("set global tidb_enable_model_inference = on")
+
+	restoreIO := modelruntime.SetInspectModelIOInfoHookForTest(func([]byte) ([]onnxruntime_go.InputOutputInfo, []onnxruntime_go.InputOutputInfo, error) {
+		return []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "a",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "score",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, nil
+	})
+	defer restoreIO()
+
+	restorePredict := expression.SetModelPredictOutputHookForTest(func(modelName, outputName string, inputs []float32) (float64, error) {
+		if modelName != "m1" || outputName != "score" {
+			return 0, fmt.Errorf("unexpected request")
+		}
+		if len(inputs) != 1 || inputs[0] != 1.0 {
+			return 0, fmt.Errorf("unexpected inputs")
+		}
+		return 1.2, nil
+	})
+	defer restorePredict()
+
+	tk.MustQuery("select model_predict(test.m1, 1.0).score").Check(testkit.Rows("1.2"))
+
+	rows := tk.MustQuery("select Model_inference from information_schema.slow_query where query like '%model_predict%' order by time desc limit 1").Rows()
+	require.Len(t, rows, 1)
+	payload := rows[0][0].(string)
+	require.NotEmpty(t, payload)
+	require.Contains(t, payload, "\"model_id\"")
+	require.Contains(t, payload, "\"role\"")
 }
 
 type stubModelMetadata struct {

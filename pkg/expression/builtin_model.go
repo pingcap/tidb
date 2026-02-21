@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -137,7 +139,9 @@ func (b *builtinModelPredictSig) evalJSON(ctx EvalContext, row chunk.Row) (types
 	if hasNull {
 		return types.BinaryJSON{}, true, nil
 	}
+	start := time.Now()
 	outputs, err := b.meta.predict(inputs)
+	recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, 1, time.Since(start), err)
 	if err != nil {
 		return types.BinaryJSON{}, true, err
 	}
@@ -216,13 +220,17 @@ func (b *builtinModelPredictOutputSig) evalReal(ctx EvalContext, row chunk.Row) 
 		return 0, true, nil
 	}
 	if hook := modelPredictOutputHook; hook != nil {
+		start := time.Now()
 		out, err := hook(b.meta.modelName, b.outName, inputs)
+		recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, 1, time.Since(start), err)
 		if err != nil {
 			return 0, true, err
 		}
 		return out, false, nil
 	}
+	start := time.Now()
 	outputs, err := b.meta.predict(inputs)
+	recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, 1, time.Since(start), err)
 	if err != nil {
 		return 0, true, err
 	}
@@ -292,13 +300,17 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 		return nil
 	}
 	if hook := modelPredictBatchHook; hook != nil {
+		start := time.Now()
 		out, err := hook(b.meta.modelName, b.outName, inputs)
+		recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, len(inputs), time.Since(start), err)
 		if err != nil {
 			return err
 		}
 		outputs = out
 	} else if b.meta.batchable {
+		start := time.Now()
 		outBatch, err := b.meta.predictBatch(inputs)
+		recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, len(inputs), time.Since(start), err)
 		if err != nil {
 			return err
 		}
@@ -313,14 +325,18 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 		outputs = make([]float64, len(inputs))
 		for i, rowInputs := range inputs {
 			if hook := modelPredictOutputHook; hook != nil {
+				start := time.Now()
 				out, err := hook(b.meta.modelName, b.outName, rowInputs)
+				recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, 1, time.Since(start), err)
 				if err != nil {
 					return err
 				}
 				outputs[i] = out
 				continue
 			}
+			start := time.Now()
 			rowOut, err := b.meta.predict(rowInputs)
+			recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, 1, time.Since(start), err)
 			if err != nil {
 				return err
 			}
@@ -506,6 +522,7 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 		return nil, err
 	}
 	loader := model.NewArtifactLoader(model.LoaderOptions{})
+	loadStart := time.Now()
 	artifact, err := loader.Load(context.Background(), model.ArtifactMeta{
 		ModelID:  modelID,
 		Version:  version,
@@ -513,6 +530,7 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 		Location: location,
 		Checksum: checksum,
 	})
+	recordModelLoadStats(ctx, vars, modelID, version, time.Since(loadStart), err)
 	if err != nil {
 		return nil, err
 	}
@@ -705,6 +723,35 @@ func checkModelPredictEnabled(ctx EvalContext, privReader expropt.PrivilegeCheck
 
 func modelNullBehaviorAllowsNull() bool {
 	return strings.EqualFold(vardef.ModelNullBehavior.Load(), vardef.ModelNullBehaviorReturnNull)
+}
+
+func recordModelInferenceStats(ctx EvalContext, varsReader expropt.SessionVarsPropReader, meta *modelPredictMeta, batchSize int, duration time.Duration, err error) {
+	if meta == nil {
+		return
+	}
+	role, planID, ok := ModelInferenceStatsTargetFromContext(ctx)
+	if !ok {
+		return
+	}
+	vars, varsErr := varsReader.GetSessionVars(ctx)
+	if varsErr != nil || vars == nil || vars.StmtCtx == nil {
+		return
+	}
+	stats := vars.StmtCtx.ModelInferenceStats()
+	stats.RecordInference(planID, meta.modelID, meta.version, role, batchSize, duration, err)
+}
+
+func recordModelLoadStats(ctx EvalContext, vars *variable.SessionVars, modelID, version int64, duration time.Duration, err error) {
+	if vars == nil || vars.StmtCtx == nil {
+		return
+	}
+	role, planID, ok := ModelInferenceStatsTargetFromContext(ctx)
+	if !ok {
+		return
+	}
+	stats := vars.StmtCtx.ModelInferenceStats()
+	stats.RecordLoad(planID, modelID, version, role, duration, err)
+	metrics.ModelLoadDuration.WithLabelValues("onnx", metrics.RetLabel(err)).Observe(duration.Seconds())
 }
 
 func evalConstString(ctx EvalContext, expr Expression, label string) (string, error) {
