@@ -357,40 +357,40 @@ func (p *HandParser) parseTableOptionRowFormat(opt *ast.TableOption) {
 	opt.Tp = ast.TableOptionRowFormat
 	tok := p.next()
 	if tok.Tp == defaultKwd {
-		opt.UintValue = uint64(ast.RowFormatDefault)
+		opt.UintValue = ast.RowFormatDefault
 		return
 	}
 	switch strings.ToUpper(tok.Lit) {
 	case "DYNAMIC":
-		opt.UintValue = uint64(ast.RowFormatDynamic)
+		opt.UintValue = ast.RowFormatDynamic
 	case "FIXED":
-		opt.UintValue = uint64(ast.RowFormatFixed)
+		opt.UintValue = ast.RowFormatFixed
 	case "COMPRESSED":
-		opt.UintValue = uint64(ast.RowFormatCompressed)
+		opt.UintValue = ast.RowFormatCompressed
 	case "REDUNDANT":
-		opt.UintValue = uint64(ast.RowFormatRedundant)
+		opt.UintValue = ast.RowFormatRedundant
 	case "COMPACT":
-		opt.UintValue = uint64(ast.RowFormatCompact)
+		opt.UintValue = ast.RowFormatCompact
 	case "TOKUDB_DEFAULT":
-		opt.UintValue = uint64(ast.TokuDBRowFormatDefault)
+		opt.UintValue = ast.TokuDBRowFormatDefault
 	case "TOKUDB_FAST":
-		opt.UintValue = uint64(ast.TokuDBRowFormatFast)
+		opt.UintValue = ast.TokuDBRowFormatFast
 	case "TOKUDB_SMALL":
-		opt.UintValue = uint64(ast.TokuDBRowFormatSmall)
+		opt.UintValue = ast.TokuDBRowFormatSmall
 	case "TOKUDB_ZLIB":
-		opt.UintValue = uint64(ast.TokuDBRowFormatZlib)
+		opt.UintValue = ast.TokuDBRowFormatZlib
 	case "TOKUDB_ZSTD":
-		opt.UintValue = uint64(ast.TokuDBRowFormatZstd)
+		opt.UintValue = ast.TokuDBRowFormatZstd
 	case "TOKUDB_QUICKLZ":
-		opt.UintValue = uint64(ast.TokuDBRowFormatQuickLZ)
+		opt.UintValue = ast.TokuDBRowFormatQuickLZ
 	case "TOKUDB_LZMA":
-		opt.UintValue = uint64(ast.TokuDBRowFormatLzma)
+		opt.UintValue = ast.TokuDBRowFormatLzma
 	case "TOKUDB_SNAPPY":
-		opt.UintValue = uint64(ast.TokuDBRowFormatSnappy)
+		opt.UintValue = ast.TokuDBRowFormatSnappy
 	case "TOKUDB_UNCOMPRESSED":
-		opt.UintValue = uint64(ast.TokuDBRowFormatUncompressed)
+		opt.UintValue = ast.TokuDBRowFormatUncompressed
 	default:
-		opt.UintValue = uint64(ast.RowFormatDefault)
+		opt.UintValue = ast.RowFormatDefault
 	}
 }
 
