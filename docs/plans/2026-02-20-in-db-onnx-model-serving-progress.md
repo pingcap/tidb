@@ -15,11 +15,14 @@ Status log for phased implementation.
 - [x] Phase 1 tests green (TestModelDDL*)
 
 ## Phase 2: Runtime, Expression, Execution
-- [ ] ONNX runtime integration (always-on build)
-- [ ] Artifact loader + checksum + cache in util
-- [ ] `MODEL_PREDICT` expression and executor batching
-- [ ] Input validation (shape/type)
-- [ ] Phase 2 tests green
+- [x] ONNX runtime integration (always-on build)
+- [x] Artifact loader + checksum + cache in util
+- [x] `MODEL_PREDICT` expression + planner rewrite + scalar execution
+- [x] Executor batching/vectorized evaluation
+- [x] ONNX session cache (process-level, LRU)
+- [x] Session cache sysvars: `tidb_model_cache_capacity`, `tidb_model_cache_ttl`
+- [x] Input validation (type/name/count/shape)
+- [x] Phase 2 tests green
 
 ## Notes
 - TiFlash model pushdown is future work; v1 only pushes non-model predicates.

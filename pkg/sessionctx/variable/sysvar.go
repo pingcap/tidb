@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/modelruntime"
 	"github.com/pingcap/tidb/pkg/util/naming"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -3286,6 +3287,34 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(vardef.EnableModelInference.Load()), nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelCacheCapacity, Value: strconv.FormatUint(vardef.DefTiDBModelCacheCapacity, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseUint(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			vardef.ModelCacheCapacity.Store(val)
+			updateModelSessionCache(val, vardef.ModelCacheTTL.Load())
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.ModelCacheCapacity.Load(), 10), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelCacheTTL, Value: vardef.DefTiDBModelCacheTTL.String(), Type: vardef.TypeDuration, MinValue: 0, MaxValue: uint64(time.Hour * 24 * 365),
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			vardef.ModelCacheTTL.Store(d)
+			updateModelSessionCache(vardef.ModelCacheCapacity.Load(), d)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return vardef.ModelCacheTTL.Load().String(), nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBResourceControlStrictMode, Value: BoolToOnOff(vardef.DefTiDBResourceControlStrictMode), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		opOn := TiDBOptOn(s)
 		if opOn != vardef.EnableResourceControlStrictMode.Load() {
@@ -3949,6 +3978,17 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		}
 	}
 	return varVal
+}
+
+func updateModelSessionCache(capacity uint64, ttl time.Duration) {
+	if capacity == 0 {
+		modelruntime.SetProcessSessionCache(nil)
+		return
+	}
+	modelruntime.SetProcessSessionCache(modelruntime.NewSessionCache(modelruntime.SessionCacheOptions{
+		Capacity: uint(capacity),
+		TTL:      ttl,
+	}))
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

@@ -1153,6 +1153,7 @@ const (
 	ErrModelExists                        = 8274
 	ErrModelNotExists                     = 8275
 	ErrModelDDLDisabled                   = 8276
+	ErrModelInferenceDisabled             = 8277
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

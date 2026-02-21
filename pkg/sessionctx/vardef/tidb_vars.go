@@ -1245,6 +1245,10 @@ const (
 	TiDBEnableModelDDL = "tidb_enable_model_ddl"
 	// TiDBEnableModelInference indicates whether model inference is enabled
 	TiDBEnableModelInference = "tidb_enable_model_inference"
+	// TiDBModelCacheCapacity indicates the process-level model session cache capacity.
+	TiDBModelCacheCapacity = "tidb_model_cache_capacity"
+	// TiDBModelCacheTTL indicates the process-level model session cache TTL.
+	TiDBModelCacheTTL = "tidb_model_cache_ttl"
 	// TiDBResourceControlStrictMode indicates whether resource control strict mode is enabled.
 	// When strict mode is enabled, user need certain privilege to change session or statement resource group.
 	TiDBResourceControlStrictMode = "tidb_resource_control_strict_mode"
@@ -1717,6 +1721,8 @@ const (
 	DefTiDBEnableResourceControl                      = true
 	DefTiDBEnableModelDDL                             = false
 	DefTiDBEnableModelInference                       = false
+	DefTiDBModelCacheCapacity                         = 64
+	DefTiDBModelCacheTTL                              = 0 * time.Second
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
@@ -1898,6 +1904,8 @@ var (
 	EnableResourceControlStrictMode = atomic.NewBool(true)
 	EnableModelDDL                  = atomic.NewBool(DefTiDBEnableModelDDL)
 	EnableModelInference            = atomic.NewBool(DefTiDBEnableModelInference)
+	ModelCacheCapacity              = atomic.NewUint64(DefTiDBModelCacheCapacity)
+	ModelCacheTTL                   = atomic.NewDuration(DefTiDBModelCacheTTL)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)

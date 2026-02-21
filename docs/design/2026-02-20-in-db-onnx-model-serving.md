@@ -128,6 +128,13 @@ The runtime does not access filesystem or network during inference; only artifac
 
 The ONNX runtime is embedded in TiDB server and supports FP32 models only. Custom ops are disabled by default. A sysvar (`tidb_enable_model_custom_ops`) gates opt-in usage.
 
+Runtime deployment:
+
+- TiDB initializes ONNX Runtime at startup and fails fast if the shared library is missing.
+- Default library path: `lib/onnxruntime/<os>-<arch>/libonnxruntime.(so|dylib)` relative to the `tidb-server` binary.
+- Overrides: `TIDB_ONNXRUNTIME_LIB` (full path) or `TIDB_ONNXRUNTIME_DIR` (directory).
+- Use `make onnxruntime_prepare` to download prebuilt libraries.
+
 Determinism:
 
 - Non-deterministic ops are rejected unless `tidb_model_allow_nondeterministic` is enabled.

@@ -73,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
+	"github.com/pingcap/tidb/pkg/util/modelruntime"
 	"github.com/pingcap/tidb/pkg/util/naming"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -339,6 +340,15 @@ func main() {
 	}
 	err = setupLog()
 	terror.MustNil(err)
+
+	ortInfo, err := modelruntime.Init()
+	if err != nil {
+		logutil.BgLogger().Fatal("onnxruntime initialization failed", zap.Error(err))
+	}
+	logutil.BgLogger().Info("onnxruntime initialized",
+		zap.String("version", ortInfo.Version),
+		zap.String("library_path", ortInfo.LibraryPath),
+	)
 
 	err = memory.InitMemoryHook()
 	terror.MustNil(err)

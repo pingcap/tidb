@@ -8232,6 +8232,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_yalue_onnxruntime_go",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/yalue/onnxruntime_go",
+        sha256 = "248c9ddffb073f34378057526405b9842e4f23a6ffabff0b0074e3367c87cba2",
+        strip_prefix = "github.com/yalue/onnxruntime_go@v1.26.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/yalue/onnxruntime_go/com_github_yalue_onnxruntime_go-v1.26.0.zip",
+            "http://ats.apps.svc/gomod/github.com/yalue/onnxruntime_go/com_github_yalue_onnxruntime_go-v1.26.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/yalue/onnxruntime_go/com_github_yalue_onnxruntime_go-v1.26.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/yalue/onnxruntime_go/com_github_yalue_onnxruntime_go-v1.26.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_yangkeao_go_mysql_driver",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/YangKeao/go-mysql-driver",

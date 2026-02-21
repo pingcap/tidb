@@ -1706,6 +1706,7 @@ import (
 %precedence lowerThanParenthese
 %right '('
 %left ')'
+%right '.'
 %precedence higherThanParenthese
 %left join straightJoin inner cross left right full natural
 %precedence lowerThanOn
@@ -8165,8 +8166,20 @@ SimpleIdent:
 SimpleExpr:
 	SimpleIdent
 |	FunctionCallKeyword
+|	FunctionCallKeyword '.' Identifier
+	{
+		$$ = &ast.FieldAccessExpr{Expr: $1, Name: ast.NewCIStr($3)}
+	}
 |	FunctionCallNonKeyword
+|	FunctionCallNonKeyword '.' Identifier
+	{
+		$$ = &ast.FieldAccessExpr{Expr: $1, Name: ast.NewCIStr($3)}
+	}
 |	FunctionCallGeneric
+|	FunctionCallGeneric '.' Identifier
+	{
+		$$ = &ast.FieldAccessExpr{Expr: $1, Name: ast.NewCIStr($3)}
+	}
 |	SimpleExpr "COLLATE" CollationName
 	{
 		$$ = &ast.SetCollationExpr{Expr: $1, Collate: $3}
@@ -9382,7 +9395,7 @@ PriorityOpt:
 |	Priority
 
 TableName:
-	Identifier
+	Identifier %prec '.'
 	{
 		$$ = &ast.TableName{Name: ast.NewCIStr($1)}
 	}

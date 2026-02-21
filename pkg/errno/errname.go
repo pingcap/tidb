@@ -1086,6 +1086,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrModelExists:                      mysql.Message("Model '%-.64s.%-.64s' already exists", nil),
 	ErrModelNotExists:                   mysql.Message("Model '%-.64s.%-.64s' doesn't exist", nil),
 	ErrModelDDLDisabled:                 mysql.Message("Model DDL is disabled. Run `SET GLOBAL tidb_enable_model_ddl='ON'` to enable the feature", nil),
+	ErrModelInferenceDisabled:           mysql.Message("Model inference is disabled. Run `SET GLOBAL tidb_enable_model_inference='ON'` to enable the feature", nil),
 
 	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 
