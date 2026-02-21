@@ -811,11 +811,11 @@ func (hp *hintParser) parseSemijoinHint(name string) []*ast.TableOptimizerHint {
 
 	// Parse optional strategy list
 	if hp.peek().tp != ')' {
-		strat := hp.parseIdentifier()
-		h.Tables = append(h.Tables, ast.HintTable{TableName: ast.NewCIStr(strat)})
+		strategy := hp.parseIdentifier()
+		h.Tables = append(h.Tables, ast.HintTable{TableName: ast.NewCIStr(strategy)})
 		for hp.match(',') {
-			strat = hp.parseIdentifier()
-			h.Tables = append(h.Tables, ast.HintTable{TableName: ast.NewCIStr(strat)})
+			strategy = hp.parseIdentifier()
+			h.Tables = append(h.Tables, ast.HintTable{TableName: ast.NewCIStr(strategy)})
 		}
 	}
 
