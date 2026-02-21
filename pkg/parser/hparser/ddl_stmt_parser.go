@@ -558,7 +558,7 @@ func (p *HandParser) parseSetBindingStmt() ast.StmtNode {
 	}
 
 	// Parse the origin statement
-	originStmt := p.parseStatement()
+	originStmt := p.parseAndSetText()
 	if originStmt == nil {
 		return nil
 	}
@@ -566,7 +566,7 @@ func (p *HandParser) parseSetBindingStmt() ast.StmtNode {
 
 	// Optional: USING <hinted_stmt>
 	if _, ok := p.accept(tokUsing); ok {
-		hintedStmt := p.parseStatement()
+		hintedStmt := p.parseAndSetText()
 		if hintedStmt == nil {
 			return nil
 		}
