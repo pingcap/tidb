@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-20 (Batches 2-19: regexp through plan replayer decompositions)
+Last updated: 2026-02-21 (Batches 2-22: regexp through scalar function decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -660,3 +660,12 @@ Last updated: 2026-02-20 (Batches 2-19: regexp through plan replayer decompositi
 - [x] **planner/core/find_best_task_property.go decomposition** - 2026-02-20 - Extracted `find_best_task_pruning.go` (269 lines) with skylinePruning, hasOnlyEqualPredicatesInDNF, equalPredicateCount, getPruningInfo. Reduced find_best_task_property.go from 1,057 to 815 lines (23% reduction).
 - [x] **statistics/table.go decomposition** - 2026-02-20 - Extracted `table_pseudo.go` (199 lines) with ID2UniqueID, GenerateHistCollFromColumnInfo, PseudoHistColl, PseudoTable, CheckAnalyzeVerOnTable, PrepareCols4MVIndex. Reduced table.go from 991 to 814 lines (18% reduction).
 - [x] **domain/plan_replayer_dump.go decomposition** - 2026-02-20 - Extracted `plan_replayer_dump_util.go` (202 lines) with extractTableNames, getStatsForTable, getShowCreateTable, resultSetToStringSlice, getRows, dumpDebugTrace, dumpOneDebugTrace, dumpErrorMsgs. Reduced plan_replayer_dump.go from 973 to 800 lines (18% reduction).
+- [x] **planner/core/expression_rewriter_leave.go decomposition** - 2026-02-21 - Extracted `expression_rewriter_funccall.go` (190 lines) with rewriteFuncCall, funcCallToExpressionWithPlanCtx, funcCallToExpression. Reduced expression_rewriter_leave.go from 1,089 to 925 lines (15% reduction).
+- [x] **table/tables/index.go decomposition** - 2026-02-21 - Extracted `index_util.go` (200 lines) with FindChangingCol, IsIndexWritable, BuildRowcodecColInfoForIndexColumns, BuildFieldTypesForIndexColumns, TryAppendCommonHandleRowcodecColInfos, GenIndexValueFromIndex, ExtractColumnsFromCondition, DedupIndexColumns, extractColumnsFromExpr, init. Reduced index.go from 1,030 to 858 lines (17% reduction).
+- [x] **planner/core/preprocess_check.go decomposition** - 2026-02-21 - Extracted `preprocess_check_util.go` (261 lines) with checkDuplicateColumnName, checkIndexInfo, checkUnsupportedTableOptions, checkColumn, isDefaultValNowSymFunc, isInvalidDefaultValue. Reduced preprocess_check.go from 990 to 757 lines (24% reduction).
+- [x] **ddl/reorg.go decomposition** - 2026-02-21 - Extracted `reorg_handle.go` (205 lines) with reorgHandler struct and methods, getReorgInfoFromPartitions, UpdateReorgMeta, getSplitKeysForTempIndexRanges, adjustEndKeyAcrossVersion. Reduced reorg.go from 968 to 795 lines (18% reduction).
+- [x] **planner/core/plan_cost_ver2.go decomposition** - 2026-02-21 - Extracted `plan_cost_ver2_misc.go` (190 lines) with getNumberOfRanges, getPlanCostVer24PhysicalApply/UnionAll/PointGet/ExchangeReceiver/BatchPointGet/CTE. Reduced plan_cost_ver2.go from 989 to 823 lines (17% reduction).
+- [x] **executor/join/index_lookup_hash_join.go decomposition** - 2026-02-21 - Extracted `index_lookup_hash_join_inner.go` (230 lines) with doJoinUnordered, getMatchedOuterRows, joinMatchedInnerRow2Chunk, collectMatchedInnerPtrs4OuterRows, doJoinInOrder. Reduced index_lookup_hash_join.go from 981 to 779 lines (21% reduction).
+- [x] **executor/memtable_reader.go decomposition** - 2026-02-21 - Extracted `memtable_reader_region_peers.go` (165 lines) with tikvRegionPeersRetriever struct and methods. Reduced memtable_reader.go from 1,025 to 890 lines (13% reduction).
+- [x] **planner/core/memtable_infoschema_extractor.go decomposition** - 2026-02-21 - Extracted `memtable_infoschema_extractor_columns.go` (180 lines) with InfoSchemaColumnsExtractor, InfoSchemaTiDBIndexUsageExtractor. Reduced memtable_infoschema_extractor.go from 1,016 to 861 lines (15% reduction).
+- [x] **expression/scalar_function.go decomposition** - 2026-02-21 - Extracted `scalar_function_resolve.go` (206 lines) with ResolveIndices, ResolveIndicesByVirtualExpr, RemapColumn, GetSingleColumn, Coercibility/Charset/Collation methods, MemoryUsage. Reduced scalar_function.go from 963 to 779 lines (19% reduction).
