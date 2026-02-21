@@ -96,7 +96,7 @@ func (p *HandParser) parseAlterAdd(spec *ast.AlterTableSpec) {
 			if _, ok := p.accept('('); ok {
 				for {
 					if tok, ok := p.expectAny(identifier, stringLit); ok {
-						col := Alloc[ast.ColumnName](p.arena)
+						col := p.arena.AllocColumnName()
 						col.Name = ast.NewCIStr(tok.Lit)
 						spec.Statistics.Columns = append(spec.Statistics.Columns, col)
 					}
@@ -136,7 +136,7 @@ func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 		spec.Tp = ast.AlterTableDropColumn
 		spec.IfExists = p.acceptIfExists()
 		if tok, ok := p.expectAny(identifier, stringLit); ok {
-			spec.OldColumnName = Alloc[ast.ColumnName](p.arena)
+			spec.OldColumnName = p.arena.AllocColumnName()
 			spec.OldColumnName.Name = ast.NewCIStr(tok.Lit)
 		}
 		p.acceptAny(restrict, cascade)
@@ -162,7 +162,7 @@ func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 	} else if _, ok := p.acceptAny(check, constraint); ok {
 		spec.Tp = ast.AlterTableDropCheck
 		if tok, ok := p.expectAny(identifier, stringLit); ok {
-			c := Alloc[ast.Constraint](p.arena)
+			c := p.arena.AllocConstraint()
 			c.Name = tok.Lit
 			spec.Constraint = c
 		}
@@ -196,12 +196,12 @@ func (p *HandParser) parseAlterRename(spec *ast.AlterTableSpec) {
 	} else if _, ok := p.accept(column); ok {
 		spec.Tp = ast.AlterTableRenameColumn
 		if tok, ok := p.expectAny(identifier, stringLit); ok {
-			spec.OldColumnName = Alloc[ast.ColumnName](p.arena)
+			spec.OldColumnName = p.arena.AllocColumnName()
 			spec.OldColumnName.Name = ast.NewCIStr(tok.Lit)
 		}
 		p.expect(to)
 		if tok, ok := p.expectAny(identifier, stringLit); ok {
-			spec.NewColumnName = Alloc[ast.ColumnName](p.arena)
+			spec.NewColumnName = p.arena.AllocColumnName()
 			spec.NewColumnName.Name = ast.NewCIStr(tok.Lit)
 		}
 	} else if _, ok := p.acceptAny(index, key); ok {
@@ -247,7 +247,7 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 	// ALTER CHECK|CONSTRAINT name {ENFORCED | NOT ENFORCED}
 	if _, ok := p.acceptAny(check, constraint); ok {
 		spec.Tp = ast.AlterTableAlterCheck
-		spec.Constraint = Alloc[ast.Constraint](p.arena)
+		spec.Constraint = p.arena.AllocConstraint()
 		if tok, ok := p.expectAny(identifier, stringLit); ok {
 			spec.Constraint.Name = tok.Lit
 		}
@@ -542,7 +542,7 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 	case force:
 		p.next()
 		if p.peek().Tp == autoIncrement || p.peek().Tp == autoRandomBase {
-			opt := Alloc[ast.TableOption](p.arena)
+			opt := p.arena.AllocTableOption()
 			if !p.parseForceAutoOption(opt) {
 				p.syntaxError(p.peek().Offset)
 				return true // Handled but error
@@ -615,7 +615,7 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 		p.next()
 		p.expect(to)
 		spec.Tp = ast.AlterTableOption
-		opt := Alloc[ast.TableOption](p.arena)
+		opt := p.arena.AllocTableOption()
 		opt.Tp = ast.TableOptionCharset
 		opt.UintValue = ast.TableOptionCharsetWithConvertTo
 		// CharsetKw: CHARACTER SET | CHARSET | CHAR SET
@@ -627,7 +627,7 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 		}
 		spec.Options = []*ast.TableOption{opt}
 		if _, ok := p.accept(collate); ok {
-			collOpt := Alloc[ast.TableOption](p.arena)
+			collOpt := p.arena.AllocTableOption()
 			collOpt.Tp = ast.TableOptionCollate
 			if tok, ok := p.expectAny(identifier, stringLit); ok {
 				collOpt.StrValue = strings.ToLower(tok.Lit)

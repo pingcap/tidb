@@ -35,7 +35,7 @@ func (p *HandParser) parseCreateTableOptions() []*ast.TableOption {
 
 // parseTableOption parses a single table option.
 func (p *HandParser) parseTableOption() *ast.TableOption {
-	opt := Alloc[ast.TableOption](p.arena)
+	opt := p.arena.AllocTableOption()
 	switch p.peek().Tp {
 	case affinity:
 		p.next()
@@ -156,7 +156,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		opt.Tp = ast.TableOptionTTL
 		// TTL = col_name + INTERVAL N UNIT
 		if tok, ok := p.expectAny(identifier, stringLit); ok {
-			opt.ColumnName = Alloc[ast.ColumnName](p.arena)
+			opt.ColumnName = p.arena.AllocColumnName()
 			opt.ColumnName.Name = ast.NewCIStr(tok.Lit)
 		}
 		p.accept('+') // consume '+'

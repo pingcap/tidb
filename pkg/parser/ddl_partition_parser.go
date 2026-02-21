@@ -217,7 +217,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 				p.syntaxError(tok.Offset)
 				return nil
 			}
-			c := Alloc[ast.Constraint](p.arena)
+			c := p.arena.AllocConstraint()
 			c.Name = tok.Lit
 			c.Option = Alloc[ast.IndexOption](p.arena)
 			if _, ok := p.accept(global); ok {

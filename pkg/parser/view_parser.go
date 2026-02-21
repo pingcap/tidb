@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 )
 
 // parseCreateViewStmt parses:
@@ -33,7 +32,7 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 
 	// Set defaults (Algorithm=UNDEFINED and Security=DEFINER are zero values).
 	// CheckOption=CASCADED suppresses "WITH LOCAL CHECK OPTION" in Restore.
-	authDefiner := Alloc[auth.UserIdentity](p.arena)
+	authDefiner := p.arena.AllocUserIdentity()
 	authDefiner.CurrentUser = true
 	stmt.Definer = authDefiner
 	stmt.CheckOption = ast.CheckOptionCascaded

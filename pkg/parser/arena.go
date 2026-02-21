@@ -13,7 +13,12 @@
 
 package parser
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+)
 
 const (
 	// defaultBlockSize is the default arena block size (8 KB).
@@ -22,18 +27,80 @@ const (
 
 	// maxAlignment is the maximum alignment we guarantee for arena-allocated objects.
 	maxAlignment = 8
+
+	// slabSize is the number of elements pre-allocated per typed slab batch.
+	// 64 gives a good balance: large enough to amortize allocation overhead,
+	// small enough to avoid excessive waste for small queries.
+	slabSize = 64
 )
 
-// Arena is a bump-pointer memory allocator for AST nodes.
+// ---------------------------------------------------------------------------
+// Typed slab allocator — GC-safe batch allocation for hot AST node types
+// ---------------------------------------------------------------------------
 //
-// All allocations from a single parse operation share one Arena. When the parser
-// is reset, the arena's bump pointer is reset to zero—no per-node deallocation
-// occurs, which eliminates GC pressure from AST construction entirely.
+// Go's GC needs type information to trace pointers within objects. A generic
+// []byte arena allocator is invisible to the GC: pointer fields (strings,
+// interfaces, slices) inside arena-allocated AST nodes won't be traced,
+// causing dangling pointers and SIGBUS.
 //
-// Safety: Arena uses unsafe.Pointer arithmetic. All returned pointers are valid
-// for the lifetime of the Arena (until Reset is called). The caller must not
-// retain pointers after Reset.
+// Typed slabs solve this: []ast.ColumnName is a typed slice — the GC knows
+// every field's layout and traces all interior pointers. Instead of N
+// individual new(T) calls (each creating a small heap object), we make
+// N/slabSize calls to make([]T, slabSize). This reduces heap object count,
+// GC marking work, and allocation overhead.
+
+// slab is a pre-allocated batch of typed objects.
+type slab[T interface{}] struct {
+	items []T
+	idx   int
+}
+
+// alloc returns a pointer to a zero-initialized element from the slab.
+// Allocates a new batch when the current one is exhausted.
+func (s *slab[T]) alloc() *T {
+	if s.idx >= len(s.items) {
+		s.items = make([]T, slabSize)
+		s.idx = 0
+	}
+	p := &s.items[s.idx]
+	s.idx++
+	return p
+}
+
+// reset resets the slab index for reuse. The backing slice is retained by the
+// GC for as long as any element pointer is alive — no dangling references.
+func (s *slab[T]) reset() {
+	s.items = nil
+	s.idx = 0
+}
+
+// ---------------------------------------------------------------------------
+// Arena
+// ---------------------------------------------------------------------------
+
+// Arena provides memory allocation for AST nodes during parsing.
+//
+// It contains typed slabs for the most frequently allocated AST node types.
+// These slabs are GC-safe: each uses a typed Go slice, so the garbage collector
+// can properly trace all pointer fields within allocated nodes.
+//
+// For less common types, the generic Alloc[T] function falls back to new(T).
 type Arena struct {
+	// Typed slabs for hot AST node types (GC-safe batch allocation).
+	columnNames  slab[ast.ColumnName]
+	joins        slab[ast.Join]
+	subqueryExpr slab[ast.SubqueryExpr]
+	funcCallExpr slab[ast.FuncCallExpr]
+	varAssign    slab[ast.VariableAssignment]
+	defaultExpr  slab[ast.DefaultExpr]
+	tableOption  slab[ast.TableOption]
+	showStmt     slab[ast.ShowStmt]
+	constraint   slab[ast.Constraint]
+	selectStmt   slab[ast.SelectStmt]
+	userIdentity slab[auth.UserIdentity]
+
+	// Legacy bump-pointer allocator (currently unused — retained for future use
+	// when a GC-safe unsafe arena approach becomes available).
 	blocks []*arenaBlock
 	cur    int // index of current block in blocks
 }
@@ -59,14 +126,91 @@ func newArenaBlock(size int) *arenaBlock {
 	}
 }
 
-// Reset resets the arena for reuse. All previously allocated memory becomes
-// invalid. The backing memory is retained to avoid re-allocation.
+// Reset resets the arena for reuse. All slab indices are reset. The typed slab
+// backing slices are released (but stay alive in the GC as long as any element
+// pointer is reachable). The bump-pointer blocks are also reset.
 func (a *Arena) Reset() {
+	// Reset typed slabs.
+	a.columnNames.reset()
+	a.joins.reset()
+	a.subqueryExpr.reset()
+	a.funcCallExpr.reset()
+	a.varAssign.reset()
+	a.defaultExpr.reset()
+	a.tableOption.reset()
+	a.showStmt.reset()
+	a.constraint.reset()
+	a.selectStmt.reset()
+	a.userIdentity.reset()
+
+	// Reset legacy bump-pointer blocks.
 	for _, b := range a.blocks {
 		b.used = 0
 	}
 	a.cur = 0
 }
+
+// ---------------------------------------------------------------------------
+// Hot-type slab allocation methods
+// ---------------------------------------------------------------------------
+
+// AllocColumnName allocates an ast.ColumnName from the typed slab.
+func (a *Arena) AllocColumnName() *ast.ColumnName { return a.columnNames.alloc() }
+
+// AllocJoin allocates an ast.Join from the typed slab.
+func (a *Arena) AllocJoin() *ast.Join { return a.joins.alloc() }
+
+// AllocSubqueryExpr allocates an ast.SubqueryExpr from the typed slab.
+func (a *Arena) AllocSubqueryExpr() *ast.SubqueryExpr { return a.subqueryExpr.alloc() }
+
+// AllocFuncCallExpr allocates an ast.FuncCallExpr from the typed slab.
+func (a *Arena) AllocFuncCallExpr() *ast.FuncCallExpr { return a.funcCallExpr.alloc() }
+
+// AllocVariableAssignment allocates an ast.VariableAssignment from the typed slab.
+func (a *Arena) AllocVariableAssignment() *ast.VariableAssignment { return a.varAssign.alloc() }
+
+// AllocDefaultExpr allocates an ast.DefaultExpr from the typed slab.
+func (a *Arena) AllocDefaultExpr() *ast.DefaultExpr { return a.defaultExpr.alloc() }
+
+// AllocTableOption allocates an ast.TableOption from the typed slab.
+func (a *Arena) AllocTableOption() *ast.TableOption { return a.tableOption.alloc() }
+
+// AllocShowStmt allocates an ast.ShowStmt from the typed slab.
+func (a *Arena) AllocShowStmt() *ast.ShowStmt { return a.showStmt.alloc() }
+
+// AllocConstraint allocates an ast.Constraint from the typed slab.
+func (a *Arena) AllocConstraint() *ast.Constraint { return a.constraint.alloc() }
+
+// AllocSelectStmt allocates an ast.SelectStmt from the typed slab.
+func (a *Arena) AllocSelectStmt() *ast.SelectStmt { return a.selectStmt.alloc() }
+
+// AllocUserIdentity allocates an auth.UserIdentity from the typed slab.
+func (a *Arena) AllocUserIdentity() *auth.UserIdentity { return a.userIdentity.alloc() }
+
+// ---------------------------------------------------------------------------
+// Generic allocator (fallback for non-hot types)
+// ---------------------------------------------------------------------------
+
+// Alloc allocates a zero-initialized value of type T.
+//
+// For hot AST node types, use the dedicated Arena methods (e.g.
+// AllocColumnName, AllocSelectStmt) which use GC-safe typed slab allocation.
+// This generic function falls back to heap allocation via new(T).
+func Alloc[T interface{}](_ *Arena) *T {
+	return new(T)
+}
+
+// AllocSlice allocates a slice of n elements of type T.
+func AllocSlice[T interface{}](_ *Arena, n int) []T {
+	if n == 0 {
+		return nil
+	}
+	return make([]T, n)
+}
+
+// ---------------------------------------------------------------------------
+// Legacy bump-pointer allocator internals (retained for future use)
+// ---------------------------------------------------------------------------
 
 // align rounds up n to the nearest multiple of maxAlignment.
 func align(n int) int {
@@ -99,29 +243,6 @@ func (a *Arena) alloc(size int) unsafe.Pointer {
 	ptr := unsafe.Pointer(&b.data[b.used])
 	b.used += size
 	return ptr
-}
-
-// Alloc allocates a zero-initialized value of type T.
-//
-// NOTE: Currently uses heap allocation (new) instead of arena bump-pointer.
-// The original arena approach used unsafe.Pointer into []byte blocks, which
-// is invisible to Go's GC. When the parser goes out of scope but AST nodes
-// survive (e.g. in the plan cache), the GC collects the arena's []byte blocks
-// while AST nodes still reference them, causing SIGBUS. Using new() ensures
-// AST nodes are properly GC-tracked. The arena parameter is retained for API
-// compatibility and can be re-enabled once a GC-safe arena implementation
-// (e.g., Go's native arena package) is available.
-func Alloc[T interface{}](_ *Arena) *T {
-	return new(T)
-}
-
-// AllocSlice allocates a slice of n elements of type T.
-// See Alloc for the rationale behind heap allocation.
-func AllocSlice[T interface{}](_ *Arena, n int) []T {
-	if n == 0 {
-		return nil
-	}
-	return make([]T, n)
 }
 
 func maxInt(a, b int) int {

@@ -25,7 +25,7 @@ import (
 func (p *HandParser) parseShowStmt() ast.StmtNode {
 	p.expect(show)
 
-	stmt := Alloc[ast.ShowStmt](p.arena)
+	stmt := p.arena.AllocShowStmt()
 
 	switch p.peek().Tp {
 	case binaryType:

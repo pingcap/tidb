@@ -396,7 +396,7 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 	p.expect('(')
 
-	node := Alloc[ast.FuncCallExpr](p.arena)
+	node := p.arena.AllocFuncCallExpr()
 	node.FnName = ast.NewCIStr(name)
 
 	// Empty arg list.

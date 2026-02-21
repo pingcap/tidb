@@ -102,7 +102,7 @@ func (p *HandParser) parseAlterTableSpec() *ast.AlterTableSpec {
 		spec.IfExists = p.acceptIfExists()
 		if isChange {
 			if tok, ok := p.expectAny(identifier, stringLit); ok {
-				spec.OldColumnName = Alloc[ast.ColumnName](p.arena)
+				spec.OldColumnName = p.arena.AllocColumnName()
 				spec.OldColumnName.Name = ast.NewCIStr(tok.Lit)
 			}
 		}
@@ -216,7 +216,7 @@ func (p *HandParser) parseColumnPosition(spec *ast.AlterTableSpec) {
 	} else if _, ok := p.accept(after); ok {
 		spec.Position.Tp = ast.ColumnPositionAfter
 		if tok, ok := p.expectAny(identifier, stringLit); ok {
-			spec.Position.RelativeColumn = Alloc[ast.ColumnName](p.arena)
+			spec.Position.RelativeColumn = p.arena.AllocColumnName()
 			spec.Position.RelativeColumn.Name = ast.NewCIStr(tok.Lit)
 		}
 	}

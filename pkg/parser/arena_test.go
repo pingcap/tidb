@@ -14,9 +14,12 @@
 package parser
 
 import (
+	"fmt"
+	"runtime"
 	"testing"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	trequire "github.com/stretchr/testify/require"
 )
 
@@ -161,5 +164,64 @@ func BenchmarkHeapAlloc(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		n := new(node)
 		n.Value = int64(i)
+	}
+}
+
+func TestSlabAllocGCSafety(t *testing.T) {
+	// Verify that slab-allocated AST nodes survive garbage collection.
+	a := NewArena()
+
+	// Allocate nodes that contain GC-managed types (strings, pointers).
+	cols := make([]*ast.ColumnName, 100)
+	for i := range cols {
+		col := a.AllocColumnName()
+		col.Name = ast.NewCIStr(fmt.Sprintf("col_%d", i))
+		cols[i] = col
+	}
+
+	joins := make([]*ast.Join, 20)
+	for i := range joins {
+		j := a.AllocJoin()
+		joins[i] = j
+	}
+
+	// Force GC multiple times to trigger collection.
+	for range 3 {
+		runtime.GC()
+	}
+
+	// Verify all data survived GC.
+	for i, col := range cols {
+		trequire.Equal(t, fmt.Sprintf("col_%d", i), col.Name.O,
+			"slab-allocated ColumnName.Name corrupted after GC (index %d)", i)
+	}
+	for _, j := range joins {
+		trequire.NotNil(t, j, "slab-allocated Join pointer nil after GC")
+	}
+}
+
+func TestSlabAllocDistinctPointers(t *testing.T) {
+	a := NewArena()
+
+	ptrs := make(map[unsafe.Pointer]bool)
+	for range slabSize + 10 {
+		col := a.AllocColumnName()
+		p := unsafe.Pointer(col)
+		trequire.False(t, ptrs[p], "duplicate pointer from slab allocator")
+		ptrs[p] = true
+	}
+	// Should have allocated across at least 2 slab batches.
+	trequire.Greater(t, len(ptrs), slabSize)
+}
+
+func BenchmarkSlabAlloc(b *testing.B) {
+	a := NewArena()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if i%1000 == 0 {
+			a.Reset()
+		}
+		col := a.AllocColumnName()
+		col.Name = ast.NewCIStr("x")
 	}
 }
