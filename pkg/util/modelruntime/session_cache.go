@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/yalue/onnxruntime_go"
@@ -90,6 +91,7 @@ func NewSessionCache(opts SessionCacheOptions) *SessionCache {
 	cache.SetOnEvict(func(_ kvcache.Key, value kvcache.Value) {
 		entry := value.(*sessionEntry)
 		_ = entry.session.Destroy()
+		metrics.ModelSessionCacheCounter.WithLabelValues("evict").Inc()
 	})
 	return sc
 }
@@ -117,14 +119,18 @@ func (c *SessionCache) Get(key SessionKey) (*sessionEntry, bool) {
 	defer c.mu.Unlock()
 	value, ok := c.cache.Get(key)
 	if !ok {
+		metrics.ModelSessionCacheCounter.WithLabelValues("miss").Inc()
 		return nil, false
 	}
 	entry := value.(*sessionEntry)
 	if c.ttl > 0 && c.now().Sub(entry.cachedAt) > c.ttl {
 		c.cache.Delete(key)
 		_ = entry.session.Destroy()
+		metrics.ModelSessionCacheCounter.WithLabelValues("miss").Inc()
+		metrics.ModelSessionCacheCounter.WithLabelValues("evict").Inc()
 		return nil, false
 	}
+	metrics.ModelSessionCacheCounter.WithLabelValues("hit").Inc()
 	return entry, true
 }
 

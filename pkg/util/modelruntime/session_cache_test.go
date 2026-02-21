@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/metrics"
+	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/yalue/onnxruntime_go"
 )
@@ -92,4 +94,24 @@ func TestSessionCacheTTLExpires(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, firstSession.destroyed)
+}
+
+func TestSessionCacheMetrics(t *testing.T) {
+	metrics.ModelSessionCacheCounter.Reset()
+
+	cache := NewSessionCache(SessionCacheOptions{Capacity: 1})
+	create := func() (dynamicSession, error) {
+		return &stubSession{}, nil
+	}
+
+	_, err := cache.GetOrCreate(SessionKey("m1"), create)
+	require.NoError(t, err)
+	_, err = cache.GetOrCreate(SessionKey("m1"), create)
+	require.NoError(t, err)
+	_, err = cache.GetOrCreate(SessionKey("m2"), create)
+	require.NoError(t, err)
+
+	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ModelSessionCacheCounter.WithLabelValues("hit")))
+	require.Equal(t, 2.0, promtestutils.ToFloat64(metrics.ModelSessionCacheCounter.WithLabelValues("miss")))
+	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ModelSessionCacheCounter.WithLabelValues("evict")))
 }

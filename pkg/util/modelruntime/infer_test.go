@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/metrics"
+	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/yalue/onnxruntime_go"
 )
@@ -93,11 +95,39 @@ func TestRunInferenceTimeout(t *testing.T) {
 	require.Contains(t, err.Error(), "timeout")
 }
 
+func TestRunInferenceMetrics(t *testing.T) {
+	metrics.ModelInferenceCounter.Reset()
+
+	restoreScalar := swapRunInferenceScalar(func(_ *sessionEntry, _ []string, _ []string, _ []float32, _ time.Duration) ([]float32, error) {
+		return []float32{1}, nil
+	})
+	defer restoreScalar()
+
+	restoreSession := swapNewDynamicSession(func([]byte, []string, []string) (dynamicSession, error) {
+		return &stubInferenceSession{}, nil
+	})
+	defer restoreSession()
+
+	_, err := RunInferenceWithOptions(nil, "", []byte("dummy"), []string{"a"}, []string{"out"}, []float32{1}, InferenceOptions{})
+	require.NoError(t, err)
+
+	counter := metrics.ModelInferenceCounter.WithLabelValues("scalar", metrics.RetLabel(nil))
+	require.Equal(t, 1.0, promtestutils.ToFloat64(counter))
+}
+
 func swapNewDynamicSession(fn func([]byte, []string, []string) (dynamicSession, error)) func() {
 	old := newDynamicSessionFn
 	newDynamicSessionFn = fn
 	return func() {
 		newDynamicSessionFn = old
+	}
+}
+
+func swapRunInferenceScalar(fn func(*sessionEntry, []string, []string, []float32, time.Duration) ([]float32, error)) func() {
+	old := runInferenceScalarFn
+	runInferenceScalarFn = fn
+	return func() {
+		runInferenceScalarFn = old
 	}
 }
 

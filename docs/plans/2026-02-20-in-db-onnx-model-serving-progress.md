@@ -36,6 +36,11 @@ Status log for phased implementation.
 - [x] Scalar and vectorized null handling for `MODEL_PREDICT`
 - [x] Phase 4 test green (TestModelPredictNullBehaviorReturnNull)
 
+## Phase 5: Metrics
+- [x] Metrics: model inference counter + duration histogram
+- [x] Metrics: session cache hit/miss/evict counters
+- [x] Phase 5 tests green (TestRunInferenceMetrics, TestSessionCacheMetrics)
+
 ## Notes
 - TiFlash model pushdown is future work; v1 only pushes non-model predicates.
 - Tests: `go test -run TestModelStatements --tags=intest ./pkg/parser`; `go test -run TestModelSystemTablesBootstrap --tags=intest ./pkg/session`

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/yalue/onnxruntime_go"
 )
 
@@ -48,7 +49,13 @@ func RunInferenceWithCache(cache *SessionCache, key SessionKey, onnxData []byte,
 }
 
 // RunInferenceWithOptions executes the ONNX model using options such as timeouts.
-func RunInferenceWithOptions(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string, inputs []float32, opts InferenceOptions) ([]float32, error) {
+func RunInferenceWithOptions(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string, inputs []float32, opts InferenceOptions) (outputs []float32, err error) {
+	start := time.Now()
+	defer func() {
+		label := metrics.RetLabel(err)
+		metrics.ModelInferenceCounter.WithLabelValues("scalar", label).Inc()
+		metrics.ModelInferenceDuration.WithLabelValues("scalar", label).Observe(time.Since(start).Seconds())
+	}()
 	if len(inputNames) != len(inputs) {
 		return nil, errors.New("onnx input count does not match inputs")
 	}
@@ -58,7 +65,8 @@ func RunInferenceWithOptions(cache *SessionCache, key SessionKey, onnxData []byt
 	}
 	defer cleanup()
 
-	return runInferenceScalarFn(session, inputNames, outputNames, inputs, opts.Timeout)
+	outputs, err = runInferenceScalarFn(session, inputNames, outputNames, inputs, opts.Timeout)
+	return outputs, err
 }
 
 func runInferenceScalar(session *sessionEntry, inputNames, outputNames []string, inputs []float32, timeout time.Duration) ([]float32, error) {
@@ -108,7 +116,13 @@ func RunInferenceBatchWithCache(cache *SessionCache, key SessionKey, onnxData []
 }
 
 // RunInferenceBatchWithOptions executes the ONNX model with cached sessions when provided.
-func RunInferenceBatchWithOptions(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string, inputs [][]float32, opts InferenceOptions) ([][]float32, error) {
+func RunInferenceBatchWithOptions(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string, inputs [][]float32, opts InferenceOptions) (outputs [][]float32, err error) {
+	start := time.Now()
+	defer func() {
+		label := metrics.RetLabel(err)
+		metrics.ModelInferenceCounter.WithLabelValues("batch", label).Inc()
+		metrics.ModelInferenceDuration.WithLabelValues("batch", label).Observe(time.Since(start).Seconds())
+	}()
 	if len(inputs) == 0 {
 		return nil, errors.New("onnx batch input is empty")
 	}
@@ -141,9 +155,11 @@ func RunInferenceBatchWithOptions(cache *SessionCache, key SessionKey, onnxData 
 				results[start+i] = subResults[i]
 			}
 		}
-		return results, nil
+		outputs = results
+		return outputs, nil
 	}
-	return runInferenceBatchFn(session, inputNames, outputNames, inputs, opts.Timeout)
+	outputs, err = runInferenceBatchFn(session, inputNames, outputNames, inputs, opts.Timeout)
+	return outputs, err
 }
 
 func runInferenceBatch(session *sessionEntry, inputNames, outputNames []string, inputs [][]float32, timeout time.Duration) ([][]float32, error) {
