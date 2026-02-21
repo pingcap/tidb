@@ -13,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/modelruntime",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/metrics",
         "//pkg/util/kvcache",
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
@@ -33,6 +34,10 @@ go_test(
     embed = [":modelruntime"],
     flaky = True,
     deps = [
+        "//pkg/metrics",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
+        "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@com_github_yalue_onnxruntime_go//:onnxruntime_go",
     ],

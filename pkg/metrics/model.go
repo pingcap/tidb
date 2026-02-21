@@ -24,6 +24,10 @@ var (
 	ModelInferenceCounter *prometheus.CounterVec
 	// ModelInferenceDuration records model inference latency by type and result.
 	ModelInferenceDuration *prometheus.HistogramVec
+	// ModelLoadDuration records model artifact load latency by type and result.
+	ModelLoadDuration *prometheus.HistogramVec
+	// ModelBatchSize records model inference batch sizes by type and result.
+	ModelBatchSize *prometheus.HistogramVec
 	// ModelSessionCacheCounter records model session cache events.
 	ModelSessionCacheCounter *prometheus.CounterVec
 )
@@ -46,6 +50,26 @@ func InitModelMetrics() {
 			Name:      "inference_duration_seconds",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 			Help:      "Histogram of model inference duration.",
+		}, []string{LblType, LblResult},
+	)
+
+	ModelLoadDuration = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "model",
+			Name:      "load_duration_seconds",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+			Help:      "Histogram of model load duration.",
+		}, []string{LblType, LblResult},
+	)
+
+	ModelBatchSize = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "model",
+			Name:      "inference_batch_size",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
+			Help:      "Histogram of model inference batch sizes.",
 		}, []string{LblType, LblResult},
 	)
 

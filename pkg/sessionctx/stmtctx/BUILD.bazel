@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "stmtctx",
-    srcs = ["stmtctx.go"],
+    srcs = [
+        "model_inference_stats.go",
+        "stmtctx.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/sessionctx/stmtctx",
     visibility = ["//visibility:public"],
     deps = [
@@ -40,11 +43,12 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "model_inference_stats_test.go",
         "stmtctx_test.go",
     ],
     embed = [":stmtctx"],
     flaky = True,
-    shard_count = 14,
+    shard_count = 16,
     deps = [
         "//pkg/errctx",
         "//pkg/kv",

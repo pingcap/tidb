@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/yalue/onnxruntime_go"
 )
@@ -115,6 +117,36 @@ func TestRunInferenceMetrics(t *testing.T) {
 	require.Equal(t, 1.0, promtestutils.ToFloat64(counter))
 }
 
+func TestRunInferenceBatchMetrics(t *testing.T) {
+	metrics.ModelBatchSize.Reset()
+	metrics.ModelBatchSize.WithLabelValues("batch", metrics.RetLabel(nil))
+
+	restoreBatch := swapRunInferenceBatch(func(_ *sessionEntry, _ []string, _ []string, batch [][]float32, _ time.Duration) ([][]float32, error) {
+		out := make([][]float32, len(batch))
+		for i, row := range batch {
+			out[i] = []float32{row[0]}
+		}
+		return out, nil
+	})
+	defer restoreBatch()
+
+	restoreSession := swapNewDynamicSession(func([]byte, []string, []string) (dynamicSession, error) {
+		return &stubInferenceSession{}, nil
+	})
+	defer restoreSession()
+
+	inputs := [][]float32{{1}, {2}, {3}}
+	_, err := RunInferenceBatchWithOptions(nil, "", []byte("dummy"), []string{"a"}, []string{"out"}, inputs, InferenceOptions{})
+	require.NoError(t, err)
+
+	count, sum := histogramCountAndSum(t, metrics.ModelBatchSize, map[string]string{
+		metrics.LblType:   "batch",
+		metrics.LblResult: metrics.RetLabel(nil),
+	})
+	require.Equal(t, uint64(1), count)
+	require.InDelta(t, float64(len(inputs)), sum, 1e-9)
+}
+
 func swapNewDynamicSession(fn func([]byte, []string, []string) (dynamicSession, error)) func() {
 	old := newDynamicSessionFn
 	newDynamicSessionFn = fn
@@ -145,4 +177,39 @@ func swapNewRunOptions(fn func() (*onnxruntime_go.RunOptions, error)) func() {
 	return func() {
 		newRunOptionsFn = old
 	}
+}
+
+func histogramCountAndSum(t *testing.T, vec *prometheus.HistogramVec, labels map[string]string) (uint64, float64) {
+	t.Helper()
+	ch := make(chan prometheus.Metric, 4)
+	go func() {
+		vec.Collect(ch)
+		close(ch)
+	}()
+	for metric := range ch {
+		dtoMetric := &dto.Metric{}
+		require.NoError(t, metric.Write(dtoMetric))
+		if labelsMatch(dtoMetric, labels) {
+			hist := dtoMetric.GetHistogram()
+			require.NotNil(t, hist)
+			return hist.GetSampleCount(), hist.GetSampleSum()
+		}
+	}
+	t.Fatalf("histogram metric not found for labels: %v", labels)
+	return 0, 0
+}
+
+func labelsMatch(metric *dto.Metric, labels map[string]string) bool {
+	if len(labels) == 0 {
+		return len(metric.GetLabel()) == 0
+	}
+	if len(metric.GetLabel()) != len(labels) {
+		return false
+	}
+	for _, label := range metric.GetLabel() {
+		if labels[label.GetName()] != label.GetValue() {
+			return false
+		}
+	}
+	return true
 }

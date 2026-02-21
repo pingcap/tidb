@@ -27,7 +27,7 @@ var (
 	newDynamicSessionFn = func(onnxData []byte, inputNames, outputNames []string) (dynamicSession, error) {
 		return onnxruntime_go.NewDynamicAdvancedSessionWithONNXData(onnxData, inputNames, outputNames, nil)
 	}
-	newRunOptionsFn     = onnxruntime_go.NewRunOptions
+	newRunOptionsFn      = onnxruntime_go.NewRunOptions
 	runInferenceScalarFn = runInferenceScalar
 	runInferenceBatchFn  = runInferenceBatch
 )
@@ -117,19 +117,22 @@ func RunInferenceBatchWithCache(cache *SessionCache, key SessionKey, onnxData []
 
 // RunInferenceBatchWithOptions executes the ONNX model with cached sessions when provided.
 func RunInferenceBatchWithOptions(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string, inputs [][]float32, opts InferenceOptions) (outputs [][]float32, err error) {
+	batchSize := len(inputs)
 	start := time.Now()
 	defer func() {
 		label := metrics.RetLabel(err)
 		metrics.ModelInferenceCounter.WithLabelValues("batch", label).Inc()
 		metrics.ModelInferenceDuration.WithLabelValues("batch", label).Observe(time.Since(start).Seconds())
+		if batchSize > 0 {
+			metrics.ModelBatchSize.WithLabelValues("batch", label).Observe(float64(batchSize))
+		}
 	}()
-	if len(inputs) == 0 {
+	if batchSize == 0 {
 		return nil, errors.New("onnx batch input is empty")
 	}
 	if len(inputNames) == 0 {
 		return nil, errors.New("onnx input names are empty")
 	}
-	batchSize := len(inputs)
 	for i, row := range inputs {
 		if len(row) != len(inputNames) {
 			return nil, errors.Errorf("onnx input count does not match inputs at row %d", i)

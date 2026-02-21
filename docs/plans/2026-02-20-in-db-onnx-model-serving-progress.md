@@ -41,6 +41,13 @@ Status log for phased implementation.
 - [x] Metrics: session cache hit/miss/evict counters
 - [x] Phase 5 tests green (TestRunInferenceMetrics, TestSessionCacheMetrics)
 
+## Phase 6: Observability
+- [x] Statement-scoped model inference stats (role + plan ID)
+- [x] EXPLAIN ANALYZE model runtime stats registration
+- [x] Slow log Model_inference payload + slow_query table parsing
+- [x] Metrics: model load duration + batch size histograms
+- [x] Phase 6 tests green (TestModelInferenceStats, TestModelPredictInferenceStatsRecorded, TestExplainAnalyzeIncludesModelInferenceStats, TestSlowLogModelInferencePayload, TestRunInferenceBatchMetrics, TestRecordModelLoadStatsMetrics)
+
 ## Notes
 - TiFlash model pushdown is future work; v1 only pushes non-model predicates.
 - Tests: `go test -run TestModelStatements --tags=intest ./pkg/parser`; `go test -run TestModelSystemTablesBootstrap --tags=intest ./pkg/session`

@@ -194,6 +194,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(SessionRestrictedSQLCounter)
 	prometheus.MustRegister(ModelInferenceCounter)
 	prometheus.MustRegister(ModelInferenceDuration)
+	prometheus.MustRegister(ModelLoadDuration)
+	prometheus.MustRegister(ModelBatchSize)
 	prometheus.MustRegister(ModelSessionCacheCounter)
 	prometheus.MustRegister(SessionRetry)
 	prometheus.MustRegister(SessionRetryErrorCounter)
