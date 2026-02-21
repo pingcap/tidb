@@ -22,7 +22,7 @@ import (
 
 // parseTrafficStmt parses TRAFFIC CAPTURE/REPLAY statements.
 func (p *HandParser) parseTrafficStmt() ast.StmtNode {
-	p.expect(58107)
+	p.expect(traffic)
 	tok := p.next()
 	stmt := &ast.TrafficStmt{}
 
@@ -30,12 +30,12 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 	case "CAPTURE":
 		stmt.OpType = ast.TrafficOpCapture
 		// TO 'path'
-		if _, ok := p.expect(57564); ok {
-			if tok, ok := p.expect(57353); ok {
+		if _, ok := p.expect(to); ok {
+			if tok, ok := p.expect(stringLit); ok {
 				stmt.Dir = tok.Lit
 			}
 		} else {
-			// expect(57564) already logged error
+			// expect(to) already logged error
 			return nil
 		}
 
@@ -43,12 +43,12 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 		for p.peek().Tp != 0 && p.peek().Tp != ';' {
 			optTok := p.next()
 			optName := strings.ToUpper(optTok.Lit)
-			p.accept(58202)
+			p.accept(eq)
 			opt := &ast.TrafficOption{}
 			switch optName {
 			case "DURATION":
 				opt.OptionType = ast.TrafficOptionDuration
-				if tok, ok := p.expect(57353); ok {
+				if tok, ok := p.expect(stringLit); ok {
 					opt.StrValue = tok.Lit
 				}
 				// check duration
@@ -60,7 +60,7 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 				}
 			case "ENCRYPTION_METHOD":
 				opt.OptionType = ast.TrafficOptionEncryptionMethod
-				if tok, ok := p.expect(57353); ok {
+				if tok, ok := p.expect(stringLit); ok {
 					opt.StrValue = tok.Lit
 				}
 			case "COMPRESS":
@@ -90,8 +90,8 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 	case "REPLAY":
 		stmt.OpType = ast.TrafficOpReplay
 		// FROM 'path'
-		if _, ok := p.expect(57434); ok {
-			if tok, ok := p.expect(57353); ok {
+		if _, ok := p.expect(from); ok {
+			if tok, ok := p.expect(stringLit); ok {
 				stmt.Dir = tok.Lit
 			}
 		} else {
@@ -102,17 +102,17 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 		for p.peek().Tp != 0 && p.peek().Tp != ';' {
 			optTok := p.next()
 			optName := strings.ToUpper(optTok.Lit)
-			p.accept(58202)
+			p.accept(eq)
 			opt := &ast.TrafficOption{}
 			switch optName {
 			case "USER":
 				opt.OptionType = ast.TrafficOptionUsername
-				if tok, ok := p.expect(57353); ok {
+				if tok, ok := p.expect(stringLit); ok {
 					opt.StrValue = tok.Lit
 				}
 			case "PASSWORD":
 				opt.OptionType = ast.TrafficOptionPassword
-				if tok, ok := p.expect(57353); ok {
+				if tok, ok := p.expect(stringLit); ok {
 					opt.StrValue = tok.Lit
 				}
 			case "SPEED":
@@ -145,7 +145,7 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 
 // parseRefreshStmt parses REFRESH STATS obj_list [FULL|LITE] [CLUSTER].
 func (p *HandParser) parseRefreshStmt() ast.StmtNode {
-	p.expect(57859)
+	p.expect(refresh)
 
 	// STATS keyword (identifier, not reserved).
 	tok := p.next()
@@ -226,7 +226,7 @@ func (p *HandParser) parseCancelTrafficStmt() ast.StmtNode {
 
 // parseTrafficJobStmt is the shared implementation for SHOW/CANCEL TRAFFIC JOBS.
 func (p *HandParser) parseTrafficJobStmt(opType ast.TrafficOpType) ast.StmtNode {
-	p.expect(58107)
-	p.expect(58167)
+	p.expect(traffic)
+	p.expect(jobs)
 	return &ast.TrafficStmt{OpType: opType}
 }

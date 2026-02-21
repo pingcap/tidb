@@ -25,19 +25,19 @@ import (
 )
 
 // parseKeywordFuncCall parses a function call where the function name is a
-// SQL keyword (IF, REPLACE, COALESCE, etc.). These are not 57346,
+// SQL keyword (IF, REPLACE, COALESCE, etc.). These are not identifier,
 // so they need special routing.
 func (p *HandParser) parseKeywordFuncCall() ast.ExprNode {
 	tok := p.next()
 	var name string
 	switch tok.Tp {
-	case 57445:
+	case ifKwd:
 		name = "if"
-	case 57530:
+	case replace:
 		name = "replace"
-	case 57650:
+	case coalesce:
 		name = "coalesce"
-	case 57453:
+	case insert:
 		name = "insert_func"
 	default:
 		p.error(tok.Offset, "unexpected keyword-function token %d", tok.Tp)
@@ -61,28 +61,28 @@ func (p *HandParser) parseFuncCall(name string) ast.ExprNode {
 	// [FROM LAST | FROM FIRST] [IGNORE NULLS | RESPECT NULLS]
 	// Use 2-token lookahead for FROM to avoid consuming FROM in SELECT...FROM.
 	var fromLast, ignoreNull bool
-	if p.peek().Tp == 57434 && (p.peekN(1).Tp == 57763 || p.peekN(1).Tp == 57724) {
+	if p.peek().Tp == from && (p.peekN(1).Tp == last || p.peekN(1).Tp == first) {
 		p.next() // consume FROM
-		if _, ok := p.accept(57763); ok {
+		if _, ok := p.accept(last); ok {
 			fromLast = true
 		} else {
-			p.expect(57724)
+			p.expect(first)
 		}
 	}
-	if p.peek().Tp == 57446 && p.peekN(1).Tp == 57808 {
+	if p.peek().Tp == ignore && p.peekN(1).Tp == nulls {
 		p.next() // consume IGNORE
 		p.next() // consume NULLS
 		ignoreNull = true
-	} else if p.peek().Tp == 57870 && p.peekN(1).Tp == 57808 {
+	} else if p.peek().Tp == respect && p.peekN(1).Tp == nulls {
 		p.next() // consume RESPECT
 		p.next() // consume NULLS
 		// RESPECT NULLS is the default, no flag needed
 	}
 
 	// Check for window function: func(...) OVER (...)
-	// The scanner may tokenize OVER as either 57514 (reserved keyword) or
-	// 57346 (non-reserved keyword — MySQL treats OVER as non-reserved).
-	if _, ok := p.accept(57514); ok || p.peek().IsKeyword("OVER") {
+	// The scanner may tokenize OVER as either over (reserved keyword) or
+	// identifier (non-reserved keyword — MySQL treats OVER as non-reserved).
+	if _, ok := p.accept(over); ok || p.peek().IsKeyword("OVER") {
 		if !ok {
 			p.next() // consume the identifier "OVER" token
 		}
@@ -151,23 +151,23 @@ func (p *HandParser) parseWindowSpec() ast.WindowSpec {
 	p.expect('(') // consume '('
 
 	// Optional window reference name
-	if p.peek().Tp == 57346 && p.peekN(1).Tp != 57376 {
+	if p.peek().Tp == identifier && p.peekN(1).Tp != by {
 		spec.Ref = ast.NewCIStr(p.next().Lit)
 	}
 
 	// PARTITION BY
-	if _, ok := p.accept(57515); ok {
-		p.expect(57376)
+	if _, ok := p.accept(partition); ok {
+		p.expect(by)
 		spec.PartitionBy = p.parsePartitionByClause()
 	}
 
 	// ORDER BY
-	if p.peek().Tp == 57510 {
+	if p.peek().Tp == order {
 		spec.OrderBy = p.parseOrderByClause()
 	}
 
 	// Frame clause (ROWS/RANGE/GROUPS ...)
-	if p.peek().Tp == 57537 || p.peek().Tp == 57439 || (p.peek().Tp == 57520 && p.peekN(1).Tp != ')') {
+	if p.peek().Tp == rows || p.peek().Tp == groups || (p.peek().Tp == rangeKwd && p.peekN(1).Tp != ')') {
 		spec.Frame = p.parseFrameClause()
 	}
 
@@ -192,10 +192,10 @@ func (p *HandParser) parsePartitionByClause() *ast.PartitionByClause {
 func (p *HandParser) parseFrameClause() *ast.FrameClause {
 	frame := &ast.FrameClause{}
 	switch p.peek().Tp {
-	case 57537:
+	case rows:
 		p.next()
 		frame.Type = ast.Rows
-	case 57439:
+	case groups:
 		p.next()
 		frame.Type = ast.Groups
 	default:
@@ -204,9 +204,9 @@ func (p *HandParser) parseFrameClause() *ast.FrameClause {
 	}
 
 	// BETWEEN ... AND ... or single bound
-	if _, ok := p.accept(57371); ok {
+	if _, ok := p.accept(between); ok {
 		frame.Extent.Start = p.parseFrameBound()
-		p.expect(57367)
+		p.expect(and)
 		frame.Extent.End = p.parseFrameBound()
 	} else {
 		frame.Extent.Start = p.parseFrameBound()
@@ -220,19 +220,19 @@ func (p *HandParser) parseFrameClause() *ast.FrameClause {
 func (p *HandParser) parseFrameBound() ast.FrameBound {
 	bound := ast.FrameBound{}
 
-	if _, ok := p.accept(57677); ok {
-		// CURRENT ROW — consume the ROW token (57536, distinct from ROWS 57537)
+	if _, ok := p.accept(current); ok {
+		// CURRENT ROW — consume the ROW token (row, distinct from ROWS rows)
 		p.next()
 		bound.Type = ast.CurrentRow
 		return bound
 	}
 
-	if _, ok := p.accept(57969); ok {
-		if _, ok := p.accept(57839); ok {
+	if _, ok := p.accept(unbounded); ok {
+		if _, ok := p.accept(preceding); ok {
 			bound.Type = ast.Preceding
 			bound.UnBounded = true
 		} else {
-			p.expect(57727)
+			p.expect(following)
 			bound.Type = ast.Following
 			bound.UnBounded = true
 		}
@@ -240,7 +240,7 @@ func (p *HandParser) parseFrameBound() ast.FrameBound {
 	}
 
 	// INTERVAL expr unit PRECEDING/FOLLOWING (for RANGE frames)
-	if _, ok := p.accept(57462); ok {
+	if _, ok := p.accept(interval); ok {
 		expr := p.parseExpression(precNone)
 		unit := p.parseTimeUnit()
 		bound.Expr = expr
@@ -251,10 +251,10 @@ func (p *HandParser) parseFrameBound() ast.FrameBound {
 		// expr PRECEDING/FOLLOWING
 		bound.Expr = p.parseExpression(precNone)
 	}
-	if _, ok := p.accept(57839); ok {
+	if _, ok := p.accept(preceding); ok {
 		bound.Type = ast.Preceding
 	} else {
-		p.expect(57727)
+		p.expect(following)
 		bound.Type = ast.Following
 	}
 	return bound
@@ -297,14 +297,14 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 
 	// Optional DISTINCT/DISTINCTROW inside aggregate.
 	hasDistinctAll := false
-	if _, ok := p.accept(57411); ok {
+	if _, ok := p.accept(distinct); ok {
 		node.Distinct = true
-	} else if _, ok := p.accept(57412); ok {
+	} else if _, ok := p.accept(distinctRow); ok {
 		// DISTINCTROW is a MySQL alias for DISTINCT.
 		node.Distinct = true
 	}
 	if node.Distinct {
-		if _, ok := p.accept(57364); ok {
+		if _, ok := p.accept(all); ok {
 			hasDistinctAll = true
 		}
 	}
@@ -327,7 +327,7 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 
 	// Argument list.
 	for {
-		p.accept(57364)
+		p.accept(all)
 
 		arg := p.parseExpression(precNone)
 		if arg == nil {
@@ -372,13 +372,13 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 	// - optional SEPARATOR clause (defaults to ',')
 	// AggregateFuncExpr.Restore() expects the last Args element to be the SEPARATOR value.
 	if lowerName == "group_concat" {
-		if _, ok := p.accept(57510); ok {
-			p.expect(57376)
+		if _, ok := p.accept(order); ok {
+			p.expect(by)
 			ob := Alloc[ast.OrderByClause](p.arena)
 			ob.Items = p.parseByItems()
 			node.Order = ob
 		}
-		if _, ok := p.accept(57895); ok {
+		if _, ok := p.accept(separator); ok {
 			// SEPARATOR followed by a string literal — use empty charset/collation
 			// to match the OptGConcatSeparator rule.
 			tok := p.next()
@@ -433,7 +433,7 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 		}
 		p.expect(',')
 		// Check for INTERVAL keyword.
-		if _, ok := p.accept(57462); ok {
+		if _, ok := p.accept(interval); ok {
 			intervalExpr := p.parseExpression(precNone)
 			unit := p.parseTimeUnit()
 			if unit == nil {
@@ -465,7 +465,7 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 			}
 		}
 		// Check for USING keyword.
-		if _, ok := p.accept(57576); ok {
+		if _, ok := p.accept(using); ok {
 			charsetTok := p.next()
 			charsetName := strings.ToLower(charsetTok.Lit)
 			if !charset.ValidCharsetAndCollation(charsetName, "") {
@@ -489,11 +489,11 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 		selector := &ast.GetFormatSelectorExpr{}
 		tok := p.next()
 		switch tok.Tp {
-		case 57680:
+		case dateType:
 			selector.Selector = ast.GetFormatSelectorDate
-		case 57952:
+		case timeType:
 			selector.Selector = ast.GetFormatSelectorTime
-		case 57681:
+		case datetimeType:
 			selector.Selector = ast.GetFormatSelectorDatetime
 		default:
 			// TIMESTAMP is also accepted
@@ -512,7 +512,7 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 		if unit == nil {
 			return nil
 		}
-		p.expect(57434)
+		p.expect(from)
 		expr := p.parseExpression(precNone)
 		p.expect(')')
 		node.Args = []ast.ExprNode{unit, expr}
@@ -522,7 +522,7 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 	// Special: POSITION(substr IN str)
 	if lowerName == "position" {
 		substr := p.parseExpression(precNone)
-		p.expect(57448)
+		p.expect(in)
 		str := p.parseExpression(precNone)
 		p.expect(')')
 		node.Args = []ast.ExprNode{substr, str}
@@ -535,14 +535,14 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 		if expr == nil {
 			return nil
 		}
-		if _, ok := p.accept(57369); ok {
+		if _, ok := p.accept(as); ok {
 			// AS CHAR(N) or AS CHARACTER(N) or AS BINARY(N)
 			var typName string
 			switch p.peek().Tp {
-			case 57381, 57382:
+			case charType, character:
 				p.next()
 				typName = "CHAR"
-			case 57373:
+			case binaryType:
 				p.next()
 				typName = "BINARY"
 			}

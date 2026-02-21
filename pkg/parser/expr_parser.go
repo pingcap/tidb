@@ -44,15 +44,15 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 
 		// Handle keyword-based infix operators that don't fit the simple precedence model.
 		switch tok.Tp {
-		case 57498:
+		case not:
 			// "NOT IN", "NOT LIKE", "NOT BETWEEN", "NOT REGEXP/RLIKE"
 			if minPrec > precPredicate {
 				return left
 			}
 			// Only treat NOT as infix if followed by IN/LIKE/ILIKE/BETWEEN/REGEXP/RLIKE
 			nextTp := p.peekN(1).Tp
-			if nextTp != 57448 && nextTp != 57476 && nextTp != 57447 &&
-				nextTp != 57371 && nextTp != 57526 && nextTp != 57535 {
+			if nextTp != in && nextTp != like && nextTp != ilike &&
+				nextTp != between && nextTp != regexpKwd && nextTp != rlike {
 				return left
 			}
 			left = p.parseNotInfixExpr(left)
@@ -61,7 +61,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			}
 			continue
 
-		case 57448:
+		case in:
 			if minPrec > precPredicate {
 				return left
 			}
@@ -71,18 +71,18 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			}
 			continue
 
-		case 57476, 57447:
+		case like, ilike:
 			if minPrec > precPredicate {
 				return left
 			}
-			isNotLike := (tok.Tp == 57476)
+			isNotLike := (tok.Tp == like)
 			left = p.parseLikeExpr(left, false, isNotLike)
 			if left == nil {
 				return nil
 			}
 			continue
 
-		case 57371:
+		case between:
 			if minPrec > precPredicate {
 				return left
 			}
@@ -92,7 +92,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			}
 			continue
 
-		case 57526, 57535:
+		case regexpKwd, rlike:
 			if minPrec > precPredicate {
 				return left
 			}
@@ -102,7 +102,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			}
 			continue
 
-		case 57464:
+		case is:
 			// IS is at the same precedence as comparison operators (=, >=, etc.)
 			// in MySQL grammar — both are at the bool_primary level with left-to-right
 			// associativity. So "A = B IS NULL" parses as "(A = B) IS NULL".
@@ -115,7 +115,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			}
 			continue
 
-		case 57384:
+		case collate:
 			if minPrec > precCollate {
 				return left
 			}
@@ -125,17 +125,17 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			}
 			continue
 
-		case 58205, 58206: // -> or ->> (JSON extract / unquote+extract)
+		case jss, juss: // -> or ->> (JSON extract / unquote+extract)
 			if minPrec > precPredicate {
 				return left
 			}
-			left = p.parseJSONExtract(left, tok.Tp == 58206)
+			left = p.parseJSONExtract(left, tok.Tp == juss)
 			if left == nil {
 				return nil
 			}
 			continue
 
-		case 57350: // MEMBER OF (expr) - lexer merges MEMBER+OF into single token
+		case memberof: // MEMBER OF (expr) - lexer merges MEMBER+OF into single token
 			if minPrec > precPredicate {
 				return left
 			}
@@ -150,8 +150,8 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 				return nil
 			}
 			// Allow -> and ->> JSON extract chains on the simple expr.
-			for p.peek().Tp == 58205 || p.peek().Tp == 58206 {
-				arg = p.parseJSONExtract(arg, p.peek().Tp == 58206)
+			for p.peek().Tp == jss || p.peek().Tp == juss {
+				arg = p.parseJSONExtract(arg, p.peek().Tp == juss)
 				if arg == nil {
 					return nil
 				}
@@ -183,13 +183,13 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 		// Check for ANY/SOME/ALL subquery comparison: expr <op> ANY/SOME/ALL (subquery)
 		if prec == precComparison {
 			switch p.peek().Tp {
-			case 57605, 57912:
+			case any, some:
 				if res := p.parseCompareSubquery(left, opCode, false); res != nil {
 					left = res
 					continue
 				}
 				return nil
-			case 57364:
+			case all:
 				if res := p.parseCompareSubquery(left, opCode, true); res != nil {
 					left = res
 					continue
@@ -229,13 +229,13 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 	tok := p.peek()
 
 	switch tok.Tp {
-	case 58197, 58195, 58196, 57353, 58198, 58199:
+	case intLit, floatLit, decLit, stringLit, hexLit, bitLit:
 		return p.parseLiteral()
 
 	case '{': // ODBC escape sequence
 		p.next() // consume '{'
 		tok := p.next()
-		if tok.Tp != 57346 {
+		if tok.Tp != identifier {
 			p.error(tok.Offset, "expected identifier after '{' in ODBC escape sequence")
 			return nil
 		}
@@ -274,23 +274,23 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 			return innerExpr
 		}
 
-	case 57502:
+	case null:
 		p.next()
 		return p.newValueExpr(nil)
 
-	case 57567, 57425:
-		return p.newValueExpr(p.next().Tp == 57567)
+	case trueKwd, falseKwd:
+		return p.newValueExpr(p.next().Tp == trueKwd)
 
-	case 57579, 57578, 57577:
+	case utcTimestamp, utcTime, utcDate:
 		return p.parseTimeFunc(p.peek().Lit)
 
-	case 57352:
+	case underscoreCS:
 		return p.parseCharsetIntroducer()
 
-	case 57346:
+	case identifier:
 		return p.parseIdentOrFuncCall()
 
-	case 58211:
+	case paramMarker:
 		return p.parseParamMarker()
 
 	case '(':
@@ -310,7 +310,7 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 		}
 		return p.parseUnaryOp(op, precUnary)
 
-	case 57498:
+	case not:
 		if minPrec > precNot {
 			return nil
 		}
@@ -330,8 +330,8 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 		node.V = expr
 		return node
 
-	case 58213:
-		// 58213 is emitted by the lexer when HIGH_NOT_PRECEDENCE mode is set.
+	case not2:
+		// not2 is emitted by the lexer when HIGH_NOT_PRECEDENCE mode is set.
 		// It has the same precedence as ! and restores as "!".
 		if minPrec > precUnary {
 			return nil
@@ -348,13 +348,13 @@ func (p *HandParser) parseLiteral() ast.ExprNode {
 	tok := p.next()
 
 	switch tok.Tp {
-	case 58197, 58195, 58196:
+	case intLit, floatLit, decLit:
 		return p.newValueExpr(tok.Item)
-	case 57353:
+	case stringLit:
 		return p.newValueExpr(tok.Lit)
-	case 58198, 58199:
+	case hexLit, bitLit:
 		var ctor func(string) (interface{}, error)
-		if tok.Tp == 58198 {
+		if tok.Tp == hexLit {
 			ctor = ast.NewHexLiteral
 		} else {
 			ctor = ast.NewBitLiteral
@@ -372,7 +372,7 @@ func (p *HandParser) parseIdentOrFuncCall() ast.ExprNode {
 	tok := p.next() // consume the identifier
 
 	// Schema-qualified function call: schema.func(...)
-	if p.peek().Tp == '.' && p.peekN(1).Tp >= 57346 && p.peekN(2).Tp == '(' {
+	if p.peek().Tp == '.' && p.peekN(1).Tp >= identifier && p.peekN(2).Tp == '(' {
 		p.next()                // consume '.'
 		funcNameTok := p.next() // consume function name
 		// Generic function with schema: s.a()
@@ -452,15 +452,15 @@ func (p *HandParser) parseNotInfixExpr(left ast.ExprNode) ast.ExprNode {
 	p.next() // consume NOT
 
 	switch p.peek().Tp {
-	case 57448:
+	case in:
 		return p.parseInExpr(left, true)
-	case 57476:
+	case like:
 		return p.parseLikeExpr(left, true, true)
-	case 57447:
+	case ilike:
 		return p.parseLikeExpr(left, true, false)
-	case 57371:
+	case between:
 		return p.parseBetweenExpr(left, true)
-	case 57526, 57535:
+	case regexpKwd, rlike:
 		return p.parseRegexpExpr(left, true)
 	default:
 		p.error(p.peek().Offset, "expected IN, LIKE, BETWEEN, or REGEXP after NOT")
@@ -469,18 +469,18 @@ func (p *HandParser) parseNotInfixExpr(left ast.ExprNode) ast.ExprNode {
 }
 
 // parseLikeExpr parses [NOT] LIKE/ILIKE pattern [ESCAPE escape_char].
-func (p *HandParser) parseLikeExpr(left ast.ExprNode, not bool, isLike bool) ast.ExprNode {
+func (p *HandParser) parseLikeExpr(left ast.ExprNode, isNot bool, isLike bool) ast.ExprNode {
 	p.next() // consume LIKE or ILIKE
 
 	node := Alloc[ast.PatternLikeOrIlikeExpr](p.arena)
 	node.Expr = left
-	node.Not = not
+	node.Not = isNot
 	node.IsLike = isLike
 	node.Pattern = p.parseExpression(precPredicate + 1)
 
 	// Optional ESCAPE clause.
 	// Note: 'escape' can be either an identifier or the escape keyword token.
-	if _, ok := p.acceptKeyword(57709, "escape"); ok {
+	if _, ok := p.acceptKeyword(escape, "escape"); ok {
 		escTok := p.next()
 		switch len(escTok.Lit) {
 		case 0:
@@ -500,28 +500,28 @@ func (p *HandParser) parseLikeExpr(left ast.ExprNode, not bool, isLike bool) ast
 }
 
 // parseBetweenExpr parses [NOT] BETWEEN low AND high.
-func (p *HandParser) parseBetweenExpr(left ast.ExprNode, not bool) ast.ExprNode {
+func (p *HandParser) parseBetweenExpr(left ast.ExprNode, isNot bool) ast.ExprNode {
 	p.next() // consume BETWEEN
 
 	node := Alloc[ast.BetweenExpr](p.arena)
 	node.Expr = left
-	node.Not = not
+	node.Not = isNot
 
 	// Parse the low bound at high precedence so AND binds to BETWEEN, not to logical AND.
 	node.Left = p.parseExpression(precPredicate + 1)
-	p.expect(57367)
+	p.expect(and)
 	node.Right = p.parseExpression(precPredicate + 1)
 
 	return node
 }
 
 // parseRegexpExpr parses [NOT] REGEXP|RLIKE pattern.
-func (p *HandParser) parseRegexpExpr(left ast.ExprNode, not bool) ast.ExprNode {
+func (p *HandParser) parseRegexpExpr(left ast.ExprNode, isNot bool) ast.ExprNode {
 	p.next() // consume REGEXP or RLIKE
 
 	node := Alloc[ast.PatternRegexpExpr](p.arena)
 	node.Expr = left
-	node.Not = not
+	node.Not = isNot
 	node.Pattern = p.parseExpression(precPredicate + 1)
 
 	return node
@@ -539,7 +539,7 @@ func (p *HandParser) parseJSONExtract(left ast.ExprNode, unquote bool) ast.ExprN
 		return nil
 	}
 	p.next() // consume -> or ->>
-	if p.peek().Tp != 57353 {
+	if p.peek().Tp != stringLit {
 		p.error(0, "%s requires a string literal JSON path on the right side", opName)
 		return nil
 	}
@@ -564,28 +564,28 @@ func (p *HandParser) parseJSONExtract(left ast.ExprNode, unquote bool) ast.ExprN
 func (p *HandParser) parseIsExpr(left ast.ExprNode) ast.ExprNode {
 	p.next() // consume IS
 
-	not := false
-	if _, ok := p.accept(57498); ok {
-		not = true
+	isNot := false
+	if _, ok := p.accept(not); ok {
+		isNot = true
 	}
 
 	switch p.peek().Tp {
-	case 57502:
+	case null:
 		p.next()
 		node := Alloc[ast.IsNullExpr](p.arena)
 		node.Expr = left
-		node.Not = not
+		node.Not = isNot
 		return node
 
-	case 57567, 57425:
+	case trueKwd, falseKwd:
 		trueVal := int64(0)
-		if p.peek().Tp == 57567 {
+		if p.peek().Tp == trueKwd {
 			trueVal = 1
 		}
 		p.next()
 		node := Alloc[ast.IsTruthExpr](p.arena)
 		node.Expr = left
-		node.Not = not
+		node.Not = isNot
 		node.True = trueVal
 		return node
 
@@ -596,7 +596,7 @@ func (p *HandParser) parseIsExpr(left ast.ExprNode) ast.ExprNode {
 			p.next()
 			node := Alloc[ast.IsNullExpr](p.arena)
 			node.Expr = left
-			node.Not = not
+			node.Not = isNot
 			return node
 		}
 		p.error(p.peek().Offset, "expected NULL, TRUE, FALSE, or UNKNOWN after IS [NOT]")
@@ -627,7 +627,7 @@ func (p *HandParser) parseVariableExpr() ast.ExprNode {
 	tok := p.next()
 	node := Alloc[ast.VariableExpr](p.arena)
 
-	if tok.Tp == 57355 {
+	if tok.Tp == doubleAtIdentifier {
 		node.IsSystem = true
 		// tok.Lit contains the full literal, e.g. "@@global.max_connections"
 		// Strip leading "@@" and lowercase (matching the SystemVariable rule).
@@ -659,7 +659,7 @@ func (p *HandParser) parseVariableExpr() ast.ExprNode {
 	}
 
 	// Check for assignment: @var := expr
-	if p.peek().Tp == 58201 {
+	if p.peek().Tp == assignmentEq {
 		p.next() // consume :=
 		node.IsGlobal = false
 		node.IsSystem = false
@@ -701,13 +701,13 @@ func (p *HandParser) parseCharsetIntroducer() ast.ExprNode {
 	valTok := p.peek()
 	var expr ast.ExprNode
 	switch valTok.Tp {
-	case 57353:
+	case stringLit:
 		p.next()
 		expr = ast.NewValueExpr(valTok.Lit, csName, co)
-	case 58198, 58199:
+	case hexLit, bitLit:
 		p.next()
 		var parseFn func(string) (interface{}, error)
-		if valTok.Tp == 58198 {
+		if valTok.Tp == hexLit {
 			parseFn = ast.NewHexLiteral
 		} else {
 			parseFn = ast.NewBitLiteral
@@ -747,7 +747,7 @@ func (p *HandParser) parseOptPrecisionFunc() ast.ExprNode {
 	node.FnName = ast.NewCIStr(tok.Lit)
 
 	// Optional precision argument: NOW(6), CURTIME(3)
-	if p.peek().Tp == 58197 {
+	if p.peek().Tp == intLit {
 		arg := p.parseLiteral()
 		if arg == nil {
 			return nil
@@ -793,29 +793,29 @@ func (p *HandParser) parseMatchAgainstExpr() ast.ExprNode {
 	p.expect(')')
 
 	// AGAINST (expr [modifier])
-	p.expect(57601)
+	p.expect(against)
 	p.expect('(')
 	node.Against = p.parseExpression(precPredicate + 1)
 
 	// Optional search modifier.
-	if _, ok := p.accept(57448); ok {
+	if _, ok := p.accept(in); ok {
 		// IN BOOLEAN MODE or IN NATURAL LANGUAGE MODE [WITH QUERY EXPANSION]
-		if _, ok := p.accept(57630); ok {
-			p.expect(57790)
+		if _, ok := p.accept(booleanType); ok {
+			p.expect(mode)
 			node.Modifier = ast.FulltextSearchModifier(ast.FulltextSearchModifierBooleanMode)
 			// IN BOOLEAN MODE WITH QUERY EXPANSION is invalid.
-			if _, ok := p.accept(57590); ok {
+			if _, ok := p.accept(with); ok {
 				p.error(p.peek().Offset, "IN BOOLEAN MODE WITH QUERY EXPANSION is not supported")
 				return nil
 			}
-		} else if _, ok := p.accept(57497); ok {
-			p.expect(57762)
-			p.expect(57790)
+		} else if _, ok := p.accept(natural); ok {
+			p.expect(language)
+			p.expect(mode)
 			// "IN NATURAL LANGUAGE MODE" = NaturalLanguageMode (0)
 			// Check for optional "WITH QUERY EXPANSION"
-			if _, ok := p.accept(57590); ok {
-				p.expect(57852)
-				p.expect(57716)
+			if _, ok := p.accept(with); ok {
+				p.expect(query)
+				p.expect(expansion)
 				node.Modifier = ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode | ast.FulltextSearchModifierWithQueryExpansion)
 			} else {
 				node.Modifier = ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode)
@@ -824,10 +824,10 @@ func (p *HandParser) parseMatchAgainstExpr() ast.ExprNode {
 			p.error(p.peek().Offset, "expected BOOLEAN MODE or NATURAL LANGUAGE MODE after IN")
 			return nil
 		}
-	} else if _, ok := p.accept(57590); ok {
+	} else if _, ok := p.accept(with); ok {
 		// WITH QUERY EXPANSION
-		p.expect(57852)
-		p.expect(57716)
+		p.expect(query)
+		p.expect(expansion)
 		node.Modifier = ast.FulltextSearchModifier(ast.FulltextSearchModifierWithQueryExpansion)
 	}
 
@@ -862,7 +862,7 @@ func (p *HandParser) parseCompareSubquery(left ast.ExprNode, opCode opcode.Op, a
 }
 
 func (p *HandParser) parseDateArith(left ast.ExprNode, opCode opcode.Op) ast.ExprNode {
-	if (opCode != opcode.Plus && opCode != opcode.Minus) || p.peek().Tp != 57462 || p.peekN(1).Tp == '(' {
+	if (opCode != opcode.Plus && opCode != opcode.Minus) || p.peek().Tp != interval || p.peekN(1).Tp == '(' {
 		return nil
 	}
 	p.next() // consume INTERVAL
@@ -889,7 +889,7 @@ func (p *HandParser) parseTimeFunc(fnName string) ast.ExprNode {
 		// Parse optional fsp (0-6), must be literal integer
 		var args []ast.ExprNode
 		if p.peek().Tp != ')' {
-			if p.peek().Tp == 58197 {
+			if p.peek().Tp == intLit {
 				if lit := p.parseLiteral(); lit != nil {
 					args = append(args, lit)
 				} else {

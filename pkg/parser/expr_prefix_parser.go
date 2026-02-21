@@ -25,16 +25,16 @@ import (
 func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 	tok := p.peek()
 	switch tok.Tp {
-	case 57422:
+	case exists:
 		return p.parseExistsSubquery()
 
-	case 57379:
+	case caseKwd:
 		return p.parseCaseExpr()
 
-	case 57405:
+	case defaultKwd:
 		return p.parseDefaultExpr()
 
-	case 57536:
+	case row:
 		// ROW(expr, expr, ...) — explicit row constructor (requires 2+ elements).
 		p.next()
 		p.expect('(')
@@ -56,14 +56,14 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 		}
 		return row
 
-	case 57489:
+	case maxValue:
 		p.next()
 		return &ast.MaxValueExpr{}
 
-	case 57488:
+	case match:
 		return p.parseMatchAgainstExpr()
 
-	case 57580:
+	case values:
 		// VALUES(column) in ON DUPLICATE KEY UPDATE context.
 		p.next()
 		p.expect('(')
@@ -78,10 +78,10 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 		// This should only be reached in expression context for table.*.
 		return nil
 
-	case 57354, 57355:
+	case singleAtIdentifier, doubleAtIdentifier:
 		return p.parseVariableExpr()
 
-	case 57392, 57394, 57395, 57396, 57393:
+	case currentDate, currentTime, currentTs, currentUser, currentRole:
 		return p.parseCurrentFunc()
 
 	case builtinFnCast:
@@ -96,10 +96,10 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 	case builtinFnPosition:
 		return p.tryBuiltinFunc(p.parsePositionFunc)
 
-	case 57388:
+	case convert:
 		return p.tryBuiltinFunc(p.parseConvertFunc)
 
-	case 57373:
+	case binaryType:
 		// BINARY expr → FuncCastExpr with binary charset (per parser.y:8242-8253).
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
 		p.next()
@@ -118,19 +118,19 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 		// Fallback to identifier if not a binary expression.
 		return &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: ast.NewCIStr("binary")}}
 
-	case 58095:
+	case timestampDiff:
 		return p.tryBuiltinFunc(p.parseTimestampDiffFunc)
 
 	// Keywords that are also valid as function names in expression context.
-	case 57445, 57530, 57650, 57453:
+	case ifKwd, replace, coalesce, insert:
 		return p.parseKeywordFuncCall()
 
-	case 57952, 57954, 57680:
+	case timeType, timestampType, dateType:
 		var tp string
 		switch p.peek().Tp {
-		case 57952:
+		case timeType:
 			tp = ast.TimeLiteral
-		case 57954:
+		case timestampType:
 			tp = ast.TimestampLiteral
 		default:
 			tp = ast.DateLiteral
@@ -142,8 +142,8 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 
 	// NowSymFunc: NOW(), CURRENT_TIMESTAMP(), LOCALTIME(), LOCALTIMESTAMP()
 	// Originally, these all produce FnName "CURRENT_TIMESTAMP" (canonical name).
-	// The scanner may produce either builtinFnNow or 58052 depending on context.
-	case builtinFnNow, 58052, builtinFnCurTime:
+	// The scanner may produce either builtinFnNow or now depending on context.
+	case builtinFnNow, now, builtinFnCurTime:
 		return p.tryBuiltinFunc(p.parseOptPrecisionFunc)
 
 	case builtinFnCurDate:
@@ -158,11 +158,11 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 		return p.tryBuiltinFunc(p.parseSubstringFunc)
 
 	// JSON_SUM_CRC32(expr AS type)
-	case 58038:
+	case jsonSumCrc32:
 		return p.tryBuiltinFunc(p.parseJsonSumCrc32Func)
 
 	// CHAR(expr, ...) - must route through parseScalarFuncCall for USING/NULL-sentinel handling.
-	case 57381, 57382:
+	case charType, character:
 		if p.peekN(1).Tp == '(' {
 			p.next() // consume the CHAR/CHARACTER token
 			return p.parseScalarFuncCall(tok.Lit)
@@ -171,7 +171,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 
 	// INTERVAL expr unit + expr → DATE_ADD(expr, INTERVAL expr unit)
 	// INTERVAL(N, N1, N2, ...) → comparison function (handled by generic path)
-	case 57462:
+	case interval:
 		if p.peekN(1).Tp != '(' {
 			p.next() // consume INTERVAL
 			intervalExpr := p.parseExpression(precNone)
@@ -187,7 +187,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 		return p.parseIdentOrFuncCall()
 
 	default:
-		if tok.Tp == 57356 {
+		if tok.Tp == invalid {
 			p.error(tok.Offset, "invalid token")
 			return nil
 		}
@@ -199,7 +199,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 			return p.parseFuncCall(tok.Lit)
 		}
 		// NEXT VALUE FOR seq_name → NEXTVAL(seq)
-		if tok.Tp == 57797 && p.peekN(1).Tp == 57977 && p.peekN(2).Tp == 57431 {
+		if tok.Tp == next && p.peekN(1).Tp == value && p.peekN(2).Tp == forKwd {
 			p.next() // consume NEXT
 			p.next() // consume VALUE
 			p.next() // consume FOR
@@ -210,12 +210,12 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 				Args:   []ast.ExprNode{seqExpr},
 			}
 		}
-		// Fallback: any keyword token (Tp >= 57346) can be used as an
+		// Fallback: any keyword token (Tp >= identifier) can be used as an
 		// identifier in expression context. MySQL allows most non-reserved keywords
 		// as column/table names. However, reserved clause-introducing keywords
 		// (FROM, WHERE, etc.) must NOT be consumed as identifiers — they terminate
 		// the current expression/field list.
-		if tok.Tp >= 57346 && !isReservedClauseKeyword(tok.Tp) {
+		if tok.Tp >= identifier && !isReservedClauseKeyword(tok.Tp) {
 			if p.peekN(1).Tp == '(' {
 				// keyword followed by '(' → function call (e.g., AVG(...))
 				p.next() // consume the keyword token
@@ -235,7 +235,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 
 // parsePrefixTimeLiteral parses DATE '...', TIME '...', TIMESTAMP '...'.
 func (p *HandParser) parsePrefixTimeLiteral(fnName string) ast.ExprNode {
-	if p.peekN(1).Tp == 57353 {
+	if p.peekN(1).Tp == stringLit {
 		p.next()        // consume type token
 		lit := p.next() // consume string literal
 		node := &ast.FuncCallExpr{
@@ -250,13 +250,13 @@ func (p *HandParser) parsePrefixTimeLiteral(fnName string) ast.ExprNode {
 // isReservedClauseKeyword returns true for SQL reserved keywords that introduce
 // clauses and must NOT be consumed as bare identifiers in expression context.
 // These keywords terminate field lists and expression parsing. They can still
-// be used as identifiers when backtick-quoted (the lexer emits 57346
+// be used as identifiers when backtick-quoted (the lexer emits identifier
 // for quoted names).
 func isReservedClauseKeyword(tp int) bool {
 	switch tp {
-	case 57434, 57587, 57438, 57510, 57477,
-		57440, 57568, 57463, 57431, 57483,
-		57540, 57541, 57505:
+	case from, where, group, order, limit,
+		having, union, into, forKwd, lock,
+		selectKwd, set, on:
 		return true
 	}
 	return false

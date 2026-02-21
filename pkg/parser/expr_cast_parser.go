@@ -36,15 +36,15 @@ func (p *HandParser) parseCurrentFunc() ast.ExprNode {
 
 	// Map token to canonical function name.
 	switch tok.Tp {
-	case 57395:
+	case currentTs:
 		node.FnName = ast.NewCIStr("CURRENT_TIMESTAMP")
-	case 57392:
+	case currentDate:
 		node.FnName = ast.NewCIStr("CURRENT_DATE")
-	case 57394:
+	case currentTime:
 		node.FnName = ast.NewCIStr("CURRENT_TIME")
-	case 57396:
+	case currentUser:
 		node.FnName = ast.NewCIStr("CURRENT_USER")
-	case 57393:
+	case currentRole:
 		node.FnName = ast.NewCIStr("CURRENT_ROLE")
 	default:
 		p.error(tok.Offset, "unexpected current-func token %d", tok.Tp)
@@ -53,7 +53,7 @@ func (p *HandParser) parseCurrentFunc() ast.ExprNode {
 
 	// Optional parentheses with optional precision argument.
 	if _, ok := p.accept('('); ok {
-		if p.peek().Tp == 58197 {
+		if p.peek().Tp == intLit {
 			arg := p.parseLiteral()
 			if arg == nil {
 				return nil
@@ -94,7 +94,7 @@ func (p *HandParser) parseConvertFunc() ast.ExprNode {
 	}
 
 	// CONVERT(expr USING charset_name)
-	if _, ok := p.accept(57576); ok {
+	if _, ok := p.accept(using); ok {
 		charsetTok := p.next()
 		charsetName := strings.ToLower(charsetTok.Lit)
 		if !charset.ValidCharsetAndCollation(charsetName, "") {
@@ -175,7 +175,7 @@ func (p *HandParser) parseTimestampDiffFunc() ast.ExprNode {
 // Returns the FieldType and whether an explicit charset was specified.
 func (p *HandParser) parseCastType() (*types.FieldType, bool) {
 	tp, explicit := p.parseCastTypeInternal()
-	if tp != nil && p.peek().Tp == 57368 {
+	if tp != nil && p.peek().Tp == array {
 		p.next()
 		tp.SetArray(true)
 	}
@@ -195,7 +195,7 @@ func setBinaryCastType(tp *types.FieldType) {
 func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 	tok := p.peek()
 	switch tok.Tp {
-	case 57373:
+	case binaryType:
 		p.next()
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetFlen(p.parseOptFieldLen())
@@ -205,12 +205,12 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		setBinaryCastType(tp)
 		return tp, false
 
-	case 57381, 57382:
+	case charType, character:
 		p.next()
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetFlen(p.parseOptFieldLen())
 		// Check for BINARY suffix: CHAR(N) BINARY
-		if _, ok := p.accept(57373); ok {
+		if _, ok := p.accept(binaryType); ok {
 			if tp.GetFlen() != types.UnspecifiedLength {
 				tp.SetType(mysql.TypeString)
 			}
@@ -238,7 +238,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		tp.SetCollate(p.collation)
 		return tp, false
 
-	case 57680:
+	case dateType:
 		p.next()
 		tp := types.NewFieldType(mysql.TypeDate)
 		flen, dec := mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDate)
@@ -247,16 +247,16 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		setBinaryCastType(tp)
 		return tp, false
 
-	case 57991:
+	case yearType:
 		p.next()
 		tp := types.NewFieldType(mysql.TypeYear)
 		setBinaryCastType(tp)
 		return tp, false
 
-	case 57681, 57952:
+	case datetimeType, timeType:
 		p.next()
 		var mysqlType byte
-		if tok.Tp == 57681 {
+		if tok.Tp == datetimeType {
 			mysqlType = mysql.TypeDatetime
 		} else {
 			mysqlType = mysql.TypeDuration
@@ -271,7 +271,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		setBinaryCastType(tp)
 		return tp, false
 
-	case 57404:
+	case decimalType:
 		p.next()
 		tp := types.NewFieldType(mysql.TypeNewDecimal)
 		flen, dec := p.parseFloatOpt()
@@ -284,13 +284,13 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		setBinaryCastType(tp)
 		return tp, false
 
-	case 57905, 57571:
-		isUnsigned := tok.Tp == 57571
+	case signed, unsigned:
+		isUnsigned := tok.Tp == unsigned
 		p.next()
 		// Accept optional INTEGER/INT keyword.
-		if _, ok := p.accept(57454); !ok {
+		if _, ok := p.accept(intType); !ok {
 			if isUnsigned {
-				p.accept(57460)
+				p.accept(integerType)
 			}
 		}
 		tp := types.NewFieldType(mysql.TypeLonglong)
@@ -300,7 +300,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		setBinaryCastType(tp)
 		return tp, false
 
-	case 57759:
+	case jsonType:
 		p.next()
 		tp := types.NewFieldType(mysql.TypeJSON)
 		flen, dec := mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeJSON)
@@ -311,8 +311,8 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		tp.SetCollate(mysql.DefaultCollationName)
 		return tp, false
 
-	case 57414, 57523:
-		isReal := tok.Tp == 57523
+	case doubleType, realType:
+		isReal := tok.Tp == realType
 		p.next()
 		tp := types.NewFieldType(mysql.TypeDouble)
 		if isReal && p.sqlMode.HasRealAsFloatMode() {
@@ -324,7 +324,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		setBinaryCastType(tp)
 		return tp, false
 
-	case 57428:
+	case floatType:
 		p.next()
 		tp := types.NewFieldType(mysql.TypeFloat)
 		flen, _ := p.parseFloatOpt()
@@ -342,15 +342,15 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		setBinaryCastType(tp)
 		return tp, false
 
-	case 57979:
+	case vectorType:
 		p.next()
 		// OptVectorElementType: <FLOAT> or <DOUBLE>
 		if p.peek().Tp == '<' {
 			p.next()
 			switch p.peek().Tp {
-			case 57428, 57429:
+			case floatType, float4Type:
 				p.next()
-			case 57414, 57430:
+			case doubleType, float8Type:
 				p.next()
 				p.errs = append(p.errs, fmt.Errorf("Only VECTOR is supported for now"))
 				p.expect('>')
@@ -402,7 +402,7 @@ func (p *HandParser) parseCastExprAndType() (ast.ExprNode, *types.FieldType, boo
 	if expr == nil {
 		return nil, nil, false
 	}
-	p.expect(57369)
+	p.expect(as)
 	tp, explicitCharset := p.parseCastType()
 	if tp == nil {
 		return nil, nil, false
@@ -417,7 +417,7 @@ func (p *HandParser) parseOptFieldLen() int {
 		return types.UnspecifiedLength
 	}
 	tok := p.next()
-	if tok.Tp != 58197 {
+	if tok.Tp != intLit {
 		p.error(tok.Offset, "expected integer in field length")
 		return types.UnspecifiedLength
 	}
@@ -432,7 +432,7 @@ func (p *HandParser) parseFloatOpt() (flen, decimal int) {
 		return types.UnspecifiedLength, types.UnspecifiedLength
 	}
 	tok := p.next()
-	if tok.Tp != 58197 {
+	if tok.Tp != intLit {
 		p.error(tok.Offset, "expected integer in float opt")
 		return types.UnspecifiedLength, types.UnspecifiedLength
 	}
@@ -440,7 +440,7 @@ func (p *HandParser) parseFloatOpt() (flen, decimal int) {
 	decimal = types.UnspecifiedLength
 	if _, ok := p.accept(','); ok {
 		tok = p.next()
-		if tok.Tp != 58197 {
+		if tok.Tp != intLit {
 			p.error(tok.Offset, "expected integer in float opt decimal")
 			return flen, types.UnspecifiedLength
 		}
@@ -461,7 +461,7 @@ func (p *HandParser) parseExtractFunc() ast.ExprNode {
 		return nil
 	}
 
-	p.expect(57434)
+	p.expect(from)
 
 	expr := p.parseExpression(0)
 	if expr == nil {
@@ -490,20 +490,20 @@ func (p *HandParser) parseTrimFunc() ast.ExprNode {
 	// Check for TrimDirection keyword.
 	var direction ast.TrimDirectionType = -1 // sentinel: not specified
 	switch p.peek().Tp {
-	case 57375:
+	case both:
 		p.next()
 		direction = ast.TrimBoth
-	case 57473:
+	case leading:
 		p.next()
 		direction = ast.TrimLeading
-	case 57565:
+	case trailing:
 		p.next()
 		direction = ast.TrimTrailing
 	}
 
 	if direction >= 0 {
 		// direction FROM expr — TRIM(BOTH FROM expr) or TRIM(LEADING FROM expr) etc.
-		if _, ok := p.accept(57434); ok {
+		if _, ok := p.accept(from); ok {
 			expr := p.parseExpression(0)
 			if expr == nil {
 				return nil
@@ -521,7 +521,7 @@ func (p *HandParser) parseTrimFunc() ast.ExprNode {
 		if remStr == nil {
 			return nil
 		}
-		p.expect(57434)
+		p.expect(from)
 		expr := p.parseExpression(0)
 		if expr == nil {
 			return nil
@@ -540,7 +540,7 @@ func (p *HandParser) parseTrimFunc() ast.ExprNode {
 		return nil
 	}
 
-	if _, ok := p.accept(57434); ok {
+	if _, ok := p.accept(from); ok {
 		// TRIM(remstr FROM str)
 		expr := p.parseExpression(0)
 		if expr == nil {
@@ -574,7 +574,7 @@ func (p *HandParser) parsePositionFunc() ast.ExprNode {
 		return nil
 	}
 
-	p.expect(57448)
+	p.expect(in)
 
 	str := p.parseExpression(0)
 	if str == nil {
@@ -605,7 +605,7 @@ func (p *HandParser) parseDateArithFunc() ast.ExprNode {
 	}
 
 	p.expect(',')
-	p.expect(57462)
+	p.expect(interval)
 
 	intervalExpr := p.parseExpression(0)
 	if intervalExpr == nil {
@@ -640,7 +640,7 @@ func (p *HandParser) parseSubstringFunc() ast.ExprNode {
 
 	// FROM form or comma form — both parse pos and optional length.
 	var usesFor bool
-	if _, ok := p.accept(57434); ok {
+	if _, ok := p.accept(from); ok {
 		usesFor = true // length separator is FOR
 	} else {
 		p.expect(',') // length separator is ','
@@ -654,7 +654,7 @@ func (p *HandParser) parseSubstringFunc() ast.ExprNode {
 	args := []ast.ExprNode{str, pos}
 
 	// Optional length: FOR (FROM form) or , (comma form)
-	lenSep := 57431
+	lenSep := forKwd
 	if !usesFor {
 		lenSep = ','
 	}
@@ -679,47 +679,47 @@ func (p *HandParser) parseTimeUnit() *ast.TimeUnitExpr {
 	tok := p.next()
 	var unit ast.TimeUnitType
 	switch tok.Tp {
-	case 57786:
+	case microsecond:
 		unit = ast.TimeUnitMicrosecond
-	case 57887, 57922:
+	case second, sqlTsiSecond:
 		unit = ast.TimeUnitSecond
-	case 57787, 57919:
+	case minute, sqlTsiMinute:
 		unit = ast.TimeUnitMinute
-	case 57741, 57918:
+	case hour, sqlTsiHour:
 		unit = ast.TimeUnitHour
-	case 57682, 57917:
+	case day, sqlTsiDay:
 		unit = ast.TimeUnitDay
-	case 57985, 57923:
+	case week, sqlTsiWeek:
 		unit = ast.TimeUnitWeek
-	case 57792, 57920:
+	case month, sqlTsiMonth:
 		unit = ast.TimeUnitMonth
-	case 57850, 57921:
+	case quarter, sqlTsiQuarter:
 		unit = ast.TimeUnitQuarter
-	case 57991, 57924:
+	case yearType, sqlTsiYear:
 		unit = ast.TimeUnitYear
-	case 57539:
+	case secondMicrosecond:
 		unit = ast.TimeUnitSecondMicrosecond
-	case 57494:
+	case minuteMicrosecond:
 		unit = ast.TimeUnitMinuteMicrosecond
-	case 57495:
+	case minuteSecond:
 		unit = ast.TimeUnitMinuteSecond
-	case 57442:
+	case hourMicrosecond:
 		unit = ast.TimeUnitHourMicrosecond
-	case 57444:
+	case hourSecond:
 		unit = ast.TimeUnitHourSecond
-	case 57443:
+	case hourMinute:
 		unit = ast.TimeUnitHourMinute
-	case 57401:
+	case dayMicrosecond:
 		unit = ast.TimeUnitDayMicrosecond
-	case 57403:
+	case daySecond:
 		unit = ast.TimeUnitDaySecond
-	case 57402:
+	case dayMinute:
 		unit = ast.TimeUnitDayMinute
-	case 57400:
+	case dayHour:
 		unit = ast.TimeUnitDayHour
-	case 57593:
+	case yearMonth:
 		unit = ast.TimeUnitYearMonth
-	case 57346:
+	case identifier:
 		// Handle any remaining identifier-based time unit aliases
 		switch strings.ToUpper(tok.Lit) {
 		case "SQL_TSI_SECOND":

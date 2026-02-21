@@ -23,17 +23,17 @@ import (
 
 // parseShowStmt parses SHOW variants.
 func (p *HandParser) parseShowStmt() ast.StmtNode {
-	p.expect(57542)
+	p.expect(show)
 
 	stmt := Alloc[ast.ShowStmt](p.arena)
 
 	switch p.peek().Tp {
-	case 57373:
+	case binaryType:
 		// SHOW BINARY LOG STATUS
 		p.next()
 		if p.peek().IsKeyword("LOG") {
 			p.next()
-			if p.peekKeyword(57933, "STATUS") {
+			if p.peekKeyword(status, "STATUS") {
 				p.next()
 				stmt.Tp = ast.ShowBinlogStatus
 				return stmt
@@ -41,28 +41,28 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		}
 		return p.showSyntaxError()
 
-	case 57865:
+	case replica:
 		// SHOW REPLICA STATUS
 		p.next()
-		if p.peekKeyword(57933, "STATUS") {
+		if p.peekKeyword(status, "STATUS") {
 			p.next()
 			stmt.Tp = ast.ShowReplicaStatus
 			return stmt
 		}
 		return p.showSyntaxError()
 
-	case 57944:
+	case tables:
 		p.next()
 		stmt.Tp = ast.ShowTables
 		stmt.DBName = p.parseShowDatabaseNameOpt()
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 
-	case 58162:
+	case distribution:
 		p.next()
 		isSingular := false
-		if _, ok := p.accept(58167); !ok {
-			p.expect(58166)
+		if _, ok := p.accept(jobs); !ok {
+			p.expect(job)
 			isSingular = true
 		}
 		stmt.Tp = ast.ShowDistributionJobs
@@ -83,23 +83,23 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		}
 		return stmt
 
-	case 57730:
+	case full:
 		p.next()
 		stmt.Full = true
 		switch p.peek().Tp {
-		case 57944:
+		case tables:
 			p.next()
 			stmt.Tp = ast.ShowTables
 			stmt.DBName = p.parseShowDatabaseNameOpt()
 			p.parseShowLikeOrWhere(stmt)
 			return stmt
-		case 57653, 57722:
+		case columns, fields:
 			p.next()
 			stmt.Tp = ast.ShowColumns
 			p.parseShowTableClause(stmt)
 			p.parseShowLikeOrWhere(stmt)
 			return stmt
-		case 57845:
+		case processlist:
 			p.next()
 			stmt.Tp = ast.ShowProcessList
 			return stmt
@@ -107,25 +107,25 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 			return p.showSyntaxError()
 		}
 
-	case 57653, 57722:
+	case columns, fields:
 		p.next()
 		stmt.Tp = ast.ShowColumns
 		p.parseShowTableClause(stmt)
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 
-	case 57389:
+	case create:
 		p.next()
 		if result := p.parseShowCreate(); result != nil {
 			return result
 		}
 		return p.showSyntaxError()
 
-	case 57978, 57933, 57984:
+	case variables, status, warnings:
 		switch p.next().Tp {
-		case 57978:
+		case variables:
 			stmt.Tp = ast.ShowVariables
-		case 57933:
+		case status:
 			stmt.Tp = ast.ShowStatus
 		default:
 			stmt.Tp = ast.ShowWarnings
@@ -133,45 +133,45 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 
-	case 57733:
+	case global:
 		p.next()
 		return p.parseShowScopedStmt(stmt, true)
 
-	case 57899:
+	case session:
 		p.next()
 		return p.parseShowScopedStmt(stmt, false)
 
-	case 57845:
+	case processlist:
 		p.next()
 		stmt.Tp = ast.ShowProcessList
 		return stmt
 
-	case 57449, 57468:
+	case index, keys:
 		// SHOW {INDEX|KEYS|INDEXES} {FROM|IN} tbl [{FROM|IN} db] [WHERE expr]
 		p.next()
 		p.parseShowIndexStmt(stmt)
 		return stmt
 
-	case 57382:
+	case character:
 		// SHOW CHARACTER SET [LIKE|WHERE]
 		p.next()
-		p.expect(57541)
+		p.expect(set)
 		stmt.Tp = ast.ShowCharset
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 
-	case 57519, 57731, 57366:
+	case procedure, function, analyze:
 		// SHOW {PROCEDURE|FUNCTION|ANALYZE} STATUS [LIKE|WHERE]
 		var tp ast.ShowStmtType
 		switch p.next().Tp {
-		case 57519:
+		case procedure:
 			tp = ast.ShowProcedureStatus
-		case 57731:
+		case function:
 			tp = ast.ShowFunctionStatus
 		default:
 			tp = ast.ShowAnalyzeStatus
 		}
-		if p.peekKeyword(57933, "STATUS") {
+		if p.peekKeyword(status, "STATUS") {
 			p.next()
 			stmt.Tp = tp
 			p.parseShowLikeOrWhere(stmt)
@@ -179,45 +179,45 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		}
 		return p.showSyntaxError()
 
-	case 58153:
+	case cancel:
 		return p.parseCancelStmt()
-	case 58107:
+	case traffic:
 		return p.parseShowTrafficStmt()
 
-	case 57746:
+	case importKwd:
 		return p.parseShowImportStmt()
 
-	case 57398, 57399:
+	case database, databases:
 		// SHOW DATABASES
 		p.next()
 		stmt.Tp = ast.ShowDatabases
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 
-	case 58054:
+	case placement:
 		p.next()
 		return p.parseShowPlacement(stmt)
 
-	case 57556:
+	case tableKwd:
 		p.next()
 		if result := p.parseShowTable(stmt); result != nil {
 			return result
 		}
 		return p.showSyntaxError()
 
-	case 57734:
+	case grants:
 		p.next()
 		return p.parseShowGrants()
 
-	case 57818:
+	case open:
 		p.next()
-		p.accept(57944)
+		p.accept(tables)
 		stmt.Tp = ast.ShowOpenTables
 		stmt.DBName = p.parseShowDatabaseNameOpt()
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 
-	case 58142:
+	case builtins:
 		p.next()
 		stmt.Tp = ast.ShowBuiltins
 		return stmt
@@ -250,17 +250,17 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 	}
 	stmt.Tp = ast.ShowPlacement
 
-	if _, ok := p.accept(57431); ok {
-		if _, ok := p.accept(57398); ok {
-			if tok, ok := p.expect(57346); ok {
+	if _, ok := p.accept(forKwd); ok {
+		if _, ok := p.accept(database); ok {
+			if tok, ok := p.expect(identifier); ok {
 				stmt.DBName = tok.Lit
 			} else {
 				return nil
 			}
-		} else if _, ok := p.accept(57556); ok {
+		} else if _, ok := p.accept(tableKwd); ok {
 			stmt.Table = p.parseTableName()
-			if _, ok := p.accept(57515); ok {
-				if tok, ok := p.expect(57346); ok {
+			if _, ok := p.accept(partition); ok {
+				if tok, ok := p.expect(identifier); ok {
 					stmt.Partition = ast.NewCIStr(tok.Lit)
 				} else {
 					return nil
@@ -273,7 +273,7 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 		// After FOR clause, only LIKE/WHERE or statement end is valid.
 		// Reject unexpected trailing tokens like "TABLE tb1" after "DATABASE db1".
 		next := p.peek().Tp
-		if next != ';' && next != EOF && next != 57476 && next != 57587 {
+		if next != ';' && next != EOF && next != like && next != where {
 			p.error(p.peek().Offset, "unexpected token after SHOW PLACEMENT FOR clause")
 			return nil
 		}
@@ -287,7 +287,7 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 // Caller already consumed SHOW and TABLE tokens.
 func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 	// SHOW TABLE STATUS [FROM db] [LIKE ...]
-	if p.peekKeyword(57933, "STATUS") {
+	if p.peekKeyword(status, "STATUS") {
 		p.next()
 		stmt.Tp = ast.ShowTableStatus
 		stmt.DBName = p.parseShowDatabaseNameOpt()
@@ -298,10 +298,10 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 	stmt.Table = table
 
 	// Optional PARTITION (p1, p2, ...)
-	if _, ok := p.accept(57515); ok {
+	if _, ok := p.accept(partition); ok {
 		p.expect('(')
 		for {
-			tok, ok := p.accept(57346)
+			tok, ok := p.accept(identifier)
 			if !ok {
 				p.error(p.peek().Offset, "expected partition name")
 				return nil
@@ -316,8 +316,8 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 	}
 
 	// Optional INDEX idx
-	if _, ok := p.accept(57449); ok {
-		if tok, ok := p.accept(57346); ok {
+	if _, ok := p.accept(index); ok {
+		if tok, ok := p.accept(identifier); ok {
 			stmt.IndexName = ast.NewCIStr(tok.Lit)
 		} else {
 			p.error(p.peek().Offset, "expected index name")
@@ -327,11 +327,11 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 
 	// Check for REGIONS, NEXT_ROW_ID, or DISTRIBUTIONS
 	switch p.peek().Tp {
-	case 58174:
+	case regions:
 		stmt.Tp = ast.ShowRegions
-	case 58051:
+	case next_row_id:
 		stmt.Tp = ast.ShowTableNextRowId
-	case 58163:
+	case distributions:
 		stmt.Tp = ast.ShowDistributions
 	}
 	if stmt.Tp != 0 {
@@ -340,7 +340,7 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 		return stmt
 	}
 	// Fallback: Check for TABLE STATUS
-	if p.peekKeyword(57933, "STATUS") {
+	if p.peekKeyword(status, "STATUS") {
 		p.next()
 		stmt.Tp = ast.ShowTableStatus
 		stmt.Table = nil
@@ -361,7 +361,7 @@ func (p *HandParser) parseShowDatabaseNameOpt() string {
 
 // parseShowTableClause parses: FROM|IN tablename [FROM|IN dbname]
 func (p *HandParser) parseShowTableClause(stmt *ast.ShowStmt) {
-	if _, ok := p.acceptAny(57434, 57448); ok {
+	if _, ok := p.acceptAny(from, in); ok {
 		stmt.Table = p.parseTableName()
 		stmt.DBName = p.parseShowDatabaseNameOpt()
 	}
@@ -384,10 +384,10 @@ func (p *HandParser) parseShowIndexStmt(stmt *ast.ShowStmt) {
 func (p *HandParser) parseShowScopedStmt(stmt *ast.ShowStmt, isGlobal bool) ast.StmtNode {
 	stmt.GlobalScope = isGlobal
 	switch p.peek().Tp {
-	case 57978:
+	case variables:
 		p.next()
 		stmt.Tp = ast.ShowVariables
-	case 57933:
+	case status:
 		p.next()
 		stmt.Tp = ast.ShowStatus
 	default:
@@ -403,13 +403,13 @@ func (p *HandParser) parseShowScopedStmt(stmt *ast.ShowStmt, isGlobal bool) ast.
 }
 
 func (p *HandParser) parseShowLikeOrWhere(stmt *ast.ShowStmt) {
-	if _, ok := p.accept(57476); ok {
+	if _, ok := p.accept(like); ok {
 		pattern := Alloc[ast.PatternLikeOrIlikeExpr](p.arena)
 		pattern.Pattern = p.parseExpression(precNone)
 		pattern.IsLike = true
 		pattern.Escape = '\\'
 		stmt.Pattern = pattern
-	} else if _, ok := p.accept(57587); ok {
+	} else if _, ok := p.accept(where); ok {
 		stmt.Where = p.parseExpression(precNone)
 	}
 }

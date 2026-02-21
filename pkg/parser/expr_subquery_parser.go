@@ -28,7 +28,7 @@ func (p *HandParser) peeksThroughParensToSubquery() bool {
 		switch tok.Tp {
 		case '(':
 			continue
-		case 57540, 57590, 57556, 57580:
+		case selectKwd, with, tableKwd, values:
 			return true
 		default:
 			return false
@@ -43,7 +43,7 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 
 	// Check if this is a subquery.
 	tp := p.peek().Tp
-	if tp == 57540 || tp == 57590 || tp == 57556 || tp == 57580 {
+	if tp == selectKwd || tp == with || tp == tableKwd || tp == values {
 		startOffset := p.peek().Offset
 		// Use parseSubquery to handle SELECT, TABLE, VALUES, WITH, and UNIONs.
 		query := p.parseSubquery()
@@ -151,28 +151,28 @@ func (p *HandParser) parseCaseExpr() ast.ExprNode {
 	node := Alloc[ast.CaseExpr](p.arena)
 
 	// Optional value expression.
-	if p.peek().Tp != 57586 {
+	if p.peek().Tp != when {
 		node.Value = p.parseExpression(precNone)
 	}
 
 	// WHEN clauses.
 	for {
-		if _, ok := p.accept(57586); !ok {
+		if _, ok := p.accept(when); !ok {
 			break
 		}
 		when := Alloc[ast.WhenClause](p.arena)
 		when.Expr = p.parseExpression(precNone)
-		p.expect(57559)
+		p.expect(then)
 		when.Result = p.parseExpression(precNone)
 		node.WhenClauses = append(node.WhenClauses, when)
 	}
 
 	// Optional ELSE.
-	if _, ok := p.accept(57417); ok {
+	if _, ok := p.accept(elseKwd); ok {
 		node.ElseClause = p.parseExpression(precNone)
 	}
 
-	p.expect(57701)
+	p.expect(end)
 	return node
 }
 
@@ -219,7 +219,7 @@ func (p *HandParser) parseInExpr(left ast.ExprNode, not bool) ast.ExprNode {
 	node.Not = not
 
 	// Check for subquery (SELECT, WITH, TABLE, VALUES).
-	if p.peek().Tp == 57540 || p.peek().Tp == 57590 {
+	if p.peek().Tp == selectKwd || p.peek().Tp == with {
 		query := p.parseSelectStmt()
 		if query == nil {
 			return nil
@@ -229,9 +229,9 @@ func (p *HandParser) parseInExpr(left ast.ExprNode, not bool) ast.ExprNode {
 		sub := Alloc[ast.SubqueryExpr](p.arena)
 		sub.Query = result
 		node.Sel = sub
-	} else if p.peek().Tp == 57556 || p.peek().Tp == 57580 {
+	} else if p.peek().Tp == tableKwd || p.peek().Tp == values {
 		var query ast.StmtNode
-		if p.peek().Tp == 57556 {
+		if p.peek().Tp == tableKwd {
 			query = p.parseTableStmt()
 		} else {
 			query = p.parseValuesStmt()

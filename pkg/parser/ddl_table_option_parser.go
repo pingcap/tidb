@@ -37,107 +37,107 @@ func (p *HandParser) parseCreateTableOptions() []*ast.TableOption {
 func (p *HandParser) parseTableOption() *ast.TableOption {
 	opt := Alloc[ast.TableOption](p.arena)
 	switch p.peek().Tp {
-	case 57599:
+	case affinity:
 		p.next()
-		p.accept(58202)
-		if tok, ok := p.expect(57353); ok {
+		p.accept(eq)
+		if tok, ok := p.expect(stringLit); ok {
 			opt.Tp = ast.TableOptionAffinity
 			opt.StrValue = tok.Lit
 		}
-	case 57405:
+	case defaultKwd:
 		// DEFAULT [CHARACTER SET | CHARSET | COLLATE] = value
 		// The Restore for CHARACTER SET and COLLATE already emits "DEFAULT " prefix,
 		// so we just consume the DEFAULT keyword and delegate to the inner option.
 		p.next()
 		return p.parseTableOption()
-	case 57703:
+	case engine:
 		p.parseTableOptionString(opt, ast.TableOptionEngine)
-	case 57639, 57382, 57381:
+	case charsetKwd, character, charType:
 		// yacc CharsetKw: CHARACTER SET | CHARSET | CHAR SET
 		p.next()
-		if p.peek().Tp == 57541 {
+		if p.peek().Tp == set {
 			p.next()
 		}
-		p.accept(58202)
-		if tok, ok := p.expectAny(57346, 57353, 57373); ok {
+		p.accept(eq)
+		if tok, ok := p.expectAny(identifier, stringLit, binaryType); ok {
 			opt.Tp = ast.TableOptionCharset
 			opt.StrValue = strings.ToLower(tok.Lit)
 		}
-	case 57384:
+	case collate:
 		p.next()
-		p.accept(58202)
-		if tok, ok := p.expectAny(57346, 57353, 57373); ok {
+		p.accept(eq)
+		if tok, ok := p.expectAny(identifier, stringLit, binaryType); ok {
 			opt.Tp = ast.TableOptionCollate
 			opt.StrValue = strings.ToLower(tok.Lit)
 		}
-	case 57432:
+	case force:
 		p.next()
 		if !p.parseForceAutoOption(opt) {
 			p.syntaxError(p.peek().Offset)
 			return nil
 		}
-	case 57612:
+	case autoIncrement:
 		p.parseTableOptionUint(opt, ast.TableOptionAutoIncrement)
-	case 57614:
+	case autoRandomBase:
 		p.parseTableOptionUint(opt, ast.TableOptionAutoRandomBase)
-	case 57655, 57665, 57829, 57698, 57890:
+	case comment, connection, password, encryption, secondaryEngineAttribute:
 		var optTp ast.TableOptionType
 		switch p.peek().Tp {
-		case 57655:
+		case comment:
 			optTp = ast.TableOptionComment
-		case 57665:
+		case connection:
 			optTp = ast.TableOptionConnection
-		case 57829:
+		case password:
 			optTp = ast.TableOptionPassword
-		case 57698:
+		case encryption:
 			optTp = ast.TableOptionEncryption
 		default:
 			optTp = ast.TableOptionSecondaryEngineAttribute
 		}
 		p.parseTableOptionStringLit(opt, optTp)
-	case 57779:
+	case maxRows:
 		p.parseTableOptionUint(opt, ast.TableOptionMaxRows)
-	case 57789:
+	case minRows:
 		p.parseTableOptionUint(opt, ast.TableOptionMinRows)
-	case 57616:
+	case avgRowLength:
 		p.parseTableOptionUint(opt, ast.TableOptionAvgRowLength)
-	case 57882:
+	case rowFormat:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		p.parseTableOptionRowFormat(opt)
-	case 57760:
+	case keyBlockSize:
 		p.parseTableOptionUint(opt, ast.TableOptionKeyBlockSize)
-	case 57660:
+	case compression:
 		p.parseTableOptionString(opt, ast.TableOptionCompression)
-	case 58054:
+	case placement:
 		p.next()
-		p.accept(57838)
-		p.accept(58202)
+		p.accept(policy)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionPlacementPolicy
 		// Value can be identifier, string literal, or DEFAULT keyword
-		if tok, ok := p.expectAny(57346, 57353, 57405); ok {
+		if tok, ok := p.expectAny(identifier, stringLit, defaultKwd); ok {
 			opt.StrValue = tok.Lit
 		}
 
-	case 57641, 57946:
-		if p.peek().Tp == 57641 {
+	case checksum, tableChecksum:
+		if p.peek().Tp == checksum {
 			p.parseTableOptionUint(opt, ast.TableOptionCheckSum)
 		} else {
 			p.parseTableOptionUint(opt, ast.TableOptionTableCheckSum)
 		}
-	case 57930:
+	case statsPersistent:
 		p.parseTableOptionDefaultOrDiscard(opt, ast.TableOptionStatsPersistent)
-	case 57926, 57931:
+	case statsAutoRecalc, statsSamplePages:
 		var optTp ast.TableOptionType
-		if p.peek().Tp == 57926 {
+		if p.peek().Tp == statsAutoRecalc {
 			optTp = ast.TableOptionStatsAutoRecalc
 		} else {
 			optTp = ast.TableOptionStatsSamplePages
 		}
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = optTp
-		if _, ok := p.accept(57405); ok {
+		if _, ok := p.accept(defaultKwd); ok {
 			opt.Default = true
 		} else {
 			opt.UintValue = p.parseUint64()
@@ -146,28 +146,28 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 				return nil
 			}
 		}
-	case 57686:
+	case delayKeyWrite:
 		p.parseTableOptionUint(opt, ast.TableOptionDelayKeyWrite)
-	case 57901:
+	case shardRowIDBits:
 		p.parseTableOptionUint(opt, ast.TableOptionShardRowID)
-	case 57965:
+	case ttl:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionTTL
 		// TTL = col_name + INTERVAL N UNIT
-		if tok, ok := p.expectAny(57346, 57353); ok {
+		if tok, ok := p.expectAny(identifier, stringLit); ok {
 			opt.ColumnName = Alloc[ast.ColumnName](p.arena)
 			opt.ColumnName.Name = ast.NewCIStr(tok.Lit)
 		}
 		p.accept('+') // consume '+'
-		p.expect(57462)
+		p.expect(interval)
 		opt.Value = p.parseExpression(precNone).(ast.ValueExpr)
 		opt.TimeUnitValue = p.parseTimeUnit()
-	case 57966:
+	case ttlEnable:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionTTLEnable
-		if tok, ok := p.expect(57353); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			switch strings.ToUpper(tok.Lit) {
 			case "ON":
 				opt.BoolValue = true
@@ -178,105 +178,105 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 				return nil
 			}
 		}
-	case 57967:
+	case ttlJobInterval:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		return p.parseTableOptionTTLJobInterval(opt)
-	case 57820:
+	case packKeys:
 		p.parseTableOptionDefaultOrDiscard(opt, ast.TableOptionPackKeys)
-	case 57751:
+	case insertMethod:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionInsertMethod
-		if tok, ok := p.expectAny(57346, 57799, 57724, 57763); ok {
+		if tok, ok := p.expectAny(identifier, no, first, last); ok {
 			opt.StrValue = tok.Lit
-			if tok.Tp == 57724 {
+			if tok.Tp == first {
 				opt.StrValue = "FIRST"
-			} else if tok.Tp == 57763 {
+			} else if tok.Tp == last {
 				opt.StrValue = "LAST"
-			} else if tok.Tp == 57799 {
+			} else if tok.Tp == no {
 				opt.StrValue = "NO"
 			}
 		}
-	case 57889:
+	case secondaryEngine:
 		p.next()
-		p.accept(58202)
-		if _, ok := p.accept(57502); ok {
+		p.accept(eq)
+		if _, ok := p.accept(null); ok {
 			opt.Tp = ast.TableOptionSecondaryEngineNull
-		} else if tok, ok := p.expectAny(57353, 57346); ok {
+		} else if tok, ok := p.expectAny(stringLit, identifier); ok {
 			opt.Tp = ast.TableOptionSecondaryEngine
 			opt.StrValue = tok.Lit
 		}
-	case 57934:
+	case storage:
 		p.next()
-		if _, ok := p.accept(57703); ok {
+		if _, ok := p.accept(engine); ok {
 			// STORAGE ENGINE [=] engine_name (partition option)
-			p.accept(58202)
+			p.accept(eq)
 			opt.Tp = ast.TableOptionEngine
-			if tok, ok := p.expectAny(57346, 57353); ok {
+			if tok, ok := p.expectAny(identifier, stringLit); ok {
 				opt.StrValue = tok.Lit
 			}
-		} else if tok, ok := p.expectAny(57692, 57784); ok {
+		} else if tok, ok := p.expectAny(disk, memory); ok {
 			opt.Tp = ast.TableOptionStorageMedia
 			opt.StrValue = strings.ToUpper(tok.Lit)
 		}
-	case 57945:
+	case tablespace:
 		p.parseTableOptionString(opt, ast.TableOptionTablespace)
-	case 57802:
+	case nodegroup:
 		p.parseTableOptionUint(opt, ast.TableOptionNodegroup)
-	case 57679, 57449:
+	case data, index:
 		// DATA DIRECTORY / INDEX DIRECTORY = 'path'
 		var optTp ast.TableOptionType
-		if p.peek().Tp == 57679 {
+		if p.peek().Tp == data {
 			optTp = ast.TableOptionDataDirectory
 		} else {
 			optTp = ast.TableOptionIndexDirectory
 		}
 		p.next()
-		p.expect(57688)
-		p.accept(58202)
+		p.expect(directory)
+		p.accept(eq)
 		opt.Tp = optTp
-		if tok, ok := p.expect(57353); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			opt.StrValue = tok.Lit
 		}
-	case 57822, 57823, 57824, 57961:
+	case pageChecksum, pageCompressed, pageCompressionLevel, transactional:
 		var optTp ast.TableOptionType
 		switch p.peek().Tp {
-		case 57822:
+		case pageChecksum:
 			optTp = ast.TableOptionPageChecksum
-		case 57823:
+		case pageCompressed:
 			optTp = ast.TableOptionPageCompressed
-		case 57824:
+		case pageCompressionLevel:
 			optTp = ast.TableOptionPageCompressionLevel
 		default:
 			optTp = ast.TableOptionTransactional
 		}
 		p.parseTableOptionUint(opt, optTp)
-	case 57744:
+	case ietfQuotes:
 		p.parseTableOptionString(opt, ast.TableOptionIetfQuotes)
-	case 57896:
+	case sequence:
 		// SEQUENCE [=] {1|0}
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionSequence
-		if tok, ok := p.expect(58197); ok {
+		if tok, ok := p.expect(intLit); ok {
 			opt.UintValue = tokenItemToUint64(tok.Item)
 		}
-	case 57610:
+	case autoextendSize:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionAutoextendSize
 		// Value can be like '4M', '64K', etc. (identifier) or a plain integer.
-		if tok, ok := p.expectAny(57346, 58197, 58196); ok {
+		if tok, ok := p.expectAny(identifier, intLit, decLit); ok {
 			opt.StrValue = tok.Lit
 		}
-	case 57611:
+	case autoIdCache:
 		p.parseTableOptionUint(opt, ast.TableOptionAutoIdCache)
-	case 57842:
+	case preSplitRegions:
 		p.parseTableOptionUint(opt, ast.TableOptionPreSplitRegion)
-	case 57568:
+	case union:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		p.expect('(')
 		opt.Tp = ast.TableOptionUnion
 		if p.peek().Tp != ')' {
@@ -291,58 +291,58 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			}
 		}
 		p.expect(')')
-	case 58183:
+	case statsBuckets:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsBuckets
-		if _, ok := p.accept(57405); ok {
+		if _, ok := p.accept(defaultKwd); ok {
 			opt.Default = true
-		} else if tok, ok := p.expect(58197); ok {
+		} else if tok, ok := p.expect(intLit); ok {
 			opt.UintValue = tokenItemToUint64(tok.Item)
 		} else {
 			p.error(tok.Offset, "STATS_BUCKETS requires an integer value")
 			return nil
 		}
-	case 58190:
+	case statsTopN:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsTopN
-		if _, ok := p.accept(57405); ok {
+		if _, ok := p.accept(defaultKwd); ok {
 			opt.Default = true
-		} else if tok, ok := p.expect(58197); ok {
+		} else if tok, ok := p.expect(intLit); ok {
 			opt.UintValue = tokenItemToUint64(tok.Item)
 		} else {
 			p.error(tok.Offset, "STATS_TOPN requires an integer value")
 			return nil
 		}
-	case 57932:
+	case statsSampleRate:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsSampleRate
-		if _, ok := p.accept(57405); ok {
+		if _, ok := p.accept(defaultKwd); ok {
 			opt.Default = true
 		} else {
 			// Accepts int or float literal
-			if tok, ok := p.expectAny(58197, 58196); ok {
+			if tok, ok := p.expectAny(intLit, decLit); ok {
 				opt.Value = ast.NewValueExpr(tok.Item, "", "")
 			}
 		}
-	case 57927:
+	case statsColChoice:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsColsChoice
-		if _, ok := p.accept(57405); ok {
+		if _, ok := p.accept(defaultKwd); ok {
 			opt.Default = true
-		} else if tok, ok := p.accept(57353); ok {
+		} else if tok, ok := p.accept(stringLit); ok {
 			opt.StrValue = tok.Lit
 		}
-	case 57928:
+	case statsColList:
 		p.next()
-		p.accept(58202)
+		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsColList
-		if _, ok := p.accept(57405); ok {
+		if _, ok := p.accept(defaultKwd); ok {
 			opt.Default = true
-		} else if tok, ok := p.accept(57353); ok {
+		} else if tok, ok := p.accept(stringLit); ok {
 			opt.StrValue = tok.Lit
 		}
 	default:
@@ -356,7 +356,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 func (p *HandParser) parseTableOptionRowFormat(opt *ast.TableOption) {
 	opt.Tp = ast.TableOptionRowFormat
 	tok := p.next()
-	if tok.Tp == 57405 {
+	if tok.Tp == defaultKwd {
 		opt.UintValue = uint64(ast.RowFormatDefault)
 		return
 	}
@@ -397,7 +397,7 @@ func (p *HandParser) parseTableOptionRowFormat(opt *ast.TableOption) {
 // parseTableOptionTTLJobInterval parses TTL_JOB_INTERVAL value with validation.
 // Caller already consumed TTL_JOB_INTERVAL and optional '='.
 func (p *HandParser) parseTableOptionTTLJobInterval(opt *ast.TableOption) *ast.TableOption {
-	tok, ok := p.expect(57353)
+	tok, ok := p.expect(stringLit)
 	if !ok {
 		return nil
 	}
@@ -441,9 +441,9 @@ func (p *HandParser) parseTableOptionTTLJobInterval(opt *ast.TableOption) *ast.T
 func (p *HandParser) parseForceAutoOption(opt *ast.TableOption) bool {
 	var optTp ast.TableOptionType
 	switch p.peek().Tp {
-	case 57612:
+	case autoIncrement:
 		optTp = ast.TableOptionAutoIncrement
-	case 57614:
+	case autoRandomBase:
 		optTp = ast.TableOptionAutoRandomBase
 	default:
 		return false
@@ -455,19 +455,19 @@ func (p *HandParser) parseForceAutoOption(opt *ast.TableOption) bool {
 
 func (p *HandParser) parseTableOptionUint(opt *ast.TableOption, optTp ast.TableOptionType) {
 	p.next()
-	p.accept(58202)
+	p.accept(eq)
 	opt.Tp = optTp
-	if tok, ok := p.expectAny(58197, 58196); ok {
+	if tok, ok := p.expectAny(intLit, decLit); ok {
 		opt.UintValue = tokenItemToUint64(tok.Item)
 	}
 }
 
 func (p *HandParser) parseTableOptionString(opt *ast.TableOption, optTp ast.TableOptionType) {
 	p.next()
-	p.accept(58202)
+	p.accept(eq)
 	opt.Tp = optTp
 	tok := p.peek()
-	if tok.Tp == 57353 || isIdentLike(tok.Tp) {
+	if tok.Tp == stringLit || isIdentLike(tok.Tp) {
 		opt.StrValue = p.next().Lit
 	} else {
 		p.error(tok.Offset, "expected identifier or string literal")
@@ -478,9 +478,9 @@ func (p *HandParser) parseTableOptionString(opt *ast.TableOption, optTp ast.Tabl
 // tok [=] 'stringValue'
 func (p *HandParser) parseTableOptionStringLit(opt *ast.TableOption, optTp ast.TableOptionType) {
 	p.next()
-	p.accept(58202)
+	p.accept(eq)
 	opt.Tp = optTp
-	if tok, ok := p.expect(57353); ok {
+	if tok, ok := p.expect(stringLit); ok {
 		opt.StrValue = tok.Lit
 	}
 }
@@ -489,10 +489,10 @@ func (p *HandParser) parseTableOptionStringLit(opt *ast.TableOption, optTp ast.T
 // always sets Default=true. If not DEFAULT, consumes and discards the integer value.
 func (p *HandParser) parseTableOptionDefaultOrDiscard(opt *ast.TableOption, optTp ast.TableOptionType) {
 	p.next()
-	p.accept(58202)
+	p.accept(eq)
 	opt.Tp = optTp
 	opt.Default = true
-	if _, ok := p.accept(57405); !ok {
+	if _, ok := p.accept(defaultKwd); !ok {
 		p.parseUint64()
 	}
 }

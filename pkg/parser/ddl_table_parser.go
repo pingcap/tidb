@@ -43,17 +43,17 @@ func normalizeDDLFuncName(fc *ast.FuncCallExpr) {
 // parseCreateTableStmt parses CREATE TABLE statements.
 func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 	stmt := Alloc[ast.CreateTableStmt](p.arena)
-	p.expect(57389)
+	p.expect(create)
 
 	// [TEMPORARY | GLOBAL TEMPORARY]
-	if _, ok := p.accept(57947); ok {
+	if _, ok := p.accept(temporary); ok {
 		stmt.TemporaryKeyword = ast.TemporaryLocal
-	} else if _, ok := p.accept(57733); ok {
-		p.expect(57947)
+	} else if _, ok := p.accept(global); ok {
+		p.expect(temporary)
 		stmt.TemporaryKeyword = ast.TemporaryGlobal
 	}
 
-	p.expect(57556)
+	p.expect(tableKwd)
 
 	// [IF NOT EXISTS]
 	stmt.IfNotExists = p.acceptIfNotExists()
@@ -64,7 +64,7 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 	}
 
 	// LIKE table
-	if _, ok := p.accept(57476); ok {
+	if _, ok := p.accept(like); ok {
 		// CREATE TABLE ... LIKE table
 		stmt.ReferTable = p.parseTableName()
 		// Optional ( ... ) not supported in MySQL for LIKE but TiDB/MariaDB might allow hints/options?
@@ -82,7 +82,7 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 	// ( ... )
 	if _, ok := p.accept('('); ok {
 		// Check for (LIKE table) syntax
-		if _, ok := p.accept(57476); ok {
+		if _, ok := p.accept(like); ok {
 			stmt.ReferTable = p.parseTableName()
 			p.expect(')')
 			return stmt
@@ -104,20 +104,20 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 	stmt.Options = p.parseCreateTableOptions()
 
 	// [PARTITION BY ...]
-	if p.peekKeyword(57515, "PARTITION") {
+	if p.peekKeyword(partition, "PARTITION") {
 		stmt.Partition = p.parsePartitionOptions()
 	}
 
 	// [DuplicateOpt]
-	if _, ok := p.acceptKeyword(57446, "IGNORE"); ok {
+	if _, ok := p.acceptKeyword(ignore, "IGNORE"); ok {
 		stmt.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
-	} else if _, ok := p.acceptKeyword(57530, "REPLACE"); ok {
+	} else if _, ok := p.acceptKeyword(replace, "REPLACE"); ok {
 		stmt.OnDuplicate = ast.OnDuplicateKeyHandlingReplace
 	}
 
 	// [AS] SELECT|TABLE|VALUES Stmt | (SELECT ...)
-	p.accept(57369)
-	if tok := p.peek(); tok.Tp == 57540 {
+	p.accept(as)
+	if tok := p.peek(); tok.Tp == selectKwd {
 		selStmt := p.parseSelectStmt()
 		if selStmt != nil {
 			stmt.Select = p.maybeParseUnion(selStmt)
@@ -128,26 +128,26 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 		if sub != nil {
 			stmt.Select = p.maybeParseUnion(sub)
 		}
-	} else if tok.Tp == 57556 {
+	} else if tok.Tp == tableKwd {
 		stmt.Select = p.parseTableStmt().(ast.ResultSetNode)
-	} else if tok.Tp == 57580 {
+	} else if tok.Tp == values {
 		stmt.Select = p.parseValuesStmt().(ast.ResultSetNode)
 	}
 
 	// [ON COMMIT DELETE ROWS | ON COMMIT PRESERVE ROWS] — only valid for GLOBAL TEMPORARY
-	if p.peek().Tp == 57505 {
+	if p.peek().Tp == on {
 		if stmt.TemporaryKeyword != ast.TemporaryGlobal {
 			// ON COMMIT is only valid for GLOBAL TEMPORARY tables.
 			p.error(p.peek().Offset, "ON COMMIT can only be used with GLOBAL TEMPORARY tables")
 			return nil
 		}
 		p.next() // consume ON
-		p.expect(57656)
-		if _, ok := p.accept(57407); ok {
-			p.expect(57537)
+		p.expect(commit)
+		if _, ok := p.accept(deleteKwd); ok {
+			p.expect(rows)
 			stmt.OnCommitDelete = true
-		} else if _, ok := p.accept(57841); ok {
-			p.expect(57537)
+		} else if _, ok := p.accept(preserve); ok {
+			p.expect(rows)
 			// OnCommitDelete remains false — PRESERVE ROWS is the default.
 		}
 	} else if stmt.TemporaryKeyword == ast.TemporaryGlobal {
@@ -157,7 +157,7 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 	}
 
 	// [SPLIT ...]
-	for p.peek().Tp == 58180 {
+	for p.peek().Tp == split {
 		opt := p.parseSplitIndexOption()
 		if opt == nil {
 			return nil
@@ -176,9 +176,9 @@ func (p *HandParser) parseTableElementList() ([]*ast.ColumnDef, []*ast.Constrain
 	for {
 		// Check for constraint keywords
 		tp := p.peek().Tp
-		if tp == 57386 || tp == 57518 || tp == 57467 || tp == 57449 ||
-			tp == 57569 || tp == 57433 || tp == 57435 || tp == 57383 ||
-			tp == 57979 || tp == 57652 {
+		if tp == constraint || tp == primary || tp == key || tp == index ||
+			tp == unique || tp == foreign || tp == fulltext || tp == check ||
+			tp == vectorType || tp == columnar {
 			cons := p.parseConstraint()
 			if cons == nil {
 				return nil, nil
@@ -208,7 +208,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 	// We handle identifiers and string literals (if quoted).
 	// Keywords allowed as identifiers should be handled by lexer or mapped here?
 	// Column name: accept identifiers, string literals, and unreserved keywords.
-	// Keywords with Tp >= 57346 can be used as column names since the context
+	// Keywords with Tp >= identifier can be used as column names since the context
 	// is unambiguous (always followed by a data type).
 	tok := p.peek()
 	if !isIdentLike(tok.Tp) {
@@ -224,7 +224,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 	// Yacc grammar: ColumnName "SERIAL" ColumnOptionListOpt
 	// SERIAL is not a real field type; it must be handled at the ColumnDef level
 	// because it injects column options (NOT NULL, AUTO_INCREMENT, UNIQUE KEY).
-	if _, ok := p.accept(57897); ok {
+	if _, ok := p.accept(serial); ok {
 		col.Tp = types.NewFieldType(mysql.TypeLonglong)
 		col.Tp.AddFlag(mysql.UnsignedFlag)
 		col.Options = []*ast.ColumnOption{
@@ -268,18 +268,18 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 	for {
 		option := Alloc[ast.ColumnOption](p.arena)
 		switch p.peek().Tp {
-		case 57498:
+		case not:
 			p.next()
-			if _, ok := p.accept(57502); ok {
+			if _, ok := p.accept(null); ok {
 				option.Tp = ast.ColumnOptionNotNull
 			} else {
 				// Parse error: expected NULL after NOT
 				return nil
 			}
-		case 57502:
+		case null:
 			p.next()
 			option.Tp = ast.ColumnOptionNull
-		case 57405:
+		case defaultKwd:
 			p.next()
 			option.Tp = ast.ColumnOptionDefaultValue
 			option.Expr = p.parseExpression(precNone)
@@ -323,40 +323,40 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 				}
 			}
 
-		case 57612:
+		case autoIncrement:
 			p.next()
 			option.Tp = ast.ColumnOptionAutoIncrement
-		case 57897:
+		case serial:
 			// SERIAL DEFAULT VALUE = NOT NULL AUTO_INCREMENT UNIQUE KEY
 			p.next()
-			p.expect(57405)
-			p.expect(57977)
+			p.expect(defaultKwd)
+			p.expect(value)
 			options = append(options, &ast.ColumnOption{Tp: ast.ColumnOptionNotNull})
 			options = append(options, &ast.ColumnOption{Tp: ast.ColumnOptionAutoIncrement})
 			option.Tp = ast.ColumnOptionUniqKey
-		case 57518, 57467:
-			if p.next().Tp == 57518 {
-				if _, ok := p.accept(57467); !ok {
+		case primary, key:
+			if p.next().Tp == primary {
+				if _, ok := p.accept(key); !ok {
 					return nil
 				}
 			}
 			option.Tp = ast.ColumnOptionPrimaryKey
 			// Handle CLUSTERED/NONCLUSTERED after PRIMARY KEY
-			if _, ok := p.accept(57649); ok {
+			if _, ok := p.accept(clustered); ok {
 				option.PrimaryKeyTp = ast.PrimaryKeyTypeClustered
-			} else if _, ok := p.accept(57805); ok {
+			} else if _, ok := p.accept(nonclustered); ok {
 				option.PrimaryKeyTp = ast.PrimaryKeyTypeNonClustered
 			}
 			p.parseGlobalLocalOption(option)
-		case 57569:
+		case unique:
 			p.next()
-			p.accept(57467) // KEY is optional for UNIQUE
+			p.accept(key) // KEY is optional for UNIQUE
 			option.Tp = ast.ColumnOptionUniqKey
 			p.parseGlobalLocalOption(option)
-		case 57655:
+		case comment:
 			p.next()
 			option.Tp = ast.ColumnOptionComment
-			if p.peek().Tp == 57353 {
+			if p.peek().Tp == stringLit {
 				expr := p.newValueExpr(p.peek().Lit)
 				if valExpr, ok := expr.(ast.ValueExpr); ok {
 					valExpr.GetType().SetCharset("")
@@ -368,22 +368,22 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 				p.error(p.peek().Offset, "expected string literal for COMMENT")
 				return nil
 			}
-		case 57890:
+		case secondaryEngineAttribute:
 			p.next()
 			option.Tp = ast.ColumnOptionSecondaryEngineAttribute
-			if _, ok := p.accept(58202); ok {
+			if _, ok := p.accept(eq); ok {
 				// optional =
 			}
-			if p.peek().Tp == 57353 {
+			if p.peek().Tp == stringLit {
 				option.StrValue = p.peek().Lit
 				p.next()
 			} else {
 				p.error(p.peek().Offset, "expected string literal for SECONDARY_ENGINE_ATTRIBUTE")
 				return nil
 			}
-		case 57505:
+		case on:
 			p.next()
-			p.expect(57573)
+			p.expect(update)
 			option.Tp = ast.ColumnOptionOnUpdate
 			option.Expr = p.parseExpression(precNone) // CURRENT_TIMESTAMP etc.
 
@@ -415,21 +415,21 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 				p.error(0, "Invalid ON UPDATE clause")
 				return nil
 			}
-		case 57369, 57436:
-			if p.next().Tp == 57436 {
-				p.expect(57604)
-				p.expect(57369)
+		case as, generated:
+			if p.next().Tp == generated {
+				p.expect(always)
+				p.expect(as)
 			}
 			option.Tp = ast.ColumnOptionGenerated
 			p.parseGeneratedColumnBody(option)
-		case 57386:
+		case constraint:
 			// CONSTRAINT [name] CHECK (expr) — only valid at column level
 			// Peek ahead to verify it's followed by CHECK (with optional name in between)
 			peekOff := 1
 			if isIdentLike(p.peekN(peekOff).Tp) {
 				peekOff++
 			}
-			if p.peekN(peekOff).Tp != 57383 {
+			if p.peekN(peekOff).Tp != check {
 				// NOT a column-level CHECK constraint — stop column options
 				return options
 			}
@@ -443,7 +443,7 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 			p.expect('(')
 			option.Expr = p.parseExpression(precNone)
 			p.expect(')')
-			if p.peek().Tp == 57498 && p.peekN(1).IsKeyword("ENFORCED") {
+			if p.peek().Tp == not && p.peekN(1).IsKeyword("ENFORCED") {
 				p.next()
 				p.next()
 				option.Enforced = false
@@ -451,7 +451,7 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 				p.next()
 				option.Enforced = true
 			}
-		case 57383:
+		case check:
 			p.next()
 			option.Tp = ast.ColumnOptionCheck
 			option.Enforced = true // default is ENFORCED
@@ -462,8 +462,8 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 			// NOT NULL → injects both CHECK and a separate ColumnOptionNotNull
 			// NOT ENFORCED → sets Enforced = false
 			// ENFORCED → sets Enforced = true (default)
-			if p.peek().Tp == 57498 {
-				if p.peekN(1).Tp == 57502 {
+			if p.peek().Tp == not {
+				if p.peekN(1).Tp == null {
 					// CHECK (expr) NOT NULL → inject separate NOT NULL option
 					p.next() // consume NOT
 					p.next() // consume NULL
@@ -479,10 +479,10 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 				p.next()
 				option.Enforced = true
 			}
-		case 57525:
+		case references:
 			option.Tp = ast.ColumnOptionReference
 			option.Refer = p.parseReferenceDef()
-		case 57384:
+		case collate:
 			// Check for duplicate COLLATE: either already consumed by
 			// parseStringOptions on the field type, or already present
 			// as a prior column option. Implicit type collation (e.g. BINARY)
@@ -500,7 +500,7 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 			p.next()
 			option.Tp = ast.ColumnOptionCollate
 			tok := p.peek()
-			if isIdentLike(tok.Tp) || tok.Tp == 57353 {
+			if isIdentLike(tok.Tp) || tok.Tp == stringLit {
 				info, err := charset.GetCollationByName(tok.Lit)
 				if err != nil {
 					p.errs = append(p.errs, err)
@@ -508,21 +508,21 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 				}
 				option.StrValue = info.Name
 				p.next()
-			} else if tok.Tp == 57373 || tok.Tp == 57632 {
+			} else if tok.Tp == binaryType || tok.Tp == byteType {
 				option.StrValue = charset.CollationBin
 				p.next()
 			} else {
 				p.error(tok.Offset, "expected collation name")
 				return nil
 			}
-		case 57654:
+		case columnFormat:
 			p.next()
 			option.Tp = ast.ColumnOptionColumnFormat
 			switch {
-			case p.peek().Tp == 57405:
+			case p.peek().Tp == defaultKwd:
 				p.next()
 				option.StrValue = "DEFAULT"
-			case p.peek().Tp == 57725:
+			case p.peek().Tp == fixed:
 				p.next()
 				option.StrValue = "FIXED"
 			case p.peek().IsKeyword("DYNAMIC"):
@@ -532,17 +532,17 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 				p.error(p.peek().Offset, "expected DEFAULT, FIXED, or DYNAMIC for COLUMN_FORMAT")
 				return nil
 			}
-		case 57934:
+		case storage:
 			p.next()
 			option.Tp = ast.ColumnOptionStorage
 			switch p.peek().Tp {
-			case 57405:
+			case defaultKwd:
 				p.next()
 				option.StrValue = "DEFAULT"
-			case 57692:
+			case disk:
 				p.next()
 				option.StrValue = "DISK"
-			case 57784:
+			case memory:
 				p.next()
 				option.StrValue = "MEMORY"
 			default:
@@ -550,19 +550,19 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 				return nil
 			}
 			p.warn("The STORAGE clause is parsed but ignored by all storage engines.")
-		case 57613:
+		case autoRandom:
 			p.next()
 			option.Tp = ast.ColumnOptionAutoRandom
 			option.AutoRandOpt.ShardBits = types.UnspecifiedLength
 			option.AutoRandOpt.RangeBits = types.UnspecifiedLength
 			if p.peek().Tp == '(' {
 				p.next() // consume '('
-				if tok, ok := p.expect(58197); ok {
+				if tok, ok := p.expect(intLit); ok {
 					option.AutoRandOpt.ShardBits = int(tokenItemToUint64(tok.Item))
 				}
 				if p.peek().Tp == ',' {
 					p.next()
-					if tok, ok := p.expect(58197); ok {
+					if tok, ok := p.expect(intLit); ok {
 						option.AutoRandOpt.RangeBits = int(tokenItemToUint64(tok.Item))
 					}
 				}
@@ -587,18 +587,18 @@ func (p *HandParser) parseGeneratedColumnBody(option *ast.ColumnOption) {
 	}
 	p.expect(')')
 	// VIRTUAL / STORED
-	if _, ok := p.accept(57554); ok {
+	if _, ok := p.accept(stored); ok {
 		option.Stored = true
 	} else {
-		p.accept(57585) // optional explicit VIRTUAL
+		p.accept(virtual) // optional explicit VIRTUAL
 	}
 }
 
 // parseGlobalLocalOption parses optional GLOBAL/LOCAL suffix for column key options.
 func (p *HandParser) parseGlobalLocalOption(option *ast.ColumnOption) {
-	if _, ok := p.accept(57733); ok {
+	if _, ok := p.accept(global); ok {
 		option.StrValue = "Global"
 	} else {
-		p.accept(57770)
+		p.accept(local)
 	}
 }

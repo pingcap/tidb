@@ -57,25 +57,25 @@ const (
 // Returns precNone if the token is not a valid infix operator.
 func tokenPrecedence(tok int, sqlMode mysql.SQLMode) int {
 	switch tok {
-	case 57509, 57835:
+	case or, pipesAsOr:
 		return precOr
-	case 57592:
+	case xor:
 		return precXor
-	case 57367, 57358:
+	case and, andand:
 		return precAnd
-	case '=', 58202, 58210:
+	case '=', eq, nulleq:
 		return precComparison
-	case 58203, '>', 58204, '<', 58208, 58209:
+	case ge, '>', le, '<', neq, neqSynonym:
 		return precComparison
 	case '|':
 		return precBitOr
 	case '&':
 		return precBitAnd
-	case 58207, 58212:
+	case lsh, rsh:
 		return precShift
 	case '+', '-':
 		return precAddSub
-	case '*', '/', '%', 57413, 57496:
+	case '*', '/', '%', div, mod:
 		return precMulDiv
 	case '^':
 		return precBitXor
@@ -94,9 +94,9 @@ func tokenToOp(tok int) opcode.Op {
 		return opcode.Mul
 	case '/':
 		return opcode.Div
-	case '%', 57496:
+	case '%', mod:
 		return opcode.Mod
-	case 57413:
+	case div:
 		return opcode.IntDiv
 	case '|':
 		return opcode.Or
@@ -104,29 +104,29 @@ func tokenToOp(tok int) opcode.Op {
 		return opcode.And
 	case '^':
 		return opcode.Xor
-	case 58207:
+	case lsh:
 		return opcode.LeftShift
-	case 58212:
+	case rsh:
 		return opcode.RightShift
-	case '=', 58202:
+	case '=', eq:
 		return opcode.EQ
-	case 58210:
+	case nulleq:
 		return opcode.NullEQ
-	case 58203:
+	case ge:
 		return opcode.GE
 	case '>':
 		return opcode.GT
-	case 58204:
+	case le:
 		return opcode.LE
 	case '<':
 		return opcode.LT
-	case 58208, 58209:
+	case neq, neqSynonym:
 		return opcode.NE
-	case 57509, 57835:
+	case or, pipesAsOr:
 		return opcode.LogicOr
-	case 57367, 57358:
+	case and, andand:
 		return opcode.LogicAnd
-	case 57592:
+	case xor:
 		return opcode.LogicXor
 	}
 	return 0

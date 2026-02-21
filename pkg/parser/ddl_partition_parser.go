@@ -19,30 +19,30 @@ import (
 )
 
 func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
-	p.expect(57515)
-	p.expect(57376)
+	p.expect(partition)
+	p.expect(by)
 
 	opt := Alloc[ast.PartitionOptions](p.arena)
 
 	// [LINEAR] HASH | KEY | RANGE | LIST
-	if _, ok := p.accept(57478); ok {
+	if _, ok := p.accept(linear); ok {
 		opt.Linear = true
 	}
 
 	tok := p.next()
 	switch tok.Tp {
-	case 57736:
+	case hash:
 		opt.Tp = ast.PartitionTypeHash
 		opt.Expr = p.parsePartitionExpr("invalid expression in partition definition")
 		if opt.Expr == nil {
 			return nil
 		}
-	case 57467:
+	case key:
 		opt.Tp = ast.PartitionTypeKey
 		p.parseKeyAlgorithmAndColumns(&opt.PartitionMethod)
-	case 57520:
+	case rangeKwd:
 		opt.Tp = ast.PartitionTypeRange
-		if _, ok := p.acceptAny(57653, 57722); ok {
+		if _, ok := p.acceptAny(columns, fields); ok {
 			opt.ColumnNames = p.parseColumnsNameList()
 			if len(opt.ColumnNames) == 0 {
 				p.error(p.peek().Offset, "COLUMNS partition requires at least one column")
@@ -55,7 +55,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 			}
 		}
 
-		if _, ok := p.accept(57462); ok {
+		if _, ok := p.accept(interval); ok {
 			p.expect('(')
 			intervalExpr := p.parseExpression(0)
 
@@ -72,26 +72,26 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 			}
 
 			// FIRST PARTITION LESS THAN (expr)
-			if _, ok := p.accept(57724); ok {
+			if _, ok := p.accept(first); ok {
 				expr := p.parsePartitionLessThanBound()
 				pi.FirstRangeEnd = &expr
 			}
 
 			// LAST PARTITION LESS THAN (expr)
-			if _, ok := p.accept(57763); ok {
+			if _, ok := p.accept(last); ok {
 				expr := p.parsePartitionLessThanBound()
 				pi.LastRangeEnd = &expr
 			}
 
 			// NULL PARTITION
-			if _, ok := p.accept(57502); ok {
-				p.expect(57515)
+			if _, ok := p.accept(null); ok {
+				p.expect(partition)
 				pi.NullPart = true
 			}
 
 			// MAXVALUE PARTITION
-			if _, ok := p.accept(57489); ok {
-				p.expect(57515)
+			if _, ok := p.accept(maxValue); ok {
+				p.expect(partition)
 				pi.MaxValPart = true
 			}
 
@@ -102,9 +102,9 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 
 			opt.Interval = pi
 		}
-	case 57768:
+	case list:
 		opt.Tp = ast.PartitionTypeList
-		if _, ok := p.acceptAny(57653, 57722); ok {
+		if _, ok := p.acceptAny(columns, fields); ok {
 			opt.ColumnNames = p.parseColumnsNameList()
 			if len(opt.ColumnNames) == 0 {
 				p.error(p.peek().Offset, "COLUMNS partition requires at least one column")
@@ -116,10 +116,10 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 				return nil
 			}
 		}
-	case 57943:
+	case systemTime:
 		opt.Tp = ast.PartitionTypeSystemTime
 		// INTERVAL expr unit
-		if _, ok := p.accept(57462); ok {
+		if _, ok := p.accept(interval); ok {
 			opt.Expr = p.parseExpression(0)
 			unit := p.parseTimeUnit()
 			if unit != nil {
@@ -127,7 +127,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 			}
 		}
 		// LIMIT N
-		if _, ok := p.accept(57477); ok {
+		if _, ok := p.accept(limit); ok {
 			opt.Limit = p.parseUint64()
 		}
 		// Cannot have both INTERVAL and LIMIT
@@ -140,26 +140,26 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 	}
 
 	// [SUBPARTITION BY ...]
-	if p.peekKeyword(57937, "SUBPARTITION") {
+	if p.peekKeyword(subpartition, "SUBPARTITION") {
 		p.next()
-		p.expect(57376)
+		p.expect(by)
 
 		subOpt := Alloc[ast.PartitionMethod](p.arena)
 
 		// [LINEAR] HASH | KEY
-		if _, ok := p.accept(57478); ok {
+		if _, ok := p.accept(linear); ok {
 			subOpt.Linear = true
 		}
 
 		tok := p.next()
 		switch tok.Tp {
-		case 57736:
+		case hash:
 			subOpt.Tp = ast.PartitionTypeHash
 			subOpt.Expr = p.parsePartitionExpr("invalid expression in subpartition definition")
 			if subOpt.Expr == nil {
 				return nil
 			}
-		case 57467:
+		case key:
 			subOpt.Tp = ast.PartitionTypeKey
 			p.parseKeyAlgorithmAndColumns(subOpt)
 		default:
@@ -168,7 +168,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 		}
 
 		// [SUBPARTITIONS num]
-		if _, ok := p.acceptKeyword(57938, "SUBPARTITIONS"); ok {
+		if _, ok := p.acceptKeyword(subpartitions, "SUBPARTITIONS"); ok {
 			subOpt.Num = p.parseUint64()
 			if subOpt.Num == 0 {
 				p.error(p.peek().Offset, "Number of subpartitions must be a positive integer")
@@ -180,7 +180,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 	}
 
 	// [PARTITIONS num]
-	if _, ok := p.acceptKeyword(57828, "PARTITIONS"); ok {
+	if _, ok := p.acceptKeyword(partitions, "PARTITIONS"); ok {
 		opt.Num = p.parseUint64()
 		if opt.Num == 0 {
 			p.error(p.peek().Offset, "Number of partitions must be a positive integer")
@@ -208,8 +208,8 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 	}
 
 	// UPDATE INDEXES (idx global|local, ...)
-	if _, ok := p.accept(57573); ok {
-		p.expect(57750)
+	if _, ok := p.accept(update); ok {
+		p.expect(indexes)
 		p.expect('(')
 		for {
 			tok := p.next()
@@ -220,10 +220,10 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 			c := Alloc[ast.Constraint](p.arena)
 			c.Name = tok.Lit
 			c.Option = Alloc[ast.IndexOption](p.arena)
-			if _, ok := p.accept(57733); ok {
+			if _, ok := p.accept(global); ok {
 				c.Option.Global = true
 			} else {
-				p.expect(57770)
+				p.expect(local)
 			}
 			opt.UpdateIndexes = append(opt.UpdateIndexes, c)
 			if _, ok := p.accept(','); !ok {
@@ -285,28 +285,28 @@ func (p *HandParser) parsePartitionExpr(errMsg string) ast.ExprNode {
 
 // parseSplitIndexOption parses SPLIT PRIMARY KEY / INDEX ... options.
 func (p *HandParser) parseSplitIndexOption() *ast.SplitIndexOption {
-	p.expect(58180)
+	p.expect(split)
 	opt := Alloc[ast.SplitIndexOption](p.arena)
 
-	if _, ok := p.accept(58173); ok {
+	if _, ok := p.accept(region); ok {
 		// handle optional REGION
 	}
 
-	if _, ok := p.accept(57518); ok {
-		p.expect(57467)
+	if _, ok := p.accept(primary); ok {
+		p.expect(key)
 		opt.PrimaryKey = true
-	} else if _, ok := p.accept(57449); ok {
-		if tok, ok := p.expect(57346); ok {
+	} else if _, ok := p.accept(index); ok {
+		if tok, ok := p.expect(identifier); ok {
 			opt.IndexName = ast.NewCIStr(tok.Lit)
 		} else {
 			p.error(p.peek().Offset, "expected index name")
 			return nil
 		}
-	} else if _, ok := p.accept(57556); ok {
+	} else if _, ok := p.accept(tableKwd); ok {
 		opt.TableLevel = true
 	} else {
 		// Implicit Table Level if followed by BETWEEN or BY
-		if tp := p.peek().Tp; tp == 57371 || tp == 57376 {
+		if tp := p.peek().Tp; tp == between || tp == by {
 			opt.TableLevel = true
 		} else {
 			p.error(p.peek().Offset, "expected PRIMARY KEY, INDEX or TABLE after SPLIT")
@@ -321,7 +321,7 @@ func (p *HandParser) parseSplitIndexOption() *ast.SplitIndexOption {
 // parseSplitOption parses BETWEEN ... AND ... REGIONS ...
 func (p *HandParser) parseSplitOption() *ast.SplitOption {
 	opt := Alloc[ast.SplitOption](p.arena)
-	if _, ok := p.accept(57371); ok {
+	if _, ok := p.accept(between); ok {
 		// Lower
 		p.expect('(')
 		for {
@@ -333,7 +333,7 @@ func (p *HandParser) parseSplitOption() *ast.SplitOption {
 		}
 		p.expect(')')
 
-		p.expect(57367)
+		p.expect(and)
 
 		// Upper
 		p.expect('(')
@@ -346,9 +346,9 @@ func (p *HandParser) parseSplitOption() *ast.SplitOption {
 		}
 		p.expect(')')
 
-		p.expect(58174)
+		p.expect(regions)
 		opt.Num = p.parseIntLit()
-	} else if _, ok := p.accept(57376); ok {
+	} else if _, ok := p.accept(by); ok {
 		// BY ...
 		// (val1), (val2) ...
 		for {
@@ -394,9 +394,9 @@ func (p *HandParser) parseColumnsNameList() []*ast.ColumnName {
 // parseKeyAlgorithmAndColumns parses [ALGORITHM = N] (col, col, ...) for KEY partitions.
 // Works for both PartitionOptions (main) and PartitionMethod (sub).
 func (p *HandParser) parseKeyAlgorithmAndColumns(opt *ast.PartitionMethod) {
-	if _, ok := p.accept(57603); ok {
-		p.expectAny(58202, 58201)
-		algTok, _ := p.expect(58197)
+	if _, ok := p.accept(algorithm); ok {
+		p.expectAny(eq, assignmentEq)
+		algTok, _ := p.expect(intLit)
 		alg := &ast.PartitionKeyAlgorithm{}
 		if v, ok := algTok.Item.(int64); ok {
 			alg.Type = uint64(v)
@@ -414,9 +414,9 @@ func (p *HandParser) parseKeyAlgorithmAndColumns(opt *ast.PartitionMethod) {
 
 // parsePartitionLessThanBound parses: PARTITION LESS THAN (expr)
 func (p *HandParser) parsePartitionLessThanBound() ast.ExprNode {
-	p.expect(57515)
-	p.expect(57766)
-	p.expect(57950)
+	p.expect(partition)
+	p.expect(less)
+	p.expect(than)
 	p.expect('(')
 	expr := p.parseExpression(0)
 	p.expect(')')

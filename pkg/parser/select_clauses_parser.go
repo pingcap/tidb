@@ -19,14 +19,14 @@ import (
 
 // parseGroupByClause parses GROUP BY expr_list [WITH ROLLUP].
 func (p *HandParser) parseGroupByClause() *ast.GroupByClause {
-	p.expect(57438)
-	p.expect(57376)
+	p.expect(group)
+	p.expect(by)
 
 	gb := Alloc[ast.GroupByClause](p.arena)
 	gb.Items = p.parseByItems()
 
 	// Optional WITH ROLLUP
-	if p.peek().Tp == 57590 {
+	if p.peek().Tp == with {
 		// Speculate: WITH ROLLUP vs WITH CTE
 		saved := p.mark()
 		p.next() // consume WITH
@@ -43,8 +43,8 @@ func (p *HandParser) parseGroupByClause() *ast.GroupByClause {
 
 // parseOrderByClause parses ORDER BY order_item_list.
 func (p *HandParser) parseOrderByClause() *ast.OrderByClause {
-	p.expect(57510)
-	p.expect(57376)
+	p.expect(order)
+	p.expect(by)
 
 	ob := Alloc[ast.OrderByClause](p.arena)
 	ob.Items = p.parseByItems()
@@ -76,9 +76,9 @@ func (p *HandParser) parseByItems() []*ast.ByItem {
 
 		// Optional ASC/DESC. Per grammar, items without explicit
 		// ASC/DESC get NullOrder=true (for both GROUP BY and ORDER BY).
-		if _, ok := p.accept(57409); ok {
+		if _, ok := p.accept(desc); ok {
 			item.Desc = true
-		} else if _, ok := p.accept(57370); ok {
+		} else if _, ok := p.accept(asc); ok {
 			// explicit ASC: NullOrder stays false
 		} else {
 			item.NullOrder = true
@@ -96,68 +96,68 @@ func (p *HandParser) parseByItems() []*ast.ByItem {
 // or OFFSET offset {ROW|ROWS} FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}
 // or FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}
 func (p *HandParser) parseLimitClause() *ast.Limit {
-	limit := Alloc[ast.Limit](p.arena)
+	limitNode := Alloc[ast.Limit](p.arena)
 
 	// Handle OFFSET first if present (Standard SQL)
-	if _, ok := p.accept(57811); ok {
-		limit.Offset = p.toUint64Value(p.parseExpression(precNone))
+	if _, ok := p.accept(offset); ok {
+		limitNode.Offset = p.toUint64Value(p.parseExpression(precNone))
 		// Optional ROW/ROWS
-		if p.peek().Tp == 57536 || p.peek().Tp == 57537 {
+		if p.peek().Tp == row || p.peek().Tp == rows {
 			p.next()
 		}
 	}
 
 	// Handle LIMIT or FETCH
-	if _, ok := p.accept(57477); ok {
+	if _, ok := p.accept(limit); ok {
 		// LIMIT count [OFFSET offset] or LIMIT offset, count
 		first := p.parseExpression(precNone)
 		if _, ok := p.accept(','); ok {
 			// LIMIT offset, count
-			limit.Offset = p.toUint64Value(first)
-			limit.Count = p.toUint64Value(p.parseExpression(precNone))
-		} else if _, ok := p.accept(57811); ok {
+			limitNode.Offset = p.toUint64Value(first)
+			limitNode.Count = p.toUint64Value(p.parseExpression(precNone))
+		} else if _, ok := p.accept(offset); ok {
 			// LIMIT count OFFSET offset
-			limit.Count = p.toUint64Value(first)
-			limit.Offset = p.toUint64Value(p.parseExpression(precNone))
+			limitNode.Count = p.toUint64Value(first)
+			limitNode.Offset = p.toUint64Value(p.parseExpression(precNone))
 		} else {
 			// LIMIT count
-			limit.Count = p.toUint64Value(first)
+			limitNode.Count = p.toUint64Value(first)
 		}
-	} else if _, ok := p.acceptKeyword(57426, "FETCH"); ok {
+	} else if _, ok := p.acceptKeyword(fetch, "FETCH"); ok {
 		// FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}
 		// FIRST / NEXT
-		if _, ok := p.acceptKeyword(57724, "FIRST"); !ok {
-			if _, ok := p.acceptKeyword(57797, "NEXT"); !ok {
+		if _, ok := p.acceptKeyword(first, "FIRST"); !ok {
+			if _, ok := p.acceptKeyword(next, "NEXT"); !ok {
 				p.error(p.peek().Offset, "expected FIRST or NEXT")
 				return nil
 			}
 		}
 
 		// Count is optional — check if next is ROW/ROWS (meaning no count specified)
-		isRowOrRows := p.peekKeyword(57536, "ROW") || p.peekKeyword(57537, "ROWS")
+		isRowOrRows := p.peekKeyword(row, "ROW") || p.peekKeyword(rows, "ROWS")
 
 		if !isRowOrRows {
-			limit.Count = p.toUint64Value(p.parseExpression(precNone))
+			limitNode.Count = p.toUint64Value(p.parseExpression(precNone))
 		} else {
 			// Implicit count 1.
 			val := ast.NewValueExpr(uint64(1), "", "")
-			limit.Count = val
+			limitNode.Count = val
 		}
 
 		// ROW/ROWS
-		if _, ok := p.acceptKeyword(57536, "ROW"); !ok {
-			if _, ok := p.acceptKeyword(57537, "ROWS"); !ok {
+		if _, ok := p.acceptKeyword(row, "ROW"); !ok {
+			if _, ok := p.acceptKeyword(rows, "ROWS"); !ok {
 				p.error(p.peek().Offset, "expected ROW or ROWS")
 				return nil
 			}
 		}
 
 		// ONLY or WITH TIES
-		if _, ok := p.acceptKeyword(57816, "ONLY"); ok {
+		if _, ok := p.acceptKeyword(only, "ONLY"); ok {
 			// done
-		} else if _, ok := p.acceptKeyword(57590, "WITH"); ok {
+		} else if _, ok := p.acceptKeyword(with, "WITH"); ok {
 			// Expect TIES
-			if ident, ok := p.expect(57346); !ok || !ident.IsKeyword("TIES") {
+			if ident, ok := p.expect(identifier); !ok || !ident.IsKeyword("TIES") {
 				p.error(p.peek().Offset, "expected TIES after WITH")
 				return nil
 			}
@@ -166,7 +166,7 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 			p.error(p.peek().Offset, "expected ONLY or WITH TIES")
 			return nil
 		}
-	} else if limit.Offset != nil {
+	} else if limitNode.Offset != nil {
 		// Just OFFSET without LIMIT/FETCH? Valid standard SQL?
 		// MySQL doesn't support it without LIMIT/FETCH usually, but maybe TiDB does?
 		// Returning limit with just Offset.
@@ -176,85 +176,85 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		return nil
 	}
 
-	return limit
+	return limitNode
 }
 
 // parseSelectLock parses FOR UPDATE [NOWAIT|WAIT N|SKIP LOCKED],
 // FOR SHARE [NOWAIT|SKIP LOCKED], or LOCK IN SHARE MODE.
 func (p *HandParser) parseSelectLock() *ast.SelectLockInfo {
-	lock := Alloc[ast.SelectLockInfo](p.arena)
+	lockNode := Alloc[ast.SelectLockInfo](p.arena)
 
-	if _, ok := p.accept(57483); ok {
+	if _, ok := p.accept(lock); ok {
 		// LOCK IN SHARE MODE
-		p.expect(57448)
-		p.expect(57902)
-		p.accept(57790) // MODE is optional in some dialects
-		lock.LockType = ast.SelectLockForShare
-		return lock
+		p.expect(in)
+		p.expect(share)
+		p.accept(mode) // MODE is optional in some dialects
+		lockNode.LockType = ast.SelectLockForShare
+		return lockNode
 	}
 
-	p.expect(57431)
+	p.expect(forKwd)
 
 	switch p.peek().Tp {
-	case 57573:
+	case update:
 		p.next()
-		lock.LockType = ast.SelectLockForUpdate
-		p.parseLockTablesAndModifiers(lock, ast.SelectLockForUpdateNoWait, ast.SelectLockForUpdateSkipLocked, ast.SelectLockForUpdateWaitN)
-	case 57902:
+		lockNode.LockType = ast.SelectLockForUpdate
+		p.parseLockTablesAndModifiers(lockNode, ast.SelectLockForUpdateNoWait, ast.SelectLockForUpdateSkipLocked, ast.SelectLockForUpdateWaitN)
+	case share:
 		p.next()
-		lock.LockType = ast.SelectLockForShare
-		p.parseLockTablesAndModifiers(lock, ast.SelectLockForShareNoWait, ast.SelectLockForShareSkipLocked, 0)
+		lockNode.LockType = ast.SelectLockForShare
+		p.parseLockTablesAndModifiers(lockNode, ast.SelectLockForShareNoWait, ast.SelectLockForShareSkipLocked, 0)
 	default:
 		p.error(p.peek().Offset, "expected UPDATE or SHARE after FOR")
 	}
 
-	return lock
+	return lockNode
 }
 
 // parseLockTablesAndModifiers parses: [OF tbl_name [, ...]] [NOWAIT|SKIP LOCKED|WAIT N]
 // waitNType of 0 disables WAIT N support (only FOR UPDATE supports it).
-func (p *HandParser) parseLockTablesAndModifiers(lock *ast.SelectLockInfo, nowaitType, skipLockedType ast.SelectLockType, waitNType ast.SelectLockType) {
+func (p *HandParser) parseLockTablesAndModifiers(lockNode *ast.SelectLockInfo, nowaitType, skipLockedType ast.SelectLockType, waitNType ast.SelectLockType) {
 	// Optional: OF tbl_name [, tbl_name ...]
-	if _, ok := p.accept(57504); ok {
+	if _, ok := p.accept(of); ok {
 		for {
-			lock.Tables = append(lock.Tables, p.parseTableName())
+			lockNode.Tables = append(lockNode.Tables, p.parseTableName())
 			if _, ok := p.accept(','); !ok {
 				break
 			}
 		}
 	}
 	// Optional modifiers
-	if _, ok := p.accept(57807); ok {
-		lock.LockType = nowaitType
-	} else if _, ok := p.accept(57907); ok {
-		p.expect(57772)
-		lock.LockType = skipLockedType
+	if _, ok := p.accept(nowait); ok {
+		lockNode.LockType = nowaitType
+	} else if _, ok := p.accept(skip); ok {
+		p.expect(locked)
+		lockNode.LockType = skipLockedType
 	} else if waitNType != 0 {
-		if _, ok := p.accept(57982); ok {
-			lock.LockType = waitNType
-			lock.WaitSec = p.parseUint64()
+		if _, ok := p.accept(wait); ok {
+			lockNode.LockType = waitNType
+			lockNode.WaitSec = p.parseUint64()
 		}
 	}
 }
 
 // parseSelectIntoOption parses INTO OUTFILE 'file' [FIELDS ...] [LINES ...]
 func (p *HandParser) parseSelectIntoOption() *ast.SelectIntoOption {
-	p.expect(57463)
-	p.expect(57513)
+	p.expect(into)
+	p.expect(outfile)
 
 	opt := &ast.SelectIntoOption{Tp: ast.SelectIntoOutfile}
-	if tok, ok := p.expect(57353); ok {
+	if tok, ok := p.expect(stringLit); ok {
 		opt.FileName = tok.Lit
 	}
 
 	// Optional FIELDS/COLUMNS clause
-	if tp := p.peek().Tp; tp == 57722 || tp == 57653 {
+	if tp := p.peek().Tp; tp == fields || tp == columns {
 		p.next()
 		opt.FieldsInfo = p.parseFieldsClause(false)
 	}
 
 	// Optional LINES clause
-	if _, ok := p.accept(57479); ok {
+	if _, ok := p.accept(lines); ok {
 		opt.LinesInfo = p.parseLinesClause()
 	}
 
@@ -264,7 +264,7 @@ func (p *HandParser) parseSelectIntoOption() *ast.SelectIntoOption {
 // isJoinKeyword returns true if the token type is a keyword that starts a JOIN.
 func (p *HandParser) isJoinKeyword(tp int) bool {
 	switch tp {
-	case 57466, 57451, 57390, 57475, 57534, 57497, 57555:
+	case join, inner, cross, left, right, natural, straightJoin:
 		return true
 	}
 	return false
@@ -275,7 +275,7 @@ func (p *HandParser) isJoinKeyword(tp int) bool {
 // avoid recursing into LEFT/RIGHT/NATURAL joins which need their own ON.
 func (p *HandParser) isSimpleJoinKeyword(tp int) bool {
 	switch tp {
-	case 57466, 57451, 57390, 57555:
+	case join, inner, cross, straightJoin:
 		return true
 	}
 	return false
@@ -286,13 +286,13 @@ func (p *HandParser) isSimpleJoinKeyword(tp int) bool {
 // SQL keywords (SELECT, FROM, WHERE, ON, etc.) and structural tokens are excluded.
 func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 	// Plain identifiers and string literals always work.
-	if tok.Tp == 57346 || tok.Tp == 57353 {
+	if tok.Tp == identifier || tok.Tp == stringLit {
 		if tok.IsKeyword("FETCH") {
 			return false // FETCH is reserved for Limit clause
 		}
 		// WINDOW is an unreserved keyword and valid as alias (e.g., `select 1 WINDOW`).
 		// But when followed by `identifier AS`, it introduces a WINDOW clause.
-		if tok.IsKeyword("WINDOW") && p.peekN(1).Tp == 57346 && p.peekN(2).Tp == 57369 {
+		if tok.IsKeyword("WINDOW") && p.peekN(1).Tp == identifier && p.peekN(2).Tp == as {
 			return false
 		}
 		return true
@@ -307,23 +307,23 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 	}
 	// Exclude reserved SQL keywords that cannot be aliases.
 	switch tok.Tp {
-	case 57540, 57434, 57587, 57438, 57510, 57477,
-		57440, 57541, 57573, 57407, 57453, 57463,
-		57580, 57505, 57576, 57369, 57445, 57422,
-		57466, 57451, 57390, 57475, 57534, 57497, 57555,
-		57568, 57421, 57461,
-		57575, 57446, 57432, 57426, 57811,
-		57431, 57483, 57448, 57498, 57367, 57509, 57464, 57502,
-		57567, 57425, 57476, 57371, 57379, 57586, 57559, 57417, 57701,
-		57389, 57365, 57415, 57556, 57449, 57385,
-		57518, 57467, 57569, 57433, 57383, 57386,
-		57405, 57364, 57411,
-		57515, 57590, 57589, 57514, 57439,
-		57536, 57731, 57504, 57557,
+	case selectKwd, from, where, group, order, limit,
+		having, set, update, deleteKwd, insert, into,
+		values, on, using, as, ifKwd, exists,
+		join, inner, cross, left, right, natural, straightJoin,
+		union, except, intersect,
+		use, ignore, force, fetch, offset,
+		forKwd, lock, in, not, and, or, is, null,
+		trueKwd, falseKwd, like, between, caseKwd, when, then, elseKwd, end,
+		create, alter, drop, tableKwd, index, column,
+		primary, key, unique, foreign, check, constraint,
+		defaultKwd, all, distinct,
+		partition, with, window, over, groups,
+		row, function, of, tableSample,
 		// Window function names are reserved and cannot be aliases.
-		57391, 57408, 57427, 57470, 57471,
-		57472, 57500, 57501, 57516, 57521, 57538,
-		58197, 58195, 58196, 58198, 58199:
+		cumeDist, denseRank, firstValue, lag, lastValue,
+		lead, nthValue, ntile, percentRank, rank, rowNumber,
+		intLit, floatLit, decLit, hexLit, bitLit:
 		return false
 	}
 	// Any other keyword token with a literal can be used as an alias.
@@ -354,9 +354,9 @@ func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode 
 	// This covers cases like `(SELECT ...) UNION (SELECT ...) ORDER BY ... LIMIT ...`
 	// or `(SELECT ...) LIMIT ...` if `first` was a parenthesized subquery.
 
-	hasOuterOrderBy := p.peek().Tp == 57510
+	hasOuterOrderBy := p.peek().Tp == order
 	pt := p.peek().Tp
-	hasOuterLimit := pt == 57477 || pt == 57811 || pt == 57426
+	hasOuterLimit := pt == limit || pt == offset || pt == fetch
 
 	// Check if res already has ORDER BY/LIMIT (from inner parenthesized context).
 	// If so, we need to wrap in a new SetOprStmt before attaching outer ORDER BY/LIMIT.
@@ -377,7 +377,7 @@ func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode 
 	}
 
 	// Try parsing ORDER BY
-	if p.peek().Tp == 57510 {
+	if p.peek().Tp == order {
 		orderBy := p.parseOrderByClause()
 		switch r := res.(type) {
 		case *ast.SelectStmt:
@@ -390,7 +390,7 @@ func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode 
 	// Try parsing LIMIT / OFFSET / FETCH
 	// parseLimitClause handles LIMIT, OFFSET, and FETCH keywords internally.
 	pt = p.peek().Tp
-	if pt == 57477 || pt == 57811 || pt == 57426 {
+	if pt == limit || pt == offset || pt == fetch {
 		limit := p.parseLimitClause()
 		switch r := res.(type) {
 		case *ast.SelectStmt:
@@ -425,7 +425,7 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 		p.next() // consume operator
 
 		// Handle ALL/DISTINCT
-		if _, ok := p.accept(57364); ok {
+		if _, ok := p.accept(all); ok {
 			switch *opType {
 			case ast.Union:
 				v := ast.UnionAll
@@ -438,7 +438,7 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 				opType = &v
 			}
 		} else {
-			p.accept(57411)
+			p.accept(distinct)
 		}
 
 		// Parse RHS unit
@@ -587,15 +587,15 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 func (p *HandParser) parseSetOprUnit() ast.ResultSetNode {
 	var res ast.ResultSetNode
 	switch p.peek().Tp {
-	case 57540:
+	case selectKwd:
 		res = p.parseSelectStmt()
 
-	case 57556, 57580, '(':
+	case tableKwd, values, '(':
 		// parseSubquery handles TABLE, VALUES, and parenthesized subqueries.
 		// For parenthesized subqueries, it returns *ast.SubqueryExpr.
 		res = p.parseSubquery()
 
-	// NOTE: case 57590 is intentionally NOT handled here.
+	// NOTE: case with is intentionally NOT handled here.
 	// The grammar's SimpleSelect rule does not allow WITH after
 	// set operators (UNION/EXCEPT/INTERSECT). WITH (CTE) can only appear
 	// at the top level of a statement, not inside a set operator chain.
@@ -627,13 +627,13 @@ func (p *HandParser) parseSetOprUnit() ast.ResultSetNode {
 // and returns the corresponding SetOprType. Returns nil if not a set operator.
 func (p *HandParser) peekSetOprType() *ast.SetOprType {
 	switch p.peek().Tp {
-	case 57568:
+	case union:
 		v := ast.Union
 		return &v
-	case 57461:
+	case intersect:
 		v := ast.Intersect
 		return &v
-	case 57421:
+	case except:
 		v := ast.Except
 		return &v
 	}

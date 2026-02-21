@@ -44,9 +44,9 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	case "GRANTS":
 		p.next()
 		stmt.Tp = ast.ShowGrants
-		if _, ok := p.accept(57431); ok {
+		if _, ok := p.accept(forKwd); ok {
 			stmt.User = p.parseUserIdentity()
-			if _, ok := p.accept(57576); ok {
+			if _, ok := p.accept(using); ok {
 				for {
 					role := p.parseRoleIdentity()
 					if role == nil {
@@ -88,7 +88,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	case "OPEN":
 		p.next()
 		// SHOW OPEN TABLES [FROM db] [LIKE ...]
-		p.accept(57944)
+		p.accept(tables)
 		stmt.Tp = ast.ShowOpenTables
 		stmt.DBName = p.parseShowDatabaseNameOpt()
 		p.parseShowLikeOrWhere(stmt)
@@ -96,7 +96,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	case "TABLE":
 		p.next()
 		// SHOW TABLE STATUS [FROM db] [LIKE ...]
-		if p.peekKeyword(57933, "STATUS") {
+		if p.peekKeyword(status, "STATUS") {
 			p.next()
 			stmt.Tp = ast.ShowTableStatus
 			stmt.DBName = p.parseShowDatabaseNameOpt()
@@ -181,13 +181,13 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		}
 	doneProfileTypes:
 		// FOR QUERY n
-		if _, ok := p.accept(57431); ok {
-			p.expect(57852)
+		if _, ok := p.accept(forKwd); ok {
+			p.expect(query)
 			v := int64(p.parseUint64())
 			stmt.ShowProfileArgs = &v
 		}
 		// LIMIT
-		if p.peek().Tp == 57477 {
+		if p.peek().Tp == limit {
 			stmt.ShowProfileLimit = p.parseLimitClause()
 		}
 		return stmt
@@ -203,7 +203,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		return stmt
 	case "MASTER":
 		p.next()
-		if p.peekKeyword(57933, "STATUS") {
+		if p.peekKeyword(status, "STATUS") {
 			p.next()
 			stmt.Tp = ast.ShowMasterStatus
 			return stmt
@@ -264,7 +264,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		return stmt
 	case "BINDING_CACHE":
 		p.next()
-		if p.peekKeyword(57933, "STATUS") {
+		if p.peekKeyword(status, "STATUS") {
 			p.next()
 			stmt.Tp = ast.ShowBindingCacheStatus
 			return stmt
@@ -295,11 +295,11 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		// SHOW EXTENDED [FULL] {COLUMNS|FIELDS} {FROM|IN} tbl ...
 		p.next()
 		stmt.Extended = true
-		if p.peekKeyword(57730, "FULL") {
+		if p.peekKeyword(full, "FULL") {
 			p.next()
 			stmt.Full = true
 		}
-		if p.peekKeyword(57653, "COLUMNS") || p.peekKeyword(57722, "FIELDS") {
+		if p.peekKeyword(columns, "COLUMNS") || p.peekKeyword(fields, "FIELDS") {
 			p.next()
 			stmt.Tp = ast.ShowColumns
 			p.parseShowTableClause(stmt)
@@ -309,7 +309,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		return nil
 	case "SLAVE":
 		p.next()
-		if p.peekKeyword(57933, "STATUS") {
+		if p.peekKeyword(status, "STATUS") {
 			p.next()
 			stmt.Tp = ast.ShowReplicaStatus
 			return stmt
@@ -324,33 +324,33 @@ func (p *HandParser) parseShowCreate() ast.StmtNode {
 	stmt := Alloc[ast.ShowStmt](p.arena)
 
 	switch p.peek().Tp {
-	case 57556:
+	case tableKwd:
 		p.next()
 		stmt.Tp = ast.ShowCreateTable
 		stmt.Table = p.parseTableName()
 		return stmt
-	case 57980:
+	case view:
 		p.next()
 		stmt.Tp = ast.ShowCreateView
 		stmt.Table = p.parseTableName()
 		return stmt
-	case 57519:
+	case procedure:
 		p.next()
 		stmt.Tp = ast.ShowCreateProcedure
 		stmt.Procedure = p.parseTableName()
 		return stmt
-	case 57398:
+	case database:
 		p.next()
 		stmt.Tp = ast.ShowCreateDatabase
-		if _, ok := p.accept(57445); ok {
-			p.accept(57498)
-			p.accept(57422)
+		if _, ok := p.accept(ifKwd); ok {
+			p.accept(not)
+			p.accept(exists)
 			stmt.IfNotExists = true
 		}
 		tok := p.next()
 		stmt.DBName = tok.Lit
 		return stmt
-	case 57896:
+	case sequence:
 		p.next()
 		stmt.Tp = ast.ShowCreateSequence
 		stmt.Table = p.parseTableName()

@@ -18,27 +18,27 @@ import "strings"
 // Builtin function token constants.
 // These MUST match the values in parser_tokens.go (the generated token file).
 const (
-	builtinFnCast        = 58130
-	builtinFnCount       = 58131
-	builtinFnCurDate     = 58132
-	builtinFnCurTime     = 58133
-	builtinFnDateAdd     = 58134
-	builtinFnDateSub     = 58135
-	builtinFnGroupConcat = 58137
-	builtinFnMax         = 58138
-	builtinFnMin         = 58139
-	builtinFnNow         = 58140
-	builtinFnPosition    = 58141
-	builtinFnSubstring   = 58145
-	builtinFnSum         = 58146
-	builtinFnTrim        = 58149
+	builtinFnCast        = builtinCast
+	builtinFnCount       = builtinCount
+	builtinFnCurDate     = builtinCurDate
+	builtinFnCurTime     = builtinCurTime
+	builtinFnDateAdd     = builtinDateAdd
+	builtinFnDateSub     = builtinDateSub
+	builtinFnGroupConcat = builtinGroupConcat
+	builtinFnMax         = builtinMax
+	builtinFnMin         = builtinMin
+	builtinFnNow         = builtinNow
+	builtinFnPosition    = builtinPosition
+	builtinFnSubstring   = builtinSubstring
+	builtinFnSum         = builtinSum
+	builtinFnTrim        = builtinTrim
 
 	// Additional common function tokens.
-	builtinFnExtract    = 58136
-	builtinFnStddevPop  = 58143
-	builtinFnStddevSamp = 58144
-	builtinFnVarPop     = 58151
-	builtinFnVarSamp    = 58152
+	builtinFnExtract    = builtinExtract
+	builtinFnStddevPop  = builtinStddevPop
+	builtinFnStddevSamp = builtinStddevSamp
+	builtinFnVarPop     = builtinVarPop
+	builtinFnVarSamp    = builtinVarSamp
 )
 
 // builtinFuncName maps builtin function token types to function names.

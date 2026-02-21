@@ -26,42 +26,42 @@ import (
 
 // parseSetStmt parses SET statements.
 func (p *HandParser) parseSetStmt() ast.StmtNode {
-	p.expect(57541)
+	p.expect(set)
 
 	// Check for One-Shot Statements first
 
 	// SET [GLOBAL|SESSION] TRANSACTION ...
-	if p.peek().Tp == 57960 {
+	if p.peek().Tp == transaction {
 		return p.parseSetTransaction(false, false)
 	}
-	if p.peek().Tp == 57733 || p.peek().Tp == 57899 {
+	if p.peek().Tp == global || p.peek().Tp == session {
 		mark := p.lexer.Mark()
 		p.next()
-		if p.peek().Tp == 57960 {
+		if p.peek().Tp == transaction {
 			p.lexer.Restore(mark)
 			scope := p.next()
-			return p.parseSetTransaction(scope.Tp == 57733, true)
+			return p.parseSetTransaction(scope.Tp == global, true)
 		}
 		p.lexer.Restore(mark)
 	}
 
 	// SET ROLE ...
-	if p.peek().Tp == 57877 {
+	if p.peek().Tp == role {
 		return p.parseSetRole()
 	}
 
 	// SET DEFAULT ROLE ...
-	if p.peek().Tp == 57405 {
+	if p.peek().Tp == defaultKwd {
 		mark := p.lexer.Mark()
 		p.next() // consume DEFAULT
-		if p.peek().Tp == 57877 {
+		if p.peek().Tp == role {
 			return p.parseSetDefaultRole()
 		}
 		p.lexer.Restore(mark)
 	}
 
 	// SET BINDING {ENABLED|DISABLED} FOR ...
-	if p.peekKeyword(57623, "BINDING") {
+	if p.peekKeyword(binding, "BINDING") {
 		p.next() // consume BINDING
 		return p.parseSetBindingStmt()
 	}
@@ -69,7 +69,7 @@ func (p *HandParser) parseSetStmt() ast.StmtNode {
 	// SET SESSION_STATES 'xxx'
 	if p.peek().IsKeyword("SESSION_STATES") {
 		p.next() // consume SESSION_STATES
-		if p.peek().Tp != 57353 {
+		if p.peek().Tp != stringLit {
 			p.error(p.peek().Offset, "SET SESSION_STATES requires a string literal")
 			return nil
 		}
@@ -79,28 +79,28 @@ func (p *HandParser) parseSetStmt() ast.StmtNode {
 	}
 
 	// SET RESOURCE GROUP <name>
-	if p.peek().Tp == 57869 {
-		p.next() // consume RESOURCE (which is 57869)
-		p.expect(57438)
+	if p.peek().Tp == resource {
+		p.next() // consume RESOURCE (which is resource)
+		p.expect(group)
 		stmt := Alloc[ast.SetResourceGroupStmt](p.arena)
 		stmt.Name = ast.NewCIStr(p.next().Lit)
 		return stmt
 	}
 
 	// SET PASSWORD ... → fall back
-	if p.peek().Tp == 57829 {
+	if p.peek().Tp == password {
 		p.next() // consume PASSWORD
 		pwdStmt := Alloc[ast.SetPwdStmt](p.arena)
-		if _, ok := p.accept(57431); ok {
+		if _, ok := p.accept(forKwd); ok {
 			pwdStmt.User = p.parseUserIdentity()
 		}
-		p.expect(58202)
+		p.expect(eq)
 		pwdStmt.Password = p.next().Lit
 		return pwdStmt
 	}
 
 	// SET CONFIG ...
-	if p.peek().Tp == 57664 {
+	if p.peek().Tp == config {
 		return p.parseSetConfig()
 	}
 
@@ -110,12 +110,12 @@ func (p *HandParser) parseSetStmt() ast.StmtNode {
 
 	for {
 		// SET NAMES ...
-		if _, ok := p.accept(57793); ok {
+		if _, ok := p.accept(names); ok {
 			variables = append(variables, p.parseSetNamesAssignment()...)
-		} else if p.peek().Tp == 57382 || p.peek().Tp == 57381 || p.peek().Tp == 57639 {
+		} else if p.peek().Tp == character || p.peek().Tp == charType || p.peek().Tp == charsetKwd {
 			// SET CHARACTER SET / SET CHAR SET / SET CHARSET
-			if p.next().Tp != 57639 {
-				p.expect(57541) // CHARACTER and CHAR require SET after them
+			if p.next().Tp != charsetKwd {
+				p.expect(set) // CHARACTER and CHAR require SET after them
 			}
 			variables = append(variables, p.parseSetCharsetAssignment()...)
 		} else {
@@ -141,7 +141,7 @@ func (p *HandParser) parseVariableAssignment() *ast.VariableAssignment {
 	va := Alloc[ast.VariableAssignment](p.arena)
 
 	switch p.peek().Tp {
-	case 57354:
+	case singleAtIdentifier:
 		// @user_var = expr
 		tok := p.next()
 		// The lexer stores @var literals in Item, not Lit.
@@ -152,7 +152,7 @@ func (p *HandParser) parseVariableAssignment() *ast.VariableAssignment {
 		va.Value = p.parseExpression(precNone)
 		return va
 
-	case 57355:
+	case doubleAtIdentifier:
 		// @@[global.|session.|local.|instance.]sysvar = expr
 		tok := p.next()
 		// The lexer stores @@var literals in Item, not Lit.
@@ -178,15 +178,15 @@ func (p *HandParser) parseVariableAssignment() *ast.VariableAssignment {
 		va.Value = p.parseSetExpr()
 		return va
 
-	case 57733:
+	case global:
 		p.next()
 		return p.parseSystemVariableAssignment(true, false)
 
-	case 57899, 57770:
+	case session, local:
 		p.next()
 		return p.parseSystemVariableAssignment(false, false)
 
-	case 57752:
+	case instance:
 		p.next()
 		return p.parseSystemVariableAssignment(false, true)
 
@@ -231,10 +231,10 @@ func (p *HandParser) parseVariableName() string {
 
 // acceptEqOrAssign accepts '=' or ':='.
 func (p *HandParser) acceptEqOrAssign() bool {
-	if _, ok := p.accept(58202); ok {
+	if _, ok := p.accept(eq); ok {
 		return true
 	}
-	if _, ok := p.accept(58201); ok {
+	if _, ok := p.accept(assignmentEq); ok {
 		return true
 	}
 	return false
@@ -243,17 +243,17 @@ func (p *HandParser) acceptEqOrAssign() bool {
 // parseSetExpr parses the RHS of a SET variable assignment.
 // Handles ON, OFF, DEFAULT, BINARY (as charset string), and general expressions.
 func (p *HandParser) parseSetExpr() ast.ExprNode {
-	if _, ok := p.accept(57405); ok {
+	if _, ok := p.accept(defaultKwd); ok {
 		return Alloc[ast.DefaultExpr](p.arena)
 	}
 	// BINARY as a SET value means the charset name 'BINARY' (string)
-	if p.peek().Tp == 57373 {
+	if p.peek().Tp == binaryType {
 		p.next()
 		return p.newValueExpr("BINARY")
 	}
 	// ON/OFF are reserved keywords but valid SET values (e.g., SET @@var = ON).
 	// The parser treats them as string literals in this context.
-	if p.peek().Tp == 57505 {
+	if p.peek().Tp == on {
 		p.next()
 		return p.newValueExpr("ON")
 	}
@@ -262,7 +262,7 @@ func (p *HandParser) parseSetExpr() ast.ExprNode {
 		return p.newValueExpr("OFF")
 	}
 	// ALL is valid for some SET variables (e.g., sql_mode)
-	if p.peek().Tp == 57364 {
+	if p.peek().Tp == all {
 		p.next()
 		return p.newValueExpr("ALL")
 	}
@@ -274,13 +274,13 @@ func (p *HandParser) parseSetNamesAssignment() []*ast.VariableAssignment {
 	va := Alloc[ast.VariableAssignment](p.arena)
 	va.Name = ast.SetNames
 
-	if _, ok := p.accept(57405); ok {
+	if _, ok := p.accept(defaultKwd); ok {
 		va.Value = Alloc[ast.DefaultExpr](p.arena)
 	} else {
 		tok := p.next()
 		va.Value = ast.NewValueExpr(tok.Lit, "", "")
-		if _, ok := p.accept(57384); ok {
-			if _, ok := p.accept(57405); !ok {
+		if _, ok := p.accept(collate); ok {
+			if _, ok := p.accept(defaultKwd); !ok {
 				colTok := p.next()
 				va.ExtendValue = ast.NewValueExpr(colTok.Lit, "", "")
 			}
@@ -295,7 +295,7 @@ func (p *HandParser) parseSetCharsetAssignment() []*ast.VariableAssignment {
 	va := Alloc[ast.VariableAssignment](p.arena)
 	va.Name = ast.SetCharset
 
-	if _, ok := p.accept(57405); ok {
+	if _, ok := p.accept(defaultKwd); ok {
 		va.Value = Alloc[ast.DefaultExpr](p.arena)
 	} else {
 		tok := p.next()
@@ -309,13 +309,13 @@ func (p *HandParser) parseSetRole() ast.StmtNode {
 	p.next() // consume ROLE
 	stmt := Alloc[ast.SetRoleStmt](p.arena)
 
-	if _, ok := p.accept(57405); ok {
+	if _, ok := p.accept(defaultKwd); ok {
 		stmt.SetRoleOpt = ast.SetRoleDefault
-	} else if _, ok := p.accept(57806); ok {
+	} else if _, ok := p.accept(none); ok {
 		stmt.SetRoleOpt = ast.SetRoleNone
-	} else if _, ok := p.accept(57364); ok {
+	} else if _, ok := p.accept(all); ok {
 		stmt.SetRoleOpt = ast.SetRoleAll
-		if _, ok := p.accept(57421); ok {
+		if _, ok := p.accept(except); ok {
 			stmt.SetRoleOpt = ast.SetRoleAllExcept
 			stmt.RoleList = p.parseRoleList()
 		}
@@ -349,16 +349,16 @@ func (p *HandParser) parseSetDefaultRole() ast.StmtNode {
 	p.next() // consume ROLE (DEFAULT was consumed by caller)
 	stmt := Alloc[ast.SetDefaultRoleStmt](p.arena)
 
-	if _, ok := p.accept(57806); ok {
+	if _, ok := p.accept(none); ok {
 		stmt.SetRoleOpt = ast.SetRoleNone
-	} else if _, ok := p.accept(57364); ok {
+	} else if _, ok := p.accept(all); ok {
 		stmt.SetRoleOpt = ast.SetRoleAll
 	} else {
 		stmt.SetRoleOpt = ast.SetRoleRegular
 		stmt.RoleList = p.parseRoleList()
 	}
 
-	p.expect(57564)
+	p.expect(to)
 
 	// Parse user list (similar to role list but returning *auth.UserIdentity)
 	var users []*auth.UserIdentity
@@ -385,7 +385,7 @@ func (p *HandParser) parseSetConfig() ast.StmtNode {
 
 	// Parse Type or Instance
 	tok := p.peek()
-	if tok.Tp == 57353 {
+	if tok.Tp == stringLit {
 		stmt.Instance = tok.Lit
 		p.next()
 	} else if isIdentLike(tok.Tp) {
@@ -402,7 +402,7 @@ func (p *HandParser) parseSetConfig() ast.StmtNode {
 		return nil
 	}
 
-	p.expect(58202)
+	p.expect(eq)
 
 	// Parse Value
 	stmt.Value = p.parseExpression(precNone)
@@ -412,15 +412,15 @@ func (p *HandParser) parseSetConfig() ast.StmtNode {
 
 // parseConfigName parses configuration names which can contain identifiers, dots, and dashes.
 // Uses explicit token type checks to avoid consuming operators like '=' which isIdentLike
-// incorrectly treats as identifiers (since 58202 > 0xFF and is not reserved).
+// incorrectly treats as identifiers (since eq > 0xFF and is not reserved).
 func (p *HandParser) parseConfigName() string {
 	var sb strings.Builder
 	for {
 		tok := p.peek()
 		// Accept identifiers, unreserved keywords, and string literals.
-		// Exclude operator tokens (58201=58201 and above) which have
+		// Exclude operator tokens (assignmentEq=assignmentEq and above) which have
 		// Tp > 0xFF but are NOT identifiers/keywords.
-		if tok.Tp == 57353 || (tok.Tp >= 57346 && tok.Tp < 58201 && tok.Lit != "") {
+		if tok.Tp == stringLit || (tok.Tp >= identifier && tok.Tp < assignmentEq && tok.Lit != "") {
 			sb.WriteString(tok.Lit)
 			p.next()
 		} else if tok.Tp == '.' {
@@ -445,7 +445,7 @@ func (p *HandParser) parseConfigName() string {
 //
 // Maps to SET @@[GLOBAL.|SESSION.]tx_isolation / tx_read_only variable assignments.
 func (p *HandParser) parseSetTransaction(isGlobal bool, hasScope bool) ast.StmtNode {
-	p.expect(57960)
+	p.expect(transaction)
 
 	stmt := Alloc[ast.SetStmt](p.arena)
 
@@ -454,21 +454,21 @@ func (p *HandParser) parseSetTransaction(isGlobal bool, hasScope bool) ast.StmtN
 		va.IsSystem = true
 		va.IsGlobal = isGlobal
 
-		if _, ok := p.accept(57757); ok {
+		if _, ok := p.accept(isolation); ok {
 			// ISOLATION LEVEL { READ UNCOMMITTED | READ COMMITTED | REPEATABLE READ | SERIALIZABLE }
-			p.expect(57767)
+			p.expect(level)
 			var level string
-			if _, ok := p.accept(57522); ok {
-				if _, ok := p.accept(57970); ok {
+			if _, ok := p.accept(read); ok {
+				if _, ok := p.accept(uncommitted); ok {
 					level = "READ-UNCOMMITTED"
 				} else {
-					p.expect(57657)
+					p.expect(committed)
 					level = "READ-COMMITTED"
 				}
-			} else if _, ok := p.accept(57864); ok {
-				p.expect(57522)
+			} else if _, ok := p.accept(repeatable); ok {
+				p.expect(read)
 				level = "REPEATABLE-READ"
-			} else if _, ok := p.accept(57898); ok {
+			} else if _, ok := p.accept(serializable); ok {
 				level = "SERIALIZABLE"
 			} else {
 				p.error(p.peek().Offset, "expected isolation level")
@@ -482,23 +482,23 @@ func (p *HandParser) parseSetTransaction(isGlobal bool, hasScope bool) ast.StmtN
 			va.Value = p.newValueExpr(level)
 		} else {
 			// READ { ONLY | WRITE }
-			p.expect(57522)
-			if _, ok := p.accept(57591); ok {
+			p.expect(read)
+			if _, ok := p.accept(write); ok {
 				va.Name = "tx_read_only"
 				va.Value = p.newValueExpr("0")
 			} else {
-				p.expect(57816)
+				p.expect(only)
 				// Check for AS OF clause
 				var asOfTs string
-				if p.peek().Tp == 57347 {
+				if p.peek().Tp == asof {
 					p.next()
-					p.expect(57954)
+					p.expect(timestampType)
 					asOfTs = p.next().Lit
-				} else if p.peek().Tp == 57369 {
+				} else if p.peek().Tp == as {
 					p.next()
-					if p.peek().Tp == 57504 {
+					if p.peek().Tp == of {
 						p.next()
-						p.expect(57954)
+						p.expect(timestampType)
 						asOfTs = p.next().Lit
 					} else {
 						// Just 'AS' without 'OF'? Should not happen here in valid SQL
@@ -541,15 +541,15 @@ func (p *HandParser) parseSetBindingStmt() ast.StmtNode {
 	}
 
 	// FOR
-	p.expect(57431)
+	p.expect(forKwd)
 
 	// SQL DIGEST 'digest_string' or <statement>
-	if p.peekKeyword(57545, "SQL") {
+	if p.peekKeyword(sql, "SQL") {
 		m := p.mark()
 		p.next() // consume SQL
 		if p.peek().IsKeyword("DIGEST") {
 			p.next() // consume DIGEST
-			if tok, ok := p.expect(57353); ok {
+			if tok, ok := p.expect(stringLit); ok {
 				stmt.SQLDigest = tok.Lit
 			}
 			return stmt
@@ -565,7 +565,7 @@ func (p *HandParser) parseSetBindingStmt() ast.StmtNode {
 	stmt.OriginNode = originStmt
 
 	// Optional: USING <hinted_stmt>
-	if _, ok := p.accept(57576); ok {
+	if _, ok := p.accept(using); ok {
 		hintedStmt := p.parseAndSetText()
 		if hintedStmt == nil {
 			return nil
@@ -587,33 +587,33 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	stmt := Alloc[ast.ExplainStmt](p.arena)
 	stmt.Format = "row"
 
-	if p.peek().Tp == 57718 {
+	if p.peek().Tp == explore {
 		p.next()
 		stmt.Explore = true
 		stmt.Format = "" // Format is empty for EXPLORE
-		if tok, ok := p.accept(57353); ok {
+		if tok, ok := p.accept(stringLit); ok {
 			stmt.SQLDigest = tok.Lit
 			return stmt
 		}
 	}
 
 	// [ANALYZE]
-	if _, ok := p.accept(57366); ok {
+	if _, ok := p.accept(analyze); ok {
 		stmt.Analyze = true
 	}
 
 	// [FORMAT = 'format']
-	if p.peek().Tp == 57728 {
+	if p.peek().Tp == format {
 		p.next()
-		p.expectAny(58202, 58201)
+		p.expectAny(eq, assignmentEq)
 		fmt := p.next()
 		stmt.Format = fmt.Lit
 	}
 
 	// EXPLAIN [FORMAT = ...] FOR CONNECTION N
-	if _, ok := p.accept(57431); ok {
+	if _, ok := p.accept(forKwd); ok {
 		// FOR CONNECTION n
-		p.expect(57665)
+		p.expect(connection)
 		forStmt := Alloc[ast.ExplainForStmt](p.arena)
 		forStmt.Format = stmt.Format
 		forStmt.ConnectionID = p.parseUint64()
@@ -621,7 +621,7 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	}
 
 	// EXPLAIN [ANALYZE] [FORMAT = ...] 'plan_digest' — string literal = plan digest
-	if p.peek().Tp == 57353 {
+	if p.peek().Tp == stringLit {
 		stmt.PlanDigest = p.next().Lit
 		return stmt
 	}
@@ -630,14 +630,14 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	var sub ast.StmtNode
 	subStartOff := p.peek().Offset
 	switch p.peek().Tp {
-	case 57540, 57453, 57530, 57573, 57407,
-		57365, 57389, 57415, 57541, 57542, 57590, 57963,
-		57528, 57366, 57480, 57437, 57533, 57556, 57580,
-		57746, '(':
+	case selectKwd, insert, replace, update, deleteKwd,
+		alter, create, drop, set, show, with, truncate,
+		rename, analyze, load, grant, revoke, tableKwd, values,
+		importKwd, '(':
 		sub = p.parseStatement()
 	default:
 		// EXPLAIN|DESCRIBE tablename → maps to SHOW COLUMNS
-		if p.peek().Tp == 57346 || p.peek().Tp > 0xFF {
+		if p.peek().Tp == identifier || p.peek().Tp > 0xFF {
 			tn := p.parseTableName()
 			if tn == nil {
 				return nil
@@ -646,7 +646,7 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 			showStmt.Tp = ast.ShowColumns
 			showStmt.Table = tn
 			// Check for column specifier after table name
-			if p.peek().Tp == 57346 || p.peek().Tp == 57353 {
+			if p.peek().Tp == identifier || p.peek().Tp == stringLit {
 				col := &ast.ColumnName{Name: ast.NewCIStr(p.next().Lit)}
 				showStmt.Column = col
 			}
@@ -676,10 +676,10 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 // parseLockTablesStmt parses: LOCK TABLE[S] t1 READ|WRITE [, t2 ...]
 func (p *HandParser) parseLockTablesStmt() ast.StmtNode {
 	stmt := Alloc[ast.LockTablesStmt](p.arena)
-	p.expect(57483)
+	p.expect(lock)
 	// Accept TABLE or TABLES
-	if _, ok := p.accept(57944); !ok {
-		p.expect(57556)
+	if _, ok := p.accept(tables); !ok {
+		p.expect(tableKwd)
 	}
 
 	// Parse table lock list
@@ -712,16 +712,16 @@ func (p *HandParser) parseTableLock() (ast.TableLock, bool) {
 		Table: tn,
 	}
 	switch p.peek().Tp {
-	case 57522:
+	case read:
 		p.next()
-		if _, ok := p.accept(57770); ok {
+		if _, ok := p.accept(local); ok {
 			tl.Type = ast.TableLockReadLocal
 		} else {
 			tl.Type = ast.TableLockRead
 		}
-	case 57591:
+	case write:
 		p.next()
-		if _, ok := p.accept(57770); ok {
+		if _, ok := p.accept(local); ok {
 			tl.Type = ast.TableLockWriteLocal
 		} else {
 			tl.Type = ast.TableLockWrite

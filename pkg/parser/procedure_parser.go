@@ -23,11 +23,11 @@ import (
 func (p *HandParser) skipToSemiOrEnd() {
 	for {
 		tok := p.peek()
-		if tok.Tp == 0 || tok.Tp == ';' || tok.Tp == 57701 || tok.Tp == 57572 {
+		if tok.Tp == 0 || tok.Tp == ';' || tok.Tp == end || tok.Tp == until {
 			return
 		}
 		// Also stop at ELSEIF, ELSE which terminate IF branches.
-		if tok.Tp == 57417 || tok.Tp == 57418 {
+		if tok.Tp == elseKwd || tok.Tp == elseIfKwd {
 			return
 		}
 		p.next()
@@ -62,7 +62,7 @@ func (p *HandParser) wrapWithLabel(label string, block ast.StmtNode, isLoop bool
 		return block
 	}
 	endLabel := ""
-	if tok := p.peek(); tok.IsIdent() || tok.Tp == 57346 {
+	if tok := p.peek(); tok.IsIdent() || tok.Tp == identifier {
 		endLabel = p.next().Lit
 	}
 	if isLoop {
@@ -87,8 +87,8 @@ func (p *HandParser) wrapWithLabel(label string, block ast.StmtNode, isLoop bool
 //
 //	CREATE PROCEDURE [IF NOT EXISTS] name ( params ) body
 func (p *HandParser) parseCreateProcedureStmt() ast.StmtNode {
-	p.expect(57389)
-	p.expect(57519)
+	p.expect(create)
+	p.expect(procedure)
 
 	stmt := &ast.ProcedureInfo{}
 
@@ -118,13 +118,13 @@ func (p *HandParser) parseProcedureParams() []*ast.StoreParameter {
 
 		// [IN | OUT | INOUT]
 		switch p.peek().Tp {
-		case 57448:
+		case in:
 			p.next()
 			param.Paramstatus = ast.MODE_IN
-		case 57511:
+		case out:
 			p.next()
 			param.Paramstatus = ast.MODE_OUT
-		case 57452:
+		case inout:
 			p.next()
 			param.Paramstatus = ast.MODE_INOUT
 		default:
@@ -164,7 +164,7 @@ func (p *HandParser) parseProcedureBodyStatement() ast.StmtNode {
 
 	// Reuse inner statement logic for shared cases (BEGIN/IF/WHILE/REPEAT/CASE)
 	switch tok.Tp {
-	case 57621, 57445, 57588, 57529, 57379:
+	case begin, ifKwd, while, repeat, caseKwd:
 		return p.parseProcedureInnerStatement()
 	default:
 		return p.parseProcedureStatementList()
@@ -174,9 +174,9 @@ func (p *HandParser) parseProcedureBodyStatement() ast.StmtNode {
 // parseLabeledBody parses a labeled block/loop after "label:".
 func (p *HandParser) parseLabeledBody(label string) ast.StmtNode {
 	switch p.peek().Tp {
-	case 57588:
+	case while:
 		return p.parseProcedureWhile(label)
-	case 57529:
+	case repeat:
 		return p.parseProcedureRepeat(label)
 	default:
 		return p.parseProcedureBlock(label)
@@ -185,13 +185,13 @@ func (p *HandParser) parseLabeledBody(label string) ast.StmtNode {
 
 // parseProcedureBlock parses BEGIN ... END [label]
 func (p *HandParser) parseProcedureBlock(label string) ast.StmtNode {
-	p.expect(57621)
+	p.expect(begin)
 
 	block := &ast.ProcedureBlock{}
 	var vars []ast.DeclNode
 
 	// Parse DECLARE statements first
-	for p.peek().Tp == 57684 {
+	for p.peek().Tp == declare {
 		decl := p.parseProcedureDeclaration()
 		if decl != nil {
 			vars = append(vars, decl)
@@ -200,27 +200,27 @@ func (p *HandParser) parseProcedureBlock(label string) ast.StmtNode {
 	}
 
 	block.ProcedureVars = vars
-	block.ProcedureProcStmts = p.parseProcedureStatementsUntil(57701)
+	block.ProcedureProcStmts = p.parseProcedureStatementsUntil(end)
 
-	p.expect(57701) // consume END
+	p.expect(end) // consume END
 	return p.wrapWithLabel(label, block, false)
 }
 
 // parseProcedureDeclaration parses DECLARE statements.
 func (p *HandParser) parseProcedureDeclaration() ast.DeclNode {
-	p.expect(57684)
+	p.expect(declare)
 
 	tok := p.peek()
-	if tok.Tp == 57423 {
+	if tok.Tp == exit {
 		return p.parseProcedureHandlerDecl(ast.PROCEDUR_EXIT)
 	}
-	if tok.Tp == 57387 {
+	if tok.Tp == continueKwd {
 		return p.parseProcedureHandlerDecl(ast.PROCEDUR_CONTINUE)
 	}
 
 	firstName := p.next().Lit
 
-	if p.peek().Tp == 57397 {
+	if p.peek().Tp == cursor {
 		return p.parseProcedureCursor(firstName)
 	}
 
@@ -238,7 +238,7 @@ func (p *HandParser) parseProcedureDeclaration() ast.DeclNode {
 		DeclType:  p.parseFieldTypeProcedure(),
 	}
 
-	if _, ok := p.accept(57405); ok {
+	if _, ok := p.accept(defaultKwd); ok {
 		decl.DeclDefault = p.parseExpression(precNone)
 	}
 	return decl
@@ -247,8 +247,8 @@ func (p *HandParser) parseProcedureDeclaration() ast.DeclNode {
 // parseProcedureHandlerDecl parses: {EXIT|CONTINUE} HANDLER FOR condition [, cond ...] stmt
 func (p *HandParser) parseProcedureHandlerDecl(handlerType int) *ast.ProcedureErrorControl {
 	p.next() // consume EXIT/CONTINUE
-	p.expect(57735)
-	p.expect(57431)
+	p.expect(handler)
+	p.expect(forKwd)
 
 	handler := &ast.ProcedureErrorControl{
 		ControlHandle: handlerType,
@@ -272,22 +272,22 @@ func (p *HandParser) parseProcedureHandlerDecl(handlerType int) *ast.ProcedureEr
 // parseProcedureHandlerCondition parses a handler condition.
 func (p *HandParser) parseProcedureHandlerCondition() ast.ErrNode {
 	switch p.peek().Tp {
-	case 57548:
+	case sqlwarning:
 		p.next()
 		return &ast.ProcedureErrorCon{ErrorCon: ast.PROCEDUR_SQLWARNING}
-	case 57546:
+	case sqlexception:
 		p.next()
 		return &ast.ProcedureErrorCon{ErrorCon: ast.PROCEDUR_SQLEXCEPTION}
-	case 57547:
+	case sqlstate:
 		p.next()
 		val := p.next().Lit
 		return &ast.ProcedureErrorState{CodeStatus: val}
-	case 58197:
+	case intLit:
 		tok := p.next()
 		errNum := tokenItemToUint64(tok.Item)
 		return &ast.ProcedureErrorVal{ErrorNum: errNum}
 	default:
-		if p.peek().Tp == 57498 {
+		if p.peek().Tp == not {
 			p.next()
 			p.next() // "FOUND"
 			return &ast.ProcedureErrorCon{ErrorCon: ast.PROCEDUR_NOT_FOUND}
@@ -298,8 +298,8 @@ func (p *HandParser) parseProcedureHandlerCondition() ast.ErrNode {
 
 // parseProcedureCursor parses: CURSOR FOR select_stmt
 func (p *HandParser) parseProcedureCursor(name string) *ast.ProcedureCursor {
-	p.expect(57397)
-	p.expect(57431)
+	p.expect(cursor)
+	p.expect(forKwd)
 	cursor := &ast.ProcedureCursor{CurName: name}
 	cursor.Selectstring = p.parseSelectStmt()
 	return cursor
@@ -316,25 +316,25 @@ func (p *HandParser) parseProcedureInnerStatement() ast.StmtNode {
 	}
 
 	switch tok.Tp {
-	case 57621:
+	case begin:
 		return p.parseProcedureBlock("")
-	case 57445:
+	case ifKwd:
 		return p.parseProcedureIf()
-	case 57588:
+	case while:
 		return p.parseProcedureWhile("")
-	case 57529:
+	case repeat:
 		return p.parseProcedureRepeat("")
-	case 57379:
+	case caseKwd:
 		return p.parseProcedureCase()
-	case 57818:
+	case open:
 		return p.parseProcedureOpen()
-	case 57647:
+	case close:
 		return p.parseProcedureClose()
-	case 57426:
+	case fetch:
 		return p.parseProcedureFetch()
-	case 57474:
+	case leave:
 		return p.parseProcedureLeave()
-	case 57465:
+	case iterate:
 		return p.parseProcedureIterate()
 	default:
 		return p.parseStatement()
@@ -343,10 +343,10 @@ func (p *HandParser) parseProcedureInnerStatement() ast.StmtNode {
 
 // parseProcedureIf parses: IF expr THEN stmts [ELSEIF ...] [ELSE ...] END IF
 func (p *HandParser) parseProcedureIf() ast.StmtNode {
-	p.expect(57445)
+	p.expect(ifKwd)
 	ifBlock := p.parseProcedureIfBlock()
-	p.expect(57701)
-	p.expect(57445)
+	p.expect(end)
+	p.expect(ifKwd)
 	return &ast.ProcedureIfInfo{IfBody: ifBlock}
 }
 
@@ -354,20 +354,20 @@ func (p *HandParser) parseProcedureIf() ast.StmtNode {
 func (p *HandParser) parseProcedureIfBlock() *ast.ProcedureIfBlock {
 	block := &ast.ProcedureIfBlock{}
 	block.IfExpr = p.parseExpression(precNone)
-	p.expect(57559)
+	p.expect(then)
 
-	block.ProcedureIfStmts = p.parseProcedureStatementsUntil(57701, 57417, 57418)
+	block.ProcedureIfStmts = p.parseProcedureStatementsUntil(end, elseKwd, elseIfKwd)
 
 	tok := p.peek()
-	if tok.Tp == 57418 {
+	if tok.Tp == elseIfKwd {
 		p.next()
 		elseIfBlock := p.parseProcedureIfBlock()
 		block.ProcedureElseStmt = &ast.ProcedureElseIfBlock{
 			ProcedureIfStmt: elseIfBlock,
 		}
-	} else if _, ok := p.accept(57417); ok {
+	} else if _, ok := p.accept(elseKwd); ok {
 		block.ProcedureElseStmt = &ast.ProcedureElseBlock{
-			ProcedureIfStmts: p.parseProcedureStatementsUntil(57701),
+			ProcedureIfStmts: p.parseProcedureStatementsUntil(end),
 		}
 	}
 	return block
@@ -375,32 +375,32 @@ func (p *HandParser) parseProcedureIfBlock() *ast.ProcedureIfBlock {
 
 // parseProcedureWhile parses: WHILE expr DO stmts END WHILE [label]
 func (p *HandParser) parseProcedureWhile(label string) ast.StmtNode {
-	p.expect(57588)
+	p.expect(while)
 
 	block := &ast.ProcedureWhileStmt{}
 	block.Condition = p.parseExpression(precNone)
-	p.expect(57693)
+	p.expect(do)
 
-	block.Body = p.parseProcedureStatementsUntil(57701)
+	block.Body = p.parseProcedureStatementsUntil(end)
 
-	p.expect(57701)
-	p.expect(57588)
+	p.expect(end)
+	p.expect(while)
 
 	return p.wrapWithLabel(label, block, true)
 }
 
 // parseProcedureRepeat parses: REPEAT stmts UNTIL expr END REPEAT [label]
 func (p *HandParser) parseProcedureRepeat(label string) ast.StmtNode {
-	p.expect(57529)
+	p.expect(repeat)
 
 	block := &ast.ProcedureRepeatStmt{}
 
-	block.Body = p.parseProcedureStatementsUntil(57572)
+	block.Body = p.parseProcedureStatementsUntil(until)
 
-	p.expect(57572)
+	p.expect(until)
 	block.Condition = p.parseExpression(precNone)
-	p.expect(57701)
-	p.expect(57529)
+	p.expect(end)
+	p.expect(repeat)
 
 	return p.wrapWithLabel(label, block, true)
 }
@@ -408,9 +408,9 @@ func (p *HandParser) parseProcedureRepeat(label string) ast.StmtNode {
 // parseProcedureCase parses: CASE [expr] WHEN ... THEN ... [ELSE ...] END CASE
 // Produces SimpleCaseStmt (CASE expr WHEN ...) or SearchCaseStmt (CASE WHEN ...).
 func (p *HandParser) parseProcedureCase() ast.StmtNode {
-	p.expect(57379)
+	p.expect(caseKwd)
 
-	hasCondition := p.peek().Tp != 57586
+	hasCondition := p.peek().Tp != when
 	var condExpr ast.ExprNode
 	if hasCondition {
 		condExpr = p.parseExpression(precNone)
@@ -429,8 +429,8 @@ func (p *HandParser) parseSimpleCase(condExpr ast.ExprNode) ast.StmtNode {
 	p.parseProcedureCaseWhenElse(func() {
 		whenStmt := &ast.SimpleWhenThenStmt{}
 		whenStmt.Expr = p.parseExpression(precNone)
-		p.expect(57559)
-		whenStmt.ProcedureStmts = p.parseProcedureStatementsUntil(57586, 57701, 57417)
+		p.expect(then)
+		whenStmt.ProcedureStmts = p.parseProcedureStatementsUntil(when, end, elseKwd)
 		caseStmt.WhenCases = append(caseStmt.WhenCases, whenStmt)
 	}, func(elseStmts []ast.StmtNode) {
 		caseStmt.ElseCases = elseStmts
@@ -444,8 +444,8 @@ func (p *HandParser) parseSearchCase() ast.StmtNode {
 	p.parseProcedureCaseWhenElse(func() {
 		whenStmt := &ast.SearchWhenThenStmt{}
 		whenStmt.Expr = p.parseExpression(precNone)
-		p.expect(57559)
-		whenStmt.ProcedureStmts = p.parseProcedureStatementsUntil(57586, 57701, 57417)
+		p.expect(then)
+		whenStmt.ProcedureStmts = p.parseProcedureStatementsUntil(when, end, elseKwd)
 		caseStmt.WhenCases = append(caseStmt.WhenCases, whenStmt)
 	}, func(elseStmts []ast.StmtNode) {
 		caseStmt.ElseCases = elseStmts
@@ -457,30 +457,30 @@ func (p *HandParser) parseSearchCase() ast.StmtNode {
 // parseWhen is called for each WHEN clause (after consuming WHEN token).
 // setElse is called with the ELSE clause body if present.
 func (p *HandParser) parseProcedureCaseWhenElse(parseWhen func(), setElse func([]ast.StmtNode)) {
-	for p.peek().Tp == 57586 {
+	for p.peek().Tp == when {
 		p.next()
 		parseWhen()
 	}
-	if _, ok := p.accept(57417); ok {
+	if _, ok := p.accept(elseKwd); ok {
 		setElse(p.parseProcedureCaseElse())
 	}
-	p.expect(57701)
-	p.expect(57379)
+	p.expect(end)
+	p.expect(caseKwd)
 }
 
 // parseProcedureCaseElse parses the ELSE clause body for CASE statements.
 func (p *HandParser) parseProcedureCaseElse() []ast.StmtNode {
-	return p.parseProcedureStatementsUntil(57701)
+	return p.parseProcedureStatementsUntil(end)
 }
 
 // parseProcedureOpen parses: OPEN cursor_name
 func (p *HandParser) parseProcedureOpen() ast.StmtNode {
-	return p.parseProcedureCursorOp(57818, true)
+	return p.parseProcedureCursorOp(open, true)
 }
 
 // parseProcedureClose parses: CLOSE cursor_name
 func (p *HandParser) parseProcedureClose() ast.StmtNode {
-	return p.parseProcedureCursorOp(57647, false)
+	return p.parseProcedureCursorOp(close, false)
 }
 
 // parseProcedureCursorOp parses OPEN/CLOSE cursor_name.
@@ -495,9 +495,9 @@ func (p *HandParser) parseProcedureCursorOp(tok int, isOpen bool) ast.StmtNode {
 
 // parseProcedureFetch parses: FETCH cursor_name INTO var [, var ...]
 func (p *HandParser) parseProcedureFetch() ast.StmtNode {
-	p.expect(57426)
+	p.expect(fetch)
 	name := p.next().Lit
-	p.expect(57463)
+	p.expect(into)
 
 	var vars []string
 	for {
@@ -511,12 +511,12 @@ func (p *HandParser) parseProcedureFetch() ast.StmtNode {
 
 // parseProcedureLeave parses: LEAVE label_name
 func (p *HandParser) parseProcedureLeave() ast.StmtNode {
-	return p.parseProcedureJump(57474, true)
+	return p.parseProcedureJump(leave, true)
 }
 
 // parseProcedureIterate parses: ITERATE label_name
 func (p *HandParser) parseProcedureIterate() ast.StmtNode {
-	return p.parseProcedureJump(57465, false)
+	return p.parseProcedureJump(iterate, false)
 }
 
 // parseProcedureJump parses LEAVE/ITERATE label_name.

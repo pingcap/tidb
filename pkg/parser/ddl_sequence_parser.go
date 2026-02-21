@@ -20,8 +20,8 @@ import (
 // parseCreateSequenceStmt parses CREATE SEQUENCE statements.
 func (p *HandParser) parseCreateSequenceStmt() ast.StmtNode {
 	stmt := Alloc[ast.CreateSequenceStmt](p.arena)
-	p.expect(57389)
-	p.expect(57896)
+	p.expect(create)
+	p.expect(sequence)
 
 	stmt.IfNotExists = p.acceptIfNotExists()
 
@@ -45,8 +45,8 @@ func (p *HandParser) parseCreateSequenceStmt() ast.StmtNode {
 // parseAlterSequenceStmt parses ALTER SEQUENCE statements.
 func (p *HandParser) parseAlterSequenceStmt() ast.StmtNode {
 	stmt := Alloc[ast.AlterSequenceStmt](p.arena)
-	p.expect(57365)
-	p.expect(57896)
+	p.expect(alter)
+	p.expect(sequence)
 
 	stmt.IfExists = p.acceptIfExists()
 
@@ -72,8 +72,8 @@ func (p *HandParser) parseAlterSequenceStmt() ast.StmtNode {
 // parseDropSequenceStmt parses DROP SEQUENCE statements.
 func (p *HandParser) parseDropSequenceStmt() ast.StmtNode {
 	stmt := Alloc[ast.DropSequenceStmt](p.arena)
-	// p.expect(57415) - already consumed
-	p.expect(57896)
+	// p.expect(drop) - already consumed
+	p.expect(sequence)
 
 	stmt.IfExists = p.acceptIfExists()
 
@@ -92,8 +92,8 @@ func (p *HandParser) parseDropSequenceStmt() ast.StmtNode {
 
 // parseAlterInstanceStmt parses ALTER INSTANCE RELOAD TLS.
 func (p *HandParser) parseAlterInstanceStmt() ast.StmtNode {
-	p.expect(57365)
-	p.expect(57752)
+	p.expect(alter)
+	p.expect(instance)
 
 	stmt := &ast.AlterInstanceStmt{
 		ReloadTLS: true,
@@ -101,23 +101,23 @@ func (p *HandParser) parseAlterInstanceStmt() ast.StmtNode {
 
 	// Expect RELOAD (token or identifier)
 	tok := p.next()
-	if tok.Tp != 57860 && !tok.IsKeyword("RELOAD") {
+	if tok.Tp != reload && !tok.IsKeyword("RELOAD") {
 		p.error(tok.Offset, "expected RELOAD after ALTER INSTANCE")
 		return nil
 	}
 
 	// Expect TLS (token or identifier)
 	tok = p.next()
-	if tok.Tp != 58096 && !tok.IsKeyword("TLS") {
+	if tok.Tp != tls && !tok.IsKeyword("TLS") {
 		p.error(tok.Offset, "expected TLS after RELOAD")
 		return nil
 	}
 
 	// Optional NO ROLLBACK ON ERROR
-	if _, ok := p.accept(57799); ok {
-		p.expect(57878)
-		p.expect(57505)
-		p.expect(57707)
+	if _, ok := p.accept(no); ok {
+		p.expect(rollback)
+		p.expect(on)
+		p.expect(errorKwd)
 		stmt.NoRollbackOnError = true
 	}
 
@@ -126,18 +126,18 @@ func (p *HandParser) parseAlterInstanceStmt() ast.StmtNode {
 
 // parseAlterRangeStmt parses ALTER RANGE statements.
 func (p *HandParser) parseAlterRangeStmt() ast.StmtNode {
-	p.expect(57365)
-	p.expect(57520)
+	p.expect(alter)
+	p.expect(rangeKwd)
 
 	stmt := &ast.AlterRangeStmt{}
 
 	// Parse range name (global/meta)
-	// global=57429 (57733). meta=58241 (if defined) or identifier.
+	// global=float4Type (global). meta=58241 (if defined) or identifier.
 	// We handle identifiers and specific keywords.
 	tok := p.next()
-	if tok.Tp == 57346 {
+	if tok.Tp == identifier {
 		stmt.RangeName = ast.NewCIStr(tok.Lit)
-	} else if tok.Tp == 57733 {
+	} else if tok.Tp == global {
 		stmt.RangeName = ast.NewCIStr("global")
 	} else if tok.Tp == 58241 { // statsMeta
 		stmt.RangeName = ast.NewCIStr("meta")
@@ -146,17 +146,17 @@ func (p *HandParser) parseAlterRangeStmt() ast.StmtNode {
 		stmt.RangeName = ast.NewCIStr(tok.Lit)
 	}
 
-	if _, ok := p.accept(58054); ok {
-		p.expect(57838)
-		p.accept(58202)
+	if _, ok := p.accept(placement); ok {
+		p.expect(policy)
+		p.accept(eq)
 		// Policy name
 		tok := p.next()
-		if tok.Tp == 57346 {
+		if tok.Tp == identifier {
 			stmt.PlacementOption = &ast.PlacementOption{
 				Tp:       ast.PlacementOptionPolicy,
 				StrValue: tok.Lit,
 			}
-		} else if tok.Tp == 57405 {
+		} else if tok.Tp == defaultKwd {
 			stmt.PlacementOption = &ast.PlacementOption{
 				Tp:       ast.PlacementOptionPolicy,
 				StrValue: "default",
@@ -180,68 +180,68 @@ func (p *HandParser) parseAlterRangeStmt() ast.StmtNode {
 // parseSequenceOption parses a single sequence option.
 func (p *HandParser) parseSequenceOption() *ast.SequenceOption {
 	opt := Alloc[ast.SequenceOption](p.arena)
-	if _, ok := p.accept(57748); ok {
-		if _, ok := p.accept(57376); ok {
+	if _, ok := p.accept(increment); ok {
+		if _, ok := p.accept(by); ok {
 			// standard syntax
 		} else {
-			p.accept(58202) // optional =
+			p.accept(eq) // optional =
 		}
 		opt.Tp = ast.SequenceOptionIncrementBy
 		opt.IntValue = p.parseIntLit()
 		return opt
-	} else if _, ok := p.accept(57925); ok {
-		if _, ok := p.accept(57590); ok {
+	} else if _, ok := p.accept(start); ok {
+		if _, ok := p.accept(with); ok {
 			// standard syntax
 		} else {
-			p.accept(58202) // optional =
+			p.accept(eq) // optional =
 		}
 		opt.Tp = ast.SequenceStartWith
 		opt.IntValue = p.parseIntLit()
 		return opt
-	} else if _, ok := p.accept(57788); ok {
+	} else if _, ok := p.accept(minValue); ok {
 		opt.Tp = ast.SequenceMinValue
-		p.accept(58202) // optional =
+		p.accept(eq) // optional =
 		opt.IntValue = p.parseIntLit()
 		return opt
-	} else if _, ok := p.accept(57804); ok {
+	} else if _, ok := p.accept(nominvalue); ok {
 		opt.Tp = ast.SequenceNoMinValue
 		return opt
-	} else if _, ok := p.accept(57799); ok {
-		if _, ok := p.accept(57788); ok {
+	} else if _, ok := p.accept(no); ok {
+		if _, ok := p.accept(minValue); ok {
 			opt.Tp = ast.SequenceNoMinValue
 			return opt
-		} else if _, ok := p.accept(57489); ok {
+		} else if _, ok := p.accept(maxValue); ok {
 			opt.Tp = ast.SequenceNoMaxValue
 			return opt
-		} else if _, ok := p.accept(57633); ok {
+		} else if _, ok := p.accept(cache); ok {
 			opt.Tp = ast.SequenceNoCache
 			return opt
-		} else if _, ok := p.accept(57678); ok {
+		} else if _, ok := p.accept(cycle); ok {
 			opt.Tp = ast.SequenceNoCycle
 			return opt
 		}
 		p.error(p.peek().Offset, "expected MINVALUE, MAXVALUE, CACHE, or CYCLE after NO")
 		return nil
-	} else if _, ok := p.accept(57489); ok {
+	} else if _, ok := p.accept(maxValue); ok {
 		opt.Tp = ast.SequenceMaxValue
-		p.accept(58202)
+		p.accept(eq)
 		opt.IntValue = p.parseIntLit()
 		return opt
-	} else if _, ok := p.accept(57803); ok {
+	} else if _, ok := p.accept(nomaxvalue); ok {
 		opt.Tp = ast.SequenceNoMaxValue
 		return opt
-	} else if _, ok := p.accept(57633); ok {
+	} else if _, ok := p.accept(cache); ok {
 		opt.Tp = ast.SequenceCache
-		p.accept(58202)
+		p.accept(eq)
 		opt.IntValue = p.parseIntLit()
 		return opt
-	} else if _, ok := p.accept(57800); ok {
+	} else if _, ok := p.accept(nocache); ok {
 		opt.Tp = ast.SequenceNoCache
 		return opt
-	} else if _, ok := p.accept(57678); ok {
+	} else if _, ok := p.accept(cycle); ok {
 		opt.Tp = ast.SequenceCycle
 		return opt
-	} else if _, ok := p.accept(57801); ok {
+	} else if _, ok := p.accept(nocycle); ok {
 		opt.Tp = ast.SequenceNoCycle
 		return opt
 	}
@@ -254,12 +254,12 @@ func (p *HandParser) parseAlterSequenceOption() *ast.SequenceOption {
 		return opt
 	}
 	opt := Alloc[ast.SequenceOption](p.arena)
-	if _, ok := p.accept(57871); ok {
-		if _, ok := p.accept(57590); ok {
+	if _, ok := p.accept(restart); ok {
+		if _, ok := p.accept(with); ok {
 			opt.Tp = ast.SequenceRestartWith
 			opt.IntValue = p.parseIntLit()
 			return opt
-		} else if _, ok := p.accept(58202); ok {
+		} else if _, ok := p.accept(eq); ok {
 			opt.Tp = ast.SequenceRestartWith
 			opt.IntValue = p.parseIntLit()
 			return opt
@@ -276,11 +276,11 @@ func (p *HandParser) parseIntLit() int64 {
 	if _, ok := p.accept('-'); ok {
 		negative = true
 	}
-	if tok, ok := p.expectAny(58197); ok {
+	if tok, ok := p.expectAny(intLit); ok {
 		var val uint64
 		switch v := tok.Item.(type) {
 		case int64:
-			if v < 0 { // Should not happen for 58197 unless lexer is weird
+			if v < 0 { // Should not happen for intLit unless lexer is weird
 				// handle weird case
 				val = uint64(v) // cast back
 			} else {

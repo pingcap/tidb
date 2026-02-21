@@ -22,9 +22,9 @@ import (
 // parseCreateResourceGroupStmt parses CREATE RESOURCE GROUP statements.
 func (p *HandParser) parseCreateResourceGroupStmt() ast.StmtNode {
 	stmt := Alloc[ast.CreateResourceGroupStmt](p.arena)
-	p.expect(57389)
-	p.expect(57869) // 57869
-	p.expect(57438)
+	p.expect(create)
+	p.expect(resource) // resource
+	p.expect(group)
 
 	stmt.IfNotExists = p.acceptIfNotExists()
 
@@ -37,9 +37,9 @@ func (p *HandParser) parseCreateResourceGroupStmt() ast.StmtNode {
 // parseAlterResourceGroupStmt parses ALTER RESOURCE GROUP statements.
 func (p *HandParser) parseAlterResourceGroupStmt() ast.StmtNode {
 	stmt := Alloc[ast.AlterResourceGroupStmt](p.arena)
-	p.expect(57365)
-	p.expect(57869) // 57869
-	p.expect(57438)
+	p.expect(alter)
+	p.expect(resource) // resource
+	p.expect(group)
 
 	stmt.IfExists = p.acceptIfExists()
 
@@ -52,9 +52,9 @@ func (p *HandParser) parseAlterResourceGroupStmt() ast.StmtNode {
 // parseDropResourceGroupStmt parses DROP RESOURCE GROUP statements.
 func (p *HandParser) parseDropResourceGroupStmt() ast.StmtNode {
 	stmt := Alloc[ast.DropResourceGroupStmt](p.arena)
-	// p.expect(57415) - already consumed
-	p.expect(57869) // 57869
-	p.expect(57438)
+	// p.expect(drop) - already consumed
+	p.expect(resource) // resource
+	p.expect(group)
 
 	stmt.IfExists = p.acceptIfExists()
 
@@ -65,12 +65,12 @@ func (p *HandParser) parseDropResourceGroupStmt() ast.StmtNode {
 // parseResourceGroupOption parses a single resource group option.
 func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 	opt := &ast.ResourceGroupOption{}
-	if _, ok := p.accept(58070); ok {
-		p.accept(58202)
+	if _, ok := p.accept(ruRate); ok {
+		p.accept(eq)
 		opt.Tp = ast.ResourceRURate
-		if _, ok := p.accept(58110); ok {
+		if _, ok := p.accept(unlimited); ok {
 			opt.Burstable = ast.BurstableUnlimited
-		} else if t, ok := p.accept(58197); ok {
+		} else if t, ok := p.accept(intLit); ok {
 			switch v := t.Item.(type) {
 			case int64:
 				opt.UintValue = uint64(v)
@@ -79,25 +79,25 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 			}
 		}
 		return opt
-	} else if _, ok := p.accept(58060); ok {
-		p.accept(58202)
+	} else if _, ok := p.accept(priority); ok {
+		p.accept(eq)
 		opt.Tp = ast.ResourcePriority
-		if _, ok := p.accept(58045); ok {
+		if _, ok := p.accept(low); ok {
 			opt.UintValue = ast.LowPriorityValue
-		} else if _, ok := p.accept(58047); ok {
+		} else if _, ok := p.accept(medium); ok {
 			opt.UintValue = ast.MediumPriorityValue
-		} else if _, ok := p.accept(58029); ok {
+		} else if _, ok := p.accept(high); ok {
 			opt.UintValue = ast.HighPriorityValue
 		}
 		return opt
-	} else if _, ok := p.accept(58002); ok {
+	} else if _, ok := p.accept(burstable); ok {
 		opt.Tp = ast.ResourceBurstable
-		if _, ok := p.accept(58202); ok {
-			if _, ok := p.accept(58110); ok {
+		if _, ok := p.accept(eq); ok {
+			if _, ok := p.accept(unlimited); ok {
 				opt.Burstable = ast.BurstableUnlimited
-			} else if _, ok := p.accept(58111); ok {
+			} else if _, ok := p.accept(moderated); ok {
 				opt.Burstable = ast.BurstableModerated
-			} else if _, ok := p.accept(57810); ok {
+			} else if _, ok := p.accept(off); ok {
 				opt.Burstable = ast.BurstableDisable
 			}
 		} else {
@@ -105,11 +105,11 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 			opt.Burstable = ast.BurstableModerated
 		}
 		return opt
-	} else if _, ok := p.accept(58062); ok {
-		p.accept(58202)
+	} else if _, ok := p.accept(queryLimit); ok {
+		p.accept(eq)
 		opt.Tp = ast.ResourceGroupRunaway
 		// QUERY_LIMIT = NULL or QUERY_LIMIT = (...)
-		if _, ok := p.accept(57502); ok {
+		if _, ok := p.accept(null); ok {
 			// NULL means empty list -> disable
 			return opt
 		}
@@ -144,10 +144,10 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 			}
 		}
 		return opt
-	} else if _, ok := p.accept(57995); ok {
-		p.accept(58202)
+	} else if _, ok := p.accept(background); ok {
+		p.accept(eq)
 		opt.Tp = ast.ResourceGroupBackground
-		if _, ok := p.accept(57502); ok {
+		if _, ok := p.accept(null); ok {
 			return opt
 		}
 		p.expect('(')
@@ -156,21 +156,21 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 				break
 			}
 			p.accept(',')
-			if _, ok := p.accept(58091); ok {
-				p.accept(58202)
+			if _, ok := p.accept(taskTypes); ok {
+				p.accept(eq)
 				bgOpt := &ast.ResourceGroupBackgroundOption{
 					Type: ast.BackgroundOptionTaskNames,
 				}
-				if tok, ok := p.accept(57353); ok {
+				if tok, ok := p.accept(stringLit); ok {
 					bgOpt.StrValue = tok.Lit
 				}
 				opt.BackgroundOptions = append(opt.BackgroundOptions, bgOpt)
-			} else if _, ok := p.accept(58113); ok {
-				p.accept(58202)
+			} else if _, ok := p.accept(utilizationLimit); ok {
+				p.accept(eq)
 				bgOpt := &ast.ResourceGroupBackgroundOption{
 					Type: ast.BackgroundUtilizationLimit,
 				}
-				t, ok := p.expect(58197) // must be integer
+				t, ok := p.expect(intLit) // must be integer
 				if !ok {
 					p.error(t.Offset, "UTILIZATION_LIMIT requires an integer value")
 					return opt
@@ -197,46 +197,46 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 
 // parseRunawayOption parses a single runaway sub-option (EXEC_ELAPSED, ACTION, WATCH).
 func (p *HandParser) parseRunawayOption() *ast.ResourceGroupRunawayOption {
-	if _, ok := p.accept(58018); ok {
-		p.accept(58202)
+	if _, ok := p.accept(execElapsed); ok {
+		p.accept(eq)
 		rule := &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleExecElapsed}
-		if tok, ok := p.accept(57353); ok {
+		if tok, ok := p.accept(stringLit); ok {
 			rule.ExecElapsed = tok.Lit
 		}
 		return &ast.ResourceGroupRunawayOption{
 			Tp:         ast.RunawayRule,
 			RuleOption: rule,
 		}
-	} else if _, ok := p.accept(58061); ok {
-		p.accept(58202)
+	} else if _, ok := p.accept(processedKeys); ok {
+		p.accept(eq)
 		rule := &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleProcessedKeys}
-		if t, ok := p.accept(58197); ok {
+		if t, ok := p.accept(intLit); ok {
 			rule.ProcessedKeys = t.Item.(int64)
 		}
 		return &ast.ResourceGroupRunawayOption{
 			Tp:         ast.RunawayRule,
 			RuleOption: rule,
 		}
-	} else if _, ok := p.accept(58068); ok {
-		p.accept(58202)
+	} else if _, ok := p.accept(ru); ok {
+		p.accept(eq)
 		rule := &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleRequestUnit}
-		if t, ok := p.accept(58197); ok {
+		if t, ok := p.accept(intLit); ok {
 			rule.RequestUnit = t.Item.(int64)
 		}
 		return &ast.ResourceGroupRunawayOption{
 			Tp:         ast.RunawayRule,
 			RuleOption: rule,
 		}
-	} else if _, ok := p.accept(57596); ok {
-		p.accept(58202)
+	} else if _, ok := p.accept(action); ok {
+		p.accept(eq)
 		action := &ast.ResourceGroupRunawayActionOption{}
-		if _, ok := p.accept(58006); ok {
+		if _, ok := p.accept(cooldown); ok {
 			action.Type = ast.RunawayActionCooldown
-		} else if _, ok := p.accept(57469); ok {
+		} else if _, ok := p.accept(kill); ok {
 			action.Type = ast.RunawayActionKill
-		} else if _, ok := p.accept(58014); ok {
+		} else if _, ok := p.accept(dryRun); ok {
 			action.Type = ast.RunawayActionDryRun
-		} else if _, ok := p.accept(58089); ok {
+		} else if _, ok := p.accept(switchGroup); ok {
 			action.Type = ast.RunawayActionSwitchGroup
 			p.expect('(')
 			tok := p.next()
@@ -247,23 +247,23 @@ func (p *HandParser) parseRunawayOption() *ast.ResourceGroupRunawayOption {
 			Tp:           ast.RunawayAction,
 			ActionOption: action,
 		}
-	} else if _, ok := p.accept(58121); ok {
-		p.accept(58202)
+	} else if _, ok := p.accept(watch); ok {
+		p.accept(eq)
 		watch := &ast.ResourceGroupRunawayWatchOption{}
-		if _, ok := p.accept(58073); ok {
+		if _, ok := p.accept(similar); ok {
 			watch.Type = ast.WatchSimilar
-		} else if _, ok := p.accept(58017); ok {
+		} else if _, ok := p.accept(exact); ok {
 			watch.Type = ast.WatchExact
 		} else if p.peek().IsKeyword("PLAN") {
 			p.next()
 			watch.Type = ast.WatchPlan
 		}
 		// DURATION = '...' or DURATION = UNLIMITED
-		if _, ok := p.accept(58093); ok {
-			p.accept(58202)
-			if _, ok := p.accept(58110); ok {
+		if _, ok := p.accept(timeDuration); ok {
+			p.accept(eq)
+			if _, ok := p.accept(unlimited); ok {
 				watch.Duration = "" // empty string = unlimited in Restore
-			} else if tok, ok := p.accept(57353); ok {
+			} else if tok, ok := p.accept(stringLit); ok {
 				if strings.EqualFold(tok.Lit, "UNLIMITED") {
 					watch.Duration = "" // 'UNLIMITED' string treated as keyword
 				} else {

@@ -29,7 +29,7 @@ func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
 	stmt := Alloc[ast.SelectStmt](p.arena)
 	stmt.Kind = ast.SelectStmtKindSelect
 
-	p.expect(57540)
+	p.expect(selectKwd)
 
 	// Parse SELECT options (ALL, DISTINCT, HIGH_PRIORITY, etc.)
 	p.parseSelectOpts(stmt)
@@ -41,9 +41,9 @@ func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
 	}
 
 	// Optional FROM clause.
-	if _, ok := p.accept(57434); ok {
+	if _, ok := p.accept(from); ok {
 		// FROM DUAL is special: parsed as no FROM clause (From stays nil).
-		if p.peek().Tp == 57416 {
+		if p.peek().Tp == dual {
 			p.next() // consume DUAL
 			// Don't set stmt.From — match expected behavior.
 		} else {
@@ -55,53 +55,53 @@ func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
 	}
 
 	// Optional WHERE clause.
-	if _, ok := p.accept(57587); ok {
+	if _, ok := p.accept(where); ok {
 		stmt.Where = p.parseExpression(precNone)
 	}
 
 	// Optional GROUP BY clause.
-	if p.peek().Tp == 57438 {
+	if p.peek().Tp == group {
 		stmt.GroupBy = p.parseGroupByClause()
 	}
 
 	// Optional HAVING clause.
-	if _, ok := p.accept(57440); ok {
+	if _, ok := p.accept(having); ok {
 		having := Alloc[ast.HavingClause](p.arena)
 		having.Expr = p.parseExpression(precNone)
 		stmt.Having = having
 	}
 
 	// Optional WINDOW clause.
-	// The scanner may tokenize WINDOW as 57589 or 57346.
+	// The scanner may tokenize WINDOW as window or identifier.
 	// Disambiguate: WINDOW clause is always `WINDOW name AS (...)`,
 	// so check if the next token after WINDOW is an identifier followed by AS.
-	if p.peek().Tp == 57589 || (p.peek().IsKeyword("WINDOW") && p.peekN(1).Tp == 57346 && p.peekN(2).Tp == 57369) {
+	if p.peek().Tp == window || (p.peek().IsKeyword("WINDOW") && p.peekN(1).Tp == identifier && p.peekN(2).Tp == as) {
 		stmt.WindowSpecs = p.parseWindowClause()
 	}
 
 	// Optional ORDER BY clause.
-	if p.peek().Tp == 57510 {
+	if p.peek().Tp == order {
 		stmt.OrderBy = p.parseOrderByClause()
 	}
 
 	// Optional LIMIT clause.
-	isFetch := p.peekKeyword(57426, "FETCH")
-	if p.peek().Tp == 57477 || isFetch || p.peek().Tp == 57811 {
+	isFetch := p.peekKeyword(fetch, "FETCH")
+	if p.peek().Tp == limit || isFetch || p.peek().Tp == offset {
 		stmt.Limit = p.parseLimitClause()
 	}
 
 	// INTO OUTFILE can appear before or after FOR UPDATE/SHARE.
-	if p.peek().Tp == 57463 {
+	if p.peek().Tp == into {
 		stmt.SelectIntoOpt = p.parseSelectIntoOption()
 	}
 
 	// Optional FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE.
-	if tp := p.peek().Tp; tp == 57431 || tp == 57483 {
+	if tp := p.peek().Tp; tp == forKwd || tp == lock {
 		stmt.LockInfo = p.parseSelectLock()
 	}
 
 	// INTO OUTFILE can also appear after FOR UPDATE/SHARE.
-	if stmt.SelectIntoOpt == nil && p.peek().Tp == 57463 {
+	if stmt.SelectIntoOpt == nil && p.peek().Tp == into {
 		stmt.SelectIntoOpt = p.parseSelectIntoOption()
 	}
 
@@ -113,17 +113,17 @@ func (p *HandParser) parseSubquery() ast.ResultSetNode {
 	var res ast.ResultSetNode
 
 	switch p.peek().Tp {
-	case 57540:
+	case selectKwd:
 		stmt := p.parseSelectStmt()
 		if stmt != nil {
 			res = p.maybeParseUnion(stmt)
 		}
-	case 57556:
+	case tableKwd:
 		stmt := p.parseTableStmt()
 		if s, ok := stmt.(*ast.SelectStmt); ok {
 			res = p.maybeParseUnion(s)
 		}
-	case 57580:
+	case values:
 		stmt := p.parseValuesStmt()
 		if s, ok := stmt.(*ast.SelectStmt); ok {
 			res = p.maybeParseUnion(s)
@@ -147,7 +147,7 @@ func (p *HandParser) parseSubquery() ast.ResultSetNode {
 			}
 		}
 		p.expect(')')
-	case 57590:
+	case with:
 		// WITH ... SELECT ...
 		stmt := p.parseWithStmt()
 		if rs, ok := stmt.(ast.ResultSetNode); ok {
@@ -159,17 +159,17 @@ func (p *HandParser) parseSubquery() ast.ResultSetNode {
 
 // parseWithStmt parses WITH [RECURSIVE] cte_list statement.
 func (p *HandParser) parseWithStmt() ast.StmtNode {
-	p.expect(57590)
+	p.expect(with)
 
 	withInfo := Alloc[ast.WithClause](p.arena)
-	if _, ok := p.accept(57524); ok {
+	if _, ok := p.accept(recursive); ok {
 		withInfo.IsRecursive = true
 	}
 
 	for {
 		cte := Alloc[ast.CommonTableExpression](p.arena)
 		cte.IsRecursive = withInfo.IsRecursive
-		nameTok, ok := p.expect(57346)
+		nameTok, ok := p.expect(identifier)
 		if !ok {
 			return nil
 		}
@@ -178,7 +178,7 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 		if p.peek().Tp == '(' {
 			p.next()
 			for {
-				colTok, ok := p.expect(57346)
+				colTok, ok := p.expect(identifier)
 				if !ok {
 					return nil
 				}
@@ -190,7 +190,7 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 			p.expect(')')
 		}
 
-		p.expect(57369)
+		p.expect(as)
 		p.expect('(')
 
 		// Parse subquery
@@ -261,14 +261,14 @@ func (p *HandParser) parseSelectOpts(stmt *ast.SelectStmt) {
 	// All modifiers can appear in any order.
 	for {
 		switch p.peek().Tp {
-		case 57364:
+		case all:
 			p.next()
 			if opts.Distinct {
 				p.error(p.peek().Offset, "Incorrect usage of ALL and DISTINCT")
 				return
 			}
 			opts.ExplicitAll = true
-		case 57411, 57412:
+		case distinct, distinctRow:
 			p.next()
 			if opts.ExplicitAll {
 				p.error(p.peek().Offset, "Incorrect usage of ALL and DISTINCT")
@@ -276,34 +276,34 @@ func (p *HandParser) parseSelectOpts(stmt *ast.SelectStmt) {
 			}
 			stmt.Distinct = true
 			opts.Distinct = true
-		case 57441:
+		case highPriority:
 			p.next()
 			opts.Priority = mysql.HighPriority
-		case 57487:
+		case lowPriority:
 			p.next()
 			opts.Priority = mysql.LowPriority
-		case 57406:
+		case delayed:
 			p.next()
 			opts.Priority = mysql.DelayedPriority
-		case 57555:
+		case straightJoin:
 			p.next()
 			opts.StraightJoin = true
-		case 57550:
+		case sqlCalcFoundRows:
 			p.next()
 			opts.CalcFoundRows = true
-		case 57915:
+		case sqlCache:
 			p.next()
 			opts.SQLCache = true
-		case 57916:
+		case sqlNoCache:
 			p.next()
 			opts.SQLCache = false
-		case 57551:
+		case sqlSmallResult:
 			p.next()
 			opts.SQLSmallResult = true
-		case 57549:
+		case sqlBigResult:
 			p.next()
 			opts.SQLBigResult = true
-		case 57914:
+		case sqlBufferResult:
 			p.next()
 			opts.SQLBufferResult = true
 		default:
@@ -319,12 +319,12 @@ func (p *HandParser) parseWindowClause() []ast.WindowSpec {
 	var specs []ast.WindowSpec
 	for {
 		// Window name (identifier)
-		nameTok, ok := p.expect(57346)
+		nameTok, ok := p.expect(identifier)
 		if !ok {
 			return nil
 		}
 
-		p.expect(57369)
+		p.expect(as)
 
 		// Parse the window specification: ( [ref] [PARTITION BY] [ORDER BY] [frame] )
 		// We reuse parseWindowSpec from expr_parser.go which handles the parens and content.
@@ -375,7 +375,7 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 	sf.Offset = startOff
 
 	// Check for qualified wildcards: table.* or schema.table.*
-	if p.peek().Tp == 57346 {
+	if p.peek().Tp == identifier {
 		if p.lexer.PeekN(1).Tp == '.' {
 			if p.lexer.PeekN(2).Tp == '*' {
 				// table.*
@@ -386,7 +386,7 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 				wf.Table = ast.NewCIStr(tableName.Lit)
 				sf.WildCard = wf
 				return sf
-			} else if p.lexer.PeekN(2).Tp == 57346 &&
+			} else if p.lexer.PeekN(2).Tp == identifier &&
 				p.lexer.PeekN(3).Tp == '.' &&
 				p.lexer.PeekN(4).Tp == '*' {
 				// schema.table.*
@@ -420,9 +420,9 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 
 	// Optional alias: [AS] identifier
 	// Originally, only Identifier (non-reserved keywords) is valid after AS.
-	if _, ok := p.accept(57369); ok {
+	if _, ok := p.accept(as); ok {
 		aliasTok := p.peek()
-		if aliasTok.Tp == 57346 || aliasTok.Tp == 57353 || (aliasTok.Tp >= 57346 && !IsReserved(aliasTok.Tp)) {
+		if aliasTok.Tp == identifier || aliasTok.Tp == stringLit || (aliasTok.Tp >= identifier && !IsReserved(aliasTok.Tp)) {
 			p.next()
 			sf.AsName = ast.NewCIStr(aliasTok.Lit)
 		} else {
