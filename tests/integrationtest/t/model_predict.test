@@ -1,0 +1,9 @@
+# TestModelPredictE2E
+use test;
+set global tidb_enable_model_ddl = on;
+set global tidb_enable_model_inference = on;
+drop model if exists identity_model;
+create model identity_model (input (x float) output (y float)) using onnx location 'file:/tmp/tidb-models/identity_scalar.onnx' checksum 'sha256:855db7d48ba65b32534d04595a9776cec73b54784a6321d5aa536d6b405b5dde';
+select model_predict(identity_model, 0.25).y;
+select model_predict(identity_model, 1.5).y;
+drop model identity_model;
