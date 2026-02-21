@@ -942,6 +942,9 @@ func collectDMLTestCases() []string {
 		"UPDATE t1, t2 SET t1.a = t2.b WHERE t1.id = t2.id",
 		"DELETE t1, t2 FROM t1 JOIN t2 ON t1.id = t2.id WHERE t1.a > 0",
 
+		// ===== CREATE BINDING with multi-table DELETE (USING ambiguity guard) =====
+		"CREATE GLOBAL BINDING FOR DELETE t, t1 FROM t JOIN t1 ON t.a = t1.a USING DELETE /*+ MERGE_JOIN(t) */ t, t1 FROM t JOIN t1 ON t.a = t1.a",
+
 		// ===== Complex expression patterns =====
 		"SELECT CAST('2020-01-01' AS DATE) + INTERVAL 1 DAY",
 		"SELECT 1 + 2, 3 * 4, 5 / 2, 7 DIV 3, 8 MOD 5",
@@ -953,6 +956,103 @@ func collectDMLTestCases() []string {
 		// ===== Backtick-quoted identifiers =====
 		"SELECT `select` FROM `from` WHERE `where` = 1",
 		"CREATE TABLE `table` (`column` INT, `index` VARCHAR(100))",
+
+		// ===== DELETE USING syntax (multi-table forms) =====
+		"DELETE FROM t1 USING t1 JOIN t2 ON t1.id = t2.id WHERE t2.a > 0",
+		"DELETE FROM t1, t2 USING t1 JOIN t2 ON t1.id = t2.id",
+
+		// ===== CREATE/DROP/SET BINDING =====
+		"CREATE GLOBAL BINDING FOR SELECT * FROM t WHERE a = 1 USING SELECT /*+ USE_INDEX(t, idx) */ * FROM t WHERE a = 1",
+		"CREATE SESSION BINDING FOR SELECT * FROM t WHERE a > 0 USING SELECT /*+ HASH_JOIN(t) */ * FROM t WHERE a > 0",
+		"DROP GLOBAL BINDING FOR SELECT * FROM t WHERE a = 1",
+		"DROP SESSION BINDING FOR SELECT * FROM t WHERE a = 1",
+		"SET BINDING ENABLED FOR SELECT * FROM t WHERE a = 1",
+		"SET BINDING DISABLED FOR SELECT * FROM t WHERE a = 1",
+
+		// ===== TRACE =====
+		"TRACE SELECT * FROM t",
+		"TRACE FORMAT='row' SELECT 1",
+
+		// ===== BATCH / Non-transactional DML =====
+		"BATCH ON a LIMIT 1000 DELETE FROM t WHERE a < 100",
+		"BATCH ON a LIMIT 100 UPDATE t SET b = 1 WHERE a > 0",
+
+		// ===== IMPORT INTO =====
+		"IMPORT INTO t FROM '/tmp/data.csv'",
+		"IMPORT INTO t FROM '/tmp/data.csv' WITH fields_terminated_by=','",
+
+		// ===== LOAD DATA =====
+		"LOAD DATA INFILE '/tmp/data.csv' INTO TABLE t",
+		"LOAD DATA LOCAL INFILE '/tmp/data.csv' INTO TABLE t",
+		"LOAD DATA INFILE '/tmp/data.csv' INTO TABLE t FIELDS TERMINATED BY ','",
+
+		// ===== SPLIT TABLE =====
+		"SPLIT TABLE t BY (1), (100), (1000)",
+		"SPLIT TABLE t BETWEEN (0) AND (10000) REGIONS 10",
+
+		// ===== FLASHBACK =====
+		"FLASHBACK TABLE t TO TIMESTAMP '2020-01-01 00:00:00'",
+
+		// ===== Transaction control =====
+		"BEGIN",
+		"BEGIN PESSIMISTIC",
+		"BEGIN OPTIMISTIC",
+		"START TRANSACTION",
+		"START TRANSACTION WITH CONSISTENT SNAPSHOT",
+		"START TRANSACTION READ ONLY",
+		"COMMIT",
+		"ROLLBACK",
+		"SAVEPOINT sp1",
+		"ROLLBACK TO SAVEPOINT sp1",
+		"RELEASE SAVEPOINT sp1",
+
+		// ===== CALL =====
+		"CALL proc()",
+		"CALL proc(1, 'a')",
+		"CALL db.proc()",
+
+		// ===== KILL / FLUSH / SHUTDOWN / RESTART =====
+		"KILL 123",
+		"KILL QUERY 123",
+		"FLUSH TABLES",
+		"FLUSH PRIVILEGES",
+		"FLUSH STATUS",
+		"SHUTDOWN",
+		"RESTART",
+
+		// ===== OPTIMIZE TABLE =====
+		"OPTIMIZE TABLE t",
+		"OPTIMIZE NO_WRITE_TO_BINLOG TABLE t",
+
+		// ===== SET TRANSACTION =====
+		"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+		"SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+		"SET TRANSACTION READ ONLY",
+		"SET TRANSACTION READ WRITE",
+
+		// ===== SET variable variants =====
+		"SET @a = 1, @b = 2",
+		"SET GLOBAL max_connections = 100",
+		"SET SESSION sql_mode = 'STRICT_TRANS_TABLES'",
+		"SET @@tidb_txn_mode = 'pessimistic'",
+
+		// ===== RENAME TABLE =====
+		"RENAME TABLE t1 TO t2",
+		"RENAME TABLE t1 TO t2, t3 TO t4",
+
+		// ===== GRANT / REVOKE =====
+		"GRANT SELECT ON db.* TO 'user'@'host'",
+		"GRANT ALL PRIVILEGES ON *.* TO 'user'@'host'",
+		"REVOKE SELECT ON db.* FROM 'user'@'host'",
+		"GRANT SELECT, INSERT, UPDATE ON db.t TO 'user'@'host'",
+
+		// ===== CREATE/DROP USER =====
+		"CREATE USER 'user'@'host' IDENTIFIED BY 'password'",
+		"DROP USER 'user'@'host'",
+		"ALTER USER 'user'@'host' IDENTIFIED BY 'newpassword'",
+
+		// ===== Multi-table DELETE with hints =====
+		"DELETE /*+ USE_INDEX(t, idx) */ t FROM t JOIN t2 ON t.id = t2.id",
 	}
 }
 

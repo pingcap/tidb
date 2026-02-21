@@ -353,60 +353,81 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	stmt.TableRefs = p.parseTableRefs()
 
 	// [USING]
-	if _, ok := p.accept(using); ok {
-		// DELETE FROM t1, t2 USING t1, t2, t3 ...
-		// We encounter Using.
-		if stmt.IsMultiTable {
-			// Already is multi-table. e.g. DELETE t1 FROM t2 USING t3
-			// Do nothing special? Or standard parsing.
-		} else {
-			// Was DELETE FROM t1 ... USING ...
-			// Convert single-table DELETE FROM t1 to Multi-table (Because USING implies multi-table semantic).
-			stmt.IsMultiTable = true
-			stmt.BeforeFrom = false
-			// Move the already parsed TableRefs (t1) to Tables (targets).
-			stmt.Tables = p.convertToTableList(stmt.TableRefs)
-			if stmt.Tables == nil {
-				// Failed to convert? e.g. Join?
-				// MySQL: DELETE FROM t1, t2 USING ...
-				// valid. t1, t2 are targets.
+	// Only accept USING in "DELETE FROM t1, t2 USING ..." form (BeforeFrom==false).
+	// When BeforeFrom==true ("DELETE t1, t2 FROM t JOIN t1 ON ..."), the USING
+	// keyword does not belong to DELETE; it may be part of an outer statement
+	// (e.g., CREATE BINDING ... FOR ... USING ...).
+	if !stmt.BeforeFrom {
+		if _, ok := p.accept(using); ok {
+			// DELETE FROM t1, t2 USING t1, t2, t3 ...
+			if stmt.IsMultiTable {
+				// Already is multi-table. e.g. DELETE t1 FROM t2 USING t3
+			} else {
+				// Was DELETE FROM t1 ... USING ...
+				// Convert single-table DELETE FROM t1 to Multi-table.
+				stmt.IsMultiTable = true
+				stmt.BeforeFrom = false
+				stmt.Tables = p.convertToTableList(stmt.TableRefs)
+				if stmt.Tables == nil {
+					// Failed to convert
+				}
+				// Parse the USING tables as new TableRefs (sources).
+				stmt.TableRefs = p.parseTableRefs()
 			}
-			// Parse the USING tables as new TableRefs (sources).
-			stmt.TableRefs = p.parseTableRefs()
+		} else {
+			// No USING clause.
+			if stmt.TableRefs != nil {
+				var validateAndClear func(node ast.ResultSetNode) bool
+				validateAndClear = func(node ast.ResultSetNode) bool {
+					if j, ok := node.(*ast.Join); ok {
+						left := validateAndClear(j.Left)
+						right := false
+						if j.Right != nil {
+							right = validateAndClear(j.Right)
+						}
+						return left || right
+					}
+					if ts, ok := node.(*ast.TableSource); ok {
+						if tn, ok := ts.Source.(*ast.TableName); ok {
+							has := tn.HasWildcard
+							tn.HasWildcard = false
+							return has
+						}
+					}
+					return false
+				}
+
+				var hasWildcard bool
+				if stmt.TableRefs.TableRefs != nil {
+					hasWildcard = validateAndClear(stmt.TableRefs.TableRefs)
+				}
+
+				if hasWildcard && !stmt.IsMultiTable {
+					p.error(p.peek().Offset, "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '.*'")
+					return nil
+				}
+			}
 		}
 	} else {
-		// No USING clause.
-		// Standard DELETE FROM does not allow wildcard in FROM clause unless it's a target (which implies IsMultiTable/USING).
-		// Also we must clear HasWildcard to ensure AST/Restore consistency (Tests expect `.*` to be stripped).
+		// BeforeFrom==true: "DELETE t1, t2 FROM ..."
+		// Clear wildcards in table refs for AST normalization.
 		if stmt.TableRefs != nil {
-			var validateAndClear func(node ast.ResultSetNode) bool
-			validateAndClear = func(node ast.ResultSetNode) bool {
+			var clearWildcard func(node ast.ResultSetNode)
+			clearWildcard = func(node ast.ResultSetNode) {
 				if j, ok := node.(*ast.Join); ok {
-					left := validateAndClear(j.Left)
-					right := false
+					clearWildcard(j.Left)
 					if j.Right != nil {
-						right = validateAndClear(j.Right)
+						clearWildcard(j.Right)
 					}
-					return left || right
 				}
 				if ts, ok := node.(*ast.TableSource); ok {
 					if tn, ok := ts.Source.(*ast.TableName); ok {
-						has := tn.HasWildcard
-						tn.HasWildcard = false // Always clear for AST normalization
-						return has
+						tn.HasWildcard = false
 					}
 				}
-				return false
 			}
-
-			var hasWildcard bool
 			if stmt.TableRefs.TableRefs != nil {
-				hasWildcard = validateAndClear(stmt.TableRefs.TableRefs)
-			}
-
-			if hasWildcard && !stmt.IsMultiTable {
-				p.error(p.peek().Offset, "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '.*'")
-				return nil
+				clearWildcard(stmt.TableRefs.TableRefs)
 			}
 		}
 	}

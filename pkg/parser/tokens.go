@@ -12,7 +12,7 @@
 // limitations under the License.
 
 // tokens.go defines the token constants, symbol types, and lexer interfaces
-// used by the hand-written recursive-descent parser (hparser) and the
+// used by the hand-written recursive-descent parser and the
 // hint parser (hintparser.go).
 
 package parser
