@@ -1,0 +1,445 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package parser
+
+import (
+	"strings"
+
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+)
+
+// parseSelectStmt parses a SELECT statement.
+// Grammar: SELECT [ALL|DISTINCT] field_list FROM table_refs
+//
+//	[WHERE expr] [GROUP BY expr_list] [HAVING expr]
+//	[ORDER BY order_list] [LIMIT count [OFFSET offset]]
+func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
+	stmt := Alloc[ast.SelectStmt](p.arena)
+	stmt.Kind = ast.SelectStmtKindSelect
+
+	p.expect(57540)
+
+	// Parse SELECT options (ALL, DISTINCT, HIGH_PRIORITY, etc.)
+	p.parseSelectOpts(stmt)
+
+	// Parse field list (select expressions).
+	stmt.Fields = p.parseFieldList()
+	if stmt.Fields == nil {
+		return nil
+	}
+
+	// Optional FROM clause.
+	if _, ok := p.accept(57434); ok {
+		// FROM DUAL is special: parsed as no FROM clause (From stays nil).
+		if p.peek().Tp == 57416 {
+			p.next() // consume DUAL
+			// Don't set stmt.From — match expected behavior.
+		} else {
+			stmt.From = p.parseTableRefs()
+			if stmt.From == nil {
+				return nil
+			}
+		}
+	}
+
+	// Optional WHERE clause.
+	if _, ok := p.accept(57587); ok {
+		stmt.Where = p.parseExpression(precNone)
+	}
+
+	// Optional GROUP BY clause.
+	if p.peek().Tp == 57438 {
+		stmt.GroupBy = p.parseGroupByClause()
+	}
+
+	// Optional HAVING clause.
+	if _, ok := p.accept(57440); ok {
+		having := Alloc[ast.HavingClause](p.arena)
+		having.Expr = p.parseExpression(precNone)
+		stmt.Having = having
+	}
+
+	// Optional WINDOW clause.
+	// The scanner may tokenize WINDOW as 57589 or 57346.
+	// Disambiguate: WINDOW clause is always `WINDOW name AS (...)`,
+	// so check if the next token after WINDOW is an identifier followed by AS.
+	if p.peek().Tp == 57589 || (p.peek().IsKeyword("WINDOW") && p.peekN(1).Tp == 57346 && p.peekN(2).Tp == 57369) {
+		stmt.WindowSpecs = p.parseWindowClause()
+	}
+
+	// Optional ORDER BY clause.
+	if p.peek().Tp == 57510 {
+		stmt.OrderBy = p.parseOrderByClause()
+	}
+
+	// Optional LIMIT clause.
+	isFetch := p.peekKeyword(57426, "FETCH")
+	if p.peek().Tp == 57477 || isFetch || p.peek().Tp == 57811 {
+		stmt.Limit = p.parseLimitClause()
+	}
+
+	// INTO OUTFILE can appear before or after FOR UPDATE/SHARE.
+	if p.peek().Tp == 57463 {
+		stmt.SelectIntoOpt = p.parseSelectIntoOption()
+	}
+
+	// Optional FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE.
+	if tp := p.peek().Tp; tp == 57431 || tp == 57483 {
+		stmt.LockInfo = p.parseSelectLock()
+	}
+
+	// INTO OUTFILE can also appear after FOR UPDATE/SHARE.
+	if stmt.SelectIntoOpt == nil && p.peek().Tp == 57463 {
+		stmt.SelectIntoOpt = p.parseSelectIntoOption()
+	}
+
+	return stmt
+}
+
+// parseSubquery parses a subquery which can be SELECT, TABLE, VALUES, or parenthesized query.
+func (p *HandParser) parseSubquery() ast.ResultSetNode {
+	var res ast.ResultSetNode
+
+	switch p.peek().Tp {
+	case 57540:
+		stmt := p.parseSelectStmt()
+		if stmt != nil {
+			res = p.maybeParseUnion(stmt)
+		}
+	case 57556:
+		stmt := p.parseTableStmt()
+		if s, ok := stmt.(*ast.SelectStmt); ok {
+			res = p.maybeParseUnion(s)
+		}
+	case 57580:
+		stmt := p.parseValuesStmt()
+		if s, ok := stmt.(*ast.SelectStmt); ok {
+			res = p.maybeParseUnion(s)
+		}
+	case '(':
+		p.next()
+		res = p.parseSubquery()
+		if res != nil {
+			// First set IsInBraces on the inner result (for single SELECT in parens)
+			if s, ok := res.(*ast.SelectStmt); ok {
+				s.IsInBraces = true
+			} else if s, ok := res.(*ast.SetOprStmt); ok {
+				s.IsInBraces = true
+			}
+			res = p.maybeParseUnion(res)
+			// If maybeParseUnion created a new wrapper SetOprStmt, set IsInBraces on it too.
+			// This covers cases like ((SELECT) EXCEPT SELECT) where the EXCEPT creates a
+			// new SetOprStmt that needs IsInBraces=true for the outer parentheses.
+			if s, ok := res.(*ast.SetOprStmt); ok {
+				s.IsInBraces = true
+			}
+		}
+		p.expect(')')
+	case 57590:
+		// WITH ... SELECT ...
+		stmt := p.parseWithStmt()
+		if rs, ok := stmt.(ast.ResultSetNode); ok {
+			res = rs
+		}
+	}
+	return res
+}
+
+// parseWithStmt parses WITH [RECURSIVE] cte_list statement.
+func (p *HandParser) parseWithStmt() ast.StmtNode {
+	p.expect(57590)
+
+	withInfo := Alloc[ast.WithClause](p.arena)
+	if _, ok := p.accept(57524); ok {
+		withInfo.IsRecursive = true
+	}
+
+	for {
+		cte := Alloc[ast.CommonTableExpression](p.arena)
+		cte.IsRecursive = withInfo.IsRecursive
+		nameTok, ok := p.expect(57346)
+		if !ok {
+			return nil
+		}
+		cte.Name = ast.NewCIStr(nameTok.Lit)
+
+		if p.peek().Tp == '(' {
+			p.next()
+			for {
+				colTok, ok := p.expect(57346)
+				if !ok {
+					return nil
+				}
+				cte.ColNameList = append(cte.ColNameList, ast.NewCIStr(colTok.Lit))
+				if _, ok := p.accept(','); !ok {
+					break
+				}
+			}
+			p.expect(')')
+		}
+
+		p.expect(57369)
+		p.expect('(')
+
+		// Parse subquery
+		// Use parseSubquery to support SELECT/TABLE/VALUES/WITH/UNION/Parens
+		subNode := p.parseSubquery()
+		if subNode == nil {
+			return nil
+		}
+		// CTE Definition is always a SubqueryExpr wrapping the ResultSetNode
+		subExpr := Alloc[ast.SubqueryExpr](p.arena)
+		subExpr.Query = subNode
+		cte.Query = subExpr
+
+		p.expect(')')
+
+		withInfo.CTEs = append(withInfo.CTEs, cte)
+
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+
+	// Parse main statement
+	// Use parseStatement to support UPDATE/DELETE/SELECT, etc.
+	stmt := p.parseStatement()
+	if stmt == nil {
+		return nil
+	}
+
+	// Attach WithClause
+	// Originally, WITH is attached at the SimpleSelect level, meaning:
+	// - For a plain SELECT: attach to the SelectStmt directly
+	// - For SELECT ... UNION SELECT ...: attach to the FIRST child SelectStmt,
+	//   NOT to the SetOprStmt wrapper
+	switch s := stmt.(type) {
+	case *ast.SelectStmt:
+		s.With = withInfo
+		s.WithBeforeBraces = s.IsInBraces
+	case *ast.SetOprStmt:
+		s.With = withInfo
+		s.WithBeforeBraces = s.IsInBraces
+	case *ast.UpdateStmt:
+		s.With = withInfo
+	case *ast.DeleteStmt:
+		s.With = withInfo
+	default:
+		p.error(p.peek().Offset, "WITH clause not supported for this statement type")
+		return nil
+	}
+
+	return stmt
+}
+
+// parseSelectOpts parses SELECT modifiers: hints, ALL, DISTINCT, HIGH_PRIORITY,
+// STRAIGHT_JOIN, SQL_CALC_FOUND_ROWS, etc. in any order.
+func (p *HandParser) parseSelectOpts(stmt *ast.SelectStmt) {
+	opts := Alloc[ast.SelectStmtOpts](p.arena)
+	opts.SQLCache = true // Default is true; false emits SQL_NO_CACHE.
+	stmt.SelectStmtOpts = opts
+
+	// Optimizer hints (/*+ ... */) appear among select options.
+	opts.TableHints = p.parseOptHints()
+	if opts.TableHints != nil {
+		stmt.TableHints = opts.TableHints
+	}
+
+	// Grammar: SELECT [ALL | DISTINCT | DISTINCTROW ] [HIGH_PRIORITY] ...
+	// All modifiers can appear in any order.
+	for {
+		switch p.peek().Tp {
+		case 57364:
+			p.next()
+			if opts.Distinct {
+				p.error(p.peek().Offset, "Incorrect usage of ALL and DISTINCT")
+				return
+			}
+			opts.ExplicitAll = true
+		case 57411, 57412:
+			p.next()
+			if opts.ExplicitAll {
+				p.error(p.peek().Offset, "Incorrect usage of ALL and DISTINCT")
+				return
+			}
+			stmt.Distinct = true
+			opts.Distinct = true
+		case 57441:
+			p.next()
+			opts.Priority = mysql.HighPriority
+		case 57487:
+			p.next()
+			opts.Priority = mysql.LowPriority
+		case 57406:
+			p.next()
+			opts.Priority = mysql.DelayedPriority
+		case 57555:
+			p.next()
+			opts.StraightJoin = true
+		case 57550:
+			p.next()
+			opts.CalcFoundRows = true
+		case 57915:
+			p.next()
+			opts.SQLCache = true
+		case 57916:
+			p.next()
+			opts.SQLCache = false
+		case 57551:
+			p.next()
+			opts.SQLSmallResult = true
+		case 57549:
+			p.next()
+			opts.SQLBigResult = true
+		case 57914:
+			p.next()
+			opts.SQLBufferResult = true
+		default:
+			return
+		}
+	}
+}
+
+// parseWindowClause parses the WINDOW clause.
+// Grammar: WINDOW window_name AS (window_spec) [, window_name AS (window_spec)] ...
+func (p *HandParser) parseWindowClause() []ast.WindowSpec {
+	p.next() // consume WINDOW
+	var specs []ast.WindowSpec
+	for {
+		// Window name (identifier)
+		nameTok, ok := p.expect(57346)
+		if !ok {
+			return nil
+		}
+
+		p.expect(57369)
+
+		// Parse the window specification: ( [ref] [PARTITION BY] [ORDER BY] [frame] )
+		// We reuse parseWindowSpec from expr_parser.go which handles the parens and content.
+		spec := p.parseWindowSpec()
+		spec.Name = ast.NewCIStr(nameTok.Lit)
+
+		specs = append(specs, spec)
+
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+	return specs
+}
+
+// parseFieldList parses the select field list.
+func (p *HandParser) parseFieldList() *ast.FieldList {
+	fl := Alloc[ast.FieldList](p.arena)
+
+	for {
+		field := p.parseSelectField()
+		if field == nil {
+			// Found nothing where a field was expected.
+			// This usually means we hit an unexpected token or EOF invalidly.
+			p.error(p.peek().Offset, "expected field expression")
+			return nil
+		}
+		// Set field text from source SQL (matching the FieldList rule).
+		if field.Expr != nil {
+			endOffset := p.peek().Offset
+			if endOffset > field.Offset && endOffset <= len(p.src) {
+				field.SetText(nil, strings.TrimSpace(p.src[field.Offset:endOffset]))
+			}
+		}
+		fl.Fields = append(fl.Fields, field)
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+
+	return fl
+}
+
+// parseSelectField parses a single select field (expression, wildcard, or alias).
+func (p *HandParser) parseSelectField() *ast.SelectField {
+	sf := Alloc[ast.SelectField](p.arena)
+	startOff := p.peek().Offset
+	sf.Offset = startOff
+
+	// Check for qualified wildcards: table.* or schema.table.*
+	if p.peek().Tp == 57346 {
+		if p.lexer.PeekN(1).Tp == '.' {
+			if p.lexer.PeekN(2).Tp == '*' {
+				// table.*
+				tableName := p.next()
+				p.next() // .
+				p.next() // *
+				wf := Alloc[ast.WildCardField](p.arena)
+				wf.Table = ast.NewCIStr(tableName.Lit)
+				sf.WildCard = wf
+				return sf
+			} else if p.lexer.PeekN(2).Tp == 57346 &&
+				p.lexer.PeekN(3).Tp == '.' &&
+				p.lexer.PeekN(4).Tp == '*' {
+				// schema.table.*
+				schema := p.next()
+				p.next() // .
+				table := p.next()
+				p.next() // .
+				p.next() // *
+				wf := Alloc[ast.WildCardField](p.arena)
+				wf.Schema = ast.NewCIStr(schema.Lit)
+				wf.Table = ast.NewCIStr(table.Lit)
+				sf.WildCard = wf
+				return sf
+			}
+		}
+	}
+
+	// Check for bare * wildcard.
+	if p.peek().Tp == '*' {
+		p.next()
+		wf := Alloc[ast.WildCardField](p.arena)
+		sf.WildCard = wf
+		return sf
+	}
+
+	// Parse expression.
+	sf.Expr = p.parseExpression(precNone)
+	if sf.Expr == nil {
+		return nil
+	}
+
+	// Optional alias: [AS] identifier
+	// Originally, only Identifier (non-reserved keywords) is valid after AS.
+	if _, ok := p.accept(57369); ok {
+		aliasTok := p.peek()
+		if aliasTok.Tp == 57346 || aliasTok.Tp == 57353 || (aliasTok.Tp >= 57346 && !IsReserved(aliasTok.Tp)) {
+			p.next()
+			sf.AsName = ast.NewCIStr(aliasTok.Lit)
+		} else {
+			p.errorNear(aliasTok.Offset, aliasTok.Offset)
+			return nil
+		}
+	} else if p.CanBeImplicitAlias(p.peek()) {
+		// Implicit alias (without AS).
+		aliasTok := p.next()
+		sf.AsName = ast.NewCIStr(aliasTok.Lit)
+	}
+
+	// Capture text from source for field text.
+	endOff := p.peek().Offset
+	if endOff > startOff && endOff <= len(p.src) {
+		sf.SetText(nil, strings.TrimSpace(p.src[startOff:endOff]))
+	}
+
+	return sf
+}

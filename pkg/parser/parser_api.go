@@ -90,10 +90,14 @@ type Parser struct {
 	src        string
 	lexer      Scanner
 	hintParser *hintParser
-	handParser ParserEngine
+	handParser *HandParser
 
 	explicitCharset       bool
 	strictDoubleFieldType bool
+
+	// hintBridgeFn is stored once in New() to avoid per-ParseSQL heap allocation
+	// of the parser.hintBridge method value.
+	hintBridgeFn HintParseFn
 }
 
 // New returns a Parser object with default SQL mode.
@@ -104,13 +108,12 @@ func New() *Parser {
 		ast.NewBitLiteral == nil {
 		panic("no parser driver (forgotten import?) https://github.com/pingcap/parser/issues/43")
 	}
-	if newEngineFunc == nil {
-		panic("no parser engine registered (forgotten import of hparser?)")
-	}
 
 	p := &Parser{
-		handParser: newEngineFunc(),
+		handParser: NewHandParser(),
 	}
+	// Bind method value once to avoid per-ParseSQL closure allocation.
+	p.hintBridgeFn = p.hintBridge
 	p.reset()
 	return p
 }
@@ -167,8 +170,8 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 	// Configure the hand-written parser.
 	parser.handParser.SetSQLMode(parser.lexer.GetSQLMode())
 
-	// Set hint parse callback.
-	parser.handParser.SetHintParse(parser.hintBridge)
+	// Set hint parse callback (uses stored method value, no allocation).
+	parser.handParser.SetHintParse(parser.hintBridgeFn)
 
 	// Initialize hand parser: Reset + Init + set charset/collation.
 	parser.handParser.Reset()
