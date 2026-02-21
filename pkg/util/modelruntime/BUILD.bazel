@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "modelruntime",
     srcs = [
+        "errors.go",
         "infer.go",
         "metadata.go",
         "runtime.go",
@@ -23,6 +24,8 @@ go_test(
     name = "modelruntime_test",
     timeout = "short",
     srcs = [
+        "error_test.go",
+        "infer_test.go",
         "metadata_test.go",
         "runtime_test.go",
         "session_cache_test.go",

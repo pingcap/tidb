@@ -3287,6 +3287,50 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(vardef.EnableModelInference.Load()), nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelMaxBatchSize, Value: strconv.FormatInt(vardef.DefTiDBModelMaxBatchSize, 10), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			vardef.ModelMaxBatchSize.Store(val)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.FormatInt(vardef.ModelMaxBatchSize.Load(), 10), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelTimeout, Value: vardef.DefTiDBModelTimeout.String(), Type: vardef.TypeDuration, MinValue: 0, MaxValue: uint64(time.Hour * 24 * 365),
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			vardef.ModelTimeout.Store(d)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return vardef.ModelTimeout.Load().String(), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelAllowNondeterministic, Value: BoolToOnOff(vardef.DefTiDBModelAllowNondeterministic), Type: vardef.TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			vardef.ModelAllowNondeterministic.Store(TiDBOptOn(s))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.ModelAllowNondeterministic.Load()), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableModelCustomOps, Value: BoolToOnOff(vardef.DefTiDBEnableModelCustomOps), Type: vardef.TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			vardef.EnableModelCustomOps.Store(TiDBOptOn(s))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableModelCustomOps.Load()), nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelCacheCapacity, Value: strconv.FormatUint(vardef.DefTiDBModelCacheCapacity, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			val, err := strconv.ParseUint(s, 10, 64)

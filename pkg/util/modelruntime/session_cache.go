@@ -26,6 +26,7 @@ import (
 
 type dynamicSession interface {
 	Run(inputs, outputs []onnxruntime_go.Value) error
+	RunWithOptions(inputs, outputs []onnxruntime_go.Value, opts *onnxruntime_go.RunOptions) error
 	Destroy() error
 }
 
@@ -140,8 +141,11 @@ type sessionEntry struct {
 	mu       syncutil.Mutex
 }
 
-func (s *sessionEntry) run(inputs, outputs []onnxruntime_go.Value) error {
+func (s *sessionEntry) run(inputs, outputs []onnxruntime_go.Value, opts *onnxruntime_go.RunOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if opts != nil {
+		return s.session.RunWithOptions(inputs, outputs, opts)
+	}
 	return s.session.Run(inputs, outputs)
 }

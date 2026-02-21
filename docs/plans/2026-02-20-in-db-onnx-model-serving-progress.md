@@ -24,6 +24,13 @@ Status log for phased implementation.
 - [x] Input validation (type/name/count/shape)
 - [x] Phase 2 tests green
 
+## Phase 3: Governance, Safety, Metadata
+- [x] Governance sysvars: `tidb_model_max_batch_size`, `tidb_model_timeout`, `tidb_model_allow_nondeterministic`, `tidb_enable_model_custom_ops` (global-only)
+- [x] Inference options: per-run timeout + max batch split
+- [x] Metadata checks: nondeterministic flag handling
+- [x] Custom ops error mapping + gating
+- [x] Phase 3 tests green (modelruntime tests + sysvar test + TestModelPredictRejectsNondeterministic)
+
 ## Notes
 - TiFlash model pushdown is future work; v1 only pushes non-model predicates.
 - Tests: `go test -run TestModelStatements --tags=intest ./pkg/parser`; `go test -run TestModelSystemTablesBootstrap --tags=intest ./pkg/session`

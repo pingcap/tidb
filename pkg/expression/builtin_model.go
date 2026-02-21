@@ -367,6 +367,8 @@ type modelPredictMeta struct {
 	batchable    bool
 	sessionKey   modelruntime.SessionKey
 	sessionCache *modelruntime.SessionCache
+	inferOpts    modelruntime.InferenceOptions
+	allowCustom  bool
 }
 
 type modelSchemaColumn struct {
@@ -375,7 +377,11 @@ type modelSchemaColumn struct {
 }
 
 func (m *modelPredictMeta) predict(inputs []float32) ([]float32, error) {
-	return modelruntime.RunInferenceWithCache(m.sessionCache, m.sessionKey, m.artifactData, m.inputNames, m.outputNames, inputs)
+	outputs, err := modelruntime.RunInferenceWithOptions(m.sessionCache, m.sessionKey, m.artifactData, m.inputNames, m.outputNames, inputs, m.inferOpts)
+	if err != nil {
+		return nil, m.wrapInferenceError(err)
+	}
+	return outputs, nil
 }
 
 func (m *modelPredictMeta) predictBatch(inputs [][]float32) ([][]float32, error) {
@@ -390,7 +396,21 @@ func (m *modelPredictMeta) predictBatch(inputs [][]float32) ([][]float32, error)
 		}
 		return results, nil
 	}
-	return modelruntime.RunInferenceBatchWithCache(m.sessionCache, m.sessionKey, m.artifactData, m.inputNames, m.outputNames, inputs)
+	outputs, err := modelruntime.RunInferenceBatchWithOptions(m.sessionCache, m.sessionKey, m.artifactData, m.inputNames, m.outputNames, inputs, m.inferOpts)
+	if err != nil {
+		return nil, m.wrapInferenceError(err)
+	}
+	return outputs, nil
+}
+
+func (m *modelPredictMeta) wrapInferenceError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if !m.allowCustom && modelruntime.IsCustomOpError(err) {
+		return errors.Errorf("model %s uses custom ops; set %s=ON", m.modelName, vardef.TiDBEnableModelCustomOps)
+	}
+	return err
 }
 
 func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expropt.SQLExecutor, modelName string, inputArgCount int) (*modelPredictMeta, error) {
@@ -498,6 +518,15 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 	if err != nil {
 		return nil, err
 	}
+	if !vardef.ModelAllowNondeterministic.Load() {
+		nondet, err := modelruntime.ModelDeclaresNondeterministic(artifact.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		if nondet {
+			return nil, errors.Errorf("model %s is nondeterministic; set %s=ON to allow", modelIdent, vardef.TiDBModelAllowNondeterministic)
+		}
+	}
 	sessionKey := modelruntime.SessionKeyFromParts(modelID, version, inputNames, outputNames)
 	return &modelPredictMeta{
 		modelID:      modelID,
@@ -510,6 +539,11 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 		batchable:    batchable,
 		sessionKey:   sessionKey,
 		sessionCache: modelruntime.GetProcessSessionCache(),
+		inferOpts: modelruntime.InferenceOptions{
+			MaxBatchSize: int(vardef.ModelMaxBatchSize.Load()),
+			Timeout:      vardef.ModelTimeout.Load(),
+		},
+		allowCustom: vardef.EnableModelCustomOps.Load(),
 	}, nil
 }
 

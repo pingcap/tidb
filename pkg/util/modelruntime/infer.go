@@ -15,21 +15,40 @@
 package modelruntime
 
 import (
+	"sync/atomic"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/yalue/onnxruntime_go"
 )
 
-var newDynamicSessionFn = func(onnxData []byte, inputNames, outputNames []string) (dynamicSession, error) {
-	return onnxruntime_go.NewDynamicAdvancedSessionWithONNXData(onnxData, inputNames, outputNames, nil)
+var (
+	newDynamicSessionFn = func(onnxData []byte, inputNames, outputNames []string) (dynamicSession, error) {
+		return onnxruntime_go.NewDynamicAdvancedSessionWithONNXData(onnxData, inputNames, outputNames, nil)
+	}
+	newRunOptionsFn     = onnxruntime_go.NewRunOptions
+	runInferenceScalarFn = runInferenceScalar
+	runInferenceBatchFn  = runInferenceBatch
+)
+
+// InferenceOptions controls runtime behavior for model inference.
+type InferenceOptions struct {
+	MaxBatchSize int
+	Timeout      time.Duration
 }
 
 // RunInference executes the ONNX model with scalar float inputs and returns scalar float outputs.
 func RunInference(onnxData []byte, inputNames, outputNames []string, inputs []float32) ([]float32, error) {
-	return RunInferenceWithCache(nil, "", onnxData, inputNames, outputNames, inputs)
+	return RunInferenceWithOptions(nil, "", onnxData, inputNames, outputNames, inputs, InferenceOptions{})
 }
 
 // RunInferenceWithCache executes the ONNX model using a cached session when provided.
 func RunInferenceWithCache(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string, inputs []float32) ([]float32, error) {
+	return RunInferenceWithOptions(cache, key, onnxData, inputNames, outputNames, inputs, InferenceOptions{})
+}
+
+// RunInferenceWithOptions executes the ONNX model using options such as timeouts.
+func RunInferenceWithOptions(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string, inputs []float32, opts InferenceOptions) ([]float32, error) {
 	if len(inputNames) != len(inputs) {
 		return nil, errors.New("onnx input count does not match inputs")
 	}
@@ -39,6 +58,10 @@ func RunInferenceWithCache(cache *SessionCache, key SessionKey, onnxData []byte,
 	}
 	defer cleanup()
 
+	return runInferenceScalarFn(session, inputNames, outputNames, inputs, opts.Timeout)
+}
+
+func runInferenceScalar(session *sessionEntry, inputNames, outputNames []string, inputs []float32, timeout time.Duration) ([]float32, error) {
 	inputValues := make([]onnxruntime_go.Value, len(inputs))
 	for i, val := range inputs {
 		tensor, err := onnxruntime_go.NewTensor(onnxruntime_go.Shape{1}, []float32{val})
@@ -49,7 +72,7 @@ func RunInferenceWithCache(cache *SessionCache, key SessionKey, onnxData []byte,
 		defer tensor.Destroy()
 	}
 	outputValues := make([]onnxruntime_go.Value, len(outputNames))
-	if err := session.run(inputValues, outputValues); err != nil {
+	if err := runWithTimeout(session, inputValues, outputValues, timeout); err != nil {
 		return nil, errors.Annotate(err, "run onnx session")
 	}
 	results := make([]float32, len(outputValues))
@@ -76,11 +99,16 @@ func RunInferenceWithCache(cache *SessionCache, key SessionKey, onnxData []byte,
 // RunInferenceBatch executes the ONNX model with batched scalar float inputs.
 // inputs is a slice of rows, each row is a slice of float32 matching inputNames.
 func RunInferenceBatch(onnxData []byte, inputNames, outputNames []string, inputs [][]float32) ([][]float32, error) {
-	return RunInferenceBatchWithCache(nil, "", onnxData, inputNames, outputNames, inputs)
+	return RunInferenceBatchWithOptions(nil, "", onnxData, inputNames, outputNames, inputs, InferenceOptions{})
 }
 
 // RunInferenceBatchWithCache executes the ONNX model with cached sessions when provided.
 func RunInferenceBatchWithCache(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string, inputs [][]float32) ([][]float32, error) {
+	return RunInferenceBatchWithOptions(cache, key, onnxData, inputNames, outputNames, inputs, InferenceOptions{})
+}
+
+// RunInferenceBatchWithOptions executes the ONNX model with cached sessions when provided.
+func RunInferenceBatchWithOptions(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string, inputs [][]float32, opts InferenceOptions) ([][]float32, error) {
 	if len(inputs) == 0 {
 		return nil, errors.New("onnx batch input is empty")
 	}
@@ -98,7 +126,28 @@ func RunInferenceBatchWithCache(cache *SessionCache, key SessionKey, onnxData []
 		return nil, errors.Annotate(err, "create onnx session")
 	}
 	defer cleanup()
+	if opts.MaxBatchSize > 0 && batchSize > opts.MaxBatchSize {
+		results := make([][]float32, batchSize)
+		for start := 0; start < batchSize; start += opts.MaxBatchSize {
+			end := start + opts.MaxBatchSize
+			if end > batchSize {
+				end = batchSize
+			}
+			subResults, err := runInferenceBatchFn(session, inputNames, outputNames, inputs[start:end], opts.Timeout)
+			if err != nil {
+				return nil, err
+			}
+			for i := range subResults {
+				results[start+i] = subResults[i]
+			}
+		}
+		return results, nil
+	}
+	return runInferenceBatchFn(session, inputNames, outputNames, inputs, opts.Timeout)
+}
 
+func runInferenceBatch(session *sessionEntry, inputNames, outputNames []string, inputs [][]float32, timeout time.Duration) ([][]float32, error) {
+	batchSize := len(inputs)
 	inputValues := make([]onnxruntime_go.Value, len(inputNames))
 	for i := range inputNames {
 		data := make([]float32, batchSize)
@@ -114,7 +163,7 @@ func RunInferenceBatchWithCache(cache *SessionCache, key SessionKey, onnxData []
 	}
 
 	outputValues := make([]onnxruntime_go.Value, len(outputNames))
-	if err := session.run(inputValues, outputValues); err != nil {
+	if err := runWithTimeout(session, inputValues, outputValues, timeout); err != nil {
 		return nil, errors.Annotate(err, "run onnx session")
 	}
 
@@ -142,6 +191,28 @@ func RunInferenceBatchWithCache(cache *SessionCache, key SessionKey, onnxData []
 		}
 	}
 	return results, nil
+}
+
+func runWithTimeout(session *sessionEntry, inputs, outputs []onnxruntime_go.Value, timeout time.Duration) error {
+	if timeout <= 0 {
+		return session.run(inputs, outputs, nil)
+	}
+	opts, err := newRunOptionsFn()
+	if err != nil {
+		return errors.Annotate(err, "create onnx run options")
+	}
+	defer opts.Destroy()
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(timeout, func() {
+		timedOut.Store(true)
+		_ = opts.Terminate()
+	})
+	err = session.run(inputs, outputs, opts)
+	timer.Stop()
+	if timedOut.Load() {
+		return errors.Errorf("onnx inference timeout after %s", timeout)
+	}
+	return err
 }
 
 func getSession(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string) (*sessionEntry, func(), error) {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/modelruntime"
 	"github.com/stretchr/testify/require"
@@ -161,4 +162,69 @@ func TestModelPredictBatchInference(t *testing.T) {
 	tk.MustQuery("select model_predict(test.m1, x).score from t order by x").
 		Check(testkit.Rows("10", "20", "30"))
 	require.Greater(t, callCount, 0)
+}
+
+func TestModelPredictRejectsNondeterministic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_model_ddl = on")
+
+	modelDir := t.TempDir()
+	modelPath := filepath.Join(modelDir, "model.onnx")
+	modelBytes := []byte("dummy-model")
+	require.NoError(t, os.WriteFile(modelPath, modelBytes, 0o600))
+	checksum := fmt.Sprintf("sha256:%x", sha256.Sum256(modelBytes))
+	location := "file://" + modelPath
+
+	tk.MustExec(fmt.Sprintf(
+		"create model m1 (input (a double) output (score double)) using onnx location '%s' checksum '%s'",
+		location, checksum,
+	))
+	tk.MustExec("set global tidb_enable_model_inference = on")
+	tk.MustExec("set global tidb_model_allow_nondeterministic = off")
+	require.False(t, vardef.ModelAllowNondeterministic.Load())
+
+	ioCalls := 0
+	restoreIO := modelruntime.SetInspectModelIOInfoHookForTest(func([]byte) ([]onnxruntime_go.InputOutputInfo, []onnxruntime_go.InputOutputInfo, error) {
+		ioCalls++
+		return []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "a",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "score",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, nil
+	})
+	defer restoreIO()
+
+	restoreMeta := modelruntime.SetInspectModelMetadataHookForTest(func([]byte) (modelruntime.ModelMetadata, error) {
+		return &stubModelMetadata{values: map[string]string{"tidb_nondeterministic": "true"}}, nil
+	})
+	defer restoreMeta()
+
+	err := tk.QueryToErr("select model_predict(test.m1, 1.0).score")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tidb_model_allow_nondeterministic")
+}
+
+type stubModelMetadata struct {
+	values map[string]string
+}
+
+func (s *stubModelMetadata) Destroy() error {
+	return nil
+}
+
+func (s *stubModelMetadata) LookupCustomMetadataMap(key string) (string, bool, error) {
+	val, ok := s.values[key]
+	return val, ok, nil
 }

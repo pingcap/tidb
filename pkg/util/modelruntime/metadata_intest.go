@@ -26,3 +26,12 @@ func SetInspectModelIOInfoHookForTest(fn func([]byte) ([]onnxruntime_go.InputOut
 		getInputOutputInfoFn = old
 	}
 }
+
+// SetInspectModelMetadataHookForTest overrides model metadata lookup.
+func SetInspectModelMetadataHookForTest(fn func([]byte) (ModelMetadata, error)) func() {
+	old := getModelMetadataFn
+	getModelMetadataFn = fn
+	return func() {
+		getModelMetadataFn = old
+	}
+}

@@ -133,10 +133,53 @@ func TestInspectModelIOInfoPropagatesError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestModelDeclaresNondeterministic(t *testing.T) {
+	restore := swapGetModelMetadata(func([]byte) (ModelMetadata, error) {
+		return &stubModelMetadata{values: map[string]string{"tidb_nondeterministic": "true"}}, nil
+	})
+	defer restore()
+
+	ok, err := ModelDeclaresNondeterministic([]byte("dummy"))
+	require.NoError(t, err)
+	require.True(t, ok)
+}
+
+func TestModelDeclaresNondeterministicMissingKey(t *testing.T) {
+	restore := swapGetModelMetadata(func([]byte) (ModelMetadata, error) {
+		return &stubModelMetadata{values: map[string]string{"foo": "bar"}}, nil
+	})
+	defer restore()
+
+	ok, err := ModelDeclaresNondeterministic([]byte("dummy"))
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+type stubModelMetadata struct {
+	values map[string]string
+}
+
+func (s *stubModelMetadata) Destroy() error {
+	return nil
+}
+
+func (s *stubModelMetadata) LookupCustomMetadataMap(key string) (string, bool, error) {
+	val, ok := s.values[key]
+	return val, ok, nil
+}
+
 func swapGetInputOutputInfo(fn func([]byte) ([]onnxruntime_go.InputOutputInfo, []onnxruntime_go.InputOutputInfo, error)) func() {
 	old := getInputOutputInfoFn
 	getInputOutputInfoFn = fn
 	return func() {
 		getInputOutputInfoFn = old
+	}
+}
+
+func swapGetModelMetadata(fn func([]byte) (ModelMetadata, error)) func() {
+	old := getModelMetadataFn
+	getModelMetadataFn = fn
+	return func() {
+		getModelMetadataFn = old
 	}
 }
