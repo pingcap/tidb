@@ -252,7 +252,7 @@ func (p *HandParser) parseSetExpr() ast.ExprNode {
 		return p.newValueExpr("BINARY")
 	}
 	// ON/OFF are reserved keywords but valid SET values (e.g., SET @@var = ON).
-	// The goyacc parser treats them as string literals in this context.
+	// The parser treats them as string literals in this context.
 	if p.peek().Tp == tokOn {
 		p.next()
 		return p.newValueExpr("ON")
@@ -590,7 +590,7 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	if p.peek().Tp == tokExplore {
 		p.next()
 		stmt.Explore = true
-		stmt.Format = "" // goyacc leaves Format empty for EXPLORE
+		stmt.Format = "" // Format is empty for EXPLORE
 		if tok, ok := p.accept(tokStringLit); ok {
 			stmt.SQLDigest = tok.Lit
 			return stmt

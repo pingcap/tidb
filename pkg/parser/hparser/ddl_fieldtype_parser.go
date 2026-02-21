@@ -431,7 +431,7 @@ func (p *HandParser) parseCharsetName(tp *types.FieldType) {
 }
 
 func (p *HandParser) parseStringOptions(tp *types.FieldType) {
-	// Match goyacc OptCharsetWithOptBinary / OptBinary:
+	// Match OptCharsetWithOptBinary / OptBinary:
 	//   BYTE           → binary charset, done
 	//   ASCII          → latin1 charset, done
 	//   UNICODE        → ucs2 charset, done
@@ -588,7 +588,7 @@ func (p *HandParser) parseEnumSetOptions(tp *types.FieldType) {
 		tp.SetElemWithIsBinaryLit(i, e.val, e.isBinaryLit)
 	}
 
-	// Compute flen from element list (matching goyacc behavior).
+	// Compute flen from element list (matching MySQL syntax).
 	finalElems := tp.GetElems()
 	if tp.GetType() == mysql.TypeEnum {
 		// ENUM: flen = max element string length

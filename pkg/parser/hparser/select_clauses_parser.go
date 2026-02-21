@@ -64,7 +64,7 @@ func (p *HandParser) parseByItems() []*ast.ByItem {
 		// Convert integer literal to PositionExpr for positional references
 		// in GROUP BY / ORDER BY (e.g., "GROUP BY 1", "ORDER BY 0"). The
 		// planner relies on PositionExpr to resolve these to SELECT field
-		// positions. Matches goyacc behavior: any int64 becomes PositionExpr.
+		// positions. Matches expected behavior: any int64 becomes PositionExpr.
 		// Only set N (not P — P is reserved for prepared-statement param markers).
 		if ve, ok := item.Expr.(ast.ValueExpr); ok {
 			if n, ok2 := ve.GetValue().(int64); ok2 {
@@ -74,7 +74,7 @@ func (p *HandParser) parseByItems() []*ast.ByItem {
 			}
 		}
 
-		// Optional ASC/DESC. Per goyacc grammar, items without explicit
+		// Optional ASC/DESC. Per grammar, items without explicit
 		// ASC/DESC get NullOrder=true (for both GROUP BY and ORDER BY).
 		if _, ok := p.accept(tokDesc); ok {
 			item.Desc = true
@@ -331,7 +331,7 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 }
 
 // toUint64Value converts a ValueExpr containing an int64 to uint64 if possible.
-// This is required to match goyacc's LengthNum behavior for LIMIT/OFFSET.
+// This is required to match the LengthNum behavior for LIMIT/OFFSET.
 func (p *HandParser) toUint64Value(expr ast.ExprNode) ast.ExprNode {
 	if expr == nil {
 		return nil
@@ -461,8 +461,8 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 			}
 		}
 
-		// Flatten set operations to produce a goyacc-compatible flat SelectList.
-		// Goyacc always produces SetOprStmt{SelectList: {Selects: [sel1, sel2, sel3, ...]}}
+		// Flatten set operations to produce a parser-compatible flat SelectList.
+		// The parser always produces SetOprStmt{SelectList: {Selects: [sel1, sel2, sel3, ...]}}
 		// — a single flat list. Never nested SetOprStmt inside Selects.
 		//
 		// When lhs is already a SetOprStmt (from a previous loop iteration),
@@ -490,7 +490,7 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 			// If RHS is a SetOprStmt (parenthesized subquery), wrap it in a
 			// SetOprSelectList. The planner only handles *ast.SelectStmt and
 			// *ast.SetOprSelectList children in SetOprSelectList.Selects, not
-			// bare *ast.SetOprStmt. This matches goyacc's SubSelect rule where
+			// bare *ast.SetOprStmt. This matches the SubSelect rule where
 			// "(SelectStmtWithClause)" becomes SetOprSelectList{Selects:[...]}.
 			//
 			// Crucially, we flatten the inner SetOprStmt: instead of nesting the
@@ -525,7 +525,7 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 		}
 
 		// If LHS is a parenthesized CTE subquery (has With + IsInBraces), wrap it in a
-		// SetOprSelectList. This matches goyacc's SetOprClause: SubSelect rule where
+		// SetOprSelectList. This matches the SetOprClause: SubSelect rule where
 		// "(SelectStmtWithClause)" becomes SetOprSelectList{Selects:[SelectStmt]}.
 		// The SetOprSelectList.Restore() method wraps the child in "()", producing
 		// "(WITH ... SELECT ...)" instead of "WITH ... (SELECT ...)".
@@ -596,7 +596,7 @@ func (p *HandParser) parseSetOprUnit() ast.ResultSetNode {
 		res = p.parseSubquery()
 
 	// NOTE: case tokWith is intentionally NOT handled here.
-	// The goyacc grammar's SimpleSelect rule does not allow WITH after
+	// The grammar's SimpleSelect rule does not allow WITH after
 	// set operators (UNION/EXCEPT/INTERSECT). WITH (CTE) can only appear
 	// at the top level of a statement, not inside a set operator chain.
 	// `SELECT 1 UNION WITH cte AS (...) SELECT * FROM cte` is invalid.

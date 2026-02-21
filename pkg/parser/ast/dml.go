@@ -2133,8 +2133,8 @@ type FieldItem struct {
 // FieldsClause represents fields references clause in load data statement.
 type FieldsClause struct {
 	Terminated           *string
-	Enclosed             *string // length always <= 1 if not nil, see parser.y
-	Escaped              *string // length always <= 1 if not nil, see parser.y
+	Enclosed             *string // length always <= 1 if not nil
+	Escaped              *string // length always <= 1 if not nil
 	OptEnclosed          bool
 	DefinedNullBy        *string
 	NullValueOptEnclosed bool

@@ -78,7 +78,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 	// Optional INTO.
 	p.accept(tokInto)
 
-	// Table reference. Goyacc for INSERT uses TableName + PartitionNameListOpt.
+	// Table reference. For INSERT the parser uses TableName + PartitionNameListOpt.
 	tn := p.parseTableName()
 	if tn == nil {
 		return nil

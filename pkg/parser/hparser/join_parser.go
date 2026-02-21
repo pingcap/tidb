@@ -32,7 +32,7 @@ func (p *HandParser) parseTableRefs() *ast.TableRefsClause {
 }
 
 // parseCommaJoin parses table references separated by commas (lowest precedence).
-// Goyacc structure for `t, v`: Join{ Left: Join{Left:t, Right:nil}, Right: v, Tp: CrossJoin }
+// Expected structure for `t, v`: Join{ Left: Join{Left:t, Right:nil}, Right: v, Tp: CrossJoin }
 func (p *HandParser) parseCommaJoin() *ast.Join {
 	res := p.parseJoin()
 	if res == nil {
@@ -102,7 +102,7 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 
 		// Parse the right side.
 		// NATURAL JOIN and STRAIGHT_JOIN never take ON/USING, so they complete
-		// immediately at this level (left-associative per goyacc's %left join
+		// immediately at this level (left-associative per the %left join
 		// keyword precedence — same precedence means reduce wins). Use
 		// parseTableSource() for these to avoid absorbing subsequent joins.
 		// For all other joins, use parseJoinRHS() which recursively absorbs
@@ -587,7 +587,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		}
 	}
 
-	// If it's a TableName, initialize its slices to empty (matching goyacc's TableFactor).
+	// If it's a TableName, initialize its slices to empty (matching the TableFactor).
 	if tn, ok := res.(*ast.TableName); ok {
 		if tn.IndexHints == nil {
 			tn.IndexHints = make([]*ast.IndexHint, 0)
@@ -598,7 +598,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	}
 
 	// If we have alias, or it's a TableName, or it's a subquery (SelectStmt/SetOprStmt),
-	// we MUST wrap in TableSource. Goyacc always wraps these in TableSource.
+	// we MUST wrap in TableSource. The parser always wraps these in TableSource.
 	_, isTableName := res.(*ast.TableName)
 	_, isSelect := res.(*ast.SelectStmt)
 	_, isSetOpr := res.(*ast.SetOprStmt)

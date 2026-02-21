@@ -228,7 +228,7 @@ func (p *HandParser) parseAlterDatabaseStmt() ast.StmtNode {
 	p.expect(tokDatabase)
 
 	// Database name is optional — if next token is a db option keyword, skip name.
-	// Note: tokCharsetKwd (CHARSET) is NOT included here because in goyacc,
+	// Note: tokCharsetKwd (CHARSET) is NOT included here because in the parser,
 	// standalone CHARSET is consumed as the db name (shift/reduce preference).
 	// Only multi-word option starts (CHARACTER SET, CHAR SET) skip the name.
 	peek := p.peek()
@@ -638,7 +638,7 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 		p.accept(tokOption)
 	}
 
-	// Set text on the select body node, mirroring goyacc's behavior.
+	// Set text on the select body node, mirroring the original parser.
 	if stmt.Select != nil {
 		stmt.Select.SetText(nil, strings.TrimSpace(p.src[selectStartOff:selectEndOff]))
 	}

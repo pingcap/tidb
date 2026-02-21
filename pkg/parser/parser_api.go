@@ -101,9 +101,8 @@ type Parser struct {
 	hintBridgeFn hparser.HintParseFn
 }
 
-// yyhintSetOffset is a no-op required by the goyacc-generated hint parser
-// (hintparser.go). It mirrors yySetOffset but the hint parser doesn't need
-// position offsets tracked on its symbols.
+// yyhintSetOffset is a no-op required by the hint parser (hintparser.go).
+// The hint parser doesn't need position offsets tracked on its symbols.
 func yyhintSetOffset(_ *yyhintSymType, _ int) {
 }
 
@@ -184,7 +183,7 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 	parser.src = sql
 	parser.result = parser.result[:0]
 
-	// Hand parser is the sole parser — no goyacc fallback.
+	// Configure the hand-written parser.
 	parser.handParser.SetSQLMode(parser.lexer.GetSQLMode())
 
 	// Use stored method references to avoid per-call closure allocations.

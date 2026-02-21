@@ -30,7 +30,7 @@ func (p *HandParser) ParseSQL() ([]ast.StmtNode, []error, error) {
 	// Starting at 0 ensures that prefixes like /*! are included in the first
 	// statement's Text(). After each statement, it advances to endOff so that
 	// subsequent statements include any intervening whitespace or comment markers.
-	// This mirrors the goyacc Scanner.stmtStartPos behavior.
+	// This mirrors the Scanner.stmtStartPos behavior.
 	stmtStartPos := 0
 
 	for p.peek().Tp != EOF {
@@ -62,7 +62,7 @@ func (p *HandParser) ParseSQL() ([]ast.StmtNode, []error, error) {
 		// Set the original text of the statement from source offsets.
 		// Try consuming the optional ';' BEFORE computing endOff.
 		// If ';' is consumed, endOff = semicolonOffset + 1 (just past ';'),
-		// matching goyacc's stmtText() which uses the scanner reader position
+		// matching stmtText() which uses the scanner reader position
 		// right after consuming ';' (before whitespace is skipped for the next token).
 		// If no ';', endOff = next token's offset.
 		var endOff int
@@ -92,7 +92,7 @@ func (p *HandParser) ParseSQL() ([]ast.StmtNode, []error, error) {
 
 // parseStatement dispatches to the appropriate statement parser based on the
 // leading token. Returns nil for unrecognized statement types, triggering
-// goyacc fallback in yy_parser.go.
+// when the hand parser encounters an unsupported statement.
 func (p *HandParser) parseStatement() ast.StmtNode {
 	switch p.peek().Tp {
 	// --- DML ---

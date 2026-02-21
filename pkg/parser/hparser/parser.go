@@ -25,13 +25,12 @@ import (
 )
 
 // HintParseFn is a callback that parses optimizer hint comments (/*+ ... */).
-// Injected by yy_parser.go since the hint parser lives in the parent package.
+// Injected by the parent package since the hint parser lives there.
 type HintParseFn func(input string) ([]*ast.TableOptimizerHint, []error)
 
 // HandParser is a hand-written recursive descent SQL parser.
-// It produces the same AST nodes as the goyacc-generated parser.
-// DML is parsed natively via recursive descent. DDL/admin statements
-// return nil, causing the caller (yy_parser.go) to use goyacc.
+// It produces the same AST nodes as the original parser.
+// If a statement is not supported, it returns nil.
 type HandParser struct {
 	lexer     *LexerBridge
 	arena     *Arena
@@ -190,7 +189,7 @@ func (p *HandParser) errorNear(colOffset, nearOffset int) {
 	p.errs = append(p.errs, fmt.Errorf("line %d column %d near \"%s\" ", line, col, near))
 }
 
-// errSyntax is the [parser:1149] error instance, matching yy_parser.go's ErrSyntax.
+// errSyntax is the [parser:1149] error instance.
 var errSyntax = terror.ClassParser.NewStd(mysql.ErrSyntax)
 
 // syntaxError records a MySQL-standard syntax error with code 1149.
@@ -410,7 +409,7 @@ func isIdentLike(tp int) bool {
 	if tp == tokIntLit || tp == tokFloatLit || tp == tokDecLit || tp == tokHexLit || tp == tokBitLit || tp == tokBitAnd {
 		return false
 	}
-	// Exclude builtin function tokens (58125-58152 in goyacc).
+	// Exclude builtin function tokens (58125-58152).
 	// These can only appear as function names (e.g. BIT_AND, COUNT, MAX, SUM),
 	// never as identifiers.
 	if tp >= 58125 && tp <= 58152 {

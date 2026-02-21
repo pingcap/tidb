@@ -37,7 +37,7 @@ func BenchmarkHandParser(b *testing.B) {
 	for name, sql := range benchSQLs {
 		b.Run(name, func(b *testing.B) {
 			hp := hparser.NewHandParser()
-			// Pre-create Scanner + LexFunc to match Goyacc's reuse pattern.
+			// Pre-create Scanner + LexFunc to reuse across iterations.
 			scanner := parser.NewScanner(sql)
 			lexFunc := parser.ScannerLexFunc(scanner)
 			b.ResetTimer()
@@ -47,26 +47,6 @@ func BenchmarkHandParser(b *testing.B) {
 				scanner.ResetTo(sql)
 				hp.Init(lexFunc, sql)
 				stmts, _, err := hp.ParseSQL()
-				if err != nil {
-					b.Fatal(err)
-				}
-				if len(stmts) == 0 {
-					b.Fatal("no statements parsed")
-				}
-			}
-		})
-	}
-}
-
-// BenchmarkGoyaccParser benchmarks the existing goyacc-generated parser.
-func BenchmarkGoyaccParser(b *testing.B) {
-	for name, sql := range benchSQLs {
-		b.Run(name, func(b *testing.B) {
-			p := parser.New()
-			b.ResetTimer()
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				stmts, _, err := p.Parse(sql, "", "")
 				if err != nil {
 					b.Fatal(err)
 				}

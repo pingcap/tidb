@@ -42,10 +42,10 @@ func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
 
 	// Optional FROM clause.
 	if _, ok := p.accept(tokFrom); ok {
-		// FROM DUAL is special: goyacc treats it as no FROM clause (From stays nil).
+		// FROM DUAL is special: parsed as no FROM clause (From stays nil).
 		if p.peek().Tp == tokDual {
 			p.next() // consume DUAL
-			// Don't set stmt.From — match goyacc behavior.
+			// Don't set stmt.From — match expected behavior.
 		} else {
 			stmt.From = p.parseTableRefs()
 			if stmt.From == nil {
@@ -221,7 +221,7 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 	}
 
 	// Attach WithClause
-	// In goyacc, WITH is attached at the SimpleSelect level, meaning:
+	// Originally, WITH is attached at the SimpleSelect level, meaning:
 	// - For a plain SELECT: attach to the SelectStmt directly
 	// - For SELECT ... UNION SELECT ...: attach to the FIRST child SelectStmt,
 	//   NOT to the SetOprStmt wrapper
@@ -248,7 +248,7 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 // STRAIGHT_JOIN, SQL_CALC_FOUND_ROWS, etc. in any order.
 func (p *HandParser) parseSelectOpts(stmt *ast.SelectStmt) {
 	opts := Alloc[ast.SelectStmtOpts](p.arena)
-	opts.SQLCache = true // Default: goyacc sets this to true; false emits SQL_NO_CACHE.
+	opts.SQLCache = true // Default is true; false emits SQL_NO_CACHE.
 	stmt.SelectStmtOpts = opts
 
 	// Optimizer hints (/*+ ... */) appear among select options.
@@ -352,7 +352,7 @@ func (p *HandParser) parseFieldList() *ast.FieldList {
 			p.error(p.peek().Offset, "expected field expression")
 			return nil
 		}
-		// Set field text from source SQL (matching goyacc's FieldList rule).
+		// Set field text from source SQL (matching the FieldList rule).
 		if field.Expr != nil {
 			endOffset := p.peek().Offset
 			if endOffset > field.Offset && endOffset <= len(p.src) {
@@ -419,7 +419,7 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 	}
 
 	// Optional alias: [AS] identifier
-	// In goyacc, only Identifier (non-reserved keywords) is valid after AS.
+	// Originally, only Identifier (non-reserved keywords) is valid after AS.
 	if _, ok := p.accept(tokAs); ok {
 		aliasTok := p.peek()
 		if aliasTok.Tp == tokIdentifier || aliasTok.Tp == tokStringLit || (aliasTok.Tp >= tokIdentifier && !IsReserved(aliasTok.Tp)) {

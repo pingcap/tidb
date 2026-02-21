@@ -12,7 +12,7 @@
 // limitations under the License.
 
 // Package hparser implements a hand-written recursive descent SQL parser
-// that produces the same ASTs as the goyacc-generated parser.
+// that produces MySQL-compatible ASTs.
 //
 // It wraps the existing Scanner/lexer and produces ast.StmtNode values
 // compatible with the existing TiDB query pipeline.
@@ -27,7 +27,7 @@ import (
 
 // Token represents a lexed token with its metadata.
 type Token struct {
-	// Tp is the token type (matches goyacc token constants).
+	// Tp is the token type (matches token constants in tokens.go).
 	Tp int
 	// Offset is the byte offset in the original SQL string.
 	Offset int

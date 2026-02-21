@@ -102,7 +102,7 @@ func (p *HandParser) parseConvertFunc() ast.ExprNode {
 			return nil
 		}
 		p.expect(')')
-		// Produce FuncCallExpr matching goyacc: FnName="convert", Args=[expr, charsetValueExpr]
+		// Produce FuncCallExpr : FnName="convert", Args=[expr, charsetValueExpr]
 		return &ast.FuncCallExpr{
 			FnName: ast.NewCIStr("convert"),
 			Args:   []ast.ExprNode{expr, ast.NewValueExpr(charsetName, "", "")},
@@ -335,7 +335,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		if flen >= 25 {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-		// Always use default flen/decimal for CAST, matching goyacc.
+		// Always use default flen/decimal for CAST, as expected.
 		defFlen, defDec := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
 		tp.SetFlen(defFlen)
 		tp.SetDecimal(defDec)

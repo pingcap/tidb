@@ -99,7 +99,7 @@ func (p *HandParser) parsePlacementUintOption(tokType int, optType ast.Placement
 		opt.Tp = optType
 		p.accept(tokEq)
 		opt.UintValue = p.parseUint64()
-		// Validate: FOLLOWERS must be positive (matches goyacc grammar validation).
+		// Validate: FOLLOWERS must be positive (matches grammar validation).
 		if optType == ast.PlacementOptionFollowerCount && opt.UintValue == 0 {
 			p.error(p.peek().Offset, "FOLLOWERS must be positive")
 			return nil
