@@ -30,7 +30,7 @@ import (
 // measure of how much of the existing parser's functionality the hand parser
 // covers.
 //
-// Run with: go test -v -run TestDifferential ./hparser/ 2>&1 | tail -20
+// Run with: go test -v -run TestDifferential ./ 2>&1 | tail -20
 func TestDifferential(t *testing.T) {
 	sqls := collectDMLTestCases()
 

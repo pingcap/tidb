@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
 // Token holds the semantic value for a lexed token.
@@ -957,26 +956,3 @@ func (t Token) IsKeyword(kw string) bool {
 // HintParseFn is the callback type for parsing optimizer hint comments.
 // It is injected into the parser engine by the parent parser.
 type HintParseFn func(input string) ([]*ast.TableOptimizerHint, []error)
-
-// ParserEngine is the interface for the SQL parser implementation.
-// The hand-written parser (hparser) registers itself via init().
-type ParserEngine interface {
-	Reset()
-	SetSQLMode(mode mysql.SQLMode)
-	SetHintParse(fn HintParseFn)
-	EnableWindowFunc(val bool)
-	SetStrictDoubleFieldTypeCheck(val bool)
-	Init(lexer Lexer, src string)
-	SetCharsetCollation(charset, collation string)
-	ParseSQL() ([]ast.StmtNode, []error, error)
-}
-
-// newEngineFunc is set by the parser engine package (e.g. hparser) via
-// RegisterParserEngine during init().
-var newEngineFunc func() ParserEngine
-
-// RegisterParserEngine registers a factory function for creating parser engines.
-// Called by the parser implementation package in its init() function.
-func RegisterParserEngine(fn func() ParserEngine) {
-	newEngineFunc = fn
-}

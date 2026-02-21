@@ -7,8 +7,8 @@
 
 The goal of this project is to build a Golang parser that is fully compatible with MySQL syntax, easy to extend, and high performance. Currently, features supported by parser are as follows:
 
-- Highly compatible with MySQL: it supports almost all features of MySQL. The main SQL parser is a hand-written recursive-descent parser in [hparser/](https://github.com/pingcap/tidb/blob/master/pkg/parser/hparser/). SQL hints are parsed by a separate hand-written recursive-descent parser in [hintparser.go](https://github.com/pingcap/tidb/blob/master/pkg/parser/hintparser.go).
-- Extensible: adding a new syntax requires adding parsing logic to the appropriate file in the `hparser/` package and the corresponding AST node definitions.
+- Highly compatible with MySQL: it supports almost all features of MySQL. The main SQL parser is a hand-written recursive-descent parser in [pkg/parser](https://github.com/pingcap/tidb/tree/master/pkg/parser). SQL hints are parsed by a separate hand-written recursive-descent parser in [hintparser.go](https://github.com/pingcap/tidb/blob/master/pkg/parser/hintparser.go).
+- Extensible: adding a new syntax requires adding parsing logic to the appropriate file in the `parser` package and the corresponding AST node definitions.
 - Good performance: the hand-written parser avoids the overhead of table-driven parsing and supports arena allocation for AST nodes.
 
 ## How to use it
