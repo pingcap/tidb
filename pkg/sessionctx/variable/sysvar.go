@@ -3331,6 +3331,15 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(vardef.EnableModelCustomOps.Load()), nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelNullBehavior, Value: vardef.DefTiDBModelNullBehavior, Type: vardef.TypeEnum, PossibleValues: []string{vardef.ModelNullBehaviorError, vardef.ModelNullBehaviorReturnNull},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			vardef.ModelNullBehavior.Store(s)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return vardef.ModelNullBehavior.Load(), nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelCacheCapacity, Value: strconv.FormatUint(vardef.DefTiDBModelCacheCapacity, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			val, err := strconv.ParseUint(s, 10, 64)

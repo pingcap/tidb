@@ -55,6 +55,7 @@ This feature is default-off and controlled via sysvars. Models are stored as met
 Operational controls:
 
 - Enable/disable feature: `tidb_enable_model_inference`
+- NULL handling: `tidb_model_null_behavior` (`ERROR`/`RETURN_NULL`)
 - Safety: `tidb_model_allow_nondeterministic` (default OFF), `tidb_enable_model_custom_ops` (default OFF)
 - Performance: `tidb_model_max_batch_size`, `tidb_model_timeout`
 - Caching: `tidb_model_cache_capacity`, `tidb_model_cache_ttl`

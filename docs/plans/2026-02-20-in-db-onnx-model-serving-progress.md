@@ -31,6 +31,11 @@ Status log for phased implementation.
 - [x] Custom ops error mapping + gating
 - [x] Phase 3 tests green (modelruntime tests + sysvar test + TestModelPredictRejectsNondeterministic)
 
+## Phase 4: NULL Semantics
+- [x] Sysvar: `tidb_model_null_behavior` (`ERROR`/`RETURN_NULL`)
+- [x] Scalar and vectorized null handling for `MODEL_PREDICT`
+- [x] Phase 4 test green (TestModelPredictNullBehaviorReturnNull)
+
 ## Notes
 - TiFlash model pushdown is future work; v1 only pushes non-model predicates.
 - Tests: `go test -run TestModelStatements --tags=intest ./pkg/parser`; `go test -run TestModelSystemTablesBootstrap --tags=intest ./pkg/session`

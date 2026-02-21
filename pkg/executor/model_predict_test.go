@@ -216,6 +216,48 @@ func TestModelPredictRejectsNondeterministic(t *testing.T) {
 	require.Contains(t, err.Error(), "tidb_model_allow_nondeterministic")
 }
 
+func TestModelPredictNullBehaviorReturnNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_model_ddl = on")
+
+	modelDir := t.TempDir()
+	modelPath := filepath.Join(modelDir, "model.onnx")
+	modelBytes := []byte("dummy-model")
+	require.NoError(t, os.WriteFile(modelPath, modelBytes, 0o600))
+	checksum := fmt.Sprintf("sha256:%x", sha256.Sum256(modelBytes))
+	location := "file://" + modelPath
+
+	tk.MustExec(fmt.Sprintf(
+		"create model m1 (input (a double) output (score double)) using onnx location '%s' checksum '%s'",
+		location, checksum,
+	))
+	tk.MustExec("set global tidb_enable_model_inference = on")
+	tk.MustExec("set global tidb_model_null_behavior = 'RETURN_NULL'")
+
+	restoreIO := modelruntime.SetInspectModelIOInfoHookForTest(func([]byte) ([]onnxruntime_go.InputOutputInfo, []onnxruntime_go.InputOutputInfo, error) {
+		return []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "a",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, []onnxruntime_go.InputOutputInfo{
+				{
+					Name:         "score",
+					OrtValueType: onnxruntime_go.ONNXTypeTensor,
+					Dimensions:   onnxruntime_go.Shape{1},
+					DataType:     onnxruntime_go.TensorElementDataTypeFloat,
+				},
+			}, nil
+	})
+	defer restoreIO()
+
+	tk.MustQuery("select model_predict(test.m1, null).score").Check(testkit.Rows("<nil>"))
+}
+
 type stubModelMetadata struct {
 	values map[string]string
 }
