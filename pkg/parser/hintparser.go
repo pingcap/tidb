@@ -125,7 +125,7 @@ type hintToken struct {
 
 // lex reads the next token from the hint scanner.
 func (hp *hintParser) lex() hintToken {
-	var lval yyhintSymType
+	var lval hintLexVal
 	tp := hp.lexer.Lex(&lval)
 	if tp <= 0 {
 		return hintToken{tp: 0} // EOF
