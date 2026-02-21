@@ -16,6 +16,7 @@ package modelruntime
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,6 +140,90 @@ func (c *SessionCache) Put(key SessionKey, entry *sessionEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cache.Put(key, entry)
+}
+
+// SessionCacheSnapshotEntry captures metadata about a cached session.
+type SessionCacheSnapshotEntry struct {
+	ModelID     int64
+	Version     int64
+	InputNames  []string
+	OutputNames []string
+	CachedAt    time.Time
+	TTL         time.Duration
+	ExpiresAt   *time.Time
+}
+
+// SnapshotEntries returns a point-in-time snapshot of cached sessions.
+func (c *SessionCache) SnapshotEntries() []SessionCacheSnapshotEntry {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	keys := c.cache.Keys()
+	values := c.cache.Values()
+	if len(keys) == 0 {
+		return nil
+	}
+	now := c.now()
+	entries := make([]SessionCacheSnapshotEntry, 0, len(keys))
+	for i, key := range keys {
+		sessionKey, ok := key.(SessionKey)
+		if !ok {
+			continue
+		}
+		entry, ok := values[i].(*sessionEntry)
+		if !ok {
+			continue
+		}
+		if c.ttl > 0 && now.Sub(entry.cachedAt) > c.ttl {
+			continue
+		}
+		modelID, version, inputs, outputs, ok := parseSessionKey(sessionKey)
+		if !ok {
+			continue
+		}
+		snapshot := SessionCacheSnapshotEntry{
+			ModelID:     modelID,
+			Version:     version,
+			InputNames:  inputs,
+			OutputNames: outputs,
+			CachedAt:    entry.cachedAt,
+			TTL:         c.ttl,
+		}
+		if c.ttl > 0 {
+			expiresAt := entry.cachedAt.Add(c.ttl)
+			snapshot.ExpiresAt = &expiresAt
+		}
+		entries = append(entries, snapshot)
+	}
+	return entries
+}
+
+func parseSessionKey(key SessionKey) (modelID int64, version int64, inputs []string, outputs []string, ok bool) {
+	parts := strings.SplitN(string(key), ":", 4)
+	if len(parts) != 4 {
+		return 0, 0, nil, nil, false
+	}
+	var err error
+	modelID, err = strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, nil, nil, false
+	}
+	version, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, nil, nil, false
+	}
+	inputs = splitSessionNames(parts[2])
+	outputs = splitSessionNames(parts[3])
+	return modelID, version, inputs, outputs, true
+}
+
+func splitSessionNames(names string) []string {
+	if names == "" {
+		return nil
+	}
+	return strings.Split(names, ",")
 }
 
 type sessionEntry struct {

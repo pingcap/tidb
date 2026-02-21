@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -1604,6 +1605,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 	}
 	a.updatePrevStmt()
+	a.reportModelInferenceRUConsumption()
 	a.recordLastQueryInfo(err)
 	a.recordAffectedRows2Metrics()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
@@ -1650,6 +1652,34 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 
 	a.Ctx.ReportUsageStats()
+}
+
+func (a *ExecStmt) reportModelInferenceRUConsumption() {
+	sessVars := a.Ctx.GetSessionVars()
+	stats := sessVars.StmtCtx.ModelInferenceStats()
+	if stats == nil {
+		return
+	}
+	summaries := stats.SlowLogSummaries()
+	if len(summaries) == 0 {
+		return
+	}
+	var total time.Duration
+	for _, summary := range summaries {
+		total += summary.TotalInferenceTime
+	}
+	if total <= 0 {
+		return
+	}
+	dctx := a.Ctx.GetDistSQLCtx()
+	if dctx == nil || dctx.RUConsumptionReporter == nil {
+		return
+	}
+	totalMS := float64(total) / float64(time.Millisecond)
+	dctx.RUConsumptionReporter.ReportConsumption(dctx.ResourceGroupName, &rmpb.Consumption{
+		SqlLayerCpuTimeMs: totalMS,
+		TotalCpuTimeMs:    totalMS,
+	})
 }
 
 func (a *ExecStmt) recordAffectedRows2Metrics() {
