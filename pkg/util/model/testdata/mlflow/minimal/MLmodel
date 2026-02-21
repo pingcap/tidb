@@ -1,0 +1,10 @@
+flavors:
+  python_function:
+    loader_module: mlflow.pyfunc
+signature:
+  inputs:
+    - name: x
+      type: float
+  outputs:
+    - name: y
+      type: float
