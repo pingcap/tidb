@@ -75,7 +75,7 @@ func (l *ArtifactLoaderImpl) Load(ctx context.Context, meta ArtifactMeta) (Artif
 	if !bytesEqual(actual[:], expected) {
 		return Artifact{}, errors.New("model checksum mismatch")
 	}
-	return Artifact{Meta: meta, Bytes: data, FetchedAt: time.Now()}, nil
+	return Artifact{Meta: meta, Bytes: data, LocalPath: "", FetchedAt: time.Now()}, nil
 }
 
 func bytesEqual(a, b []byte) bool {
