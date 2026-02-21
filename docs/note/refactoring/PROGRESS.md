@@ -1,6 +1,6 @@
 # Refactoring Progress Tracker
 
-Last updated: 2026-02-21 (Batches 2-22: regexp through scalar function decompositions)
+Last updated: 2026-02-21 (Batches 2-25: regexp through physical plan helper decompositions)
 
 ## Benchmark Validation (2026-02-17)
 
@@ -669,3 +669,12 @@ Last updated: 2026-02-21 (Batches 2-22: regexp through scalar function decomposi
 - [x] **executor/memtable_reader.go decomposition** - 2026-02-21 - Extracted `memtable_reader_region_peers.go` (165 lines) with tikvRegionPeersRetriever struct and methods. Reduced memtable_reader.go from 1,025 to 890 lines (13% reduction).
 - [x] **planner/core/memtable_infoschema_extractor.go decomposition** - 2026-02-21 - Extracted `memtable_infoschema_extractor_columns.go` (180 lines) with InfoSchemaColumnsExtractor, InfoSchemaTiDBIndexUsageExtractor. Reduced memtable_infoschema_extractor.go from 1,016 to 861 lines (15% reduction).
 - [x] **expression/scalar_function.go decomposition** - 2026-02-21 - Extracted `scalar_function_resolve.go` (206 lines) with ResolveIndices, ResolveIndicesByVirtualExpr, RemapColumn, GetSingleColumn, Coercibility/Charset/Collation methods, MemoryUsage. Reduced scalar_function.go from 963 to 779 lines (19% reduction).
+- [x] **infoschema/infoschema.go decomposition** - 2026-02-21 - Extracted `infoschema_session_ext.go` (168 lines) with SessionExtendedInfoSchema, FindTableByTblOrPartID, getTableInfo, getTableInfoList. Reduced infoschema.go from 961 to 818 lines (15% reduction).
+- [x] **distsql/request_builder.go decomposition** - 2026-02-21 - Extracted `request_builder_index.go` (251 lines) with IndexRangesToKVRanges*, CommonHandleRangesToKVRanges, VerifyTxnScope, EncodeIndexKey, BuildTableRanges. Reduced request_builder.go from 918 to 697 lines (24% reduction).
+- [x] **executor/join/base_join_probe.go decomposition** - 2026-02-21 - Extracted `base_join_probe_factory.go` (195 lines) with isKeyMatched, commonInitForScanRowTable, NewJoinProbe, mockJoinProbe. Reduced base_join_probe.go from 983 to 813 lines (17% reduction).
+- [x] **server/server.go decomposition** - 2026-02-21 - Extracted `server_conn_util.go` (222 lines) with connectInfo, session management, timezone setup, txn checks, status vars. Reduced server.go from 989 to 795 lines (20% reduction).
+- [x] **ddl/executor_index.go decomposition** - 2026-02-21 - Extracted `executor_index_drop.go` (235 lines) with DropForeignKey, DropIndex, dropIndex, CheckIsDropPrimaryKey, validateCommentLength, validateGlobalIndexWithGeneratedColumns. Reduced executor_index.go from 967 to 764 lines (21% reduction).
+- [x] **executor/internal/mpp/local_mpp_coordinator.go decomposition** - 2026-02-21 - Extracted `local_mpp_coordinator_exec.go` (189 lines) with handleMPPStreamResponse, nextImpl, Next, Execute, GetNodeCnt. Reduced local_mpp_coordinator.go from 978 to 825 lines (16% reduction).
+- [x] **planner/core/joinorder/conflict_detector.go decomposition** - 2026-02-21 - Extracted `conflict_detector_rules.go` (180 lines) with ruleTableEntry type and assocRuleTable, leftAsscomRuleTable, rightAsscomRuleTable. Reduced conflict_detector.go from 963 to 799 lines (17% reduction).
+- [x] **executor/adapter.go decomposition** - 2026-02-21 - Extracted `adapter_fk_cascade.go` (211 lines) with handleForeignKeyCascade, prepareFKCascadeContext, handleFKTriggerError, buildExecutor, openExecutor, next. Reduced adapter.go from 944 to 768 lines (19% reduction).
+- [x] **planner/core/optimizer.go decomposition** - 2026-02-21 - Extracted `optimizer_physical.go` (221 lines) with physical plan iteration/transform, existsCartesianProduct, DefaultDisabledLogicalRulesList, chunk reuse helpers, overlong type checks. Reduced optimizer.go from 917 to 720 lines (21% reduction).
