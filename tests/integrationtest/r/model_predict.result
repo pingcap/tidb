@@ -2,11 +2,15 @@ use test;
 set global tidb_enable_model_ddl = on;
 set global tidb_enable_model_inference = on;
 drop model if exists identity_model;
+drop table if exists t_model;
 create model identity_model (input (x float) output (y float)) using onnx location 'file:/tmp/tidb-models/identity_scalar.onnx' checksum 'sha256:855db7d48ba65b32534d04595a9776cec73b54784a6321d5aa536d6b405b5dde';
-select model_predict(identity_model, 0.25).y;
-model_predict(identity_model, 0.25).y
-0.25
-select model_predict(identity_model, 1.5).y;
-model_predict(identity_model, 1.5).y
+create table t_model (x float, y int);
+insert into t_model values (0.25, 1), (1.5, 1), (0.4, 2), (2.0, 2);
+select x from t_model where y = 1 and model_predict(identity_model, x).y > 0.5 order by x;
+x
 1.5
+select count(*) from t_model where y = 2 and model_predict(identity_model, x).y > 1.0;
+count(*)
+1
+drop table t_model;
 drop model identity_model;
