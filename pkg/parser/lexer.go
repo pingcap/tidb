@@ -25,7 +25,7 @@ import (
 	tidbfeature "github.com/pingcap/tidb/pkg/parser/tidb"
 )
 
-var _ = yyLexer(&Scanner{})
+var _ = Lexer(&Scanner{})
 
 // Pos represents the position of a token.
 type Pos struct {
@@ -34,7 +34,7 @@ type Pos struct {
 	Offset int
 }
 
-// Scanner implements the yyLexer interface.
+// Scanner implements the Lexer interface.
 type Scanner struct {
 	r   reader
 	buf bytes.Buffer
@@ -125,7 +125,7 @@ func (s *Scanner) stmtText() string {
 }
 
 // Errorf tells scanner something is wrong.
-// Scanner satisfies yyLexer interface which need this function.
+// Scanner satisfies Lexer interface which need this function.
 func (s *Scanner) Errorf(format string, a ...interface{}) (err error) {
 	str := fmt.Sprintf(format, a...)
 	val := s.r.s[s.lastScanOffset:]
@@ -140,7 +140,7 @@ func (s *Scanner) Errorf(format string, a ...interface{}) (err error) {
 }
 
 // AppendError sets error into scanner.
-// Scanner satisfies yyLexer interface which need this function.
+// Scanner satisfies Lexer interface which need this function.
 func (s *Scanner) AppendError(err error) {
 	if err == nil {
 		return
@@ -191,7 +191,7 @@ func (s *Scanner) getNextToken() int {
 	r := s.r
 	tok, pos, lit := s.scan()
 	if tok == identifier {
-		tok = s.handleIdent(&yySymType{})
+		tok = s.handleIdent(&Token{})
 	}
 	if tok == identifier {
 		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
@@ -206,7 +206,7 @@ func (s *Scanner) getNextTwoTokens() (tok1 int, tok2 int) {
 	r := s.r
 	tok1, pos, lit := s.scan()
 	if tok1 == identifier {
-		tok1 = s.handleIdent(&yySymType{})
+		tok1 = s.handleIdent(&Token{})
 	}
 	if tok1 == identifier {
 		if tmpToken := s.isTokenIdentifier(lit, pos.Offset); tmpToken != 0 {
@@ -215,7 +215,7 @@ func (s *Scanner) getNextTwoTokens() (tok1 int, tok2 int) {
 	}
 	tok2, pos, lit = s.scan()
 	if tok2 == identifier {
-		tok2 = s.handleIdent(&yySymType{})
+		tok2 = s.handleIdent(&Token{})
 	}
 	if tok2 == identifier {
 		if tmpToken := s.isTokenIdentifier(lit, pos.Offset); tmpToken != 0 {
@@ -227,18 +227,18 @@ func (s *Scanner) getNextTwoTokens() (tok1 int, tok2 int) {
 }
 
 // Lex returns a token and store the token value in v.
-// Scanner satisfies yyLexer interface.
+// Scanner satisfies Lexer interface.
 // 0 and invalid are special token id this function would return:
 // return 0 tells parser that scanner meets EOF,
 // return invalid tells parser that scanner meets illegal character.
-func (s *Scanner) Lex(v *yySymType) int {
+func (s *Scanner) Lex(v *Token) int {
 	tok, pos, lit := s.scan()
 	s.lastScanOffset = pos.Offset
 	s.lastKeyword3 = s.lastKeyword2
 	s.lastKeyword2 = s.lastKeyword
 	s.lastKeyword = 0
-	v.offset = pos.Offset
-	v.ident = lit
+	v.Offset = pos.Offset
+	v.Lit = lit
 	if tok == identifier {
 		tok = s.handleIdent(v)
 	}
@@ -250,7 +250,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 	}
 	if s.sqlMode.HasANSIQuotesMode() &&
 		tok == stringLit &&
-		s.r.s[v.offset] == '"' {
+		s.r.s[v.Offset] == '"' {
 		tok = identifier
 	}
 
@@ -263,9 +263,9 @@ func (s *Scanner) Lex(v *yySymType) int {
 	}
 	if (tok == as || tok == member) && s.getNextToken() == of {
 		_, pos, lit = s.scan()
-		v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+		v.Lit = fmt.Sprintf("%s %s", v.Lit, lit)
 		s.lastScanOffset = pos.Offset
-		v.offset = pos.Offset
+		v.Offset = pos.Offset
 		if tok == as {
 			s.lastKeyword = asof
 			return asof
@@ -277,19 +277,19 @@ func (s *Scanner) Lex(v *yySymType) int {
 		tok1, tok2 := s.getNextTwoTokens()
 		if tok1 == timestampType && tok2 == stringLit {
 			_, pos, lit = s.scan()
-			v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+			v.Lit = fmt.Sprintf("%s %s", v.Lit, lit)
 			s.lastKeyword = toTimestamp
 			s.lastScanOffset = pos.Offset
-			v.offset = pos.Offset
+			v.Offset = pos.Offset
 			return toTimestamp
 		}
 
 		if tok1 == tsoType && tok2 == intLit {
 			_, pos, lit = s.scan()
-			v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+			v.Lit = fmt.Sprintf("%s %s", v.Lit, lit)
 			s.lastKeyword = toTSO
 			s.lastScanOffset = pos.Offset
-			v.offset = pos.Offset
+			v.Offset = pos.Offset
 			return toTSO
 		}
 	}
@@ -299,10 +299,10 @@ func (s *Scanner) Lex(v *yySymType) int {
 		if tok1 == enclosed && tok2 == by {
 			_, _, lit = s.scan()
 			_, pos2, lit2 := s.scan()
-			v.ident = fmt.Sprintf("%s %s %s", v.ident, lit, lit2)
+			v.Lit = fmt.Sprintf("%s %s %s", v.Lit, lit, lit2)
 			s.lastKeyword = optionallyEnclosedBy
 			s.lastScanOffset = pos2.Offset
-			v.offset = pos2.Offset
+			v.Offset = pos2.Offset
 			return optionallyEnclosedBy
 		}
 	}
@@ -319,16 +319,16 @@ func (s *Scanner) Lex(v *yySymType) int {
 	case bitLit:
 		return toBit(s, v, lit)
 	case singleAtIdentifier, doubleAtIdentifier, cast, extract:
-		v.item = lit
+		v.Item = lit
 		return tok
 	case null:
-		v.item = nil
+		v.Item = nil
 	case quotedIdentifier, identifier:
 		tok = identifier
 		s.identifierDot = s.r.peek() == '.'
-		tok, v.ident = s.convert2System(tok, lit)
+		tok, v.Lit = s.convert2System(tok, lit)
 	case stringLit:
-		tok, v.ident = s.convert2Connection(tok, lit)
+		tok, v.Lit = s.convert2Connection(tok, lit)
 	}
 
 	return tok
@@ -336,12 +336,12 @@ func (s *Scanner) Lex(v *yySymType) int {
 
 // LexLiteral returns the value of the converted literal
 func (s *Scanner) LexLiteral() interface{} {
-	symType := &yySymType{}
+	symType := &Token{}
 	s.Lex(symType)
-	if symType.item == nil {
-		return symType.ident
+	if symType.Item == nil {
+		return symType.Lit
 	}
-	return symType.item
+	return symType.Item
 }
 
 // SetSQLMode sets the SQL mode for scanner.
@@ -381,8 +381,8 @@ func NewScanner(s string) *Scanner {
 	return lexer
 }
 
-func (*Scanner) handleIdent(lval *yySymType) int {
-	str := lval.ident
+func (*Scanner) handleIdent(lval *Token) int {
+	str := lval.Lit
 	// A character string literal may have an optional character set introducer and COLLATE clause:
 	// [_charset_name]'string' [COLLATE collation_name]
 	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
@@ -393,7 +393,7 @@ func (*Scanner) handleIdent(lval *yySymType) int {
 	if cs == nil {
 		return identifier
 	}
-	lval.ident = cs.Name
+	lval.Lit = cs.Name
 	return underscoreCS
 }
 

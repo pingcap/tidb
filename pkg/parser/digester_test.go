@@ -258,9 +258,7 @@ func BenchmarkDigestHexEncode(b *testing.B) {
 func BenchmarkDigestSprintf(b *testing.B) {
 	digest1 := genRandDigest("abc")
 	b.ResetTimer()
-	var s string
 	for i := 0; i < b.N; i++ {
-		s = fmt.Sprintf("%x", digest1)
+		fmt.Sprintf("%x", digest1)
 	}
-	_ = s
 }

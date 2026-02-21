@@ -18,11 +18,11 @@ import (
 )
 
 // ScannerLexFunc wraps a Scanner into a LexFunc for use with the hand-written parser.
-// This bridge is necessary because yySymType is unexported.
+// This bridge exists because hparser cannot import parser (circular dependency).
 func ScannerLexFunc(s *Scanner) hparser.LexFunc {
 	return func() (tok int, offset int, lit string, item interface{}) {
-		var v yySymType
+		var v Token
 		tok = s.Lex(&v)
-		return tok, v.offset, v.ident, v.item
+		return tok, v.Offset, v.Lit, v.Item
 	}
 }

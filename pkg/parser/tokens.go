@@ -17,16 +17,16 @@
 
 package parser
 
-import (
-	"github.com/pingcap/tidb/pkg/parser/ast"
-)
-
-type yySymType struct {
-	offset    int // offset
-	item      interface{}
-	ident     string
-	expr      ast.ExprNode
-	statement ast.StmtNode
+// Token holds the semantic value for a lexed token.
+type Token struct {
+	// Tp is the token type (matches token constants defined below).
+	Tp int
+	// Offset is the byte offset in the original SQL string.
+	Offset int
+	// Lit is the literal string value (identifier name, string content, etc.).
+	Lit string
+	// Item holds converted values (int64, float64, etc.) for numeric literals.
+	Item interface{}
 }
 
 const (
@@ -926,8 +926,9 @@ const (
 	zerofill                   = 57594
 )
 
-type yyLexer interface {
-	Lex(lval *yySymType) int
+// Lexer is the interface that the Scanner must implement.
+type Lexer interface {
+	Lex(lval *Token) int
 	Errorf(format string, a ...interface{}) error
 	AppendError(err error)
 	AppendWarn(err error)
