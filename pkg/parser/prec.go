@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package hparser implements a hand-written recursive descent SQL parser
+// Package parser implements a hand-written recursive descent SQL parser
 // that produces MySQL-compatible ASTs.
 //
 // It wraps the existing Scanner/lexer and produces ast.StmtNode values
