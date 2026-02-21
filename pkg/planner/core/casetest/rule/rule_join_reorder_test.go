@@ -199,3 +199,37 @@ func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 		require.NotEqual(t, plan132.Rows(), plan123.Rows(), caller)
 	})
 }
+
+func TestOuterJoinReorderNullExtendedNonEqSafety(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1_66213, t2_66213, t3_66213;")
+		testKit.MustExec("create table t1_66213(a int);")
+		testKit.MustExec("create table t2_66213(a int, b int);")
+		testKit.MustExec("create table t3_66213(b int);")
+		testKit.MustExec("insert into t1_66213 values (1), (2);")
+		testKit.MustExec("insert into t2_66213 values (1, 5);")
+		testKit.MustExec("insert into t3_66213 values (5);")
+		testKit.MustExec("analyze table t1_66213, t2_66213, t3_66213;")
+
+		query := "select t1_66213.a, t2_66213.b, t3_66213.b from t1_66213 " +
+			"left join t2_66213 on t1_66213.a = t2_66213.a " +
+			"join t3_66213 on (t2_66213.b is null or t2_66213.b = t3_66213.b) " +
+			"order by t1_66213.a, t2_66213.b, t3_66213.b"
+		expectRows := testkit.Rows("1 5 5", "2 <nil> 5")
+
+		// Greedy reorder path must preserve semantics for non-eq predicates on null-extended columns.
+		testKit.MustExec("set @@tidb_enable_outer_join_reorder=off")
+		testKit.MustQuery(query).Check(expectRows)
+		testKit.MustExec("set @@tidb_enable_outer_join_reorder=on")
+		testKit.MustQuery(query).Check(expectRows)
+
+		// LEADING should not force an invalid reassociation across the null-extended side.
+		testKit.MustQuery("select /*+ leading(t2_66213, t3_66213, t1_66213) */ " +
+			"t1_66213.a, t2_66213.b, t3_66213.b from t1_66213 " +
+			"left join t2_66213 on t1_66213.a = t2_66213.a " +
+			"join t3_66213 on (t2_66213.b is null or t2_66213.b = t3_66213.b) " +
+			"order by t1_66213.a, t2_66213.b, t3_66213.b").Check(expectRows)
+		testKit.MustQuery("show warnings").CheckContain("leading hint is inapplicable")
+	})
+}
