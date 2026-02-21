@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/modelruntime"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/modelruntime"
 	"github.com/stretchr/testify/require"
 	"github.com/yalue/onnxruntime_go"
 )
@@ -469,6 +469,34 @@ func TestSlowLogModelInferencePayload(t *testing.T) {
 	require.NotEmpty(t, payload)
 	require.Contains(t, payload, "\"model_id\"")
 	require.Contains(t, payload, "\"role\"")
+}
+
+func TestModelPredictE2EPublicModel(t *testing.T) {
+	modelPath, err := filepath.Abs(filepath.Join("testdata", "onnx", "identity_scalar.onnx"))
+	require.NoError(t, err)
+	modelBytes, err := os.ReadFile(modelPath)
+	require.NoError(t, err)
+
+	if _, err := modelruntime.ResolveLibraryPath(); err != nil {
+		t.Skipf("onnxruntime shared library not available: %v", err)
+	}
+	if _, err := modelruntime.Init(); err != nil {
+		require.NoError(t, err)
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_model_ddl = on")
+	tk.MustExec("set global tidb_enable_model_inference = on")
+
+	checksum := fmt.Sprintf("sha256:%x", sha256.Sum256(modelBytes))
+	location := "file://" + modelPath
+	tk.MustExec(fmt.Sprintf(
+		"create model identity_model (input (x float) output (y float)) using onnx location '%s' checksum '%s'",
+		location, checksum,
+	))
+	tk.MustQuery("select model_predict(identity_model, 0.25).y").Check(testkit.Rows("0.25"))
 }
 
 type stubModelMetadata struct {
