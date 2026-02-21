@@ -146,8 +146,8 @@ func (p *HandParser) parsePlanReplayerDump(stmt *ast.PlanReplayerStmt) ast.StmtN
 
 	// WITH STATS AS OF TIMESTAMP <expr>
 	if _, ok := p.accept(with); ok {
-		p.expect(stats)  // STATS keyword token
-		p.expect(asof)      // AS OF is a single merged token
+		p.expect(stats)         // STATS keyword token
+		p.expect(asof)          // AS OF is a single merged token
 		p.expect(timestampType) // TIMESTAMP keyword token
 
 		stmt.HistoricalStatsInfo = &ast.AsOfClause{}
@@ -256,19 +256,16 @@ func (p *HandParser) parseQueryWatchStmt() ast.StmtNode {
 		if tok, ok := p.accept(intLit); ok {
 			id, _ := strconv.ParseInt(tok.Lit, 10, 64)
 			stmt.IntValue = id
-		} else {
-			// Try RESOURCE GROUP
-			if _, ok := p.accept(resource); ok {
-				p.expect(group)
-				if p.peek().Tp == singleAtIdentifier {
-					stmt.GroupNameExpr = p.parseExpression(precNone)
-				} else if tok, ok := p.expectAny(identifier, stringLit); ok {
-					stmt.GroupNameStr = ast.NewCIStr(tok.Lit)
-				}
-			} else {
-				p.error(p.peek().Offset, "Missing QUERY WATCH REMOVE target")
-				return nil
+		} else if _, ok := p.accept(resource); ok {
+			p.expect(group)
+			if p.peek().Tp == singleAtIdentifier {
+				stmt.GroupNameExpr = p.parseExpression(precNone)
+			} else if tok, ok := p.expectAny(identifier, stringLit); ok {
+				stmt.GroupNameStr = ast.NewCIStr(tok.Lit)
 			}
+		} else {
+			p.error(p.peek().Offset, "Missing QUERY WATCH REMOVE target")
+			return nil
 		}
 		return stmt
 	} else if _, ok := p.accept(drop); ok { // Logic fallback for DROP keyword
