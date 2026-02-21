@@ -416,10 +416,36 @@ func detachCondAndBuildRangeForPath(
 		}
 	}
 	indexCols := path.IdxCols
-	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols
+	if len(indexCols) > len(path.Index.Columns) {
+		// Trim appended handle dimensions and keep only real index-definition columns for stats estimation.
 		indexCols = indexCols[0:len(path.Index.Columns)]
 	}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
+	estimateRanges := path.Ranges
+	needRebuildEstimateRange := false
+	if len(indexCols) < len(path.IdxCols) {
+		for _, ran := range path.Ranges {
+			if len(ran.LowVal) > len(indexCols) || len(ran.HighVal) > len(indexCols) {
+				needRebuildEstimateRange = true
+				break
+			}
+		}
+	}
+	if needRebuildEstimateRange {
+		// Non-unique index paths may append handle columns in `path.IdxCols` for execution ranges.
+		// Rebuild estimation ranges with the same column set used in row-count estimation.
+		estimateRes, err := ranger.DetachCondAndBuildRangeForIndex(
+			sctx.GetRangerCtx(),
+			conds,
+			indexCols,
+			path.IdxColLens[:len(indexCols)],
+			sctx.GetSessionVars().RangeMaxSize,
+		)
+		if err != nil {
+			return err
+		}
+		estimateRanges = estimateRes.Ranges
+	}
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, estimateRanges, indexCols)
 	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
 	return err
 }
