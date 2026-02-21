@@ -34,7 +34,17 @@ var (
 
 //revive:enable:exported
 
-// hintScanner implements the yyhintLexer interface
+// yyhintSymType holds the semantic value for a hint token.
+// The struct name and fields are kept for compatibility with hintTokenMap
+// lookups that reference hint token constants.
+type yyhintSymType struct {
+	yys    int
+	offset int
+	ident  string
+	number uint64
+}
+
+// hintScanner implements the hint lexer interface.
 type hintScanner struct {
 	Scanner
 }
@@ -114,22 +124,21 @@ func (hs *hintScanner) Lex(lval *yyhintSymType) int {
 	return hintInvalid
 }
 
+// hintParser is the hand-written recursive-descent hint parser.
 type hintParser struct {
-	lexer  hintScanner
-	result []*ast.TableOptimizerHint
-
-	// the following fields are used by yyParse to reduce allocation.
-	cache  []yyhintSymType
-	yylval yyhintSymType
-	yyVAL  *yyhintSymType
+	lexer     hintScanner
+	result    []*ast.TableOptimizerHint
+	hasPeeked bool
+	peeked    hintToken
 }
 
 func newHintParser() *hintParser {
-	return &hintParser{cache: make([]yyhintSymType, 50)}
+	return &hintParser{}
 }
 
 func (hp *hintParser) parse(input string, sqlMode mysql.SQLMode, initPos Pos) ([]*ast.TableOptimizerHint, []error) {
 	hp.result = nil
+	hp.hasPeeked = false
 	hp.lexer.reset(input[3:])
 	hp.lexer.SetSQLMode(sqlMode)
 	hp.lexer.r.updatePos(Pos{
@@ -139,7 +148,7 @@ func (hp *hintParser) parse(input string, sqlMode mysql.SQLMode, initPos Pos) ([
 	})
 	hp.lexer.inBangComment = true // skip the final '*/' (we need the '*/' for reporting warnings)
 
-	yyhintParse(&hp.lexer, hp)
+	hp.result = hp.parseHintList()
 
 	warns, errs := hp.lexer.Errors()
 	if len(errs) == 0 {

@@ -321,7 +321,7 @@ func TestParseHint(t *testing.T) {
 		},
 		{
 			input: "unknown_hint()",
-			errs:  []string{`Optimizer hint syntax error at line 1 `},
+			errs:  []string{`Optimizer hint unknown_hint is not supported`},
 		},
 		{
 			input: "set_var(timestamp = 1.5)",
