@@ -1253,6 +1253,12 @@ const (
 	TiDBModelAllowNondeterministic = "tidb_model_allow_nondeterministic"
 	// TiDBEnableModelCustomOps indicates whether custom ops are allowed.
 	TiDBEnableModelCustomOps = "tidb_enable_model_custom_ops"
+	// TiDBModelNullBehavior controls how NULL inputs are handled by model_predict.
+	TiDBModelNullBehavior = "tidb_model_null_behavior"
+	// ModelNullBehaviorError rejects NULL inputs.
+	ModelNullBehaviorError = "ERROR"
+	// ModelNullBehaviorReturnNull returns NULL when any input is NULL.
+	ModelNullBehaviorReturnNull = "RETURN_NULL"
 	// TiDBModelCacheCapacity indicates the process-level model session cache capacity.
 	TiDBModelCacheCapacity = "tidb_model_cache_capacity"
 	// TiDBModelCacheTTL indicates the process-level model session cache TTL.
@@ -1735,6 +1741,7 @@ const (
 	DefTiDBModelTimeout                               = 200 * time.Millisecond
 	DefTiDBModelAllowNondeterministic                 = false
 	DefTiDBEnableModelCustomOps                       = false
+	DefTiDBModelNullBehavior                          = ModelNullBehaviorError
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
@@ -1922,6 +1929,7 @@ var (
 	ModelTimeout                    = atomic.NewDuration(DefTiDBModelTimeout)
 	ModelAllowNondeterministic      = atomic.NewBool(DefTiDBModelAllowNondeterministic)
 	EnableModelCustomOps            = atomic.NewBool(DefTiDBEnableModelCustomOps)
+	ModelNullBehavior               = atomic.NewString(DefTiDBModelNullBehavior)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)

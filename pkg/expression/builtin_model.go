@@ -130,9 +130,12 @@ func (b *builtinModelPredictSig) evalJSON(ctx EvalContext, row chunk.Row) (types
 	if err := b.init(ctx, 1); err != nil {
 		return types.BinaryJSON{}, true, err
 	}
-	inputs, err := evalInputFloats(ctx, row, b.getArgs()[1:])
+	inputs, hasNull, err := evalInputFloats(ctx, row, b.getArgs()[1:])
 	if err != nil {
 		return types.BinaryJSON{}, true, err
+	}
+	if hasNull {
+		return types.BinaryJSON{}, true, nil
 	}
 	outputs, err := b.meta.predict(inputs)
 	if err != nil {
@@ -205,9 +208,12 @@ func (b *builtinModelPredictOutputSig) evalReal(ctx EvalContext, row chunk.Row) 
 	if err := b.init(ctx, 2); err != nil {
 		return 0, true, err
 	}
-	inputs, err := evalInputFloats(ctx, row, b.getArgs()[2:])
+	inputs, hasNull, err := evalInputFloats(ctx, row, b.getArgs()[2:])
 	if err != nil {
 		return 0, true, err
+	}
+	if hasNull {
+		return 0, true, nil
 	}
 	if hook := modelPredictOutputHook; hook != nil {
 		out, err := hook(b.meta.modelName, b.outName, inputs)
@@ -255,19 +261,36 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 		}
 		argCols[i] = col
 	}
-	inputs := make([][]float32, n)
+	allowNull := modelNullBehaviorAllowsNull()
+	inputs := make([][]float32, 0, n)
+	rowIndex := make([]int, 0, n)
+	nullRows := make([]bool, n)
 	for rowIdx := 0; rowIdx < n; rowIdx++ {
 		rowInputs := make([]float32, argCount)
+		rowHasNull := false
 		for i, col := range argCols {
 			if col.IsNull(rowIdx) {
+				if allowNull {
+					rowHasNull = true
+					break
+				}
 				return errors.New("model input cannot be null")
 			}
 			rowInputs[i] = float32(col.GetFloat64(rowIdx))
 		}
-		inputs[rowIdx] = rowInputs
+		if rowHasNull {
+			nullRows[rowIdx] = true
+			continue
+		}
+		inputs = append(inputs, rowInputs)
+		rowIndex = append(rowIndex, rowIdx)
 	}
 
 	var outputs []float64
+	if len(inputs) == 0 {
+		result.ResizeFloat64(n, true)
+		return nil
+	}
 	if hook := modelPredictBatchHook; hook != nil {
 		out, err := hook(b.meta.modelName, b.outName, inputs)
 		if err != nil {
@@ -279,7 +302,7 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 		if err != nil {
 			return err
 		}
-		outputs = make([]float64, n)
+		outputs = make([]float64, len(inputs))
 		for i, rowOut := range outBatch {
 			if b.outIdx < 0 || b.outIdx >= len(rowOut) {
 				return errors.New("model output index out of range")
@@ -287,7 +310,7 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 			outputs[i] = float64(rowOut[b.outIdx])
 		}
 	} else {
-		outputs = make([]float64, n)
+		outputs = make([]float64, len(inputs))
 		for i, rowInputs := range inputs {
 			if hook := modelPredictOutputHook; hook != nil {
 				out, err := hook(b.meta.modelName, b.outName, rowInputs)
@@ -307,12 +330,17 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 			outputs[i] = float64(rowOut[b.outIdx])
 		}
 	}
-	if len(outputs) != n {
+	if len(outputs) != len(inputs) {
 		return errors.New("model output batch size mismatch")
 	}
 	res := result.Float64s()
-	for i := 0; i < n; i++ {
-		res[i] = outputs[i]
+	for i, rowIdx := range rowIndex {
+		res[rowIdx] = outputs[i]
+	}
+	for i, isNull := range nullRows {
+		if isNull {
+			result.SetNull(i, true)
+		}
 	}
 	return nil
 }
@@ -675,6 +703,10 @@ func checkModelPredictEnabled(ctx EvalContext, privReader expropt.PrivilegeCheck
 	return nil
 }
 
+func modelNullBehaviorAllowsNull() bool {
+	return strings.EqualFold(vardef.ModelNullBehavior.Load(), vardef.ModelNullBehaviorReturnNull)
+}
+
 func evalConstString(ctx EvalContext, expr Expression, label string) (string, error) {
 	con, ok := expr.(*Constant)
 	if !ok {
@@ -690,17 +722,21 @@ func evalConstString(ctx EvalContext, expr Expression, label string) (string, er
 	return val, nil
 }
 
-func evalInputFloats(ctx EvalContext, row chunk.Row, args []Expression) ([]float32, error) {
+func evalInputFloats(ctx EvalContext, row chunk.Row, args []Expression) ([]float32, bool, error) {
+	allowNull := modelNullBehaviorAllowsNull()
 	inputs := make([]float32, 0, len(args))
 	for _, arg := range args {
 		val, isNull, err := arg.EvalReal(ctx, row)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if isNull {
-			return nil, errors.New("model input cannot be null")
+			if allowNull {
+				return nil, true, nil
+			}
+			return nil, false, errors.New("model input cannot be null")
 		}
 		inputs = append(inputs, float32(val))
 	}
-	return inputs, nil
+	return inputs, false, nil
 }
