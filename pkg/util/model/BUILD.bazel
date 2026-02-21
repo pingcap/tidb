@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "artifact.go",
         "cache.go",
+        "dir_loader.go",
         "loader.go",
         "mlflow.go",
     ],
@@ -23,6 +24,7 @@ go_test(
     name = "model_test",
     timeout = "short",
     srcs = [
+        "dir_loader_test.go",
         "loader_test.go",
         "mlflow_test.go",
     ],

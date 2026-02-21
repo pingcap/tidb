@@ -32,6 +32,7 @@ type ArtifactMeta struct {
 type Artifact struct {
 	Meta      ArtifactMeta
 	Bytes     []byte
+	LocalPath string
 	FetchedAt time.Time
 }
 
