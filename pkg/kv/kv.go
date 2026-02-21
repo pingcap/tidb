@@ -15,10 +15,8 @@
 package kv
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
-	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
