@@ -1,15 +1,9 @@
-.PHONY: all clean test generate
+.PHONY: all clean test fmt
 
-all: fmt generate
+all: fmt
 
 test: fmt
 	sh test.sh
-
-genkeyword: generate_keyword/genkeyword.go
-	go build -C generate_keyword -o ../genkeyword
-
-generate: genkeyword
-	go generate
 
 fmt:
 	@echo "gofmt (simplify)"

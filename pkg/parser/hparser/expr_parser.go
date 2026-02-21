@@ -242,7 +242,7 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 		typ := strings.ToLower(tok.Lit)
 
 		// Parse the inner expression (not just string literal).
-		// The goyacc grammar has: '{' Identifier Expression '}'
+		// The grammar has: '{' Identifier Expression '}'
 		innerExpr := p.parseExpression(precNone)
 		if innerExpr == nil {
 			return nil
@@ -251,7 +251,7 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 
 		switch typ {
 		case "d":
-			// Clear charset on the inner expression to match goyacc behavior.
+			// Clear charset on the inner expression to match expected behavior.
 			if ve, ok := innerExpr.(ast.ValueExpr); ok {
 				ve.GetType().SetCharset("")
 				ve.GetType().SetCollate("")
@@ -319,7 +319,7 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 		if expr == nil {
 			return nil
 		}
-		// Goyacc special case: NOT EXISTS → toggle ExistsSubqueryExpr.Not
+		// Special case: NOT EXISTS → toggle ExistsSubqueryExpr.Not
 		// instead of wrapping in UnaryOperationExpr.
 		if existsExpr, ok := expr.(*ast.ExistsSubqueryExpr); ok {
 			existsExpr.Not = !existsExpr.Not
@@ -609,7 +609,7 @@ func (p *HandParser) parseCollateExpr(left ast.ExprNode) ast.ExprNode {
 	p.next() // consume COLLATE
 	collTok := p.next()
 
-	// Validate collation name (matching goyacc's CollationName rule).
+	// Validate collation name (matching the CollationName rule).
 	info, err := charset.GetCollationByName(collTok.Lit)
 	if err != nil {
 		p.errs = append(p.errs, err)
@@ -630,7 +630,7 @@ func (p *HandParser) parseVariableExpr() ast.ExprNode {
 	if tok.Tp == tokDoubleAtIdentifier {
 		node.IsSystem = true
 		// tok.Lit contains the full literal, e.g. "@@global.max_connections"
-		// Strip leading "@@" and lowercase (matching goyacc's SystemVariable rule).
+		// Strip leading "@@" and lowercase (matching the SystemVariable rule).
 		name := strings.ToLower(tok.Lit)
 		if len(name) >= 2 && name[0] == '@' && name[1] == '@' {
 			name = name[2:]
@@ -686,7 +686,7 @@ func (p *HandParser) newLiteralExpr(parse func(string) (any, error), lit string)
 }
 
 // parseCharsetIntroducer parses _charset 'string' / _charset 0xHex / _charset 0bBit.
-// Matches goyacc's UNDERSCORE_CHARSET rule.
+// Matches the UNDERSCORE_CHARSET rule.
 func (p *HandParser) parseCharsetIntroducer() ast.ExprNode {
 	csTok := p.next() // consume _charset token (e.g. _UTF8MB4)
 	csName := csTok.Lit

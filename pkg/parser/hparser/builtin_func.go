@@ -15,7 +15,7 @@ package hparser
 
 import "strings"
 
-// Builtin function tokens from the goyacc parser.
+// Builtin function token constants.
 // These MUST match the values in parser_tokens.go (the generated token file).
 const (
 	builtinCast        = 58130

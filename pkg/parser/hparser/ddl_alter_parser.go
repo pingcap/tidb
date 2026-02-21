@@ -209,7 +209,7 @@ func (p *HandParser) parseAlterTableSpec() *ast.AlterTableSpec {
 }
 
 func (p *HandParser) parseColumnPosition(spec *ast.AlterTableSpec) {
-	// Always initialize Position (goyacc always populated this).
+	// Always initialize Position (the parser always populated this).
 	spec.Position = Alloc[ast.ColumnPosition](p.arena)
 	if _, ok := p.accept(tokFirst); ok {
 		spec.Position.Tp = ast.ColumnPositionFirst

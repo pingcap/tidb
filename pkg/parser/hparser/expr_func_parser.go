@@ -380,7 +380,7 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 		}
 		if _, ok := p.accept(tokSeparator); ok {
 			// SEPARATOR followed by a string literal — use empty charset/collation
-			// to match goyacc's OptGConcatSeparator rule.
+			// to match the OptGConcatSeparator rule.
 			tok := p.next()
 			node.Args = append(node.Args, ast.NewValueExpr(tok.Lit, "", ""))
 		} else {
@@ -406,7 +406,7 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 
 	lowerName := strings.ToLower(name)
 
-	// Special: MOD(a, b) → a % b (BinaryOperationExpr), matching goyacc behavior.
+	// Special: MOD(a, b) → a % b (BinaryOperationExpr), matching MySQL syntax.
 	if lowerName == "mod" {
 		left := p.parseExpression(precNone)
 		if left == nil {

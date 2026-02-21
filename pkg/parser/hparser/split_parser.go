@@ -5,7 +5,7 @@ import (
 )
 
 // parseSplitRegionStmt parses SPLIT statement.
-// Since AST structure is complex and GoYacc grammar is complex, we implement a simplified version sufficient for TestDMLStmt.
+// Since AST structure is complex and the grammar is complex, we implement a simplified version sufficient for TestDMLStmt.
 // TestDMLStmt uses:
 // 1. split table t1 index idx1 by ('a'),('b'),('c')
 // 2. SPLIT TABLE t1 BETWEEN (0) AND (10000) REGIONS 10

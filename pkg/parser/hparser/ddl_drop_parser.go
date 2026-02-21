@@ -53,7 +53,7 @@ func (p *HandParser) parseDropStmt() ast.StmtNode {
 		return nil
 	case tokBinding:
 		p.next()
-		return p.parseDropBindingStmt(false) // default session per goyacc GlobalScope rule
+		return p.parseDropBindingStmt(false) // default session scope
 	case tokStatistics:
 		return p.parseDropStatisticsStmt()
 	case tokTable, tokTables:

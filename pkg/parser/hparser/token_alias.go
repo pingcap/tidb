@@ -13,7 +13,7 @@
 
 package hparser
 
-// Token aliases mapping goyacc-generated constants to readable names.
+// Token aliases mapping token constants to readable names.
 // These values MUST match the constants in the generated parser.go.
 //
 // This file exists so hparser can reference token types without importing
@@ -278,7 +278,7 @@ const (
 
 	// Data Types.
 	tokBit        = 57627
-	tokBitAnd     = 58127 // builtinBitAnd in goyacc (NOT 57628 which is 'block')
+	tokBitAnd     = 58127 // builtinBitAnd in the parser (NOT 57628 which is 'block')
 	tokTinyInt    = 57562
 	tokSmallInt   = 57543
 	tokMediumInt  = 57491

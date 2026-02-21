@@ -141,7 +141,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 		return nil
 
 	// NowSymFunc: NOW(), CURRENT_TIMESTAMP(), LOCALTIME(), LOCALTIMESTAMP()
-	// In goyacc, these all produce FnName "CURRENT_TIMESTAMP" (canonical name).
+	// Originally, these all produce FnName "CURRENT_TIMESTAMP" (canonical name).
 	// The scanner may produce either builtinNow or tokNow depending on context.
 	case builtinNow, tokNow, builtinCurTime:
 		return p.tryBuiltinFunc(p.parseOptPrecisionFunc)
@@ -195,7 +195,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
 		if builtinFuncName(tok.Tp) != "" {
 			p.next() // consume the builtin token
 			// Use tok.Lit (original identifier) as the function name,
-			// matching goyacc which uses $1 (the ident field).
+			// matching the grammar which uses $1 (the ident field).
 			return p.parseFuncCall(tok.Lit)
 		}
 		// NEXT VALUE FOR seq_name → NEXTVAL(seq)

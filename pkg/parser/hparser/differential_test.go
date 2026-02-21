@@ -25,7 +25,7 @@ import (
 	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
 )
 
-// TestDifferential feeds every SQL string to both the goyacc parser and the
+// TestDifferential feeds every SQL string to both the parser and the
 // hand parser, then compares the restored SQL output. This is the authoritative
 // measure of how much of the existing parser's functionality the hand parser
 // covers.
@@ -37,18 +37,18 @@ func TestDifferential(t *testing.T) {
 	var total, handled, matched, astMismatch, restoreMismatch int
 	var unhandled, failures []string
 
-	goyaccParser := parser.New()
+	refParser := parser.New()
 
 	for _, sql := range sqls {
 		total++
 
-		// --- Goyacc parser ---
-		goyaccStmts, _, goyaccErr := goyaccParser.Parse(sql, "", "")
-		if goyaccErr != nil {
-			// Skip SQL that goyacc also rejects (syntax errors, negative test cases).
+		// --- Reference parser ---
+		refStmts, _, refErr := refParser.Parse(sql, "", "")
+		if refErr != nil {
+			// Skip SQL that the parser also rejects (syntax errors, negative test cases).
 			continue
 		}
-		if len(goyaccStmts) == 0 {
+		if len(refStmts) == 0 {
 			continue
 		}
 
@@ -67,20 +67,20 @@ func TestDifferential(t *testing.T) {
 		handled++
 
 		// Compare AST node types.
-		if len(handStmts) != len(goyaccStmts) {
+		if len(handStmts) != len(refStmts) {
 			astMismatch++
-			failures = append(failures, fmt.Sprintf("[count] %s: goyacc=%d hand=%d", sql, len(goyaccStmts), len(handStmts)))
+			failures = append(failures, fmt.Sprintf("[count] %s: ref=%d hand=%d", sql, len(refStmts), len(handStmts)))
 			continue
 		}
 
 		// Compare restored SQL output.
 		allMatch := true
-		for i := range goyaccStmts {
-			gRestore := restoreSQL(goyaccStmts[i])
+		for i := range refStmts {
+			gRestore := restoreSQL(refStmts[i])
 			hRestore := restoreSQL(handStmts[i])
 			if gRestore != hRestore {
 				allMatch = false
-				failures = append(failures, fmt.Sprintf("[restore] %s\n  goyacc: %s\n  hand:   %s", sql, gRestore, hRestore))
+				failures = append(failures, fmt.Sprintf("[restore] %s\n  ref: %s\n  hand:   %s", sql, gRestore, hRestore))
 				break
 			}
 		}
@@ -96,7 +96,7 @@ func TestDifferential(t *testing.T) {
 	t.Logf("")
 	t.Logf("========== DIFFERENTIAL COVERAGE REPORT ==========")
 	t.Logf("Total SQL strings:           %d", total)
-	t.Logf("Goyacc-parseable:            %d", total-len(unhandled)-astMismatch-restoreMismatch+handled)
+	t.Logf("Reference-parseable:            %d", total-len(unhandled)-astMismatch-restoreMismatch+handled)
 	t.Logf("Hand parser handled:         %d", handled)
 	t.Logf("  ✅ Exact match:            %d", matched)
 	t.Logf("  ❌ AST count mismatch:     %d", astMismatch)
@@ -980,7 +980,7 @@ func TestHintIntegration(t *testing.T) {
 			continue
 		}
 
-		// Verify via restore round-trip (matches goyacc).
+		// Verify via restore round-trip (matches the original).
 		restored := restoreSQL(stmts[0])
 		if restored == "" {
 			t.Errorf("empty restore for %s", sql)

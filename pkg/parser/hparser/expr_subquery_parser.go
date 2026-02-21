@@ -51,7 +51,7 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 			return nil
 		}
 		endOffset := p.peek().Offset // ')' token
-		// Set subquery text from the original SQL (matching goyacc's behavior).
+		// Set subquery text from the original SQL (matching the behavior).
 		if endOffset > startOffset && endOffset <= len(p.src) {
 			query.SetText(nil, p.src[startOffset:endOffset])
 		}
