@@ -23,97 +23,97 @@ import (
 // Hint token constants used by the hint scanner (hintTokenMap in misc.go)
 // and the parser dispatch logic below.
 const (
-	hintAggToCop              = 57380
-	hintBCJoin                = 57403
-	hintBKA                   = 57355
-	hintBNL                   = 57357
-	hintDupsWeedOut           = 57433
-	hintFalse                 = 57429
-	hintFirstMatch            = 57434
-	hintForceIndex            = 57419
-	hintGB                    = 57432
-	hintHashAgg               = 57383
-	hintHashJoin              = 57359
-	hintHashJoinBuild         = 57360
-	hintHashJoinProbe         = 57361
-	hintHypoIndex             = 57379
-	hintIdentifier            = 57347
-	hintIgnoreIndex           = 57386
-	hintIgnorePlanCache       = 57381
-	hintIndexHashJoin         = 57390
-	hintIndexJoin             = 57387
-	hintIndexLookUpPushDown   = 57411
-	hintIndexMerge            = 57365
-	hintIndexMergeJoin        = 57394
-	hintInlHashJoin           = 57389
-	hintInlJoin               = 57392
-	hintInlMergeJoin          = 57393
-	hintIntLit                = 57346
-	hintInvalid               = 57348
-	hintJoinFixedOrder        = 57351
-	hintJoinOrder             = 57352
-	hintJoinPrefix            = 57353
-	hintJoinSuffix            = 57354
-	hintLeading               = 57421
-	hintLimitToCop            = 57418
-	hintLooseScan             = 57435
-	hintMB                    = 57431
-	hintMRR                   = 57367
-	hintMaterialization       = 57436
-	hintMaxExecutionTime      = 57375
-	hintMemoryQuota           = 57396
-	hintMerge                 = 57363
-	hintMpp1PhaseAgg          = 57384
-	hintMpp2PhaseAgg          = 57385
-	hintNoBKA                 = 57356
-	hintNoBNL                 = 57358
-	hintNoDecorrelate         = 57423
-	hintNoHashJoin            = 57362
-	hintNoICP                 = 57369
-	hintNoIndexHashJoin       = 57391
-	hintNoIndexJoin           = 57388
-	hintNoIndexLookUpPushDown = 57412
-	hintNoIndexMerge          = 57366
-	hintNoIndexMergeJoin      = 57395
-	hintNoMRR                 = 57368
-	hintNoMerge               = 57364
-	hintNoOrderIndex          = 57410
-	hintNoRangeOptimization   = 57370
-	hintNoSMJoin              = 57402
-	hintNoSemijoin            = 57374
-	hintNoSkipScan            = 57372
-	hintNoSwapJoinInputs      = 57397
-	hintNthPlan               = 57417
-	hintOLAP                  = 57424
-	hintOLTP                  = 57425
-	hintOrderIndex            = 57409
-	hintPartition             = 57426
-	hintQBName                = 57378
-	hintQueryType             = 57398
-	hintReadConsistentReplica = 57399
-	hintReadFromStorage       = 57400
-	hintResourceGroup         = 57377
-	hintSMJoin                = 57401
-	hintSemiJoinRewrite       = 57422
-	hintSemijoin              = 57373
-	hintSetVar                = 57376
-	hintShuffleJoin           = 57404
-	hintSingleAtIdentifier    = 57349
-	hintSkipScan              = 57371
-	hintStraightJoin          = 57420
-	hintStreamAgg             = 57405
-	hintStringLit             = 57350
-	hintSwapJoinInputs        = 57406
-	hintTiFlash               = 57428
-	hintTiKV                  = 57427
-	hintTimeRange             = 57415
-	hintTrue                  = 57430
-	hintUseCascades           = 57416
-	hintUseIndex              = 57408
-	hintUseIndexMerge         = 57407
-	hintUsePlanCache          = 57413
-	hintUseToja               = 57414
-	hintWriteSlowLog          = 57382
+	hintAggToCop              = change
+	hintBCJoin                = daySecond
+	hintBKA                   = doubleAtIdentifier
+	hintBNL                   = hintComment
+	hintDupsWeedOut           = foreign
+	hintFalse                 = float4Type
+	hintFirstMatch            = from
+	hintForceIndex            = enclosed
+	hintGB                    = force
+	hintHashAgg               = check
+	hintHashJoin              = pipes
+	hintHashJoinBuild         = odbcDateType
+	hintHashJoinProbe         = odbcTimeType
+	hintHypoIndex             = caseKwd
+	hintIdentifier            = asof
+	hintIgnoreIndex           = constraint
+	hintIgnorePlanCache       = charType
+	hintIndexHashJoin         = cross
+	hintIndexJoin             = continueKwd
+	hintIndexLookUpPushDown   = distinct
+	hintIndexMerge            = alter
+	hintIndexMergeJoin        = currentTime
+	hintInlHashJoin           = create
+	hintInlJoin               = currentDate
+	hintInlMergeJoin          = currentRole
+	hintIntLit                = identifier
+	hintInvalid               = toTimestamp
+	hintJoinFixedOrder        = optionallyEnclosedBy
+	hintJoinOrder             = underscoreCS
+	hintJoinPrefix            = stringLit
+	hintJoinSuffix            = singleAtIdentifier
+	hintLeading               = except
+	hintLimitToCop            = elseIfKwd
+	hintLooseScan             = fulltext
+	hintMB                    = forKwd
+	hintMRR                   = and
+	hintMaterialization       = generated
+	hintMaxExecutionTime      = both
+	hintMemoryQuota           = currentUser
+	hintMerge                 = add
+	hintMpp1PhaseAgg          = collate
+	hintMpp2PhaseAgg          = column
+	hintNoBKA                 = invalid
+	hintNoBNL                 = andand
+	hintNoDecorrelate         = exit
+	hintNoHashJoin            = odbcTimestampType
+	hintNoICP                 = as
+	hintNoIndexHashJoin       = cumeDist
+	hintNoIndexJoin           = convert
+	hintNoIndexLookUpPushDown = distinctRow
+	hintNoIndexMerge          = analyze
+	hintNoIndexMergeJoin      = currentTs
+	hintNoMRR                 = array
+	hintNoMerge               = all
+	hintNoOrderIndex          = describe
+	hintNoRangeOptimization   = asc
+	hintNoSMJoin              = dayMinute
+	hintNoSemijoin            = blobType
+	hintNoSkipScan            = bigIntType
+	hintNoSwapJoinInputs      = cursor
+	hintNthPlan               = elseKwd
+	hintOLAP                  = explain
+	hintOLTP                  = falseKwd
+	hintOrderIndex            = desc
+	hintPartition             = fetch
+	hintQBName                = cascade
+	hintQueryType             = database
+	hintReadConsistentReplica = databases
+	hintReadFromStorage       = dayHour
+	hintResourceGroup         = call
+	hintSMJoin                = dayMicrosecond
+	hintSemiJoinRewrite       = exists
+	hintSemijoin              = binaryType
+	hintSetVar                = by
+	hintShuffleJoin           = decimalType
+	hintSingleAtIdentifier    = toTSO
+	hintSkipScan              = between
+	hintStraightJoin          = escaped
+	hintStreamAgg             = defaultKwd
+	hintStringLit             = memberof
+	hintSwapJoinInputs        = delayed
+	hintTiFlash               = floatType
+	hintTiKV                  = firstValue
+	hintTimeRange             = drop
+	hintTrue                  = float8Type
+	hintUseCascades           = dual
+	hintUseIndex              = denseRank
+	hintUseIndexMerge         = deleteKwd
+	hintUsePlanCache          = div
+	hintUseToja               = doubleType
+	hintWriteSlowLog          = character
 )
 
 // hintToken is a lexed hint token with its metadata.
@@ -913,11 +913,11 @@ func (hp *hintParser) identOrNumber(tok hintToken) string {
 // (e.g., TRUE, FALSE, TIKV, TIFLASH, PARTITION, etc.) that can be
 // used as an identifier in contexts like QB_NAME.
 func (hp *hintParser) isHintKeyword(tp int) bool {
-	// Hint keywords are in the range 57350+ but not special tokens
+	// Hint keywords are in the range memberof+ but not special tokens
 	switch tp {
 	case hintIntLit, hintInvalid, hintSingleAtIdentifier, hintStringLit, 0:
 		return false
 	}
-	return tp >= 57350 && tp <= 57500
+	return tp >= memberof && tp <= nthValue
 }
 

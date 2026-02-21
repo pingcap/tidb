@@ -22,18 +22,18 @@ import (
 
 // parseKillStmt parses:  KILL [TIDB] [CONNECTION | QUERY] expr
 func (p *HandParser) parseKillStmt() ast.StmtNode {
-	p.next() // consume KILL (may be 57469 or 57346)
+	p.next() // consume KILL (may be kill or identifier)
 	stmt := Alloc[ast.KillStmt](p.arena)
 
 	// Check for TIDB prefix
-	if _, ok := p.acceptKeyword(58191, "TIDB"); ok {
+	if _, ok := p.acceptKeyword(tidb, "TIDB"); ok {
 		stmt.TiDBExtension = true
 	}
 
 	// Optional CONNECTION or QUERY
-	if _, ok := p.accept(57665); ok {
+	if _, ok := p.accept(connection); ok {
 		// CONNECTION is the default (Query=false)
-	} else if _, ok := p.accept(57852); ok {
+	} else if _, ok := p.accept(query); ok {
 		stmt.Query = true
 	}
 
@@ -55,13 +55,13 @@ func (p *HandParser) parseTraceStmt() ast.StmtNode {
 		// Optional TARGET = '...'
 		if p.peek().IsKeyword("TARGET") {
 			p.next()
-			p.expectAny(58202, 58201)
+			p.expectAny(eq, assignmentEq)
 			stmt.TracePlanTarget = p.next().Lit
 		}
-	} else if p.peek().Tp == 57728 {
+	} else if p.peek().Tp == format {
 		// Check for FORMAT = '...'
 		p.next()
-		p.expectAny(58202, 58201)
+		p.expectAny(eq, assignmentEq)
 		formatTok := p.next()
 		stmt.Format = formatTok.Lit
 	}
@@ -90,7 +90,7 @@ func (p *HandParser) parseRecommendStmt() ast.StmtNode {
 	stmt := Alloc[ast.RecommendIndexStmt](p.arena)
 
 	// INDEX keyword
-	if p.peek().Tp == 57449 {
+	if p.peek().Tp == index {
 		p.next()
 	}
 
@@ -100,13 +100,13 @@ func (p *HandParser) parseRecommendStmt() ast.StmtNode {
 		p.next()
 		stmt.Action = "run"
 		// Optional FOR sql_string
-		if _, ok := p.accept(57431); ok {
-			if p.peek().Tp == 57353 {
+		if _, ok := p.accept(forKwd); ok {
+			if p.peek().Tp == stringLit {
 				stmt.SQL = p.next().Lit
 			}
 		}
 		// Optional WITH opt = val, ...
-		if _, ok := p.accept(57590); ok {
+		if _, ok := p.accept(with); ok {
 			stmt.Options = p.parseRecommendOptions()
 		}
 	} else if p.peek().IsKeyword("STATUS") || p.peek().IsKeyword("CANCEL") {
@@ -120,7 +120,7 @@ func (p *HandParser) parseRecommendStmt() ast.StmtNode {
 		}
 	} else if p.peek().IsKeyword("APPLY") || p.peek().IsKeyword("IGNORE") {
 		stmt.Action = strings.ToLower(p.next().Lit)
-		if p.peek().Tp == 58197 {
+		if p.peek().Tp == intLit {
 			val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 			stmt.ID = val
 		}
@@ -148,11 +148,11 @@ func (p *HandParser) parseFlushStmt() ast.StmtNode {
 
 	// Flush target
 	switch p.peek().Tp {
-	case 57944, 57556:
+	case tables, tableKwd:
 		p.next()
 		stmt.Tp = ast.FlushTables
 		// Optional table names
-		if p.peek().IsIdent() && p.peek().Tp != 57590 {
+		if p.peek().IsIdent() && p.peek().Tp != with {
 			for {
 				tbl := p.parseTableName()
 				if tbl == nil {
@@ -165,19 +165,19 @@ func (p *HandParser) parseFlushStmt() ast.StmtNode {
 			}
 		}
 		// WITH READ LOCK
-		if _, ok := p.accept(57590); ok {
-			if _, ok := p.accept(57522); ok {
-				p.expect(57483)
+		if _, ok := p.accept(with); ok {
+			if _, ok := p.accept(read); ok {
+				p.expect(lock)
 				stmt.ReadLock = true
 			}
 		}
-	case 57843:
+	case privileges:
 		p.next()
 		stmt.Tp = ast.FlushPrivileges
-	case 57933:
+	case status:
 		p.next()
 		stmt.Tp = ast.FlushStatus
-	case 57373:
+	case binaryType:
 		// FLUSH BINARY LOGS
 		p.next()
 		if p.peek().IsKeyword("LOGS") {
@@ -270,7 +270,7 @@ func (p *HandParser) parseCreateStatisticsStmt() ast.StmtNode {
 	p.expect(')')
 
 	// ON tbl(cols)
-	p.expect(57505)
+	p.expect(on)
 	stmt.Table = p.parseTableName()
 	p.expect('(')
 	for {
@@ -308,16 +308,16 @@ func (p *HandParser) parseCreateBindingStmt(globalScope bool) ast.StmtNode {
 	stmt := Alloc[ast.CreateBindingStmt](p.arena)
 	stmt.GlobalScope = globalScope
 
-	if _, ok := p.accept(57431); ok {
+	if _, ok := p.accept(forKwd); ok {
 		// FOR select_stmt USING select_stmt
 		stmt.OriginNode = p.parseAndSetText()
 
-		p.expect(57576)
+		p.expect(using)
 		stmt.HintedNode = p.parseAndSetText()
-	} else if _, ok := p.accept(57434); ok {
+	} else if _, ok := p.accept(from); ok {
 		// FROM HISTORY USING PLAN DIGEST 'digest1', 'digest2', ...
 		p.next() // HISTORY
-		p.expect(57576)
+		p.expect(using)
 		// PLAN keyword
 		if p.peek().IsKeyword("PLAN") {
 			p.next()
@@ -327,7 +327,7 @@ func (p *HandParser) parseCreateBindingStmt(globalScope bool) ast.StmtNode {
 			p.next()
 		}
 		stmt.PlanDigests = p.parseStringOrUserVarList()
-	} else if _, ok := p.accept(57576); ok {
+	} else if _, ok := p.accept(using); ok {
 		// USING select_stmt (wildcard binding — no FOR)
 		hintedStmt := p.parseAndSetText()
 		stmt.HintedNode = hintedStmt
@@ -342,15 +342,15 @@ func (p *HandParser) parseDropBindingStmt(globalScope bool) ast.StmtNode {
 	stmt := Alloc[ast.DropBindingStmt](p.arena)
 	stmt.GlobalScope = globalScope
 
-	if _, ok := p.accept(57431); ok {
-		if p.peekKeyword(57545, "SQL") {
+	if _, ok := p.accept(forKwd); ok {
+		if p.peekKeyword(sql, "SQL") {
 			// FOR SQL DIGEST 'str'
 			p.next() // SQL
 			p.next() // DIGEST
 			stmt.SQLDigests = p.parseStringOrUserVarList()
 		} else {
 			stmt.OriginNode = p.parseAndSetText()
-			if _, ok := p.accept(57576); ok {
+			if _, ok := p.accept(using); ok {
 				stmt.HintedNode = p.parseAndSetText()
 			}
 		}
@@ -364,11 +364,11 @@ func (p *HandParser) parseShowGrants() ast.StmtNode {
 	stmt := Alloc[ast.ShowStmt](p.arena)
 	stmt.Tp = ast.ShowGrants
 
-	if _, ok := p.accept(57431); ok {
+	if _, ok := p.accept(forKwd); ok {
 		stmt.User = p.parseUserIdentity()
 
 		// USING role, ...
-		if _, ok := p.accept(57576); ok {
+		if _, ok := p.accept(using); ok {
 			for {
 				role := p.parseRoleIdentity()
 				if role == nil {
@@ -387,7 +387,7 @@ func (p *HandParser) parseShowGrants() ast.StmtNode {
 
 // parseLoadStatsStmt parses: LOAD STATS 'path'
 func (p *HandParser) parseLoadStatsStmt() ast.StmtNode {
-	p.expect(57480)
+	p.expect(load)
 	// Skip STATS keyword (identifier)
 	p.next()
 	stmt := Alloc[ast.LoadStatsStmt](p.arena)
@@ -398,7 +398,7 @@ func (p *HandParser) parseLoadStatsStmt() ast.StmtNode {
 
 // parseLockStatsStmt parses: LOCK STATS table [, table ...] [PARTITION (p0, p1, ...)]
 func (p *HandParser) parseLockStatsStmt() ast.StmtNode {
-	p.expect(57483)
+	p.expect(lock)
 	p.next() // consume STATS
 	stmt := Alloc[ast.LockStatsStmt](p.arena)
 	stmt.Tables = p.parseStatsTablesAndPartitions()
@@ -407,7 +407,7 @@ func (p *HandParser) parseLockStatsStmt() ast.StmtNode {
 
 // parseUnlockStatsStmt parses: UNLOCK STATS table [, table ...] [PARTITION (p0, p1, ...)]
 func (p *HandParser) parseUnlockStatsStmt() ast.StmtNode {
-	p.expect(57570)
+	p.expect(unlock)
 	p.next() // consume STATS
 	stmt := Alloc[ast.UnlockStatsStmt](p.arena)
 	stmt.Tables = p.parseStatsTablesAndPartitions()
@@ -455,7 +455,7 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 
 		// Match by token type (for keyword tokens) or by string (for identifiers)
 		switch {
-		case pk.Tp == 57989 || pk.IsKeyword("WORKLOAD"):
+		case pk.Tp == workload || pk.IsKeyword("WORKLOAD"):
 			p.next()
 			wlTok := p.next()
 			switch strings.ToUpper(wlTok.Lit) {
@@ -473,10 +473,10 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 				p.error(wlTok.Offset, "unknown CALIBRATE workload: %s", wlTok.Lit)
 				return nil
 			}
-		case pk.Tp == 58076 || pk.IsKeyword("START_TIME") ||
-			pk.Tp == 58016 || pk.IsKeyword("END_TIME"):
+		case pk.Tp == startTime || pk.IsKeyword("START_TIME") ||
+			pk.Tp == endTime || pk.IsKeyword("END_TIME"):
 			var optTp ast.DynamicCalibrateType
-			if pk.Tp == 58076 || pk.IsKeyword("START_TIME") {
+			if pk.Tp == startTime || pk.IsKeyword("START_TIME") {
 				optTp = ast.CalibrateStartTime
 			} else {
 				optTp = ast.CalibrateEndTime
@@ -493,9 +493,9 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 			opt := Alloc[ast.DynamicCalibrateResourceOption](p.arena)
 			opt.Tp = ast.CalibrateDuration
 			// Check for string literal or INTERVAL
-			if p.peek().Tp == 57353 {
+			if p.peek().Tp == stringLit {
 				opt.StrValue = p.next().Lit
-			} else if _, ok := p.accept(57462); ok {
+			} else if _, ok := p.accept(interval); ok {
 				opt.Ts = p.parseExpression(precNone)
 				opt.Unit = p.parseTimeUnit().Unit
 			} else {
@@ -517,7 +517,7 @@ func (p *HandParser) parseRecommendOptions() []ast.RecommendIndexOption {
 		var opt ast.RecommendIndexOption
 		nameTok := p.next()
 		opt.Option = nameTok.Lit
-		p.expectAny(58202, 58201)
+		p.expectAny(eq, assignmentEq)
 		opt.Value = p.parseExpression(precNone).(ast.ValueExpr)
 		opts = append(opts, opt)
 		if _, ok := p.accept(','); !ok {

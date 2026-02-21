@@ -119,7 +119,7 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 		}
 
 		// Check for ON/USING clause for THIS join level.
-		if _, ok := p.accept(57505); ok {
+		if _, ok := p.accept(on); ok {
 			if natural {
 				p.error(p.peek().Offset, "natural join cannot have ON clause")
 				return nil
@@ -134,7 +134,7 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 			on.Expr = p.parseExpression(precNone)
 			join.On = on
 			lhs = join
-		} else if _, ok := p.accept(57576); ok {
+		} else if _, ok := p.accept(using); ok {
 			if natural {
 				p.error(p.peek().Offset, "natural join cannot have USING clause")
 				return nil
@@ -206,7 +206,7 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 	join.StraightJoin = straight
 
 	// Consume ON/USING for THIS level.
-	if _, ok := p.accept(57505); ok {
+	if _, ok := p.accept(on); ok {
 		if natural {
 			p.error(p.peek().Offset, "natural join cannot have ON clause")
 			return nil
@@ -214,7 +214,7 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 		on := Alloc[ast.OnCondition](p.arena)
 		on.Expr = p.parseExpression(precNone)
 		join.On = on
-	} else if _, ok := p.accept(57576); ok {
+	} else if _, ok := p.accept(using); ok {
 		if natural {
 			p.error(p.peek().Offset, "natural join cannot have USING clause")
 			return nil
@@ -251,20 +251,20 @@ func (p *HandParser) validateJoin(node ast.ResultSetNode) error {
 }
 
 // peekJoinType checks if the next tokens form a join keyword without consuming them.
-func (p *HandParser) peekJoinType() (joinType ast.JoinType, natural bool, straight bool, commaJoin bool) {
+func (p *HandParser) peekJoinType() (joinType ast.JoinType, isNatural bool, straight bool, commaJoin bool) {
 	tok := p.peek()
 	switch tok.Tp {
-	case 57466:
+	case join:
 		return ast.CrossJoin, false, false, false
-	case 57451, 57390:
+	case inner, cross:
 		return ast.CrossJoin, false, false, false
-	case 57475:
+	case left:
 		return ast.LeftJoin, false, false, false
-	case 57534:
+	case right:
 		return ast.RightJoin, false, false, false
-	case 57497:
+	case natural:
 		return ast.CrossJoin, true, false, false
-	case 57555:
+	case straightJoin:
 		return ast.CrossJoin, false, true, false
 	case ',':
 		return ast.CrossJoin, false, false, true
@@ -335,51 +335,51 @@ func (p *HandParser) makeCrossJoin(left, right ast.ResultSetNode) *ast.Join {
 
 // parseJoinType returns the join type if the next tokens form a join keyword.
 // commaJoin is true only when the join operator is a literal comma (',').
-func (p *HandParser) parseJoinType() (joinType ast.JoinType, natural bool, straight bool, commaJoin bool) {
+func (p *HandParser) parseJoinType() (joinType ast.JoinType, isNatural bool, straight bool, commaJoin bool) {
 	tok := p.peek()
 
 	switch tok.Tp {
-	case 57466:
+	case join:
 		p.next()
 		return ast.CrossJoin, false, false, false
 
-	case 57451:
+	case inner:
 		p.next()
-		p.expect(57466)
+		p.expect(join)
 		return ast.CrossJoin, false, false, false
 
-	case 57390:
+	case cross:
 		p.next()
-		p.expect(57466)
+		p.expect(join)
 		return ast.CrossJoin, false, false, false
 
-	case 57475:
+	case left:
 		p.next()
-		p.accept(57512) // optional OUTER
-		p.expect(57466)
+		p.accept(outer) // optional OUTER
+		p.expect(join)
 		return ast.LeftJoin, false, false, false
 
-	case 57534:
+	case right:
 		p.next()
-		p.accept(57512) // optional OUTER
-		p.expect(57466)
+		p.accept(outer) // optional OUTER
+		p.expect(join)
 		return ast.RightJoin, false, false, false
 
-	case 57497:
+	case natural:
 		p.next()
-		natural = true
+		isNatural = true
 		switch p.peek().Tp {
-		case 57475:
+		case left:
 			p.next()
-			p.accept(57512)
-			p.expect(57466)
+			p.accept(outer)
+			p.expect(join)
 			return ast.LeftJoin, true, false, false
-		case 57534:
+		case right:
 			p.next()
-			p.accept(57512)
-			p.expect(57466)
+			p.accept(outer)
+			p.expect(join)
 			return ast.RightJoin, true, false, false
-		case 57466:
+		case join:
 			p.next()
 			return ast.CrossJoin, true, false, false
 		default:
@@ -387,7 +387,7 @@ func (p *HandParser) parseJoinType() (joinType ast.JoinType, natural bool, strai
 			return 0, false, false, false
 		}
 
-	case 57555:
+	case straightJoin:
 		p.next()
 		return ast.CrossJoin, false, true, false
 
@@ -407,7 +407,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	switch p.peek().Tp {
 	case '(':
 		p.next()
-		if p.peek().Tp == 57540 || p.peek().Tp == 57590 || p.peek().Tp == 57556 || p.peek().Tp == 57580 {
+		if p.peek().Tp == selectKwd || p.peek().Tp == with || p.peek().Tp == tableKwd || p.peek().Tp == values {
 			// Unambiguous derived table: subquery with optional UNION.
 			inner := p.parseSubquery()
 			if inner == nil {
@@ -454,7 +454,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			res = join
 		}
 
-	case 57416:
+	case dual:
 		p.next()
 		// DUAL is a virtual table that returns one row. Treat as empty table name.
 		tn := Alloc[ast.TableName](p.arena)
@@ -481,11 +481,11 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	// For simplicity, we only attach them to TableSource if it wraps a TableName.
 
 	// Check for PARTITION clause.
-	if _, ok := p.accept(57515); ok {
+	if _, ok := p.accept(partition); ok {
 		p.expect('(')
 		var names []ast.CIStr
 		for {
-			ident, ok := p.expect(57346)
+			ident, ok := p.expect(identifier)
 			if !ok {
 				return nil
 			}
@@ -510,10 +510,10 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 
 	// Optional alias or AS OF TIMESTAMP clause.
 	var asName ast.CIStr
-	if p.peek().Tp == 57347 {
+	if p.peek().Tp == asof {
 		// AS OF TIMESTAMP expr — stale read / time travel
 		p.next() // consume AS OF (combined token)
-		if p.peek().Tp == 57954 {
+		if p.peek().Tp == timestampType {
 			p.next() // consume TIMESTAMP
 		} else {
 			p.error(p.peek().Offset, "expected TIMESTAMP after AS OF")
@@ -524,10 +524,10 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		if tn, ok := res.(*ast.TableName); ok {
 			tn.AsOf = asOfClause
 		}
-	} else if _, ok := p.accept(57369); ok {
+	} else if _, ok := p.accept(as); ok {
 		aliasTok := p.next()
 		// Table alias cannot be a string literal (unlike column alias).
-		if !isIdentLike(aliasTok.Tp) || aliasTok.Tp == 57353 {
+		if !isIdentLike(aliasTok.Tp) || aliasTok.Tp == stringLit {
 			p.error(aliasTok.Offset, "expected table alias")
 			return nil
 		}
@@ -546,7 +546,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	// Parse optional TABLESAMPLE clause (can appear after alias): TABLESAMPLE [SYSTEM|BERNOULLI|REGION] (expr [PERCENT|ROWS]) [REPEATABLE(seed)]
 	// Only valid for table name references, not derived tables/subqueries.
 	_, isResTableName := res.(*ast.TableName)
-	if p.peek().Tp == 57557 && isResTableName {
+	if p.peek().Tp == tableSample && isResTableName {
 		p.next()
 		ts := Alloc[ast.TableSample](p.arena)
 		// Optional method: SYSTEM, BERNOULLI, REGION
@@ -556,7 +556,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		} else if p.peek().IsKeyword("BERNOULLI") {
 			p.next()
 			ts.SampleMethod = ast.SampleMethodTypeBernoulli
-		} else if p.peek().Tp == 58173 || p.peek().Tp == 58174 {
+		} else if p.peek().Tp == region || p.peek().Tp == regions {
 			p.next()
 			ts.SampleMethod = ast.SampleMethodTypeTiDBRegion
 		}
@@ -567,7 +567,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			if p.peek().IsKeyword("PERCENT") {
 				p.next()
 				ts.SampleClauseUnit = ast.SampleClauseUnitTypePercent
-			} else if p.peek().Tp == 57537 {
+			} else if p.peek().Tp == rows {
 				p.next()
 				ts.SampleClauseUnit = ast.SampleClauseUnitTypeRow
 			}
@@ -626,8 +626,8 @@ func (p *HandParser) parseTableName() *ast.TableName {
 		tn.Name = ast.NewCIStr(nextTok.Lit)
 		return tn
 	}
-	// All keyword/identifier tokens have Tp >= 57346 and carry their text in Lit.
-	if !isIdentLike(tok.Tp) && tok.Tp != 57352 {
+	// All keyword/identifier tokens have Tp >= identifier and carry their text in Lit.
+	if !isIdentLike(tok.Tp) && tok.Tp != underscoreCS {
 		p.error(tok.Offset, "expected table name, got token %d", tok.Tp)
 		return nil
 	}
@@ -637,7 +637,7 @@ func (p *HandParser) parseTableName() *ast.TableName {
 	if p.peek().Tp == '.' && p.peekN(1).Tp != '*' {
 		p.next() // consume '.'
 		nextTok := p.next()
-		if nextTok.Tp < 57346 && nextTok.Tp != 57352 {
+		if nextTok.Tp < identifier && nextTok.Tp != underscoreCS {
 			p.error(nextTok.Offset, "expected table name after '.', got token %d", nextTok.Tp)
 			return nil
 		}
@@ -679,13 +679,13 @@ func (p *HandParser) parseIndexHint() *ast.IndexHint {
 
 	// Hint type.
 	switch p.peek().Tp {
-	case 57575:
+	case use:
 		p.next()
 		hint.HintType = ast.HintUse
-	case 57446:
+	case ignore:
 		p.next()
 		hint.HintType = ast.HintIgnore
-	case 57432:
+	case force:
 		p.next()
 		hint.HintType = ast.HintForce
 	default:
@@ -693,26 +693,26 @@ func (p *HandParser) parseIndexHint() *ast.IndexHint {
 	}
 
 	// INDEX or KEY (both valid, treated identically).
-	if _, ok := p.accept(57449); !ok {
-		if _, ok := p.accept(57467); !ok {
+	if _, ok := p.accept(index); !ok {
+		if _, ok := p.accept(key); !ok {
 			p.error(p.peek().Offset, "expected INDEX or KEY")
 			return nil
 		}
 	}
 
 	// Optional FOR scope.
-	if _, ok := p.accept(57431); ok {
+	if _, ok := p.accept(forKwd); ok {
 		switch p.peek().Tp {
-		case 57466:
+		case join:
 			p.next()
 			hint.HintScope = ast.HintForJoin
-		case 57510:
+		case order:
 			p.next()
-			p.expect(57376)
+			p.expect(by)
 			hint.HintScope = ast.HintForOrderBy
-		case 57438:
+		case group:
 			p.next()
-			p.expect(57376)
+			p.expect(by)
 			hint.HintScope = ast.HintForGroupBy
 		}
 	}
@@ -738,7 +738,7 @@ func (p *HandParser) parseIndexHint() *ast.IndexHint {
 
 // parseIndexHintsInto parses index hints (USE/IGNORE/FORCE INDEX/KEY) into a TableName.
 func (p *HandParser) parseIndexHintsInto(tn *ast.TableName) {
-	for p.peek().Tp == 57575 || p.peek().Tp == 57446 || p.peek().Tp == 57432 {
+	for p.peek().Tp == use || p.peek().Tp == ignore || p.peek().Tp == force {
 		hint := p.parseIndexHint()
 		if hint != nil {
 			tn.IndexHints = append(tn.IndexHints, hint)

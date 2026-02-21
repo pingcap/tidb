@@ -20,13 +20,13 @@ import (
 // parseCreatePlacementPolicyStmt parses CREATE PLACEMENT POLICY statements.
 func (p *HandParser) parseCreatePlacementPolicyStmt() ast.StmtNode {
 	stmt := Alloc[ast.CreatePlacementPolicyStmt](p.arena)
-	p.expect(57389)
-	if _, ok := p.accept(57509); ok {
-		p.expect(57530)
+	p.expect(create)
+	if _, ok := p.accept(or); ok {
+		p.expect(replace)
 		stmt.OrReplace = true
 	}
-	p.expect(58054)
-	p.expect(57838)
+	p.expect(placement)
+	p.expect(policy)
 
 	stmt.IfNotExists = p.acceptIfNotExists()
 
@@ -46,9 +46,9 @@ func (p *HandParser) parseCreatePlacementPolicyStmt() ast.StmtNode {
 // parseAlterPlacementPolicyStmt parses ALTER PLACEMENT POLICY statements.
 func (p *HandParser) parseAlterPlacementPolicyStmt() ast.StmtNode {
 	stmt := Alloc[ast.AlterPlacementPolicyStmt](p.arena)
-	p.expect(57365)
-	p.expect(58054)
-	p.expect(57838)
+	p.expect(alter)
+	p.expect(placement)
+	p.expect(policy)
 
 	stmt.IfExists = p.acceptIfExists()
 
@@ -68,9 +68,9 @@ func (p *HandParser) parseAlterPlacementPolicyStmt() ast.StmtNode {
 // parseDropPlacementPolicyStmt parses DROP PLACEMENT POLICY statements.
 func (p *HandParser) parseDropPlacementPolicyStmt() ast.StmtNode {
 	stmt := Alloc[ast.DropPlacementPolicyStmt](p.arena)
-	// p.expect(57415) - already consumed
-	p.expect(58054)
-	p.expect(57838)
+	// p.expect(drop) - already consumed
+	p.expect(placement)
+	p.expect(policy)
 
 	stmt.IfExists = p.acceptIfExists()
 
@@ -83,8 +83,8 @@ func (p *HandParser) parsePlacementStringOption(tokKeyword int, optType ast.Plac
 	if _, ok := p.accept(tokKeyword); ok {
 		opt := Alloc[ast.PlacementOption](p.arena)
 		opt.Tp = optType
-		p.accept(58202)
-		if tok, ok := p.expect(57353); ok {
+		p.accept(eq)
+		if tok, ok := p.expect(stringLit); ok {
 			opt.StrValue = tok.Lit
 		}
 		return opt
@@ -97,7 +97,7 @@ func (p *HandParser) parsePlacementUintOption(tokKeyword int, optType ast.Placem
 	if _, ok := p.accept(tokKeyword); ok {
 		opt := Alloc[ast.PlacementOption](p.arena)
 		opt.Tp = optType
-		p.accept(58202)
+		p.accept(eq)
 		opt.UintValue = p.parseUint64()
 		// Validate: FOLLOWERS must be positive (matches grammar validation).
 		if optType == ast.PlacementOptionFollowerCount && opt.UintValue == 0 {
@@ -116,15 +116,15 @@ func (p *HandParser) parsePlacementOption() *ast.PlacementOption {
 		tok int
 		tp  ast.PlacementOptionType
 	}{
-		{58059, ast.PlacementOptionPrimaryRegion},
-		{58174, ast.PlacementOptionRegions},
-		{58072, ast.PlacementOptionSchedule},
-		{58005, ast.PlacementOptionConstraints},
-		{58040, ast.PlacementOptionLeaderConstraints},
-		{58023, ast.PlacementOptionFollowerConstraints},
-		{58118, ast.PlacementOptionVoterConstraints},
-		{58042, ast.PlacementOptionLearnerConstraints},
-		{58088, ast.PlacementOptionSurvivalPreferences},
+		{primaryRegion, ast.PlacementOptionPrimaryRegion},
+		{regions, ast.PlacementOptionRegions},
+		{schedule, ast.PlacementOptionSchedule},
+		{constraints, ast.PlacementOptionConstraints},
+		{leaderConstraints, ast.PlacementOptionLeaderConstraints},
+		{followerConstraints, ast.PlacementOptionFollowerConstraints},
+		{voterConstraints, ast.PlacementOptionVoterConstraints},
+		{learnerConstraints, ast.PlacementOptionLearnerConstraints},
+		{survivalPreferences, ast.PlacementOptionSurvivalPreferences},
 	}
 	for _, so := range stringOpts {
 		if opt := p.parsePlacementStringOption(so.tok, so.tp); opt != nil {
@@ -137,9 +137,9 @@ func (p *HandParser) parsePlacementOption() *ast.PlacementOption {
 		tok int
 		tp  ast.PlacementOptionType
 	}{
-		{58024, ast.PlacementOptionFollowerCount},
-		{58119, ast.PlacementOptionVoterCount},
-		{58043, ast.PlacementOptionLearnerCount},
+		{followers, ast.PlacementOptionFollowerCount},
+		{voters, ast.PlacementOptionVoterCount},
+		{learners, ast.PlacementOptionLearnerCount},
 	}
 	for _, uo := range uintOpts {
 		if opt := p.parsePlacementUintOption(uo.tok, uo.tp); opt != nil {

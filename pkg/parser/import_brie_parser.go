@@ -27,8 +27,8 @@ import (
 func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 	stmt := &ast.ImportIntoStmt{}
 
-	p.expect(57746)
-	p.expect(57463)
+	p.expect(importKwd)
+	p.expect(into)
 
 	stmt.Table = p.parseTableName()
 	if stmt.Table == nil {
@@ -39,7 +39,7 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 	if _, ok := p.accept('('); ok {
 		stmt.ColumnsAndUserVars = make([]*ast.ColumnNameOrUserVar, 0)
 		for {
-			if tok, ok := p.accept(57354); ok {
+			if tok, ok := p.accept(singleAtIdentifier); ok {
 				// @varname — singleAtIdentifier contains "@name", strip leading @.
 				varName := tok.Lit
 				if len(varName) > 0 && varName[0] == '@' {
@@ -47,7 +47,7 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 				}
 				node := &ast.ColumnNameOrUserVar{UserVar: &ast.VariableExpr{Name: varName}}
 				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
-			} else if tok, ok := p.accept(57346); ok {
+			} else if tok, ok := p.accept(identifier); ok {
 				node := &ast.ColumnNameOrUserVar{ColumnName: &ast.ColumnName{Name: ast.NewCIStr(tok.Lit)}}
 				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
 			} else {
@@ -61,14 +61,14 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 	}
 
 	// Optional SET assignments.
-	if _, ok := p.accept(57541); ok {
+	if _, ok := p.accept(set); ok {
 		stmt.ColumnAssignments = make([]*ast.Assignment, 0)
 		for {
 			col := p.parseColumnName()
 			if col == nil {
 				break
 			}
-			p.expectAny(58202, 58201)
+			p.expectAny(eq, assignmentEq)
 			expr := p.parseExpression(precNone)
 			stmt.ColumnAssignments = append(stmt.ColumnAssignments, &ast.Assignment{Column: col, Expr: expr})
 			if _, ok := p.accept(','); !ok {
@@ -78,17 +78,17 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 	}
 
 	// FROM clause.
-	p.expect(57434)
+	p.expect(from)
 
 	// Check: FROM 'path' | FROM SELECT | FROM (SELECT) | FROM WITH CTE SELECT
-	if p.peek().Tp == 57353 {
+	if p.peek().Tp == stringLit {
 		// FROM 'path'
 		pathTok := p.next()
 		stmt.Path = pathTok.Lit
 
 		// Optional FORMAT 'fmt'
-		if _, ok := p.accept(57728); ok {
-			if tok, ok := p.expect(57353); ok {
+		if _, ok := p.accept(format); ok {
+			if tok, ok := p.expect(stringLit); ok {
 				stmt.Format = sptr(tok.Lit)
 			}
 		}
@@ -105,7 +105,7 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 		ts.Source = unionSel
 		stmt.Select = ts
 		p.expect(')')
-	} else if p.peek().Tp == 57540 || p.peek().Tp == 57590 {
+	} else if p.peek().Tp == selectKwd || p.peek().Tp == with {
 		// FROM SELECT ... or FROM WITH CTE SELECT ...
 		// Validate: no user vars or SET in SELECT source.
 		if len(stmt.ColumnsAndUserVars) > 0 {
@@ -121,13 +121,13 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 			return nil
 		}
 
-		if p.peek().Tp == 57590 {
+		if p.peek().Tp == with {
 			// WITH CTE form: WITH name AS (SELECT ...) SELECT ...
 			// Consume the CTE clause, then parse the trailing SELECT.
 			withTok := p.next() // consume WITH
 			// Parse CTE name
 			cteName := p.next()
-			p.expect(57369)
+			p.expect(as)
 			p.expect('(')
 			// Parse inner select
 			cteSelect := p.parseSelectStmt()
@@ -156,7 +156,7 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 	}
 
 	// Optional WITH options.
-	if _, ok := p.accept(57590); ok {
+	if _, ok := p.accept(with); ok {
 		stmt.Options = make([]*ast.LoadDataOpt, 0)
 		for {
 			optTok := p.next()
@@ -179,27 +179,27 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 //	CANCEL IMPORT JOB <id>
 //	CANCEL DISTRIBUTION JOB <id>
 func (p *HandParser) parseCancelStmt() ast.StmtNode {
-	p.expect(58153)
+	p.expect(cancel)
 
 	switch p.peek().Tp {
-	case 57746:
+	case importKwd:
 		p.next()
-		p.expect(58166)
+		p.expect(job)
 		stmt := &ast.ImportIntoActionStmt{
 			Tp:    ast.ImportIntoCancel,
 			JobID: int64(p.parseUint64()),
 		}
 		return stmt
-	case 58162:
+	case distribution:
 		p.next()
-		p.expect(58166)
+		p.expect(job)
 		stmt := &ast.CancelDistributionJobStmt{
 			JobID: int64(p.parseUint64()),
 		}
 		return stmt
-	case 58107:
+	case traffic:
 		return p.parseCancelTrafficStmt()
-	case 58000:
+	case br:
 		p.next() // consume BR
 		return p.parseCancelBRJobStmt()
 	default:
@@ -210,29 +210,29 @@ func (p *HandParser) parseCancelStmt() ast.StmtNode {
 
 // parseShowImportStmt parses SHOW IMPORT variants. SHOW has already been consumed.
 func (p *HandParser) parseShowImportStmt() ast.StmtNode {
-	p.expect(57746)
+	p.expect(importKwd)
 
 	switch p.peek().Tp {
-	case 58167:
+	case jobs:
 		p.next()
 		stmt := &ast.ShowStmt{Tp: ast.ShowImportJobs}
-		if _, ok := p.accept(57587); ok {
+		if _, ok := p.accept(where); ok {
 			stmt.Where = p.parseExpression(precNone)
 		}
 		return stmt
-	case 58166:
+	case job:
 		p.next()
 		stmt := &ast.ShowStmt{Tp: ast.ShowImportJobs}
 		jobID := int64(p.parseUint64())
 		stmt.ImportJobID = &jobID
 		return stmt
-	case 57439:
+	case groups:
 		p.next()
 		return &ast.ShowStmt{Tp: ast.ShowImportGroups}
-	case 57438:
+	case group:
 		p.next()
 		stmt := &ast.ShowStmt{Tp: ast.ShowImportGroups}
-		if tok, ok := p.expect(57353); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			stmt.ShowGroupKey = tok.Lit
 		}
 		return stmt
@@ -250,9 +250,9 @@ func (p *HandParser) parseBRIEStmt() ast.StmtNode {
 
 	tok := p.next() // RESTORE or BACKUP
 	switch tok.Tp {
-	case 57872:
+	case restore:
 		stmt.Kind = ast.BRIEKindRestore
-	case 57618:
+	case backup:
 		stmt.Kind = ast.BRIEKindBackup
 	}
 
@@ -266,7 +266,7 @@ func (p *HandParser) parseBRIEStmt() ast.StmtNode {
 		// TO 'path'
 		if tok := p.peek(); tok.IsKeyword("TO") {
 			p.next()
-			if tok, ok := p.expect(57353); ok {
+			if tok, ok := p.expect(stringLit); ok {
 				stmt.Storage = tok.Lit
 			}
 		}
@@ -278,8 +278,8 @@ func (p *HandParser) parseBRIEStmt() ast.StmtNode {
 	if stmt.Kind == ast.BRIEKindRestore && nextLit == "POINT" {
 		p.next() // consume POINT
 		stmt.Kind = ast.BRIEKindRestorePIT
-		if _, ok := p.accept(57434); ok {
-			if tok, ok := p.expect(57353); ok {
+		if _, ok := p.accept(from); ok {
+			if tok, ok := p.expect(stringLit); ok {
 				stmt.Storage = tok.Lit
 			}
 		}
@@ -288,12 +288,12 @@ func (p *HandParser) parseBRIEStmt() ast.StmtNode {
 	}
 
 	// DATABASE, SCHEMA, or TABLE target
-	if _, ok := p.accept(57398); ok {
+	if _, ok := p.accept(database); ok {
 		p.parseBRIEDatabaseList(stmt)
 	} else if tok := p.peek(); tok.IsKeyword("SCHEMA") {
 		p.next() // consume SCHEMA (alias for DATABASE)
 		p.parseBRIEDatabaseList(stmt)
-	} else if _, ok := p.accept(57556); ok {
+	} else if _, ok := p.accept(tableKwd); ok {
 		for {
 			tn := p.parseTableName()
 			if tn == nil {
@@ -319,13 +319,13 @@ func (p *HandParser) parseBRIEStmt() ast.StmtNode {
 	}
 
 	// FROM / TO
-	if _, ok := p.accept(57434); ok {
-		if tok, ok := p.expect(57353); ok {
+	if _, ok := p.accept(from); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			stmt.Storage = tok.Lit
 		}
 	} else if tok := p.peek(); tok.IsKeyword("TO") {
 		p.next()
-		if tok, ok := p.expect(57353); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			stmt.Storage = tok.Lit
 		}
 	}
@@ -367,13 +367,13 @@ func (p *HandParser) parseBRIEOptions(stmt *ast.BRIEStmt) {
 		}
 		optTok := p.next()
 		optName := strings.ToUpper(optTok.Lit)
-		p.accept(58202) // optional '=' separator
+		p.accept(eq) // optional '=' separator
 
 		optType := brieOptionNameToType(optName)
 		opt := &ast.BRIEOption{Tp: optType}
 
 		// Value: try string literal first, then keyword level/boolean, then integer.
-		if tok, ok := p.accept(57353); ok {
+		if tok, ok := p.accept(stringLit); ok {
 			opt.StrValue = tok.Lit
 		} else if brieLevel, ok := parseBRIELevelValue(p); ok {
 			opt.UintValue = uint64(brieLevel)
@@ -420,7 +420,7 @@ func (p *HandParser) parseBRIEOptions(stmt *ast.BRIEStmt) {
 // parseBRIEStreamStmt parses: {PAUSE|RESUME|STOP} BACKUP LOGS [options]
 // The leading keyword (PAUSE/RESUME/STOP) must already be consumed.
 func (p *HandParser) parseBRIEStreamStmt(kind ast.BRIEKind) ast.StmtNode {
-	p.expect(57618)
+	p.expect(backup)
 	p.next() // consume LOGS
 	stmt := &ast.BRIEStmt{Kind: kind}
 	p.parseBRIEOptions(stmt)
@@ -445,12 +445,12 @@ func (p *HandParser) parseStopBackupLogsStmt() ast.StmtNode {
 // parsePurgeBackupLogsStmt parses: PURGE BACKUP LOGS FROM 'path' [options]
 func (p *HandParser) parsePurgeBackupLogsStmt() ast.StmtNode {
 	// PURGE already consumed by caller
-	p.expect(57618)
+	p.expect(backup)
 	// consume LOGS
 	p.next()
 	stmt := &ast.BRIEStmt{Kind: ast.BRIEKindStreamPurge}
-	if _, ok := p.accept(57434); ok {
-		if tok, ok := p.expect(57353); ok {
+	if _, ok := p.accept(from); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			stmt.Storage = tok.Lit
 		}
 	}
@@ -461,7 +461,7 @@ func (p *HandParser) parsePurgeBackupLogsStmt() ast.StmtNode {
 // parseShowBRJobStmt parses: SHOW BR JOB [QUERY] <id>
 func (p *HandParser) parseShowBRJobStmt() ast.StmtNode {
 	// SHOW already consumed, BR consumed by caller
-	p.expect(58166)
+	p.expect(job)
 	stmt := &ast.BRIEStmt{Kind: ast.BRIEKindShowJob}
 	if tok := p.peek(); tok.IsKeyword("QUERY") {
 		p.next()
@@ -474,7 +474,7 @@ func (p *HandParser) parseShowBRJobStmt() ast.StmtNode {
 // parseCancelBRJobStmt parses: CANCEL BR JOB <id>
 func (p *HandParser) parseCancelBRJobStmt() ast.StmtNode {
 	// CANCEL already consumed, BR consumed by caller
-	p.expect(58166)
+	p.expect(job)
 	stmt := &ast.BRIEStmt{Kind: ast.BRIEKindCancelJob}
 	stmt.JobID = int64(p.parseUint64())
 	return stmt
@@ -505,8 +505,8 @@ func (p *HandParser) parseShowBackupLogsStmt() ast.StmtNode {
 // parseBRIEMetadataStmt parses: [FROM 'path'] for SHOW BACKUP [LOGS] METADATA.
 func (p *HandParser) parseBRIEMetadataStmt(kind ast.BRIEKind) ast.StmtNode {
 	stmt := &ast.BRIEStmt{Kind: kind}
-	if _, ok := p.accept(57434); ok {
-		if tok, ok := p.expect(57353); ok {
+	if _, ok := p.accept(from); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			stmt.Storage = tok.Lit
 		}
 	}

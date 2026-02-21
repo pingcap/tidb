@@ -33,28 +33,28 @@ import (
 //	CREATE [UNIQUE | FULLTEXT | SPATIAL] INDEX [IF NOT EXISTS] idx ON tbl (col, ...) [options]
 func (p *HandParser) parseCreateIndexStmt() ast.StmtNode {
 	stmt := Alloc[ast.CreateIndexStmt](p.arena)
-	p.expect(57389)
+	p.expect(create)
 
 	// [UNIQUE | FULLTEXT | SPATIAL | VECTOR | COLUMNAR]
 	switch p.peek().Tp {
-	case 57569:
+	case unique:
 		p.next()
 		stmt.KeyType = ast.IndexKeyTypeUnique
-	case 57435:
+	case fulltext:
 		p.next()
 		stmt.KeyType = ast.IndexKeyTypeFulltext
-	case 57544:
+	case spatial:
 		p.next()
 		stmt.KeyType = ast.IndexKeyTypeSpatial
-	case 57979:
+	case vectorType:
 		p.next()
 		stmt.KeyType = ast.IndexKeyTypeVector
-	case 57652:
+	case columnar:
 		p.next()
 		stmt.KeyType = ast.IndexKeyTypeColumnar
 	}
 
-	p.expect(57449)
+	p.expect(index)
 
 	// [IF NOT EXISTS]
 	stmt.IfNotExists = p.acceptIfNotExists()
@@ -70,7 +70,7 @@ func (p *HandParser) parseCreateIndexStmt() ast.StmtNode {
 	}
 
 	// ON table_name
-	p.expect(57505)
+	p.expect(on)
 	stmt.Table = p.parseTableName()
 
 	// (col1, col2, ...)
@@ -106,11 +106,11 @@ func (p *HandParser) parseIndexLockAndAlgorithm() *ast.IndexLockAndAlgorithm {
 	found := false
 
 	for i := 0; i < 2; i++ {
-		if _, ok := p.accept(57483); ok {
+		if _, ok := p.accept(lock); ok {
 			found = true
-			p.accept(58202)
+			p.accept(eq)
 			tok := p.next()
-			if tok.Tp == 57405 {
+			if tok.Tp == defaultKwd {
 				lockTp = ast.LockTypeDefault
 			} else {
 				switch strings.ToUpper(tok.Lit) {
@@ -125,19 +125,19 @@ func (p *HandParser) parseIndexLockAndAlgorithm() *ast.IndexLockAndAlgorithm {
 					return nil
 				}
 			}
-		} else if _, ok := p.accept(57603); ok {
+		} else if _, ok := p.accept(algorithm); ok {
 			found = true
-			p.accept(58202)
+			p.accept(eq)
 			tok := p.next()
-			if tok.Tp == 57405 {
+			if tok.Tp == defaultKwd {
 				algTp = ast.AlgorithmTypeDefault
 			} else {
 				switch tok.Tp {
-				case 58007:
+				case copyKwd:
 					algTp = ast.AlgorithmTypeCopy
-				case 58030:
+				case inplace:
 					algTp = ast.AlgorithmTypeInplace
-				case 58031:
+				case instant:
 					algTp = ast.AlgorithmTypeInstant
 				default:
 					p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm).GenWithStackByArgs(tok.Lit))
@@ -169,11 +169,11 @@ func (p *HandParser) parseIndexLockAndAlgorithm() *ast.IndexLockAndAlgorithm {
 func (p *HandParser) parseRecoverTableStmt() ast.StmtNode {
 	stmt := Alloc[ast.RecoverTableStmt](p.arena)
 	p.next() // consume RECOVER
-	p.expect(57556)
+	p.expect(tableKwd)
 
 	// BY JOB int64
-	if _, ok := p.accept(57376); ok {
-		p.expect(58166)
+	if _, ok := p.accept(by); ok {
+		p.expect(job)
 		v, ok := p.parseInt64()
 		if !ok {
 			return nil
@@ -184,7 +184,7 @@ func (p *HandParser) parseRecoverTableStmt() ast.StmtNode {
 
 	// tablename [int64]
 	stmt.Table = p.parseTableName()
-	if tok, ok := p.acceptAny(58197); ok {
+	if tok, ok := p.acceptAny(intLit); ok {
 		v, valid := tokenItemToInt64(tok.Item)
 		if !valid {
 			p.error(tok.Offset, "integer value is out of range")
@@ -204,8 +204,8 @@ func (p *HandParser) parseRecoverTableStmt() ast.StmtNode {
 //	CREATE DATABASE [IF NOT EXISTS] db [options]
 func (p *HandParser) parseCreateDatabaseStmt() ast.StmtNode {
 	stmt := Alloc[ast.CreateDatabaseStmt](p.arena)
-	p.expect(57389)
-	p.expect(57398)
+	p.expect(create)
+	p.expect(database)
 
 	stmt.IfNotExists = p.acceptIfNotExists()
 
@@ -224,17 +224,17 @@ func (p *HandParser) parseCreateDatabaseStmt() ast.StmtNode {
 //	ALTER DATABASE db [options]
 func (p *HandParser) parseAlterDatabaseStmt() ast.StmtNode {
 	stmt := Alloc[ast.AlterDatabaseStmt](p.arena)
-	p.expect(57365)
-	p.expect(57398)
+	p.expect(alter)
+	p.expect(database)
 
 	// Database name is optional — if next token is a db option keyword, skip name.
-	// Note: 57639 (CHARSET) is NOT included here because in the parser,
+	// Note: charsetKwd (CHARSET) is NOT included here because in the parser,
 	// standalone CHARSET is consumed as the db name (shift/reduce preference).
 	// Only multi-word option starts (CHARACTER SET, CHAR SET) skip the name.
 	peek := p.peek()
-	isDatabaseOption := peek.Tp == 57382 || peek.Tp == 57381 ||
-		peek.Tp == 57384 || peek.Tp == 57405 || peek.Tp == 57698 ||
-		peek.Tp == 58054 || peek.Tp == 57541
+	isDatabaseOption := peek.Tp == character || peek.Tp == charType ||
+		peek.Tp == collate || peek.Tp == defaultKwd || peek.Tp == encryption ||
+		peek.Tp == placement || peek.Tp == set
 	if !isDatabaseOption {
 		nameTok := p.next()
 		if !isIdentLike(nameTok.Tp) {
@@ -259,13 +259,13 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 	for {
 		opt := &ast.DatabaseOption{}
 		switch p.peek().Tp {
-		case 57639, 57382, 57381:
+		case charsetKwd, character, charType:
 			// yacc CharsetKw: CHARACTER SET | CHARSET | CHAR SET
 			p.next()
-			if p.peek().Tp == 57541 {
+			if p.peek().Tp == set {
 				p.next()
 			}
-			p.accept(58202)
+			p.accept(eq)
 			opt.Tp = ast.DatabaseOptionCharset
 			rawCharset := p.next().Lit
 			opt.Value = strings.ToLower(rawCharset)
@@ -275,9 +275,9 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 				p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: '%s'", rawCharset))
 				return nil
 			}
-		case 57384:
+		case collate:
 			p.next()
-			p.accept(58202)
+			p.accept(eq)
 			opt.Tp = ast.DatabaseOptionCollate
 			rawCollation := p.next().Lit
 			opt.Value = strings.ToLower(rawCollation)
@@ -286,28 +286,28 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 				p.errs = append(p.errs, fmt.Errorf("[ddl:1273]Unknown collation: '%s'", rawCollation))
 				return nil
 			}
-		case 58054:
+		case placement:
 			p.next()
-			p.accept(57838)
+			p.accept(policy)
 			// Accept both '=' and SET as separator (MySQL supports both)
-			if _, ok := p.accept(58202); !ok {
-				p.accept(57541)
+			if _, ok := p.accept(eq); !ok {
+				p.accept(set)
 			}
 			opt.Tp = ast.DatabaseOptionPlacementPolicy
 			tok := p.next()
-			if tok.Tp == 57405 {
+			if tok.Tp == defaultKwd {
 				opt.Value = "DEFAULT"
-			} else if tok.Tp == 57353 {
+			} else if tok.Tp == stringLit {
 				opt.Value = tok.Lit
 			} else {
 				opt.Value = tok.Lit
 			}
-		case 57698:
+		case encryption:
 			p.next()
-			p.accept(58202)
+			p.accept(eq)
 			opt.Tp = ast.DatabaseOptionEncryption
 			valTok := p.peek()
-			if valTok.Tp != 57353 {
+			if valTok.Tp != stringLit {
 				// ENCRYPTION requires a quoted string value
 				return nil
 			}
@@ -317,14 +317,14 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 				p.errs = append(p.errs, fmt.Errorf("[parser:1525]Incorrect argument (should be Y or N) value: '%s'", opt.Value))
 				return nil
 			}
-		case 57541:
+		case set:
 			// SET TIFLASH REPLICA count [LOCATION LABELS 'label1', 'label2', ...]
-			if p.peekN(1).Tp != 58192 {
+			if p.peekN(1).Tp != tiFlash {
 				return opts
 			}
 			p.next() // consume SET
 			p.next() // consume TIFLASH
-			p.expect(57865)
+			p.expect(replica)
 			opt.Tp = ast.DatabaseSetTiFlashReplica
 			tiFlash := &ast.TiFlashReplicaSpec{}
 			tiFlash.Count = p.parseUint64()
@@ -336,7 +336,7 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 				}
 				p.next()
 				for {
-					if tok, ok := p.expect(57353); ok {
+					if tok, ok := p.expect(stringLit); ok {
 						tiFlash.Labels = append(tiFlash.Labels, tok.Lit)
 					}
 					if _, ok := p.accept(','); !ok {
@@ -347,7 +347,7 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			opt.TiFlashReplica = tiFlash
 		default:
 			// Check for DEFAULT keyword before option
-			if _, ok := p.accept(57405); ok {
+			if _, ok := p.accept(defaultKwd); ok {
 				continue // re-loop after consuming DEFAULT
 			}
 			return opts
@@ -361,7 +361,7 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 // parseTSOValue parses a TSO integer value from an IntLit token.
 // Returns (tso, true) on success, (0, false) on failure.
 func (p *HandParser) parseTSOValue() (uint64, bool) {
-	tok, ok := p.expect(58197)
+	tok, ok := p.expect(intLit)
 	if !ok {
 		return 0, false
 	}
@@ -391,10 +391,10 @@ func (p *HandParser) parseTSOValue() (uint64, bool) {
 //   - FLASHBACK TABLE tablename [TO newname]
 //   - FLASHBACK DATABASE/SCHEMA name [TO newname]
 func (p *HandParser) parseFlashbackStmt() ast.StmtNode {
-	p.expect(58021)
+	p.expect(flashback)
 
 	switch p.peek().Tp {
-	case 57648:
+	case cluster:
 		// FLASHBACK CLUSTER TO TIMESTAMP 'str' | FLASHBACK CLUSTER TO TSO num
 		p.next()
 		tsStmt := p.parseFlashbackWithTS()
@@ -405,7 +405,7 @@ func (p *HandParser) parseFlashbackStmt() ast.StmtNode {
 			return nil
 		}
 		return tsStmt
-	case 57556:
+	case tableKwd:
 		p.next()
 		// Parse table name(s)
 		tables := p.parseTableNameList()
@@ -429,14 +429,14 @@ func (p *HandParser) parseFlashbackStmt() ast.StmtNode {
 		if len(tables) > 0 {
 			tblStmt.Table = tables[0]
 		}
-		// Handle compound 57348 without string literal → treat as TO + identifier "timestamp"
-		if _, ok := p.accept(57348); ok {
+		// Handle compound toTimestamp without string literal → treat as TO + identifier "timestamp"
+		if _, ok := p.accept(toTimestamp); ok {
 			tblStmt.NewName = "timestamp"
-		} else if _, ok := p.accept(57564); ok {
+		} else if _, ok := p.accept(to); ok {
 			tblStmt.NewName = p.next().Lit
 		}
 		return tblStmt
-	case 57398: /* SCHEMA is same token */
+	case database: /* SCHEMA is same token */
 		p.next()
 		// Parse database name
 		nameTok := p.next()
@@ -455,7 +455,7 @@ func (p *HandParser) parseFlashbackStmt() ast.StmtNode {
 		// FlashBackDatabaseStmt: FLASHBACK DATABASE name [TO newname]
 		stmt := Alloc[ast.FlashBackDatabaseStmt](p.arena)
 		stmt.DBName = dbName
-		if _, ok := p.accept(57564); ok {
+		if _, ok := p.accept(to); ok {
 			stmt.NewName = p.next().Lit
 		}
 		return stmt
@@ -466,14 +466,14 @@ func (p *HandParser) parseFlashbackStmt() ast.StmtNode {
 }
 
 func (p *HandParser) parseFlashbackWithTS() *ast.FlashBackToTimestampStmt {
-	if p.peek().Tp == 57348 && p.peekN(1).Tp == 57353 {
+	if p.peek().Tp == toTimestamp && p.peekN(1).Tp == stringLit {
 		p.next() // consume toTimestamp
 		tsStmt := Alloc[ast.FlashBackToTimestampStmt](p.arena)
-		if tok, ok := p.expect(57353); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			tsStmt.FlashbackTS = ast.NewValueExpr(tok.Lit, "", "")
 		}
 		return tsStmt
-	} else if p.peek().Tp == 57349 {
+	} else if p.peek().Tp == toTSO {
 		p.next()
 		tso, ok := p.parseTSOValue()
 		if !ok {
@@ -497,30 +497,30 @@ func (p *HandParser) parseFlashbackWithTS() *ast.FlashBackToTimestampStmt {
 //	  [DEFINER = user] [SQL SECURITY {DEFINER|INVOKER}]
 //	  VIEW name [(col_list)] AS select_stmt
 func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
-	p.expect(57389)
+	p.expect(create)
 	stmt := Alloc[ast.CreateViewStmt](p.arena)
 
 	// Set defaults (Algorithm=UNDEFINED and Security=DEFINER are zero values).
 	// CheckOption=CASCADED suppresses "WITH LOCAL CHECK OPTION" in Restore.
-	definer := Alloc[auth.UserIdentity](p.arena)
-	definer.CurrentUser = true
-	stmt.Definer = definer
+	authDefiner := Alloc[auth.UserIdentity](p.arena)
+	authDefiner.CurrentUser = true
+	stmt.Definer = authDefiner
 	stmt.CheckOption = ast.CheckOptionCascaded
 
 	// [OR REPLACE]
-	if _, ok := p.accept(57509); ok {
-		p.expect(57530)
+	if _, ok := p.accept(or); ok {
+		p.expect(replace)
 		stmt.OrReplace = true
 	}
 
 	// [ALGORITHM = {UNDEFINED|MERGE|TEMPTABLE}]
-	if _, ok := p.accept(57603); ok {
-		p.expect(58202)
+	if _, ok := p.accept(algorithm); ok {
+		p.expect(eq)
 		switch p.peek().Tp {
-		case 57785:
+		case merge:
 			p.next()
 			stmt.Algorithm = ast.AlgorithmMerge
-		case 57948:
+		case temptable:
 			p.next()
 			stmt.Algorithm = ast.AlgorithmTemptable
 		default:
@@ -531,9 +531,9 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 	}
 
 	// [DEFINER = user]
-	if _, ok := p.accept(57685); ok {
-		p.expect(58202)
-		if _, ok := p.accept(57396); ok {
+	if _, ok := p.accept(definer); ok {
+		p.expect(eq)
+		if _, ok := p.accept(currentUser); ok {
 			// already set to CurrentUser — DEFINER = CURRENT_USER
 			if _, ok := p.accept('('); ok {
 				p.accept(')')
@@ -544,19 +544,19 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 	}
 
 	// [SQL SECURITY {DEFINER|INVOKER}]
-	if _, ok := p.accept(57545); ok {
-		if _, ok := p.accept(57893); ok {
-			if _, ok := p.accept(57754); ok {
+	if _, ok := p.accept(sql); ok {
+		if _, ok := p.accept(security); ok {
+			if _, ok := p.accept(invoker); ok {
 				stmt.Security = ast.SecurityInvoker
 			} else {
 				// DEFINER or any other value → accept the token
-				p.accept(57685)
+				p.accept(definer)
 				// default is DEFINER (zero value)
 			}
 		}
 	}
 
-	p.expect(57980)
+	p.expect(view)
 
 	// View name
 	stmt.ViewName = p.parseTableName()
@@ -564,7 +564,7 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 	// Optional column list: (col1, col2, ...)
 	if _, ok := p.accept('('); ok {
 		for {
-			if tok, ok := p.expectAny(57346); ok {
+			if tok, ok := p.expectAny(identifier); ok {
 				stmt.Cols = append(stmt.Cols, ast.NewCIStr(tok.Lit))
 			}
 			if _, ok := p.accept(','); !ok {
@@ -574,33 +574,33 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 		p.expect(')')
 	}
 
-	p.expect(57369)
+	p.expect(as)
 
 	// Record the start offset of the select body (right after AS keyword).
 	selectStartOff := p.peek().Offset
 
 	// AS select_stmt (SELECT, TABLE, VALUES, WITH, or parenthesized)
 	switch p.peek().Tp {
-	case 57540:
+	case selectKwd:
 		sel := p.parseSelectStmt()
 		stmt.Select = p.maybeParseUnion(sel).(ast.StmtNode)
-	case 57590:
+	case with:
 		// CTE: WITH ... SELECT ... — call the CTE parser directly.
 		if withNode := p.parseWithStmt(); withNode != nil {
 			stmt.Select = withNode
 		}
-	case 57556:
+	case tableKwd:
 		stmt.Select = p.parseTableStmt()
-	case 57580:
+	case values:
 		stmt.Select = p.parseValuesStmt()
 	case '(':
 		// (SELECT ...) or (TABLE t) or (VALUES ...)
 		p.next() // consume '('
 		var inner ast.ResultSetNode
 		switch p.peek().Tp {
-		case 57556:
+		case tableKwd:
 			inner = p.parseTableStmt().(*ast.SelectStmt)
-		case 57580:
+		case values:
 			inner = p.parseValuesStmt().(*ast.SelectStmt)
 		default:
 			inner = p.parseSelectStmt()
@@ -626,16 +626,16 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 	selectEndOff := p.peek().Offset
 
 	// [WITH [LOCAL|CASCADED] CHECK OPTION]
-	if _, ok := p.accept(57590); ok {
+	if _, ok := p.accept(with); ok {
 		// LOCAL
-		if _, ok := p.accept(57770); ok {
+		if _, ok := p.accept(local); ok {
 			stmt.CheckOption = ast.CheckOptionLocal
 		}
 		// CASCADED is the default — accept it but don't change.
-		p.accept(57636)
+		p.accept(cascaded)
 		// CHECK OPTION
-		p.expect(57383)
-		p.accept(57507)
+		p.expect(check)
+		p.accept(option)
 	}
 
 	// Set text on the select body node, mirroring the original parser.
@@ -653,11 +653,11 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 // parsePrepareStmt parses: PREPARE stmt_name FROM preparable_stmt
 func (p *HandParser) parsePrepareStmt() ast.StmtNode {
 	stmt := Alloc[ast.PrepareStmt](p.arena)
-	p.expect(57840)
+	p.expect(prepare)
 	stmt.Name = p.parseName()
-	p.expect(57434)
+	p.expect(from)
 
-	if tok, ok := p.accept(57353); ok {
+	if tok, ok := p.accept(stringLit); ok {
 		stmt.SQLText = tok.Lit
 	} else {
 		// Must be user variable @var
@@ -675,10 +675,10 @@ func (p *HandParser) parsePrepareStmt() ast.StmtNode {
 // parseExecuteStmt parses: EXECUTE stmt_name [USING @var_name [, @var_name] ...]
 func (p *HandParser) parseExecuteStmt() ast.StmtNode {
 	stmt := Alloc[ast.ExecuteStmt](p.arena)
-	p.expect(57715)
+	p.expect(execute)
 	stmt.Name = p.parseName()
 
-	if _, ok := p.accept(57576); ok {
+	if _, ok := p.accept(using); ok {
 		for {
 			expr := p.parseVariableExpr()
 			stmt.UsingVars = append(stmt.UsingVars, expr)
@@ -694,13 +694,13 @@ func (p *HandParser) parseExecuteStmt() ast.StmtNode {
 func (p *HandParser) parseDeallocateStmt() ast.StmtNode {
 	stmt := Alloc[ast.DeallocateStmt](p.arena)
 	// Consumes DEALLOCATE if called from dispatch, or DROP if called from parseDropStmt?
-	// If called from dispatch (57683), we expect 57683.
-	// If called from parseDropStmt (57415 + 57840), we expect 57840 (Drop consumed).
-	// But here I name it parseDeallocateStmt and use p.expect(57683).
+	// If called from dispatch (deallocate), we expect deallocate.
+	// If called from parseDropStmt (drop + prepare), we expect prepare (Drop consumed).
+	// But here I name it parseDeallocateStmt and use p.expect(deallocate).
 	// Only for distinct DEALLOCATE statement.
 	// For DROP PREPARE, I'll need a different path or logic.
-	p.expect(57683)
-	p.accept(57840)
+	p.expect(deallocate)
+	p.accept(prepare)
 	stmt.Name = p.parseName()
 	return stmt
 }
@@ -708,7 +708,7 @@ func (p *HandParser) parseDeallocateStmt() ast.StmtNode {
 // parseName parses a simple identifier name.
 func (p *HandParser) parseName() string {
 	tok := p.next()
-	if tok.Tp < 57346 && tok.Tp != 57352 {
+	if tok.Tp < identifier && tok.Tp != underscoreCS {
 		p.error(tok.Offset, "expected identifier")
 		return ""
 	}

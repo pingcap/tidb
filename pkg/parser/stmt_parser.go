@@ -96,7 +96,7 @@ func (p *HandParser) ParseSQL() ([]ast.StmtNode, []error, error) {
 func (p *HandParser) parseStatement() ast.StmtNode {
 	switch p.peek().Tp {
 	// --- DML ---
-	case 57540:
+	case selectKwd:
 		if s := p.parseSelectStmt(); s != nil {
 			return p.maybeParseUnion(s).(ast.StmtNode)
 		}
@@ -116,38 +116,38 @@ func (p *HandParser) parseStatement() ast.StmtNode {
 		}
 		return nil
 
-	case 57453:
+	case insert:
 		if s := p.parseInsertStmt(false); s != nil {
 			return s
 		}
 		return nil
 
-	case 57530:
+	case replace:
 		if s := p.parseInsertStmt(true); s != nil {
 			return s
 		}
 		return nil
 
-	case 57573:
+	case update:
 		if s := p.parseUpdateStmt(); s != nil {
 			return s
 		}
 		return nil
 
-	case 57407:
+	case deleteKwd:
 		if s := p.parseDeleteStmt(); s != nil {
 			return s
 		}
 		return nil
 
-	case 57480:
+	case load:
 		if p.peekN(1).IsKeyword("STATS") {
 			return p.parseLoadStatsStmt()
 		}
 		return p.parseLoadDataStmt()
-	case 57556, 57580:
+	case tableKwd, values:
 		var s ast.StmtNode
-		if p.peek().Tp == 57556 {
+		if p.peek().Tp == tableKwd {
 			s = p.parseTableStmt()
 		} else {
 			s = p.parseValuesStmt()
@@ -160,135 +160,135 @@ func (p *HandParser) parseStatement() ast.StmtNode {
 		}
 		return nil
 
-	case 57437:
+	case grant:
 		return p.parseGrantStmt()
 
-	case 57533:
+	case revoke:
 		return p.parseRevokeStmt()
 
-	case 57626:
+	case binlog:
 		return p.parseBinlogStmt()
 
-	case 58180:
+	case split:
 		return p.parseSplitRegionStmt()
-	case 58161:
+	case distribute:
 		return p.parseDistributeTableStmt()
 
 	// --- Transaction control ---
-	case 57621, 57925:
+	case begin, start:
 		return p.parseBeginStmt()
-	case 57656:
+	case commit:
 		return p.parseCommitStmt()
-	case 57878:
+	case rollback:
 		return p.parseRollbackStmt()
-	case 57886:
+	case savepoint:
 		return p.parseSavepointStmt()
-	case 57527:
+	case release:
 		return p.parseReleaseSavepointStmt()
 
 	// --- Trivial admin ---
-	case 57575:
+	case use:
 		return p.parseUseStmt()
-	case 57693:
+	case do:
 		return p.parseDoStmt()
-	case 57570:
+	case unlock:
 		if p.peekN(1).IsKeyword("STATS") {
 			return p.parseUnlockStatsStmt()
 		}
 		return p.parseUnlockTablesStmt()
-	case 57469:
+	case kill:
 		return p.parseKillStmt()
-	case 57726:
+	case flush:
 		return p.parseFlushStmt()
-	case 57856:
+	case recommend:
 		return p.parseRecommendStmt()
-	case 57958:
+	case trace:
 		return p.parseTraceStmt()
-	case 57904:
+	case shutdown:
 		return p.parseShutdownStmt()
-	case 57871:
+	case restart:
 		return p.parseRestartStmt()
-	case 57737:
+	case help:
 		return p.parseHelpStmt()
 
 	// --- SET / SHOW ---
-	case 57541:
+	case set:
 		return p.speculate(p.parseSetStmt)
-	case 57542:
+	case show:
 		return p.parseShowStmt()
 
 	// --- DDL ---
-	case 57389:
+	case create:
 		return p.speculate(p.parseCreateStmt)
-	case 57365:
+	case alter:
 		return p.parseAlterStmt()
-	case 57415:
+	case drop:
 		return p.speculate(p.parseDropStmt)
-	case 57963:
+	case truncate:
 		return p.speculate(p.parseTruncateTableStmt)
-	case 57528:
+	case rename:
 		return p.parseRenameStmt()
-	case 57366:
+	case analyze:
 		return p.speculate(p.parseAnalyzeTableStmt)
-	case 58021:
+	case flashback:
 		return p.speculate(p.parseFlashbackStmt)
 
 	// --- Admin / Utility ---
-	case 57506:
+	case optimize:
 		return p.parseOptimizeTableStmt()
-	case 58056:
+	case plan:
 		return p.parsePlanReplayerStmt() // PLAN REPLAYER
-	case 57852:
+	case query:
 		return p.parseQueryWatchStmt() // QUERY WATCH
 
 	// --- EXPLAIN / DESCRIBE ---
-	case 57424, 57410, 57409:
+	case explain, describe, desc:
 		return p.speculate(p.parseExplainStmt)
 
 	// --- LOCK TABLES ---
-	case 57483:
+	case lock:
 		if p.peekN(1).IsKeyword("STATS") {
 			return p.parseLockStatsStmt()
 		}
 		return p.parseLockTablesStmt()
 
 	// --- Admin helpers ---
-	case 58122:
+	case admin:
 		return p.speculate(p.parseAdminStmt)
-	case 57377:
+	case call:
 		return p.speculate(p.parseCallStmt)
 
 	// --- IMPORT / BRIE / TRAFFIC / REFRESH ---
-	case 57746:
+	case importKwd:
 		return p.parseImportIntoStmt()
-	case 58153:
+	case cancel:
 		return p.parseCancelStmt()
-	case 57618, 57872:
+	case backup, restore:
 		return p.parseBRIEStmt()
-	case 58107:
+	case traffic:
 		return p.parseTrafficStmt()
-	case 57831:
+	case pause:
 		p.next() // consume PAUSE
 		return p.parsePauseBackupLogsStmt()
-	case 57874:
+	case resume:
 		p.next() // consume RESUME
 		return p.parseResumeBackupLogsStmt()
-	case 58082:
+	case stop:
 		p.next() // consume STOP
 		return p.parseStopBackupLogsStmt()
-	case 57849:
+	case purge:
 		p.next() // consume PURGE
 		return p.parsePurgeBackupLogsStmt()
-	case 58123:
+	case batch:
 		return p.parseNonTransactionalDMLStmt()
-	case 57859:
+	case refresh:
 		return p.parseRefreshStmt()
 
-	case 57590:
+	case with:
 		return p.parseWithStmt()
-	case 57634:
+	case calibrate:
 		return p.parseCalibrateResourceStmt()
-	case 57346:
+	case identifier:
 		switch strings.ToUpper(p.peek().Lit) {
 		case "SLOW":
 			return p.parseSlowQueryStmt()
@@ -310,13 +310,13 @@ func (p *HandParser) parseStatement() ast.StmtNode {
 		}
 
 	// --- PREPARE / EXECUTE / DEALLOCATE ---
-	case 57840:
+	case prepare:
 		return p.parsePrepareStmt()
-	case 57715:
+	case execute:
 		return p.parseExecuteStmt()
-	case 57683:
+	case deallocate:
 		return p.parseDeallocateStmt()
-	case 57857:
+	case recover:
 		return p.parseRecoverTableStmt()
 
 	default:
@@ -342,34 +342,34 @@ func (p *HandParser) parseCreateStmt() ast.StmtNode {
 	// [UNIQUE | FULLTEXT | SPATIAL]
 	var indexType int
 	switch p.peek().Tp {
-	case 57569:
+	case unique:
 		p.next()
 		indexType = 1
-	case 57435:
+	case fulltext:
 		p.next()
 		indexType = 2
-	case 57544:
+	case spatial:
 		p.next()
 		indexType = 3
-	case 57979:
+	case vectorType:
 		p.next()
 		indexType = 4
-	case 57652:
+	case columnar:
 		p.next()
 		indexType = 5
 	}
 
 	switch p.peek().Tp {
-	case 57449, 57467:
+	case index, key:
 		p.lexer.Restore(mark)
 		return p.parseCreateIndexStmt()
-	case 57896:
+	case sequence:
 		p.lexer.Restore(mark)
 		return p.parseCreateSequenceStmt()
-	case 58054:
+	case placement:
 		p.lexer.Restore(mark)
 		return p.parseCreatePlacementPolicyStmt()
-	case 57509:
+	case or:
 		// CREATE OR REPLACE ... — peek past OR REPLACE to disambiguate.
 		mark2 := p.lexer.Mark()
 		p.next() // consume OR
@@ -378,67 +378,67 @@ func (p *HandParser) parseCreateStmt() ast.StmtNode {
 		p.lexer.Restore(mark2) // restore back to OR
 
 		switch nextTp {
-		case 57980, 57603, 57685, 57545:
+		case view, algorithm, definer, sql:
 			p.lexer.Restore(mark)
 			return p.parseCreateViewStmt()
 		}
 
 		p.lexer.Restore(mark)
 		return p.parseCreatePlacementPolicyStmt()
-	case 57398: // 57398 == 57398
+	case database: // database == database
 		p.lexer.Restore(mark)
 		return p.parseCreateDatabaseStmt()
-	case 57869:
+	case resource:
 		p.lexer.Restore(mark)
 		return p.parseCreateResourceGroupStmt()
-	case 57519:
+	case procedure:
 		p.lexer.Restore(mark)
 		return p.parseCreateProcedureStmt()
-	case 57980:
+	case view:
 		p.lexer.Restore(mark)
 		return p.parseCreateViewStmt()
-	case 57556:
+	case tableKwd:
 		_ = indexType
 		p.lexer.Restore(mark)
 		return p.parseCreateTableStmt()
-	case 57947:
+	case temporary:
 		_ = indexType
 		p.lexer.Restore(mark)
 		return p.parseCreateTableStmt()
-	case 57975:
+	case user:
 		p.lexer.Restore(mark)
 		return p.parseCreateUserStmt()
-	case 57877:
+	case role:
 		p.lexer.Restore(mark)
 		return p.parseCreateUserStmt()
-	case 57603, 57685, 57545:
+	case algorithm, definer, sql:
 		// CREATE ALGORITHM = ... VIEW, CREATE DEFINER = ... VIEW, CREATE SQL SECURITY ... VIEW
 		p.lexer.Restore(mark)
 		return p.parseCreateViewStmt()
-	case 57733:
+	case global:
 		// CREATE GLOBAL BINDING ...
 		p.next() // consume GLOBAL
-		if p.peek().Tp == 57623 {
+		if p.peek().Tp == binding {
 			p.next() // consume BINDING
 			return p.parseCreateBindingStmt(true)
 		}
 		// CREATE GLOBAL TEMPORARY TABLE ...
 		p.lexer.Restore(mark)
 		return p.parseCreateTableStmt()
-	case 57899:
+	case session:
 		// CREATE SESSION BINDING ...
 		p.next() // consume SESSION
-		if p.peek().Tp == 57623 {
+		if p.peek().Tp == binding {
 			p.next() // consume BINDING
 			return p.parseCreateBindingStmt(false)
 		}
 		p.lexer.Restore(mark)
 		return nil
-	case 57623:
+	case binding:
 		// CREATE BINDING (default session scope)
 		p.next() // consume BINDING
 		return p.parseCreateBindingStmt(false)
-	case 58181:
+	case statistics:
 		return p.parseCreateStatisticsStmt()
 	default:
 		// Check identifier-based keywords
@@ -465,25 +465,25 @@ func (p *HandParser) parseAlterStmt() ast.StmtNode {
 	p.next() // consume ALTER
 
 	switch p.peek().Tp {
-	case 57398: // 57398 == 57398
+	case database: // database == database
 		p.lexer.Restore(mark)
 		return p.parseAlterDatabaseStmt()
-	case 58054:
+	case placement:
 		p.lexer.Restore(mark)
 		return p.parseAlterPlacementPolicyStmt()
-	case 57896:
+	case sequence:
 		p.lexer.Restore(mark)
 		return p.parseAlterSequenceStmt()
-	case 57869:
+	case resource:
 		p.lexer.Restore(mark)
 		return p.parseAlterResourceGroupStmt()
-	case 57752:
+	case instance:
 		p.lexer.Restore(mark)
 		return p.parseAlterInstanceStmt()
-	case 57520:
+	case rangeKwd:
 		p.lexer.Restore(mark)
 		return p.parseAlterRangeStmt()
-	case 57975:
+	case user:
 		p.lexer.Restore(mark)
 		return p.parseAlterUserStmt()
 	default:
@@ -498,7 +498,7 @@ func (p *HandParser) parseRenameStmt() ast.StmtNode {
 	p.next() // consume RENAME
 
 	switch p.peek().Tp {
-	case 57975:
+	case user:
 		p.lexer.Restore(mark)
 		return p.parseRenameUserStmt()
 	default:

@@ -23,16 +23,16 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 	cons := Alloc[ast.Constraint](p.arena)
 
 	// Optional CONSTRAINT [symbol]
-	if _, ok := p.accept(57386); ok {
+	if _, ok := p.accept(constraint); ok {
 		if isIdentLike(p.peek().Tp) {
 			cons.Name = p.next().Lit
 		}
 	}
 
 	switch p.peek().Tp {
-	case 57518:
+	case primary:
 		p.next()
-		p.expect(57467)
+		p.expect(key)
 		cons.Tp = ast.ConstraintPrimaryKey
 		// Optional index name: PRIMARY KEY pk_name (col)
 		if isIdentLike(p.peek().Tp) && p.peek().Tp != '(' {
@@ -40,10 +40,10 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		}
 		// Optional USING BTREE/HASH before column list
 		p.parseIndexDefinition(cons)
-	case 57569:
+	case unique:
 		p.next()
 		// UNIQUE [INDEX|KEY] [index_name]
-		if p.peek().Tp == 57449 || p.peek().Tp == 57467 {
+		if p.peek().Tp == index || p.peek().Tp == key {
 			p.next()
 		}
 		cons.Tp = ast.ConstraintUniq
@@ -52,9 +52,9 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		}
 		// Optional USING BTREE/HASH before column list
 		p.parseIndexDefinition(cons)
-	case 57433:
+	case foreign:
 		p.next()
-		p.expect(57467)
+		p.expect(key)
 		cons.Tp = ast.ConstraintForeignKey
 		// IF NOT EXISTS
 		cons.IfNotExists = p.acceptIfNotExists()
@@ -63,21 +63,21 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		}
 		cons.Keys = p.parseIndexPartSpecifications()
 		cons.Refer = p.parseReferenceDef()
-	case 57383:
+	case check:
 		p.next()
 		cons.Tp = ast.ConstraintCheck
 		p.expect('(')
 		cons.Expr = p.parseExpression(precNone)
 		p.expect(')')
-		if _, ok := p.accept(57498); ok {
-			p.expect(57702)
+		if _, ok := p.accept(not); ok {
+			p.expect(enforced)
 			cons.Enforced = false
-		} else if _, ok := p.accept(57702); ok {
+		} else if _, ok := p.accept(enforced); ok {
 			cons.Enforced = true
 		} else {
 			cons.Enforced = true
 		}
-	case 57449, 57467:
+	case index, key:
 		p.next()
 		cons.Tp = ast.ConstraintIndex
 		// IF NOT EXISTS
@@ -92,9 +92,9 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		}
 		// Optional USING BTREE/HASH before column list
 		p.parseIndexDefinition(cons)
-	case 57435:
+	case fulltext:
 		p.next()
-		if p.peek().Tp == 57467 || p.peek().Tp == 57449 {
+		if p.peek().Tp == key || p.peek().Tp == index {
 			p.next()
 		}
 		cons.Tp = ast.ConstraintFulltext
@@ -103,15 +103,15 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		}
 		cons.Keys = p.parseIndexPartSpecifications()
 		cons.Option = p.parseIndexOptions()
-	case 57979, 57652:
+	case vectorType, columnar:
 		var consTp ast.ConstraintType
-		if p.peek().Tp == 57979 {
+		if p.peek().Tp == vectorType {
 			consTp = ast.ConstraintVector
 		} else {
 			consTp = ast.ConstraintColumnar
 		}
 		p.next()
-		p.expect(57449)
+		p.expect(index)
 		cons.IfNotExists = p.acceptIfNotExists()
 		if isIdentLike(p.peek().Tp) && p.peek().Tp != '(' {
 			cons.Name = p.next().Lit
@@ -159,9 +159,9 @@ func (p *HandParser) parseIndexPartSpecifications() []*ast.IndexPartSpecificatio
 			return nil
 		}
 
-		if _, ok := p.accept(57370); ok {
+		if _, ok := p.accept(asc); ok {
 			// default
-		} else if _, ok := p.accept(57409); ok {
+		} else if _, ok := p.accept(desc); ok {
 			part.Desc = true
 		}
 
@@ -176,7 +176,7 @@ func (p *HandParser) parseIndexPartSpecifications() []*ast.IndexPartSpecificatio
 
 // parseReferenceDef parses REFERENCES tbl (cols) [MATCH FULL|PARTIAL|SIMPLE] [ON DELETE opt] [ON UPDATE opt]
 func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
-	p.expect(57525)
+	p.expect(references)
 	ref := Alloc[ast.ReferenceDef](p.arena)
 	ref.Table = p.parseTableName()
 	// Column list is optional (yacc: IndexPartSpecificationListOpt)
@@ -189,7 +189,7 @@ func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 	ref.OnUpdate = &ast.OnUpdateOpt{ReferOpt: ast.ReferOptionNoOption}
 
 	// Parse optional MATCH FULL | PARTIAL | SIMPLE
-	if _, ok := p.accept(57488); ok {
+	if _, ok := p.accept(match); ok {
 		switch {
 		case p.peek().IsKeyword("FULL"):
 			p.next()
@@ -204,13 +204,13 @@ func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 	}
 
 	// Parse optional ON DELETE / ON UPDATE
-	for p.peek().Tp == 57505 {
+	for p.peek().Tp == on {
 		p.next() // consume ON
 		switch p.peek().Tp {
-		case 57407:
+		case deleteKwd:
 			p.next()
 			ref.OnDelete = &ast.OnDeleteOpt{ReferOpt: p.parseReferAction()}
-		case 57573:
+		case update:
 			p.next()
 			ref.OnUpdate = &ast.OnUpdateOpt{ReferOpt: p.parseReferAction()}
 		default:
@@ -223,24 +223,24 @@ func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 // parseReferAction parses a referential action: RESTRICT | CASCADE | SET NULL | NO ACTION | SET DEFAULT
 func (p *HandParser) parseReferAction() ast.ReferOptionType {
 	switch p.peek().Tp {
-	case 57532:
+	case restrict:
 		p.next()
 		return ast.ReferOptionRestrict
-	case 57378:
+	case cascade:
 		p.next()
 		return ast.ReferOptionCascade
-	case 57541:
+	case set:
 		p.next()
-		if _, ok := p.accept(57502); ok {
+		if _, ok := p.accept(null); ok {
 			return ast.ReferOptionSetNull
 		}
-		if _, ok := p.accept(57405); ok {
+		if _, ok := p.accept(defaultKwd); ok {
 			return ast.ReferOptionSetDefault
 		}
 		return ast.ReferOptionNoOption
-	case 57799:
+	case no:
 		p.next()
-		p.accept(57596)
+		p.accept(action)
 		return ast.ReferOptionNoAction
 	default:
 		return ast.ReferOptionNoOption
@@ -250,7 +250,7 @@ func (p *HandParser) parseReferAction() ast.ReferOptionType {
 // parseOptionalUsingIndexType parses optional USING BTREE/HASH before the column list.
 // Returns nil if no USING clause is present.
 func (p *HandParser) parseOptionalUsingIndexType() *ast.IndexOption {
-	if p.peek().Tp != 57576 && p.peek().Tp != 57968 {
+	if p.peek().Tp != using && p.peek().Tp != tp {
 		return nil
 	}
 	p.next() // consume USING or TYPE
@@ -262,22 +262,22 @@ func (p *HandParser) parseOptionalUsingIndexType() *ast.IndexOption {
 // resolveIndexType maps the current token to an IndexType constant and consumes it.
 func (p *HandParser) resolveIndexType() ast.IndexType {
 	switch p.peek().Tp {
-	case 57631:
+	case btree:
 		p.next()
 		return ast.IndexTypeBtree
-	case 57736:
+	case hash:
 		p.next()
 		return ast.IndexTypeHash
-	case 57883:
+	case rtree:
 		p.next()
 		return ast.IndexTypeRtree
-	case 58050:
+	case hnsw:
 		p.next()
 		return ast.IndexTypeHNSW
-	case 57742:
+	case hypo:
 		p.next()
 		return ast.IndexTypeHypo
-	case 58033:
+	case inverted:
 		p.next()
 		return ast.IndexTypeInverted
 	default:
@@ -307,53 +307,53 @@ func (p *HandParser) parseIndexOptions() *ast.IndexOption {
 	opt := Alloc[ast.IndexOption](p.arena)
 	for {
 		switch p.peek().Tp {
-		case 57576, 57968:
+		case using, tp:
 			p.next()
 			resolved := p.resolveIndexType()
 			if resolved == ast.IndexTypeInvalid {
 				return opt
 			}
 			opt.Tp = resolved
-		case 57760:
+		case keyBlockSize:
 			p.next()
-			p.accept(58202)
-			if tok, ok := p.expectAny(58197, 58196); ok {
+			p.accept(eq)
+			if tok, ok := p.expectAny(intLit, decLit); ok {
 				opt.KeyBlockSize = tokenItemToUint64(tok.Item)
 			}
-		case 57597:
+		case addColumnarReplicaOnDemand:
 			p.next()
 			opt.AddColumnarReplicaOnDemand = 1
-		case 57655:
+		case comment:
 			p.next()
-			if tok, ok := p.expect(57353); ok {
+			if tok, ok := p.expect(stringLit); ok {
 				opt.Comment = tok.Lit
 			}
-		case 57590:
+		case with:
 			p.next()
-			p.expect(57825)
-			if tok, ok := p.expect(57346); ok {
+			p.expect(parser)
+			if tok, ok := p.expect(identifier); ok {
 				opt.ParserName = ast.NewCIStr(tok.Lit)
 			}
-		case 57981, 57753:
-			if p.next().Tp == 57981 {
+		case visible, invisible:
+			if p.next().Tp == visible {
 				opt.Visibility = ast.IndexVisibilityVisible
 			} else {
 				opt.Visibility = ast.IndexVisibilityInvisible
 			}
-		case 57649, 57805:
-			if p.next().Tp == 57649 {
+		case clustered, nonclustered:
+			if p.next().Tp == clustered {
 				opt.PrimaryKeyTp = ast.PrimaryKeyTypeClustered
 			} else {
 				opt.PrimaryKeyTp = ast.PrimaryKeyTypeNonClustered
 			}
-		case 57842:
+		case preSplitRegions:
 			p.next()
-			p.accept(58202)
+			p.accept(eq)
 			if _, ok := p.accept('('); ok {
 				opt.SplitOpt = p.parseSplitOption()
 				p.expect(')')
 			} else {
-				if tok, ok := p.expectAny(58197, 58196); ok {
+				if tok, ok := p.expectAny(intLit, decLit); ok {
 					opt.SplitOpt = Alloc[ast.SplitOption](p.arena)
 					if val, ok := tok.Item.(int64); ok {
 						opt.SplitOpt.Num = val
@@ -362,16 +362,16 @@ func (p *HandParser) parseIndexOptions() *ast.IndexOption {
 					}
 				}
 			}
-		case 57587:
+		case where:
 			p.next()
 			opt.Condition = p.parseExpression(precNone)
-		case 57733, 57770:
-			opt.Global = p.next().Tp == 57733
-		case 57890:
+		case global, local:
+			opt.Global = p.next().Tp == global
+		case secondaryEngineAttribute:
 			p.next()
-			if _, ok := p.accept(58202); ok {
+			if _, ok := p.accept(eq); ok {
 			}
-			if tok, ok := p.expect(57353); ok {
+			if tok, ok := p.expect(stringLit); ok {
 				opt.SecondaryEngineAttr = tok.Lit
 			}
 		default:

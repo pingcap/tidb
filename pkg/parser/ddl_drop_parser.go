@@ -26,64 +26,64 @@ import (
 // parseDropStmt dispatches DROP TABLE/VIEW/DATABASE/INDEX.
 func (p *HandParser) parseDropStmt() ast.StmtNode {
 	mark := p.lexer.Mark()
-	p.expect(57415)
+	p.expect(drop)
 
 	switch p.peek().Tp {
-	case 57947:
+	case temporary:
 		p.next()
 		return p.parseDropTable(ast.TemporaryLocal)
-	case 57733:
+	case global:
 		mark := p.lexer.Mark()
 		p.next()
-		if p.peek().Tp == 57623 {
+		if p.peek().Tp == binding {
 			p.next() // consume BINDING
 			return p.parseDropBindingStmt(true)
 		}
-		if _, ok := p.accept(57947); ok {
+		if _, ok := p.accept(temporary); ok {
 			return p.parseDropTable(ast.TemporaryGlobal)
 		}
 		p.lexer.Restore(mark)
 		return nil
-	case 57899:
+	case session:
 		p.next()
-		if p.peek().Tp == 57623 {
+		if p.peek().Tp == binding {
 			p.next() // consume BINDING
 			return p.parseDropBindingStmt(false)
 		}
 		return nil
-	case 57623:
+	case binding:
 		p.next()
 		return p.parseDropBindingStmt(false) // default session scope
-	case 58181:
+	case statistics:
 		return p.parseDropStatisticsStmt()
-	case 57556, 57944:
+	case tableKwd, tables:
 		return p.parseDropTable(ast.TemporaryNone)
-	case 57980:
+	case view:
 		p.next()
 		return p.parseDropView()
-	case 57896:
+	case sequence:
 		return p.parseDropSequenceStmt()
-	case 57975, 57877:
+	case user, role:
 		p.lexer.Restore(mark)
 		return p.parseDropUserStmt()
-	case 57869:
+	case resource:
 		return p.parseDropResourceGroupStmt()
-	case 58054:
+	case placement:
 		return p.parseDropPlacementPolicyStmt()
-	case 57398: // 57398 alias
+	case database: // database alias
 		p.next()
 		return p.parseDropDatabase()
-	case 57449:
+	case index:
 		p.next()
 		return p.parseDropIndex()
-	case 57519:
+	case procedure:
 		return p.parseDropProcedureStmt()
-	case 57840:
+	case prepare:
 		// DROP PREPARE stmt_name -> same as DEALLOCATE PREPARE
-		// parseDeallocateStmt expects 57683, then 57840.
-		// Here we consumed 57415. Next is 57840.
+		// parseDeallocateStmt expects deallocate, then prepare.
+		// Here we consumed drop. Next is prepare.
 		// We can call a helper or handle it here.
-		// parseDeallocateStmt: p.expect(57683); p.accept(57840);
+		// parseDeallocateStmt: p.expect(deallocate); p.accept(prepare);
 		// So we can't reuse parseDeallocateStmt directly if it strictly expects DEALLOCATE.
 		// Let's modify parseDeallocateStmt to be more flexible or duplicate logic.
 		// Duplicating logic is simpler for now:
@@ -91,7 +91,7 @@ func (p *HandParser) parseDropStmt() ast.StmtNode {
 		p.next() // consume PREPARE
 		stmt.Name = p.parseName()
 		return stmt
-	case 58182:
+	case stats:
 		return p.parseDropStatsStmt()
 	default:
 		return nil
@@ -112,7 +112,7 @@ func (p *HandParser) parseDropStatsStmt() ast.StmtNode {
 	if p.peek().IsKeyword("GLOBAL") {
 		p.next()
 		stmt.IsGlobalStats = true
-	} else if _, ok := p.accept(57515); ok {
+	} else if _, ok := p.accept(partition); ok {
 		for {
 			nameTok := p.next()
 			stmt.PartitionNames = append(stmt.PartitionNames, ast.NewCIStr(nameTok.Lit))
@@ -160,7 +160,7 @@ func (p *HandParser) parseTableNameList() []*ast.TableName {
 
 // parseDropTable parses: [TEMPORARY|GLOBAL TEMPORARY] TABLE [IF EXISTS] t1, t2 [RESTRICT|CASCADE]
 func (p *HandParser) parseDropTable(tmpKw ast.TemporaryKeyword) ast.StmtNode {
-	p.acceptAny(57556, 57944)
+	p.acceptAny(tableKwd, tables)
 	return p.parseDropTableOrView(false, tmpKw)
 }
 
@@ -189,7 +189,7 @@ func (p *HandParser) parseDropIndex() ast.StmtNode {
 	stmt.IfExists = p.acceptIfExists()
 	tok := p.next()
 	stmt.IndexName = tok.Lit
-	p.expect(57505)
+	p.expect(on)
 	stmt.Table = p.parseTableName()
 	stmt.LockAlg = p.parseIndexLockAndAlgorithm()
 	return stmt
@@ -202,8 +202,8 @@ func (p *HandParser) parseDropIndex() ast.StmtNode {
 // parseTruncateTableStmt parses: TRUNCATE [TABLE] tablename
 func (p *HandParser) parseTruncateTableStmt() ast.StmtNode {
 	stmt := Alloc[ast.TruncateTableStmt](p.arena)
-	p.expect(57963)
-	p.accept(57556) // optional TABLE keyword
+	p.expect(truncate)
+	p.accept(tableKwd) // optional TABLE keyword
 	stmt.Table = p.parseTableName()
 	if stmt.Table == nil {
 		return nil
@@ -218,8 +218,8 @@ func (p *HandParser) parseTruncateTableStmt() ast.StmtNode {
 // parseRenameTableStmt parses: RENAME TABLE t1 TO t2 [, t3 TO t4 ...]
 func (p *HandParser) parseRenameTableStmt() ast.StmtNode {
 	stmt := Alloc[ast.RenameTableStmt](p.arena)
-	p.expect(57528)
-	p.expect(57556)
+	p.expect(rename)
+	p.expect(tableKwd)
 
 	first := p.parseTableToTable()
 	if first == nil {
@@ -246,7 +246,7 @@ func (p *HandParser) parseTableToTable() *ast.TableToTable {
 	if oldTable == nil {
 		return nil
 	}
-	p.expect(57564)
+	p.expect(to)
 	newTable := p.parseTableName()
 	if newTable == nil {
 		return nil
@@ -266,7 +266,7 @@ func (p *HandParser) parseTableToTable() *ast.TableToTable {
 //	[WITH n BUCKETS, n TOPN, ...]
 func (p *HandParser) parseAnalyzeTableStmt() ast.StmtNode {
 	stmt := Alloc[ast.AnalyzeTableStmt](p.arena)
-	p.expect(57366)
+	p.expect(analyze)
 
 	// Optional: NO_WRITE_TO_BINLOG or LOCAL
 	stmt.NoWriteToBinLog = p.acceptNoWriteToBinlog()
@@ -277,29 +277,29 @@ func (p *HandParser) parseAnalyzeTableStmt() ast.StmtNode {
 		stmt.Incremental = true
 	}
 
-	p.expect(57556)
+	p.expect(tableKwd)
 	stmt.TableNames = p.parseTableNameList()
 	if stmt.TableNames == nil {
 		return nil
 	}
 
 	// Optional: PARTITION p1[, p2]
-	if _, ok := p.accept(57515); ok {
+	if _, ok := p.accept(partition); ok {
 		stmt.PartitionNames = p.parseIdentList()
 	}
 
 	// Optional: UPDATE HISTOGRAM ON c1[,c2] | DROP HISTOGRAM ON c1[,c2]
-	if p.peek().Tp == 57573 || p.peek().Tp == 57415 {
+	if p.peek().Tp == update || p.peek().Tp == drop {
 		histTok := p.peek()
 		if p.peekN(1).IsKeyword("HISTOGRAM") {
 			p.next() // consume UPDATE/DROP
 			p.next() // consume HISTOGRAM
-			if histTok.Tp == 57573 {
+			if histTok.Tp == update {
 				stmt.HistogramOperation = ast.HistogramOperationUpdate
 			} else {
 				stmt.HistogramOperation = ast.HistogramOperationDrop
 			}
-			p.expect(57505)
+			p.expect(on)
 			// Parse column names (simple identifiers, NOT dotted names)
 			cols, ok := p.parseSimpleColumnNameList()
 			if !ok {
@@ -313,7 +313,7 @@ func (p *HandParser) parseAnalyzeTableStmt() ast.StmtNode {
 	}
 
 	// Optional: INDEX [idx1[, idx2]]
-	if _, ok := p.accept(57449); ok {
+	if _, ok := p.accept(index); ok {
 		stmt.IndexFlag = true
 		// Parse optional index names
 		for isIdentLike(p.peek().Tp) {
@@ -328,7 +328,7 @@ func (p *HandParser) parseAnalyzeTableStmt() ast.StmtNode {
 	}
 
 	// Optional: ALL COLUMNS | PREDICATE COLUMNS | COLUMNS c1[, c2]
-	if p.peek().Tp == 57364 && p.peekN(1).IsKeyword("COLUMNS") {
+	if p.peek().Tp == all && p.peekN(1).IsKeyword("COLUMNS") {
 		p.next() // ALL
 		p.next() // COLUMNS
 		stmt.ColumnChoice = ast.AllColumns
@@ -352,12 +352,12 @@ func (p *HandParser) parseAnalyzeTableStmt() ast.StmtNode {
 
 // parseAnalyzeWithOpts parses optional WITH n BUCKETS, n TOPN, etc.
 func (p *HandParser) parseAnalyzeWithOpts(stmt *ast.AnalyzeTableStmt) {
-	if _, ok := p.accept(57590); !ok {
+	if _, ok := p.accept(with); !ok {
 		return
 	}
 	for {
 		// Parse value (integer or decimal)
-		valTok, ok := p.expectAny(58197, 58196)
+		valTok, ok := p.expectAny(intLit, decLit)
 		if !ok {
 			return
 		}
@@ -395,7 +395,7 @@ func (p *HandParser) parseAnalyzeWithOpts(stmt *ast.AnalyzeTableStmt) {
 // parseDropProcedureStmt parses: DROP PROCEDURE [IF EXISTS] sp_name
 func (p *HandParser) parseDropProcedureStmt() ast.StmtNode {
 	stmt := Alloc[ast.DropProcedureStmt](p.arena)
-	p.expect(57519)
+	p.expect(procedure)
 	stmt.IfExists = p.acceptIfExists()
 	stmt.ProcedureName = p.parseTableName()
 	return stmt

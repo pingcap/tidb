@@ -30,13 +30,13 @@ func markIsInBraces(node ast.Node) {
 // parsePriority parses optional LOW_PRIORITY / HIGH_PRIORITY / DELAYED modifiers.
 func (p *HandParser) parsePriority() mysql.PriorityEnum {
 	switch p.peek().Tp {
-	case 57487:
+	case lowPriority:
 		p.next()
 		return mysql.LowPriority
-	case 57441:
+	case highPriority:
 		p.next()
 		return mysql.HighPriority
-	case 57406:
+	case delayed:
 		p.next()
 		return mysql.DelayedPriority
 	}
@@ -71,12 +71,12 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 	stmt.Priority = p.parsePriority()
 
 	// Optional IGNORE.
-	if _, ok := p.accept(57446); ok {
+	if _, ok := p.accept(ignore); ok {
 		stmt.IgnoreErr = true
 	}
 
 	// Optional INTO.
-	p.accept(57463)
+	p.accept(into)
 
 	// Table reference. For INSERT the parser uses TableName + PartitionNameListOpt.
 	tn := p.parseTableName()
@@ -85,7 +85,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 	}
 
 	// Optional PARTITION clause.
-	if _, ok := p.accept(57515); ok {
+	if _, ok := p.accept(partition); ok {
 		p.expect('(')
 		var names []ast.CIStr
 		for {
@@ -111,7 +111,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			// Empty column list: INSERT INTO foo () VALUES ()
 			p.next() // consume ')'
 			stmt.Columns = make([]*ast.ColumnName, 0)
-		} else if p.peek().Tp == 57540 || p.peek().Tp == 57590 {
+		} else if p.peek().Tp == selectKwd || p.peek().Tp == with {
 			// Subquery in parens: INSERT INTO t1 (SELECT ...).
 			query := p.parseSelectStmt()
 			res := p.maybeParseUnion(query)
@@ -133,33 +133,33 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 
 	// VALUES or SELECT
 	switch p.peek().Tp {
-	case 57580, 57977: // VALUES
+	case values, value: // VALUES
 		stmt.Lists = p.parseValueList(isReplace, false)
-	case 57540: // SELECT
+	case selectKwd: // SELECT
 		sel := p.parseSelectStmt()
 		stmt.Select = p.maybeParseUnion(sel)
-	case 57590: // WITH [RECURSIVE] cte_list SELECT ...
+	case with: // WITH [RECURSIVE] cte_list SELECT ...
 		withStmt := p.parseWithStmt()
 		if rs, ok := withStmt.(ast.ResultSetNode); ok {
 			stmt.Select = rs
 		}
-	case 57556: // TABLE
+	case tableKwd: // TABLE
 		// INSERT INTO ... TABLE ...
 		stmt.Select = p.parseTableStmt().(*ast.SelectStmt)
 	case '(': // (SELECT ...) or (VALUES ...)
 		p.next()
-		if p.peek().Tp == 57540 {
+		if p.peek().Tp == selectKwd {
 			sel := p.parseSelectStmt()
 			stmt.Select = p.maybeParseUnion(sel)
 			p.expect(')')
 			markIsInBraces(stmt.Select)
-		} else if p.peek().Tp == 57580 { // (VALUES ...)
+		} else if p.peek().Tp == values { // (VALUES ...)
 			stmt.Lists = p.parseValueList(isReplace, false) // subquery VALUES? Assuming false for now.
 			p.expect(')')
 		} else {
 			// Assuming recursive calls handle complex cases.
 		}
-	case 57541: // SET c1=v1
+	case set: // SET c1=v1
 		if hasColumnList {
 			p.error(p.peek().Offset, "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near 'SET'")
 			return nil
@@ -184,10 +184,10 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 	}
 
 	// ON DUPLICATE KEY UPDATE
-	if _, ok := p.accept(57505); ok {
-		p.expect(57694) // 57694
-		p.expect(57467)
-		p.expect(57573)
+	if _, ok := p.accept(on); ok {
+		p.expect(duplicate) // duplicate
+		p.expect(key)
+		p.expect(update)
 		for {
 			assign := p.parseAssignment()
 			stmt.OnDuplicate = append(stmt.OnDuplicate, assign)
@@ -202,15 +202,15 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 
 // parseValueList parses VALUES (v1, v2), (v3, v4), ...
 func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode {
-	p.expectAny(57580, 57977)
+	p.expectAny(values, value)
 
 	var lists [][]ast.ExprNode
 	for {
 		// (val1, val2, ...) || ROW(val1, val2, ...)
-		if _, ok := p.accept(57536); ok {
+		if _, ok := p.accept(row); ok {
 			// consume ROW
 		} else if enforceRow {
-			p.expect(57536)
+			p.expect(row)
 		}
 		p.expect('(')
 		var list []ast.ExprNode
@@ -238,12 +238,12 @@ func (p *HandParser) parseAssignment() *ast.Assignment {
 	if col == nil {
 		return nil
 	}
-	p.expectAny(58202, 58201)
+	p.expectAny(eq, assignmentEq)
 
 	node := Alloc[ast.Assignment](p.arena)
 	node.Column = col
 
-	if _, ok := p.accept(57405); ok {
+	if _, ok := p.accept(defaultKwd); ok {
 		node.Expr = Alloc[ast.DefaultExpr](p.arena)
 	} else {
 		node.Expr = p.parseExpression(precNone)
@@ -254,7 +254,7 @@ func (p *HandParser) parseAssignment() *ast.Assignment {
 // parseUpdateStmt parses UPDATE [LOW_PRIORITY] [IGNORE] table_reference SET col_name1={expr1|DEFAULT} [, col_name2={expr2|DEFAULT}] ... [WHERE where_condition] [ORDER BY ...] [LIMIT row_count]
 func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 	stmt := Alloc[ast.UpdateStmt](p.arena)
-	p.expect(57573)
+	p.expect(update)
 
 	// Optional optimizer hints (/*+ ... */).
 	stmt.TableHints = p.parseOptHints()
@@ -263,7 +263,7 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 	stmt.Priority = p.parsePriority()
 
 	// [IGNORE]
-	if _, ok := p.accept(57446); ok {
+	if _, ok := p.accept(ignore); ok {
 		stmt.IgnoreErr = true
 	}
 
@@ -271,7 +271,7 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 	stmt.TableRefs = p.parseTableRefs()
 
 	// SET
-	p.expect(57541)
+	p.expect(set)
 	for {
 		assign := p.parseAssignment()
 		stmt.List = append(stmt.List, assign)
@@ -281,7 +281,7 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 	}
 
 	// [WHERE]
-	if _, ok := p.accept(57587); ok {
+	if _, ok := p.accept(where); ok {
 		stmt.Where = p.parseExpression(precNone)
 	}
 
@@ -293,7 +293,7 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 		}
 	}
 
-	if p.peek().Tp == 57510 {
+	if p.peek().Tp == order {
 		if isMultiTable {
 			p.error(p.peek().Offset, "Incorrect usage of UPDATE and ORDER BY")
 			return nil
@@ -302,7 +302,7 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 	}
 
 	// [LIMIT]
-	if p.peek().Tp == 57477 {
+	if p.peek().Tp == limit {
 		if isMultiTable {
 			p.error(p.peek().Offset, "Incorrect usage of UPDATE and LIMIT")
 			return nil
@@ -319,7 +319,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	stmt := Alloc[ast.DeleteStmt](p.arena)
 	stmt.IsMultiTable = false
 	stmt.BeforeFrom = false
-	p.expect(57407)
+	p.expect(deleteKwd)
 
 	// Optional optimizer hints (/*+ ... */).
 	stmt.TableHints = p.parseOptHints()
@@ -328,12 +328,12 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	stmt.Priority = p.parsePriority()
 
 	// [QUICK]
-	if _, ok := p.accept(57853); ok {
+	if _, ok := p.accept(quick); ok {
 		stmt.Quick = true
 	}
 
 	// [IGNORE]
-	if _, ok := p.accept(57446); ok {
+	if _, ok := p.accept(ignore); ok {
 		stmt.IgnoreErr = true
 	}
 
@@ -341,19 +341,19 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	// Multi-table: DELETE t1, t2 FROM t1, t2, t3 ...
 	// Single-table: DELETE FROM t1 ...
 
-	if p.peek().Tp != 57434 {
+	if p.peek().Tp != from {
 		stmt.IsMultiTable = true
 		stmt.BeforeFrom = true
 		stmt.Tables = p.parseDeleteTableList()
 	}
 
-	p.expect(57434)
+	p.expect(from)
 
 	// Table refs
 	stmt.TableRefs = p.parseTableRefs()
 
 	// [USING]
-	if _, ok := p.accept(57576); ok {
+	if _, ok := p.accept(using); ok {
 		// DELETE FROM t1, t2 USING t1, t2, t3 ...
 		// We encounter Using.
 		if stmt.IsMultiTable {
@@ -412,17 +412,17 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	}
 
 	// [WHERE]
-	if _, ok := p.accept(57587); ok {
+	if _, ok := p.accept(where); ok {
 		stmt.Where = p.parseExpression(precNone)
 	}
 
 	// [ORDER BY] and [LIMIT] are only valid for single-table DELETE.
 	if !stmt.IsMultiTable {
-		if p.peek().Tp == 57510 {
+		if p.peek().Tp == order {
 			stmt.Order = p.parseOrderByClause()
 		}
 
-		if p.peek().Tp == 57477 {
+		if p.peek().Tp == limit {
 			stmt.Limit = p.parseLimitClause()
 		}
 	}
@@ -499,7 +499,7 @@ func (p *HandParser) parseTableStmt() ast.StmtNode {
 	// TABLE t1 -> SELECT * FROM t1
 	stmt := Alloc[ast.SelectStmt](p.arena)
 	stmt.Kind = ast.SelectStmtKindTable
-	p.expect(57556)
+	p.expect(tableKwd)
 
 	tn := p.parseTableName()
 	stmt.From = p.wrapTableNameInRefs(tn)
@@ -535,23 +535,23 @@ func (p *HandParser) parseValuesStmt() ast.StmtNode {
 // parseNonTransactionalDMLStmt parses: BATCH [ON column] [LIMIT N] [DRY RUN [QUERY]] <DML>
 func (p *HandParser) parseNonTransactionalDMLStmt() ast.StmtNode {
 	stmt := Alloc[ast.NonTransactionalDMLStmt](p.arena)
-	p.expect(58123)
+	p.expect(batch)
 
-	if _, ok := p.accept(57505); ok {
+	if _, ok := p.accept(on); ok {
 		stmt.ShardColumn = p.parseColumnName()
 	}
 
-	if _, ok := p.accept(57477); ok {
-		if tok, ok := p.expect(58197); ok {
+	if _, ok := p.accept(limit); ok {
+		if tok, ok := p.expect(intLit); ok {
 			stmt.Limit = tokenItemToUint64(tok.Item)
 		}
 	}
 
 	// DRY RUN
-	if _, ok := p.accept(58164); ok {
-		p.expect(58176)
+	if _, ok := p.accept(dry); ok {
+		p.expect(run)
 		stmt.DryRun = ast.DryRunSplitDml
-		if ok := p.peek().Tp == 57852; ok {
+		if ok := p.peek().Tp == query; ok {
 			p.next()
 			stmt.DryRun = ast.DryRunQuery
 		} else if p.peek().IsKeyword("QUERY") {
@@ -562,13 +562,13 @@ func (p *HandParser) parseNonTransactionalDMLStmt() ast.StmtNode {
 
 	var dml ast.StmtNode
 	switch p.peek().Tp {
-	case 57453:
+	case insert:
 		dml = p.parseInsertStmt(false)
-	case 57530:
+	case replace:
 		dml = p.parseInsertStmt(true)
-	case 57573:
+	case update:
 		dml = p.parseUpdateStmt()
-	case 57407:
+	case deleteKwd:
 		dml = p.parseDeleteStmt()
 	default:
 		p.error(p.peek().Offset, "expected INSERT, UPDATE, REPLACE or DELETE after BATCH options")
@@ -588,13 +588,13 @@ func (p *HandParser) parseNonTransactionalDMLStmt() ast.StmtNode {
 // parseSelectStmtSuffix parses the common suffix for TABLE/VALUES statements:
 // [ORDER BY ...] [LIMIT ...] [INTO OUTFILE ...]
 func (p *HandParser) parseSelectStmtSuffix(stmt *ast.SelectStmt) {
-	if p.peek().Tp == 57510 {
+	if p.peek().Tp == order {
 		stmt.OrderBy = p.parseOrderByClause()
 	}
-	if p.peek().Tp == 57477 {
+	if p.peek().Tp == limit {
 		stmt.Limit = p.parseLimitClause()
 	}
-	if p.peek().Tp == 57463 {
+	if p.peek().Tp == into {
 		stmt.SelectIntoOpt = p.parseSelectIntoOption()
 	}
 }

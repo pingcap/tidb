@@ -23,15 +23,15 @@ import (
 func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	stmt := Alloc[ast.LoadDataStmt](p.arena)
 
-	p.expect(57480)
-	p.expect(57679)
+	p.expect(load)
+	p.expect(data)
 
 	// [LOW_PRIORITY]
-	if _, ok := p.acceptKeyword(57487, "LOW_PRIORITY"); ok {
+	if _, ok := p.acceptKeyword(lowPriority, "LOW_PRIORITY"); ok {
 		stmt.LowPriority = true
 	}
 
-	if _, ok := p.acceptKeyword(57770, "LOCAL"); ok {
+	if _, ok := p.acceptKeyword(local, "LOCAL"); ok {
 		stmt.FileLocRef = ast.FileLocClient
 	} else {
 		stmt.FileLocRef = ast.FileLocServerOrRemote
@@ -40,14 +40,14 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	// [REPLACE | IGNORE] (before INFILE)
 	stmt.OnDuplicate = p.acceptOnDuplicateOpt()
 
-	p.expect(57450)
-	if tok, ok := p.expect(57353); ok {
+	p.expect(infile)
+	if tok, ok := p.expect(stringLit); ok {
 		stmt.Path = tok.Lit
 	}
 
 	// FormatOpt: [FORMAT 'string']
-	if _, ok := p.acceptKeyword(57728, "FORMAT"); ok {
-		if tok, ok := p.expect(57353); ok {
+	if _, ok := p.acceptKeyword(format, "FORMAT"); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			stmt.Format = sptr(tok.Lit)
 		}
 	}
@@ -62,14 +62,14 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 		stmt.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
 	}
 
-	p.expect(57463)
-	p.expect(57556)
+	p.expect(into)
+	p.expect(tableKwd)
 	stmt.Table = p.parseTableName()
 
 	// CharsetOpt
-	if _, ok := p.acceptKeyword(57382, "CHARACTER"); ok {
-		p.expect(57541)
-		if tok, ok := p.expectAny(57353, 57346); ok {
+	if _, ok := p.acceptKeyword(character, "CHARACTER"); ok {
+		p.expect(set)
+		if tok, ok := p.expectAny(stringLit, identifier); ok {
 			stmt.Charset = sptr(tok.Lit)
 		}
 	}
@@ -77,13 +77,13 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	// Fields/Lines options
 	for {
 		tok := p.peek()
-		if tok.Tp == 57722 || tok.Tp == 57653 {
+		if tok.Tp == fields || tok.Tp == columns {
 			p.next()
 			stmt.FieldsInfo = p.parseFieldsClause(true)
 			if stmt.FieldsInfo == nil {
 				return nil // validation error (e.g. [parser:1083])
 			}
-		} else if tok.Tp == 57479 {
+		} else if tok.Tp == lines {
 			p.next()
 			stmt.LinesInfo = p.parseLinesClause()
 		} else {
@@ -92,12 +92,12 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	}
 
 	// IGNORE n LINES
-	if p.peekKeyword(57446, "IGNORE") {
+	if p.peekKeyword(ignore, "IGNORE") {
 		m := p.mark()
 		p.next()
-		if p.peek().Tp == 58197 {
+		if p.peek().Tp == intLit {
 			stmt.IgnoreLines = uptr(p.parseUint64())
-			p.accept(57479)
+			p.accept(lines)
 		} else {
 			p.restore(m)
 		}
@@ -107,17 +107,17 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	if _, ok := p.accept('('); ok {
 		stmt.ColumnsAndUserVars = make([]*ast.ColumnNameOrUserVar, 0)
 		for {
-			if tok, ok := p.accept(57346); ok {
+			if tok, ok := p.accept(identifier); ok {
 				node := &ast.ColumnNameOrUserVar{ColumnName: &ast.ColumnName{Name: ast.NewCIStr(tok.Lit)}}
 				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
-			} else if tok.Tp == 57354 {
-				// @dummy user variables (lexer fuses @ + ident into 57354)
+			} else if tok.Tp == singleAtIdentifier {
+				// @dummy user variables (lexer fuses @ + ident into singleAtIdentifier)
 				p.next()
 				node := &ast.ColumnNameOrUserVar{UserVar: &ast.VariableExpr{Name: tok.Lit}}
 				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
 			} else if tok.Tp == '@' {
 				p.next()
-				if tok, ok := p.expect(57346); ok {
+				if tok, ok := p.expect(identifier); ok {
 					node := &ast.ColumnNameOrUserVar{UserVar: &ast.VariableExpr{Name: tok.Lit}}
 					stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
 				}
@@ -130,7 +130,7 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	}
 
 	// SET assignments
-	if _, ok := p.accept(57541); ok {
+	if _, ok := p.accept(set); ok {
 		stmt.ColumnAssignments = make([]*ast.Assignment, 0)
 		for {
 			m := p.mark()
@@ -139,7 +139,7 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 				p.restore(m)
 				break
 			}
-			p.expectAny(58202, 58201)
+			p.expectAny(eq, assignmentEq)
 			expr := p.parseExpression(0)
 			stmt.ColumnAssignments = append(stmt.ColumnAssignments, &ast.Assignment{Column: col, Expr: expr})
 			if _, ok := p.accept(','); !ok {
@@ -149,7 +149,7 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	}
 
 	// WITH options: WITH name[=value][, name[=value]]...
-	if _, ok := p.accept(57590); ok {
+	if _, ok := p.accept(with); ok {
 		stmt.Options = make([]*ast.LoadDataOpt, 0)
 		for {
 			tok := p.next() // option name (identifier or keyword)
@@ -170,10 +170,10 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 // acceptOnDuplicateOpt accepts optional REPLACE or IGNORE keyword
 // and returns the corresponding OnDuplicateKeyHandlingType.
 func (p *HandParser) acceptOnDuplicateOpt() ast.OnDuplicateKeyHandlingType {
-	if _, ok := p.acceptKeyword(57530, "REPLACE"); ok {
+	if _, ok := p.acceptKeyword(replace, "REPLACE"); ok {
 		return ast.OnDuplicateKeyHandlingReplace
 	}
-	if _, ok := p.acceptKeyword(57446, "IGNORE"); ok {
+	if _, ok := p.acceptKeyword(ignore, "IGNORE"); ok {
 		return ast.OnDuplicateKeyHandlingIgnore
 	}
 	return ast.OnDuplicateKeyHandlingError

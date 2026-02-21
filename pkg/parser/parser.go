@@ -92,7 +92,7 @@ func (p *HandParser) SetHintParse(fn HintParseFn) {
 // optimizer hints using the injected HintParseFn. Returns nil if no hint
 // token is present or no callback is set.
 func (p *HandParser) parseOptHints() []*ast.TableOptimizerHint {
-	if tok, ok := p.accept(57357); ok {
+	if tok, ok := p.accept(hintComment); ok {
 		if p.hintParse != nil {
 			hints, warns := p.hintParse(tok.Lit)
 			p.warns = append(p.warns, warns...)
@@ -255,14 +255,14 @@ func (p *HandParser) acceptAny(expected ...int) (Token, bool) {
 
 // acceptKeyword consumes the next token if it matches the given token type OR is
 // an identifier with the given keyword string (case-insensitive). This consolidates
-// the common pattern: tok.Tp == tokFoo || (tok.Tp == 57346 && strings.EqualFold(tok.Lit, "FOO"))
+// the common pattern: tok.Tp == tokFoo || (tok.Tp == identifier && strings.EqualFold(tok.Lit, "FOO"))
 func (p *HandParser) acceptKeyword(tokKeyword int, keyword string) (Token, bool) {
 	tok := p.peek()
 	if tok.Tp == tokKeyword {
 		p.next()
 		return tok, true
 	}
-	if tok.Tp == 57346 && strings.EqualFold(tok.Lit, keyword) {
+	if tok.Tp == identifier && strings.EqualFold(tok.Lit, keyword) {
 		p.next()
 		return tok, true
 	}
@@ -273,25 +273,25 @@ func (p *HandParser) acceptKeyword(tokKeyword int, keyword string) (Token, bool)
 // an identifier with the given keyword string (case-insensitive). Does not consume.
 func (p *HandParser) peekKeyword(tokKeyword int, keyword string) bool {
 	tok := p.peek()
-	return tok.Tp == tokKeyword || (tok.Tp == 57346 && strings.EqualFold(tok.Lit, keyword))
+	return tok.Tp == tokKeyword || (tok.Tp == identifier && strings.EqualFold(tok.Lit, keyword))
 }
 
 // acceptIfNotExists consumes IF NOT EXISTS if present, returning true if found.
-// Consolidates the 3-line pattern: accept(57445) → expect(57498) → expect(57422).
+// Consolidates the 3-line pattern: accept(ifKwd) → expect(not) → expect(exists).
 func (p *HandParser) acceptIfNotExists() bool {
-	if _, ok := p.accept(57445); ok {
-		p.expect(57498)
-		p.expect(57422)
+	if _, ok := p.accept(ifKwd); ok {
+		p.expect(not)
+		p.expect(exists)
 		return true
 	}
 	return false
 }
 
 // acceptIfExists consumes IF EXISTS if present, returning true if found.
-// Consolidates the 2-line pattern: accept(57445) → expect(57422).
+// Consolidates the 2-line pattern: accept(ifKwd) → expect(exists).
 func (p *HandParser) acceptIfExists() bool {
-	if _, ok := p.accept(57445); ok {
-		p.expect(57422)
+	if _, ok := p.accept(ifKwd); ok {
+		p.expect(exists)
 		return true
 	}
 	return false
@@ -301,9 +301,9 @@ func (p *HandParser) acceptIfExists() bool {
 // Consolidates the 10-way disjunction used in ADD COLUMN/CONSTRAINT parsing.
 func isConstraintToken(tp int) bool {
 	switch tp {
-	case 57386, 57518, 57467, 57449,
-		57569, 57433, 57435, 57383,
-		57979, 57652:
+	case constraint, primary, key, index,
+		unique, foreign, fulltext, check,
+		vectorType, columnar:
 		return true
 	}
 	return false
@@ -349,7 +349,7 @@ func (p *HandParser) restore(m LexerMark) {
 // parseUint64 parses and returns an unsigned 64-bit integer literal.
 func (p *HandParser) parseUint64() uint64 {
 	tok := p.next()
-	if tok.Tp != 58197 {
+	if tok.Tp != intLit {
 		p.error(tok.Offset, "expected integer literal, got %d", tok.Tp)
 		return 0
 	}
@@ -385,7 +385,7 @@ func tokenItemToInt64(item interface{}) (int64, bool) {
 // parseInt64 parses the next token as a signed int64, reporting an error if out of range.
 func (p *HandParser) parseInt64() (int64, bool) {
 	tok := p.next()
-	if tok.Tp != 58197 {
+	if tok.Tp != intLit {
 		p.error(tok.Offset, "expected integer literal")
 		return 0, false
 	}
@@ -402,16 +402,16 @@ func (p *HandParser) parseInt64() (int64, bool) {
 // Tokens with types > 0xFF are keyword tokens from the lexer.
 func isIdentLike(tp int) bool {
 	// Exclude literals
-	if tp == 58197 || tp == 58195 || tp == 58196 || tp == 58198 || tp == 58199 || tp == 58127 {
+	if tp == intLit || tp == floatLit || tp == decLit || tp == hexLit || tp == bitLit || tp == builtinBitAnd {
 		return false
 	}
-	// Exclude builtin function tokens (58125-58152).
+	// Exclude builtin function tokens (builtinApproxCountDistinct-builtinVarSamp).
 	// These can only appear as function names (e.g. BIT_AND, COUNT, MAX, SUM),
 	// never as identifiers.
-	if tp >= 58125 && tp <= 58152 {
+	if tp >= builtinApproxCountDistinct && tp <= builtinVarSamp {
 		return false
 	}
-	if tp == 57346 || tp == 57353 {
+	if tp == identifier || tp == stringLit {
 		return true
 	}
 	if tp > 0xFF {
@@ -492,9 +492,9 @@ func uptr(u uint64) *uint64 {
 func (p *HandParser) parseStringValue() string {
 	tok := p.next()
 	switch tok.Tp {
-	case 57353:
+	case stringLit:
 		return tok.Lit
-	case 58199, 58198:
+	case bitLit, hexLit:
 		if bl, ok := tok.Item.(ast.BinaryLiteral); ok {
 			return bl.ToString()
 		}
@@ -506,18 +506,18 @@ func (p *HandParser) parseStringValue() string {
 
 // parseHostname parses the @host portion of user@host or role@host identifiers.
 // Handles three cases:
-//  1. 57819 followed by identifier/string → user @ host as separate tokens
-//  2. 57354 → lexer combined @host into one token
+//  1. optional followed by identifier/string → user @ host as separate tokens
+//  2. singleAtIdentifier → lexer combined @host into one token
 //  3. no @ → default to '%'
 func (p *HandParser) parseHostname() string {
-	if _, ok := p.accept(57819); ok {
+	if _, ok := p.accept(optional); ok {
 		hostTok := p.next()
 		if hostTok.Tp == '%' {
 			return "%"
 		}
 		return strings.ToLower(hostTok.Lit)
 	}
-	if tok, ok := p.accept(57354); ok {
+	if tok, ok := p.accept(singleAtIdentifier); ok {
 		host := tok.Lit
 		if len(host) > 0 && host[0] == '@' {
 			host = host[1:]
@@ -536,37 +536,37 @@ func (p *HandParser) parseHostname() string {
 
 // parseUserIdentity parses user@host or CURRENT_USER or USER()
 func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
-	user := Alloc[auth.UserIdentity](p.arena)
+	authUser := Alloc[auth.UserIdentity](p.arena)
 
-	if _, ok := p.accept(57396); ok {
-		user.CurrentUser = true
+	if _, ok := p.accept(currentUser); ok {
+		authUser.CurrentUser = true
 		if _, ok := p.accept('('); ok {
 			p.accept(')')
 		}
-		return user
-	} else if p.peek().Tp == 57975 && p.peekN(1).Tp == '(' {
+		return authUser
+	} else if p.peek().Tp == user && p.peekN(1).Tp == '(' {
 		p.next() // consume USER
 		p.next() // consume (
 		p.expect(')')
-		user.CurrentUser = true
-		return user
+		authUser.CurrentUser = true
+		return authUser
 	}
 
 	// Username: identifier or string literal
-	if tok, ok := p.expectAny(57346, 57353); ok {
-		user.Username = tok.Lit
+	if tok, ok := p.expectAny(identifier, stringLit); ok {
+		authUser.Username = tok.Lit
 	} else {
 		return nil
 	}
 
-	user.Hostname = p.parseHostname()
-	return user
+	authUser.Hostname = p.parseHostname()
+	return authUser
 }
 
 // parseRoleIdentity parses a role identifier
 func (p *HandParser) parseRoleIdentity() *auth.RoleIdentity {
 	role := Alloc[auth.RoleIdentity](p.arena)
-	if tok, ok := p.expectAny(57353, 57346); ok {
+	if tok, ok := p.expectAny(stringLit, identifier); ok {
 		role.Username = tok.Lit
 	} else {
 		return nil
@@ -581,11 +581,11 @@ func (p *HandParser) parseRoleIdentity() *auth.RoleIdentity {
 func (p *HandParser) parseLinesClause() *ast.LinesClause {
 	lines := Alloc[ast.LinesClause](p.arena)
 	for {
-		if _, ok := p.accept(57553); ok {
-			p.expect(57376)
+		if _, ok := p.accept(starting); ok {
+			p.expect(by)
 			lines.Starting = sptr(p.parseStringValue())
-		} else if _, ok := p.accept(57558); ok {
-			p.expect(57376)
+		} else if _, ok := p.accept(terminated); ok {
+			p.expect(by)
 			lines.Terminated = sptr(p.parseStringValue())
 		} else {
 			break
@@ -602,10 +602,10 @@ func (p *HandParser) parseLinesClause() *ast.LinesClause {
 func (p *HandParser) parseFieldsClause(loadDataMode bool) *ast.FieldsClause {
 	fields := Alloc[ast.FieldsClause](p.arena)
 	for {
-		if _, ok := p.accept(57558); ok {
-			p.expect(57376)
+		if _, ok := p.accept(terminated); ok {
+			p.expect(by)
 			fields.Terminated = sptr(p.parseStringValue())
-		} else if _, ok := p.accept(57351); ok {
+		} else if _, ok := p.accept(optionallyEnclosedBy); ok {
 			// Scanner fuses OPTIONALLY ENCLOSED BY into one token.
 			val := p.parseStringValue()
 			if loadDataMode && !p.isValidFieldSep(val) {
@@ -613,39 +613,39 @@ func (p *HandParser) parseFieldsClause(loadDataMode bool) *ast.FieldsClause {
 			}
 			fields.Enclosed = sptr(val)
 			fields.OptEnclosed = true
-		} else if _, ok := p.accept(57508); ok {
-			p.expect(57419)
-			p.expect(57376)
+		} else if _, ok := p.accept(optionally); ok {
+			p.expect(enclosed)
+			p.expect(by)
 			val := p.parseStringValue()
 			if loadDataMode && !p.isValidFieldSep(val) {
 				return nil
 			}
 			fields.Enclosed = sptr(val)
 			fields.OptEnclosed = true
-		} else if _, ok := p.accept(57419); ok {
-			p.expect(57376)
+		} else if _, ok := p.accept(enclosed); ok {
+			p.expect(by)
 			val := p.parseStringValue()
 			if loadDataMode && !p.isValidFieldSep(val) {
 				return nil
 			}
 			fields.Enclosed = sptr(val)
-		} else if _, ok := p.accept(57420); ok {
-			p.expect(57376)
+		} else if _, ok := p.accept(escaped); ok {
+			p.expect(by)
 			val := p.parseStringValue()
 			if loadDataMode && !p.isValidFieldSep(val) {
 				return nil
 			}
 			fields.Escaped = sptr(val)
 		} else if loadDataMode {
-			if _, ok := p.accept(58012); ok {
+			if _, ok := p.accept(defined); ok {
 				// DEFINED NULL BY 'val' [OPTIONALLY ENCLOSED]
-				p.expect(57502)
-				p.expect(57376)
+				p.expect(null)
+				p.expect(by)
 				fields.DefinedNullBy = sptr(p.parseStringValue())
-				if _, ok := p.accept(57351); ok {
+				if _, ok := p.accept(optionallyEnclosedBy); ok {
 					fields.NullValueOptEnclosed = true
-				} else if _, ok := p.accept(57508); ok {
-					p.accept(57419) // OPTIONALLY ENCLOSED
+				} else if _, ok := p.accept(optionally); ok {
+					p.accept(enclosed) // OPTIONALLY ENCLOSED
 					fields.NullValueOptEnclosed = true
 				}
 			} else {
@@ -680,7 +680,7 @@ func (p *HandParser) parseStatsTablesAndPartitions() []*ast.TableName {
 		}
 	}
 	// Optional PARTITION clause
-	if _, ok := p.accept(57515); ok {
+	if _, ok := p.accept(partition); ok {
 		p.expect('(')
 		for {
 			partTok := p.next()
@@ -701,9 +701,9 @@ func (p *HandParser) parseStringOrUserVarList() []*ast.StringOrUserVar {
 	var list []*ast.StringOrUserVar
 	for {
 		souv := &ast.StringOrUserVar{}
-		if p.peek().Tp == 57353 {
+		if p.peek().Tp == stringLit {
 			souv.StringLit = p.next().Lit
-		} else if p.peek().Tp == 57354 {
+		} else if p.peek().Tp == singleAtIdentifier {
 			tok := p.next()
 			name := tok.Lit
 			if len(name) > 0 && name[0] == '@' {
@@ -724,25 +724,25 @@ func (p *HandParser) parseStringOrUserVarList() []*ast.StringOrUserVar {
 
 // expectFromOrIn consumes FROM or IN (mandatory). Used for SHOW ... FROM|IN patterns.
 func (p *HandParser) expectFromOrIn() {
-	if _, ok := p.accept(57434); !ok {
-		p.expect(57448)
+	if _, ok := p.accept(from); !ok {
+		p.expect(in)
 	}
 }
 
 // acceptFromOrIn optionally consumes FROM or IN. Returns (dbName, true) if found.
 func (p *HandParser) acceptFromOrIn() (string, bool) {
-	if _, ok := p.accept(57434); ok {
+	if _, ok := p.accept(from); ok {
 		return p.next().Lit, true
 	}
-	if _, ok := p.accept(57448); ok {
+	if _, ok := p.accept(in); ok {
 		return p.next().Lit, true
 	}
 	return "", false
 }
 
 // isRoleStatement peeks ahead through a comma-separated identifier list to detect
-// whether this is a role statement (terminated by `terminator`, e.g. 57564/57434)
-// vs a privilege statement (terminated by 57505).
+// whether this is a role statement (terminated by `terminator`, e.g. to/from)
+// vs a privilege statement (terminated by on).
 // Used to distinguish GRANT role vs GRANT privilege, and REVOKE role vs REVOKE privilege.
 func (p *HandParser) isRoleStatement(terminator int) bool {
 	for i := 0; ; i++ {
@@ -750,7 +750,7 @@ func (p *HandParser) isRoleStatement(terminator int) bool {
 		if tok.Tp == terminator {
 			return true
 		}
-		if tok.Tp == 57505 || tok.Tp == 0 || tok.Tp == ';' {
+		if tok.Tp == on || tok.Tp == 0 || tok.Tp == ';' {
 			return false
 		}
 	}
@@ -760,13 +760,13 @@ func (p *HandParser) isRoleStatement(terminator int) bool {
 // Shared between GRANT and REVOKE.
 func (p *HandParser) parseObjectType() ast.ObjectTypeType {
 	switch p.peek().Tp {
-	case 57556:
+	case tableKwd:
 		p.next()
 		return ast.ObjectTypeTable
-	case 57731:
+	case function:
 		p.next()
 		return ast.ObjectTypeFunction
-	case 57519:
+	case procedure:
 		p.next()
 		return ast.ObjectTypeProcedure
 	default:
@@ -817,7 +817,7 @@ func (p *HandParser) parseUserSpecList() []*ast.UserSpec {
 func (p *HandParser) parseIdentList() []ast.CIStr {
 	var list []ast.CIStr
 	for {
-		tok, ok := p.expectAny(57346, 57353)
+		tok, ok := p.expectAny(identifier, stringLit)
 		if !ok {
 			break
 		}
@@ -832,10 +832,10 @@ func (p *HandParser) parseIdentList() []ast.CIStr {
 // acceptNoWriteToBinlog accepts the optional NO_WRITE_TO_BINLOG or LOCAL keyword.
 // Returns true if either was consumed.
 func (p *HandParser) acceptNoWriteToBinlog() bool {
-	if _, ok := p.accept(57499); ok {
+	if _, ok := p.accept(noWriteToBinLog); ok {
 		return true
 	}
-	if _, ok := p.accept(57770); ok {
+	if _, ok := p.accept(local); ok {
 		return true
 	}
 	return false
@@ -844,9 +844,9 @@ func (p *HandParser) acceptNoWriteToBinlog() bool {
 // parsePartitionLessThanExpr parses: PARTITION LESS THAN '(' expr ')'
 // and sets spec.Partition to a new PartitionOptions with the parsed expression.
 func (p *HandParser) parsePartitionLessThanExpr(spec *ast.AlterTableSpec) {
-	p.expect(57515)
-	p.expect(57766)
-	p.expect(57950)
+	p.expect(partition)
+	p.expect(less)
+	p.expect(than)
 	p.expect('(')
 	expr := p.parseExpression(0)
 	p.expect(')')
@@ -873,6 +873,6 @@ func (p *HandParser) parseSimpleColumnNameList() ([]ast.CIStr, bool) {
 
 // acceptRestrictOrCascade consumes optional RESTRICT or CASCADE keywords.
 func (p *HandParser) acceptRestrictOrCascade() {
-	p.accept(57532)
-	p.accept(57378)
+	p.accept(restrict)
+	p.accept(cascade)
 }

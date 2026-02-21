@@ -11,7 +11,7 @@ import (
 // 2. SPLIT TABLE t1 BETWEEN (0) AND (10000) REGIONS 10
 // 3. SPLIT TABLE t PARTITION (p1, p2) ... (Maybe?)
 func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
-	p.expect(58180)
+	p.expect(split)
 	stmt := Alloc[ast.SplitRegionStmt](p.arena)
 
 	// Optional PARTITION or REGION syntax (handled by SplitSyntaxOpt?)
@@ -22,16 +22,16 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 	// Handle optional SPLIT [REGION [FOR [PARTITION]]] TABLE syntax
 	stmt.SplitSyntaxOpt = &ast.SplitSyntaxOption{}
 
-	if _, ok := p.accept(58173); ok {
+	if _, ok := p.accept(region); ok {
 		stmt.SplitSyntaxOpt.HasRegionFor = true
-		p.accept(57431)
+		p.accept(forKwd)
 	}
-	if _, ok := p.accept(57515); ok {
+	if _, ok := p.accept(partition); ok {
 		stmt.SplitSyntaxOpt.HasPartition = true
 	}
 
 	// Expect TABLE
-	if _, ok := p.accept(57556); !ok {
+	if _, ok := p.accept(tableKwd); !ok {
 		p.error(p.peek().Offset, "expected TABLE after SPLIT [REGION [FOR [PARTITION]]]")
 		return nil
 	}
@@ -44,14 +44,14 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 	}
 
 	// Optional PARTITION (p1, p2, ...)
-	if _, ok := p.accept(57515); ok {
+	if _, ok := p.accept(partition); ok {
 		stmt.PartitionNames = p.parseParenPartitionNames()
 	}
 
 	// Optional INDEX idx
-	if _, ok := p.accept(57449); ok {
+	if _, ok := p.accept(index); ok {
 		// Expect identifier for index name
-		if tok, ok := p.accept(57346); ok {
+		if tok, ok := p.accept(identifier); ok {
 			stmt.IndexName = ast.NewCIStr(tok.Lit)
 		} else {
 			p.error(p.peek().Offset, "expected index name")
@@ -62,7 +62,7 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 	// Parse Split Option: BY ... or BETWEEN ...
 	stmt.SplitOpt = Alloc[ast.SplitOption](p.arena)
 
-	if _, ok := p.accept(57376); ok {
+	if _, ok := p.accept(by); ok {
 		// BY (val_list), (val_list)...
 		// Each val_list is (expr, expr, ...)
 		// Note: The grammar allows general expressions.
@@ -120,14 +120,14 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 		}
 		stmt.SplitOpt.ValueLists = valueLists
 
-	} else if _, ok := p.accept(57371); ok {
+	} else if _, ok := p.accept(between); ok {
 		// BETWEEN (lower) AND (upper) REGIONS n
 
 		// Lower
 		lower := p.parseSplitBound()
 
 		// Expect AND
-		if _, ok := p.accept(57367); !ok {
+		if _, ok := p.accept(and); !ok {
 			p.error(p.peek().Offset, "expected AND in SPLIT BETWEEN")
 			return nil
 		}
@@ -136,7 +136,7 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 		upper := p.parseSplitBound()
 
 		// Expect REGIONS n
-		if _, ok := p.accept(58174); !ok {
+		if _, ok := p.accept(regions); !ok {
 			p.error(p.peek().Offset, "expected REGIONS in SPLIT BETWEEN")
 			return nil
 		}
@@ -184,8 +184,8 @@ func (p *HandParser) parseSplitBound() []ast.ExprNode {
 
 // parseDistributeTableStmt parses a DISTRIBUTE TABLE statement.
 func (p *HandParser) parseDistributeTableStmt() ast.StmtNode {
-	p.expect(58161)
-	p.expect(57556)
+	p.expect(distribute)
+	p.expect(tableKwd)
 
 	stmt := Alloc[ast.DistributeTableStmt](p.arena)
 	stmt.Table = p.parseTableName()
@@ -194,14 +194,14 @@ func (p *HandParser) parseDistributeTableStmt() ast.StmtNode {
 	}
 
 	// Optional PARTITION (p1, p2, ...)
-	if _, ok := p.accept(57515); ok {
+	if _, ok := p.accept(partition); ok {
 		stmt.PartitionNames = p.parseParenPartitionNames()
 	}
 
 	// Optional RULE/ENGINE/TIMEOUT = 'string'
-	stmt.Rule = p.parseStringOption(57884)
-	stmt.Engine = p.parseStringOption(57703)
-	stmt.Timeout = p.parseStringOption(57953)
+	stmt.Rule = p.parseStringOption(rule)
+	stmt.Engine = p.parseStringOption(engine)
+	stmt.Timeout = p.parseStringOption(timeout)
 
 	// Check if at least one VALID option (Rule/Engine/Timeout) is present?
 	// Test case "distribute table t1 partition(p0)" expects error.
@@ -219,7 +219,7 @@ func (p *HandParser) parseParenPartitionNames() []ast.CIStr {
 	p.expect('(')
 	var names []ast.CIStr
 	for {
-		tok, ok := p.accept(57346)
+		tok, ok := p.accept(identifier)
 		if !ok {
 			p.error(p.peek().Offset, "expected partition name")
 			return nil
@@ -238,8 +238,8 @@ func (p *HandParser) parseStringOption(keyword int) string {
 	if _, ok := p.accept(keyword); !ok {
 		return ""
 	}
-	p.accept(58202)
-	if tok, ok := p.accept(57353); ok {
+	p.accept(eq)
+	if tok, ok := p.accept(stringLit); ok {
 		return tok.Lit
 	}
 	return ""

@@ -23,7 +23,7 @@ import (
 func (p *HandParser) parseIntList() []int64 {
 	var ids []int64
 	for {
-		if p.peek().Tp == 58197 {
+		if p.peek().Tp == intLit {
 			val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 			ids = append(ids, val)
 		}
@@ -45,10 +45,10 @@ func (p *HandParser) parseIntList() []int64 {
 func (p *HandParser) parseBeginStmt() ast.StmtNode {
 	stmt := Alloc[ast.BeginStmt](p.arena)
 
-	if _, ok := p.accept(57621); ok {
+	if _, ok := p.accept(begin); ok {
 		// BEGIN [PESSIMISTIC | OPTIMISTIC]
-		if tok, ok := p.acceptAny(58172, 58171); ok {
-			if tok.Tp == 58172 {
+		if tok, ok := p.acceptAny(pessimistic, optimistic); ok {
+			if tok.Tp == pessimistic {
 				stmt.Mode = ast.Pessimistic
 			} else {
 				stmt.Mode = ast.Optimistic
@@ -58,18 +58,18 @@ func (p *HandParser) parseBeginStmt() ast.StmtNode {
 	}
 
 	// START TRANSACTION ...
-	p.expect(57925)
-	p.expect(57960)
+	p.expect(start)
+	p.expect(transaction)
 
 	switch p.peek().Tp {
-	case 57522:
+	case read:
 		p.next()
-		if _, ok := p.accept(57591); ok {
+		if _, ok := p.accept(write); ok {
 			// START TRANSACTION READ WRITE — default mode
-		} else if _, ok := p.accept(57816); ok {
+		} else if _, ok := p.accept(only); ok {
 			stmt.ReadOnly = true
-			if _, ok := p.accept(57347); ok {
-				p.expect(57954)
+			if _, ok := p.accept(asof); ok {
+				p.expect(timestampType)
 				if ts := p.parseExpression(precNone); ts != nil {
 					asOf := Alloc[ast.AsOfClause](p.arena)
 					asOf.TsExpr = ts
@@ -80,14 +80,14 @@ func (p *HandParser) parseBeginStmt() ast.StmtNode {
 				}
 			}
 		}
-	case 57590:
+	case with:
 		p.next()
-		if _, ok := p.accept(57667); ok {
-			p.expect(57911)
+		if _, ok := p.accept(consistent); ok {
+			p.expect(snapshot)
 			// START TRANSACTION WITH CONSISTENT SNAPSHOT — default mode
-		} else if _, ok := p.accept(57637); ok {
-			p.expect(57666)
-			p.expect(57816)
+		} else if _, ok := p.accept(causal); ok {
+			p.expect(consistency)
+			p.expect(only)
 			stmt.CausalConsistencyOnly = true
 		}
 	}
@@ -98,7 +98,7 @@ func (p *HandParser) parseBeginStmt() ast.StmtNode {
 // parseCommitStmt parses:  COMMIT [AND [NO] CHAIN [NO RELEASE] | RELEASE | NO RELEASE]
 func (p *HandParser) parseCommitStmt() ast.StmtNode {
 	stmt := Alloc[ast.CommitStmt](p.arena)
-	p.expect(57656)
+	p.expect(commit)
 	stmt.CompletionType = p.parseCompletionType()
 	return stmt
 }
@@ -106,11 +106,11 @@ func (p *HandParser) parseCommitStmt() ast.StmtNode {
 // parseRollbackStmt parses:  ROLLBACK [TO [SAVEPOINT] ident | CompletionType]
 func (p *HandParser) parseRollbackStmt() ast.StmtNode {
 	stmt := Alloc[ast.RollbackStmt](p.arena)
-	p.expect(57878)
+	p.expect(rollback)
 
-	if _, ok := p.accept(57564); ok {
+	if _, ok := p.accept(to); ok {
 		// ROLLBACK TO [SAVEPOINT] ident
-		p.accept(57886) // optional
+		p.accept(savepoint) // optional
 		tok := p.next()
 		stmt.SavepointName = tok.Lit
 	} else {
@@ -125,31 +125,31 @@ func (p *HandParser) parseRollbackStmt() ast.StmtNode {
 //	RELEASE | NO RELEASE
 func (p *HandParser) parseCompletionType() ast.CompletionType {
 	switch p.peek().Tp {
-	case 57367:
+	case and:
 		p.next()
-		if _, ok := p.accept(57638); ok {
+		if _, ok := p.accept(chain); ok {
 			// AND CHAIN [NO RELEASE]
-			if _, ok := p.accept(57799); ok {
-				p.expect(57527)
+			if _, ok := p.accept(no); ok {
+				p.expect(release)
 			}
 			return ast.CompletionTypeChain
 		}
 		// AND NO CHAIN [RELEASE | NO RELEASE]
-		p.expect(57799)
-		p.expect(57638)
-		if _, ok := p.accept(57527); ok {
+		p.expect(no)
+		p.expect(chain)
+		if _, ok := p.accept(release); ok {
 			return ast.CompletionTypeRelease
 		}
-		if _, ok := p.accept(57799); ok {
-			p.expect(57527)
+		if _, ok := p.accept(no); ok {
+			p.expect(release)
 		}
 		return ast.CompletionTypeDefault
-	case 57527:
+	case release:
 		p.next()
 		return ast.CompletionTypeRelease
-	case 57799:
+	case no:
 		p.next()
-		p.expect(57527)
+		p.expect(release)
 		return ast.CompletionTypeDefault
 	}
 	return ast.CompletionTypeDefault
@@ -158,7 +158,7 @@ func (p *HandParser) parseCompletionType() ast.CompletionType {
 // parseSavepointStmt parses:  SAVEPOINT ident
 func (p *HandParser) parseSavepointStmt() ast.StmtNode {
 	stmt := Alloc[ast.SavepointStmt](p.arena)
-	p.expect(57886)
+	p.expect(savepoint)
 	tok := p.next()
 	stmt.Name = tok.Lit
 	return stmt
@@ -167,8 +167,8 @@ func (p *HandParser) parseSavepointStmt() ast.StmtNode {
 // parseReleaseSavepointStmt parses:  RELEASE SAVEPOINT ident
 func (p *HandParser) parseReleaseSavepointStmt() ast.StmtNode {
 	stmt := Alloc[ast.ReleaseSavepointStmt](p.arena)
-	p.expect(57527)
-	p.expect(57886)
+	p.expect(release)
+	p.expect(savepoint)
 	tok := p.next()
 	stmt.Name = tok.Lit
 	return stmt
@@ -178,7 +178,7 @@ func (p *HandParser) parseReleaseSavepointStmt() ast.StmtNode {
 // dbname must be an identifier-like token (including non-reserved keywords).
 func (p *HandParser) parseUseStmt() ast.StmtNode {
 	stmt := Alloc[ast.UseStmt](p.arena)
-	p.expect(57575)
+	p.expect(use)
 	tok := p.peek()
 	if !isIdentLike(tok.Tp) {
 		p.errorNear(p.peek().Offset, p.peek().Offset)
@@ -192,7 +192,7 @@ func (p *HandParser) parseUseStmt() ast.StmtNode {
 // parseDoStmt parses:  DO expr [, expr ...]
 func (p *HandParser) parseDoStmt() ast.StmtNode {
 	stmt := Alloc[ast.DoStmt](p.arena)
-	p.expect(57693)
+	p.expect(do)
 	// Parse comma-separated expression list.
 	stmt.Exprs = []ast.ExprNode{p.parseExpression(precNone)}
 	for {
@@ -207,10 +207,10 @@ func (p *HandParser) parseDoStmt() ast.StmtNode {
 // parseUnlockTablesStmt parses:  UNLOCK TABLES
 func (p *HandParser) parseUnlockTablesStmt() ast.StmtNode {
 	stmt := Alloc[ast.UnlockTablesStmt](p.arena)
-	p.expect(57570)
+	p.expect(unlock)
 	// Accept TABLES or TABLE (MySQL supports both forms)
-	if _, ok := p.accept(57944); !ok {
-		p.expect(57556)
+	if _, ok := p.accept(tables); !ok {
+		p.expect(tableKwd)
 	}
 	return stmt
 }
@@ -218,21 +218,21 @@ func (p *HandParser) parseUnlockTablesStmt() ast.StmtNode {
 // parseShutdownStmt parses:  SHUTDOWN
 func (p *HandParser) parseShutdownStmt() ast.StmtNode {
 	stmt := Alloc[ast.ShutdownStmt](p.arena)
-	p.expect(57904)
+	p.expect(shutdown)
 	return stmt
 }
 
 // parseRestartStmt parses:  RESTART
 func (p *HandParser) parseRestartStmt() ast.StmtNode {
 	stmt := Alloc[ast.RestartStmt](p.arena)
-	p.expect(57871)
+	p.expect(restart)
 	return stmt
 }
 
 // parseHelpStmt parses:  HELP 'topic'
 func (p *HandParser) parseHelpStmt() ast.StmtNode {
 	stmt := Alloc[ast.HelpStmt](p.arena)
-	p.expect(57737)
+	p.expect(help)
 	tok := p.next()
 	stmt.Topic = tok.Lit
 	return stmt
@@ -244,14 +244,14 @@ func (p *HandParser) parseHelpStmt() ast.StmtNode {
 //	ADMIN SHOW DDL ...
 //	etc.
 func (p *HandParser) parseAdminStmt() ast.StmtNode {
-	p.expect(58122)
+	p.expect(admin)
 
 	stmt := Alloc[ast.AdminStmt](p.arena)
 
 	switch p.peek().Tp {
-	case 57863:
+	case repair:
 		p.next()
-		p.expect(57556)
+		p.expect(tableKwd)
 		repairStmt := Alloc[ast.RepairTableStmt](p.arena)
 		repairStmt.Table = p.parseTableName()
 		cs := p.parseCreateTableStmt()
@@ -262,18 +262,18 @@ func (p *HandParser) parseAdminStmt() ast.StmtNode {
 		}
 		return repairStmt
 
-	case 57542:
+	case show:
 		p.next()
 		return p.parseAdminShow(stmt)
 
-	case 57641:
+	case checksum:
 		p.next()
-		p.expect(57556)
+		p.expect(tableKwd)
 		stmt.Tp = ast.AdminChecksumTable
 		stmt.Tables = p.parseTableNameList()
 		return stmt
 
-	case 57389:
+	case create:
 		p.next()
 		// ADMIN CREATE WORKLOAD SNAPSHOT
 		if p.peek().IsKeyword("WORKLOAD") {
@@ -286,14 +286,14 @@ func (p *HandParser) parseAdminStmt() ast.StmtNode {
 		}
 		return nil
 
-	case 57383:
+	case check:
 		p.next()
-		if _, ok := p.accept(57556); ok {
+		if _, ok := p.accept(tableKwd); ok {
 			stmt.Tp = ast.AdminCheckTable
 			stmt.Tables = p.parseTableNameList()
 			return stmt
 		}
-		if _, ok := p.accept(57449); ok {
+		if _, ok := p.accept(index); ok {
 			// ADMIN CHECK INDEX t idx [(begin, end), ...]
 			stmt.Tp = ast.AdminCheckIndex
 			stmt.Tables = []*ast.TableName{p.parseTableName()}
@@ -332,7 +332,7 @@ func (p *HandParser) parseAdminStmt() ast.StmtNode {
 		}
 		return nil
 
-	case 58153:
+	case cancel:
 		p.next()
 		return p.parseAdminDDLJobs(stmt, ast.AdminCancelDDLJobs)
 
@@ -348,7 +348,7 @@ func (p *HandParser) parseAdminDDLJobs(stmt *ast.AdminStmt, stmtType ast.AdminSt
 		p.next()
 		p.next() // JOBS
 		stmt.Tp = stmtType
-		if p.peek().Tp != 58197 {
+		if p.peek().Tp != intLit {
 			return nil
 		}
 		stmt.JobIDs = p.parseIntList()
@@ -370,12 +370,12 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 			p.next()
 			stmt.Tp = ast.AdminShowDDLJobs
 			// Optional job number
-			if p.peek().Tp == 58197 {
+			if p.peek().Tp == intLit {
 				val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 				stmt.JobNumber = val
 			}
 			// Optional WHERE clause for DDL JOBS
-			if _, ok := p.accept(57587); ok {
+			if _, ok := p.accept(where); ok {
 				stmt.Where = p.parseExpression(precNone)
 			}
 		} else if p.peek().IsKeyword("JOB") {
@@ -386,15 +386,15 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 				stmt.Tp = ast.AdminShowDDLJobQueries
 				stmt.JobIDs = p.parseIntList()
 				// Optional LIMIT [offset,] count or LIMIT count OFFSET offset
-				if _, ok := p.accept(57477); ok {
+				if _, ok := p.accept(limit); ok {
 					stmt.Tp = ast.AdminShowDDLJobQueriesWithRange
-					if p.peek().Tp == 58197 {
+					if p.peek().Tp == intLit {
 						val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 						stmt.LimitSimple.Count = uint64(val)
 						// Check for offset, count form
 						if _, ok := p.accept(','); ok {
 							stmt.LimitSimple.Offset = stmt.LimitSimple.Count
-							if p.peek().Tp == 58197 {
+							if p.peek().Tp == intLit {
 								val2, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 								stmt.LimitSimple.Count = uint64(val2)
 							}
@@ -402,7 +402,7 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 						// Check for LIMIT count OFFSET offset form
 						if p.peek().IsKeyword("OFFSET") {
 							p.next()
-							if p.peek().Tp == 58197 {
+							if p.peek().Tp == intLit {
 								val2, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 								stmt.LimitSimple.Offset = uint64(val2)
 							}
@@ -421,7 +421,7 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 		if p.peek().IsKeyword("RECENT") {
 			p.next()
 			stmt.ShowSlow.Tp = ast.ShowSlowRecent
-			if p.peek().Tp == 58197 {
+			if p.peek().Tp == intLit {
 				val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 				stmt.ShowSlow.Count = uint64(val)
 			}
@@ -435,7 +435,7 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 				p.next()
 				stmt.ShowSlow.Kind = ast.ShowSlowKindAll
 			}
-			if p.peek().Tp == 58197 {
+			if p.peek().Tp == intLit {
 				val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 				stmt.ShowSlow.Count = uint64(val)
 			}
@@ -451,7 +451,7 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 	}
 	// ADMIN SHOW tablename NEXT_ROW_ID
 	tbl := p.parseTableName()
-	if tbl != nil && p.peek().Tp == 58051 {
+	if tbl != nil && p.peek().Tp == next_row_id {
 		p.next()
 		stmt.Tp = ast.AdminShowNextRowID
 		stmt.Tables = []*ast.TableName{tbl}
@@ -465,17 +465,17 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 	if p.peek().IsKeyword("RECOVER") {
 		p.next()
-		p.expect(57449)
+		p.expect(index)
 		return p.parseAdminIndexOp(stmt, ast.AdminRecoverIndex)
 	}
 	if p.peek().IsKeyword("CLEANUP") {
 		p.next()
-		if _, ok := p.accept(57449); ok {
+		if _, ok := p.accept(index); ok {
 			return p.parseAdminIndexOp(stmt, ast.AdminCleanupIndex)
 		}
-		if _, ok := p.accept(57556); ok {
+		if _, ok := p.accept(tableKwd); ok {
 			// ADMIN CLEANUP TABLE LOCK t, ...
-			p.accept(57483)
+			p.accept(lock)
 			cleanupStmt := Alloc[ast.CleanupTableLockStmt](p.arena)
 			cleanupStmt.Tables = p.parseTableNameList()
 			return cleanupStmt
@@ -600,7 +600,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 			p.next()
 			p.next() // JOBS
 			stmt.Tp = ast.AdminAlterDDLJob
-			if p.peek().Tp == 58197 {
+			if p.peek().Tp == intLit {
 				val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 				stmt.JobNumber = val
 			}
@@ -610,7 +610,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 				}
 				var opt ast.AlterJobOption
 				opt.Name = p.next().Lit
-				p.expectAny(58202, 58201)
+				p.expectAny(eq, assignmentEq)
 				opt.Value = p.parseExpression(precNone)
 				if opt.Value == nil {
 					return nil

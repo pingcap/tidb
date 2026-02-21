@@ -26,11 +26,11 @@ import (
 // parseCreateUserStmt parses CREATE USER statements.
 func (p *HandParser) parseCreateUserStmt() ast.StmtNode {
 	stmt := Alloc[ast.CreateUserStmt](p.arena)
-	p.expect(57389)
-	if _, ok := p.accept(57877); ok {
+	p.expect(create)
+	if _, ok := p.accept(role); ok {
 		stmt.IsCreateRole = true
 	} else {
-		p.expect(57975)
+		p.expect(user)
 	}
 
 	stmt.IfNotExists = p.acceptIfNotExists()
@@ -48,12 +48,12 @@ func (p *HandParser) parseCreateUserStmt() ast.StmtNode {
 
 	// Parse optional user attributes/options
 	// [REQUIRE ...]
-	if _, ok := p.accept(57531); ok {
+	if _, ok := p.accept(require); ok {
 		stmt.AuthTokenOrTLSOptions = p.parseTLSOptions()
 	}
 
 	// [WITH resource_option ...]
-	if _, ok := p.accept(57590); ok {
+	if _, ok := p.accept(with); ok {
 		stmt.ResourceOptions = p.parseResourceOptions()
 	}
 
@@ -78,35 +78,35 @@ func (p *HandParser) parseTLSOptions() []*ast.AuthTokenOrTLSOption {
 		opt := Alloc[ast.AuthTokenOrTLSOption](p.arena)
 		tok := p.peek()
 		switch tok.Tp {
-		case 57806:
+		case none:
 			p.next()
 			opt.Type = ast.TlsNone
-		case 57552:
+		case ssl:
 			p.next()
 			opt.Type = ast.Ssl
-		case 57990:
+		case x509:
 			p.next()
 			opt.Type = ast.X509
-		case 57643:
+		case cipher:
 			p.parseTLSOptionString(opt, ast.Cipher)
-		case 57758:
+		case issuer:
 			p.parseTLSOptionString(opt, ast.Issuer)
-		case 57936:
+		case subject:
 			p.parseTLSOptionString(opt, ast.Subject)
-		case 57885:
+		case san:
 			p.parseTLSOptionString(opt, ast.SAN)
-		case 57955:
+		case tokenIssuer:
 			p.parseTLSOptionString(opt, ast.TokenIssuer)
 		default:
 			// Unknown option
 			return opts
 		}
 		opts = append(opts, opt)
-		if _, ok := p.accept(57367); !ok {
+		if _, ok := p.accept(and); !ok {
 			// Check if next is a TLS option keyword
 			next := p.peek()
 			switch next.Tp {
-			case 57552, 57806, 57990, 57643, 57758, 57936, 57885, 57955:
+			case ssl, none, x509, cipher, issuer, subject, san, tokenIssuer:
 				continue
 			}
 			break
@@ -122,19 +122,19 @@ func (p *HandParser) parseResourceOptions() []*ast.ResourceOption {
 		opt := Alloc[ast.ResourceOption](p.arena)
 		tok := p.peek()
 		switch tok.Tp {
-		case 57778:
+		case maxQueriesPerHour:
 			p.next()
 			opt.Type = ast.MaxQueriesPerHour
 			opt.Count, _ = p.parseInt64()
-		case 57780:
+		case maxUpdatesPerHour:
 			p.next()
 			opt.Type = ast.MaxUpdatesPerHour
 			opt.Count, _ = p.parseInt64()
-		case 57775:
+		case maxConnectionsPerHour:
 			p.next()
 			opt.Type = ast.MaxConnectionsPerHour
 			opt.Count, _ = p.parseInt64()
-		case 57781:
+		case maxUserConnections:
 			p.next()
 			opt.Type = ast.MaxUserConnections
 			opt.Count, _ = p.parseInt64()
@@ -152,68 +152,68 @@ func (p *HandParser) parsePasswordAndLockOptions() []*ast.PasswordOrLockOption {
 	for {
 		opt := Alloc[ast.PasswordOrLockOption](p.arena)
 		tok := p.peek()
-		if tok.Tp == 57829 {
+		if tok.Tp == password {
 			p.next()
 			// PASSWORD EXPIRE ...
 			next := p.peek()
-			if next.Tp == 57717 {
+			if next.Tp == expire {
 				p.next() // consume EXPIRE
 				opt.Type = ast.PasswordExpire
 				// Check for optional DEFAULT, NEVER, INTERVAL N DAY
-				if p.peek().Tp == 57405 {
+				if p.peek().Tp == defaultKwd {
 					p.next()
 					opt.Type = ast.PasswordExpireDefault
-				} else if p.peekKeyword(57796, "NEVER") {
+				} else if p.peekKeyword(never, "NEVER") {
 					p.next()
 					opt.Type = ast.PasswordExpireNever
-				} else if p.peek().Tp == 57462 {
+				} else if p.peek().Tp == interval {
 					p.next() // INTERVAL
 					opt.Type = ast.PasswordExpireInterval
-					if val, ok := p.expect(58197); ok {
+					if val, ok := p.expect(intLit); ok {
 						count, _ := strconv.ParseInt(val.Lit, 10, 64)
 						opt.Count = count
 					}
 					// DAY is usually expected but might be implied or checked
-					if p.peekKeyword(57682, "DAY") {
+					if p.peekKeyword(day, "DAY") {
 						p.next()
 					}
 				}
-			} else if next.Tp == 57739 {
+			} else if next.Tp == history {
 				p.next() // HISTORY
 				opt.Type = ast.PasswordHistory
-				if p.peek().Tp == 57405 {
+				if p.peek().Tp == defaultKwd {
 					p.next()
 					opt.Type = ast.PasswordHistoryDefault
-				} else if val, ok := p.accept(58197); ok {
+				} else if val, ok := p.accept(intLit); ok {
 					count, _ := strconv.ParseInt(val.Lit, 10, 64)
 					opt.Count = count
 				}
-			} else if next.Tp == 57875 {
+			} else if next.Tp == reuse {
 				p.next() // REUSE
 				// INTERVAL N DAY
-				if p.peek().Tp == 57462 {
+				if p.peek().Tp == interval {
 					p.next()
 					opt.Type = ast.PasswordReuseInterval
-					if val, ok := p.expect(58197); ok {
+					if val, ok := p.expect(intLit); ok {
 						count, _ := strconv.ParseInt(val.Lit, 10, 64)
 						opt.Count = count
 					}
-					if p.peekKeyword(57682, "DAY") {
+					if p.peekKeyword(day, "DAY") {
 						p.next()
 					}
-				} else if p.peek().Tp == 57405 {
+				} else if p.peek().Tp == defaultKwd {
 					p.next()
 					opt.Type = ast.PasswordReuseDefault
 				}
-			} else if next.Tp == 57531 {
+			} else if next.Tp == require {
 				// PASSWORD REQUIRE CURRENT [DEFAULT | OPTIONAL]
 				p.next() // REQUIRE
-				if p.peek().Tp == 57677 {
+				if p.peek().Tp == current {
 					p.next() // CURRENT
-					if p.peek().Tp == 57405 {
+					if p.peek().Tp == defaultKwd {
 						p.next()
 						opt.Type = ast.PasswordRequireCurrentDefault
-					} else if p.peek().Tp == 57819 {
+					} else if p.peek().Tp == optional {
 						p.next()
 						// ast.PasswordRequireCurrentOptional ? (Not in my list, maybe 0?)
 					}
@@ -222,16 +222,16 @@ func (p *HandParser) parsePasswordAndLockOptions() []*ast.PasswordOrLockOption {
 				// Just PASSWORD token? unlikely in CREATE USER options
 				return opts
 			}
-		} else if tok.Tp == 57483 || tok.Tp == 57570 {
-			if p.next().Tp == 57483 {
+		} else if tok.Tp == lock || tok.Tp == unlock {
+			if p.next().Tp == lock {
 				opt.Type = ast.Lock
 			} else {
 				opt.Type = ast.Unlock
 			}
-		} else if tok.Tp == 57595 {
+		} else if tok.Tp == account {
 			p.next() // ACCOUNT
-			if p.peek().Tp == 57483 || p.peek().Tp == 57570 {
-				if p.next().Tp == 57483 {
+			if p.peek().Tp == lock || p.peek().Tp == unlock {
+				if p.next().Tp == lock {
 					opt.Type = ast.Lock
 				} else {
 					opt.Type = ast.Unlock
@@ -239,20 +239,20 @@ func (p *HandParser) parsePasswordAndLockOptions() []*ast.PasswordOrLockOption {
 			} else {
 				return opts
 			}
-		} else if tok.Tp == 57720 {
+		} else if tok.Tp == failedLoginAttempts {
 			p.next()
 			opt.Type = ast.FailedLoginAttempts
-			if val, ok := p.expect(58197); ok {
+			if val, ok := p.expect(intLit); ok {
 				count, _ := strconv.ParseInt(val.Lit, 10, 64)
 				opt.Count = count
 			}
-		} else if tok.Tp == 57830 {
+		} else if tok.Tp == passwordLockTime {
 			p.next()
 			opt.Type = ast.PasswordLockTime
-			if p.peek().Tp == 57969 {
+			if p.peek().Tp == unbounded {
 				p.next()
 				opt.Type = ast.PasswordLockTimeUnbounded
-			} else if val, ok := p.accept(58197); ok {
+			} else if val, ok := p.accept(intLit); ok {
 				count, _ := strconv.ParseInt(val.Lit, 10, 64)
 				opt.Count = count
 			}
@@ -267,15 +267,15 @@ func (p *HandParser) parsePasswordAndLockOptions() []*ast.PasswordOrLockOption {
 func (p *HandParser) parseCommentOrAttributeOption() *ast.CommentOrAttributeOption {
 	var optType int
 	switch p.peek().Tp {
-	case 57655:
+	case comment:
 		optType = ast.UserCommentType
-	case 57608:
+	case attribute:
 		optType = ast.UserAttributeType
 	default:
 		return nil
 	}
 	p.next()
-	if val, ok := p.expect(57353); ok {
+	if val, ok := p.expect(stringLit); ok {
 		opt := Alloc[ast.CommentOrAttributeOption](p.arena)
 		opt.Type = optType
 		opt.Value = val.Lit
@@ -287,11 +287,11 @@ func (p *HandParser) parseCommentOrAttributeOption() *ast.CommentOrAttributeOpti
 // parseDropUserStmt parses DROP USER statements.
 func (p *HandParser) parseDropUserStmt() ast.StmtNode {
 	stmt := Alloc[ast.DropUserStmt](p.arena)
-	p.expect(57415)
-	if _, ok := p.accept(57877); ok {
+	p.expect(drop)
+	if _, ok := p.accept(role); ok {
 		stmt.IsDropRole = true
 	} else {
-		p.expect(57975)
+		p.expect(user)
 	}
 
 	stmt.IfExists = p.acceptIfExists()
@@ -313,7 +313,7 @@ func (p *HandParser) parseDropUserStmt() ast.StmtNode {
 
 // parseGrantStmt parses GRANT statements (both GRANT privilege and GRANT role).
 func (p *HandParser) parseGrantStmt() ast.StmtNode {
-	p.expect(57437)
+	p.expect(grant)
 
 	// Detect GRANT ROLE vs GRANT PRIVILEGE.
 	// GRANT ROLE: GRANT 'role1', 'role2' TO ...
@@ -321,11 +321,11 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 	// When the first token is a string literal, it's always a role grant.
 	// When the first token is an identifier, we need to look ahead through the comma-separated
 	// list to see if it ends with TO (role) or ON (privilege).
-	if p.peek().Tp == 57353 {
+	if p.peek().Tp == stringLit {
 		return p.parseGrantRoleStmt()
 	}
-	if p.peek().Tp == 57346 {
-		if p.isRoleStatement(57564) {
+	if p.peek().Tp == identifier {
+		if p.isRoleStatement(to) {
 			return p.parseGrantRoleStmt()
 		}
 	}
@@ -335,7 +335,7 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 	// Parse privilege list
 	stmt.Privs = p.parsePrivileges()
 
-	p.expect(57505)
+	p.expect(on)
 
 	// Parse ObjectType: TABLE, FUNCTION, PROCEDURE
 	stmt.ObjectType = p.parseObjectType()
@@ -350,21 +350,21 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 		stmt.Level = p.parseGrantLevel()
 	}
 
-	p.expect(57564)
+	p.expect(to)
 	stmt.Users = p.parseUserSpecList()
 	if stmt.Users == nil {
 		return nil
 	}
 
 	// Optional REQUIRE clause
-	if _, ok := p.accept(57531); ok {
+	if _, ok := p.accept(require); ok {
 		stmt.AuthTokenOrTLSOptions = p.parseTLSOptions()
 	}
 
 	// Optional WITH GRANT OPTION
-	if _, ok := p.accept(57590); ok {
-		if _, ok := p.accept(57437); ok {
-			p.expect(57507)
+	if _, ok := p.accept(with); ok {
+		if _, ok := p.accept(grant); ok {
+			p.expect(option)
 			stmt.WithGrant = true
 		}
 	}
@@ -377,7 +377,7 @@ func (p *HandParser) parseGrantRoleStmt() ast.StmtNode {
 	stmt := Alloc[ast.GrantRoleStmt](p.arena)
 
 	// Parse role list
-	stmt.Roles, stmt.Users = p.parseRoleListAndUserList(57564)
+	stmt.Roles, stmt.Users = p.parseRoleListAndUserList(to)
 	if stmt.Roles == nil || stmt.Users == nil {
 		return nil
 	}
@@ -406,13 +406,13 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 	priv := Alloc[ast.PrivElem](p.arena)
 	tok := p.peek()
 	switch tok.Tp {
-	case 57364:
+	case all:
 		p.next()
-		p.accept(57843)
+		p.accept(privileges)
 		priv.Priv = mysql.AllPriv
-	case 57540:
+	case selectKwd:
 		// Check for dynamic privileges starting with SELECT, e.g., SELECT INTO S3
-		if p.peekN(1).Tp == 57463 {
+		if p.peekN(1).Tp == into {
 			priv.Priv, priv.Name = p.parseExtendedPrivName("SELECT")
 			if priv.Name == "" {
 				return nil
@@ -421,68 +421,68 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 			p.next()
 			priv.Priv = mysql.SelectPriv
 		}
-	case 57453:
+	case insert:
 		p.next()
 		priv.Priv = mysql.InsertPriv
-	case 57573:
+	case update:
 		p.next()
 		priv.Priv = mysql.UpdatePriv
-	case 57407:
+	case deleteKwd:
 		p.next()
 		priv.Priv = mysql.DeletePriv
-	case 57415:
+	case drop:
 		p.next()
 		priv.Priv = mysql.DropPriv
-	case 57437:
+	case grant:
 		p.next()
-		p.expect(57507)
+		p.expect(option)
 		priv.Priv = mysql.GrantPriv
-	case 57449:
+	case index:
 		p.next()
 		priv.Priv = mysql.IndexPriv
-	case 57365:
+	case alter:
 		p.next()
 		// ALTER ROUTINE compound privilege
-		if p.peek().Tp == 57880 {
+		if p.peek().Tp == routine {
 			p.next()
 			priv.Priv = mysql.AlterRoutinePriv
 		} else {
 			priv.Priv = mysql.AlterPriv
 		}
-	case 57715:
+	case execute:
 		p.next()
 		priv.Priv = mysql.ExecutePriv
-	case 57664:
+	case config:
 		p.next()
 		priv.Priv = mysql.ConfigPriv
-	case 57525:
+	case references:
 		p.next()
 		priv.Priv = mysql.ReferencesPriv
-	case 57574:
+	case usage:
 		p.next()
 		priv.Priv = mysql.UsagePriv
-	case 57844:
+	case process:
 		p.next()
 		priv.Priv = mysql.ProcessPriv
-	case 57939:
+	case super:
 		p.next()
 		priv.Priv = mysql.SuperPriv
-	case 57710:
+	case event:
 		p.next()
 		priv.Priv = mysql.EventPriv
-	case 57723:
+	case file:
 		p.next()
 		priv.Priv = mysql.FilePriv
-	case 57566:
+	case trigger:
 		p.next()
 		priv.Priv = mysql.TriggerPriv
-	case 57904:
+	case shutdown:
 		p.next()
 		priv.Priv = mysql.ShutdownPriv
-	case 57860:
+	case reload:
 		p.next()
 		priv.Priv = mysql.ReloadPriv
-	case 57867:
+	case replication:
 		p.next()
 		// REPLICATION CLIENT or REPLICATION SLAVE
 		next := p.next()
@@ -491,45 +491,45 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		} else {
 			priv.Priv = mysql.ReplicationSlavePriv
 		}
-	case 57389:
+	case create:
 		p.next()
 		// CREATE VIEW, CREATE ROUTINE, CREATE USER, CREATE TEMPORARY TABLES, CREATE TABLESPACE
 		switch p.peek().Tp {
-		case 57980:
+		case view:
 			p.next()
 			priv.Priv = mysql.CreateViewPriv
-		case 57975:
+		case user:
 			p.next()
 			priv.Priv = mysql.CreateUserPriv
-		case 57947:
+		case temporary:
 			p.next()
-			p.accept(57944) // TABLES
+			p.accept(tables) // TABLES
 			priv.Priv = mysql.CreateTMPTablePriv
-		case 57945:
+		case tablespace:
 			p.next()
 			priv.Priv = mysql.CreateTablespacePriv
 		default:
 			// Check for 'CREATE ROUTINE'
-			if p.peek().Tp == 57880 {
+			if p.peek().Tp == routine {
 				p.next()
 				priv.Priv = mysql.CreateRoutinePriv
 			} else {
 				priv.Priv = mysql.CreatePriv
 			}
 		}
-	case 57542:
+	case show:
 		p.next()
 		// SHOW DATABASES or SHOW VIEW
-		if p.peek().Tp == 57399 || p.peek().Tp == 57398 {
+		if p.peek().Tp == databases || p.peek().Tp == database {
 			p.next()
 			priv.Priv = mysql.ShowDBPriv
-		} else if p.peek().Tp == 57980 {
+		} else if p.peek().Tp == view {
 			p.next()
 			priv.Priv = mysql.ShowViewPriv
 		}
-	case 57483:
+	case lock:
 		p.next()
-		p.accept(57944) // LOCK TABLES
+		p.accept(tables) // LOCK TABLES
 		priv.Priv = mysql.LockTablesPriv
 	default:
 		priv.Priv, priv.Name = p.parseExtendedPrivName("")
@@ -543,7 +543,7 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		p.next()
 		for {
 			col := &ast.ColumnName{}
-			if tok, ok := p.expectAny(57346, 57353); ok {
+			if tok, ok := p.expectAny(identifier, stringLit); ok {
 				col.Name = ast.NewCIStr(tok.Lit)
 			}
 			priv.Cols = append(priv.Cols, col)
@@ -594,22 +594,22 @@ func (p *HandParser) parseGrantLevel() *ast.GrantLevel {
 // parseAlterUserStmt parses ALTER USER [IF EXISTS] user [options]
 func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 	stmt := Alloc[ast.AlterUserStmt](p.arena)
-	p.expect(57365)
-	p.expect(57975)
+	p.expect(alter)
+	p.expect(user)
 
 	stmt.IfExists = p.acceptIfExists()
 
 	// Handle ALTER USER USER() IDENTIFIED BY ... (CurrentAuth form)
-	if p.peek().Tp == 57975 && p.peekN(1).Tp == '(' {
+	if p.peek().Tp == user && p.peekN(1).Tp == '(' {
 		p.next() // consume USER
 		p.next() // consume (
 		p.expect(')')
 
 		// Parse auth option for CurrentAuth
-		if _, ok := p.accept(57743); ok {
+		if _, ok := p.accept(identified); ok {
 			stmt.CurrentAuth = Alloc[ast.AuthOption](p.arena)
-			if _, ok := p.accept(57376); ok {
-				if tok, ok := p.expect(57353); ok {
+			if _, ok := p.accept(by); ok {
+				if tok, ok := p.expect(stringLit); ok {
 					stmt.CurrentAuth.ByAuthString = true
 					stmt.CurrentAuth.AuthString = tok.Lit
 				}
@@ -630,10 +630,10 @@ func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 	}
 
 	// Options
-	if _, ok := p.accept(57531); ok {
+	if _, ok := p.accept(require); ok {
 		stmt.AuthTokenOrTLSOptions = p.parseTLSOptions()
 	}
-	if _, ok := p.accept(57590); ok {
+	if _, ok := p.accept(with); ok {
 		stmt.ResourceOptions = p.parseResourceOptions()
 	}
 	stmt.PasswordOrLockOptions = p.parsePasswordAndLockOptions()
@@ -655,8 +655,8 @@ func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 // parseRenameUserStmt parses RENAME USER old_user TO new_user, ...
 func (p *HandParser) parseRenameUserStmt() ast.StmtNode {
 	stmt := Alloc[ast.RenameUserStmt](p.arena)
-	p.expect(57528)
-	p.expect(57975)
+	p.expect(rename)
+	p.expect(user)
 
 	for {
 		u2u := Alloc[ast.UserToUser](p.arena)
@@ -666,7 +666,7 @@ func (p *HandParser) parseRenameUserStmt() ast.StmtNode {
 		}
 		u2u.OldUser = oldSpec.User
 
-		p.expect(57564)
+		p.expect(to)
 
 		newSpec := p.parseUserSpec()
 		if newSpec == nil {
@@ -685,18 +685,18 @@ func (p *HandParser) parseRenameUserStmt() ast.StmtNode {
 
 // parseRevokeStmt parses REVOKE statements (both REVOKE privilege and REVOKE role).
 func (p *HandParser) parseRevokeStmt() ast.StmtNode {
-	p.expect(57533)
+	p.expect(revoke)
 
 	// Detect REVOKE ROLE vs REVOKE PRIVILEGE.
 	// REVOKE ROLE: REVOKE 'role1', 'role2' FROM ...
 	// REVOKE PRIVILEGE: REVOKE priv1, priv2 ON ...
 	// When the first token is a string literal, it's always a role revocation.
 	// When the first token is an identifier, scan ahead for FROM vs ON.
-	if p.peek().Tp == 57353 {
+	if p.peek().Tp == stringLit {
 		return p.parseRevokeRoleStmt()
 	}
-	if p.peek().Tp == 57346 {
-		if p.isRoleStatement(57434) {
+	if p.peek().Tp == identifier {
+		if p.isRoleStatement(from) {
 			return p.parseRevokeRoleStmt()
 		}
 	}
@@ -705,7 +705,7 @@ func (p *HandParser) parseRevokeStmt() ast.StmtNode {
 	stmt.ObjectType = ast.ObjectTypeNone
 	stmt.Privs = p.parsePrivileges()
 
-	if _, ok := p.accept(57505); ok {
+	if _, ok := p.accept(on); ok {
 		// Parse ObjectType: TABLE, FUNCTION, PROCEDURE
 		stmt.ObjectType = p.parseObjectType()
 
@@ -724,7 +724,7 @@ func (p *HandParser) parseRevokeStmt() ast.StmtNode {
 		stmt.Level.Level = ast.GrantLevelGlobal
 	}
 
-	p.expect(57434)
+	p.expect(from)
 	stmt.Users = p.parseUserSpecList()
 	if stmt.Users == nil {
 		return nil
@@ -737,7 +737,7 @@ func (p *HandParser) parseRevokeRoleStmt() ast.StmtNode {
 	stmt := Alloc[ast.RevokeRoleStmt](p.arena)
 
 	// Parse role list
-	stmt.Roles, stmt.Users = p.parseRoleListAndUserList(57434)
+	stmt.Roles, stmt.Users = p.parseRoleListAndUserList(from)
 	if stmt.Roles == nil || stmt.Users == nil {
 		return nil
 	}
@@ -752,22 +752,22 @@ func (p *HandParser) parseUserSpec() *ast.UserSpec {
 		return nil
 	}
 
-	if _, ok := p.accept(57743); ok {
+	if _, ok := p.accept(identified); ok {
 		spec.AuthOpt = Alloc[ast.AuthOption](p.arena)
-		if _, ok := p.accept(57590); ok {
+		if _, ok := p.accept(with); ok {
 			// IDENTIFIED WITH 'auth_plugin' [BY 'password' | AS 'hash']
-			if tok, ok := p.expectAny(57353, 57346); ok {
+			if tok, ok := p.expectAny(stringLit, identifier); ok {
 				spec.AuthOpt.AuthPlugin = tok.Lit
 			}
-			if _, ok := p.accept(57376); ok {
-				if tok, ok := p.expect(57353); ok {
+			if _, ok := p.accept(by); ok {
+				if tok, ok := p.expect(stringLit); ok {
 					spec.AuthOpt.ByAuthString = true
 					spec.AuthOpt.AuthString = tok.Lit
 				}
-			} else if _, ok := p.accept(57369); ok {
-				if tok, ok := p.expectAny(57353, 58198); ok {
+			} else if _, ok := p.accept(as); ok {
+				if tok, ok := p.expectAny(stringLit, hexLit); ok {
 					spec.AuthOpt.ByHashString = true
-					if tok.Tp == 58198 {
+					if tok.Tp == hexLit {
 						// Decode hex literal 0x... to binary string
 						hexStr := tok.Lit
 						if len(hexStr) > 2 && hexStr[0] == '0' && (hexStr[1] == 'x' || hexStr[1] == 'X') {
@@ -784,25 +784,25 @@ func (p *HandParser) parseUserSpec() *ast.UserSpec {
 					}
 				}
 			}
-		} else if _, ok := p.accept(57369); ok {
+		} else if _, ok := p.accept(as); ok {
 			// IDENTIFIED AS 'hashstring' (restored form from BY PASSWORD)
-			if tok, ok := p.expectAny(57353, 58198); ok {
+			if tok, ok := p.expectAny(stringLit, hexLit); ok {
 				spec.AuthOpt.ByHashString = true
 				spec.AuthOpt.HashString = tok.Lit
 			}
 		} else {
 			// IDENTIFIED BY [PASSWORD] 'password'
-			p.expect(57376)
-			if _, ok := p.accept(57829); ok {
+			p.expect(by)
+			if _, ok := p.accept(password); ok {
 				// IDENTIFIED BY PASSWORD 'hashstring' (deprecated pre-hashed form)
 				// mysql_native_password is implied when using BY PASSWORD
 				spec.AuthOpt.AuthPlugin = "mysql_native_password"
-				if tok, ok := p.expect(57353); ok {
+				if tok, ok := p.expect(stringLit); ok {
 					spec.AuthOpt.ByHashString = true
 					spec.AuthOpt.HashString = tok.Lit
 				}
 			} else {
-				if tok, ok := p.expect(57353); ok {
+				if tok, ok := p.expect(stringLit); ok {
 					spec.AuthOpt.ByAuthString = true
 					spec.AuthOpt.AuthString = tok.Lit
 				}
@@ -815,18 +815,18 @@ func (p *HandParser) parseUserSpec() *ast.UserSpec {
 
 func (p *HandParser) parseTLSOptionString(opt *ast.AuthTokenOrTLSOption, tp ast.AuthTokenOrTLSOptionType) {
 	p.next()
-	if val, ok := p.expect(57353); ok {
+	if val, ok := p.expect(stringLit); ok {
 		opt.Type = tp
 		opt.Value = val.Lit
 	}
 }
 
 func (p *HandParser) parseUserResourceGroupOption() *ast.ResourceGroupNameOption {
-	if p.peek().Tp == 57869 {
+	if p.peek().Tp == resource {
 		p.next()
-		p.expect(57438)
+		p.expect(group)
 		opt := Alloc[ast.ResourceGroupNameOption](p.arena)
-		if tok, ok := p.expectAny(57346, 57353); ok {
+		if tok, ok := p.expectAny(identifier, stringLit); ok {
 			opt.Value = tok.Lit
 		}
 		return opt
@@ -875,10 +875,10 @@ func (p *HandParser) parseExtendedPrivName(initPart string) (mysql.PrivilegeType
 	}
 	for {
 		tok := p.peek()
-		if tok.Tp == ',' || tok.Tp == 57505 || tok.Tp == '(' || tok.Tp == ';' || tok.Tp == 0 {
+		if tok.Tp == ',' || tok.Tp == on || tok.Tp == '(' || tok.Tp == ';' || tok.Tp == 0 {
 			break
 		}
-		if tok.Tp == 57346 {
+		if tok.Tp == identifier {
 			parts = append(parts, tok.Lit)
 		} else if tok.Lit != "" {
 			parts = append(parts, tok.Lit)

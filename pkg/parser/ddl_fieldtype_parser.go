@@ -36,7 +36,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 
 	token := p.peek()
 	switch token.Tp {
-	case 57627:
+	case bitType:
 		p.next()
 		tp.SetType(mysql.TypeBit)
 		if p.peek().Tp == '(' {
@@ -44,17 +44,17 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		} else {
 			tp.SetFlen(1)
 		}
-	case 57562, 57455:
+	case tinyIntType, int1Type:
 		p.parseIntegerType(tp, mysql.TypeTiny)
-	case 57543, 57456:
+	case smallIntType, int2Type:
 		p.parseIntegerType(tp, mysql.TypeShort)
-	case 57491, 57457, 57493:
+	case mediumIntType, int3Type, middleIntType:
 		p.parseIntegerType(tp, mysql.TypeInt24)
-	case 57454, 57460, 57458:
+	case intType, integerType, int4Type:
 		p.parseIntegerType(tp, mysql.TypeLong)
-	case 57372, 57459:
+	case bigIntType, int8Type:
 		p.parseIntegerType(tp, mysql.TypeLonglong)
-	case 57523:
+	case realType:
 		p.next()
 		if p.sqlMode.HasRealAsFloatMode() {
 			tp.SetType(mysql.TypeFloat)
@@ -62,14 +62,14 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 			tp.SetType(mysql.TypeDouble)
 		}
 		p.parseFloatOptions(tp)
-	case 57414, 57430:
+	case doubleType, float8Type:
 		p.next()
 		tp.SetType(mysql.TypeDouble)
-		if p.peek().Tp == 57517 {
+		if p.peek().Tp == precisionType {
 			p.next()
 		}
 		p.parseFloatOptions(tp)
-	case 57428, 57429:
+	case floatType, float4Type:
 		p.next()
 		tp.SetType(mysql.TypeFloat)
 		p.parseFloatOptions(tp)
@@ -83,21 +83,21 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 			}
 			tp.SetFlen(types.UnspecifiedLength)
 		}
-	case 57404, 57503, 57725:
+	case decimalType, numericType, fixed:
 		p.next()
 		tp.SetType(mysql.TypeNewDecimal)
 		p.parseDecimalOptions(tp)
-	case 57680:
+	case dateType:
 		p.next()
 		tp.SetType(mysql.TypeDate)
-	case 57681:
+	case datetimeType:
 		p.parseFspType(tp, mysql.TypeDatetime)
-	case 57954:
+	case timestampType:
 		p.parseFspType(tp, mysql.TypeTimestamp)
-	case 57952:
+	case timeType:
 		p.parseFspType(tp, mysql.TypeDuration)
 
-	case 57991, 57924:
+	case yearType, sqlTsiYear:
 		p.next()
 		tp.SetType(mysql.TypeYear)
 		if p.peek().Tp == '(' {
@@ -134,10 +134,10 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		}
 		// Discard options for YEAR type to match yacc parser behavior
 		p.parseIntegerOptions(types.NewFieldType(mysql.TypeYear))
-	case 57794:
+	case national:
 		p.next()
 		switch p.peek().Tp {
-		case 57381, 57382:
+		case charType, character:
 			// NATIONAL CHAR / NATIONAL CHARACTER [VARYING]
 			p.next()
 			if p.resolveCharVarchar() {
@@ -147,7 +147,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 				tp.SetType(mysql.TypeString)
 				p.parseOptionalFieldLen(tp)
 			}
-		case 57582, 57583:
+		case varcharType, varcharacter:
 			// NATIONAL VARCHAR / NATIONAL VARCHARACTER
 			p.next()
 			tp.SetType(mysql.TypeVarchar)
@@ -156,7 +156,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 			return nil
 		}
 		p.parseStringOptions(tp)
-	case 57795, 57381, 57382:
+	case ncharType, charType, character:
 		// NCHAR/CHAR/CHARACTER [VARYING|VARCHAR|VARCHARACTER]
 		p.next()
 		if p.resolveCharVarchar() {
@@ -166,42 +166,42 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		}
 		p.parseOptionalFieldLen(tp)
 		p.parseStringOptions(tp)
-	case 57809, 57582, 57583:
+	case nvarcharType, varcharType, varcharacter:
 		p.next()
 		tp.SetType(mysql.TypeVarchar)
 		p.parseOptionalFieldLen(tp)
 		p.parseStringOptions(tp)
-	case 57373:
+	case binaryType:
 		p.parseBinaryFieldType(tp, mysql.TypeString, false)
-	case 57581:
+	case varbinaryType:
 		p.parseBinaryFieldType(tp, mysql.TypeVarchar, true)
-	case 57561:
+	case tinyblobType:
 		p.parseBlobType(tp, mysql.TypeTinyBlob)
-	case 57374:
+	case blobType:
 		p.parseBlobType(tp, mysql.TypeBlob)
 		if p.peek().Tp == '(' {
 			tp.SetFlen(p.parseFieldLen())
 		}
-	case 57490:
+	case mediumblobType:
 		p.parseBlobType(tp, mysql.TypeMediumBlob)
-	case 57485:
+	case longblobType:
 		p.parseBlobType(tp, mysql.TypeLongBlob)
-	case 57563:
+	case tinytextType:
 		p.parseTextType(tp, mysql.TypeTinyBlob)
-	case 57949:
+	case textType:
 		p.next()
 		tp.SetType(mysql.TypeBlob)
 		if p.peek().Tp == '(' {
 			tp.SetFlen(p.parseFieldLen())
 		}
 		p.parseStringOptions(tp)
-	case 57492:
+	case mediumtextType:
 		p.parseTextType(tp, mysql.TypeMediumBlob)
-	case 57486:
+	case longtextType:
 		p.parseTextType(tp, mysql.TypeLongBlob)
-	case 57484:
+	case long:
 		p.next()
-		if p.peek().Tp == 57581 || p.peek().Tp == 57632 {
+		if p.peek().Tp == varbinaryType || p.peek().Tp == byteType {
 			p.next()
 			tp.SetType(mysql.TypeMediumBlob)
 			tp.SetCharset(charset.CharsetBin)
@@ -210,11 +210,11 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		} else {
 			// Consume optional Varchar form: VARCHAR | VARCHARACTER | CHAR VARYING | CHARACTER VARYING
 			switch p.peek().Tp {
-			case 57582, 57583:
+			case varcharType, varcharacter:
 				p.next()
-			case 57381, 57382:
+			case charType, character:
 				// LONG CHAR VARYING / LONG CHARACTER VARYING
-				if p.peekN(1).Tp == 57584 {
+				if p.peekN(1).Tp == varying {
 					p.next() // consume CHAR/CHARACTER
 					p.next() // consume VARYING
 				}
@@ -222,23 +222,23 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 			tp.SetType(mysql.TypeMediumBlob)
 			p.parseStringOptions(tp)
 		}
-	case 57706, 57541:
-		if p.next().Tp == 57706 {
+	case enum, set:
+		if p.next().Tp == enum {
 			tp.SetType(mysql.TypeEnum)
 		} else {
 			tp.SetType(mysql.TypeSet)
 		}
 		p.parseEnumSetOptions(tp)
-	case 57759:
+	case jsonType:
 		p.next()
 		tp.SetType(mysql.TypeJSON)
 		tp.SetDecimal(0)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
-	case 57544, 57837:
+	case spatial, point:
 		p.next()
 		tp.SetType(mysql.TypeGeometry)
-	case 57346:
+	case identifier:
 		// Handle LINESTRING, POLYGON, etc. which are not keywords
 		str := token.Lit
 		switch strings.ToUpper(str) {
@@ -248,7 +248,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		default:
 			return nil // Not a known type
 		}
-	case 57979:
+	case vectorType:
 		p.next()
 		tp.SetType(mysql.TypeTiDBVectorFloat32)
 		// Check for <FLOAT> or <DOUBLE>
@@ -256,10 +256,10 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 			p.next()
 			// Consume element type
 			switch p.peek().Tp {
-			case 57428, 57429:
+			case floatType, float4Type:
 				// VECTOR<FLOAT> — default, already TypeTiDBVectorFloat32
 				p.next()
-			case 57414, 57430:
+			case doubleType, float8Type:
 				// VECTOR<DOUBLE> — parsed but rejected per parser.y (AppendError is fatal)
 				p.next()
 				p.errs = append(p.errs, fmt.Errorf("Only VECTOR is supported for now"))
@@ -277,7 +277,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		tp.SetDecimal(0)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
-	case 57630, 57629:
+	case booleanType, boolType:
 		p.next()
 		tp.SetType(mysql.TypeTiny)
 		tp.SetFlen(1)
@@ -295,13 +295,13 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 // Returns true if consumed, false otherwise. Caller should then parse the charset name.
 func (p *HandParser) acceptCharsetKw() bool {
 	switch p.peek().Tp {
-	case 57382, 57381:
-		if p.peekN(1).Tp == 57541 {
+	case character, charType:
+		if p.peekN(1).Tp == set {
 			p.next() // consume CHARACTER/CHAR
 			p.next() // consume SET
 			return true
 		}
-	case 57639:
+	case charsetKwd:
 		p.next()
 		return true
 	}
@@ -313,7 +313,7 @@ func (p *HandParser) acceptCharsetKw() bool {
 // This consolidates the CHAR→VARCHAR promotion logic used across multiple type branches.
 func (p *HandParser) resolveCharVarchar() bool {
 	switch p.peek().Tp {
-	case 57584, 57582, 57583:
+	case varying, varcharType, varcharacter:
 		p.next()
 		return true
 	}
@@ -358,13 +358,13 @@ func (p *HandParser) parseFieldLenAndOptions(tp *types.FieldType) {
 func (p *HandParser) parseIntegerOptions(tp *types.FieldType) {
 	for {
 		switch p.peek().Tp {
-		case 57571:
+		case unsigned:
 			p.next()
 			tp.AddFlag(mysql.UnsignedFlag)
-		case 57905:
+		case signed:
 			p.next()
 			tp.DelFlag(mysql.UnsignedFlag)
-		case 57594:
+		case zerofill:
 			p.next()
 			tp.AddFlag(mysql.ZerofillFlag)
 			tp.AddFlag(mysql.UnsignedFlag) // Zerofill implies Unsigned
@@ -407,7 +407,7 @@ func (p *HandParser) parseDecimalOptions(tp *types.FieldType) {
 func (p *HandParser) parseCharsetName(tp *types.FieldType) {
 	tok := p.peek()
 	// binaryType → charset.CharsetBin
-	if tok.Tp == 57373 {
+	if tok.Tp == binaryType {
 		tp.SetCharset(charset.CharsetBin)
 		p.next()
 		return
@@ -438,18 +438,18 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 	//   BINARY [CHARACTER SET charset] → binary flag, optional charset
 	//   CHARACTER SET charset [BINARY] → charset, optional binary flag
 	switch p.peek().Tp {
-	case 57632:
+	case byteType:
 		// BYTE = binary charset (standalone, no further options)
 		p.next()
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 		tp.AddFlag(mysql.BinaryFlag)
 		return
-	case 57607:
+	case ascii:
 		p.next()
 		tp.SetCharset("latin1")
 		return
-	case 57972:
+	case unicodeSym:
 		p.next()
 		cs, err := charset.GetCharsetInfo("ucs2")
 		if err != nil {
@@ -458,7 +458,7 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 		}
 		tp.SetCharset(cs.Name)
 		// Fall through to auto-flag below
-	case 57373:
+	case binaryType:
 		// BINARY [CHARACTER SET charset]
 		p.next()
 		tp.AddFlag(mysql.BinaryFlag)
@@ -479,7 +479,7 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 			tp.SetCollate(charset.CollationBin)
 		}
 	}
-	if p.peek().Tp == 57384 {
+	if p.peek().Tp == collate {
 		p.lastFieldTypeExplicitCollate = true // track explicit COLLATE for duplicate detection
 		p.next()
 		tok := p.peek()
@@ -499,7 +499,7 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 			}
 			tp.SetCollate(info.Name)
 			p.next()
-		} else if tok.Tp == 57373 || tok.Tp == 57632 {
+		} else if tok.Tp == binaryType || tok.Tp == byteType {
 			tp.SetCollate(charset.CollationBin)
 			p.next()
 		} else {
@@ -508,7 +508,7 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 	}
 
 	// Parse optional trailing BINARY: [CHARACTER SET ...] [COLLATE ...] [BINARY]
-	if p.peek().Tp == 57373 {
+	if p.peek().Tp == binaryType {
 		p.next()
 		tp.AddFlag(mysql.BinaryFlag)
 	}
@@ -528,10 +528,10 @@ func (p *HandParser) parseEnumSetOptions(tp *types.FieldType) {
 		tok := p.peek()
 		var elemVal string
 		isBinaryLit := false
-		if tok.Tp == 57353 {
+		if tok.Tp == stringLit {
 			elemVal = strings.TrimRight(tok.Lit, " ")
 			p.next()
-		} else if tok.Tp == 58198 {
+		} else if tok.Tp == hexLit {
 			s := tok.Lit
 			if len(s) > 2 && (s[0] == 'x' || s[0] == 'X') && s[1] == '\'' {
 				s = s[2 : len(s)-1]
@@ -549,7 +549,7 @@ func (p *HandParser) parseEnumSetOptions(tp *types.FieldType) {
 			}
 			isBinaryLit = true
 			p.next()
-		} else if tok.Tp == 58199 {
+		} else if tok.Tp == bitLit {
 			s := tok.Lit
 			if len(s) > 2 && (s[0] == 'b' || s[0] == 'B') && s[1] == '\'' {
 				s = s[2 : len(s)-1]

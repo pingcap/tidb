@@ -6,10 +6,10 @@ import (
 
 // parseBinlogStmt parses BINLOG 'str'
 func (p *HandParser) parseBinlogStmt() *ast.BinlogStmt {
-	p.expect(57626)
+	p.expect(binlog)
 	stmt := Alloc[ast.BinlogStmt](p.arena)
 	tok := p.next()
-	if tok.Tp != 57353 {
+	if tok.Tp != stringLit {
 		p.error(tok.Offset, "expected string literal after BINLOG")
 		return nil
 	}
