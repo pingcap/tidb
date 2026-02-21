@@ -22,7 +22,6 @@ import (
 )
 
 type yySymType struct {
-	yys       int
 	offset    int // offset
 	item      interface{}
 	ident     string
@@ -31,8 +30,6 @@ type yySymType struct {
 }
 
 const (
-	yyDefault                  = 58240
-	yyEOFCode                  = 57344
 	account                    = 57595
 	action                     = 57596
 	add                        = 57363
@@ -280,7 +277,6 @@ const (
 	engines                    = 57704
 	enum                       = 57706
 	eq                         = 58202
-	yyErrCode                  = 57345
 	errorKwd                   = 57707
 	escape                     = 57709
 	escaped                    = 57420
@@ -928,9 +924,6 @@ const (
 	yearMonth                  = 57593
 	yearType                   = 57991
 	zerofill                   = 57594
-
-	yyMaxDepth = 200
-	yyTabOfs   = -3052
 )
 
 type yyLexer interface {
@@ -939,9 +932,4 @@ type yyLexer interface {
 	AppendError(err error)
 	AppendWarn(err error)
 	Errors() (warns []error, errs []error)
-}
-
-type yyLexerEx interface {
-	yyLexer
-	Reduced(rule, state int, lval *yySymType) bool
 }
