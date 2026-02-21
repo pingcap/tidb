@@ -270,12 +270,11 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 		switch p.peek().Tp {
 		case not:
 			p.next()
-			if _, ok := p.accept(null); ok {
-				option.Tp = ast.ColumnOptionNotNull
-			} else {
+			if _, ok := p.accept(null); !ok {
 				// Parse error: expected NULL after NOT
 				return nil
 			}
+			option.Tp = ast.ColumnOptionNotNull
 		case null:
 			p.next()
 			option.Tp = ast.ColumnOptionNull
@@ -356,31 +355,27 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 		case comment:
 			p.next()
 			option.Tp = ast.ColumnOptionComment
-			if p.peek().Tp == stringLit {
-				expr := p.newValueExpr(p.peek().Lit)
-				if valExpr, ok := expr.(ast.ValueExpr); ok {
-					valExpr.GetType().SetCharset("")
-					valExpr.GetType().SetCollate("")
-				}
-				option.Expr = expr
-				p.next()
-			} else {
+			if p.peek().Tp != stringLit {
 				p.error(p.peek().Offset, "expected string literal for COMMENT")
 				return nil
 			}
+			expr := p.newValueExpr(p.peek().Lit)
+			if valExpr, ok := expr.(ast.ValueExpr); ok {
+				valExpr.GetType().SetCharset("")
+				valExpr.GetType().SetCollate("")
+			}
+			option.Expr = expr
+			p.next()
 		case secondaryEngineAttribute:
 			p.next()
 			option.Tp = ast.ColumnOptionSecondaryEngineAttribute
-			if _, ok := p.accept(eq); ok {
-				// optional =
-			}
-			if p.peek().Tp == stringLit {
-				option.StrValue = p.peek().Lit
-				p.next()
-			} else {
+			p.accept(eq) // optional =
+			if p.peek().Tp != stringLit {
 				p.error(p.peek().Offset, "expected string literal for SECONDARY_ENGINE_ATTRIBUTE")
 				return nil
 			}
+			option.StrValue = p.peek().Lit
+			p.next()
 		case on:
 			p.next()
 			p.expect(update)
@@ -408,13 +403,13 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 			}
 
 			// Must be FuncCallExpr
-			if fc, ok := option.Expr.(*ast.FuncCallExpr); ok {
-				normalizeDDLFuncName(fc)
-			} else {
+			fc, ok := option.Expr.(*ast.FuncCallExpr)
+			if !ok {
 				// Reject other types (ValueExpr, etc)
 				p.error(0, "Invalid ON UPDATE clause")
 				return nil
 			}
+			normalizeDDLFuncName(fc)
 		case as, generated:
 			if p.next().Tp == generated {
 				p.expect(always)

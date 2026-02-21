@@ -104,7 +104,7 @@ func (p *HandParser) parseIndexLockAndAlgorithm() *ast.IndexLockAndAlgorithm {
 	algTp := ast.AlgorithmTypeDefault
 	found := false
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if _, ok := p.accept(lock); ok {
 			found = true
 			p.accept(eq)

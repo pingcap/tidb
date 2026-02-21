@@ -334,7 +334,7 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 	case hintReadFromStorage:
 		return hp.parseStorageHint(name)
 
-	// ---- SEMIJOIN / NO_SEMIJOIN([qb] strat, ...) ----
+	// ---- SEMIJOIN / NO_SEMIJOIN([qb] strategy, ...) ----
 	case hintSemijoin, hintNoSemijoin:
 		return hp.parseSemijoinHint(name)
 
