@@ -229,6 +229,46 @@ func TestLateralJoinSchemaResolution(t *testing.T) {
 			sql:         "SELECT * FROM t, LATERAL (SELECT * FROM (SELECT t.a) AS inner_dt) AS dt",
 			expectError: false,
 		},
+		{
+			name:        "Deep join tree - LATERAL sees all left tables",
+			sql:         "SELECT * FROM t AS t1 JOIN t AS t2 ON t1.a=t2.a JOIN t AS t3 ON t2.b=t3.b, LATERAL (SELECT t1.c, t3.d) AS dt",
+			expectError: false,
+		},
+		{
+			name:        "Deep join tree with USING - LATERAL sees columns from all tables",
+			sql:         "SELECT * FROM t AS t1 JOIN t AS t2 USING(a) JOIN t AS t3 ON t2.b=t3.b, LATERAL (SELECT t1.c, t3.d) AS dt",
+			expectError: false,
+		},
+		{
+			name:        "Deep join tree with USING - LATERAL sees merged USING column by table qualifier",
+			sql:         "SELECT * FROM t AS t1 JOIN t AS t2 USING(a) JOIN t AS t3 ON t2.b=t3.b, LATERAL (SELECT t1.a, t3.d) AS dt",
+			expectError: false,
+		},
+		{
+			name:        "NATURAL JOIN in deep tree - LATERAL sees all columns",
+			sql:         "SELECT * FROM t AS t1 NATURAL JOIN t AS t2 JOIN t AS t3 ON t1.b=t3.b, LATERAL (SELECT t1.c, t3.d) AS dt",
+			expectError: false,
+		},
+		{
+			name:        "Simple USING - LATERAL references merged column by table qualifier",
+			sql:         "SELECT * FROM t AS t1 JOIN t AS t2 USING(a), LATERAL (SELECT t2.a) AS dt",
+			expectError: false,
+		},
+		{
+			name:        "Deep tree with USING - LATERAL references merged column by table qualifier",
+			sql:         "SELECT * FROM t AS t1 JOIN t AS t2 USING(a) JOIN t AS t3 ON t1.b=t3.b, LATERAL (SELECT t2.a, t3.d) AS dt",
+			expectError: false,
+		},
+		{
+			name:        "Deep tree with NATURAL - LATERAL references merged column by table qualifier",
+			sql:         "SELECT * FROM t AS t1 NATURAL JOIN t AS t2 JOIN t AS t3 ON t1.b=t3.b, LATERAL (SELECT t2.a, t3.d) AS dt",
+			expectError: false,
+		},
+		{
+			name:        "Nested LATERAL - second LATERAL sees first LATERAL columns",
+			sql:         "SELECT * FROM t, LATERAL (SELECT t.a) AS dt1, LATERAL (SELECT dt1.a) AS dt2",
+			expectError: false,
+		},
 	}
 
 	for _, tc := range testCases {

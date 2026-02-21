@@ -568,6 +568,37 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	}
 }
 
+// findJoinFullSchema walks through single-child wrapper operators (e.g., LogicalSelection
+// created by ON clauses on inner joins) to find an underlying LogicalJoin or LogicalApply
+// with FullSchema. This is needed because USING/NATURAL joins set FullSchema on the
+// LogicalJoin, but when that join has an ON condition with InnerJoin type, the result is
+// wrapped in a LogicalSelection, hiding the FullSchema from direct type assertions.
+func findJoinFullSchema(p base.LogicalPlan) (*expression.Schema, types.NameSlice) {
+	for {
+		switch x := p.(type) {
+		case *logicalop.LogicalJoin:
+			if x.FullSchema != nil {
+				return x.FullSchema, x.FullNames
+			}
+			return nil, nil
+		case *logicalop.LogicalApply:
+			if x.FullSchema != nil {
+				return x.FullSchema, x.FullNames
+			}
+			return nil, nil
+		case *logicalop.LogicalSelection, *logicalop.LogicalProjection:
+			// These are single-child wrapper operators; look through them.
+			children := p.Children()
+			if len(children) != 1 {
+				return nil, nil
+			}
+			p = children[0]
+		default:
+			return nil, nil
+		}
+	}
+}
+
 // containsLateralTableSource checks if a ResultSetNode contains a LATERAL table source.
 // This handles parenthesized forms like (LATERAL (...) AS dt) where the parser creates
 // nested Join nodes: Join{Right: Join{Left: TableSource{Lateral:true}}}
@@ -620,16 +651,13 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	if isLateral {
 		// For USING/NATURAL joins, use FullSchema/FullNames which include redundant columns
 		// that were merged (e.g., both t1.a and t2.a from JOIN ... USING(a))
-		// Also check LogicalApply for nested LATERAL joins - it embeds LogicalJoin and may
-		// have FullSchema from a USING/NATURAL join in its left subtree.
+		// Walk through wrapper operators (e.g., LogicalSelection from ON clauses) to find
+		// the underlying LogicalJoin/LogicalApply that may carry FullSchema.
 		outerSchema := leftPlan.Schema()
 		outerNames := leftPlan.OutputNames()
-		if join, ok := leftPlan.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-			outerSchema = join.FullSchema
-			outerNames = join.FullNames
-		} else if apply, ok := leftPlan.(*logicalop.LogicalApply); ok && apply.FullSchema != nil {
-			outerSchema = apply.FullSchema
-			outerNames = apply.FullNames
+		if fullSchema, fullNames := findJoinFullSchema(leftPlan); fullSchema != nil {
+			outerSchema = fullSchema
+			outerNames = fullNames
 		}
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, outerNames)
@@ -795,13 +823,12 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	}
 
 	// Extract correlated columns from right side that reference left side.
-	// Use FullSchema when leftPlan is a USING/NATURAL join, so we capture
+	// Use FullSchema when leftPlan contains a USING/NATURAL join, so we capture
 	// correlated columns that reference the redundant (merged) join columns.
-	// This must match the schema used for name resolution in LATERAL subqueries
-	// (see buildJoin's outer schema handling for LATERAL).
+	// Walk through wrapper operators (e.g., LogicalSelection) to find FullSchema.
 	outerSchema := leftPlan.Schema()
-	if join, ok := leftPlan.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-		outerSchema = join.FullSchema
+	if fullSchema, _ := findJoinFullSchema(leftPlan); fullSchema != nil {
+		outerSchema = fullSchema
 	}
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, outerSchema)
 
@@ -887,9 +914,9 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	// which has these fields, so we should set them for correctness.
 	var lFullSchema, rFullSchema *expression.Schema
 	var lFullNames, rFullNames types.NameSlice
-	if left, ok := leftPlan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
-		lFullSchema = left.FullSchema
-		lFullNames = left.FullNames
+	if fullSchema, fullNames := findJoinFullSchema(leftPlan); fullSchema != nil {
+		lFullSchema = fullSchema
+		lFullNames = fullNames
 	} else {
 		lFullSchema = leftPlan.Schema()
 		lFullNames = leftPlan.OutputNames()
@@ -1356,8 +1383,10 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 	var origTblName, tblName, origColName, colName, dbName ast.CIStr
 	innerNode := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	col, isCol := expr.(*expression.Column)
-	// Correlated column won't affect the final output names. So we can put it in any of the three logic block.
-	// Don't put it into the first block just for simplifying the codes.
+	// For correlated columns (e.g., from LATERAL joins), use the AST column name
+	// to derive proper output names. Without this, `SELECT t.a` inside LATERAL
+	// would get column name "t.a" instead of "a", making the derived table column
+	// unreferenceable by later LATERAL joins (e.g., dt1.a would fail).
 	if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
 		// Field is a column reference.
 		idx := p.Schema().ColumnIndex(col)
@@ -1369,6 +1398,23 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 			name = p.OutputNames()[idx]
 		}
 		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, colNameField, name)
+	} else if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && !isCol {
+		if _, isCorCol := expr.(*expression.CorrelatedColumn); isCorCol {
+			// Correlated column reference (e.g., `t.a` in LATERAL subquery).
+			// Use the AST column name ("a") not the expression text ("t.a").
+			if field.AsName.L != "" {
+				colName = field.AsName
+			} else {
+				colName = colNameField.Name.Name
+			}
+		} else if field.AsName.L != "" {
+			colName = field.AsName
+		} else {
+			var err error
+			if colName, err = b.buildProjectionFieldNameFromExpressions(ctx, field); err != nil {
+				return nil, nil, err
+			}
+		}
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
