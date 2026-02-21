@@ -367,7 +367,6 @@ func (p *HandParser) parseJoinType() (joinType ast.JoinType, isNatural bool, str
 
 	case natural:
 		p.next()
-		isNatural = true
 		switch p.peek().Tp {
 		case left:
 			p.next()

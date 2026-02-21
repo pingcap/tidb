@@ -13,9 +13,6 @@
 
 package parser
 
-import (
-)
-
 // LexerBridge wraps a Lexer (the Scanner) to provide token lookahead
 // and backtracking for the recursive descent parser.
 //

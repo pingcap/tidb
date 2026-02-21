@@ -302,14 +302,13 @@ func (p *HandParser) parseIntLit() int64 {
 				return 0
 			}
 			return -int64(val)
-		} else {
-			// val > 9223372036854775807 overflows
-			if val > 9223372036854775807 {
-				p.error(tok.Offset, "constant %d overflows int64", val)
-				return 0
-			}
-			return int64(val)
 		}
+		// val > 9223372036854775807 overflows
+		if val > 9223372036854775807 {
+			p.error(tok.Offset, "constant %d overflows int64", val)
+			return 0
+		}
+		return int64(val)
 	}
 	return 0
 }

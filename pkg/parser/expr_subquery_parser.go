@@ -23,7 +23,7 @@ import (
 // speculative parsing that can overflow the ring buffer (maxLookahead = 8)
 // when there are many levels of nested parentheses ((((expr)))).
 func (p *HandParser) peeksThroughParensToSubquery() bool {
-	for i := 0; i < maxLookahead-1; i++ {
+	for i := range maxLookahead - 1 {
 		tok := p.peekN(i)
 		switch tok.Tp {
 		case '(':
