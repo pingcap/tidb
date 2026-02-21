@@ -6133,6 +6133,11 @@ func TestModelStatements(t *testing.T) {
 			"CREATE MODEL `m` (INPUT (`a` INT) OUTPUT (`score` DOUBLE)) USING ONNX LOCATION 's3://models/m/v1.onnx' CHECKSUM 'sha256:abc'",
 		},
 		{
+			"create model m (input (a int) output (score double)) using mlflow location 's3://models/m/v1' checksum 'sha256:abc'",
+			true,
+			"CREATE MODEL `m` (INPUT (`a` INT) OUTPUT (`score` DOUBLE)) USING MLFLOW LOCATION 's3://models/m/v1' CHECKSUM 'sha256:abc'",
+		},
+		{
 			"alter model m set location 's3://models/m/v2.onnx' checksum 'sha256:def'",
 			true,
 			"ALTER MODEL `m` SET LOCATION 's3://models/m/v2.onnx' CHECKSUM 'sha256:def'",
