@@ -31,10 +31,10 @@ func (p *HandParser) parseKillStmt() ast.StmtNode {
 	}
 
 	// Optional CONNECTION or QUERY
-	if _, ok := p.accept(connection); ok {
-		// CONNECTION is the default (Query=false)
-	} else if _, ok := p.accept(query); ok {
+	if _, ok := p.accept(query); ok {
 		stmt.Query = true
+	} else {
+		p.accept(connection) // CONNECTION keyword (default: Query=false)
 	}
 
 	stmt.Expr = p.parseExpression(precNone)
@@ -243,7 +243,6 @@ func (p *HandParser) parseFlushStmt() ast.StmtNode {
 
 	return stmt
 }
-
 
 // parseCalibrateResourceStmt parses: CALIBRATE RESOURCE [WORKLOAD workload_type] [options...]
 func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
