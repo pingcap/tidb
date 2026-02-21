@@ -1914,6 +1914,46 @@ func TestTiDBModelSessionCacheConfig(t *testing.T) {
 	require.Equal(t, 150*time.Millisecond, readSessionCacheTTL(t, cache))
 }
 
+func TestTiDBModelGovernanceSysvars(t *testing.T) {
+	const (
+		modelMaxBatchVar         = "tidb_model_max_batch_size"
+		modelTimeoutVar          = "tidb_model_timeout"
+		modelAllowNondetVar      = "tidb_model_allow_nondeterministic"
+		modelEnableCustomOpsVar  = "tidb_enable_model_custom_ops"
+	)
+
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+
+	sv := GetSysVar(modelMaxBatchVar)
+	require.NotNil(t, sv)
+	require.NoError(t, sv.SetGlobal(ctx, vars, "128"))
+	got, err := sv.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "128", got)
+
+	sv = GetSysVar(modelTimeoutVar)
+	require.NotNil(t, sv)
+	require.NoError(t, sv.SetGlobal(ctx, vars, "150ms"))
+	got, err = sv.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "150ms", got)
+
+	sv = GetSysVar(modelAllowNondetVar)
+	require.NotNil(t, sv)
+	require.NoError(t, sv.SetGlobal(ctx, vars, "ON"))
+	got, err = sv.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "ON", got)
+
+	sv = GetSysVar(modelEnableCustomOpsVar)
+	require.NotNil(t, sv)
+	require.NoError(t, sv.SetGlobal(ctx, vars, "ON"))
+	got, err = sv.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "ON", got)
+}
+
 func readSessionCacheCapacity(t *testing.T, cache *modelruntime.SessionCache) uint {
 	t.Helper()
 	if cache == nil {

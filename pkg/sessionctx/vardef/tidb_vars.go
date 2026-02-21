@@ -1245,6 +1245,14 @@ const (
 	TiDBEnableModelDDL = "tidb_enable_model_ddl"
 	// TiDBEnableModelInference indicates whether model inference is enabled
 	TiDBEnableModelInference = "tidb_enable_model_inference"
+	// TiDBModelMaxBatchSize indicates the max batch size for model inference.
+	TiDBModelMaxBatchSize = "tidb_model_max_batch_size"
+	// TiDBModelTimeout indicates the timeout for model inference.
+	TiDBModelTimeout = "tidb_model_timeout"
+	// TiDBModelAllowNondeterministic indicates whether nondeterministic models are allowed.
+	TiDBModelAllowNondeterministic = "tidb_model_allow_nondeterministic"
+	// TiDBEnableModelCustomOps indicates whether custom ops are allowed.
+	TiDBEnableModelCustomOps = "tidb_enable_model_custom_ops"
 	// TiDBModelCacheCapacity indicates the process-level model session cache capacity.
 	TiDBModelCacheCapacity = "tidb_model_cache_capacity"
 	// TiDBModelCacheTTL indicates the process-level model session cache TTL.
@@ -1723,6 +1731,10 @@ const (
 	DefTiDBEnableModelInference                       = false
 	DefTiDBModelCacheCapacity                         = 64
 	DefTiDBModelCacheTTL                              = 0 * time.Second
+	DefTiDBModelMaxBatchSize                          = 256
+	DefTiDBModelTimeout                               = 200 * time.Millisecond
+	DefTiDBModelAllowNondeterministic                 = false
+	DefTiDBEnableModelCustomOps                       = false
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
@@ -1906,6 +1918,10 @@ var (
 	EnableModelInference            = atomic.NewBool(DefTiDBEnableModelInference)
 	ModelCacheCapacity              = atomic.NewUint64(DefTiDBModelCacheCapacity)
 	ModelCacheTTL                   = atomic.NewDuration(DefTiDBModelCacheTTL)
+	ModelMaxBatchSize               = atomic.NewInt64(DefTiDBModelMaxBatchSize)
+	ModelTimeout                    = atomic.NewDuration(DefTiDBModelTimeout)
+	ModelAllowNondeterministic      = atomic.NewBool(DefTiDBModelAllowNondeterministic)
+	EnableModelCustomOps            = atomic.NewBool(DefTiDBEnableModelCustomOps)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)

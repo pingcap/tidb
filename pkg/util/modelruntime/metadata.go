@@ -15,6 +15,8 @@
 package modelruntime
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/yalue/onnxruntime_go"
 )
@@ -27,6 +29,15 @@ type TensorInfo struct {
 }
 
 var getInputOutputInfoFn = onnxruntime_go.GetInputOutputInfoWithONNXData
+var getModelMetadataFn = func(onnxData []byte) (ModelMetadata, error) {
+	return onnxruntime_go.GetModelMetadataWithONNXData(onnxData)
+}
+
+// ModelMetadata exposes ONNX custom metadata for inspection.
+type ModelMetadata interface {
+	Destroy() error
+	LookupCustomMetadataMap(key string) (string, bool, error)
+}
 
 // InspectModelIOInfo returns ONNX model input/output metadata.
 // It validates tensor-only IO and enforces FP32 element types.
@@ -44,6 +55,26 @@ func InspectModelIOInfo(onnxData []byte) ([]TensorInfo, []TensorInfo, error) {
 		return nil, nil, err
 	}
 	return parsedInputs, parsedOutputs, nil
+}
+
+// ModelDeclaresNondeterministic checks model metadata for nondeterminism hints.
+// It returns false when metadata is unavailable to keep best-effort behavior.
+func ModelDeclaresNondeterministic(onnxData []byte) (bool, error) {
+	meta, err := getModelMetadataFn(onnxData)
+	if err != nil {
+		return false, nil
+	}
+	defer meta.Destroy()
+	val, ok, err := meta.LookupCustomMetadataMap("tidb_nondeterministic")
+	if err != nil || !ok {
+		return false, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "true", "1", "yes":
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 func convertTensorInfo(items []onnxruntime_go.InputOutputInfo) ([]TensorInfo, error) {

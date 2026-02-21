@@ -30,6 +30,10 @@ func (s *stubSession) Run([]onnxruntime_go.Value, []onnxruntime_go.Value) error 
 	return nil
 }
 
+func (s *stubSession) RunWithOptions([]onnxruntime_go.Value, []onnxruntime_go.Value, *onnxruntime_go.RunOptions) error {
+	return nil
+}
+
 func (s *stubSession) Destroy() error {
 	s.destroyed++
 	return nil
