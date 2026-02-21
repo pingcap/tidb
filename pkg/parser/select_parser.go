@@ -26,7 +26,7 @@ import (
 //	[WHERE expr] [GROUP BY expr_list] [HAVING expr]
 //	[ORDER BY order_list] [LIMIT count [OFFSET offset]]
 func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
-	stmt := Alloc[ast.SelectStmt](p.arena)
+	stmt := p.arena.AllocSelectStmt()
 	stmt.Kind = ast.SelectStmtKindSelect
 
 	p.expect(selectKwd)
@@ -200,7 +200,7 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 			return nil
 		}
 		// CTE Definition is always a SubqueryExpr wrapping the ResultSetNode
-		subExpr := Alloc[ast.SubqueryExpr](p.arena)
+		subExpr := p.arena.AllocSubqueryExpr()
 		subExpr.Query = subNode
 		cte.Query = subExpr
 

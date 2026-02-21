@@ -89,7 +89,7 @@ func (p *HandParser) parseDropBindingStmt(globalScope bool) ast.StmtNode {
 
 // parseShowGrants parses: SHOW GRANTS [FOR user [USING role, ...]]
 func (p *HandParser) parseShowGrants() ast.StmtNode {
-	stmt := Alloc[ast.ShowStmt](p.arena)
+	stmt := p.arena.AllocShowStmt()
 	stmt.Tp = ast.ShowGrants
 
 	if _, ok := p.accept(forKwd); ok {

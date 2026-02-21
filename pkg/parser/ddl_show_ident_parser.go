@@ -321,7 +321,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 
 // parseShowCreate parses: SHOW CREATE TABLE|VIEW|DATABASE ...
 func (p *HandParser) parseShowCreate() ast.StmtNode {
-	stmt := Alloc[ast.ShowStmt](p.arena)
+	stmt := p.arena.AllocShowStmt()
 
 	switch p.peek().Tp {
 	case tableKwd:

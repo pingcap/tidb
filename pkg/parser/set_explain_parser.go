@@ -138,7 +138,7 @@ func (p *HandParser) parseSetStmt() ast.StmtNode {
 
 // parseVariableAssignment parses a single variable assignment.
 func (p *HandParser) parseVariableAssignment() *ast.VariableAssignment {
-	va := Alloc[ast.VariableAssignment](p.arena)
+	va := p.arena.AllocVariableAssignment()
 
 	switch p.peek().Tp {
 	case singleAtIdentifier:
@@ -197,7 +197,7 @@ func (p *HandParser) parseVariableAssignment() *ast.VariableAssignment {
 }
 
 func (p *HandParser) parseSystemVariableAssignment(isGlobal, isInstance bool) *ast.VariableAssignment {
-	va := Alloc[ast.VariableAssignment](p.arena)
+	va := p.arena.AllocVariableAssignment()
 	va.IsSystem = true
 	va.IsGlobal = isGlobal
 	va.IsInstance = isInstance
@@ -244,7 +244,7 @@ func (p *HandParser) acceptEqOrAssign() bool {
 // Handles ON, OFF, DEFAULT, BINARY (as charset string), and general expressions.
 func (p *HandParser) parseSetExpr() ast.ExprNode {
 	if _, ok := p.accept(defaultKwd); ok {
-		return Alloc[ast.DefaultExpr](p.arena)
+		return p.arena.AllocDefaultExpr()
 	}
 	// BINARY as a SET value means the charset name 'BINARY' (string)
 	if p.peek().Tp == binaryType {
@@ -271,11 +271,11 @@ func (p *HandParser) parseSetExpr() ast.ExprNode {
 
 // parseSetNamesAssignment returns assignments for: NAMES charset [COLLATE collation | DEFAULT]
 func (p *HandParser) parseSetNamesAssignment() []*ast.VariableAssignment {
-	va := Alloc[ast.VariableAssignment](p.arena)
+	va := p.arena.AllocVariableAssignment()
 	va.Name = ast.SetNames
 
 	if _, ok := p.accept(defaultKwd); ok {
-		va.Value = Alloc[ast.DefaultExpr](p.arena)
+		va.Value = p.arena.AllocDefaultExpr()
 	} else {
 		tok := p.next()
 		va.Value = ast.NewValueExpr(tok.Lit, "", "")
@@ -292,11 +292,11 @@ func (p *HandParser) parseSetNamesAssignment() []*ast.VariableAssignment {
 // parseSetCharsetAssignment returns assignments for: {charset_name | DEFAULT}
 // Used for both SET CHARACTER SET and SET CHARSET — caller already consumed the keyword tokens.
 func (p *HandParser) parseSetCharsetAssignment() []*ast.VariableAssignment {
-	va := Alloc[ast.VariableAssignment](p.arena)
+	va := p.arena.AllocVariableAssignment()
 	va.Name = ast.SetCharset
 
 	if _, ok := p.accept(defaultKwd); ok {
-		va.Value = Alloc[ast.DefaultExpr](p.arena)
+		va.Value = p.arena.AllocDefaultExpr()
 	} else {
 		tok := p.next()
 		va.Value = ast.NewValueExpr(tok.Lit, "", "")
@@ -450,7 +450,7 @@ func (p *HandParser) parseSetTransaction(isGlobal bool, hasScope bool) ast.StmtN
 	stmt := Alloc[ast.SetStmt](p.arena)
 
 	for {
-		va := Alloc[ast.VariableAssignment](p.arena)
+		va := p.arena.AllocVariableAssignment()
 		va.IsSystem = true
 		va.IsGlobal = isGlobal
 
@@ -642,7 +642,7 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 			if tn == nil {
 				return nil
 			}
-			showStmt := Alloc[ast.ShowStmt](p.arena)
+			showStmt := p.arena.AllocShowStmt()
 			showStmt.Tp = ast.ShowColumns
 			showStmt.Table = tn
 			// Check for column specifier after table name

@@ -108,7 +108,7 @@ func (p *HandParser) parseColumnName() *ast.ColumnName {
 	}
 	name := ast.NewCIStr(tok.Lit)
 
-	col := Alloc[ast.ColumnName](p.arena)
+	col := p.arena.AllocColumnName()
 	col.Name = name
 
 	// Check for qualifications
@@ -216,7 +216,7 @@ func (p *HandParser) parseHostname() string {
 
 // parseUserIdentity parses user@host or CURRENT_USER or USER()
 func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
-	authUser := Alloc[auth.UserIdentity](p.arena)
+	authUser := p.arena.AllocUserIdentity()
 
 	if _, ok := p.accept(currentUser); ok {
 		authUser.CurrentUser = true

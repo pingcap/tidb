@@ -417,7 +417,7 @@ func (p *HandParser) parseIdentOrFuncCall() ast.ExprNode {
 // parseColumnRef parses a possibly-qualified column name starting with the
 // already-consumed first identifier token.
 func (p *HandParser) parseColumnRef(first Token) ast.ExprNode {
-	col := Alloc[ast.ColumnName](p.arena)
+	col := p.arena.AllocColumnName()
 	col.Name = ast.NewCIStr(first.Lit)
 
 	// Check for schema.table.column or table.column
@@ -743,7 +743,7 @@ func (p *HandParser) parseOptPrecisionFunc() ast.ExprNode {
 	tok := p.next() // consume the function token
 	p.expect('(')
 
-	node := Alloc[ast.FuncCallExpr](p.arena)
+	node := p.arena.AllocFuncCallExpr()
 	node.FnName = ast.NewCIStr(tok.Lit)
 
 	// Optional precision argument: NOW(6), CURTIME(3)
@@ -766,7 +766,7 @@ func (p *HandParser) parseCurDateFunc() ast.ExprNode {
 	p.expect('(')
 	p.expect(')')
 
-	node := Alloc[ast.FuncCallExpr](p.arena)
+	node := p.arena.AllocFuncCallExpr()
 	node.FnName = ast.NewCIStr(tok.Lit)
 	return node
 }
@@ -850,7 +850,7 @@ func (p *HandParser) parseCompareSubquery(left ast.ExprNode, opCode opcode.Op, a
 	sub = p.maybeParseUnion(sub)
 	p.expect(')')
 
-	subExpr := Alloc[ast.SubqueryExpr](p.arena)
+	subExpr := p.arena.AllocSubqueryExpr()
 	subExpr.Query = sub
 
 	cmpNode := Alloc[ast.CompareSubqueryExpr](p.arena)
@@ -902,13 +902,13 @@ func (p *HandParser) parseTimeFunc(fnName string) ast.ExprNode {
 			}
 		}
 		p.expect(')')
-		node := Alloc[ast.FuncCallExpr](p.arena)
+		node := p.arena.AllocFuncCallExpr()
 		node.FnName = ast.NewCIStr(fnName)
 		node.Args = args
 		return node
 	}
 	// Niladic form
-	node := Alloc[ast.FuncCallExpr](p.arena)
+	node := p.arena.AllocFuncCallExpr()
 	node.FnName = ast.NewCIStr(fnName)
 	return node
 }

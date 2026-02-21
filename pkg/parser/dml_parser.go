@@ -47,7 +47,7 @@ func (p *HandParser) parsePriority() mysql.PriorityEnum {
 func (p *HandParser) wrapTableNameInRefs(tn *ast.TableName) *ast.TableRefsClause {
 	ts := Alloc[ast.TableSource](p.arena)
 	ts.Source = tn
-	join := Alloc[ast.Join](p.arena)
+	join := p.arena.AllocJoin()
 	join.Left = ts
 	clause := Alloc[ast.TableRefsClause](p.arena)
 	clause.TableRefs = join
@@ -244,7 +244,7 @@ func (p *HandParser) parseAssignment() *ast.Assignment {
 	node.Column = col
 
 	if _, ok := p.accept(defaultKwd); ok {
-		node.Expr = Alloc[ast.DefaultExpr](p.arena)
+		node.Expr = p.arena.AllocDefaultExpr()
 	} else {
 		node.Expr = p.parseExpression(precNone)
 	}
@@ -518,7 +518,7 @@ func (p *HandParser) parseDeleteTableList() *ast.DeleteTableList {
 // parseTableStmt parses TABLE t1 [ORDER BY ...] [LIMIT ...]
 func (p *HandParser) parseTableStmt() ast.StmtNode {
 	// TABLE t1 -> SELECT * FROM t1
-	stmt := Alloc[ast.SelectStmt](p.arena)
+	stmt := p.arena.AllocSelectStmt()
 	stmt.Kind = ast.SelectStmtKindTable
 	p.expect(tableKwd)
 
@@ -537,7 +537,7 @@ func (p *HandParser) parseTableStmt() ast.StmtNode {
 
 // parseValuesStmt parses VALUES (1,2), (3,4) ...
 func (p *HandParser) parseValuesStmt() ast.StmtNode {
-	stmt := Alloc[ast.SelectStmt](p.arena)
+	stmt := p.arena.AllocSelectStmt()
 	stmt.Kind = ast.SelectStmtKindValues
 
 	rawLists := p.parseValueList(false, true)

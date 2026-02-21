@@ -44,7 +44,7 @@ func (p *HandParser) parseCommaJoin() *ast.Join {
 	if j, ok := res.(*ast.Join); ok {
 		innerJoin = j
 	} else {
-		innerJoin = Alloc[ast.Join](p.arena)
+		innerJoin = p.arena.AllocJoin()
 		innerJoin.Left = res
 	}
 
@@ -56,7 +56,7 @@ func (p *HandParser) parseCommaJoin() *ast.Join {
 			}
 
 			// Comma join ALWAYS nests the previous ref (even if it's already a Join).
-			newJoin := Alloc[ast.Join](p.arena)
+			newJoin := p.arena.AllocJoin()
 			newJoin.Left = innerJoin
 			newJoin.Right = right
 			newJoin.Tp = ast.CrossJoin
@@ -124,7 +124,7 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 				p.error(p.peek().Offset, "natural join cannot have ON clause")
 				return nil
 			}
-			join := Alloc[ast.Join](p.arena)
+			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
@@ -139,7 +139,7 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 				p.error(p.peek().Offset, "natural join cannot have USING clause")
 				return nil
 			}
-			join := Alloc[ast.Join](p.arena)
+			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
@@ -151,7 +151,7 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 			lhs = join
 		} else if natural || straight {
 			// NATURAL JOIN and STRAIGHT_JOIN don't take ON/USING.
-			join := Alloc[ast.Join](p.arena)
+			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
@@ -198,7 +198,7 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 		return nil
 	}
 
-	join := Alloc[ast.Join](p.arena)
+	join := p.arena.AllocJoin()
 	join.Left = left
 	join.Right = rhs
 	join.Tp = joinType
@@ -299,7 +299,7 @@ func (p *HandParser) makeCrossJoin(left, right ast.ResultSetNode) *ast.Join {
 	rj, ok := right.(*ast.Join)
 	// don't break the explicit parents name scope constraints.
 	if !ok || rj.Right == nil || rj.ExplicitParens {
-		join := Alloc[ast.Join](p.arena)
+		join := p.arena.AllocJoin()
 		join.Left = left
 		join.Right = right
 		join.Tp = ast.CrossJoin
@@ -324,7 +324,7 @@ func (p *HandParser) makeCrossJoin(left, right ast.ResultSetNode) *ast.Join {
 		leftMostLeafFatherOfRight = join
 	}
 
-	newCrossJoin := Alloc[ast.Join](p.arena)
+	newCrossJoin := p.arena.AllocJoin()
 	newCrossJoin.Left = left
 	newCrossJoin.Right = leftMostLeafFatherOfRight.Left
 	newCrossJoin.Tp = ast.CrossJoin
@@ -661,7 +661,7 @@ func (p *HandParser) parseColumnNameList() []*ast.ColumnName {
 	var cols []*ast.ColumnName
 	for {
 		tok := p.next()
-		col := Alloc[ast.ColumnName](p.arena)
+		col := p.arena.AllocColumnName()
 		col.Name = ast.NewCIStr(tok.Lit)
 		cols = append(cols, col)
 		if _, ok := p.accept(','); !ok {

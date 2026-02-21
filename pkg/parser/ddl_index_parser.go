@@ -20,7 +20,7 @@ import (
 
 // parseConstraint parses a table constraint: [CONSTRAINT name] PRIMARY KEY ...
 func (p *HandParser) parseConstraint() *ast.Constraint {
-	cons := Alloc[ast.Constraint](p.arena)
+	cons := p.arena.AllocConstraint()
 
 	// Optional CONSTRAINT [symbol]
 	if _, ok := p.accept(constraint); ok {
@@ -150,7 +150,7 @@ func (p *HandParser) parseIndexPartSpecifications() []*ast.IndexPartSpecificatio
 			part.Expr = p.parseExpression(precNone)
 			p.expect(')')
 		} else if isIdentLike(p.peek().Tp) {
-			part.Column = Alloc[ast.ColumnName](p.arena)
+			part.Column = p.arena.AllocColumnName()
 			part.Column.Name = ast.NewCIStr(p.next().Lit)
 			if p.peek().Tp == '(' {
 				part.Length = p.parseFieldLen()

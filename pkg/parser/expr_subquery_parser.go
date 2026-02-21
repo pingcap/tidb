@@ -56,7 +56,7 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 			query.SetText(nil, p.src[startOffset:endOffset])
 		}
 		p.expect(')')
-		sub := Alloc[ast.SubqueryExpr](p.arena)
+		sub := p.arena.AllocSubqueryExpr()
 		sub.Query = query
 		return sub
 	}
@@ -78,7 +78,7 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 				query.SetText(nil, p.src[startOffset:endOffset])
 			}
 			p.expect(')')
-			sub := Alloc[ast.SubqueryExpr](p.arena)
+			sub := p.arena.AllocSubqueryExpr()
 			sub.Query = query
 			return sub
 		}
@@ -135,7 +135,7 @@ func (p *HandParser) parseExistsSubquery() ast.ExprNode {
 	}
 	p.expect(')')
 
-	sub := Alloc[ast.SubqueryExpr](p.arena)
+	sub := p.arena.AllocSubqueryExpr()
 	sub.Query = query
 	sub.Exists = true
 
@@ -179,10 +179,10 @@ func (p *HandParser) parseCaseExpr() ast.ExprNode {
 // parseDefaultExpr parses DEFAULT or DEFAULT(column).
 func (p *HandParser) parseDefaultExpr() ast.ExprNode {
 	p.next() // consume DEFAULT
-	node := Alloc[ast.DefaultExpr](p.arena)
+	node := p.arena.AllocDefaultExpr()
 
 	if _, ok := p.accept('('); ok {
-		col := Alloc[ast.ColumnName](p.arena)
+		col := p.arena.AllocColumnName()
 		// Parse potentially dotted column name: col / tbl.col / schema.tbl.col
 		part1 := p.next().Lit
 		if _, ok2 := p.accept('.'); ok2 {
@@ -226,7 +226,7 @@ func (p *HandParser) parseInExpr(left ast.ExprNode, not bool) ast.ExprNode {
 		}
 		// Handle UNION/EXCEPT/INTERSECT after the initial SELECT.
 		result := p.maybeParseUnion(query)
-		sub := Alloc[ast.SubqueryExpr](p.arena)
+		sub := p.arena.AllocSubqueryExpr()
 		sub.Query = result
 		node.Sel = sub
 	} else if p.peek().Tp == tableKwd || p.peek().Tp == values {
@@ -236,7 +236,7 @@ func (p *HandParser) parseInExpr(left ast.ExprNode, not bool) ast.ExprNode {
 		} else {
 			query = p.parseValuesStmt()
 		}
-		sub := Alloc[ast.SubqueryExpr](p.arena)
+		sub := p.arena.AllocSubqueryExpr()
 		sub.Query = query.(*ast.SelectStmt)
 		node.Sel = sub
 	} else {

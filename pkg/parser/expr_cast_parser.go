@@ -32,7 +32,7 @@ import (
 func (p *HandParser) parseCurrentFunc() ast.ExprNode {
 	tok := p.next()
 
-	node := Alloc[ast.FuncCallExpr](p.arena)
+	node := p.arena.AllocFuncCallExpr()
 
 	// Map token to canonical function name.
 	switch tok.Tp {
