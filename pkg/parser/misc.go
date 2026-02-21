@@ -560,6 +560,7 @@ var tokenMap = map[string]int{
 	"METADATA":                       metadata,
 	"MICROSECOND":                    microsecond,
 	"MIDDLEINT":                      middleIntType,
+	"MLFLOW":                         mlflow,
 	"MIN_ROWS":                       minRows,
 	"MIN":                            min,
 	"MINUTE_MICROSECOND":             minuteMicrosecond,

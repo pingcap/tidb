@@ -479,10 +479,10 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	increment                  "INCREMENT"
 	incremental                "INCREMENTAL"
 	indexes                    "INDEXES"
+	input                      "INPUT"
 	insertMethod               "INSERT_METHOD"
 	instance                   "INSTANCE"
 	invisible                  "INVISIBLE"
-	input                      "INPUT"
 	invoker                    "INVOKER"
 	io                         "IO"
 	ipc                        "IPC"
@@ -520,6 +520,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	minute                     "MINUTE"
 	minValue                   "MINVALUE"
 	minRows                    "MIN_ROWS"
+	mlflow                     "MLFLOW"
 	mode                       "MODE"
 	model                      "MODEL"
 	modify                     "MODIFY"
@@ -547,12 +548,12 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	oltpReadWrite              "OLTP_READ_WRITE"
 	oltpWriteOnly              "OLTP_WRITE_ONLY"
 	online                     "ONLINE"
-	onnx                       "ONNX"
 	only                       "ONLY"
+	onnx                       "ONNX"
 	onDuplicate                "ON_DUPLICATE"
 	open                       "OPEN"
-	output                     "OUTPUT"
 	optional                   "OPTIONAL"
+	output                     "OUTPUT"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
 	pageChecksum               "PAGE_CHECKSUM"
@@ -1608,6 +1609,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	KeyOrIndex        "{KEY|INDEX}"
 	ColumnKeywordOpt  "Column keyword or empty"
 	PrimaryOpt        "Optional primary keyword"
+	ModelEngine       "model engine type"
 	NowSym            "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP"
 	NowSymFunc        "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	CurdateSym        "CURDATE or CURRENT_DATE"
@@ -7516,6 +7518,7 @@ UnReservedKeyword:
 |	"INPUT"
 |	"OUTPUT"
 |	"MODEL"
+|	"MLFLOW"
 |	"ONNX"
 |	"LABELS"
 |	"LOGS"
@@ -16178,15 +16181,25 @@ DropModelStmt:
 	}
 
 ModelSpec:
-	'(' "INPUT" '(' ModelColumnDefList ')' "OUTPUT" '(' ModelColumnDefList ')' ')' "USING" "ONNX" "LOCATION" stringLit "CHECKSUM" stringLit
+	'(' "INPUT" '(' ModelColumnDefList ')' "OUTPUT" '(' ModelColumnDefList ')' ')' "USING" ModelEngine "LOCATION" stringLit "CHECKSUM" stringLit
 	{
 		$$ = &ast.CreateModelStmt{
 			InputCols:  $4.([]*ast.ColumnDef),
 			OutputCols: $8.([]*ast.ColumnDef),
-			Engine:     "ONNX",
+			Engine:     $12,
 			Location:   $14,
 			Checksum:   $16,
 		}
+	}
+
+ModelEngine:
+	"ONNX"
+	{
+		$$ = "ONNX"
+	}
+|	"MLFLOW"
+	{
+		$$ = "MLFLOW"
 	}
 
 ModelColumnDefList:
