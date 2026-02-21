@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "model",
+    srcs = [
+        "artifact.go",
+        "cache.go",
+        "loader.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/model",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore",
+        "//pkg/util/kvcache",
+        "//pkg/util/syncutil",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "model_test",
+    timeout = "short",
+    srcs = ["loader_test.go"],
+    embed = [":model"],
+    flaky = True,
+    deps = [
+        "@com_github_stretchr_testify//require",
+    ],
+)

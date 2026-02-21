@@ -43,6 +43,8 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.TimestampLiteral: {},
 	ast.AesEncrypt:       {}, // affected by @@block_encryption_mode
 	ast.AesDecrypt:       {},
+	ast.ModelPredict:     {},
+	ast.ModelPredictOutput: {},
 }
 
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.
@@ -65,6 +67,8 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.LastVal:   {},
 	ast.SetVal:    {},
 	ast.AnyValue:  {},
+	ast.ModelPredict: {},
+	ast.ModelPredictOutput: {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.

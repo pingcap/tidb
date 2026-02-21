@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "modelruntime",
+    srcs = [
+        "infer.go",
+        "metadata.go",
+        "runtime.go",
+        "runtime_test_helpers.go",
+        "session_cache.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/modelruntime",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/kvcache",
+        "//pkg/util/syncutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_yalue_onnxruntime_go//:onnxruntime_go",
+    ],
+)
+
+go_test(
+    name = "modelruntime_test",
+    timeout = "short",
+    srcs = [
+        "metadata_test.go",
+        "runtime_test.go",
+        "session_cache_test.go",
+    ],
+    embed = [":modelruntime"],
+    flaky = True,
+    deps = [
+        "@com_github_stretchr_testify//require",
+        "@com_github_yalue_onnxruntime_go//:onnxruntime_go",
+    ],
+)

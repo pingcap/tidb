@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -1574,6 +1575,30 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 				er.disableFoldCounter--
 			}
 		}
+	case *ast.FieldAccessExpr:
+		base := er.ctxStack[len(er.ctxStack)-1]
+		er.ctxStackPop(1)
+		sf, ok := base.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.ModelPredict {
+			er.err = errors.Errorf("unsupported field access")
+			return retNode, false
+		}
+		args := sf.GetArgs()
+		if len(args) == 0 {
+			er.err = errors.New("model_predict requires arguments")
+			return retNode, false
+		}
+		outputConst := expression.DatumToConstant(types.NewStringDatum(v.Name.O), mysql.TypeVarchar, 0)
+		newArgs := make([]expression.Expression, 0, len(args)+1)
+		newArgs = append(newArgs, args[0], outputConst)
+		newArgs = append(newArgs, args[1:]...)
+		retType := types.NewFieldType(mysql.TypeDouble)
+		function, err := er.newFunction(ast.ModelPredictOutput, retType, newArgs...)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
+		er.ctxStackAppend(function, types.EmptyName)
 	case *ast.TableName:
 		er.toTable(v)
 	case *ast.ColumnName:
@@ -2375,6 +2400,29 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 // Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
 func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
+	case ast.ModelPredict:
+		if len(v.Args) < 2 {
+			er.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
+			return true
+		}
+		if err := er.checkModelPredictAccessInPlan(); err != nil {
+			er.err = err
+			return true
+		}
+		if colExpr, ok := v.Args[0].(*ast.ColumnNameExpr); ok && colExpr.Name != nil {
+			name := colExpr.Name.Name.O
+			if colExpr.Name.Table.O != "" {
+				name = colExpr.Name.Table.O + "." + name
+			}
+			if colExpr.Name.Schema.O != "" {
+				name = colExpr.Name.Schema.O + "." + name
+			}
+			idx := len(er.ctxStack) - len(v.Args)
+			if idx >= 0 && idx < len(er.ctxStack) {
+				er.ctxStack[idx] = expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeVarchar, 0)
+			}
+		}
+		return false
 	// when column is not null, ifnull on such column can be optimized to a cast.
 	case ast.Ifnull:
 		if len(v.Args) != 2 {
@@ -2445,6 +2493,24 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	default:
 		return false
 	}
+}
+
+func (er *expressionRewriter) checkModelPredictAccessInPlan() error {
+	if !vardef.EnableModelInference.Load() {
+		return infoschema.ErrModelInferenceDisabled
+	}
+	if er.planCtx == nil || er.planCtx.builder == nil {
+		return nil
+	}
+	checker := privilege.GetPrivilegeManager(er.planCtx.builder.ctx)
+	if checker == nil {
+		return nil
+	}
+	activeRoles := er.planCtx.builder.ctx.GetSessionVars().ActiveRoles
+	if !checker.RequestDynamicVerification(activeRoles, "MODEL_EXECUTE", false) {
+		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("MODEL_EXECUTE")
+	}
+	return nil
 }
 
 func (er *expressionRewriter) funcCallToExpressionWithPlanCtx(planCtx *exprRewriterPlanCtx, v *ast.FuncCallExpr) {
@@ -2602,6 +2668,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 
 	planCtx := er.planCtx
 	if planCtx == nil {
+		if er.tryRewriteModelPredictName(v) {
+			return
+		}
 		er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[er.clause()])
 		return
 	}
@@ -2634,7 +2703,36 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	if planCtx.builder.curClause == globalOrderByClause {
 		planCtx.builder.curClause = orderByClause
 	}
+	if er.tryRewriteModelPredictName(v) {
+		return
+	}
 	er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[planCtx.builder.curClause])
+}
+
+func (er *expressionRewriter) tryRewriteModelPredictName(v *ast.ColumnName) bool {
+	if len(er.astNodeStack) < 3 {
+		return false
+	}
+	parent, ok := er.astNodeStack[len(er.astNodeStack)-2].(*ast.ColumnNameExpr)
+	if !ok || parent.Name != v {
+		return false
+	}
+	grand, ok := er.astNodeStack[len(er.astNodeStack)-3].(*ast.FuncCallExpr)
+	if !ok || grand.FnName.L != ast.ModelPredict || len(grand.Args) == 0 {
+		return false
+	}
+	if grand.Args[0] != parent {
+		return false
+	}
+	name := v.Name.O
+	if v.Table.O != "" {
+		name = v.Table.O + "." + name
+	}
+	if v.Schema.O != "" {
+		name = v.Schema.O + "." + name
+	}
+	er.ctxStackAppend(expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeVarchar, 0), types.EmptyName)
+	return true
 }
 
 func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
