@@ -338,7 +338,6 @@
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
-      "parser/goyacc/": "ignore goyacc code",
       ".*_test\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
@@ -549,7 +548,6 @@
       "GOROOT/": "ignore code",
       "/cgo/": "ignore cgo",
       "tools/": "ignore tool code",
-      "pkg/parser/goyacc/": "ignore goyacc code",
       "pkg/parser/ast/": "ignore parser/ast code",
       "pkg/parser/test_driver/": "ignore parser/test_driver code",
       "pkg/planner/core/plan_clone_generated.go": "ignore plan_clone_generated code",

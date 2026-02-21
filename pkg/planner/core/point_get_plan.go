@@ -701,7 +701,7 @@ func indexIsAvailableByHints(
 			continue
 		}
 		if len(h.Tables) != 1 {
-			// This should not happen. See HintIndexList in hintparser.y.
+			// This should not happen. See parseIndexLevelHint in hintparser.go.
 			intest.Assert(false)
 			continue
 		}
