@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -629,14 +630,6 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
 	tk.MustExec("refresh materialized view mv complete")
-	refreshLastQueryInfoRows := tk.MustQuery("select json_extract(@@tidb_last_query_info, '$.start_ts'), json_extract(@@tidb_last_query_info, '$.for_update_ts')").Rows()
-	require.Len(t, refreshLastQueryInfoRows, 1)
-	refreshLastQueryStartTS, err := strconv.ParseUint(refreshLastQueryInfoRows[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	refreshLastQueryForUpdateTS, err := strconv.ParseUint(refreshLastQueryInfoRows[0][1].(string), 10, 64)
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, refreshLastQueryForUpdateTS, refreshLastQueryStartTS)
-	t.Logf("after refresh last_query_info: start_ts=%d for_update_ts=%d", refreshLastQueryStartTS, refreshLastQueryForUpdateTS)
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
 
 	newTSRow := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESSFUL_REFRESH_READ_TSO from mysql.tidb_mview_refresh where MVIEW_ID = %d", mviewID)).Rows()
@@ -647,7 +640,7 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 
 	require.NotEqual(t, oldTS, newTS)
 
-	tk.MustQuery(fmt.Sprintf("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE, LAST_SUCCESSFUL_REFRESH_READ_TSO = %d from mysql.tidb_mview_refresh where MVIEW_ID = %d", refreshLastQueryForUpdateTS, mviewID)).
+	tk.MustQuery(fmt.Sprintf("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE, LAST_SUCCESSFUL_REFRESH_READ_TSO > 0 from mysql.tidb_mview_refresh where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("success complete 1"))
 }
 
@@ -958,4 +951,26 @@ func TestMaterializedViewRefreshCompleteForceConstraintCheckInPlacePessimisticOn
 	tk.MustExec("refresh materialized view mv complete")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
 	tk.MustQuery("select @@tidb_constraint_check_in_place_pessimistic").Check(testkit.Rows("0"))
+}
+
+func TestMaterializedViewRefreshRequiresAlterPrivilege(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create user 'mv_refresh_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'mv_refresh_u'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_refresh_u", Hostname: "%"}, nil, nil, nil))
+
+	err := tkUser.ExecToErr("refresh materialized view test.mv complete")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "ALTER command denied")
+
+	tk.MustExec("grant alter on test.mv to 'mv_refresh_u'@'%'")
+	tkUser.MustExec("refresh materialized view test.mv complete")
 }

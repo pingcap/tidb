@@ -10,7 +10,7 @@ go_test(
         "mview_log_ddl_test.go",
     ],
     flaky = True,
-    shard_count = 43,
+    shard_count = 50,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
@@ -23,6 +23,7 @@ go_test(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",

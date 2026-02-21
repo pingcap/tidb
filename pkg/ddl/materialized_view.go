@@ -379,8 +379,16 @@ func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.Refre
 	}
 
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
-	sqlExec := sctx.GetSQLExecutor()
-	sessVars := sctx.GetSessionVars()
+	if e.sessPool == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: internal session pool is not initialized")
+	}
+	refreshSctx, err := e.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer e.sessPool.Put(refreshSctx)
+	sqlExec := refreshSctx.GetSQLExecutor()
+	sessVars := refreshSctx.GetSessionVars()
 
 	// Savepoint is required for transactional refresh-with-failure-record (rollback MV data changes but persist failure info).
 	// Savepoint is not supported in pessimistic txn when `tidb_constraint_check_in_place_pessimistic` is OFF, so we
@@ -508,7 +516,7 @@ WHERE MVIEW_ID = %?`
 		lastSuccessfulRefreshReadTSO = lockedReadTSO
 	}
 
-	txn, err := sctx.Txn(true)
+	txn, err := refreshSctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
