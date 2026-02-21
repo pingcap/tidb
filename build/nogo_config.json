@@ -330,8 +330,7 @@
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code",
       "pkg/util/printer/printer.go": "ignore util/printer code",
-      "pkg/parser/parser.go": "ignore parser code",
-      "pkg/parser/hintparser.go": "ignore parser/hintparser code"
+      "pkg/parser/parser.go": "ignore parser code"
     }
   },
   "gosec": {
@@ -456,10 +455,7 @@
       "pkg/parser/model/model_test.go": "ignore tables code",
       "pkg/parser/ast": "ignore ast code",
       "pkg/parser/parser.go": "ignore parser code",
-      "pkg/parser/hintparser.go": "ignore hintparser code",
-      "pkg/parser/yy_parser.go": "ignore yy_parser code",
       "pkg/parser/digester.go": "ignore digester code",
-      "pkg/parser/consistent_test.go": "ignore consistent code",
       "pkg/parser/bench_test.go": "ignore bench code",
       "pkg/parser/parser_test.go": "ignore parser_test code",
       "pkg/parser/digester_test.go": "ignore digester_test code",
@@ -1276,7 +1272,6 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
-      "pkg/parser/yy_parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
@@ -1286,7 +1281,6 @@
       "cmd/mirror": "no need to mirror",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
-      "pkg/parser/yy_parser.go": "ignore generated code",
       "pkg/parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
@@ -1301,7 +1295,6 @@
   "assertionapi": {
     "exclude_files": {
       "external/": "no need to vet third party code",
-      "pkg/parser/yy_parser.go": "ignore generated code",
       "pkg/parser/parser.go": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
