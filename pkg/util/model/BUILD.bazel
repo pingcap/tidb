@@ -6,6 +6,7 @@ go_library(
         "artifact.go",
         "cache.go",
         "loader.go",
+        "mlflow.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/model",
     visibility = ["//visibility:public"],
@@ -14,15 +15,20 @@ go_library(
         "//pkg/util/kvcache",
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
+        "@in_gopkg_yaml_v3//:yaml_v3",
     ],
 )
 
 go_test(
     name = "model_test",
     timeout = "short",
-    srcs = ["loader_test.go"],
+    srcs = [
+        "loader_test.go",
+        "mlflow_test.go",
+    ],
     embed = [":model"],
     flaky = True,
+    data = glob(["testdata/**"]),
     deps = [
         "@com_github_stretchr_testify//require",
     ],
