@@ -14,9 +14,10 @@
 package parser_test
 
 import (
+	"github.com/pingcap/tidb/pkg/parser"
+
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
@@ -321,7 +322,7 @@ func TestParseHint(t *testing.T) {
 		},
 		{
 			input: "unknown_hint()",
-			errs:  []string{`Optimizer hint syntax error at line 1 `},
+			errs:  []string{`Optimizer hint unknown_hint is not supported`},
 		},
 		{
 			input: "set_var(timestamp = 1.5)",

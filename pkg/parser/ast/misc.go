@@ -533,7 +533,7 @@ func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
 			case TrafficOptionSpeed:
 				ctx.WriteKeyWord("SPEED ")
 				ctx.WritePlain("= ")
-				ctx.WritePlainf("%v", option.FloatValue.GetValue())
+				ctx.WritePlain(option.StrValue)
 			case TrafficOptionReadOnly:
 				ctx.WriteKeyWord("READONLY ")
 				ctx.WritePlain("= ")
@@ -3002,6 +3002,8 @@ const (
 	ObjectTypeFunction
 	// ObjectTypeProcedure means the following object is a stored procedure.
 	ObjectTypeProcedure
+	// ObjectTypeUser means the following object is a user (for GRANT PROXY).
+	ObjectTypeUser
 )
 
 // Restore implements Node interface.
@@ -3033,6 +3035,8 @@ const (
 	GrantLevelDB
 	// GrantLevelTable means the privileges apply to all columns in a given table.
 	GrantLevelTable
+	// GrantLevelUser means the privileges apply to a given user (for GRANT PROXY).
+	GrantLevelUser
 )
 
 // GrantLevel is used for store the privilege scope.
@@ -3060,6 +3064,12 @@ func (n *GrantLevel) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(".")
 		}
 		ctx.WriteName(n.TableName)
+	case GrantLevelUser:
+		// Used for GRANT PROXY ON 'User'@'Host'
+		// DBName stores User, TableName stores Host
+		ctx.WriteName(n.DBName) // Username
+		ctx.WritePlain("@")
+		ctx.WriteName(n.TableName) // Hostname
 	}
 	return nil
 }

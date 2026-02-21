@@ -14,9 +14,10 @@
 package parser_test
 
 import (
+	"github.com/pingcap/tidb/pkg/parser"
+
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,7 +51,7 @@ func TestKeywordsLength(t *testing.T) {
 func TestKeywordsSorting(t *testing.T) {
 	for i, kw := range parser.Keywords {
 		if i > 1 && parser.Keywords[i-1].Word > kw.Word && parser.Keywords[i-1].Section == kw.Section {
-			t.Errorf("%s should come after %s, please update parser.y and re-generate keywords.go\n",
+			t.Errorf("%s should come after %s, please update keywords.go to fix the sort order\n",
 				parser.Keywords[i-1].Word, kw.Word)
 		}
 	}
