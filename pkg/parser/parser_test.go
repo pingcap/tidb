@@ -14,6 +14,8 @@
 package parser_test
 
 import (
+	"github.com/pingcap/tidb/pkg/parser"
+
 	"bytes"
 	"fmt"
 	"runtime"
@@ -22,11 +24,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	. "github.com/pingcap/tidb/pkg/parser/format"
-	_ "github.com/pingcap/tidb/pkg/parser/hparser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
