@@ -10,11 +10,12 @@ go_test(
         "mview_log_ddl_test.go",
     ],
     flaky = True,
-    shard_count = 42,
+    shard_count = 43,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
         "//pkg/ddl/schematracker",
+        "//pkg/ddl/session",
         "//pkg/ddl/testutil",
         "//pkg/ddl/util",
         "//pkg/domain",
