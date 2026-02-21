@@ -13,18 +13,18 @@
 
 package hparser
 
-// LexerBridge wraps a Scanner (from the parent parser package) to provide
-// token lookahead and backtracking for the recursive descent parser.
+import (
+	"github.com/pingcap/tidb/pkg/parser"
+)
+
+// LexerBridge wraps a parser.Lexer (the Scanner) to provide token lookahead
+// and backtracking for the recursive descent parser.
 //
 // It maintains a ring buffer of pre-fetched tokens so the parser can
 // peek ahead without consuming tokens, and can backtrack to a saved position.
-//
-// The bridge uses a LexFunc callback to avoid importing the parent parser
-// package directly (which would create a circular dependency).
 type LexerBridge struct {
-	// lexFunc is called to get the next token from the underlying scanner.
-	// It returns the token type, byte offset, literal string, and arbitrary item.
-	lexFunc LexFunc
+	// lexer is the underlying scanner that produces tokens.
+	lexer parser.Lexer
 
 	// buf is a ring buffer of pre-read tokens.
 	buf [maxLookahead]Token
@@ -37,18 +37,13 @@ type LexerBridge struct {
 	src string
 }
 
-// LexFunc is the callback type for the underlying scanner.
-// Parameters: none
-// Returns: token type, byte offset, literal, converted item (e.g. int64 for intLit)
-type LexFunc func() (tok int, offset int, lit string, item any)
-
 const maxLookahead = 8
 
-// NewLexerBridge creates a LexerBridge backed by the given lex function.
-func NewLexerBridge(fn LexFunc, src string) *LexerBridge {
+// NewLexerBridge creates a LexerBridge backed by the given lexer.
+func NewLexerBridge(lexer parser.Lexer, src string) *LexerBridge {
 	return &LexerBridge{
-		lexFunc: fn,
-		src:     src,
+		lexer: lexer,
+		src:   src,
 	}
 }
 
@@ -58,9 +53,9 @@ func (lb *LexerBridge) fill(n int) {
 		panic("LexerBridge.fill: lookahead exceeds maxLookahead")
 	}
 	for lb.count < n {
-		tok, offset, lit, item := lb.lexFunc()
 		idx := (lb.head + lb.count) % maxLookahead
-		lb.buf[idx] = Token{Tp: tok, Offset: offset, Lit: lit, Item: item}
+		// Lex directly into the ring buffer slot — zero copy.
+		lb.buf[idx].Tp = lb.lexer.Lex(&lb.buf[idx])
 		lb.count++
 	}
 }

@@ -18,15 +18,18 @@ import (
 	"math"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
-// HintParseFn is a callback that parses optimizer hint comments (/*+ ... */).
-// Injected by the parent package since the hint parser lives there.
-type HintParseFn func(input string) ([]*ast.TableOptimizerHint, []error)
+func init() {
+	parser.RegisterParserEngine(func() parser.ParserEngine {
+		return NewHandParser()
+	})
+}
 
 // HandParser is a hand-written recursive descent SQL parser.
 // It produces the same AST nodes as the original parser.
@@ -51,7 +54,7 @@ type HandParser struct {
 	lastFieldTypeExplicitCollate bool
 
 	// hintParse parses optimizer hint comments (/*+ ... */).
-	hintParse HintParseFn
+	hintParse parser.HintParseFn
 
 	// Errors accumulated during parsing.
 	errs  []error
@@ -88,7 +91,7 @@ func (p *HandParser) SetSQLMode(mode mysql.SQLMode) {
 }
 
 // SetHintParse sets the optimizer hint parse callback.
-func (p *HandParser) SetHintParse(fn HintParseFn) {
+func (p *HandParser) SetHintParse(fn parser.HintParseFn) {
 	p.hintParse = fn
 }
 
@@ -116,9 +119,9 @@ func (p *HandParser) SetStrictDoubleFieldTypeCheck(val bool) {
 	p.strictDoubleFieldType = val
 }
 
-// Init initializes the parser with a lexer function and source SQL.
-func (p *HandParser) Init(lexFunc LexFunc, src string) {
-	p.lexer = NewLexerBridge(lexFunc, src)
+// Init initializes the parser with a lexer and source SQL.
+func (p *HandParser) Init(lexer parser.Lexer, src string) {
+	p.lexer = NewLexerBridge(lexer, src)
 	p.src = src
 }
 
@@ -129,9 +132,9 @@ func (p *HandParser) SetCharsetCollation(charset, collation string) {
 }
 
 // Parse acts as a complete parser entry point, handling initialization and execution.
-func (p *HandParser) Parse(lexFunc LexFunc, src string, charset, collation string) ([]ast.StmtNode, []error, error) {
+func (p *HandParser) Parse(lexer parser.Lexer, src string, charset, collation string) ([]ast.StmtNode, []error, error) {
 	p.Reset()
-	p.Init(lexFunc, src)
+	p.Init(lexer, src)
 	p.SetCharsetCollation(charset, collation)
 	return p.ParseSQL()
 }

@@ -19,44 +19,20 @@
 package hparser
 
 import (
-	"strings"
-
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 )
 
-// Token represents a lexed token with its metadata.
-// It mirrors parser.Token but is a separate type to avoid an import cycle
-// (parser imports hparser, so hparser cannot import parser).
-type Token struct {
-	// Tp is the token type (matches token constants in tokens.go).
-	Tp int
-	// Offset is the byte offset in the original SQL string.
-	Offset int
-	// Lit is the literal string value (identifier name, string content, etc.).
-	Lit string
-	// Item holds converted values (int64, float64, etc.) for numeric literals.
-	Item any
-}
-
-// IsIdent returns true if the token is an identifier or a string literal (which can be used as a name).
-func (t Token) IsIdent() bool {
-	return t.Tp == 57346 || t.Tp == 57347 // tokIdentifier or tokStringLit
-}
-
-// IsKeyword returns true if the token's literal matches the given keyword (case-insensitive).
-// This works regardless of token type — keywords with dedicated token IDs will still match.
-func (t Token) IsKeyword(kw string) bool {
-	return strings.EqualFold(t.Lit, kw)
-}
+// Token is an alias for parser.Token. All token values flow through this type
+// from the Scanner into the hand-written parser's ring buffer (LexerBridge).
+type Token = parser.Token
 
 // EOF is the token type returned at end of input.
 const EOF = 0
 
 // Precedence levels for the Pratt expression parser.
 // Higher number = tighter binding.
-//
-// These follow MySQL's grammar hierarchy:
 //
 //	bool_pri → comp_op predicate   (precComparison for =, >=, etc.)
 //	predicate → LIKE/IN/BETWEEN/REGEXP/IS   (precPredicate)
