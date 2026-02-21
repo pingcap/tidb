@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/keydecoder"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/modelruntime"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
@@ -241,6 +242,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPlanCache(ctx, sctx, false)
 		case infoschema.ClusterTableTiDBPlanCache:
 			err = e.setDataFromPlanCache(ctx, sctx, true)
+		case infoschema.TableTiDBModelVersions:
+			err = e.setDataForModelVersions(ctx, sctx)
+		case infoschema.TableTiDBModelCache:
+			err = e.setDataForModelCache(sctx)
 		case infoschema.TableKeyspaceMeta:
 			err = e.setDataForKeyspaceMeta(sctx)
 		}
@@ -4097,6 +4102,100 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 		}
 	}
 
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForModelVersions(ctx context.Context, sctx sessionctx.Context) error {
+	exec := sctx.GetRestrictedSQLExecutor()
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, `
+		SELECT m.db_name, m.model_name, mv.model_id, mv.version, mv.engine, mv.location,
+		       mv.checksum, mv.input_schema, mv.output_schema, mv.options, mv.status,
+		       mv.create_time, mv.deleted_at
+		FROM mysql.tidb_model m
+		JOIN mysql.tidb_model_version mv ON m.id = mv.model_id`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 13 {
+			continue
+		}
+		var inputSchema any
+		if !chunkRow.IsNull(7) {
+			inputSchema = chunkRow.GetJSON(7)
+		}
+		var outputSchema any
+		if !chunkRow.IsNull(8) {
+			outputSchema = chunkRow.GetJSON(8)
+		}
+		var options any
+		if !chunkRow.IsNull(9) {
+			options = chunkRow.GetJSON(9)
+		}
+		var deletedAt any
+		if !chunkRow.IsNull(12) {
+			deletedAt = chunkRow.GetTime(12)
+		}
+		row := types.MakeDatums(
+			chunkRow.GetString(0),
+			chunkRow.GetString(1),
+			chunkRow.GetInt64(2),
+			chunkRow.GetInt64(3),
+			chunkRow.GetString(4),
+			chunkRow.GetString(5),
+			chunkRow.GetString(6),
+			inputSchema,
+			outputSchema,
+			options,
+			chunkRow.GetString(10),
+			chunkRow.GetTime(11),
+			deletedAt,
+		)
+		rows = append(rows, row)
+		e.recordMemoryConsume(row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForModelCache(sctx sessionctx.Context) error {
+	cache := modelruntime.GetProcessSessionCache()
+	if cache == nil {
+		return nil
+	}
+	entries := cache.SnapshotEntries()
+	if len(entries) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(entries))
+	for _, entry := range entries {
+		cachedAt := types.NewTime(types.FromGoTime(entry.CachedAt), mysql.TypeDatetime, types.DefaultFsp)
+		var ttlSeconds any
+		if entry.TTL > 0 {
+			ttlSeconds = int64(entry.TTL / time.Second)
+		}
+		var expiresAt any
+		if entry.ExpiresAt != nil {
+			expiresAt = types.NewTime(types.FromGoTime(*entry.ExpiresAt), mysql.TypeDatetime, types.DefaultFsp)
+		}
+		row := types.MakeDatums(
+			entry.ModelID,
+			entry.Version,
+			strings.Join(entry.InputNames, ","),
+			strings.Join(entry.OutputNames, ","),
+			cachedAt,
+			ttlSeconds,
+			expiresAt,
+		)
+		rows = append(rows, row)
+		e.recordMemoryConsume(row)
+	}
 	e.rows = rows
 	return nil
 }

@@ -115,3 +115,34 @@ func TestSessionCacheMetrics(t *testing.T) {
 	require.Equal(t, 2.0, promtestutils.ToFloat64(metrics.ModelSessionCacheCounter.WithLabelValues("miss")))
 	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ModelSessionCacheCounter.WithLabelValues("evict")))
 }
+
+func TestSessionCacheSnapshotEntries(t *testing.T) {
+	now := time.Date(2026, 2, 21, 8, 0, 0, 0, time.UTC)
+	cache := NewSessionCache(SessionCacheOptions{
+		Capacity: 1,
+		TTL:      10 * time.Second,
+		Now: func() time.Time {
+			return now
+		},
+	})
+	_, err := cache.GetOrCreate(SessionKeyFromParts(7, 4, []string{"input_a", "input_b"}, []string{"output"}), func() (dynamicSession, error) {
+		return &stubSession{}, nil
+	})
+	require.NoError(t, err)
+
+	entries := cache.SnapshotEntries()
+	require.Len(t, entries, 1)
+	entry := entries[0]
+	require.Equal(t, int64(7), entry.ModelID)
+	require.Equal(t, int64(4), entry.Version)
+	require.Equal(t, []string{"input_a", "input_b"}, entry.InputNames)
+	require.Equal(t, []string{"output"}, entry.OutputNames)
+	require.Equal(t, now, entry.CachedAt)
+	require.Equal(t, 10*time.Second, entry.TTL)
+	require.NotNil(t, entry.ExpiresAt)
+	require.Equal(t, now.Add(10*time.Second), *entry.ExpiresAt)
+
+	now = now.Add(11 * time.Second)
+	entries = cache.SnapshotEntries()
+	require.Empty(t, entries)
+}

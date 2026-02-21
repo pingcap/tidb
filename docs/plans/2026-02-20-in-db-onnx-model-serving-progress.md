@@ -48,6 +48,13 @@ Status log for phased implementation.
 - [x] Metrics: model load duration + batch size histograms
 - [x] Phase 6 tests green (TestModelInferenceStats, TestModelPredictInferenceStatsRecorded, TestExplainAnalyzeIncludesModelInferenceStats, TestSlowLogModelInferencePayload, TestRunInferenceBatchMetrics, TestRecordModelLoadStatsMetrics)
 
+## Phase 7: Optimizer + RU + Metadata Views
+- [x] Optimizer predicate ordering + cost factor for model predicates
+- [x] Selectivity defaults for model predicates
+- [x] RU accounting includes model inference CPU time
+- [x] INFORMATION_SCHEMA: TIDB_MODEL_VERSIONS + TIDB_MODEL_CACHE
+- [x] Phase 7 tests green (TestModelPredicateOrder, TestSelectivityModelPredictDefault, TestReportModelInferenceRUConsumption, TestSetDataForModelVersions, TestSetDataForModelCache, TestSessionCacheSnapshotEntries)
+
 ## Notes
 - TiFlash model pushdown is future work; v1 only pushes non-model predicates.
 - Tests: `go test -run TestModelStatements --tags=intest ./pkg/parser`; `go test -run TestModelSystemTablesBootstrap --tags=intest ./pkg/session`

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -926,6 +927,46 @@ func TestSelectivity(t *testing.T) {
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
 	}
+}
+
+func TestSelectivityModelPredictDefault(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	statsTbl, err := prepareSelectivity(testKit, dom)
+	require.NoError(t, err)
+
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl := tb.Meta()
+	colInfo := tbl.Columns[0]
+	col := &expression.Column{
+		ID:       colInfo.ID,
+		UniqueID: colInfo.ID,
+		RetType:  colInfo.FieldType.Clone(),
+	}
+	histColl := statsTbl.GenerateHistCollFromColumnInfo(tbl, []*expression.Column{col})
+
+	sctx := testKit.Session().(sessionctx.Context)
+	ectx := sctx.GetExprCtx()
+	modelOutput := expression.NewFunctionInternal(
+		ectx,
+		ast.ModelPredictOutput,
+		types.NewFieldType(mysql.TypeDouble),
+		expression.NewStrConst("m1"),
+		expression.NewStrConst("score"),
+		col,
+	)
+	modelPred := expression.NewFunctionInternal(
+		ectx,
+		ast.GT,
+		types.NewFieldType(mysql.TypeTiny),
+		modelOutput,
+		expression.NewInt64Const(0),
+	)
+
+	ratio, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, []expression.Expression{modelPred}, nil)
+	require.NoError(t, err)
+	require.Truef(t, math.Abs(ratio-0.1) < eps, "expected model default selectivity, got: %v", ratio)
 }
 
 // TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.

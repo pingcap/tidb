@@ -1519,6 +1519,29 @@ func CheckFuncInExpr(e Expression, funcName string) bool {
 	return false
 }
 
+// ContainsModelPredict checks whether the expression contains model predict functions.
+func ContainsModelPredict(e Expression) bool {
+	switch x := e.(type) {
+	case *Constant:
+		if x.DeferredExpr != nil {
+			return ContainsModelPredict(x.DeferredExpr)
+		}
+		return false
+	case *Column, *CorrelatedColumn:
+		return false
+	case *ScalarFunction:
+		if x.FuncName.L == ast.ModelPredict || x.FuncName.L == ast.ModelPredictOutput {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if ContainsModelPredict(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
 func IsMutableEffectsExpr(expr Expression) bool {
 	switch x := expr.(type) {
