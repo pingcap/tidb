@@ -42,7 +42,8 @@ type Artifact struct {
 }
 
 var backendRegistry = map[string]Backend{
-	"ONNX": &onnxBackend{},
+	"ONNX":   &onnxBackend{},
+	"MLFLOW": newMLflowBackend(),
 }
 
 // BackendForEngine returns the backend for a model engine.

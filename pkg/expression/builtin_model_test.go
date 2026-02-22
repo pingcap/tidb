@@ -35,7 +35,7 @@ func TestRecordModelLoadStatsMetrics(t *testing.T) {
 	vars.StmtCtx = stmtctx.NewStmtCtx()
 	ctx := WithModelInferenceStatsTarget(exprstatic.NewEvalContext(), stmtctx.ModelInferenceRoleProjection, 1)
 
-	recordModelLoadStats(ctx, vars, 1, 1, 150*time.Millisecond, nil)
+	recordModelLoadStats(ctx, vars, 1, 1, "onnx", 150*time.Millisecond, nil)
 
 	count, sum := histogramCountAndSum(t, metrics.ModelLoadDuration, map[string]string{
 		metrics.LblType:   "onnx",

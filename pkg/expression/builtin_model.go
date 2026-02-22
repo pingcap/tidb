@@ -521,7 +521,12 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 	if err := validateFloatColumns(outputCols); err != nil {
 		return nil, err
 	}
-	loader := model.NewArtifactLoader(model.LoaderOptions{})
+	var loader model.ArtifactLoader
+	if strings.EqualFold(engine, "MLFLOW") {
+		loader = model.NewDirectoryLoader(model.DirectoryLoaderOptions{})
+	} else {
+		loader = model.NewArtifactLoader(model.LoaderOptions{})
+	}
 	loadStart := time.Now()
 	artifact, err := loader.Load(context.Background(), model.ArtifactMeta{
 		ModelID:  modelID,
@@ -530,7 +535,7 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 		Location: location,
 		Checksum: checksum,
 	})
-	recordModelLoadStats(ctx, vars, modelID, version, time.Since(loadStart), err)
+	recordModelLoadStats(ctx, vars, modelID, version, engine, time.Since(loadStart), err)
 	if err != nil {
 		return nil, err
 	}
@@ -546,15 +551,15 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 		return nil, err
 	}
 	if len(ioInfo.Inputs) != len(inputCols) {
-		return nil, errors.New("onnx input count does not match model schema")
+		return nil, errors.New("model input count does not match model schema")
 	}
 	if len(ioInfo.Outputs) != len(outputCols) {
-		return nil, errors.New("onnx output count does not match model schema")
+		return nil, errors.New("model output count does not match model schema")
 	}
 	inputNames := make([]string, len(ioInfo.Inputs))
 	for i, info := range ioInfo.Inputs {
 		if !strings.EqualFold(info.Name, inputCols[i].name.O) {
-			return nil, errors.Errorf("onnx input %s does not match model schema %s", info.Name, inputCols[i].name.O)
+			return nil, errors.Errorf("model input %s does not match model schema %s", info.Name, inputCols[i].name.O)
 		}
 		inputNames[i] = info.Name
 	}
@@ -562,7 +567,7 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 	outputIndex := make(map[string]int, len(ioInfo.Outputs))
 	for i, info := range ioInfo.Outputs {
 		if !strings.EqualFold(info.Name, outputCols[i].name.O) {
-			return nil, errors.Errorf("onnx output %s does not match model schema %s", info.Name, outputCols[i].name.O)
+			return nil, errors.Errorf("model output %s does not match model schema %s", info.Name, outputCols[i].name.O)
 		}
 		outputNames[i] = info.Name
 		outputIndex[strings.ToLower(info.Name)] = i
@@ -652,7 +657,7 @@ func resolveBatchableShape(inputs, outputs []modelruntime.TensorInfo) (bool, err
 	if inputsBatch && outputsBatch {
 		return true, nil
 	}
-	return false, errors.New("onnx input/output shapes must all be scalar or batchable")
+	return false, errors.New("model input/output shapes must all be scalar or batchable")
 }
 
 func classifyTensorShapes(items []modelruntime.TensorInfo) (allScalar bool, allBatch bool) {
@@ -746,7 +751,7 @@ func recordModelInferenceStats(ctx EvalContext, varsReader expropt.SessionVarsPr
 	stats.RecordInference(planID, meta.modelID, meta.version, role, batchSize, duration, err)
 }
 
-func recordModelLoadStats(ctx EvalContext, vars *variable.SessionVars, modelID, version int64, duration time.Duration, err error) {
+func recordModelLoadStats(ctx EvalContext, vars *variable.SessionVars, modelID, version int64, engine string, duration time.Duration, err error) {
 	if vars == nil || vars.StmtCtx == nil {
 		return
 	}
@@ -756,7 +761,7 @@ func recordModelLoadStats(ctx EvalContext, vars *variable.SessionVars, modelID, 
 	}
 	stats := vars.StmtCtx.ModelInferenceStats()
 	stats.RecordLoad(planID, modelID, version, role, duration, err)
-	metrics.ModelLoadDuration.WithLabelValues("onnx", metrics.RetLabel(err)).Observe(duration.Seconds())
+	metrics.ModelLoadDuration.WithLabelValues(strings.ToLower(engine), metrics.RetLabel(err)).Observe(duration.Seconds())
 }
 
 func evalConstString(ctx EvalContext, expr Expression, label string) (string, error) {
