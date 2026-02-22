@@ -129,6 +129,22 @@ func TestPurgeMaterializedViewLogDisallowExplicitTransaction(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+func TestPurgeMaterializedViewLogDoesNotMarkDDLExecution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_mlog_purge_flag (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_mlog_purge_flag (id, v) purge immediate")
+	require.NotNil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
+
+	tk.MustExec("insert into t_mlog_purge_flag values (1, 10), (2, 20)")
+	require.Nil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
+
+	tk.MustExec("purge materialized view log on t_mlog_purge_flag")
+	require.Nil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
+}
+
 func TestIndexColumnLength(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
