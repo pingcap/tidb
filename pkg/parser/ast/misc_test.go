@@ -15,11 +15,14 @@ package ast_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -80,6 +83,11 @@ func TestMiscVisitorCover(t *testing.T) {
 				{},
 			},
 		},
+		&ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
+		&ast.RefreshMaterializedViewImplementStmt{
+			RefreshStmt:                  &ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
+			LastSuccessfulRefreshReadTSO: 1,
+		},
 		&ast.ShutdownStmt{},
 	}
 
@@ -87,6 +95,29 @@ func TestMiscVisitorCover(t *testing.T) {
 		v.Accept(visitor{})
 		v.Accept(visitor1{})
 	}
+}
+
+func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
+	stmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: model.NewCIStr("test"),
+				Name:   model.NewCIStr("mv"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 4242,
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242", sb.String())
+}
+
+func TestRefreshMaterializedViewStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.RefreshMaterializedViewStmt{}).(ast.StmtNode)
+	require.True(t, ok)
 }
 
 func TestDDLVisitorCoverMisc(t *testing.T) {

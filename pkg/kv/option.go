@@ -187,6 +187,8 @@ const (
 	InternalTxnMeta = util.InternalTxnMeta
 	// InternalTxnDDL is the type of inner txns in ddl module.
 	InternalTxnDDL = "ddl"
+	// InternalTxnMVMaintenance is the type of materialized view maintenance operations.
+	InternalTxnMVMaintenance = "mv_maintain"
 	// InternalTxnBackfillDDLPrefix is the prefix of the types of DDL operations needs backfilling.
 	InternalTxnBackfillDDLPrefix = "ddl_"
 	// InternalTxnCacheTable is the type of cache table usage.
