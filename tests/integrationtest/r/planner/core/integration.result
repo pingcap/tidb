@@ -2347,9 +2347,9 @@ Error 3029 (HY000): Expression #1 of ORDER BY contains aggregate function and ap
 select v1 from ttest having count(v2);
 Error 8123 (HY000): In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by
 select v2, v1 from (select * from ttest) t1 join (select 1, 2) t2 group by v1;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'planner__core__integration.t1.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column '.t1.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select v2, v1 from (select t1.v1, t2.v2 from ttest t1 join ttest t2) t3 join (select 1, 2) t2 group by v1;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'planner__core__integration.t3.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column '.t3.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 create table tt (x int, z int as (x+10) stored);
 insert into tt(x) values (1);
 update tt set x=2, z = default;

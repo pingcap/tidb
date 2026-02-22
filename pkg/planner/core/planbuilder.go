@@ -308,6 +308,10 @@ type PlanBuilder struct {
 	// noDecorrelate indicates whether decorrelation should be disabled for correlated aggregates in subqueries
 	noDecorrelate bool
 
+	// buildingLateralSubquery indicates we're currently building a LATERAL derived table
+	// This allows resolving column references against the left side of the join
+	buildingLateralSubquery bool
+
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.

@@ -1059,7 +1059,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select /*+ leading(t2,t1) */ * from t1 join t2 join (select * from t3) n join t4 where t1.a = t2.a and t2.b = n.b and n.a = t4.a and n.c = ?`,
-			"leading(`test`.`t2`, `test`.`t1`, `test`.`n`, `test`.`t4`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` `k_a`), no_order_index(@`sel_1` `test`.`t4` `k_a`)",
+			"leading(`test`.`t2`, `test`.`t1`, `n`, `test`.`t4`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` `k_a`), no_order_index(@`sel_1` `test`.`t4` `k_a`)",
 			nil,
 		},
 

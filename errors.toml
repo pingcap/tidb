@@ -2686,6 +2686,11 @@ error = '''
 Variable '%s' might not be affected by SET_VAR hint.
 '''
 
+["planner:3809"]
+error = '''
+Invalid use of LATERAL: %s
+'''
+
 ["planner:8006"]
 error = '''
 `%s` is unsupported on temporary tables.

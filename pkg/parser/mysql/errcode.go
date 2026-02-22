@@ -948,6 +948,7 @@ const (
 	ErrFunctionalIndexOnField                                = 3762
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
+	ErrInvalidLateralJoin                                    = 3809
 	ErrDependentByFunctionalIndex                            = 3837
 	ErrInvalidJSONType                                       = 3853
 	ErrInvalidJsonValueForFuncIndex                          = 3903 //nolint: revive
