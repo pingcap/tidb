@@ -752,6 +752,13 @@ type RefreshMaterializedView struct {
 	Statement *ast.RefreshMaterializedViewStmt
 }
 
+// PurgeMaterializedViewLog represents a "PURGE MATERIALIZED VIEW LOG ..." plan.
+type PurgeMaterializedViewLog struct {
+	baseSchemaProducer
+
+	Statement *ast.PurgeMaterializedViewLogStmt
+}
+
 // SelectInto represents a select-into plan.
 type SelectInto struct {
 	baseSchemaProducer
