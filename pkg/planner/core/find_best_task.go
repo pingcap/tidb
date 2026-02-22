@@ -3019,8 +3019,8 @@ func findBestTask4LogicalJoin(super base.LogicalPlan, prop *property.PhysicalPro
 			join := self.(*logicalop.LogicalJoin)
 			join.CorrelateAlternative = nil
 			// Return the cached join task if available (from step 1), otherwise invalid.
-			// Do NOT retry findBestTask here — the Apply alternative's DeriveStats may
-			// have corrupted shared AccessPath objects, making a retry unsafe.
+			// Do NOT retry findBestTask here — the Apply alternative may have
+			// left partial state, making a retry unsafe.
 			p := self.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
 			if cached := p.GetTask(prop); cached != nil {
 				bestTask = cached

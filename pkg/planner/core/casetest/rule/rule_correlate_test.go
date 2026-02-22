@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,38 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
+
+// TestCorrelateNullSemantics verifies that CorrelateSolver does not break
+// 3-valued NULL semantics for scalar IN (LeftOuterSemiJoin).
+func TestCorrelateNullSemantics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_enable_correlate_subquery = ON")
+
+	// Case 1: non-null outer, null inner → must return NULL (not 0).
+	tk.MustExec("drop table if exists tn, sn")
+	tk.MustExec("create table tn(a int)")
+	tk.MustExec("create table sn(a int, key(a))")
+	tk.MustExec("insert into tn values (1)")
+	tk.MustExec("insert into sn values (null)")
+	tk.MustQuery("select tn.a in (select sn.a from sn) as r from tn").Check(testkit.Rows("<nil>"))
+
+	// Case 2: null outer, non-null inner → must return NULL (not 0).
+	tk.MustExec("truncate table tn")
+	tk.MustExec("truncate table sn")
+	tk.MustExec("insert into tn values (null)")
+	tk.MustExec("insert into sn values (1)")
+	tk.MustQuery("select tn.a in (select sn.a from sn) as r from tn").Check(testkit.Rows("<nil>"))
+
+	// Case 3: both columns NOT NULL → correlate is safe; verify correct results.
+	tk.MustExec("drop table if exists tnn, snn")
+	tk.MustExec("create table tnn(a int not null)")
+	tk.MustExec("create table snn(a int not null, key(a))")
+	tk.MustExec("insert into tnn values (1), (2), (3)")
+	tk.MustExec("insert into snn values (1), (2)")
+	tk.MustQuery("select tnn.a in (select snn.a from snn) as r from tnn order by tnn.a").Check(testkit.Rows("1", "1", "0"))
+}
 
 func TestCorrelate(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {

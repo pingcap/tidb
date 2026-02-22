@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // CorrelateSolver tries to convert semi-join LogicalJoin back to correlated LogicalApply.
@@ -34,7 +36,9 @@ type CorrelateSolver struct{}
 func (s *CorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan) (retPlan base.LogicalPlan, retChanged bool, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
-			// If correlate panics, return the original plan unchanged.
+			logutil.BgLogger().Warn("CorrelateSolver panic, returning original plan",
+				zap.Any("recover", r),
+				zap.Stack("stack"))
 			retPlan = p
 			retChanged = false
 			retErr = nil
@@ -86,6 +90,42 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 
 	leftSchema := join.Children()[0].Schema()
 	rightSchema := join.Children()[1].Schema()
+
+	// Left outer semi joins (scalar IN / NOT IN) require 3-valued NULL
+	// semantics: the joiner must distinguish "no match" (→ 0) from "unknown
+	// due to NULL" (→ NULL). It does this by evaluating the equality join
+	// condition and tracking whether any comparison returned NULL.
+	//
+	// When we push the equality into the inner side as a correlated filter
+	// (rightCol = CorCol(leftCol)), two problems arise:
+	//  1. If the inner column is nullable, NULL inner values are silently
+	//     filtered out (NULL = X → NULL → filtered), so the joiner never
+	//     sees them and returns 0 instead of NULL.
+	//  2. If the outer column is nullable and its value is NULL, the
+	//     correlated filter becomes rightCol = NULL, which filters out all
+	//     inner rows, and the joiner returns 0 instead of NULL.
+	//
+	// Skip unless ALL equality columns on both sides are proven NOT NULL.
+	if join.JoinType == base.LeftOuterSemiJoin || join.JoinType == base.AntiLeftOuterSemiJoin {
+		for _, eqCond := range join.EqualConditions {
+			col0, col1, ok := expression.IsColOpCol(eqCond)
+			if !ok {
+				return p, planChanged, nil
+			}
+			leftCol := leftSchema.RetrieveColumn(col0)
+			rightCol := rightSchema.RetrieveColumn(col1)
+			if leftCol == nil || rightCol == nil {
+				leftCol = leftSchema.RetrieveColumn(col1)
+				rightCol = rightSchema.RetrieveColumn(col0)
+			}
+			if leftCol == nil || rightCol == nil {
+				return p, planChanged, nil
+			}
+			if !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) || !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
+				return p, planChanged, nil
+			}
+		}
+	}
 
 	selConds := make([]expression.Expression, 0, len(join.EqualConditions)+len(join.RightConditions))
 	corCols := make([]*expression.CorrelatedColumn, 0, len(join.EqualConditions))
@@ -257,12 +297,18 @@ func cloneDataSource(ds *logicalop.DataSource) *logicalop.DataSource {
 	// Independent slices that PPD replaces.
 	clone.AllConds = append([]expression.Expression(nil), ds.AllConds...)
 	clone.PushedDownConds = append([]expression.Expression(nil), ds.PushedDownConds...)
-	// Share the original AccessPaths. DeriveStats returns early for DataSources
-	// with preserved stats (below), so these paths won't be modified. For
-	// DataSources that receive correlated conditions, resetStatsForCorrelatedDS
-	// creates fresh AccessPaths and clears stats before DeriveStats re-runs.
-	clone.AllPossibleAccessPaths = append([]*util.AccessPath(nil), ds.AllPossibleAccessPaths...)
-	clone.PossibleAccessPaths = append([]*util.AccessPath(nil), ds.PossibleAccessPaths...)
+	// Deep-clone AccessPaths so the Join and Apply alternatives have fully
+	// independent path objects. Stats derivation (fillIndexPath, etc.) mutates
+	// AccessPath fields in place; without deep cloning, costing one alternative
+	// can corrupt the other and destabilize CBO.
+	clone.AllPossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
+	for i, ap := range ds.AllPossibleAccessPaths {
+		clone.AllPossibleAccessPaths[i] = ap.Clone()
+	}
+	clone.PossibleAccessPaths = make([]*util.AccessPath, len(ds.PossibleAccessPaths))
+	for i, ap := range ds.PossibleAccessPaths {
+		clone.PossibleAccessPaths[i] = ap.Clone()
+	}
 	// Preserve original stats so DeriveStats returns early for DataSources
 	// that don't receive correlated conditions. Without this, DeriveStats
 	// re-runs fillIndexPath on all DataSources, which fails when conditions
@@ -287,6 +333,10 @@ func cloneJoin(j *logicalop.LogicalJoin) (*logicalop.LogicalJoin, bool) {
 	clone.LeftConditions = append(expression.CNFExprs(nil), j.LeftConditions...)
 	clone.RightConditions = append(expression.CNFExprs(nil), j.RightConditions...)
 	clone.OtherConditions = append(expression.CNFExprs(nil), j.OtherConditions...)
+	// Clear correlate state. The alternative was built for the original join's
+	// children; retaining it would point physical planning at uncloned nodes.
+	clone.CorrelateAlternative = nil
+	clone.PreferCorrelate = false
 	clone.SetChildren(children...)
 	return &clone, true
 }
@@ -401,9 +451,9 @@ func liftDataSourceConds(p base.LogicalPlan) base.LogicalPlan {
 //
 // For correlated DataSources, fresh AccessPaths are created so fillIndexPath
 // starts from a clean state with the new correlated conditions. Non-correlated
-// DataSources retain their original AccessPaths and stats (set during cloning)
-// so DeriveStats returns early — this avoids failures when conditions reference
-// columns that column pruning removed from the DataSource's schema.
+// DataSources retain their deep-cloned AccessPaths and stats (set during
+// cloning) so DeriveStats returns early — this avoids failures when conditions
+// reference columns that column pruning removed from the DataSource's schema.
 func resetStatsForCorrelatedDS(p base.LogicalPlan) bool {
 	hasCorrelated := false
 
@@ -417,8 +467,7 @@ func resetStatsForCorrelatedDS(p base.LogicalPlan) bool {
 		}
 		if hasCorrelated {
 			// Create fresh AccessPaths so fillIndexPath rebuilds them with the
-			// correlated conditions. The original paths (shared from the clone)
-			// must not be modified to avoid corrupting the original DataSource.
+			// correlated conditions from a clean state.
 			origPaths := ds.AllPossibleAccessPaths
 			ds.AllPossibleAccessPaths = make([]*util.AccessPath, len(origPaths))
 			for i, ap := range origPaths {
