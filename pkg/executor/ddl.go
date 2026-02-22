@@ -89,6 +89,51 @@ func (e *DDLExec) getLocalTemporaryTable(schema pmodel.CIStr, table pmodel.CIStr
 	return tbl, true
 }
 
+// RefreshMaterializedViewExec executes "REFRESH MATERIALIZED VIEW" as a utility-style statement.
+// The actual refresh implementation is delegated to DDL executor for now.
+type RefreshMaterializedViewExec struct {
+	DDLExec
+}
+
+// Next implements the Executor Next interface.
+func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	refreshStmt, ok := e.stmt.(*ast.RefreshMaterializedViewStmt)
+	if !ok {
+		return errors.Errorf("invalid statement type for RefreshMaterializedViewExec: %T", e.stmt)
+	}
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	if err = sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
+		return err
+	}
+	defer func() {
+		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue = false
+		e.Ctx().GetSessionVars().StmtCtx.DDLJobID = 0
+	}()
+
+	err = e.ddlExecutor.RefreshMaterializedView(e.Ctx(), refreshStmt)
+	if err != nil {
+		if (e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) ||
+			!e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue {
+			return e.toErr(err)
+		}
+		return err
+	}
+
+	// Keep the post-exec behavior consistent with DDLExec.
+	dom := domain.GetDomain(e.Ctx())
+	is := dom.InfoSchema()
+	txnCtx := e.Ctx().GetSessionVars().TxnCtx
+	txnCtx.InfoSchema = is
+	e.Ctx().GetSessionVars().SetInTxn(false)
+	return nil
+}
+
 // Next implements the Executor Next interface.
 func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if e.done {
@@ -216,8 +261,6 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.ddlExecutor.DropMaterializedView(e.Ctx(), x)
 	case *ast.DropMaterializedViewLogStmt:
 		err = e.ddlExecutor.DropMaterializedViewLog(e.Ctx(), x)
-	case *ast.RefreshMaterializedViewStmt:
-		err = e.ddlExecutor.RefreshMaterializedView(e.Ctx(), x)
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
 	case *ast.CreatePlacementPolicyStmt:
