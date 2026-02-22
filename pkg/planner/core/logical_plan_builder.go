@@ -5348,11 +5348,16 @@ func buildColumns2HandleWithWrtiableColumns(
 //
 // The two kind of columns forms the whole columns of the table. Public part first.
 //
+// For base tables with materialized view log (mlog), we enable selective pruning: preserve handle columns
+// plus trackedBaseOffsets (columns tracked by mlog), prune others. See #66222.
+//
 // This function returns the following things:
 //  1. TblColPosInfoSlice stores the each table's column's position information in the final mixed row.
 //  2. The bitset records which column in the original mixed row is not pruned..
 //  3. The error we meet during the algorithm.
 func pruneAndBuildColPositionInfoForDelete(
+	ctx context.Context,
+	is infoschema.InfoSchema,
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
@@ -5402,21 +5407,54 @@ func pruneAndBuildColPositionInfoForDelete(
 		// Use a very relax check for foreign key cascades and checks.
 		// If there's one table containing foreign keys, all of the tables would not do pruning.
 		// It should be strict in the future or just support pruning column when there is foreign key.
-		// For base tables with mlog, disable delete column pruning to keep RemoveRecord row layout stable.
-		hasMLog := tblInfo.MaterializedViewBase != nil && tblInfo.MaterializedViewBase.MLogID != 0
-		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil || hasMLog {
+		// For base tables with mlog, enable selective pruning (handle + trackedBaseOffsets) instead of skipping entirely. #66222
+		var mlogRequiredOffsets []int
+		skipPruning := tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil
+		if !skipPruning && tblInfo.MaterializedViewBase != nil && tblInfo.MaterializedViewBase.MLogID != 0 {
+			mlogRequiredOffsets = getMLogRequiredColOffsets(ctx, is, tbl, names, cols2PosInfo.Start)
+		}
+		if skipPruning {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
 			if err != nil {
 				return nil, nil, err
 			}
 			continue
 		}
-		err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned)
+		err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned, mlogRequiredOffsets)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 	return cols2PosInfos, nonPruned, nil
+}
+
+// getMLogRequiredColOffsets returns the column offsets (in base table) that must be kept for mlog RemoveRecord.
+// Required set = handle columns + trackedBaseOffsets (columns tracked by the mlog). #66222
+func getMLogRequiredColOffsets(ctx context.Context, is infoschema.InfoSchema, baseTbl table.Table, names []*types.FieldName, tableStart int) []int {
+	tblInfo := baseTbl.Meta()
+	if tblInfo.MaterializedViewBase == nil || tblInfo.MaterializedViewBase.MLogID == 0 {
+		return nil
+	}
+	mlogTbl, ok := is.TableByID(ctx, tblInfo.MaterializedViewBase.MLogID)
+	if !ok {
+		return nil
+	}
+	mlogInfo := mlogTbl.Meta().MaterializedViewLog
+	if mlogInfo == nil || len(mlogInfo.Columns) == 0 {
+		return nil
+	}
+	deletableCols := baseTbl.DeletableCols()
+	nameToOffset := make(map[string]int, len(deletableCols))
+	for i, col := range deletableCols {
+		nameToOffset[col.Name.L] = i
+	}
+	offsets := make([]int, 0, len(mlogInfo.Columns))
+	for _, colName := range mlogInfo.Columns {
+		if off, ok := nameToOffset[colName.L]; ok {
+			offsets = append(offsets, off)
+		}
+	}
+	return offsets
 }
 
 // initColPosInfo initializes the column position information.
@@ -5448,6 +5486,7 @@ func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *TblColPosI
 
 // pruneAndBuildSingleTableColPosInfoForDelete builds columns mapping for delete.
 // And it will try to prune columns that not used in pk or indexes.
+// mlogRequiredOffsets, when non-nil, are additional column offsets (in table) that must be kept for mlog RemoveRecord. #66222
 func pruneAndBuildSingleTableColPosInfoForDelete(
 	t table.Table,
 	tableName string,
@@ -5455,6 +5494,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	colPosInfo *TblColPosInfo,
 	prePrunedCount int,
 	nonPrunedSet *bitset.BitSet,
+	mlogRequiredOffsets []int,
 ) error {
 	// Columns can be seen by DELETE are the deletable columns.
 	deletableCols := t.DeletableCols()
@@ -5470,6 +5510,11 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
 		col := colPosInfo.HandleCols.GetCol(i)
 		fixedPos[col.Index-originalStart] = 0
+	}
+
+	// Mark the columns required by mlog (trackedBaseOffsets). #66222
+	for _, off := range mlogRequiredOffsets {
+		fixedPos[off] = 0
 	}
 
 	// Mark the columns in indexes.
@@ -6130,7 +6175,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	}
 
 	var nonPruned *bitset.BitSet
-	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(preProjNames, tblID2Handle, tblID2table, len(del.FKCascades) > 0 || len(del.FKChecks) > 0)
+	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(ctx, b.is, preProjNames, tblID2Handle, tblID2table, len(del.FKCascades) > 0 || len(del.FKChecks) > 0)
 	if err != nil {
 		return nil, err
 	}
