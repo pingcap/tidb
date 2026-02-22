@@ -161,87 +161,32 @@ FAST refresh 目前尚未实现真正的增量刷新执行逻辑（planner 仍�
 
 当前实现采用 (1)：在 COMPLETE refresh 的 DML 执行完成后，从 `TxnCtx` 读取 `for_update_ts` 并写入 `LAST_SUCCESSFUL_REFRESH_READ_TSO`。
 
-## 代码落点建议（实现方式）
+## 代码落点（当前实现）
 
-`REFRESH MATERIALIZED VIEW` 当前仍走 DDL statement 的分发路径，但执行方式是“同步执行 + 内部 SQL / internal statement”，不会进入 DDL job 队列：
+`REFRESH MATERIALIZED VIEW` 当前是 utility / maintenance statement，不进入 DDL job 队列。执行链路如下：
 
-- `pkg/executor/ddl.go` 会把 `*ast.RefreshMaterializedViewStmt` 转发到 `ddl.Executor.RefreshMaterializedView`。
-- 实际执行在 `pkg/ddl/materialized_view.go` 的 `(*executor).RefreshMaterializedView(...)`：
-  - 先从 DDL `sessPool` 获取 internal session，再在该 session 内跑整段 refresh 事务。
-  - `COMPLETE`：事务内执行 `DELETE FROM` + `INSERT INTO ... SQLContent`（`ExecuteInternal`）。
-  - `FAST`：读取 `LAST_SUCCESSFUL_REFRESH_READ_TSO`，构造 `*ast.RefreshMaterializedViewImplementStmt` 并走 `ExecuteInternalStmt`（当前 planner/build 返回 not supported，占位）。
+1. Parser/AST：
+   - `RefreshMaterializedViewStmt` 与 `RefreshMaterializedViewImplementStmt` 定义在 `pkg/parser/ast/misc.go`。
+   - parser grammar 在 `pkg/parser/parser.y` 的通用 `Statement` 分支中解析 `REFRESH MATERIALIZED VIEW`。
+2. Planner：
+   - `PlanBuilder.buildRefreshMaterializedView` 负责该语句的 plan 构建与外层 privilege 校验（当前 MVP：`ALTER` on MV）。
+3. Executor：
+   - executor builder 将 plan 映射到 `RefreshMaterializedViewExec`。
+   - `RefreshMaterializedViewExec` 直接执行 refresh service（`Validate + Lock + Savepoint + DataChanges + RefreshInfo Persist + Commit`）。
 
-### 为什么会被当成 DDL statement
+核心执行语义：
 
-从“语义”上讲，`REFRESH MATERIALIZED VIEW` 更像一个 **utility / maintenance statement**：它不改 schema（不是 create/drop/alter），但会改 MV 的物理数据以及刷新相关的系统表元信息。
+- 刷新逻辑使用内部 session 执行，避免复用当前用户 session 的事务/变量环境。
+- 刷新路径使用专用 internal source type（`kv.InternalTxnMVMaintenance`）。
+- 使用 `BEGIN PESSIMISTIC` + `SELECT ... FOR UPDATE NOWAIT` 在 `mysql.tidb_mview_refresh` 上实现互斥。
+- 使用 `SAVEPOINT` / `ROLLBACK TO SAVEPOINT`，保证写入失败时 MV 数据可回滚，同时失败元信息仍可写入并提交。
+- `COMPLETE` 通过 `DELETE FROM mv` + `INSERT INTO mv SELECT ...` 完成重建。
+- `FAST` 通过 internal-only statement `RefreshMaterializedViewImplementStmt` 作为框架入口（当前 planner 仍返回 not supported 占位）。
+- `RefreshMaterializedViewStmt` 作为 `StmtNode` 参与执行，不带 DDL statement 语义（例如不会设置 `LastExecuteDDL` 标记）。
 
-当前 TiDB 代码里它被放进 DDL statement 路径，主要是**工程组织与复用上的选择**：
+## 后续阶段规划
 
-- Parser/AST 层面：`RefreshMaterializedViewStmt` 定义在 `pkg/parser/ast/ddl.go`，`pkg/parser/parser.y` 里也把它放在 DDL statement 的 grammar 分支里，所以自然会被 executor 归类到 DDL statement。
-- Executor 路径：`pkg/executor/ddl.go` 的 switch case 会把该语句转发给 DDL executor（`pkg/ddl/materialized_view.go`）。
-
-需要强调的是：**走 DDL statement 路径并不等同于一定要走 DDL job（异步/owner/job queue/reorg）**。
-当前 refresh 的实现是在 DDL executor 里“同步执行一段内部逻辑”（本质上就是一个事务内的数据变更 + 系统表元信息更新），不触发 schema version 变更，也不需要 DDL job。
-
-如果后续希望它在 TiDB 的语句分类上更贴近 DML（比如想支持在用户显式事务里执行、或在 metrics/audit 上归类为 DML），那就需要把该语句从 parser 的 DDL 分支迁出（AST 位置与 executor 分发都要改），这是更大范围的重构，不建议作为 MVP 的阻塞项。
-
-当前实现位于 `pkg/ddl/materialized_view.go` 的 `RefreshMaterializedView`，核心做法是“同步执行 + 显式事务封装”：
-
-- 不新引入 DDL job（因为不改 schema、也不需要 reorg/checkpoint）。
-- 刷新逻辑统一在 internal session 上执行，避免复用当前用户 session 的事务/变量/权限环境。
-- 通过 `BEGIN PESSIMISTIC` + `SELECT ... FOR UPDATE NOWAIT` 对 `mysql.tidb_mview_refresh` 做 mutex。
-- 用 `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` 保证失败时 MV 数据不部分写入，但失败元信息可 `COMMIT` 落盘。
-- 运行期间会临时将 `tidb_constraint_check_in_place_pessimistic=ON`（避免 pessimistic txn 下 savepoint 受限）。
-- 执行刷新实现时会开启 `SessionVars.InMaterializedViewMaintenance`（允许 refresh 的扫描部分更容易走 TiFlash/MPP）。
-- `COMPLETE` 使用 `ExecuteInternal(...)` 执行 `DELETE` + `INSERT`。
-- `FAST` 使用 `ExecuteInternalStmt(...)` 执行 internal statement，并在返回 `RecordSet` 非空时 drain `Next()`，确保 executor tree 真正跑完后再 `Close()` 回收资源。
-- 用 `sqlescape.MustEscapeSQL`（或等价安全拼接工具）来拼出 `%n.%n` 形式的表名，避免手写 quote。
-- 刷新路径使用专用的 internal source type（例如 `kv.InternalTxnMVMaintenance`），避免与通用 DDL 请求混在同一类指标/观测标签里。
-
-## 迁移到 utility executor（分阶段方案）
-
-为了把 `REFRESH MATERIALIZED VIEW` 从“DDL 分发路径”迁到“utility/maintenance statement 路径”，同时控制风险，建议按阶段推进。
-
-### Phase-1：先迁移“总入口”，复用现有 refresh 实现（最小改动，已完成）
-
-目标：先让 refresh 不再通过 `DDLExec` 作为总路口，但不立即重写 refresh 内核逻辑。
-
-建议改动：
-
-1. 在 planner 中为 `*ast.RefreshMaterializedViewStmt` 增加独立 plan（例如 `RefreshMaterializedView`），并在 `Build()` 主分发里显式处理（放在 `case ast.DDLNode:` 之前）。
-2. 将 refresh 的 privilege 语义（当前 MVP：`ALTER` on MV）从 `buildDDL` 的大 switch 中抽出，放入独立的 `buildRefreshMaterializedView`。
-3. 在 executor builder 中增加该 plan 的 executor 映射（例如 `RefreshMaterializedViewExec`）。
-4. `RefreshMaterializedViewExec.Next()` 在 Phase-1 初始实现中先复用现有逻辑，直接调用 `domain.GetDomain(e.Ctx()).DDLExecutor().RefreshMaterializedView(...)`。
-5. 从 `pkg/executor/ddl.go` 的 `DDLExec` switch 中移除 `*ast.RefreshMaterializedViewStmt` 分支，避免双入口。
-
-阶段收益：
-
-- 语句编排入口从 DDL 路径解耦，后续演进（FAST/out-of-place）不再被 DDLExec 结构约束。
-- 现有 refresh 逻辑可原样复用，回归风险最小。
-
-### Phase-2：迁移 refresh 内核到 utility service（保持语义不变，当前分支已完成）
-
-目标：把 `pkg/ddl/materialized_view.go` 里的 refresh 执行流程迁到 utility 层（例如 `pkg/executor/internal/mviewrefresh`），并保持当前语义等价。
-
-当前实现：
-
-1. `RefreshMaterializedViewExec` 内直接执行 refresh service：`Validate + Lock + Savepoint + DataChanges + RefreshInfo Persist + Commit`。
-2. service 使用内部 session 池执行（例如 domain 的系统 session pool），并使用专用 internal source 标记（例如 `InternalTxnMVMaintenance`）。
-3. 保留 `RefreshMaterializedViewImplementStmt` 的 internal AST 路径，以支持 FAST 的后续 planner/executor 实现。
-4. DDL interface 中的 `RefreshMaterializedView` 可以先保留为兼容桥接，等调用方全部迁移后再删除。
-
-阶段收益：
-
-- refresh 语义与实现归位到 utility statement，职责边界更清晰。
-- DDL 模块只保留“真正 schema 变更”的职责。
-
-### Phase-3：语法节点去 DDL 化（先做语义归位）
-
-若希望在语句分类上完全脱离 DDL（例如 prepared-plan 限制、`LastExecuteDDL` 标记、审计归类），可在这一阶段把 `RefreshMaterializedViewStmt` 从 `DDLNode` 迁为普通 `StmtNode`。
-
-这一阶段建议在 Phase-2 稳定后推进，但可以先于 out-of-place COMPLETE refresh。
-
-### Phase-4：支持 out-of-place COMPLETE refresh（build 与 cutover 解耦）
+### Phase-3：支持 out-of-place COMPLETE refresh（build 与 cutover 解耦）
 
 out-of-place complete refresh 推荐采用“utility 主流程 + DDL 子步骤”的混合模式：
 
@@ -253,6 +198,14 @@ out-of-place complete refresh 推荐采用“utility 主流程 + DDL 子步骤�
 
 - 不建议直接复用通用 `RENAME TABLE` 作为 MV swap。当前 TiDB 对 MV 相关对象已有约束（例如禁止 `RENAME TABLE` 作用于 MV 表，且 base table 有 MV 依赖时也禁止 rename），需要单独设计 cutover 语义与实现。
 - MV 相关元信息存在 table ID 绑定（例如 `mysql.tidb_mview_refresh.MVIEW_ID`、base table 的 `MaterializedViewBase.MViewIDs`），cutover 方案必须显式定义这些 ID 绑定在切换过程中的保持/迁移策略。
+
+### Phase-4：支持 FAST refresh 的真实执行（增量路径）
+
+Phase-4 目标是把当前的 FAST refresh framework（internal statement + planner placeholder）补齐为可执行的增量路径：
+
+1. 基于 MLOG 与 `LAST_SUCCESSFUL_REFRESH_READ_TSO` 规划增量输入集。
+2. 为 `RefreshMaterializedViewImplementStmt` 生成可执行的 plan tree / executor，而不是仅返回 not supported。
+3. 完整定义 FAST refresh 的成功/失败元信息更新与回放语义，保证与 COMPLETE refresh 一致的可观测性与恢复行为。
 
 ## 测试建议（后续落地时）
 

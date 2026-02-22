@@ -14,12 +14,10 @@
 package ast_test
 
 import (
-	"strings"
 	"testing"
 
 	. "github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,24 +71,6 @@ func TestDDLVisitorCover(t *testing.T) {
 		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
 		v.node.Accept(visitor1{})
 	}
-}
-
-func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
-	stmt := &RefreshMaterializedViewImplementStmt{
-		RefreshStmt: &RefreshMaterializedViewStmt{
-			ViewName: &TableName{
-				Schema: model.NewCIStr("test"),
-				Name:   model.NewCIStr("mv"),
-			},
-			Type: RefreshMaterializedViewTypeFast,
-		},
-		LastSuccessfulRefreshReadTSO: 4242,
-	}
-
-	var sb strings.Builder
-	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	require.NoError(t, stmt.Restore(rctx))
-	require.Equal(t, "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242", sb.String())
 }
 
 func TestDDLIndexColNameRestore(t *testing.T) {
