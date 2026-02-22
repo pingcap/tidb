@@ -765,7 +765,9 @@ type SessionVars struct {
 	BatchSize
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize        int
+	DMLBatchSize int
+	// MLogPurgeBatchSize indicates the max rows deleted by one purge batch transaction.
+	MLogPurgeBatchSize  int
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
 	*UserVars
@@ -2293,6 +2295,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MaxPagingSize:      DefMaxPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
+	vars.MLogPurgeBatchSize = DefTiDBMLogPurgeBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation

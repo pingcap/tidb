@@ -16,7 +16,10 @@ package executor
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,6 +32,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -46,6 +50,15 @@ type RefreshMaterializedViewExec struct {
 	done bool
 }
 
+var errMLogPurgeLockConflict = errors.NewNoStackError("mlog purge lock conflict")
+
+// PurgeMaterializedViewLogExec executes "PURGE MATERIALIZED VIEW LOG" as a utility-style statement.
+type PurgeMaterializedViewLogExec struct {
+	exec.BaseExecutor
+	stmt *ast.PurgeMaterializedViewLogStmt
+	done bool
+}
+
 // Next implements the Executor Next interface.
 func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if e.done {
@@ -56,6 +69,454 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	return e.executeRefreshMaterializedView(ctx, e.stmt)
+}
+
+// Next implements the Executor Next interface.
+func (e *PurgeMaterializedViewLogExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+
+	return e.executePurgeMaterializedViewLog(ctx, e.stmt)
+}
+
+func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
+	kctx context.Context,
+	s *ast.PurgeMaterializedViewLogStmt,
+) (err error) {
+	schemaName, baseTableMeta, mlogName, mlogID, err := e.resolvePurgeMaterializedViewLogMeta(s)
+	if err != nil {
+		return err
+	}
+	batchSize := int64(e.Ctx().GetSessionVars().MLogPurgeBatchSize)
+	if batchSize <= 0 {
+		batchSize = int64(variable.DefTiDBMLogPurgeBatchSize)
+	}
+
+	purgeSctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(kctx, purgeSctx)
+	sqlExec := purgeSctx.GetSQLExecutor()
+
+	purgeStartTime := time.Now()
+	totalPurgeRows := int64(0)
+	safePurgeTSOReady := false
+	safePurgeTSO := uint64(0)
+
+	for {
+		if _, err = sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
+			return errors.Trace(err)
+		}
+
+		if err := acquireMaterializedViewLogPurgeLock(kctx, sqlExec, schemaName, s.Table.Name, mlogID); err != nil {
+			_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
+			if isMLogPurgeLockConflict(err) && totalPurgeRows > 0 {
+				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+					"purge materialized view log on %s.%s stopped before deleting all eligible rows due to lock conflict after deleting %d rows; please retry later",
+					schemaName.O,
+					s.Table.Name.O,
+					totalPurgeRows,
+				))
+				return nil
+			}
+			return err
+		}
+
+		var batchErr error
+		batchPurgeRows := int64(0)
+
+		// Calculate safe purge tso once at the first successful lock acquisition.
+		if !safePurgeTSOReady {
+			txn, err := purgeSctx.Txn(true)
+			if err != nil {
+				_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
+				return errors.Trace(err)
+			}
+			purgeStartTS := txn.StartTS()
+			safePurgeTSO = purgeStartTS
+
+			// Collect all dependent MV IDs (Public + in-building CREATE MATERIALIZED VIEW jobs).
+			publicMVIDs, buildingMVIDs, collectErr := collectDependentMViewIDsForMLogPurge(kctx, sqlExec, baseTableMeta, mlogID)
+			if collectErr != nil {
+				batchErr = collectErr
+			} else {
+				// If there are no dependent MVs, it is safe to purge up to the start tso of this transaction.
+				safePurgeTSO, batchErr = calcMaterializedViewLogSafePurgeTSO(
+					kctx,
+					sqlExec,
+					schemaName.O,
+					s.Table.Name.O,
+					purgeStartTS,
+					publicMVIDs,
+					buildingMVIDs,
+				)
+			}
+			safePurgeTSOReady = true
+		}
+
+		if batchErr == nil && safePurgeTSO > 0 {
+			batchPurgeRows, batchErr = purgeMaterializedViewLogData(
+				kctx,
+				sqlExec,
+				purgeSctx.GetSessionVars(),
+				schemaName.O,
+				mlogName.O,
+				safePurgeTSO,
+				batchSize,
+			)
+		}
+
+		purgeEndTime := time.Now()
+		purgeDuration := purgeEndTime.Sub(purgeStartTime).Milliseconds()
+		purgeRowsForState := totalPurgeRows
+		if batchErr == nil {
+			purgeRowsForState += batchPurgeRows
+		}
+		// Keep state bookkeeping even when batchErr != nil. The failed DELETE statement has already
+		// been rolled back at statement level by session execution, so committing here will only
+		// persist this state update and will not include failed DELETE writes.
+		if err := updateMaterializedViewLogPurgeState(kctx, sqlExec, mlogID, purgeEndTime, purgeRowsForState, purgeDuration); err != nil {
+			_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
+			return err
+		}
+		if _, err = sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
+			return errors.Trace(err)
+		}
+
+		if batchErr != nil {
+			return errors.Trace(batchErr)
+		}
+		totalPurgeRows += batchPurgeRows
+		if batchPurgeRows < batchSize {
+			return nil
+		}
+	}
+}
+
+func calcMaterializedViewLogSafePurgeTSO(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	baseSchema string,
+	baseTable string,
+	purgeStartTS uint64,
+	publicMVIDs map[int64]struct{},
+	buildingMVIDs map[int64]struct{},
+) (uint64, error) {
+	// If there are no dependent MVs, it is safe to purge up to the start tso of this transaction.
+	safePurgeTSO := purgeStartTS
+	buildINList := func(ids []int64) string {
+		var sb strings.Builder
+		for i, id := range ids {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			sb.WriteString(strconv.FormatInt(id, 10))
+		}
+		return sb.String()
+	}
+
+	publicIDs := make([]int64, 0, len(publicMVIDs))
+	for mvID := range publicMVIDs {
+		publicIDs = append(publicIDs, mvID)
+	}
+	if len(publicIDs) > 0 {
+		// Public MVs should always have a refresh record. If not, treat it as metadata inconsistency and abort.
+		countSQL := fmt.Sprintf(
+			"SELECT COUNT(1) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID IN (%s)",
+			buildINList(publicIDs),
+		)
+		countRows, err := sqlexec.ExecSQL(kctx, sqlExec, countSQL)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) {
+				return safePurgeTSO, errors.New("required system table mysql.tidb_mview_refresh does not exist")
+			}
+			return safePurgeTSO, errors.Trace(err)
+		}
+
+		var cnt int64
+		if len(countRows) > 0 {
+			cnt = countRows[0].GetInt64(0)
+		}
+		if cnt != int64(len(publicIDs)) {
+			return safePurgeTSO, errors.Errorf(
+				"materialized view refresh info is missing for some dependent materialized views on base table %s.%s (expected %d, got %d)",
+				baseSchema,
+				baseTable,
+				len(publicIDs),
+				cnt,
+			)
+		}
+	}
+
+	allMVIDs := make(map[int64]struct{}, len(publicMVIDs)+len(buildingMVIDs))
+	for mvID := range publicMVIDs {
+		allMVIDs[mvID] = struct{}{}
+	}
+	for mvID := range buildingMVIDs {
+		allMVIDs[mvID] = struct{}{}
+	}
+	allIDs := make([]int64, 0, len(allMVIDs))
+	for mvID := range allMVIDs {
+		allIDs = append(allIDs, mvID)
+	}
+	if len(allIDs) > 0 {
+		minSQL := fmt.Sprintf(
+			"SELECT MIN(COALESCE(LAST_SUCCESSFUL_REFRESH_READ_TSO, 0)) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID IN (%s)",
+			buildINList(allIDs),
+		)
+		minRows, err := sqlexec.ExecSQL(kctx, sqlExec, minSQL)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) {
+				return safePurgeTSO, errors.New("required system table mysql.tidb_mview_refresh does not exist")
+			}
+			return safePurgeTSO, errors.Trace(err)
+		}
+
+		if len(minRows) > 0 && !minRows[0].IsNull(0) {
+			v := minRows[0].GetInt64(0)
+			if v <= 0 {
+				safePurgeTSO = 0
+			} else {
+				safePurgeTSO = uint64(v)
+				if safePurgeTSO > purgeStartTS {
+					safePurgeTSO = purgeStartTS
+				}
+			}
+		}
+	}
+
+	return safePurgeTSO, nil
+}
+
+func (e *PurgeMaterializedViewLogExec) resolvePurgeMaterializedViewLogMeta(
+	s *ast.PurgeMaterializedViewLogStmt,
+) (schemaName pmodel.CIStr, baseTableMeta *model.TableInfo, mlogName pmodel.CIStr, mlogID int64, _ error) {
+	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	schemaName = s.Table.Schema
+	if schemaName.O == "" {
+		if e.Ctx().GetSessionVars().CurrentDB == "" {
+			return schemaName, nil, mlogName, 0, errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+		s.Table.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return schemaName, nil, mlogName, 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+	baseTable, err := is.TableByName(context.Background(), schemaName, s.Table.Name)
+	if err != nil {
+		return schemaName, nil, mlogName, 0, err
+	}
+	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
+		return schemaName, nil, mlogName, 0, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+	baseTableMeta = baseTable.Meta()
+	baseTableID := baseTableMeta.ID
+
+	mlogName = pmodel.NewCIStr("$mlog$" + baseTableMeta.Name.O)
+	mlogTable, err := is.TableByName(context.Background(), schemaName, mlogName)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return schemaName, baseTableMeta, mlogName, 0, errors.Errorf(
+				"materialized view log does not exist for base table %s.%s",
+				schemaName.O,
+				s.Table.Name.O,
+			)
+		}
+		return schemaName, baseTableMeta, mlogName, 0, err
+	}
+	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
+		return schemaName, baseTableMeta, mlogName, 0, errors.Errorf(
+			"table %s.%s is not a materialized view log for base table %s.%s",
+			schemaName.O,
+			mlogName.O,
+			schemaName.O,
+			s.Table.Name.O,
+		)
+	}
+	mlogID = mlogTable.Meta().ID
+
+	return schemaName, baseTableMeta, mlogName, mlogID, nil
+}
+
+func acquireMaterializedViewLogPurgeLock(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	schemaName pmodel.CIStr,
+	baseTableName pmodel.CIStr,
+	mlogID int64,
+) error {
+	forceConflict := false
+	failpoint.Inject("mockPurgeMaterializedViewLogLockConflict", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			forceConflict = true
+		}
+	})
+	if forceConflict {
+		return errors.Annotatef(
+			errMLogPurgeLockConflict,
+			"another purge is running for materialized view log on %s.%s, please retry later",
+			schemaName.O,
+			baseTableName.O,
+		)
+	}
+
+	// Acquire the mutual exclusion lock row for this MLOG_ID. NOWAIT ensures we fail fast if another purge is running.
+	lockSQL := sqlescape.MustEscapeSQL("SELECT 1 FROM mysql.tidb_mlog_purge WHERE MLOG_ID = %? FOR UPDATE NOWAIT", mlogID)
+	rows, err := sqlexec.ExecSQL(kctx, sqlExec, lockSQL)
+	if err != nil {
+		if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
+			return errors.Annotatef(
+				errMLogPurgeLockConflict,
+				"another purge is running for materialized view log on %s.%s, please retry later",
+				schemaName.O,
+				baseTableName.O,
+			)
+		}
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("required system table mysql.tidb_mlog_purge does not exist")
+		}
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("mlog purge lock row does not exist for mlog id %d", mlogID)
+	}
+	return nil
+}
+
+func isMLogPurgeLockConflict(err error) bool {
+	return err != nil && errors.ErrorEqual(err, errMLogPurgeLockConflict)
+}
+
+func collectDependentMViewIDsForMLogPurge(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	baseTableMeta *model.TableInfo,
+	mlogID int64,
+) (publicMVIDs, buildingMVIDs map[int64]struct{}, _ error) {
+	publicMVIDs = make(map[int64]struct{})
+	if baseMeta := baseTableMeta.MaterializedViewBase; baseMeta != nil {
+		for _, id := range baseMeta.MViewIDs {
+			if id > 0 {
+				publicMVIDs[id] = struct{}{}
+			}
+		}
+	}
+
+	buildingMVIDs = make(map[int64]struct{})
+	jobSQL := sqlescape.MustEscapeSQL(
+		"SELECT job_meta FROM mysql.tidb_ddl_job WHERE type = %? AND FIND_IN_SET(%?, table_ids)",
+		model.ActionCreateMaterializedView,
+		mlogID,
+	)
+	jobRows, err := sqlexec.ExecSQL(kctx, sqlExec, jobSQL)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return publicMVIDs, buildingMVIDs, errors.New("required system table mysql.tidb_ddl_job does not exist")
+		}
+		return publicMVIDs, buildingMVIDs, errors.Trace(err)
+	}
+	for _, row := range jobRows {
+		jobBytes := row.GetBytes(0)
+		if len(jobBytes) == 0 {
+			continue
+		}
+		job := model.Job{}
+		if err := job.Decode(jobBytes); err != nil {
+			return publicMVIDs, buildingMVIDs, errors.Trace(err)
+		}
+		if job.TableID > 0 {
+			// `MaterializedViewBase.MViewIDs` may already include the MV ID when the job enters later phases.
+			// Prefer the semantics of Public MVs (missing refresh record blocks purge) for overlapped IDs.
+			if _, ok := publicMVIDs[job.TableID]; !ok {
+				buildingMVIDs[job.TableID] = struct{}{}
+			}
+		}
+	}
+	return publicMVIDs, buildingMVIDs, nil
+}
+
+func purgeMaterializedViewLogData(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	sessVars *variable.SessionVars,
+	schemaName string,
+	mlogName string,
+	safePurgeTSO uint64,
+	batchSize int64,
+) (int64, error) {
+	failpoint.Inject("mockPurgeMaterializedViewLogDeleteErr", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(int64(0), errors.New("mock purge mlog delete error"))
+		}
+	})
+
+	failpoint.Inject("mockPurgeMaterializedViewLogDeleteRows", func(val failpoint.Value) {
+		switch v := val.(type) {
+		case int:
+			failpoint.Return(int64(v), nil)
+		case int64:
+			failpoint.Return(v, nil)
+		}
+	})
+
+	const mlogAlias = "mlog"
+	deleteSQL := sqlescape.MustEscapeSQL(
+		"DELETE /*+ read_from_storage(tiflash[%n]) */ FROM %n.%n AS %n WHERE _tidb_commit_ts <= %? LIMIT %?",
+		mlogAlias,
+		schemaName,
+		mlogName,
+		mlogAlias,
+		safePurgeTSO,
+		batchSize,
+	)
+	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
+	sessVars.InMaterializedViewMaintenance = true
+	defer func() {
+		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+	}()
+
+	_, err := sqlExec.ExecuteInternal(kctx, deleteSQL)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return int64(sessVars.StmtCtx.AffectedRows()), nil
+}
+
+func updateMaterializedViewLogPurgeState(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mlogID int64,
+	purgeEndTime time.Time,
+	purgeRows int64,
+	purgeDurationMillis int64,
+) error {
+	purgeEndTimeStr := purgeEndTime.Format(types.TimeFSPFormat)
+	updatePurgeSQL := sqlescape.MustEscapeSQL(
+		"UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = %?, LAST_PURGE_ROWS = %?, LAST_PURGE_DURATION = %? WHERE MLOG_ID = %?",
+		purgeEndTimeStr,
+		purgeRows,
+		purgeDurationMillis,
+		mlogID,
+	)
+	_, err := sqlExec.ExecuteInternal(kctx, updatePurgeSQL)
+	failpoint.Inject("mockUpdateMaterializedViewLogPurgeStateErr", func(val failpoint.Value) {
+		if val.(bool) {
+			err = errors.New("mock update mlog purge state error")
+		}
+	})
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("required system table mysql.tidb_mlog_purge does not exist")
+		}
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) error {
