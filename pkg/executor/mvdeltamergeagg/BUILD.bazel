@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "mvmergeagg",
+    name = "mvdeltamergeagg",
     srcs = [
         "exec.go",
         "merge.go",
@@ -9,7 +9,7 @@ go_library(
         "merge_sum.go",
         "writer.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/executor/mvmergeagg",
+    importpath = "github.com/pingcap/tidb/pkg/executor/mvdeltamergeagg",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/executor/internal/exec",
@@ -29,11 +29,11 @@ go_library(
 )
 
 go_test(
-    name = "mvmergeagg_test",
+    name = "mvdeltamergeagg_test",
     timeout = "short",
     srcs = ["exec_test.go"],
     deps = [
-        ":mvmergeagg",
+        ":mvdeltamergeagg",
         "//pkg/executor/internal/exec",
         "//pkg/expression",
         "//pkg/expression/aggregation",

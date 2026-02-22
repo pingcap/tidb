@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvmergeagg
+package mvdeltamergeagg
 
 import (
 	"context"
@@ -63,14 +63,14 @@ func (m *mockSource) Next(_ context.Context, req *chunk.Chunk) error {
 }
 
 type collectWriter struct {
-	results []*MVMergeAggChunkResult
+	results []*MVDeltaMergeAggChunkResult
 }
 
-func (w *collectWriter) WriteChunk(_ context.Context, result *MVMergeAggChunkResult) error {
-	clone := &MVMergeAggChunkResult{
+func (w *collectWriter) WriteChunk(_ context.Context, result *MVDeltaMergeAggChunkResult) error {
+	clone := &MVDeltaMergeAggChunkResult{
 		Input:        result.Input.CopyConstruct(),
 		ComputedCols: make([]*chunk.Column, len(result.ComputedCols)),
-		RowOps:       append([]MVMergeAggRowOp(nil), result.RowOps...),
+		RowOps:       append([]MVDeltaMergeAggRowOp(nil), result.RowOps...),
 	}
 	for i := range result.ComputedCols {
 		if result.ComputedCols[i] != nil {
@@ -127,9 +127,9 @@ func TestCountAndNullableSum(t *testing.T) {
 	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{4}, DependencyColID: []int{0}},
 			{AggFunc: countDesc, ColID: []int{6}, DependencyColID: []int{2}},
 			{AggFunc: sumDesc, ColID: []int{5}, DependencyColID: []int{1, 6}},
@@ -149,9 +149,9 @@ func TestCountAndNullableSum(t *testing.T) {
 	require.Len(t, writer.results, 1)
 	res := writer.results[0]
 	require.Len(t, res.RowOps, 3)
-	require.Equal(t, MVMergeAggRowOpUpdate, res.RowOps[0].Tp)
-	require.Equal(t, MVMergeAggRowOpDelete, res.RowOps[1].Tp)
-	require.Equal(t, MVMergeAggRowOpInsert, res.RowOps[2].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpUpdate, res.RowOps[0].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpDelete, res.RowOps[1].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpInsert, res.RowOps[2].Tp)
 
 	countStarCol := res.ComputedCols[4]
 	require.NotNil(t, countStarCol)
@@ -204,9 +204,9 @@ func TestCountAndNonNullSumReal(t *testing.T) {
 	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{3}, DependencyColID: []int{0}},
 			{AggFunc: sumDesc, ColID: []int{4}, DependencyColID: []int{1}},
 		},
@@ -224,9 +224,9 @@ func TestCountAndNonNullSumReal(t *testing.T) {
 	require.Len(t, writer.results, 1)
 	res := writer.results[0]
 	require.Len(t, res.RowOps, 3)
-	require.Equal(t, MVMergeAggRowOpUpdate, res.RowOps[0].Tp)
-	require.Equal(t, MVMergeAggRowOpInsert, res.RowOps[1].Tp)
-	require.Equal(t, MVMergeAggRowOpDelete, res.RowOps[2].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpUpdate, res.RowOps[0].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpInsert, res.RowOps[1].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpDelete, res.RowOps[2].Tp)
 
 	sumCol := res.ComputedCols[4]
 	require.NotNil(t, sumCol)
@@ -271,9 +271,9 @@ func TestCountAndNonNullSumUnsignedInt(t *testing.T) {
 	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{2}, DependencyColID: []int{0}},
 			{AggFunc: sumDesc, ColID: []int{3}, DependencyColID: []int{1}},
 		},
@@ -291,9 +291,9 @@ func TestCountAndNonNullSumUnsignedInt(t *testing.T) {
 	require.Len(t, writer.results, 1)
 	res := writer.results[0]
 	require.Len(t, res.RowOps, 3)
-	require.Equal(t, MVMergeAggRowOpUpdate, res.RowOps[0].Tp)
-	require.Equal(t, MVMergeAggRowOpInsert, res.RowOps[1].Tp)
-	require.Equal(t, MVMergeAggRowOpDelete, res.RowOps[2].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpUpdate, res.RowOps[0].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpInsert, res.RowOps[1].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpDelete, res.RowOps[2].Tp)
 
 	sumCol := res.ComputedCols[3]
 	require.NotNil(t, sumCol)
@@ -349,9 +349,9 @@ func TestCountAndNullableSumUnsignedInt(t *testing.T) {
 	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{4}, DependencyColID: []int{0}},
 			{AggFunc: countDesc, ColID: []int{6}, DependencyColID: []int{2}},
 			{AggFunc: sumDesc, ColID: []int{5}, DependencyColID: []int{1, 6}},
@@ -370,9 +370,9 @@ func TestCountAndNullableSumUnsignedInt(t *testing.T) {
 	require.Len(t, writer.results, 1)
 	res := writer.results[0]
 	require.Len(t, res.RowOps, 3)
-	require.Equal(t, MVMergeAggRowOpUpdate, res.RowOps[0].Tp)
-	require.Equal(t, MVMergeAggRowOpUpdate, res.RowOps[1].Tp)
-	require.Equal(t, MVMergeAggRowOpInsert, res.RowOps[2].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpUpdate, res.RowOps[0].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpUpdate, res.RowOps[1].Tp)
+	require.Equal(t, MVDeltaMergeAggRowOpInsert, res.RowOps[2].Tp)
 
 	sumCol := res.ComputedCols[5]
 	require.NotNil(t, sumCol)
@@ -407,9 +407,9 @@ func TestRejectSumUnsignedDelta(t *testing.T) {
 	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{2}, DependencyColID: []int{0}},
 			{AggFunc: sumDesc, ColID: []int{3}, DependencyColID: []int{1}},
 		},
@@ -443,9 +443,9 @@ func TestRejectNullableSumCountDependencyFromDelta(t *testing.T) {
 	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{3}, DependencyColID: []int{0}},
 			{AggFunc: sumDesc, ColID: []int{4}, DependencyColID: []int{1, 2}},
 		},
@@ -469,9 +469,9 @@ func TestRejectSumTypeMismatch(t *testing.T) {
 	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{2}, DependencyColID: []int{0}},
 			{AggFunc: sumDesc, ColID: []int{3}, DependencyColID: []int{1}},
 		},
@@ -492,9 +492,9 @@ func TestRejectCountTypeMismatch(t *testing.T) {
 	countStarDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{1}, DependencyColID: []int{0}},
 		},
 		DeltaAggColCount: 1,
@@ -515,9 +515,9 @@ func TestRejectCountUnsignedType(t *testing.T) {
 	countStarDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{1}, DependencyColID: []int{0}},
 		},
 		DeltaAggColCount: 1,
@@ -538,9 +538,9 @@ func TestRejectMinMaxForStage1(t *testing.T) {
 	minDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncMin, []expression.Expression{countArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{1}, DependencyColID: []int{0}},
 			{AggFunc: minDesc, ColID: []int{2, 3}, DependencyColID: []int{0}},
 		},
@@ -556,9 +556,9 @@ func TestRejectNilAggFunc(t *testing.T) {
 	fts := []*types.FieldType{ftInt, ftInt}
 	src := newMockSource(sctx, fts, nil)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: nil, ColID: []int{1}, DependencyColID: []int{0}},
 		},
 	}
@@ -576,9 +576,9 @@ func TestRejectFirstCountNotAllRows(t *testing.T) {
 	countDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{countArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countDesc, ColID: []int{1}, DependencyColID: []int{0}},
 		},
 	}
@@ -603,9 +603,9 @@ func TestAllowFirstCountConstTwo(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countTwoDesc, ColID: []int{1}, DependencyColID: []int{0}},
 		},
 		DeltaAggColCount: 1,
@@ -628,9 +628,9 @@ func TestRejectDependencyFromMVSide(t *testing.T) {
 	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{1}, DependencyColID: []int{0}},
 			// dependency col 2 is on MV side because DeltaAggColCount is 1.
 			{AggFunc: sumDesc, ColID: []int{2}, DependencyColID: []int{2}},
@@ -664,9 +664,9 @@ func TestNoOpWhenAggValueUnchanged(t *testing.T) {
 	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
 	require.NoError(t, err)
 
-	mergeExec := &MVMergeAggExec{
+	mergeExec := &MVDeltaMergeAggExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
-		AggMappings: []MVMergeAggMapping{
+		AggMappings: []MVDeltaMergeAggMapping{
 			{AggFunc: countStarDesc, ColID: []int{2}, DependencyColID: []int{0}},
 			{AggFunc: sumDesc, ColID: []int{3}, DependencyColID: []int{1}},
 		},
