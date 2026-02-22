@@ -16,6 +16,7 @@ package mlflow
 
 import (
 	"context"
+	"errors"
 	"net"
 )
 
@@ -36,11 +37,17 @@ func NewClient(opts ClientOptions) *Client {
 
 // PredictBatch sends a batch prediction request.
 func (c *Client) PredictBatch(ctx context.Context, req PredictRequest) ([][]float32, error) {
+	if c.dial == nil {
+		return nil, errors.New("mlflow dialer is not configured")
+	}
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
 	if err := writeRequest(conn, req); err != nil {
 		return nil, err
 	}

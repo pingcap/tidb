@@ -6,6 +6,7 @@ go_library(
         "client.go",
         "parse.go",
         "protocol.go",
+        "sidecar.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/modelruntime/mlflow",
     visibility = ["//visibility:public"],
@@ -18,7 +19,10 @@ go_library(
 go_test(
     name = "mlflow_test",
     timeout = "short",
-    srcs = ["client_test.go"],
+    srcs = [
+        "client_test.go",
+        "sidecar_test.go",
+    ],
     embed = [":mlflow"],
     data = ["sidecar.py"],
     deps = [
