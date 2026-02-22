@@ -83,6 +83,11 @@ func TestMiscVisitorCover(t *testing.T) {
 				{},
 			},
 		},
+		&ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
+		&ast.RefreshMaterializedViewImplementStmt{
+			RefreshStmt:                  &ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
+			LastSuccessfulRefreshReadTSO: 1,
+		},
 		&ast.ShutdownStmt{},
 	}
 
