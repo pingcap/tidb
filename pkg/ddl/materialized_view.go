@@ -338,6 +338,8 @@ func (*executor) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterial
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG ... PURGE is not supported")
 }
 
+// RefreshMaterializedView is kept as a compatibility bridge for the DDL Executor interface.
+// The SQL execution path has been migrated to utility executor.
 func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.RefreshMaterializedViewStmt) error {
 	refreshType, err := validateRefreshMaterializedViewStmt(s)
 	if err != nil {
@@ -349,7 +351,7 @@ func (e *executor) RefreshMaterializedView(sctx sessionctx.Context, s *ast.Refre
 		return err
 	}
 
-	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
+	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnMVMaintenance)
 	refreshSctx, cleanup, err := e.getRefreshMaterializedViewSession()
 	if err != nil {
 		return err

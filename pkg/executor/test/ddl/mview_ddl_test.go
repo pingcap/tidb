@@ -669,7 +669,7 @@ UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointVal
 	// Make MV stale by changing base table.
 	tk.MustExec("insert into t values (1, 1)")
 
-	const afterBeginFailpoint = "github.com/pingcap/tidb/pkg/ddl/refreshMaterializedViewAfterBegin"
+	const afterBeginFailpoint = "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterBegin"
 	pauseCh := make(chan struct{})
 	hitCh := make(chan struct{})
 	require.NoError(t, failpoint.EnableCall(afterBeginFailpoint, func() {
@@ -754,7 +754,7 @@ func TestMaterializedViewRefreshCompleteAbortOnRefreshInfoReadTSOMismatch(t *tes
 	require.NoError(t, err)
 	require.NotZero(t, oldTS)
 
-	const afterBeginFailpoint = "github.com/pingcap/tidb/pkg/ddl/refreshMaterializedViewAfterBegin"
+	const afterBeginFailpoint = "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterBegin"
 	pauseCh := make(chan struct{})
 	hitCh := make(chan struct{})
 	require.NoError(t, failpoint.EnableCall(afterBeginFailpoint, func() {
