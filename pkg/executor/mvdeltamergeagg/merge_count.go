@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvmergeagg
+package mvdeltamergeagg
 
 import (
 	"github.com/pingcap/errors"
@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-func (e *MVMergeAggExec) buildCountMerger(
-	mapping MVMergeAggMapping,
+func (e *MVDeltaMergeAggExec) buildCountMerger(
+	mapping MVDeltaMergeAggMapping,
 	colID2ComputedIdx map[int]int,
 	childTypes []*types.FieldType,
 ) (aggMerger, error) {
@@ -119,8 +119,7 @@ func validateCountValueTypes(outputTp, deltaTp *types.FieldType) error {
 	if deltaTp.EvalType() != types.ETInt {
 		return errors.Errorf("COUNT mapping dependency eval type must be int, got %s", deltaTp.EvalType())
 	}
-	// COUNT delta can be negative (from sum_int(__new_old)); COUNT output should
-	// also be signed BIGINT by type inference. Validate both here defensively.
+	// Both of COUNT delta and COUNT output can be negative
 	if mysql.HasUnsignedFlag(outputTp.GetFlag()) {
 		return errors.New("COUNT mapping output type must be signed integer")
 	}

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvmergeagg
+package mvdeltamergeagg
 
 import (
 	"github.com/pingcap/errors"
@@ -36,8 +36,8 @@ func validateSumValueTypes(outputTp, deltaTp *types.FieldType) error {
 	return nil
 }
 
-func (e *MVMergeAggExec) buildSumMerger(
-	mapping MVMergeAggMapping,
+func (e *MVDeltaMergeAggExec) buildSumMerger(
+	mapping MVDeltaMergeAggMapping,
 	colID2ComputedIdx map[int]int,
 	childTypes []*types.FieldType,
 ) (aggMerger, error) {
