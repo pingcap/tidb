@@ -15,7 +15,6 @@
 package statistics
 
 import (
-	"bytes"
 	"cmp"
 	"math"
 	"reflect"

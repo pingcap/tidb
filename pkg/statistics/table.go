@@ -16,14 +16,12 @@ package statistics
 
 import (
 	"cmp"
-	"fmt"
 	"maps"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"go.uber.org/atomic"
 )
 
 const (
