@@ -6,6 +6,7 @@ go_library(
         "backend.go",
         "errors.go",
         "infer.go",
+        "mlflow_backend.go",
         "metadata.go",
         "onnx_backend.go",
         "runtime.go",
@@ -17,6 +18,7 @@ go_library(
     deps = [
         "//pkg/metrics",
         "//pkg/util/kvcache",
+        "//pkg/util/modelruntime/mlflow",
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_yalue_onnxruntime_go//:onnxruntime_go",

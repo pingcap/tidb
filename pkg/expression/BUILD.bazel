@@ -180,6 +180,7 @@ go_test(
         "builtin_math_vec_test.go",
         "builtin_miscellaneous_test.go",
         "builtin_miscellaneous_vec_test.go",
+        "builtin_model_mlflow_test.go",
         "builtin_model_test.go",
         "builtin_op_test.go",
         "builtin_op_vec_test.go",

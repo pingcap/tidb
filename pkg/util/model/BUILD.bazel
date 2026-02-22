@@ -14,9 +14,9 @@ go_library(
     deps = [
         "//pkg/objstore",
         "//pkg/util/kvcache",
+        "//pkg/util/modelruntime/mlflow",
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
-        "@in_gopkg_yaml_v3//:yaml_v3",
     ],
 )
 

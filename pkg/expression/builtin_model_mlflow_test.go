@@ -12,14 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package model
+package expression
 
-import "github.com/pingcap/tidb/pkg/util/modelruntime/mlflow"
+import (
+	"testing"
 
-// MLflowModelInfo captures parsed MLflow PyFunc metadata.
-type MLflowModelInfo = mlflow.ModelInfo
+	"github.com/pingcap/tidb/pkg/util/modelruntime"
+	"github.com/stretchr/testify/require"
+)
 
-// ParseMLflowModel parses an MLflow MLmodel file and returns PyFunc metadata.
-func ParseMLflowModel(data []byte) (MLflowModelInfo, error) {
-	return mlflow.ParseModel(data)
+func TestModelPredictMetaMLflowEngine(t *testing.T) {
+	engine := "MLFLOW"
+	backend, ok := modelruntime.BackendForEngine(engine)
+	require.True(t, ok)
+	require.NotNil(t, backend)
 }
