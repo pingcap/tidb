@@ -407,10 +407,9 @@ type modelPredictMeta struct {
 	inputNames   []string
 	outputNames  []string
 	outputIndex  map[string]int
-	artifactData []byte
+	artifact     modelruntime.Artifact
+	backend      modelruntime.Backend
 	batchable    bool
-	sessionKey   modelruntime.SessionKey
-	sessionCache *modelruntime.SessionCache
 	inferOpts    modelruntime.InferenceOptions
 	allowCustom  bool
 }
@@ -421,7 +420,7 @@ type modelSchemaColumn struct {
 }
 
 func (m *modelPredictMeta) predict(inputs []float32) ([]float32, error) {
-	outputs, err := modelruntime.RunInferenceWithOptions(m.sessionCache, m.sessionKey, m.artifactData, m.inputNames, m.outputNames, inputs, m.inferOpts)
+	outputs, err := m.backend.Infer(context.Background(), m.artifact, m.inputNames, m.outputNames, inputs, m.inferOpts)
 	if err != nil {
 		return nil, m.wrapInferenceError(err)
 	}
@@ -440,7 +439,7 @@ func (m *modelPredictMeta) predictBatch(inputs [][]float32) ([][]float32, error)
 		}
 		return results, nil
 	}
-	outputs, err := modelruntime.RunInferenceBatchWithOptions(m.sessionCache, m.sessionKey, m.artifactData, m.inputNames, m.outputNames, inputs, m.inferOpts)
+	outputs, err := m.backend.InferBatch(context.Background(), m.artifact, m.inputNames, m.outputNames, inputs, m.inferOpts)
 	if err != nil {
 		return nil, m.wrapInferenceError(err)
 	}
@@ -501,7 +500,8 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 	if err != nil {
 		return nil, err
 	}
-	if !strings.EqualFold(engine, "ONNX") {
+	backend, ok := modelruntime.BackendForEngine(engine)
+	if !ok {
 		return nil, errors.Errorf("unsupported model engine: %s", engine)
 	}
 	inputCols, err := parseModelSchema(inputSchema)
@@ -534,38 +534,45 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 	if err != nil {
 		return nil, err
 	}
-	onnxInputs, onnxOutputs, err := modelruntime.InspectModelIOInfo(artifact.Bytes)
+	runtimeArtifact := modelruntime.Artifact{
+		ModelID:   artifact.Meta.ModelID,
+		Version:   artifact.Meta.Version,
+		Engine:    artifact.Meta.Engine,
+		Bytes:     artifact.Bytes,
+		LocalPath: artifact.LocalPath,
+	}
+	ioInfo, err := backend.InspectIO(context.Background(), runtimeArtifact)
 	if err != nil {
 		return nil, err
 	}
-	if len(onnxInputs) != len(inputCols) {
+	if len(ioInfo.Inputs) != len(inputCols) {
 		return nil, errors.New("onnx input count does not match model schema")
 	}
-	if len(onnxOutputs) != len(outputCols) {
+	if len(ioInfo.Outputs) != len(outputCols) {
 		return nil, errors.New("onnx output count does not match model schema")
 	}
-	inputNames := make([]string, len(onnxInputs))
-	for i, info := range onnxInputs {
+	inputNames := make([]string, len(ioInfo.Inputs))
+	for i, info := range ioInfo.Inputs {
 		if !strings.EqualFold(info.Name, inputCols[i].name.O) {
 			return nil, errors.Errorf("onnx input %s does not match model schema %s", info.Name, inputCols[i].name.O)
 		}
 		inputNames[i] = info.Name
 	}
-	outputNames := make([]string, len(onnxOutputs))
-	outputIndex := make(map[string]int, len(onnxOutputs))
-	for i, info := range onnxOutputs {
+	outputNames := make([]string, len(ioInfo.Outputs))
+	outputIndex := make(map[string]int, len(ioInfo.Outputs))
+	for i, info := range ioInfo.Outputs {
 		if !strings.EqualFold(info.Name, outputCols[i].name.O) {
 			return nil, errors.Errorf("onnx output %s does not match model schema %s", info.Name, outputCols[i].name.O)
 		}
 		outputNames[i] = info.Name
 		outputIndex[strings.ToLower(info.Name)] = i
 	}
-	batchable, err := resolveBatchableShape(onnxInputs, onnxOutputs)
+	batchable, err := resolveBatchableShape(ioInfo.Inputs, ioInfo.Outputs)
 	if err != nil {
 		return nil, err
 	}
-	if !vardef.ModelAllowNondeterministic.Load() {
-		nondet, err := modelruntime.ModelDeclaresNondeterministic(artifact.Bytes)
+	if strings.EqualFold(engine, "ONNX") && !vardef.ModelAllowNondeterministic.Load() {
+		nondet, err := modelruntime.ModelDeclaresNondeterministic(runtimeArtifact.Bytes)
 		if err != nil {
 			return nil, err
 		}
@@ -573,7 +580,6 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 			return nil, errors.Errorf("model %s is nondeterministic; set %s=ON to allow", modelIdent, vardef.TiDBModelAllowNondeterministic)
 		}
 	}
-	sessionKey := modelruntime.SessionKeyFromParts(modelID, version, inputNames, outputNames)
 	return &modelPredictMeta{
 		modelID:      modelID,
 		version:      version,
@@ -581,10 +587,9 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 		inputNames:   inputNames,
 		outputNames:  outputNames,
 		outputIndex:  outputIndex,
-		artifactData: artifact.Bytes,
+		artifact:     runtimeArtifact,
+		backend:      backend,
 		batchable:    batchable,
-		sessionKey:   sessionKey,
-		sessionCache: modelruntime.GetProcessSessionCache(),
 		inferOpts: modelruntime.InferenceOptions{
 			MaxBatchSize: int(vardef.ModelMaxBatchSize.Load()),
 			Timeout:      vardef.ModelTimeout.Load(),

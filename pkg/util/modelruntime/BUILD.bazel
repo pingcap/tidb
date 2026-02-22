@@ -3,9 +3,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "modelruntime",
     srcs = [
+        "backend.go",
         "errors.go",
         "infer.go",
         "metadata.go",
+        "onnx_backend.go",
         "runtime.go",
         "runtime_test_helpers.go",
         "session_cache.go",
@@ -28,6 +30,7 @@ go_test(
         "error_test.go",
         "infer_test.go",
         "metadata_test.go",
+        "onnx_backend_test.go",
         "runtime_test.go",
         "session_cache_test.go",
     ],
