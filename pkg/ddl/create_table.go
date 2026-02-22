@@ -377,6 +377,11 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: detected residual build rows on retry")
 			}
+			// Prewrite a virtual refresh watermark before init build starts.
+			if err = w.prewriteCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID); err != nil {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(err)
+			}
 		}
 		reorg := &reorgInfo{Job: job, jobCtx: jobCtx}
 		storeName := ""
@@ -415,7 +420,14 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 		}
 
-		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID, job.SnapshotVer, true, ""); err != nil {
+		if err = w.upsertCreateMaterializedViewRefreshInfo(
+			jobCtx,
+			mvTblInfo.ID,
+			mviewRefreshResultSuccess,
+			mviewRefreshTypeComplete,
+			job.SnapshotVer,
+			"",
+		); err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
@@ -528,6 +540,22 @@ func getCreateMaterializedViewBuildReadTS(ctx context.Context, ddlSess *sess.Ses
 		return 0, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 	}
 	return readTS, nil
+}
+
+func getCreateMaterializedViewTxnStartTS(ddlSess *sess.Session) (uint64, error) {
+	startTS := ddlSess.GetSessionVars().TxnCtx.StartTS
+	if startTS != 0 {
+		return startTS, nil
+	}
+	txn, err := ddlSess.Txn()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	startTS = txn.StartTS()
+	if startTS == 0 {
+		return 0, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid init refresh tso")
+	}
+	return startTS, nil
 }
 
 func buildCreateMaterializedViewInsertSQL(schemaName string, mvTblInfo *model.TableInfo) (string, error) {
@@ -660,13 +688,97 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 	return w.buildCreateMaterializedViewDataByImport(ctx, job, mvTblInfo)
 }
 
-func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64, readTS uint64, success bool, failedReason string) error {
+const (
+	mviewRefreshResultRunning = "running"
+	mviewRefreshResultSuccess = "success"
+	mviewRefreshTypeComplete  = "complete"
+)
+
+func (w *worker) prewriteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64) error {
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, success, failedReason)
-	_, err := w.sess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ddlSess := sess.NewSession(sessCtx)
+	defer w.sessPool.Put(sessCtx)
+
+	err = ddlSess.Begin(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			ddlSess.Rollback()
+		}
+	}()
+	startTS, err := getCreateMaterializedViewTxnStartTS(ddlSess)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = execCreateMaterializedViewRefreshInfoUpsert(
+		ctx,
+		ddlSess,
+		mviewID,
+		mviewRefreshResultRunning,
+		mviewRefreshTypeComplete,
+		startTS,
+		"",
+	); err != nil {
+		return errors.Trace(err)
+	}
+	if err = ddlSess.Commit(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	committed = true
+	return nil
+}
+
+func (w *worker) upsertCreateMaterializedViewRefreshInfo(
+	jobCtx *jobContext,
+	mviewID int64,
+	refreshResult string,
+	refreshType string,
+	readTS uint64,
+	failedReason string,
+) error {
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ddlSess := sess.NewSession(sessCtx)
+	defer w.sessPool.Put(sessCtx)
+
+	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(
+		ctx,
+		ddlSess,
+		mviewID,
+		refreshResult,
+		refreshType,
+		readTS,
+		failedReason,
+	))
+}
+
+func execCreateMaterializedViewRefreshInfoUpsert(
+	ctx context.Context,
+	ddlSess *sess.Session,
+	mviewID int64,
+	refreshResult string,
+	refreshType string,
+	readTS uint64,
+	failedReason string,
+) error {
+	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, refreshResult, refreshType, readTS, failedReason)
+	_, err := ddlSess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
 			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
@@ -696,15 +808,20 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	return errors.Trace(err)
 }
 
-func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, success bool, failedReason string) string {
-	result := "failed"
-	refreshType := "complete"
-	var successfulReadTS any
-	var refreshFailedReason any = failedReason
-	if success {
-		result = "success"
-		successfulReadTS = readTS
-		refreshFailedReason = nil
+func buildCreateMaterializedViewRefreshInfoUpsertSQL(
+	mviewID int64,
+	refreshResult string,
+	refreshType string,
+	readTS uint64,
+	failedReason string,
+) string {
+	var successfulReadTS any = readTS
+	if readTS == 0 {
+		successfulReadTS = nil
+	}
+	var refreshFailedReason any
+	if failedReason != "" {
+		refreshFailedReason = failedReason
 	}
 	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
 		MVIEW_ID,
@@ -721,7 +838,7 @@ func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint6
 		LAST_SUCCESSFUL_REFRESH_READ_TSO = VALUES(LAST_SUCCESSFUL_REFRESH_READ_TSO),
 		LAST_REFRESH_FAILED_REASON = VALUES(LAST_REFRESH_FAILED_REASON)`,
 		mviewID,
-		result,
+		refreshResult,
 		refreshType,
 		successfulReadTS,
 		refreshFailedReason,

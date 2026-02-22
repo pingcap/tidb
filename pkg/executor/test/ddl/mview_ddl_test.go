@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -200,6 +201,64 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	baseTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
+}
+
+func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	const pauseBuildFailpoint = "github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild"
+	require.NoError(t, failpoint.Enable(pauseBuildFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+		}
+	}()
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_state (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	}()
+
+	var initTS uint64
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE, LAST_SUCCESSFUL_REFRESH_READ_TSO from mysql.tidb_mview_refresh").Rows()
+		if len(rows) != 1 {
+			return false
+		}
+		if fmt.Sprint(rows[0][0]) != "running" || fmt.Sprint(rows[0][1]) != "complete" {
+			return false
+		}
+		ts, err := strconv.ParseUint(fmt.Sprint(rows[0][2]), 10, 64)
+		if err != nil || ts == 0 {
+			return false
+		}
+		initTS = ts
+		return true
+	}, 30*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+	enabled = false
+
+	err := <-ddlDone
+	require.NoError(t, err)
+	tk.MustQuery("select a, s, cnt from mv_state order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	rows := tk.MustQuery("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE, LAST_SUCCESSFUL_REFRESH_READ_TSO, LAST_REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "success", fmt.Sprint(rows[0][0]))
+	require.Equal(t, "complete", fmt.Sprint(rows[0][1]))
+	finalTS, err := strconv.ParseUint(fmt.Sprint(rows[0][2]), 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, finalTS, initTS)
+	require.Equal(t, "1", fmt.Sprint(rows[0][3]))
 }
 
 func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
