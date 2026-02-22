@@ -141,6 +141,15 @@ function prepare_model_test_artifacts()
     fi
     mkdir -p "$dst_dir"
     cp "$src" "$dst"
+
+    local mlflow_src="${ROOT_DIR}/pkg/executor/testdata/mlflow/identity"
+    local mlflow_dst="${dst_dir}/identity_mlflow"
+    if [ ! -f "${mlflow_src}/MLmodel" ]; then
+        echo "missing mlflow model test artifact: ${mlflow_src}/MLmodel" >&2
+        exit 1
+    fi
+    rm -rf "${mlflow_dst}"
+    cp -R "${mlflow_src}" "${mlflow_dst}"
 }
 
 while getopts "t:s:r:b:d:c:i:P:h" opt; do

@@ -1,0 +1,25 @@
+flavors:
+  python_function:
+    cloudpickle_version: 3.1.2
+    code: null
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.pyfunc.model
+    python_model: python_model.pkl
+    python_version: 3.14.3
+    streamable: false
+is_signature_from_type_hint: false
+mlflow_version: 3.10.0
+model_id: null
+model_size_bytes: 1513
+model_uuid: 1ef95e3214884429936f3e59d3d0d6a6
+prompts: null
+signature:
+  inputs: '[{"name": "x", "type": "tensor", "tensor-spec": {"dtype": "float32", "shape":
+    [-1, 1]}}]'
+  outputs: '[{"name": "y", "type": "tensor", "tensor-spec": {"dtype": "float32", "shape":
+    [-1, 1]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2026-02-22 01:48:10.783690'

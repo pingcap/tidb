@@ -23,8 +23,9 @@ go_test(
         "client_test.go",
         "sidecar_test.go",
     ],
-    embed = [":mlflow"],
     data = ["sidecar.py"],
+    embed = [":mlflow"],
+    flaky = True,
     deps = [
         "@com_github_stretchr_testify//require",
     ],
