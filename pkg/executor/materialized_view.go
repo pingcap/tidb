@@ -54,7 +54,7 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 }
 
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) error {
-	refreshType, err := validateRefreshMaterializedViewStmtForUtility(s)
+	refreshType, err := validateRefreshMaterializedViewStmt(s)
 	if err != nil {
 		return err
 	}
@@ -97,10 +97,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	failpoint.Inject("pauseRefreshMaterializedViewAfterBegin", func() {})
 
 	mviewID := tblInfo.ID
-	lockedReadTSO, lockedReadTSONull, persistFailureOnErr, err := lockAndValidateRefreshInfoRowForUtility(kctx, sqlExec, mviewID)
+	lockedReadTSO, lockedReadTSONull, persistFailureOnErr, err := lockAndValidateRefreshInfoRow(kctx, sqlExec, mviewID)
 	if err != nil {
 		if persistFailureOnErr {
-			return persistRefreshFailureAndCommitForUtility(kctx, sqlExec, refreshType, mviewID, err, &txnCommitted)
+			return persistRefreshFailureAndCommit(kctx, sqlExec, refreshType, mviewID, err, &txnCommitted)
 		}
 		return err
 	}
@@ -130,7 +130,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return errors.Trace(err)
 	}
 
-	if err := executeRefreshMaterializedViewDataChangesForUtility(
+	if err := executeRefreshMaterializedViewDataChanges(
 		kctx,
 		sqlExec,
 		sessVars,
@@ -142,17 +142,17 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		if _, rollbackErr := sqlExec.ExecuteInternal(kctx, "ROLLBACK TO SAVEPOINT "+refreshSavepoint); rollbackErr != nil {
 			return errors.Annotatef(rollbackErr, "refresh materialized view: failed to rollback MV data changes after error %v", err)
 		}
-		return persistRefreshFailureAndCommitForUtility(kctx, sqlExec, refreshType, mviewID, err, &txnCommitted)
+		return persistRefreshFailureAndCommit(kctx, sqlExec, refreshType, mviewID, err, &txnCommitted)
 	}
 
-	refreshReadTSO, err := getRefreshReadTSOForSuccessForUtility(s.Type, sessVars, startTS)
+	refreshReadTSO, err := getRefreshReadTSOForSuccess(s.Type, sessVars, startTS)
 	if err != nil {
 		return err
 	}
-	return persistRefreshSuccessAndCommitForUtility(kctx, sqlExec, refreshType, mviewID, refreshReadTSO, &txnCommitted)
+	return persistRefreshSuccessAndCommit(kctx, sqlExec, refreshType, mviewID, refreshReadTSO, &txnCommitted)
 }
 
-func validateRefreshMaterializedViewStmtForUtility(s *ast.RefreshMaterializedViewStmt) (string, error) {
+func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt) (string, error) {
 	if s == nil || s.ViewName == nil {
 		return "", errors.New("refresh materialized view: missing view name")
 	}
@@ -211,7 +211,7 @@ func forceConstraintCheckInPlacePessimisticOnForRefresh(sessVars *variable.Sessi
 	}, nil
 }
 
-func lockAndValidateRefreshInfoRowForUtility(
+func lockAndValidateRefreshInfoRow(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	mviewID int64,
@@ -286,7 +286,7 @@ func lockAndValidateRefreshInfoRowForUtility(
 	return lockedReadTSO, lockedReadTSONull, false, nil
 }
 
-func executeRefreshMaterializedViewDataChangesForUtility(
+func executeRefreshMaterializedViewDataChanges(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	sessVars *variable.SessionVars,
@@ -321,13 +321,13 @@ func executeRefreshMaterializedViewDataChangesForUtility(
 			RefreshStmt:                  s,
 			LastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
 		}
-		return executeFastRefreshImplementStmtForUtility(kctx, sqlExec, sessVars, implementStmt)
+		return executeFastRefreshImplementStmt(kctx, sqlExec, sessVars, implementStmt)
 	default:
 		return errors.New("unknown REFRESH MATERIALIZED VIEW type")
 	}
 }
 
-func executeFastRefreshImplementStmtForUtility(
+func executeFastRefreshImplementStmt(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	sessVars *variable.SessionVars,
@@ -337,7 +337,7 @@ func executeFastRefreshImplementStmtForUtility(
 		ExecuteInternalStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	}); ok {
 		rs, execErr := internalExec.ExecuteInternalStmt(kctx, implementStmt)
-		return drainAndCloseRefreshRecordSetForUtility(kctx, rs, execErr)
+		return drainAndCloseRefreshRecordSet(kctx, rs, execErr)
 	}
 
 	// Fallback: emulate ExecuteInternalStmt by flipping InRestrictedSQL around ExecuteStmt.
@@ -347,10 +347,10 @@ func executeFastRefreshImplementStmtForUtility(
 		sessVars.InRestrictedSQL = origRestricted
 	}()
 	rs, execErr := sqlExec.ExecuteStmt(kctx, implementStmt)
-	return drainAndCloseRefreshRecordSetForUtility(kctx, rs, execErr)
+	return drainAndCloseRefreshRecordSet(kctx, rs, execErr)
 }
 
-func drainAndCloseRefreshRecordSetForUtility(
+func drainAndCloseRefreshRecordSet(
 	kctx context.Context,
 	rs sqlexec.RecordSet,
 	execErr error,
@@ -359,7 +359,7 @@ func drainAndCloseRefreshRecordSetForUtility(
 		return execErr
 	}
 	if execErr == nil {
-		if drainErr := drainRefreshRecordSetForUtility(kctx, rs); drainErr != nil {
+		if drainErr := drainRefreshRecordSet(kctx, rs); drainErr != nil {
 			_ = rs.Close()
 			return errors.Trace(drainErr)
 		}
@@ -370,7 +370,7 @@ func drainAndCloseRefreshRecordSetForUtility(
 	return execErr
 }
 
-func drainRefreshRecordSetForUtility(kctx context.Context, rs sqlexec.RecordSet) error {
+func drainRefreshRecordSet(kctx context.Context, rs sqlexec.RecordSet) error {
 	chk := rs.NewChunk(nil)
 	for {
 		chk.Reset()
@@ -383,7 +383,7 @@ func drainRefreshRecordSetForUtility(kctx context.Context, rs sqlexec.RecordSet)
 	}
 }
 
-func persistRefreshFailureAndCommitForUtility(
+func persistRefreshFailureAndCommit(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	refreshType string,
@@ -411,7 +411,7 @@ WHERE MVIEW_ID = %?`
 	return errors.Trace(refreshErr)
 }
 
-func getRefreshReadTSOForSuccessForUtility(
+func getRefreshReadTSOForSuccess(
 	refreshType ast.RefreshMaterializedViewType,
 	sessVars *variable.SessionVars,
 	startTS uint64,
@@ -432,7 +432,7 @@ func getRefreshReadTSOForSuccessForUtility(
 	return refreshReadTSO, nil
 }
 
-func persistRefreshSuccessAndCommitForUtility(
+func persistRefreshSuccessAndCommit(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	refreshType string,
