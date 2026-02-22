@@ -16,11 +16,11 @@ package modelruntime
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/modelruntime/mlflow"
 	"github.com/yalue/onnxruntime_go"
 )
@@ -82,12 +82,24 @@ func (b *mlflowBackend) InferBatch(ctx context.Context, artifact Artifact, input
 	if b.client == nil {
 		return nil, errors.New("mlflow sidecar client is not configured")
 	}
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
 	return b.client.PredictBatch(ctx, mlflow.PredictRequest{ModelPath: artifact.LocalPath, Inputs: inputs})
 }
 
 func newMLflowBackend() *mlflowBackend {
-	dial := func(ctx context.Context) (net.Conn, error) {
-		return nil, errors.New("mlflow sidecar is not configured")
+	cfg := mlflow.DefaultConfig()
+	if global := config.GetGlobalConfig(); global != nil {
+		cfg = mlflow.Config{
+			Python:       global.ModelMLflow.Python,
+			Workers:      global.ModelMLflow.SidecarWorkers,
+			Timeout:      global.ModelMLflow.RequestTimeout,
+			CacheEntries: global.ModelMLflow.CacheEntries,
+		}
 	}
-	return &mlflowBackend{client: mlflow.NewClient(mlflow.ClientOptions{Dial: dial})}
+	pool := mlflow.NewSidecarPool(cfg)
+	return &mlflowBackend{client: mlflow.NewClient(mlflow.ClientOptions{Dial: pool.Dial})}
 }

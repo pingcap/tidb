@@ -206,6 +206,7 @@ type Config struct {
 	Security                   Security                `toml:"security" json:"security"`
 	Status                     Status                  `toml:"status" json:"status"`
 	Performance                Performance             `toml:"performance" json:"performance"`
+	ModelMLflow                ModelMLflow             `toml:"model-mlflow" json:"model-mlflow"`
 	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
@@ -799,6 +800,14 @@ type Performance struct {
 	EnableAsyncBatchGet bool `toml:"enable-async-batch-get" json:"enable-async-batch-get"`
 }
 
+// ModelMLflow is the config section for MLflow sidecar inference.
+type ModelMLflow struct {
+	Python         string        `toml:"python" json:"python"`
+	SidecarWorkers int           `toml:"sidecar-workers" json:"sidecar-workers"`
+	RequestTimeout time.Duration `toml:"request-timeout" json:"request-timeout"`
+	CacheEntries   int           `toml:"cache-entries" json:"cache-entries"`
+}
+
 // PlanCache is the PlanCache section of the config.
 type PlanCache struct {
 	Enabled  bool `toml:"enabled" json:"enabled"`
@@ -1076,6 +1085,12 @@ var defaultConf = Config{
 		// Deprecated: Stats are always initialized concurrently.
 		ConcurrentlyInitStats: true,
 		EnableAsyncBatchGet:   true,
+	},
+	ModelMLflow: ModelMLflow{
+		Python:         "python3",
+		SidecarWorkers: 2,
+		RequestTimeout: 2 * time.Second,
+		CacheEntries:   64,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
