@@ -30,6 +30,7 @@ func init() {
 	// For code refactor init.
 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
 	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
+	utilfuncp.FindBestTask4LogicalJoin = findBestTask4LogicalJoin
 	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
 	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
 

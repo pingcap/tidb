@@ -492,6 +492,11 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 		return findBestTask4LogicalShowDDLJobs(e, prop)
 	case *logicalop.MockDataSource:
 		return findBestTask4LogicalMockDatasource(lop, prop)
+	case *logicalop.LogicalJoin:
+		if lop.CorrelateAlternative != nil {
+			return utilfuncp.FindBestTask4LogicalJoin(e, prop)
+		}
+		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop)
 	default:
 		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop)
 	}

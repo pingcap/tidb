@@ -49,6 +49,7 @@ go_library(
         "rule_aggregation_elimination.go",
         "rule_aggregation_push_down.go",
         "rule_aggregation_skew_rewrite.go",
+        "rule_correlate.go",
         "rule_decorrelate.go",
         "rule_derive_topn_from_window.go",
         "rule_eliminate_empty_selection.go",
