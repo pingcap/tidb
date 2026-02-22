@@ -13,6 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/util/kvcache",
         "//pkg/util/modelruntime/mlflow",
         "//pkg/util/syncutil",
@@ -28,9 +29,9 @@ go_test(
         "loader_test.go",
         "mlflow_test.go",
     ],
+    data = glob(["testdata/**"]),
     embed = [":model"],
     flaky = True,
-    data = glob(["testdata/**"]),
     deps = [
         "@com_github_stretchr_testify//require",
     ],

@@ -1,0 +1,6 @@
+flavors:
+  python_function:
+    loader_module: mlflow.pyfunc
+signature:
+  inputs: '[{"name": "x", "type": "tensor", "tensor-spec": {"dtype": "float32", "shape": [-1, 1]}}]'
+  outputs: '[{"name": "y", "type": "tensor", "tensor-spec": {"dtype": "float32", "shape": [-1, 1]}}]'

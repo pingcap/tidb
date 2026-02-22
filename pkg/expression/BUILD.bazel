@@ -259,6 +259,7 @@ go_test(
         "//pkg/util/hack",
         "//pkg/util/mathutil",
         "//pkg/util/mock",
+        "//pkg/util/modelruntime",
         "//pkg/util/printer",
         "//pkg/util/sqlkiller",
         "//pkg/util/timeutil",

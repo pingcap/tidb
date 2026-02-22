@@ -15,6 +15,8 @@
 package mlflow
 
 import (
+	"encoding/json"
+
 	"github.com/pingcap/errors"
 	"gopkg.in/yaml.v3"
 )
@@ -29,14 +31,43 @@ type ModelInfo struct {
 type modelDoc struct {
 	Flavors   map[string]any `yaml:"flavors"`
 	Signature struct {
-		Inputs  []modelField `yaml:"inputs"`
-		Outputs []modelField `yaml:"outputs"`
+		Inputs  modelFields `yaml:"inputs"`
+		Outputs modelFields `yaml:"outputs"`
 	} `yaml:"signature"`
 }
 
 type modelField struct {
 	Name string `yaml:"name"`
 	Type string `yaml:"type"`
+}
+
+type modelFields []modelField
+
+func (f *modelFields) UnmarshalYAML(value *yaml.Node) error {
+	if value == nil {
+		return nil
+	}
+	if value.Kind == yaml.ScalarNode && value.Tag == "!!str" {
+		var raw string
+		if err := value.Decode(&raw); err != nil {
+			return err
+		}
+		if raw == "" {
+			return nil
+		}
+		var fields []modelField
+		if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+			return err
+		}
+		*f = fields
+		return nil
+	}
+	var fields []modelField
+	if err := value.Decode(&fields); err != nil {
+		return err
+	}
+	*f = fields
+	return nil
 }
 
 // ParseModel parses an MLflow MLmodel file and returns PyFunc metadata.

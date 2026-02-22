@@ -33,3 +33,15 @@ func TestParseMLflowModelSignature(t *testing.T) {
 	require.Equal(t, []string{"x"}, info.InputNames)
 	require.Equal(t, []string{"y"}, info.OutputNames)
 }
+
+func TestParseMLflowModelSignatureJSON(t *testing.T) {
+	path := filepath.Join("testdata", "mlflow", "json_signature", "MLmodel")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	info, err := ParseMLflowModel(data)
+	require.NoError(t, err)
+	require.True(t, info.HasPyFunc)
+	require.Equal(t, []string{"x"}, info.InputNames)
+	require.Equal(t, []string{"y"}, info.OutputNames)
+}

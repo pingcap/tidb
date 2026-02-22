@@ -37,6 +37,19 @@ def write_msg(conn, obj):
     conn.sendall(payload)
 
 
+def normalize_outputs(outputs):
+    if isinstance(outputs, dict):
+        if len(outputs) != 1:
+            raise ValueError("mlflow model returned multiple outputs")
+        outputs = next(iter(outputs.values()))
+    if hasattr(outputs, "to_numpy"):
+        outputs = outputs.to_numpy()
+    outputs = np.asarray(outputs, dtype=np.float32)
+    if outputs.ndim == 1:
+        outputs = outputs.reshape(-1, 1)
+    return outputs
+
+
 def handle_conn(conn):
     with conn:
         while True:
@@ -49,7 +62,8 @@ def handle_conn(conn):
             model = model_cache[path]
             inputs = np.array(msg["inputs"], dtype=np.float32)
             outputs = model.predict(inputs)
-            write_msg(conn, {"outputs": outputs.astype(np.float32).tolist()})
+            outputs = normalize_outputs(outputs)
+            write_msg(conn, {"outputs": outputs.tolist()})
 
 
 def main():
