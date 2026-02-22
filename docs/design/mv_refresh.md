@@ -183,6 +183,7 @@ FAST refresh 目前尚未实现真正的增量刷新执行逻辑（planner 仍�
 - `COMPLETE` 通过 `DELETE FROM mv` + `INSERT INTO mv SELECT ...` 完成重建。
 - `FAST` 通过 internal-only statement `RefreshMaterializedViewImplementStmt` 作为框架入口（当前 planner 仍返回 not supported 占位）。
 - `RefreshMaterializedViewStmt` 作为 `StmtNode` 参与执行，不带 DDL statement 语义（例如不会设置 `LastExecuteDDL` 标记）。
+- 语句禁止在用户显式事务中执行（例如 `BEGIN` / `START TRANSACTION` 之后），必须在自动提交语义下独立执行。
 
 ## 后续阶段规划
 
