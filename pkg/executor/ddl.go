@@ -94,7 +94,26 @@ func (e *DDLExec) getLocalTemporaryTable(schema pmodel.CIStr, table pmodel.CIStr
 
 // RefreshMaterializedViewExec executes "REFRESH MATERIALIZED VIEW" as a utility-style statement.
 type RefreshMaterializedViewExec struct {
-	DDLExec
+	exec.BaseExecutor
+	stmt *ast.RefreshMaterializedViewStmt
+	is   infoschema.InfoSchema
+	done bool
+}
+
+func (e *RefreshMaterializedViewExec) toErr(err error) error {
+	// The err may be caused by schema change. Distinguish ErrInfoSchemaChanged from execution errors.
+	dom := domain.GetDomain(e.Ctx())
+	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil, true)
+	txn, txnErr := e.Ctx().Txn(true)
+	if txnErr != nil {
+		logutil.BgLogger().Error("active txn failed", zap.Error(txnErr))
+		return err
+	}
+	_, schemaInfoErr := checker.Check(txn.StartTS())
+	if schemaInfoErr != nil {
+		return errors.Trace(schemaInfoErr)
+	}
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -104,35 +123,20 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 	}
 	e.done = true
 
-	refreshStmt, ok := e.stmt.(*ast.RefreshMaterializedViewStmt)
-	if !ok {
-		return errors.Errorf("invalid statement type for RefreshMaterializedViewExec: %T", e.stmt)
-	}
-
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	if err = sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		return err
 	}
-	defer func() {
-		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue = false
-		e.Ctx().GetSessionVars().StmtCtx.DDLJobID = 0
-	}()
 
-	err = e.executeRefreshMaterializedView(ctx, refreshStmt)
+	err = e.executeRefreshMaterializedView(ctx, e.stmt)
 	if err != nil {
-		if (e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) ||
-			!e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue {
-			return e.toErr(err)
-		}
-		return err
+		return e.toErr(err)
 	}
 
-	// Keep the post-exec behavior consistent with DDLExec.
 	dom := domain.GetDomain(e.Ctx())
 	is := dom.InfoSchema()
 	txnCtx := e.Ctx().GetSessionVars().TxnCtx
 	txnCtx.InfoSchema = is
-	e.Ctx().GetSessionVars().SetInTxn(false)
 	return nil
 }
 
@@ -192,7 +196,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if s.Type == ast.RefreshMaterializedViewTypeFast {
 		// LAST_SUCCESSFUL_REFRESH_READ_TSO is BIGINT DEFAULT NULL. FAST refresh requires it to be non-NULL.
 		if lockedReadTSONull {
-			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view fast: LAST_SUCCESSFUL_REFRESH_READ_TSO is NULL")
+			return errors.New("refresh materialized view fast: LAST_SUCCESSFUL_REFRESH_READ_TSO is NULL")
 		}
 		lastSuccessfulRefreshReadTSO = lockedReadTSO
 	}
@@ -203,7 +207,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 	startTS := txn.StartTS()
 	if startTS == 0 {
-		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: invalid transaction start tso")
+		return errors.New("refresh materialized view: invalid transaction start tso")
 	}
 
 	// Use a savepoint so we can keep the mutex lock, rollback MV data changes on failure,
@@ -237,7 +241,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 func validateRefreshMaterializedViewStmtForUtility(s *ast.RefreshMaterializedViewStmt) (string, error) {
 	if s == nil || s.ViewName == nil {
-		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: missing view name")
+		return "", errors.New("refresh materialized view: missing view name")
 	}
 	switch s.Type {
 	case ast.RefreshMaterializedViewTypeComplete:
@@ -245,7 +249,7 @@ func validateRefreshMaterializedViewStmtForUtility(s *ast.RefreshMaterializedVie
 	case ast.RefreshMaterializedViewTypeFast:
 		// Framework is supported; actual execution happens via RefreshMaterializedViewImplementStmt.
 	default:
-		return "", dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unknown REFRESH MATERIALIZED VIEW type")
+		return "", errors.New("unknown REFRESH MATERIALIZED VIEW type")
 	}
 	// In MVP, refresh is synchronous by nature. `WITH SYNC MODE` is accepted and behaves the same.
 	return strings.ToLower(s.Type.String()), nil
@@ -276,7 +280,7 @@ func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
 		return pmodel.CIStr{}, nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name.O, "MATERIALIZED VIEW")
 	}
 	if len(tblInfo.MaterializedView.SQLContent) == 0 {
-		return pmodel.CIStr{}, nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: invalid select sql")
+		return pmodel.CIStr{}, nil, errors.New("refresh materialized view: invalid select sql")
 	}
 	return schemaName, tblInfo, nil
 }
@@ -306,13 +310,13 @@ func lockAndValidateRefreshInfoRowForUtility(
 		mviewID,
 	)
 	if infoschema.ErrTableNotExists.Equal(err) {
-		return 0, false, false, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
+		return 0, false, false, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
 	}
 	if err != nil {
 		return 0, false, false, errors.Trace(err)
 	}
 	if lockRS == nil {
-		return 0, false, false, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: cannot lock mysql.tidb_mview_refresh row")
+		return 0, false, false, errors.New("refresh materialized view: cannot lock mysql.tidb_mview_refresh row")
 	}
 	lockRows, drainErr := sqlexec.DrainRecordSet(kctx, lockRS, 1)
 	closeErr := lockRS.Close()
@@ -323,7 +327,7 @@ func lockAndValidateRefreshInfoRowForUtility(
 		return 0, false, false, errors.Trace(closeErr)
 	}
 	if len(lockRows) == 0 {
-		return 0, false, false, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh")
+		return 0, false, false, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh")
 	}
 
 	// In pessimistic txn, `SELECT ... FOR UPDATE` reads at txn's `for_update_ts`, while normal `SELECT`
@@ -344,7 +348,7 @@ func lockAndValidateRefreshInfoRowForUtility(
 		return 0, false, false, errors.Trace(err)
 	}
 	if recheckRS == nil {
-		return 0, false, false, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: cannot re-check mysql.tidb_mview_refresh row")
+		return 0, false, false, errors.New("refresh materialized view: cannot re-check mysql.tidb_mview_refresh row")
 	}
 	recheckRows, drainErr := sqlexec.DrainRecordSet(kctx, recheckRS, 1)
 	closeErr = recheckRS.Close()
@@ -355,7 +359,7 @@ func lockAndValidateRefreshInfoRowForUtility(
 		return 0, false, false, errors.Trace(closeErr)
 	}
 	if len(recheckRows) == 0 {
-		return 0, false, false, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh")
+		return 0, false, false, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh")
 	}
 	recheckRow := recheckRows[0]
 	recheckReadTSONull := recheckRow.IsNull(0)
@@ -364,7 +368,7 @@ func lockAndValidateRefreshInfoRowForUtility(
 		recheckReadTSO = recheckRow.GetInt64(0)
 	}
 	if lockedReadTSONull != recheckReadTSONull || (!lockedReadTSONull && lockedReadTSO != recheckReadTSO) {
-		return 0, false, true, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: inconsistent LAST_SUCCESSFUL_REFRESH_READ_TSO between locking read and snapshot read")
+		return 0, false, true, errors.New("refresh materialized view: inconsistent LAST_SUCCESSFUL_REFRESH_READ_TSO between locking read and snapshot read")
 	}
 	return lockedReadTSO, lockedReadTSONull, false, nil
 }
@@ -406,7 +410,7 @@ func executeRefreshMaterializedViewDataChangesForUtility(
 		}
 		return executeFastRefreshImplementStmtForUtility(kctx, sqlExec, sessVars, implementStmt)
 	default:
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unknown REFRESH MATERIALIZED VIEW type")
+		return errors.New("unknown REFRESH MATERIALIZED VIEW type")
 	}
 }
 
@@ -483,7 +487,7 @@ SET
 WHERE MVIEW_ID = %?`
 	if _, err := sqlExec.ExecuteInternal(kctx, updateFailedSQL, refreshType, refreshErr.Error(), mviewID); err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
-			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
+			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
 		}
 		return errors.Annotatef(err, "refresh materialized view: failed to persist refresh failure info (original error: %v)", refreshErr)
 	}
@@ -509,7 +513,7 @@ func getRefreshReadTSOForSuccessForUtility(
 	if refreshType == ast.RefreshMaterializedViewTypeComplete {
 		refreshReadTSO = sessVars.TxnCtx.GetForUpdateTS()
 		if refreshReadTSO == 0 {
-			return 0, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: invalid refresh read tso")
+			return 0, errors.New("refresh materialized view: invalid refresh read tso")
 		}
 	}
 	return refreshReadTSO, nil
@@ -533,7 +537,7 @@ SET
 WHERE MVIEW_ID = %?`
 	if _, err := sqlExec.ExecuteInternal(kctx, updateSQL, refreshType, refreshReadTSO, mviewID); err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
-			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
+			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
 		}
 		return errors.Trace(err)
 	}

@@ -1327,12 +1327,9 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) exec.Executor {
 
 func (b *executorBuilder) buildRefreshMaterializedView(v *plannercore.RefreshMaterializedView) exec.Executor {
 	e := &RefreshMaterializedViewExec{
-		DDLExec: DDLExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-			ddlExecutor:  domain.GetDomain(b.ctx).DDLExecutor(),
-			stmt:         v.Statement,
-			is:           b.is,
-		},
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+		is:           b.is,
 	}
 	return e
 }
