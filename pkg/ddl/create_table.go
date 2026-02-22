@@ -257,6 +257,29 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 		return ver, errors.Trace(err)
 	}
 
+	// Insert the lock row used by PURGE MATERIALIZED VIEW LOG for mutual exclusion.
+	// The row is keyed by MLOG_ID and acts as a cross-node row-lock carrier.
+	{
+		ctx := jobCtx.stepCtx
+		if ctx == nil {
+			ctx = w.workCtx
+		}
+		insertSQL := sqlescape.MustEscapeSQL("INSERT IGNORE INTO mysql.tidb_mlog_purge (MLOG_ID) VALUES (%?)", mlogTblInfo.ID)
+		_, err = w.sess.Execute(ctx, insertSQL, "mlog-purge-lock-row-insert")
+		failpoint.Inject("mockInsertMLogPurgeTableNotExists", func(val failpoint.Value) {
+			if val.(bool) {
+				err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge")
+			}
+		})
+		if infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: required system table mysql.tidb_mlog_purge does not exist")
+		}
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+
 	ver, err = updateSchemaVersion(jobCtx, job, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: baseTblInfo})
 	if err != nil {
 		return ver, errors.Trace(err)
