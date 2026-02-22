@@ -241,6 +241,14 @@ func (p Prefix) ObjectKey(name string) string {
 	return string(p) + name
 }
 
+// ToPath convert the object storage prefix into a URL path.
+// we expect `p` relative to the bucket, not to another prefix, so we add a
+// leading '/' directly. if p is empty, it will return '/', which is also a
+// valid path.
+func (p Prefix) ToPath() string {
+	return "/" + string(p)
+}
+
 // String implements fmt.Stringer interface.
 func (p Prefix) String() string {
 	return string(p)

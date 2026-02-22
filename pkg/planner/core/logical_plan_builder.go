@@ -1210,6 +1210,10 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 		if err != nil {
 			return nil, err
 		}
+		p = np
+		if expr == nil {
+			continue
+		}
 		// for case: explain SELECT year+2 as y, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002;
 		// currently, we succeed to resolve y to (year+2), but fail to resolve (year+2) to grouping col, and to base column function: plus(year, 2) instead.
 		// which will cause this selection being pushed down through Expand OP itself.
@@ -1217,10 +1221,6 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 		// In expand, we will additionally project (year+2) out as a new column, let's say grouping_col here, and we wanna it can substitute any upper layer's (year+2)
 		expr = b.replaceGroupingFunc(expr)
 
-		p = np
-		if expr == nil {
-			continue
-		}
 		expressions = append(expressions, expr)
 	}
 	cnfExpres := make([]expression.Expression, 0)
