@@ -1329,7 +1329,6 @@ func (b *executorBuilder) buildRefreshMaterializedView(v *plannercore.RefreshMat
 	e := &RefreshMaterializedViewExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
-		is:           b.is,
 	}
 	return e
 }

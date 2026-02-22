@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -28,38 +27,18 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 // RefreshMaterializedViewExec executes "REFRESH MATERIALIZED VIEW" as a utility-style statement.
 type RefreshMaterializedViewExec struct {
 	exec.BaseExecutor
 	stmt *ast.RefreshMaterializedViewStmt
-	is   infoschema.InfoSchema
 	done bool
-}
-
-func (e *RefreshMaterializedViewExec) toErr(err error) error {
-	// The err may be caused by schema change. Distinguish ErrInfoSchemaChanged from execution errors.
-	dom := domain.GetDomain(e.Ctx())
-	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil, true)
-	txn, txnErr := e.Ctx().Txn(true)
-	if txnErr != nil {
-		logutil.BgLogger().Error("active txn failed", zap.Error(txnErr))
-		return err
-	}
-	_, schemaInfoErr := checker.Check(txn.StartTS())
-	if schemaInfoErr != nil {
-		return errors.Trace(schemaInfoErr)
-	}
-	return err
 }
 
 // Next implements the Executor Next interface.
@@ -70,20 +49,8 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 	e.done = true
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
-	if err = sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
-		return err
-	}
 
-	err = e.executeRefreshMaterializedView(ctx, e.stmt)
-	if err != nil {
-		return e.toErr(err)
-	}
-
-	dom := domain.GetDomain(e.Ctx())
-	is := dom.InfoSchema()
-	txnCtx := e.Ctx().GetSessionVars().TxnCtx
-	txnCtx.InfoSchema = is
-	return nil
+	return e.executeRefreshMaterializedView(ctx, e.stmt)
 }
 
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) error {
