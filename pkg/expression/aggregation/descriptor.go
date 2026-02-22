@@ -183,9 +183,14 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		finalAggDesc.Args = args
 	default:
 		args := make([]expression.Expression, 0, 1)
+		argRetTp := a.RetTp
+		if a.Name == ast.AggFuncMaxCount || a.Name == ast.AggFuncMinCount {
+			// max_count/min_count final phase compares partial extrema, so keep the original arg type.
+			argRetTp = a.Args[0].GetType(nil).Clone()
+		}
 		args = append(args, &expression.Column{
 			Index:   ordinal[0],
-			RetType: a.RetTp,
+			RetType: argRetTp,
 		})
 		finalAggDesc.Args = args
 		if finalAggDesc.Name == ast.AggFuncGroupConcat || finalAggDesc.Name == ast.AggFuncApproxPercentile {
@@ -230,7 +235,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 // +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
 func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
 	switch a.Name {
-	case ast.AggFuncCount:
+	case ast.AggFuncCount, ast.AggFuncMaxCount, ast.AggFuncMinCount:
 		return a.evalNullValueInOuterJoin4Count(ctx, schema)
 	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncMax, ast.AggFuncMin,
 		ast.AggFuncFirstRow:
@@ -264,6 +269,18 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation
 		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
 	case ast.AggFuncMin:
 		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
+	case ast.AggFuncMaxCount:
+		cmpArgIdx := 0
+		if (a.Mode == FinalMode || a.Mode == Partial2Mode) && len(a.Args) > 1 {
+			cmpArgIdx = 1
+		}
+		return &maxMinCountFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[cmpArgIdx].GetType(ctx.GetEvalCtx()).GetCollate())}
+	case ast.AggFuncMinCount:
+		cmpArgIdx := 0
+		if (a.Mode == FinalMode || a.Mode == Partial2Mode) && len(a.Args) > 1 {
+			cmpArgIdx = 1
+		}
+		return &maxMinCountFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[cmpArgIdx].GetType(ctx.GetEvalCtx()).GetCollate())}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitOr:
@@ -331,7 +348,7 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx expression.BuildContext
 func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool) error {
 	var removeNotNull bool
 	switch a.Name {
-	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile,
+	case ast.AggFuncCount, ast.AggFuncMaxCount, ast.AggFuncMinCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile,
 		ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
 		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,

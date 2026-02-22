@@ -472,6 +472,55 @@ func TestPartialResult4MaxMinJSON(t *testing.T) {
 	}
 }
 
+func TestPartialResult4MaxMinVectorFloat32(t *testing.T) {
+	serializeHelper := NewSerializeHelper()
+
+	largeVecData := make([]float32, 1024)
+	for i := range largeVecData {
+		largeVecData[i] = float32(i)
+	}
+
+	// Initialize test data
+	expectData := []partialResult4MaxMinVectorFloat32{
+		{val: types.MustCreateVectorFloat32([]float32{1, 2, 3}), isNull: false},
+		{val: types.MustCreateVectorFloat32(largeVecData), isNull: true},
+	}
+	serializedPartialResults := make([]PartialResult, len(expectData))
+	testDataNum := len(serializedPartialResults)
+	for i := range serializedPartialResults {
+		pr := new(partialResult4MaxMinVectorFloat32)
+		*pr = expectData[i]
+		serializedPartialResults[i] = PartialResult(pr)
+	}
+
+	// Serialize test data
+	chk := getChunk()
+	for _, pr := range serializedPartialResults {
+		serializedData := serializeHelper.serializePartialResult4MaxMinVectorFloat32(*(*partialResult4MaxMinVectorFloat32)(pr))
+		chk.AppendBytes(0, serializedData)
+	}
+
+	// Deserialize test data
+	deserializeHelper := newDeserializeHelper(chk.Column(0), testDataNum)
+	deserializedPartialResults := make([]partialResult4MaxMinVectorFloat32, testDataNum+1)
+	index := 0
+	for {
+		success := deserializeHelper.deserializePartialResult4MaxMinVectorFloat32(&deserializedPartialResults[index])
+		if !success {
+			break
+		}
+		index++
+	}
+
+	chk.Column(0).DestroyDataForTest()
+
+	// Check some results
+	require.Equal(t, testDataNum, index)
+	for i := 0; i < testDataNum; i++ {
+		require.Equal(t, *(*partialResult4MaxMinVectorFloat32)(serializedPartialResults[i]), deserializedPartialResults[i])
+	}
+}
+
 func TestPartialResult4MaxMinEnum(t *testing.T) {
 	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()

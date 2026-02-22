@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -675,6 +676,47 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	mixedAggFuncs = append(mixedAggFuncs, groupConcatAggFuncs...)
 	checkResult(ctx, mixedAggFuncs, emptyGroupByItems)
 	checkResult(ctx, mixedAggFuncs, groupByItems)
+}
+
+func TestBuildFinalModeAggregationMaxMinCountSchema(t *testing.T) {
+	ctx := core.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	argType := types.NewFieldType(mysql.TypeString)
+	argType.SetCharset(charset.CharsetUTF8MB4)
+	argType.SetCollate("utf8mb4_general_ci")
+	argType.DelFlag(mysql.NotNullFlag)
+	argCol := &expression.Column{
+		Index:   0,
+		RetType: argType,
+	}
+
+	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMaxCount, []expression.Expression{argCol}, false)
+	require.NoError(t, err)
+
+	schema := expression.NewSchema()
+	schema.Append(&expression.Column{
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  desc.RetTp,
+	})
+
+	partial, final, _ := core.BuildFinalModeAggregation(ctx, &core.AggInfo{
+		AggFuncs:     []*aggregation.AggFuncDesc{desc},
+		GroupByItems: nil,
+		Schema:       schema,
+	}, true, false)
+	require.NotNil(t, partial)
+	require.NotNil(t, final)
+	require.Len(t, partial.Schema.Columns, 2)
+	require.Equal(t, mysql.TypeLonglong, partial.Schema.Columns[0].RetType.GetType())
+	require.Equal(t, mysql.TypeString, partial.Schema.Columns[1].RetType.GetType())
+	require.Equal(t, "utf8mb4_general_ci", partial.Schema.Columns[1].RetType.GetCollate())
+	require.Len(t, final.AggFuncs[0].Args, 2)
+	require.Equal(t, mysql.TypeLonglong, final.AggFuncs[0].Args[0].GetType(ctx.GetExprCtx().GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeString, final.AggFuncs[0].Args[1].GetType(ctx.GetExprCtx().GetEvalCtx()).GetType())
+	require.Equal(t, "utf8mb4_general_ci", final.AggFuncs[0].Args[1].GetType(ctx.GetExprCtx().GetEvalCtx()).GetCollate())
 }
 
 func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
