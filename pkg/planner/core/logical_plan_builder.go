@@ -3636,7 +3636,11 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p base.LogicalPlan, se
 			if sel.GroupBy.Rollup {
 				return plannererrors.ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(strconv.Itoa(errExprLoc.Offset + 1))
 			}
-			return plannererrors.ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, name.DBName.O+"."+name.TblName.O+"."+name.OrigColName.O)
+			colRef := name.TblName.O + "." + name.OrigColName.O
+			if name.DBName.O != "" {
+				colRef = name.DBName.O + "." + colRef
+			}
+			return plannererrors.ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, colRef)
 		case ErrExprInOrderBy:
 			return plannererrors.ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
 		}

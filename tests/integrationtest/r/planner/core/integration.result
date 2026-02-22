@@ -2347,9 +2347,9 @@ Error 3029 (HY000): Expression #1 of ORDER BY contains aggregate function and ap
 select v1 from ttest having count(v2);
 Error 8123 (HY000): In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by
 select v2, v1 from (select * from ttest) t1 join (select 1, 2) t2 group by v1;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column '.t1.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 't1.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select v2, v1 from (select t1.v1, t2.v2 from ttest t1 join ttest t2) t3 join (select 1, 2) t2 group by v1;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column '.t3.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 't3.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 create table tt (x int, z int as (x+10) stored);
 insert into tt(x) values (1);
 update tt set x=2, z = default;
@@ -2886,7 +2886,7 @@ CREATE TABLE `BB` (
 PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000001;
 explain format='plan_tree' SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b';
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column '.OUTR.' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'OUTR.' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 drop table if exists member, agent, deposit, view_member_agents;
 create table member(login varchar(50) NOT NULL, agent_login varchar(100) DEFAULT NULL, PRIMARY KEY(login));
 create table agent(login varchar(50) NOT NULL, data varchar(100) DEFAULT NULL, share_login varchar(50) NOT NULL, PRIMARY KEY(login));
