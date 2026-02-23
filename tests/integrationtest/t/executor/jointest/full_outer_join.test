@@ -1,0 +1,45 @@
+# TestFullOuterJoinHashJoinV1Basic
+set @@tidb_enable_cascades_planner = 0;
+set @@tidb_hash_join_version = legacy;
+
+drop table if exists t1, t2;
+create table t1(a int, b int, c int);
+create table t2(a int, b int, c int);
+insert into t1 values (1,10,1), (2,20,0), (3,30,1), (null,40,1);
+insert into t2 values (1,100,1), (3,300,0), (4,400,1), (null,500,1);
+
+select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b;
+select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a and t1.c = 1 and t2.c = 1 order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b;
+select t1.b, t2.b from t1 full outer join t2 on t1.a = t2.a where t1.a is null and t2.a is null order by t1.b, t2.b;
+select t1.b, t2.b from t1 full outer join t2 on t1.a <=> t2.a where t1.a is null and t2.a is null order by t1.b, t2.b;
+
+# TestFullOuterJoinNullAndOtherCondition
+
+drop table if exists t3, t4;
+create table t3(a int, b int);
+create table t4(a int, b int);
+insert into t3 values (null,1), (null,2), (1,10);
+insert into t4 values (null,100), (null,200), (2,20);
+
+select t3.b, t4.b from t3 full outer join t4 on t3.a <=> t4.a where t3.a is null and t4.a is null order by t3.b, t4.b;
+select t3.b, t4.b from t3 full outer join t4 on t3.a = t4.a where t3.a is null or t4.a is null order by isnull(t3.b), t3.b, isnull(t4.b), t4.b;
+
+drop table if exists t5, t6;
+create table t5(a int, b int, c int);
+create table t6(a int, b int, c int);
+insert into t5 values (1,10,1), (1,2,0), (2,5,1), (3,8,0);
+insert into t6 values (1,3,1), (1,20,0), (2,4,0), (4,7,1);
+select t5.a, t5.b, t6.a, t6.b from t5 full outer join t6 on t5.a = t6.a and ((t5.b > t6.b and t6.c = 1) or (t5.c = 1 and t6.b < 5)) order by isnull(t5.a), t5.a, isnull(t6.a), t6.a, isnull(t5.b), t5.b, isnull(t6.b), t6.b;
+
+# TestFullOuterJoinUnsupportedForms
+--error 1235
+select * from t1 full outer join t2 using (a);
+--error 1235
+select * from t1 natural full outer join t2;
+
+set @@tidb_enable_cascades_planner = 1;
+--error 1235
+select * from t1 full outer join t2 on t1.a = t2.a;
+
+set @@tidb_enable_cascades_planner = default;
+set @@tidb_hash_join_version = default;

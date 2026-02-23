@@ -422,6 +422,59 @@ func TestFullOuterJoinHashJoinV1Spill(t *testing.T) {
 	))
 }
 
+func TestFullOuterJoinHashJoinV1AgainstRewriteOracle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(join.DisableHashJoinV2)
+
+	tk.MustExec("drop table if exists l, r")
+	tk.MustExec("create table l(id int primary key, k int, v int, f int)")
+	tk.MustExec("create table r(id int primary key, k int, v int, f int)")
+	tk.MustExec("insert into l values (1,1,10,1), (2,1,2,0), (3,2,5,1), (4,null,7,1), (5,3,8,0)")
+	tk.MustExec("insert into r values (11,1,3,1), (12,1,20,0), (13,2,4,0), (14,null,30,1), (15,4,9,1)")
+
+	assertEquivalent := func(fojSQL, rewriteSQL string) {
+		for _, hinted := range []string{
+			fojSQL,
+			strings.Replace(fojSQL, "select ", "select /*+ HASH_JOIN_BUILD(l) */ ", 1),
+			strings.Replace(fojSQL, "select ", "select /*+ HASH_JOIN_BUILD(r) */ ", 1),
+		} {
+			got := tk.MustQuery(hinted).Sort()
+			expected := tk.MustQuery(rewriteSQL).Sort()
+			got.Check(expected.Rows())
+		}
+	}
+
+	assertEquivalent(
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l full outer join r on l.k = r.k",
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l left join r on l.k = r.k "+
+			"union all "+
+			"select l2.id, l2.k, l2.v, r2.id, r2.k, r2.v from r r2 left join l l2 on l2.k = r2.k where l2.id is null",
+	)
+
+	assertEquivalent(
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l full outer join r on l.k <=> r.k",
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l left join r on l.k <=> r.k "+
+			"union all "+
+			"select l2.id, l2.k, l2.v, r2.id, r2.k, r2.v from r r2 left join l l2 on l2.k <=> r2.k where l2.id is null",
+	)
+
+	assertEquivalent(
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l full outer join r on l.k = r.k and l.f = 1 and r.f = 1",
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l left join r on l.k = r.k and l.f = 1 and r.f = 1 "+
+			"union all "+
+			"select l2.id, l2.k, l2.v, r2.id, r2.k, r2.v from r r2 left join l l2 on l2.k = r2.k and l2.f = 1 and r2.f = 1 where l2.id is null",
+	)
+
+	assertEquivalent(
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l full outer join r on l.k = r.k and ((l.v > r.v and r.f = 1) or (l.f = 1 and r.v < 5))",
+		"select l.id, l.k, l.v, r.id, r.k, r.v from l left join r on l.k = r.k and ((l.v > r.v and r.f = 1) or (l.f = 1 and r.v < 5)) "+
+			"union all "+
+			"select l2.id, l2.k, l2.v, r2.id, r2.k, r2.v from r r2 left join l l2 on l2.k = r2.k and ((l2.v > r2.v and r2.f = 1) or (l2.f = 1 and r2.v < 5)) where l2.id is null",
+	)
+}
+
 func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

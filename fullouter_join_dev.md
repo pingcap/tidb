@@ -21,6 +21,29 @@
 
 ---
 
+## 当前进度（更新于 2026-02-23）
+
+阶段 1（Volcano + HashJoin v1）主链路已打通，当前状态如下：
+
+- [x] Parser / AST 支持 `FULL OUTER JOIN`；`FULL JOIN` 仍保持 MySQL alias 语义。
+- [x] Planner fail-fast 安全门已落地（在真正支持前不会 silent fallback）。
+- [x] Logical/Physical JoinType 已支持 `FullOuterJoin`，输出列 nullable 语义已对齐。
+- [x] Predicate PushDown 在 full join 下保留单侧 ON 过滤，不下推为 child selection。
+- [x] 仅枚举 Root HashJoin，阻断 MPP / ToPB full join 下推。
+- [x] HashJoin v1 executor 已支持 full join 双侧 unmatched 输出（含 `=` / `<=>` key 语义）。
+- [x] join reorder 对 full join 做了跳过保护，避免错误重排。
+- [x] `simplifyOuterJoin` / `ConvertOuterToInnerJoin` 已覆盖 full join 相关转换路径。
+- [x] 单元测试覆盖已包含：build side 两方向、NULL key、复杂 other condition、spill 场景。
+- [x] integrationtest 已新增 `executor/jointest/full_outer_join`，覆盖端到端语义与限制项回归。
+
+阶段 1 的明确范围外（暂不实现）：
+
+- [ ] `NATURAL FULL OUTER JOIN` / `FULL OUTER JOIN ... USING(...)`。
+- [ ] Cascades planner 下 `FULL OUTER JOIN`。
+- [ ] HashJoin v2 / MergeJoin / IndexJoin / MPP 对 `FULL OUTER JOIN` 的支持。
+
+---
+
 ## 0. 语义口径（先统一“正确性”）
 
 在开始拆任务之前，需要把这三类语义口径写死，避免后续在 planner/executor 两边各自“猜”：
