@@ -3583,12 +3583,14 @@ func TestAuditPluginRetrying(t *testing.T) {
 			var wg sync.WaitGroup
 			errCh := make(chan error, concurrency)
 			for range concurrency {
-				wg.Go(func() {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
 					_, err := db.ExecContext(context.Background(), updateSQL)
 					if err != nil {
 						errCh <- err
 					}
-				})
+				}()
 			}
 			wg.Wait()
 			close(errCh)
