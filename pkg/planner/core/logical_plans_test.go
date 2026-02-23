@@ -380,6 +380,21 @@ func findFirstLogicalJoinType(p base.LogicalPlan) (logicalop.JoinType, bool) {
 	return joinType, found
 }
 
+func collectLogicalJoins(p base.LogicalPlan) []*logicalop.LogicalJoin {
+	joins := make([]*logicalop.LogicalJoin, 0, 4)
+	var walk func(base.LogicalPlan)
+	walk = func(cur base.LogicalPlan) {
+		if join, ok := cur.(*logicalop.LogicalJoin); ok {
+			joins = append(joins, join)
+		}
+		for _, child := range cur.Children() {
+			walk(child)
+		}
+	}
+	walk(p)
+	return joins
+}
+
 func TestFullOuterJoinSimplifyOuterJoin(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
@@ -417,6 +432,30 @@ func TestFullOuterJoinSimplifyOuterJoin(t *testing.T) {
 		require.True(t, ok, tt.sql)
 		require.Equal(t, tt.joinType, joinType, tt.sql)
 	}
+}
+
+func TestFullOuterJoinSkipJoinReOrder(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a full outer join t t3 on t2.a = t3.a"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+	require.NoError(t, err, sql)
+	p, err = logicalOptimize(ctx, rule.FlagPredicatePushDown|rule.FlagJoinReOrder, p.(base.LogicalPlan))
+	require.NoError(t, err, sql)
+	joins := collectLogicalJoins(p.(base.LogicalPlan))
+	require.NotEmpty(t, joins, sql)
+	hasFullOuterJoin := false
+	for _, join := range joins {
+		if join.JoinType == logicalop.FullOuterJoin {
+			hasFullOuterJoin = true
+			require.False(t, join.Reordered, sql)
+		}
+	}
+	require.True(t, hasFullOuterJoin, sql)
 }
 
 func TestFullOuterJoinConvertOuterToInner(t *testing.T) {
