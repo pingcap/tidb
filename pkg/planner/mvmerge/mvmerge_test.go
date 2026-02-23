@@ -139,15 +139,15 @@ func TestBuildCountSum(t *testing.T) {
 		switch ai.Kind {
 		case mvmerge.AggCountStar:
 			hasCountStar = true
-			requireDependencies(t, ai, []int{4})
+			requireDependencies(t, ai, []int{0})
 		case mvmerge.AggSum:
 			hasSum = true
 			require.Equal(t, "b", ai.ArgColName)
-			requireDependencies(t, ai, []int{6, 2})
+			requireDependencies(t, ai, []int{2, 5})
 		case mvmerge.AggCount:
 			hasCountExpr = true
 			require.Equal(t, "b", ai.ArgColName)
-			requireDependencies(t, ai, []int{5})
+			requireDependencies(t, ai, []int{1})
 		}
 	}
 	require.True(t, hasCountStar)
@@ -159,13 +159,13 @@ func TestBuildCountSum(t *testing.T) {
 	require.NotEmpty(t, item.DBName.O)
 	mvDBName := item.DBName.O
 	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
-		{Pos: 0, Col: "x"},
-		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
-		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
-		{Pos: 3, DB: mvDBName, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
-		{Pos: 4, Tbl: deltaTableAlias, Col: deltaCntStarName},
-		{Pos: 5, Tbl: deltaTableAlias, Col: "__mvmerge_delta_cnt_2"},
-		{Pos: 6, Tbl: deltaTableAlias, Col: "__mvmerge_delta_sum_3"},
+		{Pos: 0, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 1, Tbl: deltaTableAlias, Col: "__mvmerge_delta_cnt_2"},
+		{Pos: 2, Tbl: deltaTableAlias, Col: "__mvmerge_delta_sum_3"},
+		{Pos: 3, DB: mvDBName, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
+		{Pos: 4, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
+		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
 	})
 }
 
@@ -238,15 +238,15 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 		switch ai.Kind {
 		case mvmerge.AggCountStar:
 			hasCountStar = true
-			requireDependencies(t, ai, []int{4})
+			requireDependencies(t, ai, []int{0})
 		case mvmerge.AggCount:
 			hasCount = true
 			require.Empty(t, ai.ArgColName)
-			requireDependencies(t, ai, []int{5})
+			requireDependencies(t, ai, []int{1})
 		case mvmerge.AggSum:
 			hasSum = true
 			require.Empty(t, ai.ArgColName)
-			requireDependencies(t, ai, []int{6, 2})
+			requireDependencies(t, ai, []int{2, 5})
 		}
 	}
 	require.True(t, hasCountStar)
@@ -257,13 +257,13 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 	require.True(t, ok)
 	mvDBName := item.DBName.O
 	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
-		{Pos: 0, Col: "x"},
-		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_star", OrigTbl: mv.Name.O, OrigCol: "cnt_star"},
-		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
-		{Pos: 3, DB: mvDBName, Tbl: mvTableAlias, Col: "s_expr", OrigTbl: mv.Name.O, OrigCol: "s_expr"},
-		{Pos: 4, Tbl: deltaTableAlias, Col: deltaCntStarName},
-		{Pos: 5, Tbl: deltaTableAlias, Col: "__mvmerge_delta_cnt_2"},
-		{Pos: 6, Tbl: deltaTableAlias, Col: "__mvmerge_delta_sum_3"},
+		{Pos: 0, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 1, Tbl: deltaTableAlias, Col: "__mvmerge_delta_cnt_2"},
+		{Pos: 2, Tbl: deltaTableAlias, Col: "__mvmerge_delta_sum_3"},
+		{Pos: 3, DB: mvDBName, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
+		{Pos: 4, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_star", OrigTbl: mv.Name.O, OrigCol: "cnt_star"},
+		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
+		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "s_expr", OrigTbl: mv.Name.O, OrigCol: "s_expr"},
 	})
 }
 
@@ -335,14 +335,14 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	for _, ai := range res.AggInfos {
 		if ai.Kind == mvmerge.AggMax {
 			hasMax = true
-			requireDependencies(t, ai, []int{5, 7})
+			requireDependencies(t, ai, []int{1, 3})
 		}
 		if ai.Kind == mvmerge.AggMin {
 			hasMin = true
-			requireDependencies(t, ai, []int{6, 7})
+			requireDependencies(t, ai, []int{2, 3})
 		}
 		if ai.Kind == mvmerge.AggCountStar {
-			requireDependencies(t, ai, []int{4})
+			requireDependencies(t, ai, []int{0})
 		}
 	}
 	require.True(t, hasMax)
@@ -353,14 +353,14 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	require.NotEmpty(t, item.DBName.O)
 	mvDBName := item.DBName.O
 	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
-		{Pos: 0, Col: "x"},
-		{Pos: 1, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
-		{Pos: 2, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
-		{Pos: 3, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
-		{Pos: 4, Tbl: deltaTableAlias, Col: deltaCntStarName},
-		{Pos: 5, Tbl: deltaTableAlias, Col: "__mvmerge_max_in_added_2"},
-		{Pos: 6, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_added_3"},
-		{Pos: 7, Tbl: deltaTableAlias, Col: removedRowsName},
+		{Pos: 0, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 1, Tbl: deltaTableAlias, Col: "__mvmerge_max_in_added_2"},
+		{Pos: 2, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_added_3"},
+		{Pos: 3, Tbl: deltaTableAlias, Col: removedRowsName},
+		{Pos: 4, DB: mvDBName, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
+		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
+		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
 	})
 }
 

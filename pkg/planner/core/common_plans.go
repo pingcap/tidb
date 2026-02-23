@@ -573,11 +573,11 @@ type MVDeltaMerge struct {
 	baseSchemaProducer
 
 	// Source is the merge-source physical plan. Its row layout is:
-	//  1. MV output columns first (count = MVColumnCount)
-	//  2. delta columns after MV columns
+	//  1. delta columns first
+	//  2. MV output columns after delta columns (count = MVColumnCount)
 	Source base.PhysicalPlan
 
-	// SourceOutputNames matches the result schema of Source (MV columns first, then delta columns).
+	// SourceOutputNames matches the result schema of Source (delta columns first, then MV columns).
 	// Physical plans may not keep output names, so they are carried explicitly for executor-side usage/debug.
 	SourceOutputNames types.NameSlice `plan-cache-clone:"shallow"`
 

@@ -48,8 +48,8 @@ type BuildOptions struct {
 // BuildResult is the merge source produced by Build.
 // It includes the merge-source SELECT statement and all metadata needed by executor-side MV merge.
 // Row layout of MergeSourceSelect output is fixed:
-//  1. MV output columns first (count = MVColumnCount)
-//  2. delta columns after MV columns
+//  1. delta columns first
+//  2. MV output columns after delta columns (count = MVColumnCount)
 //
 // All offsets in AggInfos (MVOffset and Dependencies) are based on this layout.
 type BuildResult struct {
@@ -62,7 +62,7 @@ type BuildResult struct {
 	MLogTableID int64
 
 	// MVColumnCount indicates how many columns in the merge-source output schema belong to the MV row shape.
-	// The MV columns are always put in the front.
+	// The MV columns are always put after all delta columns.
 	MVColumnCount int
 
 	// GroupKeyMVOffsets are offsets (0-based) of the group key columns in the MV output schema.
@@ -118,7 +118,7 @@ type AggInfo struct {
 	//       no COUNT(expr) dependency needed.
 	//     - [self_delta, matched_count_expr_mv] otherwise.
 	//     - self_delta: offset of SUM(expr) delta column.
-	//     - matched_count_expr_mv: offset of matched COUNT(expr) in MV output.
+	//     - matched_count_expr_mv: absolute output offset of matched COUNT(expr) MV column.
 	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
 	//       The same matched COUNT(expr) can be a dependency for multiple aggregate functions.
 	//   - AggMax / AggMin: [self_delta, removed_rows_delta]
@@ -341,6 +341,7 @@ func BuildFromLocal(
 	}
 
 	expectedLen := len(local.mv.Columns) + len(deltaColumns)
+	mvColumnOffsetBase := len(deltaColumns)
 
 	sumToCountExprIdx, err := mapSumToCountExprDependencies(local.aggCols, sumArgNotNullByOffset)
 	if err != nil {
@@ -371,7 +372,7 @@ func BuildFromLocal(
 					return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
 				}
 				countAgg := local.aggCols[countIdx]
-				deps = append(deps, countAgg.info.MVOffset)
+				deps = append(deps, mvColumnOffsetBase+countAgg.info.MVOffset)
 			}
 		case AggMax, AggMin:
 			if removedDelta == nil {
@@ -391,7 +392,13 @@ func BuildFromLocal(
 	if removedDelta != nil {
 		removedRowsDeltaOff = removedDelta.Offset
 	}
-	if err := validateAggDependencies(outAggInfos, len(local.mv.Columns), expectedLen, removedRowsDeltaOff); err != nil {
+	if err := validateAggDependencies(
+		outAggInfos,
+		mvColumnOffsetBase,
+		len(local.mv.Columns),
+		expectedLen,
+		removedRowsDeltaOff,
+	); err != nil {
 		return nil, err
 	}
 
@@ -620,8 +627,18 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 	return sumToCountIdx, nil
 }
 
-func validateAggDependencies(aggInfos []AggInfo, mvColumnCount, schemaLen, removedRowsDeltaOff int) error {
+func validateAggDependencies(
+	aggInfos []AggInfo,
+	mvColumnOffsetBase int,
+	mvColumnCount int,
+	schemaLen int,
+	removedRowsDeltaOff int,
+) error {
+	mvColumnEnd := mvColumnOffsetBase + mvColumnCount
 	for _, ai := range aggInfos {
+		if ai.MVOffset < 0 || ai.MVOffset >= mvColumnCount {
+			return errors.Errorf("invalid mv offset %d for %v", ai.MVOffset, ai.Kind)
+		}
 		for _, dep := range ai.Dependencies {
 			if dep < 0 || dep >= schemaLen {
 				return errors.Errorf("invalid dependency offset %d for %v at mv offset %d", dep, ai.Kind, ai.MVOffset)
@@ -637,7 +654,7 @@ func validateAggDependencies(aggInfos []AggInfo, mvColumnCount, schemaLen, remov
 					ai.Dependencies,
 				)
 			}
-			if ai.Dependencies[0] < mvColumnCount {
+			if ai.Dependencies[0] >= mvColumnOffsetBase {
 				return errors.Errorf(
 					"%v at mv offset %d has invalid self_delta offset %d",
 					ai.Kind,
@@ -654,11 +671,11 @@ func validateAggDependencies(aggInfos []AggInfo, mvColumnCount, schemaLen, remov
 					ai.Dependencies,
 				)
 			}
-			if ai.Dependencies[0] < mvColumnCount {
+			if ai.Dependencies[0] >= mvColumnOffsetBase {
 				return errors.Errorf("SUM at mv offset %d has invalid self_delta offset %d", ai.MVOffset, ai.Dependencies[0])
 			}
 			if len(ai.Dependencies) == 2 {
-				if ai.Dependencies[1] < 0 || ai.Dependencies[1] >= mvColumnCount {
+				if ai.Dependencies[1] < mvColumnOffsetBase || ai.Dependencies[1] >= mvColumnEnd {
 					return errors.Errorf(
 						"SUM at mv offset %d has invalid matched_count_expr_mv offset %d",
 						ai.MVOffset,
@@ -676,7 +693,7 @@ func validateAggDependencies(aggInfos []AggInfo, mvColumnCount, schemaLen, remov
 					ai.Dependencies,
 				)
 			}
-			if ai.Dependencies[0] < mvColumnCount {
+			if ai.Dependencies[0] >= mvColumnOffsetBase {
 				return errors.Errorf(
 					"%v at mv offset %d has invalid self_delta offset %d",
 					ai.Kind,
@@ -998,27 +1015,15 @@ func buildMergeSourceSelect(
 		On:    &ast.OnCondition{Expr: onExpr},
 	}
 
-	// SELECT: MV columns first (group keys filled by COALESCE), then delta columns.
+	// SELECT: delta columns first, then MV columns.
+	// Group keys in MV layout are still MV columns conceptually, but projected from delta side directly.
+	// delta is the LEFT side and always exists for changed groups.
 	fields := make([]*ast.SelectField, 0, len(mvCols)+1+len(aggCols)+1)
-	for i, col := range mvCols {
-		if _, ok := groupKeySet[i]; ok {
-			fields = append(fields, &ast.SelectField{
-				// Group key may come from either side: missing MV row for new groups, missing delta row should not happen.
-				Expr:   coalesce(qualColExpr(mvTableAlias, col.Name.O), qualColExpr(deltaTableAlias, col.Name.O)),
-				AsName: col.Name,
-			})
-			continue
-		}
-		fields = append(fields, &ast.SelectField{
-			Expr:   qualColExpr(mvTableAlias, col.Name.O),
-			AsName: col.Name,
-		})
-	}
 
 	deltaColumns := make([]DeltaColumn, 0, 1+len(aggCols)+1)
 	var removedDelta *DeltaColumn
-	nextOffset := len(mvCols)
-	// Keep all delta columns contiguous after MV columns, and track their absolute output offsets.
+	nextOffset := 0
+	// Keep all delta columns contiguous before MV columns, and track their absolute output offsets.
 	addDeltaCol := func(name string) int {
 		off := nextOffset
 		nextOffset++
@@ -1049,6 +1054,20 @@ func buildMergeSourceSelect(
 			AsName: pmodel.NewCIStr(removedRowsName),
 		})
 		removedDelta = &DeltaColumn{Name: removedRowsName, Offset: off}
+	}
+
+	for i, col := range mvCols {
+		if _, ok := groupKeySet[i]; ok {
+			fields = append(fields, &ast.SelectField{
+				Expr:   qualColExpr(deltaTableAlias, col.Name.O),
+				AsName: col.Name,
+			})
+			continue
+		}
+		fields = append(fields, &ast.SelectField{
+			Expr:   qualColExpr(mvTableAlias, col.Name.O),
+			AsName: col.Name,
+		})
 	}
 
 	return &ast.SelectStmt{
@@ -1166,13 +1185,5 @@ func ifExpr(cond, trueExpr, falseExpr ast.ExprNode) *ast.FuncCallExpr {
 		Tp:     ast.FuncCallExprTypeGeneric,
 		FnName: pmodel.NewCIStr("IF"),
 		Args:   []ast.ExprNode{cond, trueExpr, falseExpr},
-	}
-}
-
-func coalesce(args ...ast.ExprNode) *ast.FuncCallExpr {
-	return &ast.FuncCallExpr{
-		Tp:     ast.FuncCallExprTypeGeneric,
-		FnName: pmodel.NewCIStr("COALESCE"),
-		Args:   args,
 	}
 }
