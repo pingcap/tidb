@@ -227,8 +227,7 @@ func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 	releaseWorker := make(chan struct{})
 	thirdSendPaused := make(chan struct{})
 	releaseThirdSend := make(chan struct{})
-	var workerHookCount atomic.Int64
-	var sendHookCount atomic.Int64
+	var workerHookCount, sendHookCount atomic.Int64
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSaveWorkerBeforeHandleSignal", func() {
 		if workerHookCount.Add(1) == 1 {
