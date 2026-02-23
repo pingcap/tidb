@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -216,36 +215,39 @@ func TestAnalyzeSaveResultErrorDoesNotHang(t *testing.T) {
 func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tkObserver := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tkObserver.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
 	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("create table t (a int, b int, key idx_b(b)) partition by hash(a) partitions 4")
-	for i := 0; i < 20; i++ {
+	tk.MustExec("create table t (a int, b int, key idx_b(b)) partition by hash(a) partitions 64")
+	for i := 0; i < 400; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
-
-	enteredSave := make(chan struct{})
-	releaseSave := make(chan struct{})
-	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorage", func() {
-		once.Do(func() {
-			close(enteredSave)
-			<-releaseSave
-		})
-	})
 
 	done := make(chan error, 1)
 	go func() {
 		done <- tk.ExecToErr("analyze table t")
 	}()
 
-	select {
-	case <-enteredSave:
-	case <-time.After(5 * time.Second):
-		t.Fatal("analyze does not enter save stage")
+	saveStarted := false
+	waitSaveTimeout := time.After(10 * time.Second)
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for !saveStarted {
+		select {
+		case err := <-done:
+			require.FailNow(t, "analyze finished before kill", "unexpected err: %v", err)
+		case <-waitSaveTimeout:
+			t.Fatal("analyze does not enter save stage")
+		case <-ticker.C:
+			rows := tkObserver.MustQuery("show stats_meta where db_name='test' and table_name='t' and partition_name != 'global'").Rows()
+			if len(rows) > 0 {
+				saveStarted = true
+			}
+		}
 	}
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	close(releaseSave)
 
 	select {
 	case err := <-done:
