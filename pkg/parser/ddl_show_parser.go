@@ -267,14 +267,14 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 				stmt.Partition = ast.NewCIStr(tok.Lit)
 			}
 		} else {
-			p.error(p.peek().Offset, "expected DATABASE, TABLE after FOR")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		// After FOR clause, only LIKE/WHERE or statement end is valid.
 		// Reject unexpected trailing tokens like "TABLE tb1" after "DATABASE db1".
 		next := p.peek().Tp
 		if next != ';' && next != EOF && next != like && next != where {
-			p.error(p.peek().Offset, "unexpected token after SHOW PLACEMENT FOR clause")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 	}
@@ -303,7 +303,7 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 		for {
 			tok, ok := p.accept(identifier)
 			if !ok {
-				p.error(p.peek().Offset, "expected partition name")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 			table.PartitionNames = append(table.PartitionNames, ast.NewCIStr(tok.Lit))
@@ -319,7 +319,7 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 	if _, ok := p.accept(index); ok {
 		tok, ok := p.accept(identifier)
 		if !ok {
-			p.error(p.peek().Offset, "expected index name")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		stmt.IndexName = ast.NewCIStr(tok.Lit)
@@ -348,7 +348,7 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	}
-	p.error(p.peek().Offset, "expected REGIONS or NEXT_ROW_ID after SHOW TABLE")
+	p.syntaxErrorAt(p.peek().Offset)
 	return nil
 }
 

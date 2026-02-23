@@ -175,7 +175,11 @@ func (p *HandParser) parseIndexPartSpecifications() []*ast.IndexPartSpecificatio
 
 // parseReferenceDef parses REFERENCES tbl (cols) [MATCH FULL|PARTIAL|SIMPLE] [ON DELETE opt] [ON UPDATE opt]
 func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
-	p.expect(references)
+	tok := p.next()
+	if tok.Tp != references {
+		p.errorNear(tok.Offset+len(tok.Lit), tok.Offset)
+		return nil
+	}
 	ref := Alloc[ast.ReferenceDef](p.arena)
 	ref.Table = p.parseTableName()
 	// Column list is optional (yacc: IndexPartSpecificationListOpt)

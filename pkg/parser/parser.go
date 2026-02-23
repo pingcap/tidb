@@ -152,7 +152,12 @@ func (p *HandParser) calcLineCol(limit int) (line int, col int) {
 	return line, col
 }
 
-// error records a parse error with position info (line X column Y near "...").
+// error records a TiDB-specific validation error with diagnostic text.
+// Use this for SEMANTIC validation errors where the yacc grammar would NOT have
+// reported the same message (e.g., "VALUES clause is not allowed for HASH partitions").
+//
+// DO NOT USE for pure syntax errors where yacc would report `near "..."` only —
+// use errorNear or syntaxErrorAt instead.
 func (p *HandParser) error(offset int, format string, args ...interface{}) {
 	// The yacc parser reports column based on the scanner's current position
 	// (after consuming the token). For non-EOF tokens, this means iterating
@@ -175,9 +180,10 @@ func (p *HandParser) error(offset int, format string, args ...interface{}) {
 	p.errs = append(p.errs, fmt.Errorf("line %d column %d near \"%s\"%s ", line, col, near, msg))
 }
 
-// errorNear records a parse error in yacc-compatible format.
-// colOffset is the byte position for column (typically end-of-token),
-// nearOffset is the byte position for near text (typically start-of-token).
+// errorNear records a parse error in yacc-compatible format: `near "..."` only.
+// Use this when matching the yacc parser's error output exactly.
+//   - colOffset: byte position for calculating column number (typically end-of-token)
+//   - nearOffset: byte position for near text (typically start-of-token)
 func (p *HandParser) errorNear(colOffset, nearOffset int) {
 	line, col := p.calcLineCol(colOffset)
 	near := ""
@@ -188,6 +194,17 @@ func (p *HandParser) errorNear(colOffset, nearOffset int) {
 		}
 	}
 	p.errs = append(p.errs, fmt.Errorf("line %d column %d near \"%s\" ", line, col, near))
+}
+
+// syntaxErrorAt records a yacc-compatible syntax error at the given token offset.
+// This is the preferred method for reporting unexpected tokens during parsing.
+// It uses the token's offset for both column calculation and near-text display.
+func (p *HandParser) syntaxErrorAt(offset int) {
+	limit := offset
+	if limit < len(p.src) {
+		limit++
+	}
+	p.errorNear(limit, offset)
 }
 
 // errSyntax is the [parser:1149] error instance.

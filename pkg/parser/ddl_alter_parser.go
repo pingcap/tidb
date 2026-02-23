@@ -178,7 +178,7 @@ func (p *HandParser) parseAlterTableSpec() *ast.AlterTableSpec {
 			if p.peek().IsKeyword("LOCATION") {
 				p.next() // consume LOCATION
 				if !(p.peek().IsKeyword("LABELS")) {
-					p.error(p.peek().Offset, "expected LABELS after LOCATION")
+					p.syntaxErrorAt(p.peek().Offset)
 					return nil
 				}
 				p.next() // consume LABELS

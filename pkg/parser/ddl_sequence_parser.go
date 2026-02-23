@@ -63,7 +63,7 @@ func (p *HandParser) parseAlterSequenceStmt() ast.StmtNode {
 		stmt.SeqOptions = append(stmt.SeqOptions, opt)
 	}
 	if len(stmt.SeqOptions) == 0 {
-		p.error(p.peek().Offset, "expected at least one sequence option")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 	return stmt
@@ -102,14 +102,14 @@ func (p *HandParser) parseAlterInstanceStmt() ast.StmtNode {
 	// Expect RELOAD (token or identifier)
 	tok := p.next()
 	if tok.Tp != reload && !tok.IsKeyword("RELOAD") {
-		p.error(tok.Offset, "expected RELOAD after ALTER INSTANCE")
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 
 	// Expect TLS (token or identifier)
 	tok = p.next()
 	if tok.Tp != tls && !tok.IsKeyword("TLS") {
-		p.error(tok.Offset, "expected TLS after RELOAD")
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 
@@ -162,7 +162,7 @@ func (p *HandParser) parseAlterRangeStmt() ast.StmtNode {
 				StrValue: "default",
 			}
 		} else {
-			p.error(tok.Offset, "expected policy name")
+			p.syntaxErrorAt(tok.Offset)
 			return nil
 		}
 	} else {
@@ -216,7 +216,7 @@ func (p *HandParser) parseSequenceOption() *ast.SequenceOption {
 			opt.Tp = ast.SequenceNoCycle
 			return opt
 		}
-		p.error(p.peek().Offset, "expected MINVALUE, MAXVALUE, CACHE, or CYCLE after NO")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	} else if _, ok := p.accept(maxValue); ok {
 		opt.Tp = ast.SequenceMaxValue

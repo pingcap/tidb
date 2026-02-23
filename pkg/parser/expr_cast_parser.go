@@ -47,7 +47,7 @@ func (p *HandParser) parseCurrentFunc() ast.ExprNode {
 	case currentRole:
 		node.FnName = ast.NewCIStr("CURRENT_ROLE")
 	default:
-		p.error(tok.Offset, "unexpected current-func token %d", tok.Tp)
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 
@@ -358,7 +358,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 				p.expect('>')
 				return nil, false
 			default:
-				p.error(p.peek().Offset, "expected FLOAT or DOUBLE inside VECTOR")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil, false
 			}
 			p.expect('>')
@@ -371,7 +371,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		return tp, false
 
 	default:
-		p.error(tok.Offset, "expected cast type")
+		p.syntaxErrorAt(tok.Offset)
 		return nil, false
 	}
 }
@@ -420,7 +420,7 @@ func (p *HandParser) parseOptFieldLen() int {
 	}
 	tok := p.next()
 	if tok.Tp != intLit {
-		p.error(tok.Offset, "expected integer in field length")
+		p.syntaxErrorAt(tok.Offset)
 		return types.UnspecifiedLength
 	}
 	val := tok.Item.(int64)
@@ -435,7 +435,7 @@ func (p *HandParser) parseFloatOpt() (flen, decimal int) {
 	}
 	tok := p.next()
 	if tok.Tp != intLit {
-		p.error(tok.Offset, "expected integer in float opt")
+		p.syntaxErrorAt(tok.Offset)
 		return types.UnspecifiedLength, types.UnspecifiedLength
 	}
 	flen = int(tok.Item.(int64))
@@ -443,7 +443,7 @@ func (p *HandParser) parseFloatOpt() (flen, decimal int) {
 	if _, ok := p.accept(','); ok {
 		tok = p.next()
 		if tok.Tp != intLit {
-			p.error(tok.Offset, "expected integer in float opt decimal")
+			p.syntaxErrorAt(tok.Offset)
 			return flen, types.UnspecifiedLength
 		}
 		decimal = int(tok.Item.(int64))
@@ -741,11 +741,11 @@ func (p *HandParser) parseTimeUnit() *ast.TimeUnitExpr {
 		case "SQL_TSI_YEAR":
 			unit = ast.TimeUnitYear
 		default:
-			p.error(tok.Offset, "expected time unit")
+			p.syntaxErrorAt(tok.Offset)
 			return nil
 		}
 	default:
-		p.error(tok.Offset, "expected time unit")
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 	return &ast.TimeUnitExpr{Unit: unit}

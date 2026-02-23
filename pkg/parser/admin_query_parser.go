@@ -263,7 +263,7 @@ func (p *HandParser) parseQueryWatchStmt() ast.StmtNode {
 				stmt.GroupNameStr = ast.NewCIStr(tok.Lit)
 			}
 		} else {
-			p.error(p.peek().Offset, "Missing QUERY WATCH REMOVE target")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		return stmt

@@ -296,7 +296,6 @@ func (p *HandParser) parseSplitIndexOption() *ast.SplitIndexOption {
 	} else if _, ok := p.accept(index); ok {
 		tok, ok := p.expect(identifier)
 		if !ok {
-			p.error(p.peek().Offset, "expected index name")
 			return nil
 		}
 		opt.IndexName = ast.NewCIStr(tok.Lit)
@@ -306,7 +305,7 @@ func (p *HandParser) parseSplitIndexOption() *ast.SplitIndexOption {
 		// Implicit Table Level if followed by BETWEEN or BY
 		tp := p.peek().Tp
 		if tp != between && tp != by {
-			p.error(p.peek().Offset, "expected PRIMARY KEY, INDEX or TABLE after SPLIT")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		opt.TableLevel = true

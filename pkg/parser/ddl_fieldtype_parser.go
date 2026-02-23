@@ -266,7 +266,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 				p.expect('>')
 				return nil
 			default:
-				p.error(p.peek().Offset, "expected FLOAT or DOUBLE inside VECTOR")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 			p.expect('>')
@@ -405,28 +405,20 @@ func (p *HandParser) parseDecimalOptions(tp *types.FieldType) {
 // parseCharsetName reads a charset name after CHARACTER SET has been consumed.
 // Matches parser.y CharsetName: StringName { GetCharsetInfo($1) } | binaryType { CharsetBin }
 func (p *HandParser) parseCharsetName(tp *types.FieldType) {
-	tok := p.peek()
 	// binaryType → charset.CharsetBin
-	if tok.Tp == binaryType {
+	if _, ok := p.accept(binaryType); ok {
 		tp.SetCharset(charset.CharsetBin)
-		p.next()
 		return
 	}
-	// StringName → validate via GetCharsetInfo and use canonical cs.Name
-	var name string
-	if s := tok.Lit; s != "" {
-		name = s
-	} else if s, ok := tok.Item.(string); ok {
-		name = s
-	}
-	if name != "" {
-		cs, err := charset.GetCharsetInfo(name)
+	// StringName: identifier, keyword-as-identifier, or string literal.
+	// Uses acceptStringName to correctly handle keyword tokens like "ascii".
+	if tok, ok := p.acceptStringName(); ok {
+		cs, err := charset.GetCharsetInfo(tok.Lit)
 		if err != nil {
-			p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: '%s'", name))
+			p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: '%s'", tok.Lit))
 			return
 		}
 		tp.SetCharset(cs.Name)
-		p.next()
 	}
 }
 
@@ -503,7 +495,7 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 			tp.SetCollate(charset.CollationBin)
 			p.next()
 		} else {
-			p.error(tok.Offset, "expected collation name")
+			p.syntaxErrorAt(tok.Offset)
 		}
 	}
 
@@ -664,6 +656,6 @@ func (p *HandParser) parseBinaryFieldType(tp *types.FieldType, mysqlType byte, r
 	if p.peek().Tp == '(' {
 		tp.SetFlen(p.parseFieldLen())
 	} else if requireLen {
-		p.error(p.peek().Offset, "missing length for VARBINARY")
+		p.syntaxErrorAt(p.peek().Offset)
 	}
 }

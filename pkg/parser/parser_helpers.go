@@ -30,7 +30,7 @@ import (
 func (p *HandParser) parseUint64() uint64 {
 	tok := p.next()
 	if tok.Tp != intLit {
-		p.error(tok.Offset, "expected integer literal, got %d", tok.Tp)
+		p.syntaxErrorAt(tok.Offset)
 		return 0
 	}
 	return tokenItemToUint64(tok.Item)
@@ -66,7 +66,7 @@ func tokenItemToInt64(item interface{}) (int64, bool) {
 func (p *HandParser) parseInt64() (int64, bool) {
 	tok := p.next()
 	if tok.Tp != intLit {
-		p.error(tok.Offset, "expected integer literal")
+		p.syntaxErrorAt(tok.Offset)
 		return 0, false
 	}
 	v, ok := tokenItemToInt64(tok.Item)
@@ -116,7 +116,7 @@ func (p *HandParser) parseColumnName() *ast.ColumnName {
 		p.next() // consume '.'
 		tok2 := p.next()
 		if !isIdentLike(tok2.Tp) && tok2.Tp != '*' {
-			p.error(tok2.Offset, "expected identifier after .")
+			p.syntaxErrorAt(tok2.Offset)
 			return nil
 		}
 
@@ -133,7 +133,7 @@ func (p *HandParser) parseColumnName() *ast.ColumnName {
 			p.next() // consume second '.'
 			tok3 := p.next()
 			if !isIdentLike(tok3.Tp) && tok3.Tp != '*' {
-				p.error(tok3.Offset, "expected identifier after .")
+				p.syntaxErrorAt(tok3.Offset)
 				return nil
 			}
 
@@ -461,7 +461,7 @@ func (p *HandParser) parseProxyLevel(privs []*ast.PrivElem, stmtName string) (*a
 		if priv.Priv == mysql.ExtendedPriv && strings.ToUpper(priv.Name) == "PROXY" {
 			spec := p.parseUserSpec()
 			if spec == nil {
-				p.error(0, "Expected user specification for %s PROXY", stmtName)
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil, true
 			}
 			level := Alloc[ast.GrantLevel](p.arena)
@@ -554,4 +554,14 @@ func (p *HandParser) parseSimpleColumnNameList() ([]ast.CIStr, bool) {
 func (p *HandParser) acceptRestrictOrCascade() {
 	p.accept(restrict)
 	p.accept(cascade)
+}
+
+// acceptStringName implements the 'StringName' rule logic from parser.y:
+// it accepts either an identifier or a stringLiteral.
+func (p *HandParser) acceptStringName() (Token, bool) {
+	tok := p.peek()
+	if tok.Tp == stringLit || isIdentLike(tok.Tp) {
+		return p.next(), true
+	}
+	return Token{}, false
 }

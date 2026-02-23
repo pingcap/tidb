@@ -203,7 +203,7 @@ func (p *HandParser) parseCancelStmt() ast.StmtNode {
 		p.next() // consume BR
 		return p.parseCancelBRJobStmt()
 	default:
-		p.error(p.peek().Offset, "expected IMPORT or DISTRIBUTION after CANCEL")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 }
@@ -306,7 +306,7 @@ func (p *HandParser) parseBRIEStmt() ast.StmtNode {
 		}
 	} else {
 		// Missing DATABASE/TABLE/LOGS → error
-		p.error(p.peek().Offset, "expected DATABASE, TABLE, LOGS, or POINT after BACKUP/RESTORE")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 

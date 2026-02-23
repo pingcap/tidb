@@ -630,14 +630,14 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 		p.acceptCharsetKw()
 		if _, ok := p.accept(defaultKwd); ok {
 			opt.Default = true
-		} else if tok, ok := p.expectAny(identifier, stringLit); ok {
+		} else if tok, ok := p.acceptStringName(); ok {
 			opt.StrValue = tok.Lit
 		}
 		spec.Options = []*ast.TableOption{opt}
 		if _, ok := p.accept(collate); ok {
 			collOpt := p.arena.AllocTableOption()
 			collOpt.Tp = ast.TableOptionCollate
-			if tok, ok := p.expectAny(identifier, stringLit); ok {
+			if tok, ok := p.acceptStringName(); ok {
 				collOpt.StrValue = strings.ToLower(tok.Lit)
 			}
 			spec.Options = append(spec.Options, collOpt)

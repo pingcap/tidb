@@ -476,6 +476,60 @@ func (hp *hintParser) parseBooleanHint(name string) []*ast.TableOptimizerHint {
 
 // ─── SET_VAR ──────────────────────────────────────────────────────
 
+// parseHintValue parses a single hint value: identifier, integer, negative number,
+// float (decimal), or string literal. Returns (value, true) on success.
+//
+// The hint lexer tokenizes "-1" as '-' + int, "0.01" as a single decLit token
+// (converted to hintIdentifier). This method handles all these forms.
+func (hp *hintParser) parseHintValue() (string, bool) {
+	tok := hp.peek()
+	if tok.tp == hintInvalid || tok.tp == 0 {
+		hp.next()
+		hp.parseError()
+		return "", false
+	}
+	switch {
+	case tok.tp == hintStringLit:
+		hp.next()
+		return tok.ident, true // can be "" for empty strings like sql_mode=""
+	case tok.tp == '-':
+		// Negative number: - followed by int or float identifier
+		hp.next() // consume '-'
+		numTok := hp.next()
+		var value string
+		if numTok.tp == hintIntLit {
+			value = "-" + strconv.FormatUint(numTok.num, 10)
+		} else {
+			value = "-" + numTok.ident
+		}
+		// Check for float: -N.M
+		if hp.peek().tp == '.' {
+			hp.next() // consume '.'
+			fracTok := hp.next()
+			if fracTok.tp == hintIntLit {
+				value += "." + strconv.FormatUint(fracTok.num, 10)
+			}
+		}
+		return value, true
+	default:
+		hp.next()
+		value := hp.identOrNumber(tok)
+		if value == "" {
+			hp.parseError()
+			return "", false
+		}
+		// Check for float: N.M (when lexer didn't merge into a single decLit)
+		if hp.peek().tp == '.' {
+			hp.next() // consume '.'
+			fracTok := hp.next()
+			if fracTok.tp == hintIntLit {
+				value += "." + strconv.FormatUint(fracTok.num, 10)
+			}
+		}
+		return value, true
+	}
+}
+
 func (hp *hintParser) parseSetVarHint(name string) []*ast.TableOptimizerHint {
 	if _, ok := hp.expect('('); !ok {
 		return nil
@@ -485,16 +539,9 @@ func (hp *hintParser) parseSetVarHint(name string) []*ast.TableOptimizerHint {
 		hp.skipToCloseParen()
 		return nil
 	}
-	valTok := hp.next()
-	if valTok.tp == hintInvalid || valTok.tp == 0 {
+	value, ok := hp.parseHintValue()
+	if !ok {
 		hp.skipToCloseParen()
-		hp.parseError()
-		return nil
-	}
-	value := hp.identOrNumber(valTok)
-	if value == "" {
-		hp.skipToCloseParen()
-		hp.parseError()
 		return nil
 	}
 	if _, ok := hp.expect(')'); !ok {
@@ -1007,10 +1054,10 @@ func (hs *hintScanner) Lex(lval *hintLexVal) int {
 	case eq:
 		return '='
 
-	case floatLit:
-		errorTokenType = "floating point number"
-	case decLit:
-		errorTokenType = "decimal number"
+	case floatLit, decLit:
+		// Accept floating-point/decimal numbers as identifiers for set_var values.
+		lval.ident = lit
+		return hintIdentifier
 
 	default:
 		if tok <= 0x7f {

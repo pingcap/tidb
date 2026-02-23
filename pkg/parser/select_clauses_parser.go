@@ -126,7 +126,7 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		// FIRST / NEXT
 		if _, ok := p.acceptKeyword(first, "FIRST"); !ok {
 			if _, ok := p.acceptKeyword(next, "NEXT"); !ok {
-				p.error(p.peek().Offset, "expected FIRST or NEXT")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 		}
@@ -145,7 +145,7 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		// ROW/ROWS
 		if _, ok := p.acceptKeyword(row, "ROW"); !ok {
 			if _, ok := p.acceptKeyword(rows, "ROWS"); !ok {
-				p.error(p.peek().Offset, "expected ROW or ROWS")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 		}
@@ -153,18 +153,18 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		// ONLY or WITH TIES
 		if _, ok := p.acceptKeyword(only, "ONLY"); !ok {
 			if _, ok := p.acceptKeyword(with, "WITH"); !ok {
-				p.error(p.peek().Offset, "expected ONLY or WITH TIES")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 			// Expect TIES
 			if ident, ok := p.expect(identifier); !ok || !ident.IsKeyword("TIES") {
-				p.error(p.peek().Offset, "expected TIES after WITH")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 			// ast.Limit doesn't support WithTies. Ignore.
 		}
 	} else if limitNode.Offset == nil {
-		p.error(p.peek().Offset, "expected LIMIT, OFFSET or FETCH")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 
@@ -198,7 +198,7 @@ func (p *HandParser) parseSelectLock() *ast.SelectLockInfo {
 		lockNode.LockType = ast.SelectLockForShare
 		p.parseLockTablesAndModifiers(lockNode, ast.SelectLockForShareNoWait, ast.SelectLockForShareSkipLocked, 0)
 	default:
-		p.error(p.peek().Offset, "expected UPDATE or SHARE after FOR")
+		p.syntaxErrorAt(p.peek().Offset)
 	}
 
 	return lockNode
@@ -597,7 +597,7 @@ func (p *HandParser) parseSetOprUnit() ast.ResultSetNode {
 	// `SELECT 1 UNION WITH cte AS (...) SELECT * FROM cte` is invalid.
 
 	default:
-		p.error(p.peek().Offset, "expected query expression after set operator")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 

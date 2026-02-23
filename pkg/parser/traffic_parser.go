@@ -134,7 +134,7 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 			stmt.Options = append(stmt.Options, opt)
 		}
 	default:
-		p.error(tok.Offset, "expected CAPTURE or REPLAY after TRAFFIC")
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 
@@ -148,7 +148,7 @@ func (p *HandParser) parseRefreshStmt() ast.StmtNode {
 	// STATS keyword (identifier, not reserved).
 	tok := p.next()
 	if !tok.IsKeyword("STATS") {
-		p.error(tok.Offset, "expected STATS after REFRESH")
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 

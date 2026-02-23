@@ -94,6 +94,7 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 		}
 		stmt.Cols = cols
 		stmt.Constraints = constraints
+		p.expect(')')
 	}
 	// CREATE TABLE t SELECT ... (CTAS without columns definition) handled later.
 
@@ -209,7 +210,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 	// is unambiguous (always followed by a data type).
 	tok := p.peek()
 	if !isIdentLike(tok.Tp) {
-		p.error(tok.Offset, "expected column name, got %d", tok.Tp)
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 	col.Name = p.parseColumnName()
@@ -241,7 +242,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 	// Parse data type
 	col.Tp = p.parseFieldType()
 	if col.Tp == nil {
-		p.error(p.peek().Offset, "expected data type for column '%s'", col.Name.Name.O)
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 
@@ -353,7 +354,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			p.next()
 			option.Tp = ast.ColumnOptionComment
 			if p.peek().Tp != stringLit {
-				p.error(p.peek().Offset, "expected string literal for COMMENT")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 			expr := p.newValueExpr(p.peek().Lit)
@@ -368,7 +369,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			option.Tp = ast.ColumnOptionSecondaryEngineAttribute
 			p.accept(eq) // optional =
 			if p.peek().Tp != stringLit {
-				p.error(p.peek().Offset, "expected string literal for SECONDARY_ENGINE_ATTRIBUTE")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 			option.StrValue = p.peek().Lit
@@ -491,6 +492,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			}
 			p.next()
 			option.Tp = ast.ColumnOptionCollate
+			p.accept(eq) // optional =
 			tok := p.peek()
 			if isIdentLike(tok.Tp) || tok.Tp == stringLit {
 				info, err := charset.GetCollationByName(tok.Lit)
@@ -504,7 +506,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				option.StrValue = charset.CollationBin
 				p.next()
 			} else {
-				p.error(tok.Offset, "expected collation name")
+				p.syntaxErrorAt(tok.Offset)
 				return nil
 			}
 		case columnFormat:
@@ -521,7 +523,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				p.next()
 				option.StrValue = "DYNAMIC"
 			default:
-				p.error(p.peek().Offset, "expected DEFAULT, FIXED, or DYNAMIC for COLUMN_FORMAT")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 		case storage:
@@ -538,7 +540,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				p.next()
 				option.StrValue = "MEMORY"
 			default:
-				p.error(p.peek().Offset, "expected DEFAULT, DISK, or MEMORY for STORAGE")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 			p.warn("The STORAGE clause is parsed but ignored by all storage engines.")

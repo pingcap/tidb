@@ -381,7 +381,7 @@ func (p *HandParser) parseJoinType() (joinType ast.JoinType, isNatural bool, str
 			p.next()
 			return ast.CrossJoin, true, false, false
 		default:
-			p.error(p.peek().Offset, "expected JOIN after NATURAL")
+			p.syntaxErrorAt(p.peek().Offset)
 			return 0, false, false, false
 		}
 
@@ -512,7 +512,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		// AS OF TIMESTAMP expr — stale read / time travel
 		p.next() // consume AS OF (combined token)
 		if p.peek().Tp != timestampType {
-			p.error(p.peek().Offset, "expected TIMESTAMP after AS OF")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		p.next() // consume TIMESTAMP
@@ -525,7 +525,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		aliasTok := p.next()
 		// Table alias cannot be a string literal (unlike column alias).
 		if !isIdentLike(aliasTok.Tp) || aliasTok.Tp == stringLit {
-			p.error(aliasTok.Offset, "expected table alias")
+			p.syntaxErrorAt(aliasTok.Offset)
 			return nil
 		}
 		asName = ast.NewCIStr(aliasTok.Lit)
@@ -626,7 +626,10 @@ func (p *HandParser) parseTableName() *ast.TableName {
 	}
 	// All keyword/identifier tokens have Tp >= identifier and carry their text in Lit.
 	if !isIdentLike(tok.Tp) && tok.Tp != underscoreCS {
-		p.error(tok.Offset, "expected table name, got token %d", tok.Tp)
+		// Use errorNear for yacc-compatible error format (no extra diagnostic text).
+		// colOffset uses peek (the next token after the consumed one) for column alignment,
+		// nearOffset uses the consumed token's offset for the "near" context text.
+		p.errorNear(p.peek().Offset, tok.Offset)
 		return nil
 	}
 
@@ -636,7 +639,7 @@ func (p *HandParser) parseTableName() *ast.TableName {
 		p.next() // consume '.'
 		nextTok := p.next()
 		if nextTok.Tp < identifier && nextTok.Tp != underscoreCS {
-			p.error(nextTok.Offset, "expected table name after '.', got token %d", nextTok.Tp)
+			p.syntaxErrorAt(nextTok.Offset)
 			return nil
 		}
 		tn.Schema = ast.NewCIStr(tok.Lit)
@@ -693,7 +696,7 @@ func (p *HandParser) parseIndexHint() *ast.IndexHint {
 	// INDEX or KEY (both valid, treated identically).
 	if _, ok := p.accept(index); !ok {
 		if _, ok := p.accept(key); !ok {
-			p.error(p.peek().Offset, "expected INDEX or KEY")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 	}

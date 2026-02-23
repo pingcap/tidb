@@ -161,8 +161,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		}
 	case set: // SET c1=v1
 		if hasColumnList {
-			p.error(p.peek().Offset, "You have an error in your SQL syntax; check the manual that "+
-				"corresponds to your TiDB version for the right syntax to use near 'SET'")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		// INSERT INTO t SET c1=v1
@@ -211,7 +210,11 @@ func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode
 		if _, ok := p.accept(row); ok { //revive:disable-line
 			// consume ROW
 		} else if enforceRow {
-			p.expect(row)
+			// Report error at the current position (before consuming),
+			// matching the yacc grammar's error offset.
+			tok := p.peek()
+			p.errorNear(tok.Offset+1, tok.Offset)
+			return nil
 		}
 		p.expect('(')
 		var list []ast.ExprNode
@@ -406,8 +409,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 				}
 
 				if hasWildcard && !stmt.IsMultiTable {
-					p.error(p.peek().Offset, "You have an error in your SQL syntax; check the manual that "+
-						"corresponds to your TiDB version for the right syntax to use near '.*'")
+					p.syntaxErrorAt(p.peek().Offset)
 					return nil
 				}
 			}
@@ -596,14 +598,14 @@ func (p *HandParser) parseNonTransactionalDMLStmt() ast.StmtNode {
 	case deleteKwd:
 		dml = p.parseDeleteStmt()
 	default:
-		p.error(p.peek().Offset, "expected INSERT, UPDATE, REPLACE or DELETE after BATCH options")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 
 	if shardable, ok := dml.(ast.ShardableDMLStmt); ok { //revive:disable-line
 		stmt.DMLStmt = shardable
 	} else {
-		p.error(p.peek().Offset, "invalid DML statement for BATCH")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 

@@ -210,7 +210,7 @@ func (p *HandParser) parseCreateDatabaseStmt() ast.StmtNode {
 
 	nameTok := p.next()
 	if !isIdentLike(nameTok.Tp) {
-		p.error(nameTok.Offset, "expected database name")
+		p.syntaxErrorAt(nameTok.Offset)
 		return nil
 	}
 	stmt.Name = ast.NewCIStr(nameTok.Lit)
@@ -237,7 +237,7 @@ func (p *HandParser) parseAlterDatabaseStmt() ast.StmtNode {
 	if !isDatabaseOption {
 		nameTok := p.next()
 		if !isIdentLike(nameTok.Tp) {
-			p.error(nameTok.Offset, "")
+			p.syntaxErrorAt(nameTok.Offset)
 			return nil
 		}
 		stmt.Name = ast.NewCIStr(nameTok.Lit)
@@ -246,7 +246,7 @@ func (p *HandParser) parseAlterDatabaseStmt() ast.StmtNode {
 	}
 	stmt.Options = p.parseDatabaseOptions()
 	if len(stmt.Options) == 0 {
-		p.error(p.peek().Offset, "")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 	return stmt
@@ -328,7 +328,7 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			if p.peek().IsKeyword("LOCATION") {
 				p.next()
 				if !(p.peek().IsKeyword("LABELS")) {
-					p.error(p.peek().Offset, "expected LABELS after LOCATION")
+					p.syntaxErrorAt(p.peek().Offset)
 					return nil
 				}
 				p.next()
@@ -474,7 +474,7 @@ func (p *HandParser) parseFlashbackWithTS() *ast.FlashBackToTimestampStmt {
 		p.next()
 		tso, ok := p.parseTSOValue()
 		if !ok {
-			p.error(p.peek().Offset, "expected positive integer for TSO value")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		tsStmt := Alloc[ast.FlashBackToTimestampStmt](p.arena)

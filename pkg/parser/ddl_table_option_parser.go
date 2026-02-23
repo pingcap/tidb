@@ -59,14 +59,20 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			p.next()
 		}
 		p.accept(eq)
-		if tok, ok := p.expectAny(identifier, stringLit, binaryType); ok {
+		if tok, ok := p.acceptStringName(); ok {
+			opt.Tp = ast.TableOptionCharset
+			opt.StrValue = strings.ToLower(tok.Lit)
+		} else if tok, ok := p.accept(binaryType); ok {
 			opt.Tp = ast.TableOptionCharset
 			opt.StrValue = strings.ToLower(tok.Lit)
 		}
 	case collate:
 		p.next()
 		p.accept(eq)
-		if tok, ok := p.expectAny(identifier, stringLit, binaryType); ok {
+		if tok, ok := p.acceptStringName(); ok {
+			opt.Tp = ast.TableOptionCollate
+			opt.StrValue = strings.ToLower(tok.Lit)
+		} else if tok, ok := p.accept(binaryType); ok {
 			opt.Tp = ast.TableOptionCollate
 			opt.StrValue = strings.ToLower(tok.Lit)
 		}
@@ -115,8 +121,10 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.accept(eq)
 		opt.Tp = ast.TableOptionPlacementPolicy
 		// Value can be identifier, string literal, or DEFAULT keyword
-		if tok, ok := p.expectAny(identifier, stringLit, defaultKwd); ok {
+		if tok, ok := p.acceptStringName(); ok {
 			opt.StrValue = tok.Lit
+		} else if _, ok := p.accept(defaultKwd); ok {
+			opt.StrValue = "DEFAULT"
 		}
 
 	case checksum, tableChecksum:
@@ -174,7 +182,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			case "OFF":
 				opt.BoolValue = false
 			default:
-				p.error(tok.Offset, "expected ON or OFF for TTL_ENABLE")
+				p.syntaxErrorAt(tok.Offset)
 				return nil
 			}
 		}
@@ -213,7 +221,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			// STORAGE ENGINE [=] engine_name (partition option)
 			p.accept(eq)
 			opt.Tp = ast.TableOptionEngine
-			if tok, ok := p.expectAny(identifier, stringLit); ok {
+			if tok, ok := p.acceptStringName(); ok {
 				opt.StrValue = tok.Lit
 			}
 		} else if tok, ok := p.expectAny(disk, memory); ok {
@@ -473,7 +481,7 @@ func (p *HandParser) parseTableOptionString(opt *ast.TableOption, optTp ast.Tabl
 	if tok.Tp == stringLit || isIdentLike(tok.Tp) {
 		opt.StrValue = p.next().Lit
 	} else {
-		p.error(tok.Offset, "expected identifier or string literal")
+		p.syntaxErrorAt(tok.Offset)
 	}
 }
 

@@ -10,7 +10,7 @@ func (p *HandParser) parseBinlogStmt() *ast.BinlogStmt {
 	stmt := Alloc[ast.BinlogStmt](p.arena)
 	tok := p.next()
 	if tok.Tp != stringLit {
-		p.error(tok.Offset, "expected string literal after BINLOG")
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 	stmt.Str = tok.Lit

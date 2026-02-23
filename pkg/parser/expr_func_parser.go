@@ -40,7 +40,7 @@ func (p *HandParser) parseKeywordFuncCall() ast.ExprNode {
 	case insert:
 		name = "insert_func"
 	default:
-		p.error(tok.Offset, "unexpected keyword-function token %d", tok.Tp)
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 	return p.parseFuncCall(name)

@@ -176,7 +176,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 		op := p.next() // consume the operator
 		opCode := tokenToOp(op.Tp)
 		if opCode == 0 {
-			p.error(op.Offset, "unexpected operator token %d", op.Tp)
+			p.syntaxErrorAt(op.Offset)
 			return nil
 		}
 
@@ -208,7 +208,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 		// Right-hand side parsed at higher precedence for left-associativity.
 		right := p.parseExpression(prec + 1)
 		if right == nil {
-			p.error(op.Offset, "expected expression after operator")
+			p.syntaxErrorAt(op.Offset)
 			return nil
 		}
 
@@ -236,7 +236,7 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 		p.next() // consume '{'
 		tok := p.next()
 		if tok.Tp != identifier {
-			p.error(tok.Offset, "expected identifier after '{' in ODBC escape sequence")
+			p.syntaxErrorAt(tok.Offset)
 			return nil
 		}
 		typ := strings.ToLower(tok.Lit)
@@ -361,7 +361,7 @@ func (p *HandParser) parseLiteral() ast.ExprNode {
 		}
 		return p.newLiteralExpr(ctor, tok.Lit)
 	default:
-		p.error(tok.Offset, "func checkType[T interface{}](item interface{}) (T, bool) {%d", tok.Tp)
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 }
@@ -463,7 +463,7 @@ func (p *HandParser) parseNotInfixExpr(left ast.ExprNode) ast.ExprNode {
 	case regexpKwd, rlike:
 		return p.parseRegexpExpr(left, true)
 	default:
-		p.error(p.peek().Offset, "expected IN, LIKE, BETWEEN, or REGEXP after NOT")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 }
@@ -599,7 +599,7 @@ func (p *HandParser) parseIsExpr(left ast.ExprNode) ast.ExprNode {
 			node.Not = isNot
 			return node
 		}
-		p.error(p.peek().Offset, "expected NULL, TRUE, FALSE, or UNKNOWN after IS [NOT]")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 }
@@ -719,7 +719,7 @@ func (p *HandParser) parseCharsetIntroducer() ast.ExprNode {
 		}
 		expr = ast.NewValueExpr(val, csName, co)
 	default:
-		p.error(valTok.Offset, "expected string, hex, or bit literal after charset introducer")
+		p.syntaxErrorAt(valTok.Offset)
 		return nil
 	}
 
@@ -823,7 +823,7 @@ func (p *HandParser) parseMatchAgainstExpr() ast.ExprNode {
 				node.Modifier = ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode)
 			}
 		} else {
-			p.error(p.peek().Offset, "expected BOOLEAN MODE or NATURAL LANGUAGE MODE after IN")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 	} else if _, ok := p.accept(with); ok {
@@ -895,11 +895,11 @@ func (p *HandParser) parseTimeFunc(fnName string) ast.ExprNode {
 				if lit := p.parseLiteral(); lit != nil { //revive:disable-line
 					args = append(args, lit)
 				} else {
-					p.error(p.peek().Offset, "expected integer literal")
+					p.syntaxErrorAt(p.peek().Offset)
 					return nil
 				}
 			} else {
-				p.error(p.peek().Offset, "expected integer literal")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 		}

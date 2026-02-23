@@ -35,7 +35,7 @@ func (p *HandParser) parsePrepareStmt() ast.StmtNode {
 	expr := p.parseVariableExpr()
 	v, ok := expr.(*ast.VariableExpr)
 	if !ok {
-		p.error(p.peek().Offset, "expected string literal or user variable for PREPARE")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 	stmt.SQLVar = v
@@ -79,7 +79,7 @@ func (p *HandParser) parseDeallocateStmt() ast.StmtNode {
 func (p *HandParser) parseName() string {
 	tok := p.next()
 	if tok.Tp < identifier && tok.Tp != underscoreCS {
-		p.error(tok.Offset, "expected identifier")
+		p.syntaxErrorAt(tok.Offset)
 		return ""
 	}
 	return tok.Lit

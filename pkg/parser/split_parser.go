@@ -33,7 +33,7 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 
 	// Expect TABLE
 	if _, ok := p.accept(tableKwd); !ok {
-		p.error(p.peek().Offset, "expected TABLE after SPLIT [REGION [FOR [PARTITION]]]")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 
@@ -54,7 +54,7 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 		// Expect identifier for index name
 		tok, ok := p.accept(identifier)
 		if !ok {
-			p.error(p.peek().Offset, "expected index name")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		stmt.IndexName = ast.NewCIStr(tok.Lit)
@@ -95,7 +95,7 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 
 			expr := p.parseExpression(precNone)
 			if expr == nil {
-				p.error(p.peek().Offset, "expected expression in SPLIT BY")
+				p.syntaxErrorAt(p.peek().Offset)
 				return nil
 			}
 
@@ -128,7 +128,7 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 
 		// Expect AND
 		if _, ok := p.accept(and); !ok {
-			p.error(p.peek().Offset, "expected AND in SPLIT BETWEEN")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 
@@ -137,7 +137,7 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 
 		// Expect REGIONS n
 		if _, ok := p.accept(regions); !ok {
-			p.error(p.peek().Offset, "expected REGIONS in SPLIT BETWEEN")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		// n (int)
@@ -204,7 +204,7 @@ func (p *HandParser) parseDistributeTableStmt() ast.StmtNode {
 	// Test case "distribute table t1 partition(p0)" expects error.
 	// So Partition alone is not enough.
 	if len(stmt.Rule) == 0 && len(stmt.Engine) == 0 && len(stmt.Timeout) == 0 {
-		p.error(p.peek().Offset, "expected at least one option (RULE, ENGINE, TIMEOUT) for DISTRIBUTE TABLE")
+		p.syntaxErrorAt(p.peek().Offset)
 		return nil
 	}
 
@@ -218,7 +218,7 @@ func (p *HandParser) parseParenPartitionNames() []ast.CIStr {
 	for {
 		tok, ok := p.accept(identifier)
 		if !ok {
-			p.error(p.peek().Offset, "expected partition name")
+			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		names = append(names, ast.NewCIStr(tok.Lit))
