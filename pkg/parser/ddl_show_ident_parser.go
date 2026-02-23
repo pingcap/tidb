@@ -355,6 +355,14 @@ func (p *HandParser) parseShowCreate() ast.StmtNode {
 		stmt.Tp = ast.ShowCreateSequence
 		stmt.Table = p.parseTableName()
 		return stmt
+	case user:
+		p.next()
+		stmt.Tp = ast.ShowCreateUser
+		if userIdent := p.parseUserIdentity(); userIdent != nil {
+			stmt.User = userIdent
+			return stmt
+		}
+		return nil
 	default:
 		// Handle identifier-based CREATE sub-types
 		if isIdentLike(p.peek().Tp) {

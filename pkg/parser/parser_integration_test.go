@@ -14,10 +14,12 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
 	"github.com/stretchr/testify/require"
 )
@@ -231,6 +233,41 @@ func TestHandParserShow(t *testing.T) {
 			show, ok := stmts[0].(*ast.ShowStmt)
 			require.True(t, ok, "expected ShowStmt for: %s", sql)
 			require.Equal(t, ast.ShowBuiltins, int(show.Tp))
+		})
+	}
+}
+
+func TestHandParserShowCreateUser(t *testing.T) {
+	tests := []struct {
+		sql     string
+		valid   bool
+		restore string
+	}{
+		{"show create user 'root'@'localhost'", true, "SHOW CREATE USER `root`@`localhost`"},
+		{"show create user if not exists", false, ""},
+		{"show create user current_user", true, "SHOW CREATE USER CURRENT_USER"},
+	}
+
+	hp := parser.NewHandParser()
+	for _, tc := range tests {
+		t.Run(tc.sql, func(t *testing.T) {
+			scanner := parser.NewScanner(tc.sql)
+			hp.Init(scanner, tc.sql)
+			stmts, _, err := hp.ParseSQL()
+			if !tc.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			show, ok := stmts[0].(*ast.ShowStmt)
+			require.True(t, ok)
+			require.Equal(t, ast.ShowCreateUser, int(show.Tp))
+
+			restore := &strings.Builder{}
+			err = show.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, restore))
+			require.NoError(t, err)
+			require.Equal(t, tc.restore, restore.String())
 		})
 	}
 }
