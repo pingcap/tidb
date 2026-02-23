@@ -591,13 +591,8 @@ func (s *baseSingleGroupJoinOrderSolver) hasOtherJoinCondition(leftPlan, rightPl
 		if expression.ExprFromSchema(cond, leftPlan.Schema()) || expression.ExprFromSchema(cond, rightPlan.Schema()) {
 			continue
 		}
-		if s.nullExtendedCols != nil {
-			cols := expression.ExtractColumns(cond)
-			if slices.ContainsFunc(cols, func(col *expression.Column) bool {
-				return s.nullExtendedCols.Contains(col)
-			}) {
-				continue
-			}
+		if s.nullExtendedCols != nil && expression.ExprReferenceSchema(cond, s.nullExtendedCols) {
+			continue
 		}
 		return true
 	}
