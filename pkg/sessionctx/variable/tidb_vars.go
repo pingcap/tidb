@@ -996,6 +996,9 @@ const (
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
+	// TiDBEnableFullOuterJoin indicates whether to enable FULL OUTER JOIN.
+	TiDBEnableFullOuterJoin = "tidb_enable_full_outer_join"
+
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
@@ -1602,6 +1605,7 @@ const (
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionLegacy
+	DefTiDBEnableFullOuterJoin                        = false
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0

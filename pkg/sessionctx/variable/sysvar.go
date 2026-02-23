@@ -2551,6 +2551,10 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFullOuterJoin, Value: BoolToOnOff(DefTiDBEnableFullOuterJoin), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableFullOuterJoin = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableHashJoin, Value: BoolToOnOff(DefTiDBOptEnableHashJoin), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.DisableHashJoin = !TiDBOptOn(val)
 		return nil

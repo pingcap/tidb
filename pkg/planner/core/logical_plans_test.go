@@ -235,9 +235,26 @@ func TestJoinPredicatePushDown(t *testing.T) {
 	}
 }
 
+func TestFullOuterJoinFeatureSwitchDefaultOff(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, sql)
+	_, err = BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+	require.Error(t, err, sql)
+	require.True(t, plannererrors.ErrNotSupportedYet.Equal(err), sql)
+	require.ErrorContains(t, err, "FULL OUTER JOIN", sql)
+}
+
 func TestFullOuterJoinLogicalBuild(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
 
 	ctx := context.Background()
 	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a and t1.b > 1 and t2.b > 1"
@@ -282,6 +299,7 @@ func TestFullOuterJoinLogicalBuild(t *testing.T) {
 func TestFullOuterJoinUnsupportedFormsFailFast(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
 
 	ctx := context.Background()
 	sqls := []string{
@@ -304,6 +322,7 @@ func TestFullOuterJoinUnsupportedFormsFailFast(t *testing.T) {
 func TestFullOuterJoinCascadesFailFast(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
 	s.sctx.GetSessionVars().SetEnableCascadesPlanner(true)
 	defer s.sctx.GetSessionVars().SetEnableCascadesPlanner(false)
 
@@ -323,6 +342,7 @@ func TestFullOuterJoinCascadesFailFast(t *testing.T) {
 func TestFullOuterJoinPhysicalPlanHashJoinOnly(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
 	ctx := context.Background()
 	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a"
 	stmt, err := s.p.ParseOneStmt(sql, "", "")
@@ -398,6 +418,7 @@ func collectLogicalJoins(p base.LogicalPlan) []*logicalop.LogicalJoin {
 func TestFullOuterJoinSimplifyOuterJoin(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
 	ctx := context.Background()
 	tests := []struct {
 		sql      string
@@ -437,6 +458,7 @@ func TestFullOuterJoinSimplifyOuterJoin(t *testing.T) {
 func TestFullOuterJoinSkipJoinReOrder(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
 	ctx := context.Background()
 	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a full outer join t t3 on t2.a = t3.a"
 	stmt, err := s.p.ParseOneStmt(sql, "", "")
@@ -461,6 +483,7 @@ func TestFullOuterJoinSkipJoinReOrder(t *testing.T) {
 func TestFullOuterJoinConvertOuterToInner(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
 	ctx := context.Background()
 	tests := []struct {
 		sql      string

@@ -1,5 +1,6 @@
 # TestFullOuterJoinHashJoinV1Basic
 set @@tidb_enable_cascades_planner = 0;
+set @@tidb_enable_full_outer_join = 1;
 set @@tidb_hash_join_version = legacy;
 
 drop table if exists t1, t2;
@@ -42,4 +43,5 @@ set @@tidb_enable_cascades_planner = 1;
 select * from t1 full outer join t2 on t1.a = t2.a;
 
 set @@tidb_enable_cascades_planner = default;
+set @@tidb_enable_full_outer_join = default;
 set @@tidb_hash_join_version = default;

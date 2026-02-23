@@ -7,6 +7,7 @@
 > - 语法层面仅识别 `FULL OUTER JOIN`（`OUTER` 不可省略）；`FULL JOIN` 保持 MySQL 兼容解释（`t1 AS full JOIN t2`）。
 > - 仅 Root 执行（TiDB 层），禁止 TiFlash MPP / TiKV coprocessor pushdown。
 > - 仅 HashJoin v1（禁止 MergeJoin / IndexJoin / HashJoin v2）。
+> - 由 `tidb_enable_full_outer_join` 开关控制，默认 `OFF`。
 > - ON 等值条件同时支持 `=` 与 `<=>`（`nulleq`）：
 >   - `=`：任一侧 join key 为 `NULL` 不匹配。
 >   - `<=>`：`NULL <=> NULL = TRUE`，`NULL` join key 参与 hash 并可匹配。
@@ -35,6 +36,7 @@
 - [x] `simplifyOuterJoin` / `ConvertOuterToInnerJoin` 已覆盖 full join 相关转换路径。
 - [x] 单元测试覆盖已包含：build side 两方向、NULL key、复杂 other condition、spill 场景。
 - [x] integrationtest 已新增 `executor/jointest/full_outer_join`，覆盖端到端语义与限制项回归。
+- [x] 新增 `tidb_enable_full_outer_join` 开关，默认关闭，按 session/global 显式开启后生效。
 
 阶段 1 的明确范围外（暂不实现）：
 

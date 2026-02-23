@@ -228,6 +228,7 @@ func TestFullOuterJoinHashJoinV1(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_full_outer_join = 1")
 	tk.MustExec(join.DisableHashJoinV2)
 
 	tk.MustExec("drop table if exists t1, t2")
@@ -375,6 +376,7 @@ func TestFullOuterJoinHashJoinV1Spill(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_full_outer_join = 1")
 	tk.MustExec(join.DisableHashJoinV2)
 
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/testRowContainerSpill"
@@ -426,6 +428,7 @@ func TestFullOuterJoinHashJoinV1AgainstRewriteOracle(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_full_outer_join = 1")
 	tk.MustExec(join.DisableHashJoinV2)
 
 	tk.MustExec("drop table if exists l, r")

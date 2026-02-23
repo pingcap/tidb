@@ -577,6 +577,9 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// 1) NATURAL/USING/full-join-without-ON are still out of scope.
 	// 2) full outer join is enabled in volcano path only.
 	if joinNode.Tp == ast.FullJoin {
+		if !b.ctx.GetSessionVars().EnableFullOuterJoin {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		}
 		if b.ctx.GetSessionVars().GetEnableCascadesPlanner() {
 			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN with cascades planner")
 		}
