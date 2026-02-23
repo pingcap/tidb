@@ -903,7 +903,7 @@ func (hp *hintParser) parseIdentifier() string {
 
 // identOrNumber converts a token to a string value, handling both identifiers
 // and integer literals.
-func (hp *hintParser) identOrNumber(tok hintToken) string {
+func (*hintParser) identOrNumber(tok hintToken) string {
 	if tok.ident != "" {
 		return tok.ident
 	}
@@ -916,7 +916,7 @@ func (hp *hintParser) identOrNumber(tok hintToken) string {
 // isHintKeyword returns true if the token type is a hint keyword
 // (e.g., TRUE, FALSE, TIKV, TIFLASH, PARTITION, etc.) that can be
 // used as an identifier in contexts like QB_NAME.
-func (hp *hintParser) isHintKeyword(tp int) bool {
+func (*hintParser) isHintKeyword(tp int) bool {
 	// Hint keywords are in the range memberof+ but not special tokens
 	switch tp {
 	case hintIntLit, hintInvalid, hintSingleAtIdentifier, hintStringLit, 0:

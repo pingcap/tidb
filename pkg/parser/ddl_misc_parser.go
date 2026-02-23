@@ -296,8 +296,6 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			tok := p.next()
 			if tok.Tp == defaultKwd {
 				opt.Value = "DEFAULT"
-			} else if tok.Tp == stringLit {
-				opt.Value = tok.Lit
 			} else {
 				opt.Value = tok.Lit
 			}

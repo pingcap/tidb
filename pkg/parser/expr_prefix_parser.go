@@ -22,7 +22,7 @@ import (
 )
 
 // parsePrefixKeywordExpr handles prefix expressions starting with keywords (e.g. CASE, INTERVAL, Functions).
-func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode {
+func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive:disable-line
 	tok := p.peek()
 	switch tok.Tp {
 	case exists:

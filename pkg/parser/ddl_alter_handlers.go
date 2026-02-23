@@ -130,7 +130,8 @@ func (p *HandParser) parseAlterAdd(spec *ast.AlterTableSpec) {
 	}
 }
 
-// parseAlterDrop handles ALTER TABLE ... DROP {COLUMN|INDEX|KEY|PRIMARY KEY|FOREIGN KEY|CHECK|CONSTRAINT|PARTITION|STATS_EXTENDED|FIRST PARTITION}.
+// parseAlterDrop handles ALTER TABLE ...
+// DROP {COLUMN|INDEX|KEY|PRIMARY KEY|FOREIGN KEY|CHECK|CONSTRAINT|PARTITION|STATS_EXTENDED|FIRST PARTITION}.
 func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 	parseDropColumn := func() {
 		spec.Tp = ast.AlterTableDropColumn
@@ -394,12 +395,15 @@ func (p *HandParser) parseAlterReorganize(spec *ast.AlterTableSpec) *ast.AlterTa
 	return spec
 }
 
-// parseAlterPartitionAction handles ALTER TABLE ... {COALESCE|TRUNCATE|EXCHANGE|REBUILD|OPTIMIZE|REPAIR|CHECK|IMPORT|DISCARD|FIRST|LAST|MERGE|REORGANIZE} PARTITION ...
+// parseAlterPartitionAction handles ALTER TABLE
+// ... {COALESCE|TRUNCATE|EXCHANGE|REBUILD|OPTIMIZE|REPAIR|
+//
+//	CHECK|IMPORT|DISCARD|FIRST|LAST|MERGE|REORGANIZE} PARTITION ...
+//
 // Returns true if a partition action was parsed, false otherwise.
 func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 	tok := p.peek()
 	switch tok.Tp {
-
 	case coalesce:
 		// COALESCE PARTITION n
 		p.next()
@@ -534,7 +538,11 @@ func (p *HandParser) parseMergeFirstPartition(spec *ast.AlterTableSpec) {
 	}
 }
 
-// parseAlterTableOptions handles ALTER TABLE ... {FORCE|ALGORITHM|LOCK|READ|CONVERT|WITH|WITHOUT|STATS_OPTIONS|ATTRIBUTES|CACHE|NOCACHE|SECONDARY_LOAD|SECONDARY_UNLOAD|ENABLE|DISABLE} ...
+// parseAlterTableOptions handles ALTER TABLE
+// ... {FORCE|ALGORITHM|LOCK|READ|CONVERT|WITH|WITHOUT|STATS_OPTIONS|
+//
+//	ATTRIBUTES|CACHE|NOCACHE|SECONDARY_LOAD|SECONDARY_UNLOAD|ENABLE|DISABLE} ...
+//
 // and generic table options. Returns true if options were parsed, false otherwise.
 func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 	tok := p.peek()
@@ -560,8 +568,8 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 		p.accept(eq)
 		spec.Tp = ast.AlterTableAlgorithm
 		tok := p.next()
-		switch {
-		case tok.Tp == defaultKwd:
+		switch tok.Tp {
+		case defaultKwd:
 			spec.Algorithm = ast.AlgorithmTypeDefault
 		default:
 			switch strings.ToUpper(tok.Lit) {

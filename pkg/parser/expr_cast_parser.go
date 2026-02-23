@@ -98,7 +98,8 @@ func (p *HandParser) parseConvertFunc() ast.ExprNode {
 		charsetTok := p.next()
 		charsetName := strings.ToLower(charsetTok.Lit)
 		if !charset.ValidCharsetAndCollation(charsetName, "") {
-			p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
+			p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).
+				GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
 			return nil
 		}
 		p.expect(')')
@@ -223,7 +224,8 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 			csTok := p.next()
 			csName := strings.ToUpper(csTok.Lit)
 			if !charset.ValidCharsetAndCollation(csName, "") {
-				p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).GenWithStack("Unknown character set: '%s'", csName))
+				p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).
+					GenWithStack("Unknown character set: '%s'", csName))
 				return nil, false
 			}
 			tp.SetCharset(csName)

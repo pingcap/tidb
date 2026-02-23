@@ -139,9 +139,9 @@ func (p *HandParser) Parse(lexer Lexer, src string, charset, collation string) (
 
 // calcLineCol computes the 1-based line number and 0-based column number
 // by scanning source bytes up to (but not including) limit.
-func (p *HandParser) calcLineCol(limit int) (int, int) {
-	line := 1
-	col := 0
+func (p *HandParser) calcLineCol(limit int) (line int, col int) {
+	line = 1
+	col = 0
 	for i := 0; i < limit && i < len(p.src); i++ {
 		col++
 		if p.src[i] == '\n' {
@@ -195,7 +195,7 @@ var errSyntax = terror.ClassParser.NewStd(mysql.ErrSyntax)
 
 // syntaxError records a MySQL-standard syntax error with code 1149.
 // This produces the [parser:1149] prefix expected by test assertions.
-func (p *HandParser) syntaxError(offset int) {
+func (p *HandParser) syntaxError(_ int) {
 	p.errs = append(p.errs, errSyntax)
 }
 

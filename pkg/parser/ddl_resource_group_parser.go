@@ -284,11 +284,11 @@ func (p *HandParser) parseResourceGroupOptionList() []*ast.ResourceGroupOption {
 	var opts []*ast.ResourceGroupOption
 	for {
 		p.accept(',') // optional comma between options
-		if opt := p.parseResourceGroupOption(); opt != nil {
-			opts = append(opts, opt)
-		} else {
+		opt := p.parseResourceGroupOption()
+		if opt == nil {
 			break
 		}
+		opts = append(opts, opt)
 	}
 	return opts
 }

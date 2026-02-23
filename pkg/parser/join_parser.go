@@ -49,21 +49,20 @@ func (p *HandParser) parseCommaJoin() *ast.Join {
 	}
 
 	for {
-		if _, ok := p.accept(','); ok {
-			right := p.parseJoin()
-			if right == nil {
-				return nil
-			}
-
-			// Comma join ALWAYS nests the previous ref (even if it's already a Join).
-			newJoin := p.arena.AllocJoin()
-			newJoin.Left = innerJoin
-			newJoin.Right = right
-			newJoin.Tp = ast.CrossJoin
-			innerJoin = newJoin
-		} else {
+		if _, ok := p.accept(','); !ok {
 			break
 		}
+		right := p.parseJoin()
+		if right == nil {
+			return nil
+		}
+
+		// Comma join ALWAYS nests the previous ref (even if it's already a Join).
+		newJoin := p.arena.AllocJoin()
+		newJoin.Left = innerJoin
+		newJoin.Right = right
+		newJoin.Tp = ast.CrossJoin
+		innerJoin = newJoin
 	}
 	return innerJoin
 }
@@ -512,12 +511,11 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	if p.peek().Tp == asof {
 		// AS OF TIMESTAMP expr — stale read / time travel
 		p.next() // consume AS OF (combined token)
-		if p.peek().Tp == timestampType {
-			p.next() // consume TIMESTAMP
-		} else {
+		if p.peek().Tp != timestampType {
 			p.error(p.peek().Offset, "expected TIMESTAMP after AS OF")
 			return nil
 		}
+		p.next() // consume TIMESTAMP
 		asOfClause := Alloc[ast.AsOfClause](p.arena)
 		asOfClause.TsExpr = p.parseExpression(precNone)
 		if tn, ok := res.(*ast.TableName); ok {
@@ -542,7 +540,8 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		p.parseIndexHintsInto(tn)
 	}
 
-	// Parse optional TABLESAMPLE clause (can appear after alias): TABLESAMPLE [SYSTEM|BERNOULLI|REGION] (expr [PERCENT|ROWS]) [REPEATABLE(seed)]
+	// Parse optional TABLESAMPLE clause (can appear after alias):
+	// TABLESAMPLE [SYSTEM|BERNOULLI|REGION] (expr [PERCENT|ROWS]) [REPEATABLE(seed)]
 	// Only valid for table name references, not derived tables/subqueries.
 	_, isResTableName := res.(*ast.TableName)
 	if p.peek().Tp == tableSample && isResTableName {

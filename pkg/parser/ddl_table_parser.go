@@ -94,11 +94,8 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 		}
 		stmt.Cols = cols
 		stmt.Constraints = constraints
-		p.expect(')')
-	} else {
-		// CREATE TABLE t SELECT ... (CTAS without columns definition)
-		// Handled later.
 	}
+	// CREATE TABLE t SELECT ... (CTAS without columns definition) handled later.
 
 	// [Table Options]
 	stmt.Options = p.parseCreateTableOptions()
@@ -263,7 +260,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 }
 
 // parseColumnOptions parses column options: NOT NULL, DEFAULT 1, PRIMARY KEY, etc.
-func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate bool) []*ast.ColumnOption {
+func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate bool) []*ast.ColumnOption {
 	var options []*ast.ColumnOption
 	for {
 		option := Alloc[ast.ColumnOption](p.arena)
@@ -286,11 +283,11 @@ func (p *HandParser) parseColumnOptions(tp *types.FieldType, hasExplicitCollate 
 			// Unwrap nested parentheses for inspection and normalization
 			var inner ast.ExprNode = option.Expr
 			for {
-				if pExpr, ok := inner.(*ast.ParenthesesExpr); ok {
-					inner = pExpr.Expr
-				} else {
+				pExpr, ok := inner.(*ast.ParenthesesExpr)
+				if !ok {
 					break
 				}
+				inner = pExpr.Expr
 			}
 
 			// Reject bare identifiers (ColumnNameExpr).

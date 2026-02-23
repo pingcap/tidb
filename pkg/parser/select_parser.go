@@ -422,13 +422,12 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 	// Originally, only Identifier (non-reserved keywords) is valid after AS.
 	if _, ok := p.accept(as); ok {
 		aliasTok := p.peek()
-		if aliasTok.Tp == identifier || aliasTok.Tp == stringLit || (aliasTok.Tp >= identifier && !IsReserved(aliasTok.Tp)) {
-			p.next()
-			sf.AsName = ast.NewCIStr(aliasTok.Lit)
-		} else {
+		if aliasTok.Tp != identifier && aliasTok.Tp != stringLit && (aliasTok.Tp < identifier || IsReserved(aliasTok.Tp)) {
 			p.errorNear(aliasTok.Offset, aliasTok.Offset)
 			return nil
 		}
+		p.next()
+		sf.AsName = ast.NewCIStr(aliasTok.Lit)
 	} else if p.CanBeImplicitAlias(p.peek()) {
 		// Implicit alias (without AS).
 		aliasTok := p.next()

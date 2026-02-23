@@ -5,7 +5,8 @@ import (
 )
 
 // parseSplitRegionStmt parses SPLIT statement.
-// Since AST structure is complex and the grammar is complex, we implement a simplified version sufficient for TestDMLStmt.
+// Since AST structure is complex and the grammar is complex, we implement
+// a simplified version sufficient for TestDMLStmt.
 // TestDMLStmt uses:
 // 1. split table t1 index idx1 by ('a'),('b'),('c')
 // 2. SPLIT TABLE t1 BETWEEN (0) AND (10000) REGIONS 10
@@ -51,12 +52,12 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 	// Optional INDEX idx
 	if _, ok := p.accept(index); ok {
 		// Expect identifier for index name
-		if tok, ok := p.accept(identifier); ok {
-			stmt.IndexName = ast.NewCIStr(tok.Lit)
-		} else {
+		tok, ok := p.accept(identifier)
+		if !ok {
 			p.error(p.peek().Offset, "expected index name")
 			return nil
 		}
+		stmt.IndexName = ast.NewCIStr(tok.Lit)
 	}
 
 	// Parse Split Option: BY ... or BETWEEN ...
@@ -119,7 +120,6 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 			}
 		}
 		stmt.SplitOpt.ValueLists = valueLists
-
 	} else if _, ok := p.accept(between); ok {
 		// BETWEEN (lower) AND (upper) REGIONS n
 
@@ -152,9 +152,6 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 			if val, ok := valExpr.GetValue().(int64); ok {
 				stmt.SplitOpt.Num = val
 			}
-		} else {
-			// Error or ignore?
-			// Assume valid int literal for now.
 		}
 
 		stmt.SplitOpt.Lower = lower

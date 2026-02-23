@@ -78,9 +78,7 @@ func (p *HandParser) parseByItems() []*ast.ByItem {
 		// ASC/DESC get NullOrder=true (for both GROUP BY and ORDER BY).
 		if _, ok := p.accept(desc); ok {
 			item.Desc = true
-		} else if _, ok := p.accept(asc); ok {
-			// explicit ASC: NullOrder stays false
-		} else {
+		} else if _, ok := p.accept(asc); !ok {
 			item.NullOrder = true
 		}
 
@@ -153,25 +151,19 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		}
 
 		// ONLY or WITH TIES
-		if _, ok := p.acceptKeyword(only, "ONLY"); ok {
-			// done
-		} else if _, ok := p.acceptKeyword(with, "WITH"); ok {
+		if _, ok := p.acceptKeyword(only, "ONLY"); !ok {
+			if _, ok := p.acceptKeyword(with, "WITH"); !ok {
+				p.error(p.peek().Offset, "expected ONLY or WITH TIES")
+				return nil
+			}
 			// Expect TIES
 			if ident, ok := p.expect(identifier); !ok || !ident.IsKeyword("TIES") {
 				p.error(p.peek().Offset, "expected TIES after WITH")
 				return nil
 			}
 			// ast.Limit doesn't support WithTies. Ignore.
-		} else {
-			p.error(p.peek().Offset, "expected ONLY or WITH TIES")
-			return nil
 		}
-	} else if limitNode.Offset != nil {
-		// Just OFFSET without LIMIT/FETCH? Valid standard SQL?
-		// MySQL doesn't support it without LIMIT/FETCH usually, but maybe TiDB does?
-		// Returning limit with just Offset.
-	} else {
-		// Should have matched one of them if called.
+	} else if limitNode.Offset == nil {
 		p.error(p.peek().Offset, "expected LIMIT, OFFSET or FETCH")
 		return nil
 	}
@@ -199,7 +191,8 @@ func (p *HandParser) parseSelectLock() *ast.SelectLockInfo {
 	case update:
 		p.next()
 		lockNode.LockType = ast.SelectLockForUpdate
-		p.parseLockTablesAndModifiers(lockNode, ast.SelectLockForUpdateNoWait, ast.SelectLockForUpdateSkipLocked, ast.SelectLockForUpdateWaitN)
+		p.parseLockTablesAndModifiers(lockNode, ast.SelectLockForUpdateNoWait,
+			ast.SelectLockForUpdateSkipLocked, ast.SelectLockForUpdateWaitN)
 	case share:
 		p.next()
 		lockNode.LockType = ast.SelectLockForShare
@@ -213,7 +206,9 @@ func (p *HandParser) parseSelectLock() *ast.SelectLockInfo {
 
 // parseLockTablesAndModifiers parses: [OF tbl_name [, ...]] [NOWAIT|SKIP LOCKED|WAIT N]
 // waitNType of 0 disables WAIT N support (only FOR UPDATE supports it).
-func (p *HandParser) parseLockTablesAndModifiers(lockNode *ast.SelectLockInfo, nowaitType, skipLockedType ast.SelectLockType, waitNType ast.SelectLockType) {
+func (p *HandParser) parseLockTablesAndModifiers(
+	lockNode *ast.SelectLockInfo, nowaitType, skipLockedType ast.SelectLockType, waitNType ast.SelectLockType,
+) {
 	// Optional: OF tbl_name [, tbl_name ...]
 	if _, ok := p.accept(of); ok {
 		for {
@@ -262,7 +257,7 @@ func (p *HandParser) parseSelectIntoOption() *ast.SelectIntoOption {
 }
 
 // isJoinKeyword returns true if the token type is a keyword that starts a JOIN.
-func (p *HandParser) isJoinKeyword(tp int) bool {
+func (*HandParser) isJoinKeyword(tp int) bool {
 	switch tp {
 	case join, inner, cross, left, right, natural, straightJoin:
 		return true
@@ -273,7 +268,7 @@ func (p *HandParser) isJoinKeyword(tp int) bool {
 // isSimpleJoinKeyword returns true if the token type starts a join that doesn't
 // require an ON clause (inner/cross join). Used by nested join recursion to
 // avoid recursing into LEFT/RIGHT/NATURAL joins which need their own ON.
-func (p *HandParser) isSimpleJoinKeyword(tp int) bool {
+func (*HandParser) isSimpleJoinKeyword(tp int) bool {
 	switch tp {
 	case join, inner, cross, straightJoin:
 		return true

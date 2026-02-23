@@ -65,7 +65,8 @@ func (p *HandParser) parseCreateBindingStmt(globalScope bool) ast.StmtNode {
 	return stmt
 }
 
-// parseDropBindingStmt parses: DROP [GLOBAL | SESSION] BINDING [FOR select_stmt [USING select_stmt] | FOR SQL DIGEST str]
+// parseDropBindingStmt parses: DROP [GLOBAL | SESSION] BINDING
+// [FOR select_stmt [USING select_stmt] | FOR SQL DIGEST str]
 func (p *HandParser) parseDropBindingStmt(globalScope bool) ast.StmtNode {
 	stmt := Alloc[ast.DropBindingStmt](p.arena)
 	stmt.GlobalScope = globalScope

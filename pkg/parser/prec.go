@@ -55,7 +55,7 @@ const (
 
 // tokenPrecedence returns the infix precedence for the given token.
 // Returns precNone if the token is not a valid infix operator.
-func tokenPrecedence(tok int, sqlMode mysql.SQLMode) int {
+func tokenPrecedence(tok int, _ mysql.SQLMode) int {
 	switch tok {
 	case or, pipesAsOr:
 		return precOr

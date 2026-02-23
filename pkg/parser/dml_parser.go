@@ -156,12 +156,13 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		} else if p.peek().Tp == values { // (VALUES ...)
 			stmt.Lists = p.parseValueList(isReplace, false) // subquery VALUES? Assuming false for now.
 			p.expect(')')
-		} else {
+		} else { //revive:disable-line
 			// Assuming recursive calls handle complex cases.
 		}
 	case set: // SET c1=v1
 		if hasColumnList {
-			p.error(p.peek().Offset, "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near 'SET'")
+			p.error(p.peek().Offset, "You have an error in your SQL syntax; check the manual that "+
+				"corresponds to your TiDB version for the right syntax to use near 'SET'")
 			return nil
 		}
 		// INSERT INTO t SET c1=v1
@@ -201,13 +202,13 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 }
 
 // parseValueList parses VALUES (v1, v2), (v3, v4), ...
-func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode {
+func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode { //revive:disable-line
 	p.expectAny(values, value)
 
 	var lists [][]ast.ExprNode
 	for {
 		// (val1, val2, ...) || ROW(val1, val2, ...)
-		if _, ok := p.accept(row); ok {
+		if _, ok := p.accept(row); ok { //revive:disable-line
 			// consume ROW
 		} else if enforceRow {
 			p.expect(row)
@@ -251,7 +252,8 @@ func (p *HandParser) parseAssignment() *ast.Assignment {
 	return node
 }
 
-// parseUpdateStmt parses UPDATE [LOW_PRIORITY] [IGNORE] table_reference SET col_name1={expr1|DEFAULT} [, col_name2={expr2|DEFAULT}] ... [WHERE where_condition] [ORDER BY ...] [LIMIT row_count]
+// parseUpdateStmt parses UPDATE [LOW_PRIORITY] [IGNORE] table_reference SET col_name1={expr1|DEFAULT} [,
+// col_name2={expr2|DEFAULT}] ... [WHERE where_condition] [ORDER BY ...] [LIMIT row_count]
 func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 	stmt := Alloc[ast.UpdateStmt](p.arena)
 	p.expect(update)
@@ -313,7 +315,8 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 	return stmt
 }
 
-// parseDeleteStmt parses DELETE [LOW_PRIORITY] [QUICK] [IGNORE] FROM tbl_name [PARTITION (partition_name_list)] [WHERE where_condition] [ORDER BY ...] [LIMIT row_count]
+// parseDeleteStmt parses DELETE [LOW_PRIORITY] [QUICK] [IGNORE] FROM tbl_name
+// [PARTITION (partition_name_list)] [WHERE where_condition] [ORDER BY ...] [LIMIT row_count]
 // OR Multi-table syntax.
 func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	stmt := Alloc[ast.DeleteStmt](p.arena)
@@ -360,7 +363,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	if !stmt.BeforeFrom {
 		if _, ok := p.accept(using); ok {
 			// DELETE FROM t1, t2 USING t1, t2, t3 ...
-			if stmt.IsMultiTable {
+			if stmt.IsMultiTable { //revive:disable-line
 				// Already is multi-table. e.g. DELETE t1 FROM t2 USING t3
 			} else {
 				// Was DELETE FROM t1 ... USING ...
@@ -368,7 +371,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 				stmt.IsMultiTable = true
 				stmt.BeforeFrom = false
 				stmt.Tables = p.convertToTableList(stmt.TableRefs)
-				if stmt.Tables == nil {
+				if stmt.Tables == nil { //revive:disable-line
 					// Failed to convert
 				}
 				// Parse the USING tables as new TableRefs (sources).
@@ -403,7 +406,8 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 				}
 
 				if hasWildcard && !stmt.IsMultiTable {
-					p.error(p.peek().Offset, "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '.*'")
+					p.error(p.peek().Offset, "You have an error in your SQL syntax; check the manual that "+
+						"corresponds to your TiDB version for the right syntax to use near '.*'")
 					return nil
 				}
 			}
@@ -596,7 +600,7 @@ func (p *HandParser) parseNonTransactionalDMLStmt() ast.StmtNode {
 		return nil
 	}
 
-	if shardable, ok := dml.(ast.ShardableDMLStmt); ok {
+	if shardable, ok := dml.(ast.ShardableDMLStmt); ok { //revive:disable-line
 		stmt.DMLStmt = shardable
 	} else {
 		p.error(p.peek().Offset, "invalid DML statement for BATCH")

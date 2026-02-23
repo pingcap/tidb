@@ -64,19 +64,19 @@ func (p *HandParser) parseBeginStmt() ast.StmtNode {
 	switch p.peek().Tp {
 	case read:
 		p.next()
-		if _, ok := p.accept(write); ok {
-			// START TRANSACTION READ WRITE — default mode
-		} else if _, ok := p.accept(only); ok {
-			stmt.ReadOnly = true
-			if _, ok := p.accept(asof); ok {
-				p.expect(timestampType)
-				if ts := p.parseExpression(precNone); ts != nil {
+		if _, ok := p.accept(write); !ok {
+			if _, ok := p.accept(only); ok {
+				stmt.ReadOnly = true
+				if _, ok := p.accept(asof); ok {
+					p.expect(timestampType)
+					ts := p.parseExpression(precNone)
+					if ts == nil {
+						p.syntaxError(p.peek().Offset)
+						return nil
+					}
 					asOf := Alloc[ast.AsOfClause](p.arena)
 					asOf.TsExpr = ts
 					stmt.AsOf = asOf
-				} else {
-					p.syntaxError(p.peek().Offset)
-					return nil
 				}
 			}
 		}

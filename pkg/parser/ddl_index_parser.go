@@ -72,9 +72,8 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		if _, ok := p.accept(not); ok {
 			p.expect(enforced)
 			cons.Enforced = false
-		} else if _, ok := p.accept(enforced); ok {
-			cons.Enforced = true
 		} else {
+			p.accept(enforced)
 			cons.Enforced = true
 		}
 	case index, key:
@@ -159,10 +158,10 @@ func (p *HandParser) parseIndexPartSpecifications() []*ast.IndexPartSpecificatio
 			return nil
 		}
 
-		if _, ok := p.accept(asc); ok {
-			// default
-		} else if _, ok := p.accept(desc); ok {
-			part.Desc = true
+		if _, ok := p.accept(asc); !ok {
+			if _, ok := p.accept(desc); ok {
+				part.Desc = true
+			}
 		}
 
 		parts = append(parts, part)
@@ -287,7 +286,7 @@ func (p *HandParser) resolveIndexType() ast.IndexType {
 
 // mergeIndexOptions merges two index options, preferring the second for non-zero fields.
 // If pre is nil, returns post. If post is nil, returns pre.
-func (p *HandParser) mergeIndexOptions(pre, post *ast.IndexOption) *ast.IndexOption {
+func (*HandParser) mergeIndexOptions(pre, post *ast.IndexOption) *ast.IndexOption {
 	if pre == nil {
 		return post
 	}
@@ -369,8 +368,7 @@ func (p *HandParser) parseIndexOptions() *ast.IndexOption {
 			opt.Global = p.next().Tp == global
 		case secondaryEngineAttribute:
 			p.next()
-			if _, ok := p.accept(eq); ok {
-			}
+			p.accept(eq)
 			if tok, ok := p.expect(stringLit); ok {
 				opt.SecondaryEngineAttr = tok.Lit
 			}
