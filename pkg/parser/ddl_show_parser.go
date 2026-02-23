@@ -238,7 +238,13 @@ func (p *HandParser) showSyntaxError() ast.StmtNode {
 	return nil
 }
 
-// parseShowPlacement handles: SHOW PLACEMENT [LABELS | FOR {DATABASE|TABLE|PARTITION} ...] [LIKE|WHERE]
+// parseShowPlacement handles: SHOW PLACEMENT [LABELS | FOR {DATABASE|TABLE} ...] [LIKE|WHERE]
+// parser.y grammar (ShowPlacementTarget):
+//
+//	DATABASE db     → ShowPlacementForDatabase
+//	TABLE tbl       → ShowPlacementForTable
+//	TABLE tbl PARTITION p → ShowPlacementForPartition
+//
 // Caller already consumed SHOW and PLACEMENT tokens.
 func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 	// SHOW PLACEMENT LABELS
@@ -248,35 +254,44 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	}
-	stmt.Tp = ast.ShowPlacement
 
+	// SHOW PLACEMENT FOR {DATABASE db | TABLE tbl [PARTITION p]}
 	if _, ok := p.accept(forKwd); ok {
 		if _, ok := p.accept(database); ok {
+			// SHOW PLACEMENT FOR DATABASE db
 			tok, ok := p.expect(identifier)
 			if !ok {
 				return nil
 			}
+			stmt.Tp = ast.ShowPlacementForDatabase
 			stmt.DBName = tok.Lit
 		} else if _, ok := p.accept(tableKwd); ok {
 			stmt.Table = p.parseTableName()
 			if _, ok := p.accept(partition); ok {
+				// SHOW PLACEMENT FOR TABLE tbl PARTITION p
 				tok, ok := p.expect(identifier)
 				if !ok {
 					return nil
 				}
+				stmt.Tp = ast.ShowPlacementForPartition
 				stmt.Partition = ast.NewCIStr(tok.Lit)
+			} else {
+				// SHOW PLACEMENT FOR TABLE tbl
+				stmt.Tp = ast.ShowPlacementForTable
 			}
 		} else {
 			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
 		// After FOR clause, only LIKE/WHERE or statement end is valid.
-		// Reject unexpected trailing tokens like "TABLE tb1" after "DATABASE db1".
 		next := p.peek().Tp
 		if next != ';' && next != EOF && next != like && next != where {
 			p.syntaxErrorAt(p.peek().Offset)
 			return nil
 		}
+	} else {
+		// SHOW PLACEMENT (no FOR clause)
+		stmt.Tp = ast.ShowPlacement
 	}
 
 	p.parseShowLikeOrWhere(stmt)

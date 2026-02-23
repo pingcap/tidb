@@ -286,7 +286,13 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	case "BR":
 		p.next()
 		return p.parseShowBRJobStmt()
+	case "AFFINITY":
+		// parser.y: ShowTargetFilterable → "AFFINITY" → ShowStmt{Tp: ShowAffinity}
+		p.next()
+		stmt.Tp = ast.ShowAffinity
+		return stmt
 	case "IMPORTS":
+		// SHOW IMPORTS — ShowImports is the correct AST constant for this path
 		p.next()
 		stmt.Tp = ast.ShowImports
 		p.parseShowLikeOrWhere(stmt)
