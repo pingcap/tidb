@@ -65,7 +65,7 @@ func checkRule(pkg string) int {
 	case "pkg/planner/core":
 		return 285
 	case "pkg/executor/test/analyzetest":
-		return 52
+		return 53
 	default:
 		return 50
 	}

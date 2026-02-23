@@ -366,13 +366,21 @@ func (s *statsSyncLoad) handleOneItemTaskWithSCtx(sctx sessionctx.Context, task 
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := statsTbl.IndexIsLoadNeeded(item.ID)
+		idxInfo := tblInfo.FindIndexByID(item.ID)
+		// For consolidated single-column indexes, redirect load to column stats.
+		if idxInfo != nil && idxInfo.IsSingleColumnNonPrefixIndex() {
+			colInfo := tblInfo.Columns[idxInfo.Columns[0].Offset]
+			if !colInfo.IsVirtualGenerated() {
+				return s.handleConsolidatedIndexLoad(sctx, task, statsTbl, idxInfo, colInfo, isPkIsHandle)
+			}
+		}
 		if !loadNeeded {
 			return nil
 		}
 		if index != nil {
 			wrapper.idxInfo = index.Info
 		} else {
-			wrapper.idxInfo = tblInfo.FindIndexByID(item.ID)
+			wrapper.idxInfo = idxInfo
 		}
 	} else {
 		col, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
@@ -513,6 +521,44 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		w.col = colHist
 	}
 	return w, nil
+}
+
+// handleConsolidatedIndexLoad loads column stats from storage and creates a
+// synthetic Index for a single-column non-prefix index whose stats are
+// consolidated with the underlying column.
+func (s *statsSyncLoad) handleConsolidatedIndexLoad(
+	sctx sessionctx.Context,
+	task *statstypes.NeededItemTask,
+	_ *statistics.Table,
+	idxInfo *model.IndexInfo,
+	colInfo *model.ColumnInfo,
+	isPkIsHandle bool,
+) error {
+	item := task.Item.TableItemID
+	colItem := model.TableItemID{
+		TableID: item.TableID,
+		ID:      colInfo.ID,
+		IsIndex: false,
+	}
+	w := &statsWrapper{colInfo: colInfo}
+	w, err := s.readStatsForOneItem(sctx, colItem, w, isPkIsHandle, task.Item.FullLoad)
+	if err != nil {
+		if stderrors.Is(err, errGetHistMeta) {
+			return nil
+		}
+		return err
+	}
+	if w.col == nil {
+		return nil
+	}
+	synth := statistics.SynthesizeIndexFromColumn(w.col, idxInfo, item.TableID)
+	if synth == nil {
+		return nil
+	}
+	// Update both the column and the synthetic index in the cache.
+	s.updateCachedItem(colItem, w.col, nil, task.Item.FullLoad)
+	s.updateCachedItem(item, nil, synth, task.Item.FullLoad)
+	return nil
 }
 
 // drainColTask will hang until a task can return, and either task or error will be returned.

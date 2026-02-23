@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	pmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -586,8 +587,6 @@ func TestIssue20874(t *testing.T) {
 	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
 		"0 1 3 0 6 2 1",
 		"0 2 2 0 6 2 -0.5",
-		"1 1 3 0 6 2 0",
-		"1 2 2 0 6 2 0",
 	))
 }
 
@@ -620,6 +619,149 @@ func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
 		"test t0  a 0 0 1 1 1111 1111 0",
 		"test t1  PRIMARY 1 0 1 1 1111 1111 0",
 		"test t1  a 0 0 1 1 1111 1111 0"))
+}
+
+func analyzeCollationCaseInsensitiveSubtest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+
+	// Test 1: Simple case — only the collation-equivalent values
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(255) collate utf8mb4_0900_ai_ci, index idx_a(a))")
+	tk.MustExec("insert into t values ('HELLO'), ('Hello'), ('HELLP'), ('Hellp'), ('hello')")
+	tk.MustExec("analyze table t with 10 topn, 10 buckets")
+
+	// Under utf8mb4_0900_ai_ci collation:
+	//   HELLO = Hello = hello  (3 rows, same collation key)
+	//   HELLP = Hellp          (2 rows, same collation key)
+	//
+	// Binary sort order would be: HELLO < HELLP < Hello < Hellp < hello
+	// This interleaves the two collation groups.
+	t.Log("====== Test 1: utf8mb4_0900_ai_ci — basic collation equivalence ======")
+	t.Log("--- Collation behavior (GROUP BY) ---")
+	for _, row := range tk.MustQuery("select a, count(*) cnt from t group by a order by a").Rows() {
+		t.Logf("  %s: count=%s", row[0], row[1])
+	}
+	t.Log("--- Column TopN (is_index=0) ---")
+	for _, row := range tk.MustQuery("show stats_topn where table_name = 't' and is_index = 0").Sort().Rows() {
+		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
+	}
+	t.Log("--- Index TopN (is_index=1) ---")
+	for _, row := range tk.MustQuery("show stats_topn where table_name = 't' and is_index = 1").Sort().Rows() {
+		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
+	}
+	t.Log("--- Column Buckets ---")
+	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't' and is_index = 0").Sort().Rows() {
+		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
+			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
+	}
+	t.Log("--- Index Buckets ---")
+	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't' and is_index = 1").Sort().Rows() {
+		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
+			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
+	}
+	t.Log("--- Histograms (distinct_count, null_count) ---")
+	for _, row := range tk.MustQuery("show stats_histograms where table_name = 't'").Sort().Rows() {
+		t.Logf("  col=%s is_index=%s distinct_count=%s null_count=%s", row[3], row[4], row[6], row[7])
+	}
+
+	// Test 2: More values to force histogram buckets (not just TopN)
+	// Add enough distinct values so only some fit in TopN (2 topn), rest go to buckets
+	t.Log("")
+	t.Log("====== Test 2: utf8mb4_0900_ai_ci — force histogram buckets with 2 topn ======")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a varchar(255) collate utf8mb4_0900_ai_ci, index idx_a(a))")
+	tk.MustExec(`insert into t2 values
+		('HELLO'), ('Hello'), ('hello'), ('hElLo'), ('hELLO'),
+		('HELLP'), ('Hellp'),
+		('apple'), ('APPLE'), ('Apple'),
+		('BANANA'),
+		('cherry'),
+		('date'), ('DATE'),
+		('elderberry'),
+		('fig'), ('FIG'), ('Fig'), ('fIg')`)
+	tk.MustExec("analyze table t2 with 2 topn, 10 buckets")
+
+	t.Log("--- Collation behavior (GROUP BY) ---")
+	for _, row := range tk.MustQuery("select a, count(*) cnt from t2 group by a order by cnt desc, a").Rows() {
+		t.Logf("  %s: count=%s", row[0], row[1])
+	}
+	t.Log("--- Column TopN (is_index=0) ---")
+	for _, row := range tk.MustQuery("show stats_topn where table_name = 't2' and is_index = 0").Sort().Rows() {
+		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
+	}
+	t.Log("--- Index TopN (is_index=1) ---")
+	for _, row := range tk.MustQuery("show stats_topn where table_name = 't2' and is_index = 1").Sort().Rows() {
+		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
+	}
+	t.Log("--- Column Buckets ---")
+	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't2' and is_index = 0").Sort().Rows() {
+		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
+			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
+	}
+	t.Log("--- Index Buckets ---")
+	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't2' and is_index = 1").Sort().Rows() {
+		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
+			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
+	}
+	t.Log("--- Histograms (distinct_count, null_count) ---")
+	for _, row := range tk.MustQuery("show stats_histograms where table_name = 't2'").Sort().Rows() {
+		t.Logf("  col=%s is_index=%s distinct_count=%s null_count=%s", row[3], row[4], row[6], row[7])
+	}
+
+	// Test 3: INT column — compare column vs index stats encoding
+	t.Log("")
+	t.Log("====== Test 3: INT column — encoding difference ======")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (a int, index idx_a(a))")
+	tk.MustExec("insert into t3 values (1),(1),(1),(2),(2),(3),(4),(5)")
+	tk.MustExec("analyze table t3 with 2 topn, 10 buckets")
+	t.Log("--- Column TopN (is_index=0) ---")
+	for _, row := range tk.MustQuery("show stats_topn where table_name = 't3' and is_index = 0").Sort().Rows() {
+		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
+	}
+	t.Log("--- Index TopN (is_index=1) ---")
+	for _, row := range tk.MustQuery("show stats_topn where table_name = 't3' and is_index = 1").Sort().Rows() {
+		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
+	}
+	t.Log("--- Column Buckets ---")
+	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't3' and is_index = 0").Sort().Rows() {
+		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
+			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
+	}
+	t.Log("--- Index Buckets ---")
+	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't3' and is_index = 1").Sort().Rows() {
+		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
+			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
+	}
+
+	// Test 4: VARCHAR with binary collation (utf8mb4_bin) — preserves original strings
+	t.Log("")
+	t.Log("====== Test 4: VARCHAR utf8mb4_bin — case-sensitive baseline ======")
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4 (a varchar(255) collate utf8mb4_bin, index idx_a(a))")
+	tk.MustExec("insert into t4 values ('HELLO'),('HELLO'),('HELLO'),('Hello'),('Hello'),('hello'),('HELLP'),('Hellp')")
+	tk.MustExec("analyze table t4 with 2 topn, 10 buckets")
+	t.Log("--- Column TopN (is_index=0) ---")
+	for _, row := range tk.MustQuery("show stats_topn where table_name = 't4' and is_index = 0").Sort().Rows() {
+		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
+	}
+	t.Log("--- Index TopN (is_index=1) ---")
+	for _, row := range tk.MustQuery("show stats_topn where table_name = 't4' and is_index = 1").Sort().Rows() {
+		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
+	}
+	t.Log("--- Column Buckets ---")
+	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't4' and is_index = 0").Sort().Rows() {
+		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
+			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
+	}
+	t.Log("--- Index Buckets ---")
+	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't4' and is_index = 1").Sort().Rows() {
+		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
+			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
+	}
 }
 
 func TestAnalyzeSamplingWorkPanic(t *testing.T) {
@@ -1465,19 +1607,18 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 					"test t p1 idx 1 0 4 1 7 10 0",
 					"test t p1 idx 1 1 6 1 11 12 0"))
 
+			// In storage, no is_index=1 entries exist: single-column index stats are consolidated
+			// with column stats and not stored separately.
 			tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
-				testkit.Rows(fmt.Sprintf("%d 0 1 12 1 19 2 0", tblID), // global, aA
+				testkit.Rows(fmt.Sprintf("%d 0 1 12 1 19 2 0", tblID), // global, a
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", tblID),   // global, b, not analyzed
 					fmt.Sprintf("%d 0 3 14 0 20 2 0", tblID), // global, c
-					fmt.Sprintf("%d 1 1 14 0 0 2 0", tblID),  // global, idx
 					fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID),    // p0, a
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", p0ID),    // p0, b, not analyzed
 					fmt.Sprintf("%d 0 3 6 0 9 2 1", p0ID),    // p0, c
-					fmt.Sprintf("%d 1 1 6 0 9 2 0", p0ID),    // p0, idx
 					fmt.Sprintf("%d 0 1 7 0 11 2 1", p1ID),   // p1, a
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", p1ID),    // p1, b, not analyzed
 					fmt.Sprintf("%d 0 3 8 0 11 2 1", p1ID),   // p1, c
-					fmt.Sprintf("%d 1 1 8 0 11 2 0", p1ID),   // p1, idx
 				))
 		}(val)
 	}
@@ -1576,19 +1717,18 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 					"test t p1 idx 1 0 4 1 7 10 0",
 					"test t p1 idx 1 1 6 1 11 12 0"))
 
+			// In storage, no is_index=1 entries exist: single-column index stats are consolidated
+			// with column stats and not stored separately.
 			tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
 				testkit.Rows(fmt.Sprintf("%d 0 1 0 0 0 0 0", tblID), // global, a, not analyzed
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", tblID), // global, b, not analyzed
 					fmt.Sprintf("%d 0 3 0 0 0 0 0", tblID), // global, c, not analyzed
-					fmt.Sprintf("%d 1 1 0 0 0 0 0", tblID), // global, idx, not analyzed
 					fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID),  // p0, a
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", p0ID),  // p0, b, not analyzed
 					fmt.Sprintf("%d 0 3 6 0 9 2 1", p0ID),  // p0, c
-					fmt.Sprintf("%d 1 1 6 0 9 2 0", p0ID),  // p0, idx
 					fmt.Sprintf("%d 0 1 7 0 11 2 1", p1ID), // p1, a
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", p1ID),  // p1, b, not analyzed
 					fmt.Sprintf("%d 0 3 8 0 11 2 1", p1ID), // p1, c
-					fmt.Sprintf("%d 1 1 8 0 11 2 0", p1ID), // p1, idx
 				))
 		}(val)
 	}
@@ -2812,7 +2952,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Sort().Check(
 		testkit.Rows(
 			"analyze index idx_c",
-			"analyze table index idx_b, columns a, b with 256 buckets, 100 topn, 1 samplerate",
+			"analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate",
 		))
 
 	is := dom.InfoSchema()
@@ -2950,7 +3090,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	// 2. analyze and check analyze jobs
 	tk.MustExec("analyze table t with 1 samplerate, 3 topn")
 	tk.MustQuery("select id, table_schema, table_name, partition_name, job_info, processed_rows, state from mysql.analyze_jobs order by id").
-		Check(testkit.Rows("1 test t  analyze table index ia, column a with 256 buckets, 3 topn, 1 samplerate 27 finished",
+		Check(testkit.Rows("1 test t  analyze table column a with 256 buckets, 3 topn, 1 samplerate 27 finished",
 			"2 test t  analyze index ij_signed 190 finished",
 			"3 test t  analyze index ij_unsigned 135 finished",
 			"4 test t  analyze index ij_double 154 finished",
@@ -3318,4 +3458,115 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	require.False(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
 	// For stored columns, we can collect statistics because the values are stored in TiKV
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
+}
+
+// TestConsolidateSingleColIndexStats verifies that single-column non-prefix
+// indexes in Stats V2 have their stats consolidated with the underlying column
+// stats: no separate index stats rows are stored, and the cache synthesizes
+// Index entries from Column entries.
+func TestConsolidateSingleColIndexStats(t *testing.T) {
+	t.Run("CollationCaseInsensitive", analyzeCollationCaseInsensitiveSubtest)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+
+	// Create table with several index types:
+	//   idx_a: single-column non-prefix (eligible for consolidation)
+	//   idx_b: single-column non-prefix (eligible)
+	//   idx_ab: multi-column (NOT eligible)
+	//   idx_a_prefix: prefix index (NOT eligible)
+	//   idx_u: single-column unique (eligible)
+	tk.MustExec("drop table if exists t_consol")
+	tk.MustExec(`create table t_consol (
+		a int, b varchar(100), c varchar(100),
+		index idx_a(a),
+		index idx_b(b),
+		index idx_ab(a, b),
+		index idx_c_prefix(c(10)),
+		unique index idx_u(a)
+	)`)
+	tk.MustExec("insert into t_consol values (1,'hello','world'), (2,'foo','bar'), (3,'hello','baz'), (4,'foo','world')")
+	tk.MustExec("analyze table t_consol")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	// 1. Verify no is_index=1 rows exist in stats_histograms for eligible indexes (idx_a, idx_b, idx_u).
+	//    They should only have is_index=0 (column) rows.
+	rows := tk.MustQuery("select hist_id, is_index from mysql.stats_histograms where table_id = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='t_consol') and is_index = 1").Rows()
+	// Only multi-column (idx_ab) and prefix (idx_c_prefix) indexes should have is_index=1 rows.
+	eligibleIdxNames := map[string]bool{"idx_a": true, "idx_b": true, "idx_u": true}
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_consol"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	for _, row := range rows {
+		histID, _ := strconv.ParseInt(row[0].(string), 10, 64)
+		for _, idx := range tblInfo.Indices {
+			if idx.ID == histID {
+				require.Falsef(t, eligibleIdxNames[idx.Name.L],
+					"expected no is_index=1 row for consolidated index %s, but found one", idx.Name.L)
+			}
+		}
+	}
+
+	// 2. Verify the stats cache has Index entries for all indexes (synthesized from column stats).
+	tblStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.NotNil(t, tblStats)
+	for _, idx := range tblInfo.Indices {
+		if idx.State != pmodel.StatePublic {
+			continue
+		}
+		idxStats := tblStats.GetIdx(idx.ID)
+		require.NotNilf(t, idxStats, "expected index stats in cache for %s", idx.Name.L)
+	}
+
+	// 3. For eligible single-column indexes, verify that the synthesized index
+	//    shares the same NDV as the column stats.
+	for _, idx := range tblInfo.Indices {
+		if !idx.IsSingleColumnNonPrefixIndex() {
+			continue
+		}
+		colInfo := tblInfo.Columns[idx.Columns[0].Offset]
+		if colInfo.IsVirtualGenerated() {
+			continue
+		}
+		idxStats := tblStats.GetIdx(idx.ID)
+		colStats := tblStats.GetCol(colInfo.ID)
+		require.NotNilf(t, idxStats, "missing index stats for %s", idx.Name.L)
+		require.NotNilf(t, colStats, "missing column stats for %s", colInfo.Name.L)
+		require.Equalf(t, colStats.NDV, idxStats.NDV,
+			"NDV mismatch for consolidated index %s vs column %s", idx.Name.L, colInfo.Name.L)
+	}
+
+	// 4. Verify multi-column and prefix indexes still have stored index stats.
+	multiColIdx := tblInfo.FindIndexByName("idx_ab")
+	require.NotNil(t, multiColIdx)
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 1 and hist_id = %d",
+		tblInfo.ID, multiColIdx.ID,
+	)).Check(testkit.Rows("1"))
+
+	prefixIdx := tblInfo.FindIndexByName("idx_c_prefix")
+	require.NotNil(t, prefixIdx)
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 1 and hist_id = %d",
+		tblInfo.ID, prefixIdx.ID,
+	)).Check(testkit.Rows("1"))
+
+	// 5. Verify old index stats are cleaned up on re-analyze.
+	//    First, manually insert a fake is_index=1 row for idx_a to simulate pre-change data.
+	idxA := tblInfo.FindIndexByName("idx_a")
+	require.NotNil(t, idxA)
+	tk.MustExec(fmt.Sprintf(
+		"insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values (%d, 1, %d, 99, 1)",
+		tblInfo.ID, idxA.ID,
+	))
+	// Re-analyze should delete this old row.
+	tk.MustExec("analyze table t_consol")
+	tk.MustQuery(fmt.Sprintf(
+		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 1 and hist_id = %d",
+		tblInfo.ID, idxA.ID,
+	)).Check(testkit.Rows("0"))
 }

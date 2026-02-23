@@ -397,6 +397,20 @@ func (index *IndexInfo) ConditionExpr() (ast.ExprNode, error) {
 	return stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr, nil
 }
 
+// IsSingleColumnNonPrefixIndex returns true if the index is public, has exactly
+// one column, and uses neither a prefix, a partial-index condition, nor is an
+// MV/columnar/global index. This identifies indexes whose statistics are
+// identical to the underlying column statistics in stats version 2.
+func (index *IndexInfo) IsSingleColumnNonPrefixIndex() bool {
+	return index.State == StatePublic &&
+		len(index.Columns) == 1 &&
+		!index.HasPrefixIndex() &&
+		!index.MVIndex &&
+		!index.Global &&
+		!index.IsColumnarIndex() &&
+		!index.HasCondition()
+}
+
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
 func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...ast.CIStr) *IndexInfo {
 	for _, index := range indices {

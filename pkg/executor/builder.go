@@ -3188,6 +3188,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		schemaForVirtualColEval: schemaForVirtualColEval,
 		baseCount:               count,
 		baseModifyCnt:           modifyCount,
+		consolidatedIdxIDs:      task.ConsolidatedIdxIDs,
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),

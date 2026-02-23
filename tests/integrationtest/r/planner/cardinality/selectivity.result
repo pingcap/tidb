@@ -79,12 +79,6 @@ stats_ver
 2
 2
 2
-2
-2
-2
-2
-2
-2
 show stats_topn where db_name = 'planner__cardinality__selectivity';
 Db_name	Table_name	Partition_name	Column_name	Is_index	Value	Count
 planner__cardinality__selectivity	ct1		a	0	1	1
