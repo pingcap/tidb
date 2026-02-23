@@ -47,6 +47,7 @@ func newAnalyzeSaveStatsWorker(
 
 func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *handle.Handle, analyzeSnapshot bool) {
 	errReported := false
+	var drainErr error
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze save stats worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -57,6 +58,11 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 		}
 	}()
 	for results := range worker.resultsCh {
+		if drainErr != nil {
+			finishJobWithLog(statsHandle, results.Job, drainErr)
+			results.DestroyAndPutToPool()
+			continue
+		}
 		mockKill := false
 		failpoint.Inject("mockAnalyzeSaveWorkerKill", func(val failpoint.Value) {
 			if val.(bool) {
@@ -64,23 +70,24 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 			}
 		})
 		if mockKill {
-			err := exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
-			finishJobWithLog(statsHandle, results.Job, err)
+			drainErr = exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+			finishJobWithLog(statsHandle, results.Job, drainErr)
 			results.DestroyAndPutToPool()
 			if !errReported {
-				worker.errCh <- err
+				worker.errCh <- drainErr
 				errReported = true
 			}
-			return
+			continue
 		}
 		if err := worker.killer.HandleSignal(); err != nil {
-			finishJobWithLog(statsHandle, results.Job, err)
+			drainErr = err
+			finishJobWithLog(statsHandle, results.Job, drainErr)
 			results.DestroyAndPutToPool()
 			if !errReported {
-				worker.errCh <- err
+				worker.errCh <- drainErr
 				errReported = true
 			}
-			return
+			continue
 		}
 		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
 		if err != nil {
