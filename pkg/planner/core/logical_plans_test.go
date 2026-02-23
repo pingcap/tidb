@@ -320,7 +320,7 @@ func TestFullOuterJoinCascadesFailFast(t *testing.T) {
 	require.ErrorContains(t, err, "FULL OUTER JOIN", sql)
 }
 
-func TestFullOuterJoinPhysicalPlanFailFast(t *testing.T) {
+func TestFullOuterJoinPhysicalPlanHashJoinOnly(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
 	ctx := context.Background()
@@ -335,10 +335,27 @@ func TestFullOuterJoinPhysicalPlanFailFast(t *testing.T) {
 	require.NoError(t, err, sql)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 	require.NoError(t, err, sql)
-	_, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
-	require.Error(t, err)
-	require.True(t, plannererrors.ErrNotSupportedYet.Equal(err))
-	require.ErrorContains(t, err, "FULL OUTER JOIN")
+	p, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	require.NoError(t, err, sql)
+
+	var hashJoin *PhysicalHashJoin
+	var findHashJoin func(plan base.PhysicalPlan)
+	findHashJoin = func(plan base.PhysicalPlan) {
+		if hashJoin != nil {
+			return
+		}
+		if hj, ok := plan.(*PhysicalHashJoin); ok {
+			hashJoin = hj
+			return
+		}
+		for _, child := range plan.Children() {
+			findHashJoin(child)
+		}
+	}
+	findHashJoin(p.(base.PhysicalPlan))
+	require.NotNil(t, hashJoin, sql)
+	require.Equal(t, logicalop.FullOuterJoin, hashJoin.JoinType, sql)
+	require.False(t, hashJoin.UseOuterToBuild, sql)
 }
 
 func TestOuterWherePredicatePushDown(t *testing.T) {

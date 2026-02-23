@@ -606,6 +606,8 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
 	case logicalop.RightOuterJoin:
 		pbJoinType = tipb.JoinType_TypeRightOuterJoin
+	case logicalop.FullOuterJoin:
+		return nil, errors.Errorf("FULL OUTER JOIN is not supported in ToPB")
 	case logicalop.SemiJoin:
 		pbJoinType = tipb.JoinType_TypeSemiJoin
 	case logicalop.AntiSemiJoin:

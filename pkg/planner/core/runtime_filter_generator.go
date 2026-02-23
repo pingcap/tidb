@@ -158,6 +158,12 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 }
 
 func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) bool {
+	if hashJoinPlan.JoinType == logicalop.FullOuterJoin {
+		logutil.BgLogger().Debug("Join type does not match RF pattern",
+			zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
+			zap.String("JoinType", hashJoinPlan.JoinType.String()))
+		return false
+	}
 	if hashJoinPlan.RightIsBuildSide() {
 		// case1: build side is on the right
 		if hashJoinPlan.JoinType == logicalop.LeftOuterJoin || hashJoinPlan.JoinType == logicalop.AntiSemiJoin ||

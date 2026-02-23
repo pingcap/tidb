@@ -224,6 +224,65 @@ func TestHashJoin(t *testing.T) {
 	require.Equal(t, "5", outerActRows)
 }
 
+func TestFullOuterJoinHashJoinV1(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(join.DisableHashJoinV2)
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int)")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1,10,1), (2,20,0), (3,30,1), (null,40,1)")
+	tk.MustExec("insert into t2 values (1,100,1), (3,300,0), (4,400,1), (null,500,1)")
+
+	planSQL := "select * from t1 full outer join t2 on t1.a = t2.a"
+	tk.MustHavePlan(planSQL, "HashJoin")
+	tk.MustNotHavePlan(planSQL, "MergeJoin")
+	tk.MustNotHavePlan(planSQL, "IndexJoin")
+	tk.MustNotHavePlan(planSQL, "IndexHashJoin")
+
+	tk.MustQuery("select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b").Check(testkit.Rows(
+		"1 10 1 100",
+		"2 20 <nil> <nil>",
+		"3 30 3 300",
+		"<nil> <nil> 4 400",
+		"<nil> <nil> <nil> 500",
+		"<nil> 40 <nil> <nil>",
+	))
+
+	// t1/t2 side filters in ON should not be pushed down as child selections in full join.
+	tk.MustQuery("select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a and t1.c = 1 and t2.c = 1 order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b").Check(testkit.Rows(
+		"1 10 1 100",
+		"2 20 <nil> <nil>",
+		"3 30 <nil> <nil>",
+		"<nil> <nil> 3 300",
+		"<nil> <nil> 4 400",
+		"<nil> <nil> <nil> 500",
+		"<nil> 40 <nil> <nil>",
+	))
+
+	// Key bucket exists but other condition filters all rows: both sides must be preserved as unmatched.
+	tk.MustExec("drop table if exists t3, t4")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int)")
+	tk.MustExec("insert into t3 values (1,1)")
+	tk.MustExec("insert into t4 values (1,2)")
+	tk.MustQuery("select t3.a, t3.b, t4.a, t4.b from t3 full outer join t4 on t3.a = t4.a and t3.b > t4.b order by isnull(t3.a), t3.a, isnull(t4.a), t4.a, t3.b, t4.b").Check(testkit.Rows(
+		"1 1 <nil> <nil>",
+		"<nil> <nil> 1 2",
+	))
+
+	// Null-safe equality can match NULL keys, while normal equality cannot.
+	tk.MustQuery("select t1.b, t2.b from t1 full outer join t2 on t1.a = t2.a where t1.a is null and t2.a is null order by t1.b, t2.b").Check(testkit.Rows(
+		"<nil> 500",
+		"40 <nil>",
+	))
+	tk.MustQuery("select t1.b, t2.b from t1 full outer join t2 on t1.a <=> t2.a where t1.a is null and t2.a is null order by t1.b, t2.b").Check(testkit.Rows(
+		"40 500",
+	))
+}
+
 func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
