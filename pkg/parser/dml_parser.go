@@ -297,6 +297,9 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 			isMultiTable = true
 		}
 	}
+	// Propagate multipleTable flag to the AST node so downstream consumers
+	// (planner, executor) can distinguish single-table vs multi-table updates.
+	stmt.MultipleTable = isMultiTable
 
 	if p.peek().Tp == order {
 		if isMultiTable {
