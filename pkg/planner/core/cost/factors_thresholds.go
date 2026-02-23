@@ -39,7 +39,7 @@ const (
 
 	// SortFactor is a simplified cost factor for a single sort operation.
 	// We model a scan as equivalent to sorting 45 rows with 8-byte width, based on
-	// experimental results. See []
+	// experimental results. See https://github.com/pingcap/tidb/pull/65465#issuecomment-3947675501
 	// for the methodology behind this value.
 	SortFactor = 1.0 / 135.0
 )
