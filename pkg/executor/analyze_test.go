@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -222,7 +224,15 @@ func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockAnalyzeSaveWorkerKill", "1*return(true)")
+	enteredSave := make(chan struct{})
+	releaseSave := make(chan struct{})
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorage", func() {
+		once.Do(func() {
+			close(enteredSave)
+			<-releaseSave
+		})
+	})
 
 	done := make(chan error, 1)
 	go func() {
@@ -230,8 +240,16 @@ func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 	}()
 
 	select {
+	case <-enteredSave:
+	case <-time.After(5 * time.Second):
+		t.Fatal("analyze does not enter save stage")
+	}
+	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	close(releaseSave)
+
+	select {
 	case err := <-done:
-		require.Error(t, err)
+		require.ErrorContains(t, err, "Query execution was interrupted")
 	case <-time.After(5 * time.Second):
 		t.Fatal("analyze hangs after kill during save")
 	}
