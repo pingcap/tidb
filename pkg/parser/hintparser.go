@@ -488,11 +488,11 @@ func (hp *hintParser) parseHintValue() (string, bool) {
 		hp.parseError()
 		return "", false
 	}
-	switch {
-	case tok.tp == hintStringLit:
+	switch tok.tp {
+	case hintStringLit:
 		hp.next()
 		return tok.ident, true // can be "" for empty strings like sql_mode=""
-	case tok.tp == '-':
+	case '-':
 		// Negative number: - followed by int or float identifier
 		hp.next() // consume '-'
 		numTok := hp.next()

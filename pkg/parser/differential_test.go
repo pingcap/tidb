@@ -843,6 +843,29 @@ func collectDMLTestCases() []string {
 		"SELECT INSERT('hello', 2, 3, 'xyz')",
 		"SELECT CHAR(65, 66, 67)",
 		"SELECT WEIGHT_STRING('test')",
+		"SELECT WEIGHT_STRING('test' AS CHAR(5))",
+		"SELECT WEIGHT_STRING('test' AS BINARY(5))",
+
+		// ===== Scalar functions routed through parseScalarFuncCall switch =====
+		"SELECT MOD(10, 3)",
+		"SELECT MOD(a, b) FROM t",
+		"SELECT NEXTVAL(s)",
+		"SELECT NEXTVAL(test.s)",
+		"SELECT LASTVAL(s)",
+		"SELECT LASTVAL(test.s)",
+		"SELECT SETVAL(s, 100)",
+		"SELECT SETVAL(test.s, 100)",
+		"SELECT NEXT VALUE FOR s",
+		"SELECT NEXT VALUE FOR test.s",
+		"SELECT ADDDATE('2020-01-01', 1)",
+		"SELECT ADDDATE('2020-01-01', INTERVAL 1 DAY)",
+		"SELECT SUBDATE('2020-01-01', 1)",
+		"SELECT SUBDATE('2020-01-01', INTERVAL 1 MONTH)",
+		"SELECT GET_FORMAT(DATE, 'EUR')",
+		"SELECT GET_FORMAT(TIME, 'USA')",
+		"SELECT GET_FORMAT(DATETIME, 'ISO')",
+		"SELECT TIMESTAMPADD(DAY, 1, '2020-01-01')",
+		"SELECT TIMESTAMPADD(MONTH, 3, '2020-01-01')",
 
 		// ===== Charset/Binary interaction edge cases =====
 		"CREATE TABLE t (a VARCHAR(50) CHARACTER SET utf8 BINARY)",
@@ -1056,7 +1079,7 @@ func collectDMLTestCases() []string {
 }
 
 // TestHintIntegration verifies optimizer hints pass through the hand parser
-// correctly via the full parser.Parser (which injects HintParseFn).
+// correctly via the full parser.Parser.
 func TestHintIntegration(t *testing.T) {
 	hintSQLs := []string{
 		"SELECT /*+ HASH_JOIN(t1) */ * FROM t1",

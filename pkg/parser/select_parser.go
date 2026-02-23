@@ -199,6 +199,7 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 		if subNode == nil {
 			return nil
 		}
+		subNode = p.maybeParseUnion(subNode)
 		// CTE Definition is always a SubqueryExpr wrapping the ResultSetNode
 		subExpr := p.arena.AllocSubqueryExpr()
 		subExpr.Query = subNode

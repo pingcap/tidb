@@ -354,7 +354,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 				p.next()
 			case doubleType, float8Type:
 				p.next()
-				p.errs = append(p.errs, fmt.Errorf("Only VECTOR is supported for now"))
+				p.errs = append(p.errs, fmt.Errorf("only VECTOR is supported for now"))
 				p.expect('>')
 				return nil, false
 			default:

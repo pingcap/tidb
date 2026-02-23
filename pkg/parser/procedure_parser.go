@@ -193,9 +193,7 @@ func (p *HandParser) parseProcedureBlock(label string) ast.StmtNode {
 	// Parse DECLARE statements first
 	for p.peek().Tp == declare {
 		decl := p.parseProcedureDeclaration()
-		if decl != nil {
-			vars = append(vars, decl)
-		}
+		vars = append(vars, decl)
 		p.accept(';')
 	}
 

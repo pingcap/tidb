@@ -219,25 +219,13 @@ func (p *HandParser) parseInExpr(left ast.ExprNode, not bool) ast.ExprNode {
 	node.Not = not
 
 	// Check for subquery (SELECT, WITH, TABLE, VALUES).
-	if p.peek().Tp == selectKwd || p.peek().Tp == with {
-		query := p.parseSelectStmt()
+	if tp := p.peek().Tp; tp == selectKwd || tp == with || tp == tableKwd || tp == values {
+		query := p.parseSubquery()
 		if query == nil {
 			return nil
 		}
-		// Handle UNION/EXCEPT/INTERSECT after the initial SELECT.
-		result := p.maybeParseUnion(query)
 		sub := p.arena.AllocSubqueryExpr()
-		sub.Query = result
-		node.Sel = sub
-	} else if p.peek().Tp == tableKwd || p.peek().Tp == values {
-		var query ast.StmtNode
-		if p.peek().Tp == tableKwd {
-			query = p.parseTableStmt()
-		} else {
-			query = p.parseValuesStmt()
-		}
-		sub := p.arena.AllocSubqueryExpr()
-		sub.Query = query.(*ast.SelectStmt)
+		sub.Query = query
 		node.Sel = sub
 	} else {
 		// Expression list.

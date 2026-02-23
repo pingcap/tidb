@@ -456,7 +456,7 @@ func (p *HandParser) parseObjectType() ast.ObjectTypeType {
 // parseProxyLevel checks if the privilege list contains PROXY, and if so,
 // parses the user spec as a grant level. Returns (level, true) if PROXY was handled.
 // Shared between GRANT and REVOKE.
-func (p *HandParser) parseProxyLevel(privs []*ast.PrivElem, stmtName string) (*ast.GrantLevel, bool) {
+func (p *HandParser) parseProxyLevel(privs []*ast.PrivElem, _ string) (*ast.GrantLevel, bool) {
 	for _, priv := range privs {
 		if priv.Priv == mysql.ExtendedPriv && strings.ToUpper(priv.Name) == "PROXY" {
 			spec := p.parseUserSpec()

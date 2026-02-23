@@ -109,21 +109,6 @@ func (s *Scanner) ResetTo(sql string) {
 	s.reset(sql)
 }
 
-func (s *Scanner) stmtText() string {
-	endPos := s.r.pos().Offset
-	if s.r.s[endPos-1] == '\n' {
-		endPos = endPos - 1 // trim new line
-	}
-	if s.r.s[s.stmtStartPos] == '\n' {
-		s.stmtStartPos++
-	}
-
-	text := s.r.s[s.stmtStartPos:endPos]
-
-	s.stmtStartPos = endPos
-	return text
-}
-
 // Errorf tells scanner something is wrong.
 // Scanner satisfies Lexer interface which need this function.
 func (s *Scanner) Errorf(format string, a ...interface{}) (err error) {
@@ -718,46 +703,6 @@ func startString(s *Scanner) (tok int, pos Pos, lit string) {
 	return s.scanString()
 }
 
-// lazyBuf is used to avoid allocation if possible.
-// it has a useBuf field indicates whether bytes.Buffer is necessary. if
-// useBuf is false, we can avoid calling bytes.Buffer.String(), which
-// make a copy of data and cause allocation.
-type lazyBuf struct {
-	useBuf bool
-	r      *reader
-	b      *bytes.Buffer
-	p      *Pos
-}
-
-func (mb *lazyBuf) setUseBuf(str string) {
-	if !mb.useBuf {
-		mb.useBuf = true
-		mb.b.Reset()
-		mb.b.WriteString(str)
-	}
-}
-
-func (mb *lazyBuf) writeRune(r rune, w int) {
-	if mb.useBuf {
-		if w > 1 {
-			mb.b.WriteRune(r)
-		} else {
-			mb.b.WriteByte(byte(r))
-		}
-	}
-}
-
-func (mb *lazyBuf) data() string {
-	var lit string
-	if mb.useBuf {
-		lit = mb.b.String()
-	} else {
-		lit = mb.r.data(mb.p)
-		lit = lit[1 : len(lit)-1]
-	}
-	return lit
-}
-
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	tok, pos = stringLit, s.r.pos()
 	ending := s.r.readByte()
@@ -1033,8 +978,6 @@ type reader struct {
 	p Pos
 	l int
 }
-
-var eof = Pos{-1, -1, -1}
 
 func (r *reader) eof() bool {
 	return r.p.Offset >= r.l

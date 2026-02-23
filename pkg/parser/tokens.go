@@ -19,8 +19,6 @@ package parser
 
 import (
 	"strings"
-
-	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // Token holds the semantic value for a lexed token.
@@ -952,7 +950,3 @@ func (t Token) IsIdent() bool {
 func (t Token) IsKeyword(kw string) bool {
 	return strings.EqualFold(t.Lit, kw)
 }
-
-// HintParseFn is the callback type for parsing optimizer hint comments.
-// It is injected into the parser engine by the parent parser.
-type HintParseFn func(input string) ([]*ast.TableOptimizerHint, []error)

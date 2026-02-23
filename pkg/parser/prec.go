@@ -51,11 +51,12 @@ const (
 	precBitXor     = 12 // ^
 	precUnary      = 13 // - (unary), ~ (bit inversion), ! (not)
 	precCollate    = 14 // COLLATE
+	precConcat     = 15 // || (PIPES_AS_CONCAT)
 )
 
 // tokenPrecedence returns the infix precedence for the given token.
 // Returns precNone if the token is not a valid infix operator.
-func tokenPrecedence(tok int, _ mysql.SQLMode) int {
+func tokenPrecedence(tok int, sqlMode mysql.SQLMode) int {
 	switch tok {
 	case or, pipesAsOr:
 		return precOr
@@ -79,6 +80,10 @@ func tokenPrecedence(tok int, _ mysql.SQLMode) int {
 		return precMulDiv
 	case '^':
 		return precBitXor
+	case pipes:
+		if sqlMode.HasPipesAsConcatMode() {
+			return precConcat
+		}
 	}
 	return precNone
 }

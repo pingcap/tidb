@@ -14,8 +14,6 @@
 package parser
 
 import (
-	"unsafe"
-
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 )
@@ -24,9 +22,6 @@ const (
 	// defaultBlockSize is the default arena block size (8 KB).
 	// Grows by doubling for larger queries.
 	defaultBlockSize = 8 * 1024
-
-	// maxAlignment is the maximum alignment we guarantee for arena-allocated objects.
-	maxAlignment = 8
 
 	// slabSize is the number of elements pre-allocated per typed slab batch.
 	// 64 gives a good balance: large enough to amortize allocation overhead,
@@ -98,39 +93,17 @@ type Arena struct {
 	constraint   slab[ast.Constraint]
 	selectStmt   slab[ast.SelectStmt]
 	userIdentity slab[auth.UserIdentity]
-
-	// Legacy bump-pointer allocator (currently unused — retained for future use
-	// when a GC-safe unsafe arena approach becomes available).
-	blocks []*arenaBlock
-	cur    int // index of current block in blocks
 }
 
-type arenaBlock struct {
-	data []byte
-	used int
-}
-
-// NewArena creates a new Arena with a single pre-allocated block.
+// NewArena creates a new Arena.
 func NewArena() *Arena {
-	a := &Arena{
-		blocks: make([]*arenaBlock, 0, 4),
-	}
-	a.blocks = append(a.blocks, newArenaBlock(defaultBlockSize))
-	return a
-}
-
-func newArenaBlock(size int) *arenaBlock {
-	return &arenaBlock{
-		data: make([]byte, size),
-		used: 0,
-	}
+	return &Arena{}
 }
 
 // Reset resets the arena for reuse. All slab indices are reset. The typed slab
 // backing slices are released (but stay alive in the GC as long as any element
-// pointer is reachable). The bump-pointer blocks are also reset.
+// pointer is reachable).
 func (a *Arena) Reset() {
-	// Reset typed slabs.
 	a.columnNames.reset()
 	a.joins.reset()
 	a.subqueryExpr.reset()
@@ -142,12 +115,6 @@ func (a *Arena) Reset() {
 	a.constraint.reset()
 	a.selectStmt.reset()
 	a.userIdentity.reset()
-
-	// Reset legacy bump-pointer blocks.
-	for _, b := range a.blocks {
-		b.used = 0
-	}
-	a.cur = 0
 }
 
 // ---------------------------------------------------------------------------
@@ -206,48 +173,4 @@ func AllocSlice[T interface{}](_ *Arena, n int) []T {
 		return nil
 	}
 	return make([]T, n)
-}
-
-// ---------------------------------------------------------------------------
-// Legacy bump-pointer allocator internals (retained for future use)
-// ---------------------------------------------------------------------------
-
-// align rounds up n to the nearest multiple of maxAlignment.
-func align(n int) int {
-	return (n + maxAlignment - 1) &^ (maxAlignment - 1)
-}
-
-// alloc allocates size bytes from the arena, aligned to maxAlignment.
-// If the current block is exhausted, a new block is appended.
-func (a *Arena) alloc(size int) unsafe.Pointer {
-	size = align(size)
-	b := a.blocks[a.cur]
-	if b.used+size > len(b.data) {
-		// Current block exhausted. Try the next existing block or allocate a new one.
-		a.cur++
-		if a.cur < len(a.blocks) {
-			b = a.blocks[a.cur]
-			// The existing block might be too small for an oversized allocation.
-			if size > len(b.data) {
-				b = newArenaBlock(maxInt(size, defaultBlockSize))
-				// Insert before the current position to keep larger blocks at end.
-				a.blocks = append(a.blocks, nil)
-				copy(a.blocks[a.cur+1:], a.blocks[a.cur:])
-				a.blocks[a.cur] = b
-			}
-		} else {
-			b = newArenaBlock(maxInt(size, defaultBlockSize))
-			a.blocks = append(a.blocks, b)
-		}
-	}
-	ptr := unsafe.Pointer(&b.data[b.used])
-	b.used += size
-	return ptr
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

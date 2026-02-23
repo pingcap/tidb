@@ -50,8 +50,8 @@ type HandParser struct {
 	// duplicate COLLATE in column options. Reset at the start of parseFieldType.
 	lastFieldTypeExplicitCollate bool
 
-	// hintParse parses optimizer hint comments (/*+ ... */).
-	hintParse HintParseFn
+	// hintParser parses optimizer hint comments (/*+ ... */) directly.
+	hintParser *hintParser
 
 	// Errors accumulated during parsing.
 	errs  []error
@@ -87,21 +87,16 @@ func (p *HandParser) SetSQLMode(mode mysql.SQLMode) {
 	p.sqlMode = mode
 }
 
-// SetHintParse sets the optimizer hint parse callback.
-func (p *HandParser) SetHintParse(fn HintParseFn) {
-	p.hintParse = fn
-}
-
 // parseOptHints consumes an optional hintComment token and parses it into
-// optimizer hints using the injected HintParseFn. Returns nil if no hint
-// token is present or no callback is set.
+// optimizer hints using the embedded hint parser.
 func (p *HandParser) parseOptHints() []*ast.TableOptimizerHint {
 	if tok, ok := p.accept(hintComment); ok {
-		if p.hintParse != nil {
-			hints, warns := p.hintParse(tok.Lit)
-			p.warns = append(p.warns, warns...)
-			return hints
+		if p.hintParser == nil {
+			p.hintParser = newHintParser()
 		}
+		hints, warns := p.hintParser.parse(tok.Lit, p.sqlMode, Pos{})
+		p.warns = append(p.warns, warns...)
+		return hints
 	}
 	return nil
 }

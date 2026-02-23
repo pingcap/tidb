@@ -72,64 +72,62 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 		if stmt.ReferTable == nil {
 			return nil
 		}
-		// Fall through to handle trailing options (if any)? MySQL doesn't allow options after LIKE table.
-		// But let's check parseCreateTableOptions.
-		// TiDB parser.y: CreateTableStmt -> ... LikeTableWithOrWithoutParen OnCommitOpt
-		// LikeTableWithOrWithoutParen -> LIKE TableName | '(' LIKE TableName ')'
-		return stmt
-	}
-
-	// ( ... )
-	if _, ok := p.accept('('); ok {
+	} else if _, ok := p.accept('('); ok {
+		// ( ... )
 		// Check for (LIKE table) syntax
 		if _, ok := p.accept(like); ok {
 			stmt.ReferTable = p.parseTableName()
 			p.expect(')')
-			return stmt
+		} else {
+			cols, constraints := p.parseTableElementList()
+			if cols == nil && constraints == nil {
+				// Error or empty list?
+				return nil
+			}
+			stmt.Cols = cols
+			stmt.Constraints = constraints
+			p.expect(')')
 		}
-		cols, constraints := p.parseTableElementList()
-		if cols == nil && constraints == nil {
-			// Error or empty list?
-			return nil
-		}
-		stmt.Cols = cols
-		stmt.Constraints = constraints
-		p.expect(')')
 	}
 	// CREATE TABLE t SELECT ... (CTAS without columns definition) handled later.
 
-	// [Table Options]
-	stmt.Options = p.parseCreateTableOptions()
+	if stmt.ReferTable == nil {
+		// [Table Options]
+		stmt.Options = p.parseCreateTableOptions()
 
-	// [PARTITION BY ...]
-	if p.peekKeyword(partition, "PARTITION") {
-		stmt.Partition = p.parsePartitionOptions()
-	}
-
-	// [DuplicateOpt]
-	if _, ok := p.acceptKeyword(ignore, "IGNORE"); ok {
-		stmt.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
-	} else if _, ok := p.acceptKeyword(replace, "REPLACE"); ok {
-		stmt.OnDuplicate = ast.OnDuplicateKeyHandlingReplace
-	}
-
-	// [AS] SELECT|TABLE|VALUES Stmt | (SELECT ...)
-	p.accept(as)
-	if tok := p.peek(); tok.Tp == selectKwd {
-		selStmt := p.parseSelectStmt()
-		if selStmt != nil {
-			stmt.Select = p.maybeParseUnion(selStmt)
+		// [PARTITION BY ...]
+		if p.peekKeyword(partition, "PARTITION") {
+			stmt.Partition = p.parsePartitionOptions()
 		}
-	} else if tok.Tp == '(' {
-		// Parenthesized subquery: AS (SELECT ... UNION ...)
-		sub := p.parseSubquery()
-		if sub != nil {
-			stmt.Select = p.maybeParseUnion(sub)
+
+		// [DuplicateOpt]
+		if _, ok := p.acceptKeyword(ignore, "IGNORE"); ok {
+			stmt.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
+		} else if _, ok := p.acceptKeyword(replace, "REPLACE"); ok {
+			stmt.OnDuplicate = ast.OnDuplicateKeyHandlingReplace
 		}
-	} else if tok.Tp == tableKwd {
-		stmt.Select = p.parseTableStmt().(ast.ResultSetNode)
-	} else if tok.Tp == values {
-		stmt.Select = p.parseValuesStmt().(ast.ResultSetNode)
+
+		// [AS] SELECT|TABLE|VALUES Stmt | (SELECT ...)
+		p.accept(as) // optional AS
+		if tok := p.peek(); tok.Tp == selectKwd {
+			selStmt := p.parseSelectStmt()
+			if selStmt != nil {
+				stmt.Select = p.maybeParseUnion(selStmt)
+			}
+		} else if tok.Tp == '(' {
+			// Parenthesized subquery: AS (SELECT ... UNION ...)
+			sub := p.parseSubquery()
+			if sub != nil {
+				stmt.Select = p.maybeParseUnion(sub)
+			}
+		} else if tok.Tp == tableKwd {
+			if tblStmt := p.parseTableStmt(); tblStmt != nil {
+				stmt.Select = tblStmt.(ast.ResultSetNode)
+			}
+		} else if tok.Tp == values {
+			valStmt := p.parseValuesStmt()
+			stmt.Select = valStmt.(ast.ResultSetNode)
+		}
 	}
 
 	// [ON COMMIT DELETE ROWS | ON COMMIT PRESERVE ROWS] — only valid for GLOBAL TEMPORARY
@@ -305,20 +303,6 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 
 			// Use the unwrapped and normalized expression
 			option.Expr = inner
-
-			// Wrap other function calls (like RAND, UUID) in ParenthesesExpr to match Restore behavior.
-			// Restore adds parentheses around non-standard default functions.
-			// To ensure round-trip AST equality, we must wrap them here.
-			if fc, ok := option.Expr.(*ast.FuncCallExpr); ok {
-				name := fc.FnName.L
-				if name != ast.CurrentTimestamp && name != ast.Now && name != ast.LocalTime && name != ast.LocalTimestamp &&
-					name != ast.CurrentDate && name != ast.Curdate &&
-					name != ast.CurrentTime && name != ast.Curtime {
-					option.Expr = &ast.ParenthesesExpr{
-						Expr: option.Expr,
-					}
-				}
-			}
 
 		case autoIncrement:
 			p.next()

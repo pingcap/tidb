@@ -371,7 +371,7 @@ func (p *HandParser) parseSplitOption() *ast.SplitOption {
 // parseColumnsNameList parses a parenthesized column name list: (col1, col2, ...)
 func (p *HandParser) parseColumnsNameList() []*ast.ColumnName {
 	p.expect('(')
-	var cols []*ast.ColumnName
+	cols := make([]*ast.ColumnName, 0)
 	if p.peek().Tp != ')' {
 		for {
 			col := p.parseColumnName()

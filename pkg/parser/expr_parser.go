@@ -174,6 +174,22 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 		}
 
 		op := p.next() // consume the operator
+
+		if op.Tp == pipes {
+			// In pipes_as_concat mode, '||' produces the 'pipes' token.
+			// It compiles to a CONCAT() function call instead of a BinaryExpr.
+			right := p.parseExpression(prec + 1)
+			if right == nil {
+				p.syntaxErrorAt(op.Offset)
+				return nil
+			}
+			node := p.arena.AllocFuncCallExpr()
+			node.FnName = ast.NewCIStr("concat")
+			node.Args = []ast.ExprNode{left, right}
+			left = node
+			continue
+		}
+
 		opCode := tokenToOp(op.Tp)
 		if opCode == 0 {
 			p.syntaxErrorAt(op.Offset)

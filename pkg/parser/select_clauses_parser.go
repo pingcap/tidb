@@ -126,7 +126,7 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		// FIRST / NEXT
 		if _, ok := p.acceptKeyword(first, "FIRST"); !ok {
 			if _, ok := p.acceptKeyword(next, "NEXT"); !ok {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.error(p.peek().Offset, "expected FIRST or NEXT")
 				return nil
 			}
 		}
@@ -153,18 +153,18 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		// ONLY or WITH TIES
 		if _, ok := p.acceptKeyword(only, "ONLY"); !ok {
 			if _, ok := p.acceptKeyword(with, "WITH"); !ok {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.error(p.peek().Offset, "expected ONLY or WITH TIES")
 				return nil
 			}
 			// Expect TIES
 			if ident, ok := p.expect(identifier); !ok || !ident.IsKeyword("TIES") {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.error(p.peek().Offset, "expected TIES after WITH")
 				return nil
 			}
 			// ast.Limit doesn't support WithTies. Ignore.
 		}
 	} else if limitNode.Offset == nil {
-		p.syntaxErrorAt(p.peek().Offset)
+		p.error(p.peek().Offset, "expected LIMIT, OFFSET or FETCH")
 		return nil
 	}
 
@@ -254,26 +254,6 @@ func (p *HandParser) parseSelectIntoOption() *ast.SelectIntoOption {
 	}
 
 	return opt
-}
-
-// isJoinKeyword returns true if the token type is a keyword that starts a JOIN.
-func (*HandParser) isJoinKeyword(tp int) bool {
-	switch tp {
-	case join, inner, cross, left, right, natural, straightJoin:
-		return true
-	}
-	return false
-}
-
-// isSimpleJoinKeyword returns true if the token type starts a join that doesn't
-// require an ON clause (inner/cross join). Used by nested join recursion to
-// avoid recursing into LEFT/RIGHT/NATURAL joins which need their own ON.
-func (*HandParser) isSimpleJoinKeyword(tp int) bool {
-	switch tp {
-	case join, inner, cross, straightJoin:
-		return true
-	}
-	return false
 }
 
 // CanBeImplicitAlias returns true if a token can serve as an implicit table/column alias.
@@ -597,7 +577,7 @@ func (p *HandParser) parseSetOprUnit() ast.ResultSetNode {
 	// `SELECT 1 UNION WITH cte AS (...) SELECT * FROM cte` is invalid.
 
 	default:
-		p.syntaxErrorAt(p.peek().Offset)
+		p.error(p.peek().Offset, "expected query expression after set operator")
 		return nil
 	}
 

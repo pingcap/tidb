@@ -31,12 +31,8 @@ func (p *HandParser) parseKeywordFuncCall() ast.ExprNode {
 	tok := p.next()
 	var name string
 	switch tok.Tp {
-	case ifKwd:
-		name = "if"
-	case replace:
-		name = "replace"
-	case coalesce:
-		name = "coalesce"
+	case ifKwd, replace, coalesce:
+		name = tok.Lit
 	case insert:
 		name = "insert_func"
 	default:
@@ -392,196 +388,57 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 	return node
 }
 
+// parseSequenceTableArg parses a sequence name as a TableNameExpr.
+// Shared by nextval/lastval/setval function calls and NEXT VALUE FOR.
+func (p *HandParser) parseSequenceTableArg() ast.ExprNode {
+	tName := p.parseTableName()
+	if tName == nil {
+		return nil
+	}
+	tnExpr := Alloc[ast.TableNameExpr](p.arena)
+	tnExpr.Name = tName
+	return tnExpr
+}
+
 // parseScalarFuncCall parses a non-aggregate function call: CONCAT(a, b), IF(x, y, z), etc.
 func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 	p.expect('(')
 
-	node := p.arena.AllocFuncCallExpr()
-	node.FnName = ast.NewCIStr(name)
-
-	// Empty arg list.
+	// Empty arg list — must allocate FuncCallExpr for this case.
 	if _, ok := p.accept(')'); ok {
+		node := p.arena.AllocFuncCallExpr()
+		node.FnName = ast.NewCIStr(name)
 		return node
 	}
 
 	lowerName := strings.ToLower(name)
 
-	// Special: MOD(a, b) → a % b (BinaryOperationExpr), matching MySQL syntax.
+	// MOD returns a BinaryOperationExpr, not a FuncCallExpr — check before allocating.
 	if lowerName == "mod" {
-		left := p.parseExpression(precNone)
-		if left == nil {
-			return nil
-		}
-		p.expect(',')
-		right := p.parseExpression(precNone)
-		if right == nil {
-			return nil
-		}
-		p.expect(')')
-		binop := Alloc[ast.BinaryOperationExpr](p.arena)
-		binop.Op = opcode.Mod
-		binop.L = left
-		binop.R = right
-		return binop
+		return p.parseModFuncCall()
 	}
 
-	// Special: ADDDATE/SUBDATE with INTERVAL form: ADDDATE(expr, INTERVAL expr unit).
-	if lowerName == "adddate" || lowerName == "subdate" {
-		dateExpr := p.parseExpression(precNone)
-		if dateExpr == nil {
-			return nil
-		}
-		p.expect(',')
-		// Check for INTERVAL keyword.
-		if _, ok := p.accept(interval); ok {
-			intervalExpr := p.parseExpression(precNone)
-			unit := p.parseTimeUnit()
-			if unit == nil {
-				return nil
-			}
-			p.expect(')')
-			node.Args = []ast.ExprNode{dateExpr, intervalExpr, unit}
-		} else {
-			// Non-INTERVAL form: ADDDATE(expr, N) → ADDDATE(expr, INTERVAL N DAY)
-			intervalExpr := p.parseExpression(precNone)
-			p.expect(')')
-			unit := &ast.TimeUnitExpr{Unit: ast.TimeUnitDay}
-			node.Args = []ast.ExprNode{dateExpr, intervalExpr, unit}
-		}
-		return node
+	node := p.arena.AllocFuncCallExpr()
+	node.FnName = ast.NewCIStr(name)
+
+	switch lowerName {
+	case "nextval", "lastval":
+		return p.parseNextLastValFuncCall(node)
+	case "setval":
+		return p.parseSetValFuncCall(node)
+	case "adddate", "subdate":
+		return p.parseDateAddSubFuncCall(node)
+	case "char", "char_func":
+		return p.parseCharFuncCall(node, lowerName)
+	case "get_format":
+		return p.parseGetFormatFuncCall(node)
+	case "weight_string":
+		return p.parseWeightStringFuncCall(node)
+	case "timestampadd":
+		return p.parseTimestampAddFuncCall(node)
 	}
 
-	// Special: CHAR(expr [, expr ...] USING charset_name)
-	if lowerName == "char" || lowerName == "char_func" {
-		var args []ast.ExprNode
-		for {
-			arg := p.parseExpression(precNone)
-			if arg == nil {
-				return nil
-			}
-			args = append(args, arg)
-			if _, ok := p.accept(','); !ok {
-				break
-			}
-		}
-		// Check for USING keyword.
-		if _, ok := p.accept(using); ok {
-			charsetTok := p.next()
-			charsetName := strings.ToLower(charsetTok.Lit)
-			if !charset.ValidCharsetAndCollation(charsetName, "") {
-				p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).
-					GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
-				return nil
-			}
-			args = append(args, ast.NewValueExpr(charsetName, "", ""))
-		} else if lowerName == "char" {
-			// Only add nil sentinel for the original CHAR() form, not CHAR_FUNC()
-			// which already includes the NULL arg in the restored SQL.
-			args = append(args, ast.NewValueExpr(nil, "", ""))
-		}
-		p.expect(')')
-		node.FnName = ast.NewCIStr("char_func")
-		node.Args = args
-		return node
-	}
-
-	// Special: GET_FORMAT(DATE|TIME|DATETIME|TIMESTAMP, expr)
-	if lowerName == "get_format" {
-		selector := &ast.GetFormatSelectorExpr{}
-		tok := p.next()
-		switch tok.Tp {
-		case dateType:
-			selector.Selector = ast.GetFormatSelectorDate
-		case timeType:
-			selector.Selector = ast.GetFormatSelectorTime
-		case datetimeType:
-			selector.Selector = ast.GetFormatSelectorDatetime
-		default:
-			// TIMESTAMP is also accepted
-			selector.Selector = ast.GetFormatSelectorDatetime
-		}
-		p.expect(',')
-		arg2 := p.parseExpression(precNone)
-		p.expect(')')
-		node.Args = []ast.ExprNode{selector, arg2}
-		return node
-	}
-
-	// Special: EXTRACT(unit FROM expr)
-	if lowerName == "extract" {
-		unit := p.parseTimeUnit()
-		if unit == nil {
-			return nil
-		}
-		p.expect(from)
-		expr := p.parseExpression(precNone)
-		p.expect(')')
-		node.Args = []ast.ExprNode{unit, expr}
-		return node
-	}
-
-	// Special: POSITION(substr IN str)
-	if lowerName == "position" {
-		substr := p.parseExpression(precNone)
-		p.expect(in)
-		str := p.parseExpression(precNone)
-		p.expect(')')
-		node.Args = []ast.ExprNode{substr, str}
-		return node
-	}
-
-	// Special: WEIGHT_STRING(expr [AS {CHAR|CHARACTER|BINARY}(N)])
-	if lowerName == "weight_string" {
-		expr := p.parseExpression(precNone)
-		if expr == nil {
-			return nil
-		}
-		if _, ok := p.accept(as); ok {
-			// AS CHAR(N) or AS CHARACTER(N) or AS BINARY(N)
-			var typName string
-			switch p.peek().Tp {
-			case charType, character:
-				p.next()
-				typName = "CHAR"
-			case binaryType:
-				p.next()
-				typName = "BINARY"
-			}
-			// Parse (N) for the type length.
-			p.expect('(')
-			lenExpr := p.parseExpression(precNone)
-			p.expect(')')
-			p.expect(')')
-			node.Args = []ast.ExprNode{expr, ast.NewValueExpr(typName, "", ""), lenExpr}
-		} else {
-			p.expect(')')
-			node.Args = []ast.ExprNode{expr}
-		}
-		return node
-	}
-
-	// Special: TIMESTAMPADD(unit, interval, expr) / TIMESTAMPDIFF(unit, expr1, expr2)
-	if lowerName == "timestampadd" || lowerName == "timestampdiff" {
-		unit := p.parseTimeUnit()
-		if unit == nil {
-			return nil
-		}
-		p.expect(',')
-		arg2 := p.parseExpression(precNone)
-		if arg2 == nil {
-			return nil
-		}
-		p.expect(',')
-		arg3 := p.parseExpression(precNone)
-		if arg3 == nil {
-			return nil
-		}
-		p.expect(')')
-		node.Args = []ast.ExprNode{unit, arg2, arg3}
-		return node
-	}
-
-	// Argument list.
+	// Generic argument list.
 	for {
 		arg := p.parseExpression(precNone)
 		if arg == nil {
@@ -594,5 +451,182 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 	}
 
 	p.expect(')')
+	return node
+}
+
+// parseNextLastValFuncCall parses NEXTVAL(seq) or LASTVAL(seq).
+// The sequence name is parsed as a TableName wrapped in TableNameExpr.
+func (p *HandParser) parseNextLastValFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
+	seqArg := p.parseSequenceTableArg()
+	if seqArg == nil {
+		return nil
+	}
+	p.expect(')')
+	node.Args = []ast.ExprNode{seqArg}
+	return node
+}
+
+// parseSetValFuncCall parses SETVAL(seq, value).
+func (p *HandParser) parseSetValFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
+	seqArg := p.parseSequenceTableArg()
+	if seqArg == nil {
+		return nil
+	}
+	p.expect(',')
+	valExpr := p.parseExpression(precNone)
+	if valExpr == nil {
+		return nil
+	}
+	p.expect(')')
+	node.Args = []ast.ExprNode{seqArg, valExpr}
+	return node
+}
+
+// parseModFuncCall parses MOD(a, b) → a % b (BinaryOperationExpr).
+func (p *HandParser) parseModFuncCall() ast.ExprNode {
+	leftExpr := p.parseExpression(precNone)
+	if leftExpr == nil {
+		return nil
+	}
+	p.expect(',')
+	rightExpr := p.parseExpression(precNone)
+	if rightExpr == nil {
+		return nil
+	}
+	p.expect(')')
+	binop := Alloc[ast.BinaryOperationExpr](p.arena)
+	binop.Op = opcode.Mod
+	binop.L = leftExpr
+	binop.R = rightExpr
+	return binop
+}
+
+// parseDateAddSubFuncCall parses ADDDATE/SUBDATE with optional INTERVAL form.
+func (p *HandParser) parseDateAddSubFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
+	dateExpr := p.parseExpression(precNone)
+	if dateExpr == nil {
+		return nil
+	}
+	p.expect(',')
+	if _, ok := p.accept(interval); ok {
+		// ADDDATE(expr, INTERVAL expr unit)
+		intervalExpr := p.parseExpression(precNone)
+		unit := p.parseTimeUnit()
+		if unit == nil {
+			return nil
+		}
+		p.expect(')')
+		node.Args = []ast.ExprNode{dateExpr, intervalExpr, unit}
+	} else {
+		// ADDDATE(expr, N) → ADDDATE(expr, INTERVAL N DAY)
+		intervalExpr := p.parseExpression(precNone)
+		p.expect(')')
+		unit := &ast.TimeUnitExpr{Unit: ast.TimeUnitDay}
+		node.Args = []ast.ExprNode{dateExpr, intervalExpr, unit}
+	}
+	return node
+}
+
+// parseCharFuncCall parses CHAR(expr [, expr ...] [USING charset_name]).
+func (p *HandParser) parseCharFuncCall(node *ast.FuncCallExpr, lowerName string) ast.ExprNode {
+	var args []ast.ExprNode
+	for {
+		arg := p.parseExpression(precNone)
+		if arg == nil {
+			return nil
+		}
+		args = append(args, arg)
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+	if _, ok := p.accept(using); ok {
+		charsetTok := p.next()
+		charsetName := strings.ToLower(charsetTok.Lit)
+		if !charset.ValidCharsetAndCollation(charsetName, "") {
+			p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).
+				GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
+			return nil
+		}
+		args = append(args, ast.NewValueExpr(charsetName, "", ""))
+	} else if lowerName == "char" {
+		// Only add nil sentinel for the original CHAR() form, not CHAR_FUNC()
+		args = append(args, ast.NewValueExpr(nil, "", ""))
+	}
+	p.expect(')')
+	node.FnName = ast.NewCIStr("char_func")
+	node.Args = args
+	return node
+}
+
+// parseGetFormatFuncCall parses GET_FORMAT(DATE|TIME|DATETIME|TIMESTAMP, expr).
+func (p *HandParser) parseGetFormatFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
+	selector := &ast.GetFormatSelectorExpr{}
+	tok := p.next()
+	switch tok.Tp {
+	case dateType:
+		selector.Selector = ast.GetFormatSelectorDate
+	case timeType:
+		selector.Selector = ast.GetFormatSelectorTime
+	case datetimeType:
+		selector.Selector = ast.GetFormatSelectorDatetime
+	default:
+		selector.Selector = ast.GetFormatSelectorDatetime
+	}
+	p.expect(',')
+	arg2 := p.parseExpression(precNone)
+	p.expect(')')
+	node.Args = []ast.ExprNode{selector, arg2}
+	return node
+}
+
+// parseWeightStringFuncCall parses WEIGHT_STRING(expr [AS {CHAR|CHARACTER|BINARY}(N)]).
+func (p *HandParser) parseWeightStringFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
+	expr := p.parseExpression(precNone)
+	if expr == nil {
+		return nil
+	}
+	if _, ok := p.accept(as); ok {
+		var typName string
+		switch p.peek().Tp {
+		case charType, character:
+			p.next()
+			typName = "CHAR"
+		case binaryType:
+			p.next()
+			typName = "BINARY"
+		}
+		p.expect('(')
+		lenExpr := p.parseExpression(precNone)
+		p.expect(')')
+		p.expect(')')
+		node.Args = []ast.ExprNode{expr, ast.NewValueExpr(typName, "", ""), lenExpr}
+	} else {
+		p.expect(')')
+		node.Args = []ast.ExprNode{expr}
+	}
+	return node
+}
+
+// parseTimestampAddFuncCall parses TIMESTAMPADD(unit, interval, expr).
+// Note: TIMESTAMPDIFF is routed via the timestampDiff token in parsePrefixKeywordExpr,
+// not through this path. Only TIMESTAMPADD reaches here.
+func (p *HandParser) parseTimestampAddFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
+	unit := p.parseTimeUnit()
+	if unit == nil {
+		return nil
+	}
+	p.expect(',')
+	arg2 := p.parseExpression(precNone)
+	if arg2 == nil {
+		return nil
+	}
+	p.expect(',')
+	arg3 := p.parseExpression(precNone)
+	if arg3 == nil {
+		return nil
+	}
+	p.expect(')')
+	node.Args = []ast.ExprNode{unit, arg2, arg3}
 	return node
 }

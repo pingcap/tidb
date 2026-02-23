@@ -203,12 +203,14 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 			p.next() // consume NEXT
 			p.next() // consume VALUE
 			p.next() // consume FOR
-			// Parse the sequence name as an expression to handle schema-qualified names (test.seq).
-			seqExpr := p.parseExpression(precNone)
-			return &ast.FuncCallExpr{
-				FnName: ast.NewCIStr("nextval"),
-				Args:   []ast.ExprNode{seqExpr},
+			seqArg := p.parseSequenceTableArg()
+			if seqArg == nil {
+				return nil
 			}
+			node := p.arena.AllocFuncCallExpr()
+			node.FnName = ast.NewCIStr("nextval")
+			node.Args = []ast.ExprNode{seqArg}
+			return node
 		}
 		// Fallback: any keyword token (Tp >= identifier) can be used as an
 		// identifier in expression context. MySQL allows most non-reserved keywords

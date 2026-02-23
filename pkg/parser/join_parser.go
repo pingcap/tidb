@@ -234,21 +234,6 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 	return join
 }
 
-func (p *HandParser) validateJoin(node ast.ResultSetNode) error {
-	if j, ok := node.(*ast.Join); ok {
-		if (j.Tp == ast.LeftJoin || j.Tp == ast.RightJoin) && j.On == nil && j.Using == nil && !j.NaturalJoin {
-			return fmt.Errorf("Outer join requires ON/USING clause")
-		}
-		if err := p.validateJoin(j.Left); err != nil {
-			return err
-		}
-		if err := p.validateJoin(j.Right); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // peekJoinType checks if the next tokens form a join keyword without consuming them.
 func (p *HandParser) peekJoinType() (joinType ast.JoinType, isNatural bool, straight bool, commaJoin bool) {
 	tok := p.peek()
@@ -270,26 +255,6 @@ func (p *HandParser) peekJoinType() (joinType ast.JoinType, isNatural bool, stra
 	default:
 		return 0, false, false, false
 	}
-}
-
-// assignOn tries to assign an ON condition to the rightmost join in the subtree
-// that doesn't yet have an ON or USING clause. Checks recursively down the Left side.
-func (p *HandParser) assignOn(node ast.ResultSetNode, expr ast.ExprNode) bool {
-	if j, ok := node.(*ast.Join); ok {
-		if j.On == nil && j.Using == nil {
-			on := Alloc[ast.OnCondition](p.arena)
-			on.Expr = expr
-			j.On = on
-			return true
-		}
-		// Recursively assign to children
-		if p.assignOn(j.Left, expr) {
-			return true
-		}
-		return p.assignOn(j.Right, expr)
-	}
-	// Can't assign ON to a non-Join node (e.g. TableSource, Subquery)
-	return false
 }
 
 // makeCrossJoin builds a cross join without `on` or `using` clause, using arena allocation.

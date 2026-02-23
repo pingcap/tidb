@@ -86,15 +86,10 @@ type Parser struct {
 	result     []ast.StmtNode
 	src        string
 	lexer      Scanner
-	hintParser *hintParser
 	handParser *HandParser
 
 	explicitCharset       bool
 	strictDoubleFieldType bool
-
-	// hintBridgeFn is stored once in New() to avoid per-ParseSQL heap allocation
-	// of the parser.hintBridge method value.
-	hintBridgeFn HintParseFn
 }
 
 // New returns a Parser object with default SQL mode.
@@ -109,8 +104,6 @@ func New() *Parser {
 	p := &Parser{
 		handParser: NewHandParser(),
 	}
-	// Bind method value once to avoid per-ParseSQL closure allocation.
-	p.hintBridgeFn = p.hintBridge
 	p.reset()
 	return p
 }
@@ -146,11 +139,6 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.handParser.SetStrictDoubleFieldTypeCheck(config.EnableStrictDoubleTypeCheck)
 }
 
-// hintBridge is a bound method that parses optimizer hints.
-func (parser *Parser) hintBridge(input string) ([]*ast.TableOptimizerHint, []error) {
-	return parser.parseHint(input)
-}
-
 // ParseSQL parses a query string to raw ast.StmtNode.
 func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
 	parser.charset = mysql.DefaultCharset
@@ -166,9 +154,6 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 
 	// Configure the hand-written parser.
 	parser.handParser.SetSQLMode(parser.lexer.GetSQLMode())
-
-	// Set hint parse callback (uses stored method value, no allocation).
-	parser.handParser.SetHintParse(parser.hintBridgeFn)
 
 	// Initialize hand parser: Reset + Init + set charset/collation.
 	parser.handParser.Reset()
@@ -236,13 +221,6 @@ func ParseErrorWith(errstr string, lineno int) error {
 		errstr = errstr[:mysql.ErrTextLength]
 	}
 	return fmt.Errorf("near '%-.80s' at line %d", errstr, lineno)
-}
-
-func (parser *Parser) parseHint(input string) ([]*ast.TableOptimizerHint, []error) {
-	if parser.hintParser == nil {
-		parser.hintParser = newHintParser()
-	}
-	return parser.hintParser.parse(input, parser.lexer.GetSQLMode(), parser.lexer.lastHintPos)
 }
 
 // ---------- ParseParam types ----------

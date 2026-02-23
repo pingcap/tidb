@@ -262,7 +262,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 			case doubleType, float8Type:
 				// VECTOR<DOUBLE> — parsed but rejected per parser.y (AppendError is fatal)
 				p.next()
-				p.errs = append(p.errs, fmt.Errorf("Only VECTOR is supported for now"))
+				p.errs = append(p.errs, fmt.Errorf("only VECTOR is supported for now"))
 				p.expect('>')
 				return nil
 			default:

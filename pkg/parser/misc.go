@@ -29,17 +29,6 @@ func isIdentExtend(ch byte) bool {
 	return ch >= 0x80
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
-func isInCorrectIdentifierName(name string) bool {
-	if len(name) == 0 {
-		return true
-	}
-	if name[len(name)-1] == ' ' {
-		return true
-	}
-	return false
-}
-
 // Initialize a lookup table for isUserVarChar
 var isUserVarCharTable [256]bool
 
@@ -145,12 +134,6 @@ func init() {
 	initTokenFunc("`", scanQuotedIdent)
 	initTokenFunc("0123456789", startWithNumber)
 	initTokenFunc("'\"", startString)
-}
-
-// isInTokenMap indicates whether the target string is contained in tokenMap.
-func isInTokenMap(target string) bool {
-	_, ok := tokenMap[target]
-	return ok
 }
 
 // tokenMap is a map of known identifiers to the parser token ID.
@@ -1004,14 +987,6 @@ var windowFuncTokenMap = map[string]int{
 	"RANK":         rank,
 	"ROW_NUMBER":   rowNumber,
 	"WINDOW":       window,
-}
-
-// aliases are strings directly map to another string and use the same token.
-var aliases = map[string]string{
-	"SCHEMA":  "DATABASE",
-	"SCHEMAS": "DATABASES",
-	"DEC":     "DECIMAL",
-	"SUBSTR":  "SUBSTRING",
 }
 
 // hintedTokens is a set of tokens which recognizes a hint.
