@@ -242,14 +242,42 @@ func TestFullOuterJoinHashJoinV1(t *testing.T) {
 	tk.MustNotHavePlan(planSQL, "IndexJoin")
 	tk.MustNotHavePlan(planSQL, "IndexHashJoin")
 
-	tk.MustQuery("select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b").Check(testkit.Rows(
+	expectedBasicRows := testkit.Rows(
 		"1 10 1 100",
 		"2 20 <nil> <nil>",
 		"3 30 3 300",
 		"<nil> <nil> 4 400",
 		"<nil> <nil> <nil> 500",
 		"<nil> 40 <nil> <nil>",
-	))
+	)
+	basicSQL := "select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b"
+	tk.MustQuery(basicSQL).Check(expectedBasicRows)
+
+	assertBuildSide := func(sql, buildTable string) {
+		rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+		explain := make([]string, 0, len(rows))
+		for _, row := range rows {
+			explain = append(explain, fmt.Sprint(row))
+		}
+		all := strings.Join(explain, "\n")
+		require.Contains(t, all, "TableReader(Build)", "sql=%s, explain=%v", sql, rows)
+		idxT1, idxT2 := strings.Index(all, "table:t1"), strings.Index(all, "table:t2")
+		require.NotEqual(t, -1, idxT1, "sql=%s, explain=%v", sql, rows)
+		require.NotEqual(t, -1, idxT2, "sql=%s, explain=%v", sql, rows)
+		if buildTable == "t1" {
+			require.Less(t, idxT1, idxT2, "build side is not %s, sql=%s, explain=%v", buildTable, sql, rows)
+		} else {
+			require.Less(t, idxT2, idxT1, "build side is not %s, sql=%s, explain=%v", buildTable, sql, rows)
+		}
+	}
+
+	// Both build directions should be executable for full outer join.
+	sqlBuildT1 := "select /*+ HASH_JOIN_BUILD(t1) */ t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b"
+	sqlBuildT2 := "select /*+ HASH_JOIN_BUILD(t2) */ t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b"
+	assertBuildSide(sqlBuildT1, "t1")
+	assertBuildSide(sqlBuildT2, "t2")
+	tk.MustQuery(sqlBuildT1).Check(expectedBasicRows)
+	tk.MustQuery(sqlBuildT2).Check(expectedBasicRows)
 
 	// t1/t2 side filters in ON should not be pushed down as child selections in full join.
 	tk.MustQuery("select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a and t1.c = 1 and t2.c = 1 order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b").Check(testkit.Rows(
@@ -280,6 +308,51 @@ func TestFullOuterJoinHashJoinV1(t *testing.T) {
 	))
 	tk.MustQuery("select t1.b, t2.b from t1 full outer join t2 on t1.a <=> t2.a where t1.a is null and t2.a is null order by t1.b, t2.b").Check(testkit.Rows(
 		"40 500",
+	))
+
+	// NULL-safe equality with duplicated NULL keys should produce N x M matches.
+	tk.MustExec("drop table if exists t5, t6")
+	tk.MustExec("create table t5(a int, b int)")
+	tk.MustExec("create table t6(a int, b int)")
+	tk.MustExec("insert into t5 values (null,1), (null,2), (1,10)")
+	tk.MustExec("insert into t6 values (null,100), (null,200), (2,20)")
+	tk.MustQuery("select t5.b, t6.b from t5 full outer join t6 on t5.a <=> t6.a where t5.a is null and t6.a is null order by t5.b, t6.b").Check(testkit.Rows(
+		"1 100",
+		"1 200",
+		"2 100",
+		"2 200",
+	))
+	tk.MustQuery("select t5.b, t6.b from t5 full outer join t6 on t5.a = t6.a where t5.a is null or t6.a is null order by isnull(t5.b), t5.b, isnull(t6.b), t6.b").Check(testkit.Rows(
+		"1 <nil>",
+		"2 <nil>",
+		"10 <nil>",
+		"<nil> 20",
+		"<nil> 100",
+		"<nil> 200",
+	))
+
+	// Multi-row key bucket + other-condition all filtered: every row on both sides should remain unmatched.
+	tk.MustExec("drop table if exists t7, t8")
+	tk.MustExec("create table t7(a int, b int)")
+	tk.MustExec("create table t8(a int, b int)")
+	tk.MustExec("insert into t7 values (1,1), (1,2)")
+	tk.MustExec("insert into t8 values (1,3), (1,4)")
+	tk.MustQuery("select t7.a, t7.b, t8.a, t8.b from t7 full outer join t8 on t7.a = t8.a and t7.b > t8.b order by isnull(t7.b), t7.b, isnull(t8.b), t8.b").Check(testkit.Rows(
+		"1 1 <nil> <nil>",
+		"1 2 <nil> <nil>",
+		"<nil> <nil> 1 3",
+		"<nil> <nil> 1 4",
+	))
+
+	// In one key bucket, only matched build rows should be marked as matched.
+	tk.MustExec("drop table if exists t9, t10")
+	tk.MustExec("create table t9(a int, b int)")
+	tk.MustExec("create table t10(a int, b int)")
+	tk.MustExec("insert into t9 values (1,1), (1,10)")
+	tk.MustExec("insert into t10 values (1,5)")
+	tk.MustQuery("select t9.a, t9.b, t10.a, t10.b from t9 full outer join t10 on t9.a = t10.a and t9.b > t10.b order by isnull(t9.b), t9.b, isnull(t10.b), t10.b").Check(testkit.Rows(
+		"1 1 <nil> <nil>",
+		"1 10 1 5",
 	))
 }
 
