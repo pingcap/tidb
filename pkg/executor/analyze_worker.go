@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -61,6 +62,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 			results.DestroyAndPutToPool()
 			continue
 		}
+		failpoint.InjectCall("analyzeSaveWorkerBeforeHandleSignal")
 		if err := worker.killer.HandleSignal(); err != nil {
 			drainErr = err
 			finishJobWithLog(statsHandle, results.Job, drainErr)

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -215,39 +216,51 @@ func TestAnalyzeSaveResultErrorDoesNotHang(t *testing.T) {
 func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tkObserver := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tkObserver.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
 	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("create table t (a int, b int, key idx_b(b)) partition by hash(a) partitions 64")
-	for i := 0; i < 400; i++ {
+	tk.MustExec("create table t (a int, b int, key idx_b(b)) partition by hash(a) partitions 4")
+	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
+	workerPaused := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	thirdSendPaused := make(chan struct{})
+	releaseThirdSend := make(chan struct{})
+	var workerHookCount atomic.Int64
+	var sendHookCount atomic.Int64
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSaveWorkerBeforeHandleSignal", func() {
+		if workerHookCount.Add(1) == 1 {
+			close(workerPaused)
+			<-releaseWorker
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeBeforeSendToSaveResults", func() {
+		if sendHookCount.Add(1) == 3 {
+			close(thirdSendPaused)
+			<-releaseThirdSend
+		}
+	})
 
 	done := make(chan error, 1)
 	go func() {
 		done <- tk.ExecToErr("analyze table t")
 	}()
 
-	saveStarted := false
-	waitSaveTimeout := time.After(10 * time.Second)
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
-	for !saveStarted {
-		select {
-		case err := <-done:
-			require.FailNow(t, "analyze finished before kill", "unexpected err: %v", err)
-		case <-waitSaveTimeout:
-			t.Fatal("analyze does not enter save stage")
-		case <-ticker.C:
-			rows := tkObserver.MustQuery("show stats_meta where db_name='test' and table_name='t' and partition_name != 'global'").Rows()
-			if len(rows) > 0 {
-				saveStarted = true
-			}
-		}
+	select {
+	case <-workerPaused:
+	case <-time.After(5 * time.Second):
+		t.Fatal("save worker did not reach first kill-check point")
+	}
+	select {
+	case <-thirdSendPaused:
+	case <-time.After(10 * time.Second):
+		t.Fatal("analyze did not reach third send to save channel")
 	}
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	close(releaseWorker)
+	close(releaseThirdSend)
 
 	select {
 	case err := <-done:
