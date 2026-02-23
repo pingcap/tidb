@@ -14,13 +14,12 @@
 package parser_test
 
 import (
-	"github.com/pingcap/tidb/pkg/parser"
-
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/stretchr/testify/require"
 )
 

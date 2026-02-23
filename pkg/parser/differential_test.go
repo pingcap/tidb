@@ -14,12 +14,11 @@
 package parser_test
 
 import (
-	"github.com/pingcap/tidb/pkg/parser"
-
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
@@ -190,7 +189,7 @@ func categorize(sqls []string) []category {
 		}
 	}
 	// Sort by count descending.
-	var result []category
+	result := make([]category, 0, len(counts))
 	for name, count := range counts {
 		result = append(result, category{name, count})
 	}
