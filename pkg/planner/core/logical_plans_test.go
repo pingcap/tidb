@@ -235,6 +235,29 @@ func TestJoinPredicatePushDown(t *testing.T) {
 	}
 }
 
+func TestFullOuterJoinFailFast(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+
+	ctx := context.Background()
+	sqls := []string{
+		"select * from t t1 full outer join t t2 on t1.a = t2.a",
+		"select * from t t1 full outer join t t2 using (a)",
+		"select * from t t1 natural full outer join t t2",
+	}
+	for _, sql := range sqls {
+		stmt, err := s.p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, sql)
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		require.NoError(t, err, sql)
+		_, err = BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+		require.Error(t, err, sql)
+		require.True(t, plannererrors.ErrNotSupportedYet.Equal(err), sql)
+		require.ErrorContains(t, err, "FULL OUTER JOIN", sql)
+	}
+}
+
 func TestOuterWherePredicatePushDown(t *testing.T) {
 	var (
 		input  []string

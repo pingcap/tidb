@@ -4,11 +4,13 @@
 >
 > 阶段 1 目标与约束：
 > - 仅支持 `FULL OUTER JOIN ... ON ...`（不做 `NATURAL` / `USING`）。
+> - 语法层面仅识别 `FULL OUTER JOIN`（`OUTER` 不可省略）；`FULL JOIN` 保持 MySQL 兼容解释（`t1 AS full JOIN t2`）。
 > - 仅 Root 执行（TiDB 层），禁止 TiFlash MPP / TiKV coprocessor pushdown。
 > - 仅 HashJoin v1（禁止 MergeJoin / IndexJoin / HashJoin v2）。
 > - ON 等值条件同时支持 `=` 与 `<=>`（`nulleq`）：
 >   - `=`：任一侧 join key 为 `NULL` 不匹配。
 >   - `<=>`：`NULL <=> NULL = TRUE`，`NULL` join key 参与 hash 并可匹配。
+> - 在 planner/executor 完整支持前，`FULL OUTER JOIN` 必须在 planner 阶段显式报错（fail-fast），禁止 silent fallback 到 inner join。
 
 补充说明（语法层面的取舍）：
 
@@ -99,24 +101,49 @@ HashJoin v1 已支持 `IsNullEQ` 用于 `<=>` join key，但 FULL OUTER JOIN 的
 
 ---
 
+## 0.2 过渡期安全门（parser/ast 先行合入时必须满足）
+
+parser/ast 先行后，系统会开始接受 `ast.FullJoin`。此时如果 planner 仍按默认分支把它当 inner join 处理，会产生 silent wrong result。为避免该风险，阶段 1 明确要求：
+
+1) **强制 fail-fast**
+   - 在 `logical_plan_builder` 将 `ast.FullJoin` 映射到 `logicalop.FullOuterJoin` 之前，遇到 `ast.FullJoin` 必须直接返回 `ErrNotSupportedYet`（或等价错误），错误信息应明确包含 `FULL OUTER JOIN`。
+   - 目标是“宁可报错，不可错算”。
+
+2) **禁止语义降级**
+   - 明确禁止把 `ast.FullJoin` 走默认 inner join 分支。
+   - 该安全门应在 PR1 合入时一并落地，不可后置。
+
+3) **安全门验收**
+   - `SELECT ... FULL OUTER JOIN ... ON ...` 在 PR1 阶段应得到明确的 not supported 错误。
+   - `FULL JOIN` 仍按 alias 语义解析（`t1 AS full JOIN t2`）。
+   - `FULL OUTER JOIN ... USING(...)` 与 `NATURAL FULL OUTER JOIN ...` 在阶段 1 也应明确报 not supported（直到后续显式支持）。
+
+---
+
 ## 1. PR/任务拆分建议（推荐顺序）
 
 建议至少拆成 4 个小 PR（也可以合并，但拆开更利于 review 与回滚）：
 
-### PR1：Parser / AST（语法闭环）
+### PR1：Parser / AST + Planner fail-fast gate（语法闭环 + 安全门）
 
 - **目标**
   - 支持解析 `FULL OUTER JOIN`。
   - 不把 `FULL JOIN` 当作 `FULL OUTER JOIN` 的缩写（避免 `full` 作为 alias/identifier 的二义性）。
   - restore 输出能完整 round-trip（parse -> restore -> parse）。
+  - parser/ast 合入后，planner 对 `FULL OUTER JOIN` 显式报错，避免 silent fallback。
 - **涉及文件**
   - `pkg/parser/parser.y`
+  - `pkg/parser/lexer.go`（`FULL OUTER JOIN` 组合 token 识别）
   - `pkg/parser/ast/dml.go`
   - `pkg/parser/parser_test.go`
+  - `pkg/planner/core/logical_plan_builder.go`（临时 fail-fast gate）
 - **验收标准**
   - 新增 parse + restore UT 覆盖至少：
     - `t1 FULL OUTER JOIN t2 ON t1.a = t2.a`
     - `t1 FULL OUTER JOIN t2 ON t1.a <=> t2.a`
+  - `t1 FULL JOIN t2 ...` 维持 alias 语义（不当作 full outer join 缩写）。
+  - 在 PR1 阶段，`FULL OUTER JOIN` 查询返回明确 not supported 错误（非 inner join 结果）。
+  - 在阶段 1，`FULL OUTER JOIN ... USING(...)` / `NATURAL FULL OUTER JOIN ...` 返回明确 not supported 错误。
 
 ### PR2：Planner（LogicalJoin/PhysicalJoin 支持 Full Join）
 
@@ -124,6 +151,7 @@ HashJoin v1 已支持 `IsNullEQ` 用于 `<=>` join key，但 FULL OUTER JOIN 的
   - planner 端能构造出 `logicalop.FullOuterJoin`（或等价 JoinType）并贯穿到物理计划。
   - full join 下 schema nullable 正确（NotNull flag 清空）。
   - full join 下 predicate pushdown 不丢 preserved 行。
+  - 移除 PR1 的 fail-fast gate，并由真实 full join 语义接管。
 - **涉及文件（典型）**
   - `pkg/planner/core/operator/logicalop/logical_join.go`（JoinType + `PredicatePushDown` full join 分支）
   - `pkg/planner/core/logical_plan_builder.go`（AST join -> LogicalJoin join type 映射；nullable 处理）
@@ -172,14 +200,17 @@ HashJoin v1 已支持 `IsNullEQ` 用于 `<=>` join key，但 FULL OUTER JOIN 的
 
 ### 2.1 Parser / AST
 
-- [ ] `parser.y`：JoinType 增加 `FULL` 分支，支持可选 `OUTER`。
+- [ ] `parser.y` + `lexer.go`：仅识别 `FULL OUTER JOIN`，不把 `FULL JOIN` 视作缩写。
 - [ ] AST JoinType 常量补齐（需要能区分 full）。
 - [ ] `Restore()` 输出 FULL / FULL OUTER（选一种统一输出风格即可，但要稳定）。
 - [ ] parser UT：覆盖 `FULL OUTER JOIN`（并包含至少一个 “`FULL JOIN` 不作为缩写” 的 case）。
+- [ ] planner fail-fast gate：`ast.FullJoin` 在 PR1 阶段返回 `ErrNotSupportedYet`（或等价错误），禁止静默走 inner join。
+- [ ] 阶段 1 范围门禁：`FULL OUTER JOIN ... USING(...)` / `NATURAL FULL OUTER JOIN ...` 明确报 not supported。
 
 ### 2.2 Planner：JoinType + Schema(nullable) + Pushdown
 
 - [ ] LogicalJoin JoinType 增加 FullOuterJoin（并确保 `IsOuterJoin()` 返回 true）。
+- [ ] 移除 PR1 中的 fail-fast gate，改为真实 FullOuterJoin 逻辑闭环。
 - [ ] `LogicalJoin.PredicatePushDown` 增加 full join 分支：
   - full join 下两侧都是 preserved：`LeftConditions` / `RightConditions` 不得变成 child selection。
   - 需要审计：是否有规则在 full join 下错误使用 “inner/outer side” 概念。
@@ -244,6 +275,22 @@ full join 需要 “左 unmatched 形如 (leftRow, NULL-right)” 和 “右 unm
 
 为了避免 UT 数量爆炸，建议挑少量 case 但覆盖关键维度。下面是一个最小覆盖矩阵（每个 case 都建议同时跑 `EXPLAIN` 校验 plan 只选 HashJoin root）：
 
+### 4.0 PR1 fail-fast 回归（parser/ast 先行阶段）
+
+在 PR1（尚未接入真实 full join 语义）阶段，优先保证“不会错算”：
+
+1) `FULL OUTER JOIN ... ON ...`
+   - 预期：planner 返回 `ErrNotSupportedYet`，错误信息包含 `FULL OUTER JOIN`。
+
+2) `FULL OUTER JOIN ... USING(...)`
+   - 预期：planner 返回 `ErrNotSupportedYet`（阶段 1 范围门禁）。
+
+3) `NATURAL FULL OUTER JOIN ...`
+   - 预期：planner 返回 `ErrNotSupportedYet`（阶段 1 范围门禁）。
+
+4) `FULL JOIN`（无 `OUTER`）
+   - 预期：保持 alias 语义，不被识别为 full outer join（parser/restore case 锁定）。
+
 ### 4.1 基本匹配 + 双侧 unmatched
 
 1) `=` key
@@ -284,3 +331,7 @@ full join 需要 “左 unmatched 形如 (leftRow, NULL-right)” 和 “右 unm
 - [ ] plan 枚举：full join 只选 root HashJoin v1；禁止 MPP/merge/index/v2
 - [ ] executor：full join 双侧 unmatched + `<=>` join key 正常工作
 - [ ] tests：最小矩阵覆盖并稳定通过（包含 `<=>` NULL-NULL match 与 NULL 重复 `N×M`）
+
+补充里程碑（防止 parser/ast 先行期间出现错误语义）：
+
+- [ ] parser/ast 合入后到 PR2 合入前，`FULL OUTER JOIN` 必须稳定报 not supported（不可产生 inner join 结果）。

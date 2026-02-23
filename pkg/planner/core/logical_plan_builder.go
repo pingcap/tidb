@@ -573,6 +573,13 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return nil, err
 	}
 
+	// Phase 1 gate for FULL OUTER JOIN:
+	// parser/ast can already construct ast.FullJoin, but planner/executor semantics are not ready yet.
+	// Fail fast here to avoid silently falling back to inner join behavior.
+	if joinNode.Tp == ast.FullJoin {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+	}
+
 	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
 	if lc, ok := rightPlan.(*logicalop.LogicalCTETable); ok && joinNode.Tp == ast.LeftJoin {
 		return nil, plannererrors.ErrCTERecursiveForbiddenJoinOrder.GenWithStackByArgs(lc.Name)
