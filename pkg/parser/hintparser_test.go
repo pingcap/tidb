@@ -14,10 +14,9 @@
 package parser_test
 
 import (
-	"github.com/pingcap/tidb/pkg/parser"
-
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
