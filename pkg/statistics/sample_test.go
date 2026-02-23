@@ -146,31 +146,31 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 		d := types.NewIntDatum(int64(i))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: &d})
+		data = append(data, &SampleItem{Value: d})
 	}
 	for i := 1; i < 10; i++ {
 		d := types.NewIntDatum(int64(2))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: &d})
+		data = append(data, &SampleItem{Value: d})
 	}
 	for i := 1; i < 7; i++ {
 		d := types.NewIntDatum(int64(4))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: &d})
+		data = append(data, &SampleItem{Value: d})
 	}
 	for i := 1; i < 5; i++ {
 		d := types.NewIntDatum(int64(7))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: &d})
+		data = append(data, &SampleItem{Value: d})
 	}
 	for i := 1; i < 3; i++ {
 		d := types.NewIntDatum(int64(11))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: &d})
+		data = append(data, &SampleItem{Value: d})
 	}
 	collector := &SampleCollector{
 		Samples:   data,
@@ -205,19 +205,19 @@ func TestBuildSampleFullNDV(t *testing.T) {
 		d := types.NewIntDatum(int64(2))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: &d})
+		data = append(data, &SampleItem{Value: d})
 	}
 	for i := 1; i < 31; i++ {
 		d := types.NewIntDatum(int64(4))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: &d})
+		data = append(data, &SampleItem{Value: d})
 	}
 	for i := 1; i < 25; i++ {
 		d := types.NewIntDatum(int64(7))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: &d})
+		data = append(data, &SampleItem{Value: d})
 	}
 
 	// Add many more distinct values to the FMSketch to make column NDV > sample NDV
@@ -353,14 +353,14 @@ func SubTestMergeSampleCollector(s *testSampleSuite) func(*testing.T) {
 }
 
 // BenchmarkCopySampleItems benchmarks the performance of CopySampleItems.
+// The value-type SampleItem.Value avoids per-element heap allocation and nil checks.
 // go test -benchmem -run=^$ -bench ^BenchmarkCopySampleItems$ github.com/pingcap/tidb/pkg/statistics
 func BenchmarkCopySampleItems(b *testing.B) {
 	const n = 10000
 	items := make([]*SampleItem, n)
 	for i := range items {
-		d := types.NewIntDatum(int64(i))
 		items[i] = &SampleItem{
-			Value:   &d,
+			Value:   types.NewIntDatum(int64(i)),
 			Ordinal: i,
 		}
 	}
@@ -380,9 +380,8 @@ func BenchmarkSortSampleItems(b *testing.B) {
 		b.StopTimer()
 		items := make([]*SampleItem, n)
 		for j := range items {
-			d := types.NewIntDatum(int64(n - j))
 			items[j] = &SampleItem{
-				Value:   &d,
+				Value:   types.NewIntDatum(int64(n - j)),
 				Ordinal: j,
 			}
 		}
@@ -392,6 +391,7 @@ func BenchmarkSortSampleItems(b *testing.B) {
 }
 
 // BenchmarkSampleCollect benchmarks the reservoir sampling collect path.
+// The value-type SampleItem.Value eliminates separate Datum heap allocations per sample.
 // go test -benchmem -run=^$ -bench ^BenchmarkSampleCollect$ github.com/pingcap/tidb/pkg/statistics
 func BenchmarkSampleCollect(b *testing.B) {
 	sc := stmtctx.NewStmtCtx()

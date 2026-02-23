@@ -745,7 +745,7 @@ workLoop:
 						consumeBuffered(deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value:   &val,
+						Value:   val,
 						Ordinal: j,
 					})
 				}
@@ -804,9 +804,8 @@ workLoop:
 						// here we need to account the remaining bytes.
 						consumeBuffered(int64(cap(b) - 8))
 					}
-					tmp := types.NewBytesDatum(b)
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value: &tmp,
+						Value: types.NewBytesDatum(b),
 					})
 				}
 				flushBuffered(&collectorMemSize)
