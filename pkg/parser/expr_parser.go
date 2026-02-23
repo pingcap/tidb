@@ -816,7 +816,9 @@ func (p *HandParser) parseMatchAgainstExpr() ast.ExprNode {
 			if _, ok := p.accept(with); ok {
 				p.expect(query)
 				p.expect(expansion)
-				node.Modifier = ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode | ast.FulltextSearchModifierWithQueryExpansion)
+				node.Modifier = ast.FulltextSearchModifier(
+					ast.FulltextSearchModifierNaturalLanguageMode | ast.FulltextSearchModifierWithQueryExpansion,
+				)
 			} else {
 				node.Modifier = ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode)
 			}
@@ -889,8 +891,8 @@ func (p *HandParser) parseTimeFunc(fnName string) ast.ExprNode {
 		// Parse optional fsp (0-6), must be literal integer
 		var args []ast.ExprNode
 		if p.peek().Tp != ')' {
-			if p.peek().Tp == intLit {
-				if lit := p.parseLiteral(); lit != nil {
+			if p.peek().Tp == intLit { //revive:disable-line
+				if lit := p.parseLiteral(); lit != nil { //revive:disable-line
 					args = append(args, lit)
 				} else {
 					p.error(p.peek().Offset, "expected integer literal")

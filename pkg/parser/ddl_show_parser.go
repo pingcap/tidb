@@ -252,19 +252,19 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 
 	if _, ok := p.accept(forKwd); ok {
 		if _, ok := p.accept(database); ok {
-			if tok, ok := p.expect(identifier); ok {
-				stmt.DBName = tok.Lit
-			} else {
+			tok, ok := p.expect(identifier)
+			if !ok {
 				return nil
 			}
+			stmt.DBName = tok.Lit
 		} else if _, ok := p.accept(tableKwd); ok {
 			stmt.Table = p.parseTableName()
 			if _, ok := p.accept(partition); ok {
-				if tok, ok := p.expect(identifier); ok {
-					stmt.Partition = ast.NewCIStr(tok.Lit)
-				} else {
+				tok, ok := p.expect(identifier)
+				if !ok {
 					return nil
 				}
+				stmt.Partition = ast.NewCIStr(tok.Lit)
 			}
 		} else {
 			p.error(p.peek().Offset, "expected DATABASE, TABLE after FOR")
@@ -317,12 +317,12 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 
 	// Optional INDEX idx
 	if _, ok := p.accept(index); ok {
-		if tok, ok := p.accept(identifier); ok {
-			stmt.IndexName = ast.NewCIStr(tok.Lit)
-		} else {
+		tok, ok := p.accept(identifier)
+		if !ok {
 			p.error(p.peek().Offset, "expected index name")
 			return nil
 		}
+		stmt.IndexName = ast.NewCIStr(tok.Lit)
 	}
 
 	// Check for REGIONS, NEXT_ROW_ID, or DISTRIBUTIONS
@@ -391,12 +391,11 @@ func (p *HandParser) parseShowScopedStmt(stmt *ast.ShowStmt, isGlobal bool) ast.
 		p.next()
 		stmt.Tp = ast.ShowStatus
 	default:
-		if p.peek().IsKeyword("BINDINGS") {
-			p.next()
-			stmt.Tp = ast.ShowBindings
-		} else {
+		if !p.peek().IsKeyword("BINDINGS") {
 			return nil
 		}
+		p.next()
+		stmt.Tp = ast.ShowBindings
 	}
 	p.parseShowLikeOrWhere(stmt)
 	return stmt

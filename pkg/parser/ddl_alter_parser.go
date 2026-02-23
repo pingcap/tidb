@@ -255,7 +255,6 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 			p.error(p.peek().Offset, "VALUES clause is not allowed for HASH/KEY partitions")
 			return nil
 		}
-
 		if _, ok := p.accept(less); ok {
 			// VALUES LESS THAN
 			if partType == ast.PartitionTypeList {
@@ -288,7 +287,6 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 				clause.Exprs = append(clause.Exprs, p.parseExpression(precNone))
 			}
 			pDef.Clause = clause
-
 		} else if _, ok := p.accept(in); ok {
 			// VALUES IN
 			if partType == ast.PartitionTypeRange {
@@ -336,13 +334,11 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 			p.expect(')')
 			pDef.Clause = clause
 		}
-
 	} else if _, ok := p.accept(defaultKwd); ok {
 		// Standalone DEFAULT — shorthand for VALUES IN (DEFAULT)
 		clause := &ast.PartitionDefinitionClauseIn{}
 		clause.Values = append(clause.Values, []ast.ExprNode{&ast.DefaultExpr{}})
 		pDef.Clause = clause
-
 	} else if tok, ok := p.acceptAny(history, current); ok {
 		// HISTORY or CURRENT — for SYSTEM_TIME partitions
 		if partType != 0 && partType != ast.PartitionTypeSystemTime {
@@ -431,8 +427,9 @@ func (p *HandParser) parseSplitRegionSpec(spec *ast.AlterTableSpec) *ast.AlterTa
 		spec.Tp = ast.AlterTableSplitIndex // Using SplitIndex for partition split as well if generic
 		// Actually, standard syntax might be SPLIT PARTITION table ...
 		// But in ALTER TABLE, it's SPLIT PARTITION p1 ...
-		// We need to check available types. Using AlterTableSplitIndex for now as fallback if specific partition split type isn't clear,
-		// but standard SPLIT PARTITION likely maps to something else or reuses SplitIndex with PartitionNames.
+		// We need to check available types. Using AlterTableSplitIndex for now as fallback if
+		// specific partition split type isn't clear, but standard SPLIT PARTITION likely
+		// maps to something else or reuses SplitIndex with PartitionNames.
 		// Wait, Check AlterTableType again.
 		// There is AlterTablePartition which is generic.
 		// But let's assume AlterTableSplitIndex is valid for Table/Index split.
@@ -471,11 +468,8 @@ func (p *HandParser) parseSplitRegionSpec(spec *ast.AlterTableSpec) *ast.AlterTa
 		spec.SplitIndex.PrimaryKey = true
 		// IndexName is typically "PRIMARY" but flag controls display
 		spec.SplitIndex.IndexName = ast.NewCIStr("PRIMARY")
-	} else if _, ok := p.accept(region); ok {
-		// SPLIT REGION implies splitting table region?
-		// Treated same as SPLIT TABLE
-		spec.SplitIndex.TableLevel = true
 	} else {
+		p.accept(region) // SPLIT REGION implies splitting table region?
 		// Fallback: SPLIT PARTITION handled above.
 		// If none matched, maybe error?
 		// But parseSplitRegionSpec is called after split.
@@ -582,34 +576,34 @@ func (p *HandParser) parseAlterAnalyzePartition(table *ast.TableName) *ast.Analy
 	if _, ok := p.accept(with); ok {
 		for {
 			var opt ast.AnalyzeOpt
-			if tok, ok := p.expectAny(intLit, decLit, floatLit); ok {
-				opt.Value = ast.NewValueExpr(tok.Item, "", "")
-				if _, ok := p.accept(buckets); ok {
-					opt.Type = ast.AnalyzeOptNumBuckets
-				} else if _, ok := p.accept(topn); ok {
-					opt.Type = ast.AnalyzeOptNumTopN
-				} else if _, ok := p.accept(sampleRate); ok {
-					opt.Type = ast.AnalyzeOptSampleRate
-				} else if _, ok := p.accept(samples); ok {
-					opt.Type = ast.AnalyzeOptNumSamples
-				} else if _, ok := p.accept(cmSketch); ok {
-					if _, ok := p.accept(depth); ok {
-						opt.Type = ast.AnalyzeOptCMSketchDepth
-					} else if _, ok := p.accept(width); ok {
-						opt.Type = ast.AnalyzeOptCMSketchWidth
-					} else {
-						p.syntaxError(p.peek().Offset)
-						return nil
-					}
+			tok, ok := p.expectAny(intLit, decLit, floatLit)
+			if !ok {
+				p.syntaxError(p.peek().Offset)
+				return nil
+			}
+			opt.Value = ast.NewValueExpr(tok.Item, "", "")
+			if _, ok := p.accept(buckets); ok {
+				opt.Type = ast.AnalyzeOptNumBuckets
+			} else if _, ok := p.accept(topn); ok {
+				opt.Type = ast.AnalyzeOptNumTopN
+			} else if _, ok := p.accept(sampleRate); ok {
+				opt.Type = ast.AnalyzeOptSampleRate
+			} else if _, ok := p.accept(samples); ok {
+				opt.Type = ast.AnalyzeOptNumSamples
+			} else if _, ok := p.accept(cmSketch); ok {
+				if _, ok := p.accept(depth); ok {
+					opt.Type = ast.AnalyzeOptCMSketchDepth
+				} else if _, ok := p.accept(width); ok {
+					opt.Type = ast.AnalyzeOptCMSketchWidth
 				} else {
 					p.syntaxError(p.peek().Offset)
 					return nil
 				}
-				stmt.AnalyzeOpts = append(stmt.AnalyzeOpts, opt)
 			} else {
 				p.syntaxError(p.peek().Offset)
 				return nil
 			}
+			stmt.AnalyzeOpts = append(stmt.AnalyzeOpts, opt)
 
 			if _, ok := p.accept(','); !ok {
 				break

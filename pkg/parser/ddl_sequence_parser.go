@@ -56,11 +56,11 @@ func (p *HandParser) parseAlterSequenceStmt() ast.StmtNode {
 	}
 
 	for {
-		if opt := p.parseAlterSequenceOption(); opt != nil {
-			stmt.SeqOptions = append(stmt.SeqOptions, opt)
-		} else {
+		opt := p.parseAlterSequenceOption()
+		if opt == nil {
 			break
 		}
+		stmt.SeqOptions = append(stmt.SeqOptions, opt)
 	}
 	if len(stmt.SeqOptions) == 0 {
 		p.error(p.peek().Offset, "expected at least one sequence option")
@@ -181,18 +181,14 @@ func (p *HandParser) parseAlterRangeStmt() ast.StmtNode {
 func (p *HandParser) parseSequenceOption() *ast.SequenceOption {
 	opt := Alloc[ast.SequenceOption](p.arena)
 	if _, ok := p.accept(increment); ok {
-		if _, ok := p.accept(by); ok {
-			// standard syntax
-		} else {
+		if _, ok := p.accept(by); !ok {
 			p.accept(eq) // optional =
 		}
 		opt.Tp = ast.SequenceOptionIncrementBy
 		opt.IntValue = p.parseIntLit()
 		return opt
 	} else if _, ok := p.accept(start); ok {
-		if _, ok := p.accept(with); ok {
-			// standard syntax
-		} else {
+		if _, ok := p.accept(with); !ok {
 			p.accept(eq) // optional =
 		}
 		opt.Tp = ast.SequenceStartWith
@@ -280,12 +276,7 @@ func (p *HandParser) parseIntLit() int64 {
 		var val uint64
 		switch v := tok.Item.(type) {
 		case int64:
-			if v < 0 { // Should not happen for intLit unless lexer is weird
-				// handle weird case
-				val = uint64(v) // cast back
-			} else {
-				val = uint64(v)
-			}
+			val = uint64(v)
 		case uint64:
 			val = v
 		default:

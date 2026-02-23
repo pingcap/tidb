@@ -469,7 +469,8 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 			charsetTok := p.next()
 			charsetName := strings.ToLower(charsetTok.Lit)
 			if !charset.ValidCharsetAndCollation(charsetName, "") {
-				p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
+				p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).
+					GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
 				return nil
 			}
 			args = append(args, ast.NewValueExpr(charsetName, "", ""))

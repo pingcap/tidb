@@ -28,16 +28,17 @@ func (p *HandParser) parsePrepareStmt() ast.StmtNode {
 
 	if tok, ok := p.accept(stringLit); ok {
 		stmt.SQLText = tok.Lit
-	} else {
-		// Must be user variable @var
-		expr := p.parseVariableExpr()
-		if v, ok := expr.(*ast.VariableExpr); ok {
-			stmt.SQLVar = v
-		} else {
-			p.error(p.peek().Offset, "expected string literal or user variable for PREPARE")
-			return nil
-		}
+		return stmt
 	}
+
+	// Must be user variable @var
+	expr := p.parseVariableExpr()
+	v, ok := expr.(*ast.VariableExpr)
+	if !ok {
+		p.error(p.peek().Offset, "expected string literal or user variable for PREPARE")
+		return nil
+	}
+	stmt.SQLVar = v
 	return stmt
 }
 

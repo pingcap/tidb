@@ -33,12 +33,12 @@ func (p *HandParser) parseCreatePlacementPolicyStmt() ast.StmtNode {
 	stmt.PolicyName = ast.NewCIStr(p.next().Lit)
 
 	for {
-		if opt := p.parsePlacementOption(); opt != nil {
-			stmt.PlacementOptions = append(stmt.PlacementOptions, opt)
-			p.accept(',') // Optional comma between options
-		} else {
+		opt := p.parsePlacementOption()
+		if opt == nil {
 			break
 		}
+		stmt.PlacementOptions = append(stmt.PlacementOptions, opt)
+		p.accept(',') // Optional comma between options
 	}
 	return stmt
 }
@@ -55,12 +55,12 @@ func (p *HandParser) parseAlterPlacementPolicyStmt() ast.StmtNode {
 	stmt.PolicyName = ast.NewCIStr(p.next().Lit)
 
 	for {
-		if opt := p.parsePlacementOption(); opt != nil {
-			stmt.PlacementOptions = append(stmt.PlacementOptions, opt)
-			p.accept(',') // Optional comma between options
-		} else {
+		opt := p.parsePlacementOption()
+		if opt == nil {
 			break
 		}
+		stmt.PlacementOptions = append(stmt.PlacementOptions, opt)
+		p.accept(',') // Optional comma between options
 	}
 	return stmt
 }

@@ -233,11 +233,11 @@ func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
 	}
 
 	// Username: identifier or string literal
-	if tok, ok := p.expectAny(identifier, stringLit); ok {
-		authUser.Username = tok.Lit
-	} else {
+	tok, ok := p.expectAny(identifier, stringLit)
+	if !ok {
 		return nil
 	}
+	authUser.Username = tok.Lit
 
 	authUser.Hostname = p.parseHostname()
 	return authUser
@@ -246,11 +246,11 @@ func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
 // parseRoleIdentity parses a role identifier
 func (p *HandParser) parseRoleIdentity() *auth.RoleIdentity {
 	role := Alloc[auth.RoleIdentity](p.arena)
-	if tok, ok := p.expectAny(stringLit, identifier); ok {
-		role.Username = tok.Lit
-	} else {
+	tok, ok := p.expectAny(stringLit, identifier)
+	if !ok {
 		return nil
 	}
+	role.Username = tok.Lit
 
 	role.Hostname = p.parseHostname()
 	return role
@@ -317,19 +317,18 @@ func (p *HandParser) parseFieldsClause(loadDataMode bool) *ast.FieldsClause {
 			}
 			fields.Escaped = sptr(val)
 		} else if loadDataMode {
-			if _, ok := p.accept(defined); ok {
-				// DEFINED NULL BY 'val' [OPTIONALLY ENCLOSED]
-				p.expect(null)
-				p.expect(by)
-				fields.DefinedNullBy = sptr(p.parseStringValue())
-				if _, ok := p.accept(optionallyEnclosedBy); ok {
-					fields.NullValueOptEnclosed = true
-				} else if _, ok := p.accept(optionally); ok {
-					p.accept(enclosed) // OPTIONALLY ENCLOSED
-					fields.NullValueOptEnclosed = true
-				}
-			} else {
+			if _, ok := p.accept(defined); !ok {
 				break
+			}
+			// DEFINED NULL BY 'val' [OPTIONALLY ENCLOSED]
+			p.expect(null)
+			p.expect(by)
+			fields.DefinedNullBy = sptr(p.parseStringValue())
+			if _, ok := p.accept(optionallyEnclosedBy); ok {
+				fields.NullValueOptEnclosed = true
+			} else if _, ok := p.accept(optionally); ok {
+				p.accept(enclosed) // OPTIONALLY ENCLOSED
+				fields.NullValueOptEnclosed = true
 			}
 		} else {
 			break

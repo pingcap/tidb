@@ -244,7 +244,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 // isValidPartitionExpr validates that an expression is allowed in a partition
 // VALUES LESS THAN clause. MySQL's PartitionNumOrExpr production disallows
 // logical operators like NOT, OR, AND, XOR, IS NULL, IS TRUE, etc.
-func (p *HandParser) isValidPartitionExpr(expr ast.ExprNode) bool {
+func (*HandParser) isValidPartitionExpr(expr ast.ExprNode) bool {
 	if expr == nil {
 		return false
 	}
@@ -288,30 +288,28 @@ func (p *HandParser) parseSplitIndexOption() *ast.SplitIndexOption {
 	p.expect(split)
 	opt := Alloc[ast.SplitIndexOption](p.arena)
 
-	if _, ok := p.accept(region); ok {
-		// handle optional REGION
-	}
+	p.accept(region) // handle optional REGION
 
 	if _, ok := p.accept(primary); ok {
 		p.expect(key)
 		opt.PrimaryKey = true
 	} else if _, ok := p.accept(index); ok {
-		if tok, ok := p.expect(identifier); ok {
-			opt.IndexName = ast.NewCIStr(tok.Lit)
-		} else {
+		tok, ok := p.expect(identifier)
+		if !ok {
 			p.error(p.peek().Offset, "expected index name")
 			return nil
 		}
+		opt.IndexName = ast.NewCIStr(tok.Lit)
 	} else if _, ok := p.accept(tableKwd); ok {
 		opt.TableLevel = true
 	} else {
 		// Implicit Table Level if followed by BETWEEN or BY
-		if tp := p.peek().Tp; tp == between || tp == by {
-			opt.TableLevel = true
-		} else {
+		tp := p.peek().Tp
+		if tp != between && tp != by {
 			p.error(p.peek().Offset, "expected PRIMARY KEY, INDEX or TABLE after SPLIT")
 			return nil
 		}
+		opt.TableLevel = true
 	}
 
 	opt.SplitOpt = p.parseSplitOption()

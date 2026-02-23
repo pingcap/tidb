@@ -227,14 +227,13 @@ func (p *HandParser) parsePasswordAndLockOptions() []*ast.PasswordOrLockOption {
 			}
 		} else if tok.Tp == account {
 			p.next() // ACCOUNT
-			if p.peek().Tp == lock || p.peek().Tp == unlock {
-				if p.next().Tp == lock {
-					opt.Type = ast.Lock
-				} else {
-					opt.Type = ast.Unlock
-				}
-			} else {
+			if p.peek().Tp != lock && p.peek().Tp != unlock {
 				return opts
+			}
+			if p.next().Tp == lock {
+				opt.Type = ast.Lock
+			} else {
+				opt.Type = ast.Unlock
 			}
 		} else if tok.Tp == failedLoginAttempts {
 			p.next()

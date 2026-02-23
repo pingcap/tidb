@@ -250,7 +250,6 @@ func (p *HandParser) parseQueryWatchStmt() ast.StmtNode {
 			stmt.QueryWatchOptionList = append(stmt.QueryWatchOptionList, opt)
 		}
 		return stmt
-
 	} else if _, ok := p.accept(remove); ok { // Support REMOVE keyword as per Restore output
 		stmt := Alloc[ast.DropQueryWatchStmt](p.arena)
 		if tok, ok := p.accept(intLit); ok {

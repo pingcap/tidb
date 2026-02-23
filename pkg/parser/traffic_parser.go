@@ -30,13 +30,12 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 	case "CAPTURE":
 		stmt.OpType = ast.TrafficOpCapture
 		// TO 'path'
-		if _, ok := p.expect(to); ok {
-			if tok, ok := p.expect(stringLit); ok {
-				stmt.Dir = tok.Lit
-			}
-		} else {
+		if _, ok := p.expect(to); !ok {
 			// expect(to) already logged error
 			return nil
+		}
+		if tok, ok := p.expect(stringLit); ok {
+			stmt.Dir = tok.Lit
 		}
 
 		// Options: DURATION='...', ENCRYPTION_METHOD='...', COMPRESS=true
@@ -90,12 +89,11 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 	case "REPLAY":
 		stmt.OpType = ast.TrafficOpReplay
 		// FROM 'path'
-		if _, ok := p.expect(from); ok {
-			if tok, ok := p.expect(stringLit); ok {
-				stmt.Dir = tok.Lit
-			}
-		} else {
+		if _, ok := p.expect(from); !ok {
 			return nil
+		}
+		if tok, ok := p.expect(stringLit); ok {
+			stmt.Dir = tok.Lit
 		}
 
 		// Options: USER='root', PASSWORD='...', SPEED=1.0, READONLY=true
