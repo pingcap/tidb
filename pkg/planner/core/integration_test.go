@@ -2112,7 +2112,6 @@ WHERE t1.id IN (SELECT MIN(id) FROM t1)`
 	require.NoError(t, err)
 }
 
-
 // https://github.com/pingcap/tidb/issues/63487
 func TestINListMatchPruning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -2149,7 +2148,7 @@ func TestINListMatchPruning(t *testing.T) {
 		) t
 	`)
 
-	// sleep(1) is necesary for statistics to reflect recently committed changes
+	// sleep(1) is necessary for statistics to reflect recently committed changes
 	tk.MustQuery("select sleep(1)")
 	tk.MustExec("analyze table t1 all columns")
 
@@ -2291,7 +2290,7 @@ func TestINListMatchPruning(t *testing.T) {
 			) t
 		`)
 
-		// sleep(1) is necesary for statistics to reflect recently committed changes
+		// sleep(1) is necessary for statistics to reflect recently committed changes
 		tk.MustQuery("select sleep(1)")
 
 		tk.MustExec("analyze table t2 all columns")
