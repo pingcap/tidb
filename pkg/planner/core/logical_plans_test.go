@@ -358,6 +358,106 @@ func TestFullOuterJoinPhysicalPlanHashJoinOnly(t *testing.T) {
 	require.False(t, hashJoin.UseOuterToBuild, sql)
 }
 
+func findFirstLogicalJoinType(p base.LogicalPlan) (logicalop.JoinType, bool) {
+	var (
+		joinType logicalop.JoinType
+		found    bool
+	)
+	var walk func(base.LogicalPlan)
+	walk = func(cur base.LogicalPlan) {
+		if found {
+			return
+		}
+		if join, ok := cur.(*logicalop.LogicalJoin); ok {
+			joinType, found = join.JoinType, true
+			return
+		}
+		for _, child := range cur.Children() {
+			walk(child)
+		}
+	}
+	walk(p)
+	return joinType, found
+}
+
+func TestFullOuterJoinSimplifyOuterJoin(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.Background()
+	tests := []struct {
+		sql      string
+		joinType logicalop.JoinType
+	}{
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1",
+			joinType: logicalop.LeftOuterJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t2.b > 1",
+			joinType: logicalop.RightOuterJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 and t2.b > 1",
+			joinType: logicalop.InnerJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 or t2.b > 1",
+			joinType: logicalop.FullOuterJoin,
+		},
+	}
+	for _, tt := range tests {
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, tt.sql)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+		require.NoError(t, err, tt.sql)
+		p, err = logicalOptimize(ctx, rule.FlagPredicatePushDown, p.(base.LogicalPlan))
+		require.NoError(t, err, tt.sql)
+		joinType, ok := findFirstLogicalJoinType(p.(base.LogicalPlan))
+		require.True(t, ok, tt.sql)
+		require.Equal(t, tt.joinType, joinType, tt.sql)
+	}
+}
+
+func TestFullOuterJoinConvertOuterToInner(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.Background()
+	tests := []struct {
+		sql      string
+		joinType logicalop.JoinType
+	}{
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1",
+			joinType: logicalop.LeftOuterJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t2.b > 1",
+			joinType: logicalop.RightOuterJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 and t2.b > 1",
+			joinType: logicalop.InnerJoin,
+		},
+		{
+			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 or t2.b > 1",
+			joinType: logicalop.FullOuterJoin,
+		},
+	}
+	for _, tt := range tests {
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, tt.sql)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+		require.NoError(t, err, tt.sql)
+		p, err = logicalOptimize(ctx, rule.FlagConvertOuterToInnerJoin, p.(base.LogicalPlan))
+		require.NoError(t, err, tt.sql)
+		joinType, ok := findFirstLogicalJoinType(p.(base.LogicalPlan))
+		require.True(t, ok, tt.sql)
+		require.Equal(t, tt.joinType, joinType, tt.sql)
+	}
+}
+
 func TestOuterWherePredicatePushDown(t *testing.T) {
 	var (
 		input  []string
