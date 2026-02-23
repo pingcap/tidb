@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -2013,6 +2014,9 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 // If the hint is not figured, we will pick all candidates.
 func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalJoin)
+	if p.JoinType == logicalop.FullOuterJoin {
+		return nil, true, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+	}
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
 			indexJoins, _ := tryToGetIndexJoin(p, prop)

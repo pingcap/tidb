@@ -227,6 +227,8 @@ func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan
 		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == logicalop.RightOuterJoin {
 		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
+	} else if joinType == logicalop.FullOuterJoin {
+		util.ResetNotNullFlag(newSchema, 0, newSchema.Len())
 	}
 	return newSchema
 }

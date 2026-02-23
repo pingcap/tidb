@@ -235,13 +235,56 @@ func TestJoinPredicatePushDown(t *testing.T) {
 	}
 }
 
-func TestFullOuterJoinFailFast(t *testing.T) {
+func TestFullOuterJoinLogicalBuild(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a and t1.b > 1 and t2.b > 1"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, sql)
+	p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+	require.NoError(t, err, sql)
+
+	proj, ok := p.(*logicalop.LogicalProjection)
+	require.True(t, ok, sql)
+	join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
+	require.True(t, ok, sql)
+	require.Equal(t, logicalop.FullOuterJoin, join.JoinType, sql)
+
+	for _, col := range join.Schema().Columns {
+		require.False(t, mysql.HasNotNullFlag(col.RetType.GetFlag()), sql)
+	}
+	require.NotNil(t, join.FullSchema, sql)
+	for _, col := range join.FullSchema.Columns {
+		require.False(t, mysql.HasNotNullFlag(col.RetType.GetFlag()), sql)
+	}
+
+	p, err = logicalOptimize(ctx, rule.FlagPredicatePushDown, p.(base.LogicalPlan))
+	require.NoError(t, err, sql)
+	proj, ok = p.(*logicalop.LogicalProjection)
+	require.True(t, ok, sql)
+	join, ok = proj.Children()[0].(*logicalop.LogicalJoin)
+	require.True(t, ok, sql)
+	require.NotEmpty(t, join.LeftConditions, sql)
+	require.NotEmpty(t, join.RightConditions, sql)
+	leftPlan, ok := join.Children()[0].(*logicalop.DataSource)
+	require.True(t, ok, sql)
+	rightPlan, ok := join.Children()[1].(*logicalop.DataSource)
+	require.True(t, ok, sql)
+	require.Empty(t, leftPlan.PushedDownConds, sql)
+	require.Empty(t, rightPlan.PushedDownConds, sql)
+}
+
+func TestFullOuterJoinUnsupportedFormsFailFast(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
 
 	ctx := context.Background()
 	sqls := []string{
-		"select * from t t1 full outer join t t2 on t1.a = t2.a",
 		"select * from t t1 full outer join t t2 using (a)",
 		"select * from t t1 natural full outer join t t2",
 	}
@@ -256,6 +299,46 @@ func TestFullOuterJoinFailFast(t *testing.T) {
 		require.True(t, plannererrors.ErrNotSupportedYet.Equal(err), sql)
 		require.ErrorContains(t, err, "FULL OUTER JOIN", sql)
 	}
+}
+
+func TestFullOuterJoinCascadesFailFast(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	s.sctx.GetSessionVars().SetEnableCascadesPlanner(true)
+	defer s.sctx.GetSessionVars().SetEnableCascadesPlanner(false)
+
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, sql)
+	_, err = BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+	require.Error(t, err, sql)
+	require.True(t, plannererrors.ErrNotSupportedYet.Equal(err), sql)
+	require.ErrorContains(t, err, "FULL OUTER JOIN", sql)
+}
+
+func TestFullOuterJoinPhysicalPlanFailFast(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.Background()
+	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a"
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(ctx, s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, sql)
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(ctx, nodeW)
+	require.NoError(t, err, sql)
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
+	require.NoError(t, err, sql)
+	_, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	require.Error(t, err)
+	require.True(t, plannererrors.ErrNotSupportedYet.Equal(err))
+	require.ErrorContains(t, err, "FULL OUTER JOIN")
 }
 
 func TestOuterWherePredicatePushDown(t *testing.T) {

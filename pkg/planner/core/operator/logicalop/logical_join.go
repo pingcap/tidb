@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
-// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
+// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin, AntiJoin.
 type JoinType int
 
 const (
@@ -52,6 +52,8 @@ const (
 	LeftOuterJoin
 	// RightOuterJoin means right join.
 	RightOuterJoin
+	// FullOuterJoin means full outer join.
+	FullOuterJoin
 	// SemiJoin means if row a in table A matches some rows in B, just output a.
 	SemiJoin
 	// AntiSemiJoin means if row a in table A does not match any row in B, then output a.
@@ -64,7 +66,7 @@ const (
 
 // IsOuterJoin returns if this joiner is an outer joiner
 func (tp JoinType) IsOuterJoin() bool {
-	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+	return tp == LeftOuterJoin || tp == RightOuterJoin || tp == FullOuterJoin ||
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
@@ -82,6 +84,8 @@ func (tp JoinType) String() string {
 		return "left outer join"
 	case RightOuterJoin:
 		return "right outer join"
+	case FullOuterJoin:
+		return "full outer join"
 	case SemiJoin:
 		return "semi join"
 	case AntiSemiJoin:
@@ -243,6 +247,18 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		p.LeftConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
+	case FullOuterJoin:
+		// Both children are preserved sides for full outer join.
+		// Keep all filters above the join and avoid turning LeftConditions/RightConditions
+		// into child selections.
+		predicates = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), predicates)
+		predicates = expression.PropagateConstant(p.SCtx().GetExprCtx(), predicates)
+		dual := Conds2TableDual(p, predicates)
+		if dual != nil {
+			AppendTableDualTraceStep(p, dual, predicates, opt)
+			return ret, dual
+		}
+		ret = append(ret, predicates...)
 	case SemiJoin, InnerJoin:
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, p.LeftConditions...)
@@ -655,6 +671,9 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		count = math.Max(count, leftProfile.RowCount)
 	} else if p.JoinType == RightOuterJoin {
 		count = math.Max(count, rightProfile.RowCount)
+	} else if p.JoinType == FullOuterJoin {
+		count = math.Max(count, leftProfile.RowCount)
+		count = math.Max(count, rightProfile.RowCount)
 	}
 	colNDVs := make(map[int64]float64, selfSchema.Len())
 	for id, c := range leftProfile.ColNDVs {
@@ -708,6 +727,9 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 		rightProperties = nil
 	} else if p.JoinType == RightOuterJoin {
 		leftProperties = nil
+	} else if p.JoinType == FullOuterJoin {
+		leftProperties = nil
+		rightProperties = nil
 	}
 	resultProperties := make([][]*expression.Column, len(leftProperties)+len(rightProperties))
 	for i, cols := range leftProperties {
@@ -1451,6 +1473,10 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 		} else {
 			leftCond = append(leftCond, expr)
 		}
+	case FullOuterJoin:
+		// Keep constant predicates as join filters on both sides.
+		leftCond = append(leftCond, expr)
+		rightCond = append(rightCond, expr)
 	case SemiJoin, InnerJoin:
 		leftCond = append(leftCond, expr)
 		rightCond = append(rightCond, expr)
@@ -2022,6 +2048,8 @@ func BuildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expressio
 		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == RightOuterJoin {
 		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
+	} else if joinType == FullOuterJoin {
+		util.ResetNotNullFlag(newSchema, 0, newSchema.Len())
 	}
 	return newSchema
 }

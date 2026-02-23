@@ -573,11 +573,16 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return nil, err
 	}
 
-	// Phase 1 gate for FULL OUTER JOIN:
-	// parser/ast can already construct ast.FullJoin, but planner/executor semantics are not ready yet.
-	// Fail fast here to avoid silently falling back to inner join behavior.
+	// PR2 gating for FULL OUTER JOIN:
+	// 1) NATURAL/USING/full-join-without-ON are still out of scope.
+	// 2) full outer join is enabled in volcano path only.
 	if joinNode.Tp == ast.FullJoin {
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		if b.ctx.GetSessionVars().GetEnableCascadesPlanner() {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN with cascades planner")
+		}
+		if joinNode.NaturalJoin || joinNode.Using != nil || joinNode.On == nil {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		}
 	}
 
 	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
@@ -608,6 +613,11 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
 		joinPlan.JoinType = logicalop.RightOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), 0, leftPlan.Schema().Len())
+	case ast.FullJoin:
+		// full outer join need to be checked elimination
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+		joinPlan.JoinType = logicalop.FullOuterJoin
+		util.ResetNotNullFlag(joinPlan.Schema(), 0, joinPlan.Schema().Len())
 	default:
 		joinPlan.JoinType = logicalop.InnerJoin
 	}
@@ -642,6 +652,8 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// Clear NotNull flag for the inner side schema if it's an outer join.
 	if joinNode.Tp == ast.LeftJoin || joinNode.Tp == ast.RightJoin {
 		util.ResetNotNullFlag(joinPlan.FullSchema, lFullSchema.Len(), joinPlan.FullSchema.Len())
+	} else if joinNode.Tp == ast.FullJoin {
+		util.ResetNotNullFlag(joinPlan.FullSchema, 0, joinPlan.FullSchema.Len())
 	}
 
 	// Merge sub-plan's FullNames into this join plan, similar to the FullSchema logic above.
@@ -755,6 +767,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		util.ResetNotNullFlag(rsc, 0, rsc.Len())
 	} else if joinTp == ast.RightJoin {
 		util.ResetNotNullFlag(lsc, 0, lsc.Len())
+	} else if joinTp == ast.FullJoin {
+		util.ResetNotNullFlag(lsc, 0, lsc.Len())
+		util.ResetNotNullFlag(rsc, 0, rsc.Len())
 	}
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
