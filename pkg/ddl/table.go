@@ -131,6 +131,11 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 				return ver, errors.Trace(err)
 			}
 		}
+		if tblInfo.MaterializedViewLog != nil {
+			if err = w.deleteMaterializedViewLogPurgeInfo(jobCtx, job.TableID); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 		if tblInfo.TiFlashReplica != nil {
 			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 			if e != nil {

@@ -245,6 +245,27 @@ func TestDropMaterializedViewLogTableAfterBaseDropped(t *testing.T) {
 	tk.MustExec("drop table if exists `$mlog$t_drop_seq`")
 }
 
+func TestDropMaterializedViewLogRemovesPurgeState(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_drop_mlog_purge_state (a int)")
+	tk.MustExec("create materialized view log on t_drop_mlog_purge_state (a)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_drop_mlog_purge_state"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("1"))
+
+	tk.MustExec("drop materialized view log on t_drop_mlog_purge_state")
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("0"))
+}
+
 func TestPurgeMaterializedViewLogNoDB(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
