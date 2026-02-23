@@ -354,6 +354,72 @@ func TestFullOuterJoinHashJoinV1(t *testing.T) {
 		"1 1 <nil> <nil>",
 		"1 10 1 5",
 	))
+
+	// Complex other conditions should still keep unmatched rows from both sides.
+	tk.MustExec("drop table if exists t11, t12")
+	tk.MustExec("create table t11(a int, b int, c int)")
+	tk.MustExec("create table t12(a int, b int, c int)")
+	tk.MustExec("insert into t11 values (1,10,1), (1,2,0), (2,5,1), (3,8,0)")
+	tk.MustExec("insert into t12 values (1,3,1), (1,20,0), (2,4,0), (4,7,1)")
+	tk.MustQuery("select t11.a, t11.b, t12.a, t12.b from t11 full outer join t12 on t11.a = t12.a and ((t11.b > t12.b and t12.c = 1) or (t11.c = 1 and t12.b < 5)) order by isnull(t11.a), t11.a, isnull(t12.a), t12.a, isnull(t11.b), t11.b, isnull(t12.b), t12.b").Check(testkit.Rows(
+		"1 10 1 3",
+		"1 2 <nil> <nil>",
+		"2 5 2 4",
+		"3 8 <nil> <nil>",
+		"<nil> <nil> 1 20",
+		"<nil> <nil> 4 7",
+	))
+}
+
+func TestFullOuterJoinHashJoinV1Spill(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(join.DisableHashJoinV2)
+
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/testRowContainerSpill"
+	require.NoError(t, failpoint.Enable(fpName, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+
+	originEnableTmpStorageOnOOM := fmt.Sprint(tk.MustQuery("select @@global.tidb_enable_tmp_storage_on_oom").Rows()[0][0])
+	tk.MustExec("set global tidb_enable_tmp_storage_on_oom=on")
+	defer tk.MustExec(fmt.Sprintf("set global tidb_enable_tmp_storage_on_oom=%s", originEnableTmpStorageOnOOM))
+
+	originMemOOMAction := fmt.Sprint(tk.MustQuery("select @@global.tidb_mem_oom_action").Rows()[0][0])
+	tk.MustExec("set global tidb_mem_oom_action='LOG'")
+	defer tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action='%s'", originMemOOMAction))
+
+	tk.MustExec("set @@tidb_mem_quota_query=1")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values (1,10), (2,20), (2,21), (null,30)")
+	tk.MustExec("insert into t2 values (2,200), (3,300), (null,400)")
+
+	sql := "select /*+ HASH_JOIN_BUILD(t2) */ t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a"
+	explainRows := tk.MustQuery("explain analyze " + sql).Rows()
+	foundHashJoin := false
+	for _, row := range explainRows {
+		line := fmt.Sprint(row)
+		if strings.Contains(line, "HashJoin") {
+			disk := fmt.Sprint(row[len(row)-1])
+			require.NotContains(t, disk, "0 Bytes", "hash join should spill, row=%v", row)
+			foundHashJoin = true
+		}
+	}
+	require.True(t, foundHashJoin, "explain rows=%v", explainRows)
+
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 10 <nil> <nil>",
+		"2 20 2 200",
+		"2 21 2 200",
+		"<nil> 30 <nil> <nil>",
+		"<nil> <nil> 3 300",
+		"<nil> <nil> <nil> 400",
+	))
 }
 
 func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
