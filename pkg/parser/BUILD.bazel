@@ -14,6 +14,7 @@ go_library(
         "hintparserimpl.go",
         "keywords.go",
         "lexer.go",
+        "lexer_scanners.go",
         "misc.go",
         "parser.go",
         "yy_parser.go",

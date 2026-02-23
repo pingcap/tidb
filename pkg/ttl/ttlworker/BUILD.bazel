@@ -10,6 +10,7 @@ go_library(
         "scan.go",
         "session.go",
         "task_manager.go",
+        "task_manager_report.go",
         "timer.go",
         "timer_sync.go",
         "worker.go",

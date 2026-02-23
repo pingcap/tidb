@@ -4,6 +4,7 @@ go_library(
     name = "dbutil",
     srcs = [
         "common.go",
+        "common_helper.go",
         "index.go",
         "interface.go",
         "query.go",

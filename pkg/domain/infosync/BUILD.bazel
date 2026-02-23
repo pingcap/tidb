@@ -12,6 +12,7 @@ go_library(
         "resource_manager_client.go",
         "schedule_manager.go",
         "tiflash_manager.go",
+        "tiflash_manager_mock.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/domain/infosync",
     visibility = ["//visibility:public"],

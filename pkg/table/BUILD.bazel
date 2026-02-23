@@ -4,6 +4,7 @@ go_library(
     name = "table",
     srcs = [
         "column.go",
+        "column_default.go",
         "constraint.go",
         "index.go",
         "table.go",

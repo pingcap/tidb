@@ -8,6 +8,7 @@ go_library(
         "register.go",
         "slot.go",
         "task_executor.go",
+        "task_executor_subtask.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor",
     visibility = ["//visibility:public"],

@@ -9,6 +9,7 @@ go_library(
         "nodes.go",
         "scheduler.go",
         "scheduler_manager.go",
+        "scheduler_step.go",
         "slots.go",
         "state_transform.go",
     ],

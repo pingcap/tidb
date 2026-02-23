@@ -7,6 +7,7 @@ go_library(
         "analyze.go",
         "checksum.go",
         "cop_handler_dag.go",
+        "cop_handler_resp.go",
         "copr_handler.go",
         "executor.go",
         "rpc_copr.go",

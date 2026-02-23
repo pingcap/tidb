@@ -6,6 +6,7 @@ go_library(
         "chunk_process.go",
         "engine_process.go",
         "import.go",
+        "import_options.go",
         "job.go",
         "kv_encode.go",
         "precheck.go",

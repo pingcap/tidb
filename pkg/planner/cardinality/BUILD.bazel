@@ -12,6 +12,8 @@ go_library(
         "row_count_index.go",
         "row_size.go",
         "selectivity.go",
+        "selectivity_filter.go",
+        "selectivity_helpers.go",
         "trace.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/cardinality",

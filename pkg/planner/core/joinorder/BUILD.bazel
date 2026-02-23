@@ -4,6 +4,8 @@ go_library(
     name = "joinorder",
     srcs = [
         "conflict_detector.go",
+        "conflict_detector_join.go",
+        "conflict_detector_rules.go",
         "join_order.go",
         "util.go",
     ],

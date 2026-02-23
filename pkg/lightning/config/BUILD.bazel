@@ -7,6 +7,7 @@ go_library(
         "config.go",
         "configlist.go",
         "const.go",
+        "enums.go",
         "global.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/config",

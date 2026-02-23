@@ -5,10 +5,12 @@ go_library(
     srcs = [
         "alloc.go",
         "chunk.go",
+        "chunk_append.go",
         "chunk_in_disk.go",
         "chunk_util.go",
         "codec.go",
         "column.go",
+        "column_ops.go",
         "compare.go",
         "iterator.go",
         "list.go",

@@ -5,6 +5,8 @@ go_library(
     srcs = [
         "execdetails.go",
         "runtime_stats.go",
+        "runtime_stats_coll.go",
+        "runtime_stats_commit.go",
         "tiflash_stats.go",
         "util.go",
     ],

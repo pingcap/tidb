@@ -11,6 +11,7 @@ go_library(
         "result.go",
         "stepped.go",
         "testkit.go",
+        "testkit_util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/testkit",
     visibility = ["//visibility:public"],

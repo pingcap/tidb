@@ -4,6 +4,7 @@ go_library(
     name = "reporter",
     srcs = [
         "datamodel.go",
+        "datamodel_collecting.go",
         "datasink.go",
         "pubsub.go",
         "reporter.go",

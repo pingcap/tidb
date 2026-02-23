@@ -4,6 +4,7 @@ go_library(
     name = "physicalop",
     srcs = [
         "base_physical_agg.go",
+        "base_physical_agg_build.go",
         "base_physical_join.go",
         "base_physical_plan.go",
         "enforce.go",
@@ -46,6 +47,7 @@ go_library(
         "physical_table_reader.go",
         "physical_table_sample.go",
         "physical_table_scan.go",
+        "physical_table_scan_ops.go",
         "physical_topn.go",
         "physical_union_all.go",
         "physical_union_scan.go",
@@ -61,7 +63,6 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/distsql",
-        "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
@@ -109,6 +110,7 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/hint",
         "//pkg/util/intest",
+        "//pkg/util/joinversion",
         "//pkg/util/logutil",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",

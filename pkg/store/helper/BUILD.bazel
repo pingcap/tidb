@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "helper",
-    srcs = ["helper.go"],
+    srcs = [
+        "helper.go",
+        "helper_region.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/store/helper",
     visibility = ["//visibility:public"],
     deps = [

@@ -5,6 +5,8 @@ go_library(
     srcs = [
         "executor_with_retry.go",
         "local_mpp_coordinator.go",
+        "local_mpp_coordinator_dispatch.go",
+        "local_mpp_coordinator_exec.go",
         "recovery_handler.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/mpp",

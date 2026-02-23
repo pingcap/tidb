@@ -4,6 +4,9 @@ go_library(
     name = "privileges",
     srcs = [
         "cache.go",
+        "cache_decoder.go",
+        "cache_grants.go",
+        "cache_handle.go",
         "errors.go",
         "privileges.go",
         "tidb_auth_token.go",

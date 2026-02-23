@@ -5,8 +5,11 @@ go_library(
     srcs = [
         "checker.go",
         "detacher.go",
+        "detacher_shard.go",
         "points.go",
+        "points_scalar_builder.go",
         "ranger.go",
+        "ranger_utils.go",
         "types.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/ranger",

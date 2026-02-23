@@ -10,6 +10,7 @@ go_library(
         "binding_operator.go",
         "binding_plan_evolution.go",
         "binding_plan_generation.go",
+        "binding_plan_generation_extract.go",
         "session_handle.go",
         "utils.go",
     ],

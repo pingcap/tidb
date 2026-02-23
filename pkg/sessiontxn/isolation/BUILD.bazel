@@ -4,6 +4,7 @@ go_library(
     name = "isolation",
     srcs = [
         "base.go",
+        "base_options.go",
         "optimistic.go",
         "readcommitted.go",
         "repeatable_read.go",

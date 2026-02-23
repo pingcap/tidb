@@ -6,6 +6,7 @@ go_library(
         "column.go",
         "logger.go",
         "reader.go",
+        "reader_worker.go",
         "record.go",
         "stmtsummary.go",
     ],

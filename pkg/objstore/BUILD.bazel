@@ -4,6 +4,8 @@ go_library(
     name = "objstore",
     srcs = [
         "azblob.go",
+        "azblob_io.go",
+        "azblob_storage.go",
         "batch.go",
         "compress.go",
         "flags.go",

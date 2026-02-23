@@ -5,7 +5,10 @@ go_library(
     srcs = [
         "evicted.go",
         "reader.go",
+        "reader_column_values.go",
         "statement_summary.go",
+        "statement_summary_util.go",
+        "stmt_summary_stats.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/stmtsummary",
     visibility = ["//visibility:public"],

@@ -4,6 +4,7 @@ go_library(
     name = "handle",
     srcs = [
         "bootstrap.go",
+        "bootstrap_buckets.go",
         "handle.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle",

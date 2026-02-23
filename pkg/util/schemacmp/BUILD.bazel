@@ -4,6 +4,7 @@ go_library(
     name = "schemacmp",
     srcs = [
         "lattice.go",
+        "lattice_composite.go",
         "table.go",
         "type.go",
         "util.go",

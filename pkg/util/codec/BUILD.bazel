@@ -5,6 +5,9 @@ go_library(
     srcs = [
         "bytes.go",
         "codec.go",
+        "codec_decode.go",
+        "codec_hash_chunk.go",
+        "codec_serialize_keys.go",
         "decimal.go",
         "float.go",
         "number.go",
