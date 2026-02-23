@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
+	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -1045,6 +1045,19 @@ func (m *Mutator) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
+// IterDatabases iterates all the Databases at once, stop iterate when fn returns an error.
+func (m *Mutator) IterDatabases(fn func(info *model.DBInfo) error) error {
+	err := m.txn.HGetIter(mDBs, func(r structure.HashPair) error {
+		dbInfo := &model.DBInfo{}
+		err := json.Unmarshal(r.Value, dbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return fn(dbInfo)
+	})
+	return errors.Trace(err)
+}
+
 // IterTables iterates all the table at once, in order to avoid oom.
 func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
 	dbKey := m.dbKey(dbID)
@@ -1101,10 +1114,8 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 	defer cancel()
 	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
 
-	if concurrency >= 15 {
-		concurrency = 15
-	}
-
+	// In case of too many goroutines or 0 concurrency. fetchAllTablesAndBuildAnalysisJobs may pass 0 concurrency on 1C machine.
+	concurrency = max(1, min(15, concurrency))
 	kvRanges := splitRangeInt64Max(int64(concurrency))
 
 	mu := sync.Mutex{}
@@ -1168,8 +1179,10 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
+// foreign key info contain null and [] two situations
+var checkForeignKeyAttributesNil = `"fk_info":null`
+var checkForeignKeyAttributesZero = `"fk_info":[]`
 var checkAttributesInOrder = []string{
-	`"fk_info":null`,
 	`"partition":null`,
 	`"Lock":null`,
 	`"tiflash_replica":null`,
@@ -1183,8 +1196,19 @@ var checkAttributesInOrder = []string{
 // then it does not need to be loaded and this function will return false.
 // Otherwise, it will return true, indicating that the table info should be loaded.
 // Since attributes are checked in sequence, it's important to choose the order carefully.
-func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
+// isCheckForeignKeyAttrsInOrder check foreign key or not, since fk_info contains two null situations.
+func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filterAttrs ...string) bool {
 	idx := 0
+	if isCheckForeignKeyAttrsInOrder {
+		idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesNil))
+		if idx == -1 {
+			idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesZero))
+			if idx == -1 {
+				return true
+			}
+		}
+		json = json[idx:]
+	}
 	for _, substr := range filterAttrs {
 		idx = bytes.Index(json, hack.Slice(substr))
 		if idx == -1 {
@@ -1198,7 +1222,7 @@ func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
 // IsTableInfoMustLoad checks whether the table info needs to be loaded.
 // Exported for testing.
 func IsTableInfoMustLoad(json []byte) bool {
-	return isTableInfoMustLoad(json, checkAttributesInOrder...)
+	return isTableInfoMustLoad(json, true, checkAttributesInOrder...)
 }
 
 // NameExtractRegexp is exported for testing.
@@ -1243,7 +1267,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if isTableInfoMustLoad(value, checkAttributesInOrder...) {
+		if isTableInfoMustLoad(value, true, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1272,7 +1296,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 			return nil
 		}
 
-		if isTableInfoMustLoad(value, filterAttrs...) {
+		if isTableInfoMustLoad(value, false, filterAttrs...) {
 			tbInfo := &model.TableInfo{}
 			err := json.Unmarshal(value, tbInfo)
 			if err != nil {

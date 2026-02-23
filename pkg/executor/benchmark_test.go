@@ -1272,6 +1272,7 @@ func prepare4IndexInnerHashJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDat
 			ColLens:       colLens,
 			KeyCols:       tc.InnerJoinKeyIdx,
 			HashCols:      tc.InnerHashKeyIdx,
+			HashIsNullEQ:  make([]bool, len(tc.InnerHashKeyIdx)),
 		},
 		WorkerWg:      new(sync.WaitGroup),
 		Joiner:        join.NewJoiner(tc.Ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false),
@@ -2055,10 +2056,10 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				aggMap := make(aggfuncs.AggPartialResultMapper)
+				aggMap := aggfuncs.NewAggPartialResultMapper()
 				tempSlice := make([]aggfuncs.PartialResult, 10)
 				for num := range c.rowNum {
-					aggMap[strconv.Itoa(num)] = tempSlice
+					aggMap.Set(strconv.Itoa(num), tempSlice)
 				}
 			}
 		})

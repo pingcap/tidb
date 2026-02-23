@@ -18,7 +18,7 @@ FROM quay.io/rockylinux/rockylinux:8.10.20240528
 # setup mariadb repo
 #   ref: https://mariadb.com/docs/server/connect/clients/mariadb-client/#Linux_(Repository)
 RUN curl -LsSO https://r.mariadb.com/downloads/mariadb_repo_setup \
-    && echo "6083ef1974d11f49d42ae668fb9d513f7dc2c6276ffa47caed488c4b47268593  mariadb_repo_setup" | sha256sum -c - \
+    && echo "7a3e1610fee91347e198214e3672a6d3932ccbbf67905d9e892e9255baaec292  mariadb_repo_setup" | sha256sum -c - \
     && chmod +x mariadb_repo_setup \
     && ./mariadb_repo_setup \
     && rm mariadb_repo_setup
@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 
 # install golang toolchain
 # renovate: datasource=docker depName=golang
-ARG GOLANG_VERSION=1.23.12
+ARG GOLANG_VERSION=1.25.6
 RUN OS=linux; ARCH=$([ "$(arch)" = "x86_64" ] && echo amd64 || echo arm64); \
     curl -fsSL https://dl.google.com/go/go${GOLANG_VERSION}.linux-${ARCH}.tar.gz | tar -C /usr/local -xz
 ENV PATH /usr/local/go/bin/:$PATH
@@ -62,7 +62,7 @@ ENV PATH=$PATH:/opt/gradle-${GRADLE_VER}/bin
 
 #### install tools: bazelisk, codecov, oras
 # renovate: datasource=github-tags depName=bazelbuild/bazelisk
-ADD https://github.com/bazelbuild/bazel/releases/download/6.5.0/bazel-6.5.0-linux-x86_64 /usr/bin/bazel
+ADD https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-x86_64 /usr/bin/bazel
 RUN chmod +x /usr/bin/bazel
 
 # codecov tool
@@ -74,4 +74,4 @@ RUN folder=$([ "$(arch)" = "x86_64" ] && echo linux || echo aarch64); \
 
 # oras tool
 # renovate: datasource=github-tags depName=oras-project/oras
-COPY --from=bitnami/oras:1.2.0 /oras /usr/local/bin/oras
+COPY --from=public.ecr.aws/bitnami/oras:1.2.0 /oras /usr/local/bin/oras

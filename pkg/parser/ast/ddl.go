@@ -14,6 +14,8 @@
 package ast
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -1190,6 +1192,7 @@ type CreateTableStmt struct {
 	ReferTable     *TableName
 	Cols           []*ColumnDef
 	Constraints    []*Constraint
+	SplitIndex     []*SplitIndexOption
 	Options        []*TableOption
 	Partition      *PartitionOptions
 	OnDuplicate    OnDuplicateKeyHandlingType
@@ -1258,6 +1261,13 @@ func (n *CreateTableStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
+	for _, opt := range n.SplitIndex {
+		ctx.WritePlain(" ")
+		if err := opt.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing CreateTableStmt SplitIndex")
+		}
+	}
+
 	if n.Select != nil {
 		switch n.OnDuplicate {
 		case OnDuplicateKeyHandlingError:
@@ -1316,6 +1326,13 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Constraints[i] = node.(*Constraint)
+	}
+	for i, val := range n.SplitIndex {
+		node, ok = val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SplitIndex[i] = node.(*SplitIndexOption)
 	}
 	if n.Select != nil {
 		node, ok := n.Select.Accept(v)
@@ -2617,6 +2634,14 @@ const (
 	TableOptionTTLJobInterval
 	TableOptionEngineAttribute
 	TableOptionSecondaryEngineAttribute
+	TableOptionAutoextendSize
+	TableOptionPageChecksum
+	TableOptionPageCompressed
+	TableOptionPageCompressionLevel
+	TableOptionTransactional
+	TableOptionIetfQuotes
+	TableOptionSequence
+	TableOptionAffinity
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2660,6 +2685,28 @@ const (
 	TableOptionCharsetWithoutConvertTo uint64 = 0
 	TableOptionCharsetWithConvertTo    uint64 = 1
 )
+
+const (
+	// TableAffinityLevelNone means no affinity.
+	TableAffinityLevelNone = "none"
+	// TableAffinityLevelTable means table-level affinity.
+	TableAffinityLevelTable = "table"
+	// TableAffinityLevelPartition means partition-level affinity.
+	TableAffinityLevelPartition = "partition"
+)
+
+// NormalizeTableAffinityLevel normalizes the affinity level to lower case and checks if it's valid.
+func NormalizeTableAffinityLevel(s string) (string, bool) {
+	lower := strings.ToLower(s)
+	switch lower {
+	case TableAffinityLevelNone, TableAffinityLevelTable, TableAffinityLevelPartition:
+		return lower, true
+	case "":
+		return TableAffinityLevelNone, true
+	default:
+		return s, false
+	}
+}
 
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
@@ -2978,6 +3025,49 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
+	case TableOptionAutoextendSize:
+		ctx.WriteKeyWord("AUTOEXTEND_SIZE ")
+		ctx.WritePlain("= ")
+		ctx.WritePlain(n.StrValue) // e.g. '4M'
+
+	// MariaDB specific options
+	case TableOptionPageChecksum:
+		ctx.WriteKeyWord("PAGE_CHECKSUM ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionPageCompressed:
+		ctx.WriteKeyWord("PAGE_COMPRESSED ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionPageCompressionLevel:
+		ctx.WriteKeyWord("PAGE_COMPRESSION_LEVEL ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionTransactional:
+		ctx.WriteKeyWord("TRANSACTIONAL ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionIetfQuotes:
+		ctx.WriteKeyWord("IETF_QUOTES ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%s", n.StrValue)
+		return nil
+	case TableOptionSequence:
+		ctx.WriteKeyWord("SEQUENCE ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionAffinity:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
+			ctx.WriteKeyWord("AFFINITY ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
@@ -3197,6 +3287,7 @@ const (
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
 	AlterTableRemoveTTL
+	AlterTableSplitIndex
 )
 
 // LockType is the type for AlterTableSpec.
@@ -3273,6 +3364,7 @@ type AlterTableSpec struct {
 	Name             string
 	IndexName        CIStr
 	Constraint       *Constraint
+	SplitIndex       *SplitIndexOption
 	Options          []*TableOption
 	OrderByList      []*AlterOrderItem
 	NewTable         *TableName
@@ -3881,6 +3973,11 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AlterTableRemoveTTL:
 		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTTL, "REMOVE TTL")
+	case AlterTableSplitIndex:
+		spec := n.SplitIndex
+		if err := spec.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.SplitIndex")
+		}
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
@@ -3908,6 +4005,13 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.NewTable = node.(*TableName)
+	}
+	if n.SplitIndex != nil {
+		node, ok := n.SplitIndex.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SplitIndex = node.(*SplitIndexOption)
 	}
 	for i, col := range n.NewColumns {
 		node, ok := col.Accept(v)

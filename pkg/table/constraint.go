@@ -120,6 +120,8 @@ var unsupportedNodeForCheckConstraint = map[string]struct{}{
 	ast.ReleaseAllLocks:  {},
 	ast.LoadFile:         {},
 	ast.UUID:             {},
+	ast.UUIDv4:           {},
+	ast.UUIDv7:           {},
 	ast.UUIDShort:        {},
 	ast.Sleep:            {},
 }

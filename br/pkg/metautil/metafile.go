@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -100,7 +100,7 @@ func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherI
 // Notice: the function `output` should be thread safe.
 func walkLeafMetaFile(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	file *backuppb.MetaFile,
 	cipher *backuppb.CipherInfo,
 	output func(*backuppb.MetaFile)) error {
@@ -150,20 +150,22 @@ func walkLeafMetaFile(
 
 // Table wraps the schema and files of a table.
 type Table struct {
-	DB               *model.DBInfo
-	Info             *model.TableInfo
-	Crc64Xor         uint64
-	TotalKvs         uint64
-	TotalBytes       uint64
-	FilesOfPhysicals map[int64][]*backuppb.File
-	TiFlashReplicas  int
-	Stats            *util.JSONTable
-	StatsFileIndexes []*backuppb.StatsFileIndex
+	DB                          *model.DBInfo
+	Info                        *model.TableInfo
+	Crc64Xor                    uint64
+	TotalKvs                    uint64
+	TotalBytes                  uint64
+	FilesOfPhysicals            map[int64][]*backuppb.File
+	TiFlashReplicas             int
+	Stats                       *util.JSONTable
+	StatsFileIndexes            []*backuppb.StatsFileIndex
+	IsMergeOptionAllowed        bool
+	PartitionMergeOptionAllowed map[string]bool
 }
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
 type MetaReader struct {
-	storage    storage.ExternalStorage
+	storage    storeapi.Storage
 	backupMeta *backuppb.BackupMeta
 	cipher     *backuppb.CipherInfo
 }
@@ -171,7 +173,7 @@ type MetaReader struct {
 // NewMetaReader creates MetaReader.
 func NewMetaReader(
 	backupMeta *backuppb.BackupMeta,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo) *MetaReader {
 	return &MetaReader{
 		storage:    storage,
@@ -509,16 +511,23 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 		statsFileIndexes = s.StatsIndex
 	}
 
+	var partitionMergeOptionAllowed map[string]bool
+	if s.PartitionMergeOptionAllowed != nil {
+		partitionMergeOptionAllowed = s.PartitionMergeOptionAllowed
+	}
+
 	return &Table{
-		DB:               dbInfo,
-		Info:             tableInfo,
-		Crc64Xor:         s.Crc64Xor,
-		TotalKvs:         s.TotalKvs,
-		TotalBytes:       s.TotalBytes,
-		FilesOfPhysicals: make(map[int64][]*backuppb.File),
-		TiFlashReplicas:  int(s.TiflashReplicas),
-		Stats:            stats,
-		StatsFileIndexes: statsFileIndexes,
+		DB:                          dbInfo,
+		Info:                        tableInfo,
+		Crc64Xor:                    s.Crc64Xor,
+		TotalKvs:                    s.TotalKvs,
+		TotalBytes:                  s.TotalBytes,
+		FilesOfPhysicals:            make(map[int64][]*backuppb.File),
+		TiFlashReplicas:             int(s.TiflashReplicas),
+		Stats:                       stats,
+		StatsFileIndexes:            statsFileIndexes,
+		IsMergeOptionAllowed:        s.IsMergeOptionAllowed,
+		PartitionMergeOptionAllowed: partitionMergeOptionAllowed,
 	}, nil
 }
 
@@ -644,7 +653,7 @@ func (f *sizedMetaFile) append(file any, op AppendOp) bool {
 
 // MetaWriter represents wraps a writer, and the MetaWriter should be compatible with old version of backupmeta.
 type MetaWriter struct {
-	storage           storage.ExternalStorage
+	storage           storeapi.Storage
 	metafileSizeLimit int
 	// a flag to control whether we generate v1 or v2 meta.
 	useV2Meta  bool
@@ -679,7 +688,7 @@ type MetaWriter struct {
 
 // NewMetaWriter creates MetaWriter.
 func NewMetaWriter(
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	metafileSizeLimit int,
 	useV2Meta bool,
 	metaFileName string,
@@ -803,7 +812,7 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 	return nil
 }
 
-// FlushBackupMeta flush the `backupMeta` to `ExternalStorage`
+// FlushBackupMeta flush the `backupMeta` to `Storage`
 func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 	// Set schema version
 	if writer.useV2Meta {

@@ -30,7 +30,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -38,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -181,13 +182,14 @@ type WriterSummary struct {
 	// will be empty if no key is written.
 	Min tidbkv.Key
 	Max tidbkv.Key
-	// TotalSize is the total size of the data written by this writer.
+	// TotalSize is the total size of the KV written by this writer.
 	// depends on onDup setting, duplicates might not be included.
 	TotalSize uint64
 	// TotalCnt is the total count of the KV written by this writer.
 	// depends on onDup setting, duplicates might not be included.
-	TotalCnt           uint64
-	PutRequestCount    uint64
+	TotalCnt uint64
+	// KVFileCount is the total count of the KV files written by this writer.
+	KVFileCount        int
 	MultipleFilesStats []MultipleFilesStat
 	ConflictInfo       engineapi.ConflictInfo
 }
@@ -281,7 +283,7 @@ func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder 
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	prefix string,
 	writerID string,
 ) *Writer {
@@ -298,7 +300,6 @@ func (b *WriterBuilder) Build(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		memSizeLimit:   b.memSizeLimit,
 		store:          store,
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
@@ -321,7 +322,7 @@ func (b *WriterBuilder) Build(
 // BuildOneFile builds a new one file Writer. The writer will create only one
 // file under the prefix of "{prefix}/{writerID}".
 func (b *WriterBuilder) BuildOneFile(
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	prefix string,
 	writerID string,
 ) *OneFileWriter {
@@ -424,7 +425,7 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 
 // Writer is used to write data into external storage.
 type Writer struct {
-	store          storage.ExternalStorage
+	store          storeapi.Storage
 	writerID       string
 	groupOffset    int
 	currentSeq     int
@@ -432,8 +433,6 @@ type Writer struct {
 	rnd            *rand.Rand
 
 	rc *rangePropertiesCollector
-
-	memSizeLimit uint64
 
 	kvBuffer    *membuf.Buffer
 	kvLocations []membuf.SliceLocation
@@ -456,7 +455,8 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
-	putReqCnt uint64
+	// since we have 1 stat file per kv file, so no need to count it separately.
+	kvFileCount int
 
 	tikvCodec tikv.Codec
 	// duplicate key's statistics.
@@ -522,7 +522,12 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
-		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
+		zap.String("maxKey", hex.EncodeToString(w.maxKey)),
+		zap.Int("kv-file-count", w.kvFileCount),
+		zap.Int("dup-file-count", len(w.conflictInfo.Files)),
+		zap.String("total-size", units.BytesSize(float64(w.totalSize))),
+		zap.Uint64("total-kv-cnt", w.totalCnt),
+	)
 
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{
@@ -533,21 +538,20 @@ func (w *Writer) Close(ctx context.Context) error {
 		Max:                w.maxKey,
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
-		PutRequestCount:    w.putReqCnt,
+		KVFileCount:        w.kvFileCount,
 		MultipleFilesStats: w.multiFileStats,
 		ConflictInfo:       w.conflictInfo,
 	})
 	return nil
 }
 
-func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
+func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key) {
 	if len(w.minKey) == 0 || newMin.Cmp(w.minKey) < 0 {
 		w.minKey = newMin.Clone()
 	}
 	if len(w.maxKey) == 0 || newMax.Cmp(w.maxKey) > 0 {
 		w.maxKey = newMax.Clone()
 	}
-	w.totalSize += size
 }
 
 const flushKVsRetryTimes = 3
@@ -564,13 +568,13 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortStart := time.Now()
 	var (
 		dupFound bool
-		dupLoc   *membuf.SliceLocation
+		dupLoc   membuf.SliceLocation
 	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
 		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
 		if res == 0 && !dupFound {
 			dupFound = true
-			dupLoc = &i
+			dupLoc = i
 		}
 		return res
 	})
@@ -595,8 +599,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
-			dupKey := slices.Clone(w.getKeyByLoc(dupLoc))
-			dupValue := slices.Clone(w.getValueByLoc(dupLoc))
+			dupKey := slices.Clone(w.getKeyByLoc(&dupLoc))
+			dupValue := slices.Clone(w.getValueByLoc(&dupLoc))
 			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
 	}
@@ -639,9 +643,11 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	// maintain 500-batch statistics
 	if len(w.kvLocations) > 0 {
 		w.totalCnt += uint64(len(w.kvLocations))
+		w.totalSize += uint64(w.kvSize)
+		w.kvFileCount++
 
 		minKey, maxKey := w.getKeyByLoc(&w.kvLocations[0]), w.getKeyByLoc(&w.kvLocations[len(w.kvLocations)-1])
-		w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
+		w.recordMinMax(minKey, maxKey)
 
 		w.addNewKVFile2MultiFileStats(dataFile, statFile, minKey, maxKey)
 	}
@@ -806,27 +812,21 @@ func (w *Writer) reCalculateKVSize() int64 {
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
 	dataFile, statFile string,
-	data, stats storage.ExternalFileWriter,
+	data, stats objectio.Writer,
 	err error,
 ) {
 	dataPath := filepath.Join(w.getPartitionedPrefix(), strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
+	dataWriter, err := w.store.Create(ctx, dataPath, &storeapi.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
-		OnUpload: func() {
-			w.putReqCnt++
-		},
 	})
 	if err != nil {
 		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.getPartitionedPrefix()+statSuffix, strconv.Itoa(w.currentSeq))
-	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
+	statsWriter, err := w.store.Create(ctx, statPath, &storeapi.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
-		OnUpload: func() {
-			w.putReqCnt++
-		},
 	})
 	if err != nil {
 		_ = dataWriter.Close(ctx)
@@ -835,9 +835,9 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	return dataPath, statPath, dataWriter, statsWriter, nil
 }
 
-func (w *Writer) createDupWriter(ctx context.Context) (string, storage.ExternalFileWriter, error) {
+func (w *Writer) createDupWriter(ctx context.Context) (string, objectio.Writer, error) {
 	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
-	writer, err := w.store.Create(ctx, path, &storage.WriterOption{
+	writer, err := w.store.Create(ctx, path, &storeapi.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize})
 	return path, writer, err

@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
@@ -35,7 +35,7 @@ import (
 // Split the pitr_id_map data into 512 KiB chunks to avoid one kv entry size too large.
 const PITRIdMapBlockSize int = 524288
 
-func pitrIDMapsFilename(clusterID, restoredTS uint64) string {
+func PitrIDMapsFilename(clusterID, restoredTS uint64) string {
 	return fmt.Sprintf("pitr_id_maps/pitr_id_map.cluster_id:%d.restored_ts:%d", clusterID, restoredTS)
 }
 
@@ -49,7 +49,7 @@ func (rc *LogClient) pitrIDMapHasRestoreIDColumn() bool {
 
 func (rc *LogClient) tryGetCheckpointStorage(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) storage.ExternalStorage {
+) storeapi.Storage {
 	if !rc.useCheckpoint {
 		return nil
 	}
@@ -92,11 +92,11 @@ func (rc *LogClient) saveIDMap(
 
 func (rc *LogClient) saveIDMap2Storage(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	dbMaps []*backuppb.PitrDBMap,
 ) error {
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := pitrIDMapsFilename(clusterID, rc.restoreTS)
+	metaFileName := PitrIDMapsFilename(clusterID, rc.restoreTS)
 	metaWriter := metautil.NewMetaWriter(storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.ClusterId = clusterID
@@ -174,11 +174,11 @@ func (rc *LogClient) loadSchemasMap(
 
 func (rc *LogClient) loadSchemasMapFromStorage(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	restoredTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := pitrIDMapsFilename(clusterID, restoredTS)
+	metaFileName := PitrIDMapsFilename(clusterID, restoredTS)
 	exist, err := storage.FileExists(ctx, metaFileName)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to check filename:%s ", metaFileName)

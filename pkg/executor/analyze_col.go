@@ -64,6 +64,29 @@ type AnalyzeColumnsExec struct {
 	memTracker *memory.Tracker
 }
 
+// isColumnCoveredBySingleColUniqueIndex returns true if there exists a public, non-prefix,
+// single-column unique index whose only column has the given offset.
+func isColumnCoveredBySingleColUniqueIndex(tblInfo *model.TableInfo, colOffset int) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if isSingleColNonPrefixUniqueIndex(idx) && idx.Columns[0].Offset == colOffset {
+			return true
+		}
+	}
+	return false
+}
+
+// isSingleColNonPrefixUniqueIndex returns true if the index is public, unique
+// (or primary), has exactly one column, and uses neither a prefix nor a
+// partial-index condition.
+func isSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
+	return idx.State == model.StatePublic &&
+		(idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
+		!idx.HasPrefixIndex() && !idx.HasCondition()
+}
+
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
 		return e.toV2().analyzeColumnsPushDownV2(gp)
@@ -255,10 +278,11 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 		for j, s := range collectors[i].Samples {
 			s.Ordinal = j
-			s.Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
+			tmp, err := tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
+			s.Value = &tmp
 			// When collation is enabled, we store the Key representation of the sampling data. So we set it to kind `Bytes` here
 			// to avoid to convert it to its Key representation once more.
 			if s.Value.Kind() == types.KindString {
@@ -271,7 +295,11 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if e.StatsVersion < 2 {
 			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		} else {
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true, nil, true)
+			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
+			if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, col.Offset) {
+				numTopN = 0
+			}
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, col.ID, collectors[i], &col.FieldType, true, nil, true)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {
@@ -399,13 +427,21 @@ func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 	if len(cols) == 0 {
 		return
 	}
-	if len(cols) < len(e.tableInfo.Columns) {
+
+	filteredCols := make([]*model.ColumnInfo, 0, len(cols))
+	for _, col := range cols {
+		if !col.IsChanging() && !col.IsRemoving() {
+			filteredCols = append(filteredCols, col)
+		}
+	}
+
+	if len(filteredCols) < len(e.tableInfo.GetNonTempColumns()) {
 		if len(cols) > 1 {
 			b.WriteString(" columns ")
 		} else {
 			b.WriteString(" column ")
 		}
-		for i, col := range cols {
+		for i, col := range filteredCols {
 			if i > 0 {
 				b.WriteString(", ")
 			}

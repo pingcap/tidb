@@ -16,6 +16,8 @@
 package compat
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
@@ -83,6 +85,7 @@ func IsInvisibleSysVar(varName string) bool {
 // IsRestrictedPrivilege is a compatibility wrapper for SEM v1 and v2.
 func IsRestrictedPrivilege(privilege string) bool {
 	intest.Assert(!(sem.IsEnabled() && semv2.IsEnabled()), "SEM v1 and v2 cannot be enabled at the same time")
+	intest.Assert(strings.ToUpper(privilege) == privilege, "privilege name must be uppercase")
 
 	if sem.IsEnabled() && sem.IsRestrictedPrivilege(privilege) {
 		return true

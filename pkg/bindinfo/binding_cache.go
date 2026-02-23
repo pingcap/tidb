@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sync"
@@ -29,15 +30,18 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
+
+var bindingCacheTestKey = struct{}{}
 
 // BindingCacheUpdater maintains the binding cache and provide update APIs.
 type BindingCacheUpdater interface {
 	BindingCache
 
 	// LoadFromStorageToCache loads global bindings from storage to the memory cache.
-	LoadFromStorageToCache(fullLoad bool) (err error)
+	LoadFromStorageToCache(fullLoad, fromRemote bool) (err error)
 
 	// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
 	UpdateBindingUsageInfoToStorage() error
@@ -57,7 +61,24 @@ type bindingCacheUpdater struct {
 }
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
-func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) {
+func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) (err error) {
+	cacheSizeChange := false
+	latestCacheSize := vardef.MemQuotaBindingCache.Load()
+	if u.GetMemCapacity() != latestCacheSize {
+		cacheSizeChange = true
+		u.SetMemCapacity(latestCacheSize)
+	}
+
+	hasNewBinding := false
+	defer func(begin time.Time) {
+		if fullLoad || cacheSizeChange || hasNewBinding {
+			bindingLogger().Info("load bindings", zap.Bool("fullLoad", fullLoad), zap.Bool("fromRemote", fromRemote),
+				zap.Bool("cacheSizeChange", cacheSizeChange), zap.Bool("hasNewBinding", hasNewBinding),
+				zap.Int64("cacheCapacity", u.GetMemCapacity()), zap.Int64("cacheUsage", u.GetMemUsage()),
+				zap.Int64("cachedBindingNum", int64(u.Size())), zap.Duration("duration", time.Since(begin)), zap.Error(err))
+		}
+	}(time.Now())
+
 	lastUpdateTime := u.lastUpdateTime.Load().(types.Time)
 	var timeCondition string
 	if fullLoad || lastUpdateTime.IsZero() { // avoid "update_time>'0000-00-00 00:00:00'", which is invalid
@@ -91,6 +112,7 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 		// Even if this one is an invalid bind.
 		if binding.UpdateTime.Compare(lastUpdateTime) > 0 {
 			lastUpdateTime = binding.UpdateTime
+			hasNewBinding = true
 		}
 
 		oldBinding := u.GetBinding(binding.SQLDigest)
@@ -137,7 +159,7 @@ func NewBindingCacheUpdater(sPool util.DestroyableSessionPool) BindingCacheUpdat
 	u := new(bindingCacheUpdater)
 	u.lastUpdateTime.Store(types.ZeroTimestamp)
 	u.sPool = sPool
-	u.BindingCache = newBindCache()
+	u.BindingCache = newBindingCache(context.Background(), vardef.MemQuotaBindingCache.Load())
 	return u
 }
 
@@ -181,7 +203,16 @@ func newDigestBiMap() digestBiMap {
 func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
+	exist := false
+	for _, d := range b.noDBDigest2SQLDigest[noDBDigest] {
+		if d == sqlDigest {
+			exist = true
+			break
+		}
+	}
+	if !exist { // avoid adding duplicated binding digests
+		b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
+	}
 	b.sqlDigest2noDBDigest[sqlDigest] = noDBDigest
 }
 
@@ -264,22 +295,42 @@ type BindingCache interface {
 type bindingCache struct {
 	digestBiMap digestBiMap      // mapping between noDBDigest and sqlDigest, used to support cross-db binding.
 	cache       *ristretto.Cache // the underlying cache to store the bindings.
+	closed      *atomic.Bool
 }
 
-func newBindCache() BindingCache {
+func newBindingCache(ctx context.Context, maxCost int64) BindingCache {
+	closed := new(atomic.Bool)
+	closed.Store(false)
+
+	rejectOrEvict := func(item *ristretto.Item) {
+		if closed.Load() { // avoid unnecessary log when exiting
+			return
+		}
+		binding := item.Value.(*Binding)
+		if intest.InTest && ctx != nil && ctx.Value(bindingCacheTestKey) != nil {
+			callback := ctx.Value(bindingCacheTestKey).(func(binding *Binding))
+			callback(binding)
+		}
+		bindingLogger().Warn("binding cache memory limit reached, evict or reject binding",
+			zap.String("sqlDigest", binding.SQLDigest), zap.String("bindSQL", binding.BindSQL))
+	}
+
 	cache, _ := ristretto.NewCache(&ristretto.Config{
 		NumCounters: 1e6,
-		MaxCost:     vardef.MemQuotaBindingCache.Load(),
+		MaxCost:     maxCost,
 		BufferItems: 64,
 		Cost: func(value any) int64 {
 			return int64(value.(*Binding).size())
 		},
 		Metrics:            true,
 		IgnoreInternalCost: true,
+		OnEvict:            rejectOrEvict,
+		OnReject:           rejectOrEvict,
 	})
 	c := bindingCache{
 		cache:       cache,
 		digestBiMap: newDigestBiMap(),
+		closed:      closed,
 	}
 	return &c
 }
@@ -318,7 +369,11 @@ func (c *bindingCache) GetAllBindings() []*Binding {
 	sqlDigests := c.digestBiMap.All()
 	bindings := make([]*Binding, 0, len(sqlDigests))
 	for _, sqlDigest := range sqlDigests {
-		bindings = append(bindings, c.GetBinding(sqlDigest))
+		binding := c.GetBinding(sqlDigest)
+		if binding == nil {
+			continue // maybe evicted
+		}
+		bindings = append(bindings, binding)
 	}
 	return bindings
 }
@@ -374,7 +429,7 @@ func (c *bindingCache) Size() int {
 
 // Close closes the cache.
 func (c *bindingCache) Close() {
-	c.cache.Clear()
+	c.closed.Store(true)
 	c.cache.Close()
 	c.cache.Wait()
 }

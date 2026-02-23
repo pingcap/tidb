@@ -29,10 +29,12 @@ import (
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	CopExecDetails
-	CommitDetail   *util.CommitDetails
-	LockKeysDetail *util.LockKeysDetails
-	CopTime        time.Duration
-	RequestCount   int
+	CommitDetail         *util.CommitDetails
+	LockKeysDetail       *util.LockKeysDetails
+	SharedLockKeysDetail *util.LockKeysDetails
+	CopTime              time.Duration
+	LockKeysDuration     time.Duration
+	RequestCount         int
 }
 
 // CopExecDetails contains cop execution detail information.
@@ -441,6 +443,17 @@ func (s *SyncExecDetails) MergeLockKeysExecDetails(lockKeys *util.LockKeysDetail
 		s.execDetails.LockKeysDetail = lockKeys
 	} else {
 		s.execDetails.LockKeysDetail.Merge(lockKeys)
+	}
+}
+
+// MergeSharedLockKeysExecDetails merges shared lock keys execution details into self.
+func (s *SyncExecDetails) MergeSharedLockKeysExecDetails(lockKeys *util.LockKeysDetails) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.execDetails.SharedLockKeysDetail == nil {
+		s.execDetails.SharedLockKeysDetail = lockKeys
+	} else {
+		s.execDetails.SharedLockKeysDetail.Merge(lockKeys)
 	}
 }
 

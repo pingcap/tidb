@@ -485,6 +485,7 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE_MODE", tp: mysql.TypeVarchar, size: 16},
+	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
@@ -653,6 +654,7 @@ var partitionsCols = []columnInfo{
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -2885,4 +2887,25 @@ func FilterClusterServerInfo(serversInfo []ServerInfo, nodeTypes, addresses set.
 		filterServers = append(filterServers, srv)
 	}
 	return filterServers
+}
+
+// GetDataFromStatusByConn is getting the per-connection status for `performance_schema.status_by_connection`
+func GetDataFromStatusByConn(sctx sessionctx.Context) ([][]types.Datum, error) {
+	sm := sctx.GetSessionManager()
+	if sm == nil {
+		return nil, nil
+	}
+	statusVars := sm.GetStatusVars()
+	rows := make([][]types.Datum, 0, 2*len(statusVars))
+	for pid, svar := range statusVars {
+		for varkey, varval := range svar {
+			row := types.MakeDatums(
+				pid,
+				varkey,
+				varval,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
 }

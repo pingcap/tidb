@@ -1283,12 +1283,31 @@ type SlowQueryExtractor struct {
 	// current slow-log file.
 	Enable bool
 	Desc   bool
+	// Limit is a hint for early-exit optimizations when scanning slow log files.
+	// It is usually derived from a pushed down LIMIT/TopN (offset+count).
+	// A value of 0 means "no limit hint".
+	Limit uint64
 }
 
 // TimeRange is used to check whether a given log should be extracted.
 type TimeRange struct {
 	StartTime time.Time
 	EndTime   time.Time
+}
+
+// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
+func (e *SlowQueryExtractor) SetRowLimitHint(limit uint64) {
+	if limit == 0 {
+		return
+	}
+	if e.Limit == 0 || limit < e.Limit {
+		e.Limit = limit
+	}
+}
+
+// SetDesc implements base.MemTableDescHintSetter.
+func (e *SlowQueryExtractor) SetDesc(desc bool) {
+	e.Desc = desc
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface

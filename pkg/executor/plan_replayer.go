@@ -20,7 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"go.uber.org/zap"
 )
@@ -66,13 +67,13 @@ type PlanReplayerDumpInfo struct {
 	HistoricalStatsTS uint64
 	StartTS           uint64
 	Path              string
-	File              *os.File
+	File              io.WriteCloser
 	FileName          string
 	ctx               sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
-func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.endFlag {
 		return nil
@@ -83,10 +84,16 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return e.registerCaptureTask(ctx)
 	}
-	err := e.createFile()
+	err = e.createFile(ctx)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil && e.DumpInfo != nil && e.DumpInfo.File != nil {
+			_ = e.DumpInfo.File.Close()
+			e.DumpInfo.File = nil
+		}
+	}()
 	// Note:
 	// For the dumping for SQL file case (len(e.DumpInfo.Path) > 0), the DumpInfo.dump() is called in
 	// handleFileTransInConn(), which is after TxnManager.OnTxnEnd(), where we can't access the TxnManager anymore.
@@ -163,9 +170,12 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	return nil
 }
 
-func (e *PlanReplayerExec) createFile() error {
-	var err error
-	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(false, false, false)
+func (e *PlanReplayerExec) createFile(ctx context.Context) error {
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return err
+	}
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
 	if err != nil {
 		return err
 	}
@@ -304,15 +314,15 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
-func loadAllBindings(ctx sessionctx.Context, z *zip.Reader) error {
+func loadAllBindings(ctx sessionctx.Context, z *zip.Reader, databaseSets map[string]struct{}) error {
 	for _, f := range z.File {
 		if strings.Compare(f.Name, domain.PlanReplayerSessionBindingFile) == 0 {
-			err := loadBindings(ctx, f, true)
+			err := loadBindings(ctx, f, databaseSets, true)
 			if err != nil {
 				return err
 			}
 		} else if strings.Compare(f.Name, domain.PlanReplayerGlobalBindingFile) == 0 {
-			err := loadBindings(ctx, f, false)
+			err := loadBindings(ctx, f, databaseSets, false)
 			if err != nil {
 				return err
 			}
@@ -321,7 +331,7 @@ func loadAllBindings(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
-func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
+func loadBindings(ctx sessionctx.Context, f *zip.File, databaseSets map[string]struct{}, isSession bool) error {
 	r, err := f.Open()
 	if err != nil {
 		return errors.AddStack(err)
@@ -337,26 +347,33 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 		return nil
 	}
 	bindings := strings.Split(buf.String(), "\n")
+	// The original SQL in our bind info is actually normalized SQL, which cannot be executed directly. This is
+	// especially true for function names that are not defined as keywords, such as count and ifnull. These will be
+	// treated as strings and used to calculate the digest. Therefore, the original SQL cannot be directly used to
+	// construct the create binding. As a result, we have to use `CREATE BINDING USING <bind sql>` to create the binding.
 	for _, binding := range bindings {
 		cols := strings.Split(binding, "\t")
 		if len(cols) < 3 {
 			continue
 		}
-		originSQL := cols[0]
 		bindingSQL := cols[1]
+		defaultDB := cols[2]
 		enabled := cols[3]
-		newNormalizedSQL := parser.NormalizeForBinding(originSQL, true)
+		if _, ok := databaseSets[defaultDB]; defaultDB != "" && !ok {
+			// defaultDB is empty means it's a universal binding, which doesn't need to check databaseSets
+			continue
+		}
 		if strings.Compare(enabled, "enabled") == 0 {
-			sql := fmt.Sprintf("CREATE %s BINDING FOR %s USING %s", func() string {
+			sql := fmt.Sprintf("CREATE %s BINDING USING %s", func() string {
 				if isSession {
 					return "SESSION"
 				}
 				return "GLOBAL"
-			}(), newNormalizedSQL, bindingSQL)
+			}(), bindingSQL)
 			c := context.Background()
 			_, err = ctx.GetSQLExecutor().Execute(c, sql)
 			if err != nil {
-				return err
+				logutil.BgLogger().Warn("load bindings failed", zap.Error(err), zap.String("sql", sql))
 			}
 		}
 	}
@@ -373,7 +390,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			}
 			//nolint: errcheck,all_revive,revive
 			defer v.Close()
-			unLoadVars, err = config.LoadConfig(ctx, v)
+			unLoadVars, err = config.LoadConfigForPlanReplayerLoad(ctx, v)
 			if err != nil {
 				return errors.AddStack(err)
 			}
@@ -399,24 +416,34 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 		return errors.AddStack(err)
 	}
 	originText := buf.String()
-	index1 := strings.Index(originText, ";")
-	createDatabaseSQL := originText[:index1+1]
-	index2 := strings.Index(originText[index1+1:], ";")
-	useDatabaseSQL := originText[index1+1:][:index2+1]
-	createTableSQL := originText[index1+1:][index2+1:]
 	c := context.Background()
-	// create database if not exists
-	_, err = ctx.GetSQLExecutor().Execute(c, createDatabaseSQL)
-	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
-	// use database
-	_, err = ctx.GetSQLExecutor().Execute(c, useDatabaseSQL)
+	p := parserutil.GetParser()
+	defer parserutil.DestroyParser(p)
+	vars := ctx.GetSessionVars()
+	p.SetSQLMode(vars.SQLMode)
+	p.SetParserConfig(vars.BuildParserConfig())
+	stmts, _, err := p.ParseSQL(originText, vars.GetParseParams()...)
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
-	// create table or view
-	_, err = ctx.GetSQLExecutor().Execute(c, createTableSQL)
-	if err != nil {
-		return err
+	if len(stmts) == 0 {
+		return errors.New("plan replayer: empty schema file")
+	}
+	for i, stmt := range stmts {
+		sqlText := stmt.Text()
+		if len(strings.TrimSpace(sqlText)) == 0 {
+			continue
+		}
+		if i == 0 {
+			// create database if not exists
+			_, err = ctx.GetSQLExecutor().Execute(c, sqlText)
+			logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+			continue
+		}
+		_, err = ctx.GetSQLExecutor().Execute(c, sqlText)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -446,7 +473,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	do := domain.GetDomain(ctx)
 	h := do.StatsHandle()
 	if h == nil {
-		return errors.New("plan replayer: hanlde is nil")
+		return errors.New("plan replayer: handle is nil")
 	}
 	return h.LoadStatsFromJSON(context.Background(), ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }
@@ -466,7 +493,8 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	}
 
 	// build schema and table first
-	err = e.createTable(z)
+	var databaseSets map[string]struct{}
+	databaseSets, err = e.createTable(z)
 	if err != nil {
 		return err
 	}
@@ -499,15 +527,14 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 		}
 	}
 
-	err = loadAllBindings(e.Ctx, z)
+	err = loadAllBindings(e.Ctx, z, databaseSets)
 	if err != nil {
-		logutil.BgLogger().Warn("load bindings failed", zap.Error(err))
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
 	return nil
 }
 
-func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
+func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) (map[string]struct{}, error) {
 	originForeignKeyChecks := e.Ctx.GetSessionVars().ForeignKeyChecks
 	originPlacementMode := e.Ctx.GetSessionVars().PlacementMode
 	// We need to disable foreign key check when we create schema and tables.
@@ -518,17 +545,40 @@ func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
 		e.Ctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 		e.Ctx.GetSessionVars().PlacementMode = originPlacementMode
 	}()
+	databaseSets := make(map[string]struct{}, 0)
 	for _, zipFile := range z.File {
 		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
+			v, err := zipFile.Open()
+			if err != nil {
+				return nil, errors.AddStack(err)
+			}
+			//nolint: errcheck,all_revive,revive
+			defer v.Close()
+			buf := new(bytes.Buffer)
+			_, err = buf.ReadFrom(v)
+			if err != nil {
+				return nil, errors.AddStack(err)
+			}
+			rows := strings.Split(buf.String(), "\n")
+			for _, row := range rows {
+				metas := strings.Split(row, ";")
+				for _, m := range metas {
+					if m == "" {
+						continue
+					}
+					s := strings.Split(m, ".")
+					databaseSets[s[0]] = struct{}{}
+				}
+			}
 			continue
 		}
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
 			err := createSchemaAndItems(e.Ctx, zipFile)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
-	return nil
+	return databaseSets, nil
 }

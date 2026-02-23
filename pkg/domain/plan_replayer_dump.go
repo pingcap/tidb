@@ -159,11 +159,12 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 			tne.err = err
 			return in, true
 		}
-		if tne.is.TableExists(t.Schema, t.Name) {
-			tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
-			if tp.DBName == "" {
-				tp.DBName = tne.curDB.L
-			}
+		schema := t.Schema
+		if schema.L == "" {
+			schema = tne.curDB
+		}
+		if tne.is.TableExists(schema, t.Name) {
+			tp := tableNamePair{DBName: schema.L, TableName: t.Name.L, IsView: isView}
 			tne.names[tp] = struct{}{}
 		}
 	} else if s, ok := in.(*ast.SelectStmt); ok {
@@ -201,36 +202,31 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 
 // DumpPlanReplayerInfo will dump the information about sqls.
 // The files will be organized into the following format:
-/*
- |-sql_meta.toml
- |-meta.txt
- |-schema
- |	 |-schema_meta.txt
- |	 |-db1.table1.schema.txt
- |	 |-db2.table2.schema.txt
- |	 |-....
- |-view
- | 	 |-db1.view1.view.txt
- |	 |-db2.view2.view.txt
- |	 |-....
- |-stats
- |   |-stats1.json
- |   |-stats2.json
- |   |-....
- |-statsMem
- |   |-stats1.txt
- |   |-stats2.txt
- |   |-....
- |-config.toml
- |-table_tiflash_replica.txt
- |-variables.toml
- |-bindings.sql
- |-sql
- |   |-sql1.sql
- |   |-sql2.sql
- |	 |-....
- |-explain.txt
-*/
+//
+// Single SQL dump:
+//
+//	|-sql_meta.toml
+//	|-meta.txt
+//	|-schema/...
+//	|-view/...
+//	|-stats/...
+//	|-statsMem/...
+//	|-config.toml
+//	|-table_tiflash_replica.txt
+//	|-variables.toml
+//	|-bindings.sql
+//	|-sql/sql0.sql
+//	|-explain.txt
+//
+// Multiple SQL dump (PLAN REPLAYER DUMP EXPLAIN ( "sql1", "sql2", ... )):
+//
+//	|-(same as above)
+//	|-sql/sql0.sql
+//	|-sql/sql1.sql
+//	|-...
+//	|-explain/explain0.txt
+//	|-explain/explain1.txt
+//	|-...
 func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	task *PlanReplayerDumpTask,
 ) (err error) {
@@ -275,12 +271,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 		err1 := zw.Close()
 		if err1 != nil {
-			logutil.BgLogger().Error("Closing zip writer failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
+			logutil.BgLogger().Warn("Closing zip writer failed", zap.String("category", "plan-replayer-dump"), zap.Error(err1), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err1.Error()
 		}
 		err2 := zf.Close()
 		if err2 != nil {
-			logutil.BgLogger().Error("Closing zip file failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
+			logutil.BgLogger().Warn("Closing zip file failed", zap.String("category", "plan-replayer-dump"), zap.Error(err2), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err2.Error()
 		}
 		if len(errMsg) > 0 {
@@ -393,14 +389,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	} else {
 		// Dump explain
 		if err = dumpPlanReplayerExplain(sctx, zw, task, &records); err != nil {
-			return err
+			errMsgs = append(errMsgs, err.Error())
 		}
 	}
 
-	if task.DebugTrace != nil {
-		if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
-			return err
-		}
+	if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
+		return err
 	}
 
 	if len(errMsgs) > 0 {
@@ -730,15 +724,32 @@ func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string)
 }
 
 func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) (debugTraces []any, err error) {
-	fw, err := zw.Create("explain.txt")
-	if err != nil {
-		return nil, errors.AddStack(err)
-	}
 	ctx.GetSessionVars().InPlanReplayer = true
 	defer func() {
 		ctx.GetSessionVars().InPlanReplayer = false
 	}()
+
+	// If there are multiple SQLs, write separate explain files
+	useSeparateFiles := len(sqls) > 1
+
+	// For single SQL, create explain.txt once before the loop
+	var fw io.Writer
+	if !useSeparateFiles && len(sqls) > 0 {
+		fw, err = zw.Create("explain.txt")
+		if err != nil {
+			return nil, errors.AddStack(err)
+		}
+	}
+
 	for i, sql := range sqls {
+		// For multiple SQLs, create a separate file for each
+		if useSeparateFiles {
+			fw, err = zw.Create(fmt.Sprintf("explain/explain%v.txt", i))
+			if err != nil {
+				return nil, errors.AddStack(err)
+			}
+		}
+
 		var recordSets []sqlexec.RecordSet
 		if isAnalyze {
 			// Explain analyze
@@ -753,8 +764,6 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 				return nil, err
 			}
 		}
-		debugTrace := ctx.GetSessionVars().StmtCtx.OptimizerDebugTrace
-		debugTraces = append(debugTraces, debugTrace)
 		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], emptyAsNil)
 		if err != nil {
 			return nil, err
@@ -767,7 +776,9 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 				return nil, err
 			}
 		}
-		if i < len(sqls)-1 {
+
+		// For single SQL, add separator between multiple explains in the same file
+		if !useSeparateFiles && i < len(sqls)-1 {
 			fmt.Fprintf(fw, "<--------->\n")
 		}
 	}
@@ -917,6 +928,9 @@ func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 }
 
 func dumpDebugTrace(zw *zip.Writer, debugTraces []any) error {
+	if debugTraces == nil { // if no debug trace collected, we still create one empty file for compatibility
+		debugTraces = append(debugTraces, nil)
+	}
 	for i, trace := range debugTraces {
 		fw, err := zw.Create(fmt.Sprintf("debug_trace/debug_trace%d.json", i))
 		if err != nil {
@@ -931,6 +945,9 @@ func dumpDebugTrace(zw *zip.Writer, debugTraces []any) error {
 }
 
 func dumpOneDebugTrace(w io.Writer, debugTrace any) error {
+	if debugTrace == nil {
+		return nil
+	}
 	jsonEncoder := json.NewEncoder(w)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)

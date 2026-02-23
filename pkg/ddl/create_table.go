@@ -49,6 +49,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -145,6 +146,13 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		if tbInfo.Affinity != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tbInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return tbInfo, errors.Wrapf(err, "failed to create table affinity groups in PD")
+			}
+		}
+
 		// Updating auto id meta kv is done in a separate txn.
 		// It's ok as these data are bind with table ID, and we won't use these
 		// table IDs until info schema version is updated.
@@ -205,6 +213,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 			failpoint.Return(ver, errors.New("mock do job error"))
 		}
 	})
+
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.onCreateTable")
+	defer r.End()
 
 	args, err := model.GetCreateTableArgs(job)
 	if err != nil {
@@ -758,9 +769,19 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbCharset, dbCollate, placementPolicyRef)
+		tbInfo, err = BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	}
-	return tbInfo, err
+
+	if err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, s.Table.Schema, tbInfo); err != nil {
+		return nil, err
+	}
+	return tbInfo, nil
 }
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
@@ -823,6 +844,11 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 	// After handleTableOptions, so the partitions can get defaults from Table level
 	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
 	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// validateTableAffinity settings, this should be after buildTablePartitionInfo for some partition checks
+	if err = validateTableAffinity(tbInfo, tbInfo.Affinity); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -965,6 +991,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionAffinity:
+			affinity, err := model.NewTableAffinityInfoWithLevel(op.StrValue)
+			if err != nil {
+				return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", op.StrValue)))
+			}
+			tbInfo.Affinity = affinity
 		case ast.TableOptionEngineAttribute:
 			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
@@ -1246,9 +1278,20 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 		tblInfo.Partition = &pi
 	}
 
-	if referTblInfo.TTLInfo != nil {
+	// for issue #64948, temporary table does not support TLL, we should remove it
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		tblInfo.TTLInfo = nil
+	} else if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
+
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		// temporary table does not support affinity, we should remove it
+		tblInfo.Affinity = nil
+	} else if referTblInfo.Affinity != nil {
+		tblInfo.Affinity = referTblInfo.Affinity.Clone()
+	}
+
 	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil
 }
@@ -1285,6 +1328,25 @@ func BuildTableInfo(
 		existedColsMap[v.Name.L] = struct{}{}
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
+
+	// This pre-scan is necessary because index building in the main loop may need to check
+	// tbInfo.HasClusteredIndex() before the PRIMARY KEY constraint is fully processed.
+	for _, constr := range constraints {
+		if constr.Tp == ast.ConstraintPrimaryKey {
+			isSingleIntPK := isSingleIntPKFromTableInfo(constr, tbInfo)
+
+			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
+				if isSingleIntPK {
+					tbInfo.PKIsHandle = true
+				} else {
+					tbInfo.IsCommonHandle = true
+					tbInfo.CommonHandleVersion = 1
+				}
+			}
+			break // Only one PRIMARY KEY possible
+		}
+	}
+
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
 		if constr.Tp != ast.ConstraintColumnar {
@@ -1337,7 +1399,7 @@ func BuildTableInfo(
 				// all partial primary key.
 				return nil, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("create an primary key with partial index is not supported")
 			}
-			isSingleIntPK := isSingleIntPK(constr, lastCol)
+			isSingleIntPK := isSingleIntPKFromCol(constr, lastCol)
 			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
 				if isSingleIntPK {
 					tbInfo.PKIsHandle = true
@@ -1633,16 +1695,44 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 	return nil
 }
 
-func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
-	if len(constr.Keys) != 1 {
-		return false
-	}
-	switch lastCol.GetType() {
+func isIntCol(col *model.ColumnInfo) bool {
+	switch col.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
 		return true
 	}
 	return false
+}
+
+// isSingleIntPKFromTableInfo determines if a constraint represents a single integer primary key
+// by looking up the column information from the table info. This is used during the pre-scan
+// phase before CheckPKOnGeneratedColumn is called.
+func isSingleIntPKFromTableInfo(constr *ast.Constraint, tbInfo *model.TableInfo) bool {
+	// Multi-column PKs are not single integer PKs
+	if len(constr.Keys) != 1 {
+		return false
+	}
+
+	// Expression-based PKs (e.g., PRIMARY KEY ((col+1))) are not single integer PKs
+	if constr.Keys[0].Expr != nil {
+		return false
+	}
+
+	// Find the column in the table
+	colName := constr.Keys[0].Column.Name.L
+	for _, col := range tbInfo.Columns {
+		if col.Name.L == colName {
+			return isIntCol(col)
+		}
+	}
+	return false
+}
+
+func isSingleIntPKFromCol(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
+	if len(constr.Keys) != 1 {
+		return false
+	}
+	return isIntCol(lastCol)
 }
 
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.

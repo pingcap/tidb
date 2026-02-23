@@ -70,7 +70,7 @@ order by c_0 desc
 limit 1)) is null));
 id	task	access object	operator info
 Projection	root		planner__core__rule_outer2inner.t0.c0, planner__core__rule_outer2inner.t1.c2, planner__core__rule_outer2inner.t1.c2
-└─Selection	root		isnull(eq("", Column#12))
+└─Selection	root		isnull(eq("", Column))
   └─Apply	root		CARTESIAN left outer join, left side:HashJoin
     ├─HashJoin(Build)	root		right outer join, left side:TableReader, equal:[eq(planner__core__rule_outer2inner.t1.c1, planner__core__rule_outer2inner.t0.c0)]
     │ ├─TableReader(Build)	root		data:TableFullScan
@@ -78,7 +78,7 @@ Projection	root		planner__core__rule_outer2inner.t0.c0, planner__core__rule_oute
     │ └─TableReader(Probe)	root		data:Selection
     │   └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t1.c1))
     │     └─TableFullScan	cop[tikv]	table:ref_0	keep order:false, stats:pseudo
-    └─Projection(Probe)	root		 n1`->Column#12
+    └─Projection(Probe)	root		 n1`->Column
       └─Limit	root		offset:0, count:1
         └─HashJoin	root		left outer join, left side:Limit, equal:[eq(planner__core__rule_outer2inner.t2.c4, planner__core__rule_outer2inner.t2.c3)]
           ├─Limit(Build)	root		offset:0, count:1

@@ -22,10 +22,10 @@ import (
 
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -37,7 +37,7 @@ import (
 func MergeOverlappingFilesV2(
 	ctx context.Context,
 	multiFileStat []MultipleFilesStat,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	startKey []byte,
 	endKey []byte,
 	partSize int64,
@@ -48,7 +48,6 @@ func MergeOverlappingFilesV2(
 	propSizeDist uint64,
 	propKeysDist uint64,
 	onWriterClose OnWriterCloseFunc,
-	onReaderClose OnReaderCloseFunc,
 	concurrency int,
 	checkHotspot bool,
 ) (err error) {
@@ -133,7 +132,6 @@ func MergeOverlappingFilesV2(
 			bufPool,
 			bufPool,
 			loaded,
-			onReaderClose,
 		)
 		if err1 != nil {
 			logutil.Logger(ctx).Warn("read all data failed", zap.Error(err1))

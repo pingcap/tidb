@@ -25,6 +25,16 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestSuite(t *testing.T) {
+	// Those tests use global variables, make them run in sequence to avoid flaky.
+	t.Run("TestTraceEventCategories", testTraceEventCategories)
+	t.Run("TestTraceEventCategoryFiltering", testTraceEventCategoryFiltering)
+	t.Run("TestTraceEventRecordsEvent", testTraceEventRecordsEvent)
+	t.Run("TestTraceEventCarriesTraceID", testTraceEventCarriesTraceID)
+	t.Run("TestTraceEventLoggingSwitch", testTraceEventLoggingSwitch)
+	t.Run("TestFlightRecorderCoolingOff", testFlightRecorderCoolingOff)
+}
+
 func installRecorderSink(t *testing.T, capacity int) *RingBufferSink {
 	t.Helper()
 
@@ -37,42 +47,47 @@ func installRecorderSink(t *testing.T, capacity int) *RingBufferSink {
 	return recorder
 }
 
-func TestTraceEventCategories(t *testing.T) {
+func testTraceEventCategories(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
-	original := GetEnabledCategories()
-	t.Cleanup(func() {
-		SetCategories(original)
-	})
+
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
 
 	require.True(t, IsEnabled(TxnLifecycle))
 
-	Disable(TxnLifecycle)
+	fr.Disable(TxnLifecycle)
 	require.False(t, IsEnabled(TxnLifecycle))
 
-	Enable(TxnLifecycle)
+	fr.Enable(TxnLifecycle)
 	require.True(t, IsEnabled(TxnLifecycle))
 
-	SetCategories(0)
+	fr.SetCategories(0)
 	require.False(t, IsEnabled(TxnLifecycle))
-	SetCategories(AllCategories)
+	fr.SetCategories(AllCategories)
 	require.True(t, IsEnabled(TxnLifecycle))
 }
 
-func TestTraceEventCategoryFiltering(t *testing.T) {
+func testTraceEventCategoryFiltering(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
-	originalCategories := GetEnabledCategories()
-	prevMode := CurrentMode()
-	t.Cleanup(func() {
-		SetCategories(originalCategories)
-		_, _ = SetMode(prevMode)
-		FlightRecorder().DiscardOrFlush()
-	})
 
-	SetCategories(0)
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
+	fr.SetCategories(0)
 	_, _ = SetMode(ModeFull)
 	FlightRecorder().DiscardOrFlush()
 	recorder := installRecorderSink(t, 8)
@@ -109,21 +124,20 @@ func TestTraceEventModes(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestTraceEventRecordsEvent(t *testing.T) {
+func testTraceEventRecordsEvent(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
-	originalCategories := GetEnabledCategories()
-	prevMode := CurrentMode()
-	prevSink := CurrentSink()
-	t.Cleanup(func() {
-		SetCategories(originalCategories)
-		_, _ = SetMode(prevMode)
-		SetSink(prevSink)
-		FlightRecorder().DiscardOrFlush()
-	})
 
-	SetCategories(AllCategories)
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
+	fr.SetCategories(AllCategories)
 	_, _ = SetMode(ModeFull)
 	FlightRecorder().DiscardOrFlush()
 	recorder := installRecorderSink(t, 8)
@@ -147,19 +161,20 @@ func TestTraceEventRecordsEvent(t *testing.T) {
 	require.Len(t, recorded[0].Fields, 2)
 }
 
-func TestTraceEventCarriesTraceID(t *testing.T) {
+func testTraceEventCarriesTraceID(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
-	originalCategories := GetEnabledCategories()
-	prevMode := CurrentMode()
-	t.Cleanup(func() {
-		SetCategories(originalCategories)
-		_, _ = SetMode(prevMode)
-		FlightRecorder().DiscardOrFlush()
-	})
 
-	SetCategories(AllCategories)
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
+	fr.SetCategories(AllCategories)
 	_, _ = SetMode(ModeFull)
 	FlightRecorder().DiscardOrFlush()
 
@@ -172,19 +187,20 @@ func TestTraceEventCarriesTraceID(t *testing.T) {
 	require.Equal(t, rawTrace, events[0].TraceID)
 }
 
-func TestTraceEventLoggingSwitch(t *testing.T) {
+func testTraceEventLoggingSwitch(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
-	originalCategories := GetEnabledCategories()
-	prevMode := CurrentMode()
-	t.Cleanup(func() {
-		SetCategories(originalCategories)
-		_, _ = SetMode(prevMode)
-		FlightRecorder().DiscardOrFlush()
-	})
 
-	SetCategories(AllCategories)
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
+	fr.SetCategories(AllCategories)
 	_, _ = SetMode(ModeBase)
 	FlightRecorder().DiscardOrFlush()
 	recorder := installRecorderSink(t, 8)
@@ -200,8 +216,8 @@ func TestTraceEventLoggingSwitch(t *testing.T) {
 
 	_, _ = SetMode(ModeFull)
 	TraceEvent(ctx, TxnLifecycle, "enabled-log", zap.Int("value", 2))
-	fr := FlightRecorder().Snapshot()
-	require.Len(t, fr, flightBefore+2)
+	fr1 := FlightRecorder().Snapshot()
+	require.Len(t, fr1, flightBefore+2)
 	recorded := recorder.Snapshot()
 	require.Len(t, recorded, disabledLogged+1)
 	require.Equal(t, "enabled-log", recorded[len(recorded)-1].Name)
@@ -265,12 +281,18 @@ func TestCategoryNames(t *testing.T) {
 // BenchmarkTraceEventDisabled benchmarks the overhead when tracing is disabled.
 func BenchmarkTraceEventDisabled(b *testing.B) {
 	ctx := context.Background()
-	prevCategories := GetEnabledCategories()
 	prevMode := CurrentMode()
-	SetCategories(AllCategories)
+
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(b, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
 	_, _ = SetMode(ModeOff)
 	b.Cleanup(func() {
-		SetCategories(prevCategories)
 		_, _ = SetMode(prevMode)
 	})
 
@@ -285,12 +307,18 @@ func BenchmarkTraceEventDisabled(b *testing.B) {
 // BenchmarkTraceEventEnabled benchmarks the overhead when tracing is enabled.
 func BenchmarkTraceEventEnabled(b *testing.B) {
 	ctx := context.Background()
-	prevCategories := GetEnabledCategories()
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(b, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
 	prevMode := CurrentMode()
 	Enable(TxnLifecycle)
 	_, _ = SetMode(ModeFull)
 	b.Cleanup(func() {
-		SetCategories(prevCategories)
 		_, _ = SetMode(prevMode)
 	})
 
@@ -300,7 +328,6 @@ func BenchmarkTraceEventEnabled(b *testing.B) {
 			zap.String("key", "value"),
 			zap.Int("iteration", i))
 	}
-	SetCategories(0)
 }
 
 func extractNames(events []Event) []string {
@@ -311,20 +338,27 @@ func extractNames(events []Event) []string {
 	return names
 }
 
-func TestFlightRecorderCoolingOff(t *testing.T) {
+func testFlightRecorderCoolingOff(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
-	originalCategories := GetEnabledCategories()
+
 	prevMode := CurrentMode()
 	t.Cleanup(func() {
-		SetCategories(originalCategories)
 		_, _ = SetMode(prevMode)
 		FlightRecorder().DiscardOrFlush()
 		lastDumpTime.Store(0) // Reset cooling-off state
 	})
 
-	SetCategories(AllCategories)
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
+	fr.SetCategories(AllCategories)
 	_, _ = SetMode(ModeFull)
 	FlightRecorder().DiscardOrFlush()
 	lastDumpTime.Store(0) // Reset cooling-off state
