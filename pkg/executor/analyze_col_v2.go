@@ -989,7 +989,7 @@ func estimateNDVsBySketch(
 			zap.Uint64("sample_size", sampleSize),
 			zap.Uint64("row_count", rowCount),
 		)
-		estimateNDVs[i] = int64(statistics.EstimateNDVByChao3(sampleNDV, f1, sampleSize, rowCount))
+		estimateNDVs[i] = int64(statistics.EstimateNDVByGEE(sampleNDV, f1, sampleSize, rowCount))
 	}
 	return estimateNDVs
 }
