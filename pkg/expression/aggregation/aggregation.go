@@ -64,6 +64,10 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx expression
 		aggF := newAggFunc(ast.AggFuncSum, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
 		return &sumFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
+	case tipb.ExprType_SumInt:
+		aggF := newAggFunc(ast.AggFuncSumInt, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &sumIntFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Count:
 		aggF := newAggFunc(ast.AggFuncCount, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
