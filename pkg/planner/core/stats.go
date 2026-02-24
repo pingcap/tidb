@@ -434,7 +434,7 @@ func detachCondAndBuildRangeForPath(
 	if needPruneEstimateRange {
 		// Non-unique index paths may append handle columns in `path.IdxCols` for execution ranges.
 		// Rebuild estimation ranges with the same column set used in row-count estimation.
-		estimateRanges = pruneEstimateRange(sctx, path.Ranges, len(indexCols))
+		estimateRanges = pruneEstimateRange(path.Ranges, len(indexCols))
 	} else {
 		estimateRanges = path.Ranges
 	}
@@ -443,7 +443,7 @@ func detachCondAndBuildRangeForPath(
 	return err
 }
 
-func pruneEstimateRange(sctx base.PlanContext, ranges []*ranger.Range, keepColCnt int) []*ranger.Range {
+func pruneEstimateRange(ranges []*ranger.Range, keepColCnt int) []*ranger.Range {
 	estimateRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
 		newRange := &ranger.Range{
