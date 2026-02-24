@@ -462,7 +462,7 @@ func (a *ExecStmt) IsPrepared() bool {
 // after Preprocess/Optimize may have mutated it (e.g., expanded wildcards,
 // added auxiliary fields, arena-allocated nodes whose backing memory may have
 // been collected by the GC).
-func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
+func (*ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 	return vars.StmtCtx.IsReadOnly
 }
 
@@ -529,7 +529,6 @@ func IsFastPlan(p base.Plan) bool {
 // like the INSERT, UPDATE statements, it executes in this function. If the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
-
 	defer func() {
 		r := recover()
 		if r == nil {
