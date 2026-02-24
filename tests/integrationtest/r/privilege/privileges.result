@@ -69,11 +69,21 @@ create masking policy p on mask_t(c) as c;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or CREATE MASKING POLICY privilege(s) for this operation
 alter table mask_t disable masking policy p;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
+alter table mask_t modify masking policy p set expression = mask_full(c, '*');
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
+alter table mask_t modify masking policy p set restrict on (insert_into_select);
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 create masking policy p on mask_t(c) as c;
 alter table mask_t disable masking policy p;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
+alter table mask_t modify masking policy p set expression = mask_full(c, '*');
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
+alter table mask_t modify masking policy p set restrict on (insert_into_select);
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 alter table mask_t disable masking policy p;
 alter table mask_t enable masking policy p;
+alter table mask_t modify masking policy p set expression = mask_full(c, '*');
+alter table mask_t modify masking policy p set restrict on (insert_into_select, update_select);
 alter table mask_t drop masking policy p;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or DROP MASKING POLICY privilege(s) for this operation
 alter table mask_t drop masking policy p;

@@ -102,6 +102,10 @@ connection mask_none;
 create masking policy p on mask_t(c) as c;
 --error 1227
 alter table mask_t disable masking policy p;
+--error 1227
+alter table mask_t modify masking policy p set expression = mask_full(c, '*');
+--error 1227
+alter table mask_t modify masking policy p set restrict on (insert_into_select);
 disconnect mask_none;
 
 connect (mask_creator, localhost, mask_creator,, privilege__privileges);
@@ -109,12 +113,18 @@ connection mask_creator;
 create masking policy p on mask_t(c) as c;
 --error 1227
 alter table mask_t disable masking policy p;
+--error 1227
+alter table mask_t modify masking policy p set expression = mask_full(c, '*');
+--error 1227
+alter table mask_t modify masking policy p set restrict on (insert_into_select);
 disconnect mask_creator;
 
 connect (mask_alter, localhost, mask_alter,, privilege__privileges);
 connection mask_alter;
 alter table mask_t disable masking policy p;
 alter table mask_t enable masking policy p;
+alter table mask_t modify masking policy p set expression = mask_full(c, '*');
+alter table mask_t modify masking policy p set restrict on (insert_into_select, update_select);
 --error 1227
 alter table mask_t drop masking policy p;
 disconnect mask_alter;
