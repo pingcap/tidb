@@ -139,9 +139,13 @@ func TestShowMaskingPolicies(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, c char(120))")
 	tk.MustExec("create masking policy p on t(c) as c")
+	tk.MustExec("alter table t modify masking policy p set expression = mask_full(c, '*')")
+	tk.MustExec("alter table t modify masking policy p set restrict on (insert_into_select, delete_select)")
 
-	tk.MustQuery("show masking policies for t").Check(testkit.Rows("p c `c` ENABLE CUSTOM NONE"))
-	tk.MustQuery("show masking policies for t where column_name = 'c'").Check(testkit.Rows("p c `c` ENABLE CUSTOM NONE"))
+	tk.MustQuery("show masking policies for t").
+		Check(testkit.Rows("p c MASK_FULL(`c`, _UTF8MB4'*') ENABLE MASK_FULL INSERT_INTO_SELECT,DELETE_SELECT"))
+	tk.MustQuery("show masking policies for t where column_name = 'c'").
+		Check(testkit.Rows("p c MASK_FULL(`c`, _UTF8MB4'*') ENABLE MASK_FULL INSERT_INTO_SELECT,DELETE_SELECT"))
 	tk.MustQuery("show masking policies for t where column_name = 'missing'").Check(testkit.Rows())
 
 	rows := tk.MustQuery("show create table t").Rows()
