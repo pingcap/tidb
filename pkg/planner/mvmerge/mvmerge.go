@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -29,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/table/tables"
 )
 
 const (
@@ -37,6 +40,7 @@ const (
 
 	deltaCntStarName = "__mvmerge_delta_cnt_star"
 	removedRowsName  = "__mvmerge_removed_rows"
+	mvRowIDName      = "__mvmerge_mv_rowid"
 )
 
 // BuildOptions defines the commit-ts window (FromTS, ToTS] used to read incremental mv-log rows.
@@ -50,6 +54,7 @@ type BuildOptions struct {
 // Row layout of MergeSourceSelect output is fixed:
 //  1. delta columns first
 //  2. MV output columns after delta columns (count = MVColumnCount)
+//  3. optional _tidb_rowid handle column at the end when MV table uses extra row-id handle
 //
 // All offsets in AggInfos (MVOffset and Dependencies) are based on this layout.
 type BuildResult struct {
@@ -64,6 +69,10 @@ type BuildResult struct {
 	// MVColumnCount indicates how many columns in the merge-source output schema belong to the MV row shape.
 	// The MV columns are always put after all delta columns.
 	MVColumnCount int
+
+	// MVTablePKCols stores MV table handle columns with their positions in merge-source output schema.
+	// For extra row-id handle, it points to the trailing _tidb_rowid column.
+	MVTablePKCols plannerutil.HandleCols
 
 	// GroupKeyMVOffsets are offsets (0-based) of the group key columns in the MV output schema.
 	GroupKeyMVOffsets []int
@@ -326,7 +335,7 @@ func BuildFromLocal(
 		return nil, err
 	}
 
-	mergeSel, deltaColumns, removedDelta, err := buildMergeSourceSelect(
+	mergeSel, deltaColumns, removedDelta, rowIDHandleOffset, err := buildMergeSourceSelect(
 		local.mvDBName,
 		local.mv,
 		local.mv.Columns,
@@ -342,6 +351,9 @@ func BuildFromLocal(
 
 	expectedLen := len(local.mv.Columns) + len(deltaColumns)
 	mvColumnOffsetBase := len(deltaColumns)
+	if rowIDHandleOffset >= 0 {
+		expectedLen++
+	}
 
 	sumToCountExprIdx, err := mapSumToCountExprDependencies(local.aggCols, sumArgNotNullByOffset)
 	if err != nil {
@@ -402,6 +414,11 @@ func BuildFromLocal(
 		return nil, err
 	}
 
+	mvTablePKCols, err := buildMVTablePKHandleCols(local.mv, mvColumnOffsetBase, rowIDHandleOffset)
+	if err != nil {
+		return nil, err
+	}
+
 	res := &BuildResult{
 		MergeSourceSelect: mergeSel,
 		SourceColumnCount: expectedLen,
@@ -409,6 +426,7 @@ func BuildFromLocal(
 		BaseTableID:       local.baseTableID,
 		MLogTableID:       local.mlogTableID,
 		MVColumnCount:     len(local.mv.Columns),
+		MVTablePKCols:     mvTablePKCols,
 		GroupKeyMVOffsets: append([]int(nil), local.groupKeyOffs...),
 		CountStarMVOffset: local.countStarMVOffset,
 		AggInfos:          outAggInfos,
@@ -421,6 +439,77 @@ func BuildFromLocal(
 		}(),
 	}
 	return res, nil
+}
+
+func buildMVTablePKHandleCols(
+	mv *model.TableInfo,
+	mvColumnOffsetBase, rowIDHandleOffset int,
+) (plannerutil.HandleCols, error) {
+	if mv == nil {
+		return nil, errors.New("mv table info is nil")
+	}
+
+	mvOffsetByColID := make(map[int64]int, len(mv.Columns))
+	for i, col := range mv.Columns {
+		mvOffsetByColID[col.ID] = i
+	}
+
+	switch {
+	case mv.PKIsHandle:
+		pkCol := mv.GetPkColInfo()
+		if pkCol == nil {
+			return nil, errors.Errorf("mv table %s has PKIsHandle but no primary key column", mv.Name.O)
+		}
+		mvOffset, ok := mvOffsetByColID[pkCol.ID]
+		if !ok {
+			return nil, errors.Errorf("mv table %s primary key column id %d not found in mv columns", mv.Name.O, pkCol.ID)
+		}
+		return plannerutil.NewIntHandleCols(&expression.Column{
+			ID:      pkCol.ID,
+			RetType: &pkCol.FieldType,
+			Index:   mvColumnOffsetBase + mvOffset,
+		}), nil
+	case mv.IsCommonHandle:
+		pkIdx := tables.FindPrimaryIndex(mv)
+		if pkIdx == nil {
+			return nil, errors.Errorf("mv table %s has common handle but no primary index", mv.Name.O)
+		}
+		cols := make([]*expression.Column, 0, len(pkIdx.Columns))
+		for _, idxCol := range pkIdx.Columns {
+			if idxCol.Offset < 0 || idxCol.Offset >= len(mv.Columns) {
+				return nil, errors.Errorf(
+					"mv table %s primary index %s has invalid column offset %d",
+					mv.Name.O,
+					pkIdx.Name.O,
+					idxCol.Offset,
+				)
+			}
+			col := mv.Columns[idxCol.Offset]
+			mvOffset, ok := mvOffsetByColID[col.ID]
+			if !ok {
+				return nil, errors.Errorf("mv table %s primary key column id %d not found in mv columns", mv.Name.O, col.ID)
+			}
+			cols = append(cols, &expression.Column{
+				ID:      col.ID,
+				RetType: &col.FieldType,
+				Index:   mvColumnOffsetBase + mvOffset,
+			})
+		}
+		return plannerutil.NewCommonHandlesColsWithoutColsAlign(mv, pkIdx, cols), nil
+	default:
+		if rowIDHandleOffset < 0 {
+			return nil, errors.Errorf(
+				"mv table %s uses extra row-id handle but merge-source output has no _tidb_rowid column",
+				mv.Name.O,
+			)
+		}
+		extraHandleCol := model.NewExtraHandleColInfo()
+		return plannerutil.NewIntHandleCols(&expression.Column{
+			ID:      extraHandleCol.ID,
+			RetType: &extraHandleCol.FieldType,
+			Index:   rowIDHandleOffset,
+		}), nil
+	}
 }
 
 func inferSumArgNotNullByOffset(local *BuildLocalResult) map[int]bool {
@@ -983,7 +1072,7 @@ func buildMergeSourceSelect(
 	deltaSel *ast.SelectStmt,
 	aggCols []aggColInfo,
 	hasMinMax bool,
-) (*ast.SelectStmt, []DeltaColumn, *DeltaColumn, error) {
+) (*ast.SelectStmt, []DeltaColumn, *DeltaColumn, int, error) {
 	deltaSrc := &ast.TableSource{Source: deltaSel, AsName: pmodel.NewCIStr(deltaTableAlias)}
 	mvSrc := &ast.TableSource{
 		Source: &ast.TableName{Schema: dbName, Name: mv.Name},
@@ -1004,7 +1093,7 @@ func buildMergeSourceSelect(
 		}
 	}
 	if onExpr == nil {
-		return nil, nil, nil, errors.New("empty join key for mvmerge")
+		return nil, nil, nil, -1, errors.New("empty join key for mvmerge")
 	}
 
 	// Use delta as left side so every changed group survives even when MV row doesn't exist yet.
@@ -1024,6 +1113,7 @@ func buildMergeSourceSelect(
 	var removedDelta *DeltaColumn
 	nextOffset := 0
 	// Keep all delta columns contiguous before MV columns, and track their absolute output offsets.
+	rowIDHandleOffset := -1
 	addDeltaCol := func(name string) int {
 		off := nextOffset
 		nextOffset++
@@ -1069,11 +1159,19 @@ func buildMergeSourceSelect(
 			AsName: col.Name,
 		})
 	}
+	// Keep extra row-id handle outside delta payload so delta offsets and MV offsets stay stable.
+	if !mv.PKIsHandle && !mv.IsCommonHandle {
+		rowIDHandleOffset = len(fields)
+		fields = append(fields, &ast.SelectField{
+			Expr:   qualColExpr(mvTableAlias, model.ExtraHandleName.O),
+			AsName: pmodel.NewCIStr(mvRowIDName),
+		})
+	}
 
 	return &ast.SelectStmt{
 		Fields: &ast.FieldList{Fields: fields},
 		From:   &ast.TableRefsClause{TableRefs: join},
-	}, deltaColumns, removedDelta, nil
+	}, deltaColumns, removedDelta, rowIDHandleOffset, nil
 }
 
 func groupKeyBaseColExprAtOffset(mvSel *ast.SelectStmt, mvOffset int) (*ast.ColumnNameExpr, error) {

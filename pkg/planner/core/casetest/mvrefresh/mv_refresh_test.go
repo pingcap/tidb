@@ -110,7 +110,7 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	require.Equal(t, len(mvTbl.Columns), mergePlan.MVColumnCount)
 	require.Equal(t, []int{0}, mergePlan.GroupKeyMVOffsets)
 	require.Equal(t, 1, mergePlan.CountStarMVOffset)
-	require.Len(t, mergePlan.SourceOutputNames, 7)
+	require.Len(t, mergePlan.SourceOutputNames, 8)
 	require.Len(t, mergePlan.AggInfos, 3)
 
 	var hasCountStar, hasCountExpr, hasSum bool
@@ -328,7 +328,7 @@ func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 	require.Equal(t, len(mvTbl.Columns), mergePlan.MVColumnCount)
 	require.Equal(t, []int{0}, mergePlan.GroupKeyMVOffsets)
 	require.Equal(t, 1, mergePlan.CountStarMVOffset)
-	require.Len(t, mergePlan.SourceOutputNames, 5)
+	require.Len(t, mergePlan.SourceOutputNames, 6)
 	require.Len(t, mergePlan.AggInfos, 2)
 
 	var hasCountStar, hasSum bool
@@ -345,6 +345,243 @@ func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 	}
 	require.True(t, hasCountStar)
 	require.True(t, hasSum)
+}
+
+func TestMVMergeBuildResultHandleCols(t *testing.T) {
+	type handleCase struct {
+		name               string
+		baseID             int64
+		mlogID             int64
+		mvID               int64
+		baseCols           []handleColDef
+		buildMV            func(baseID, mvID int64) *model.TableInfo
+		expectHandleIsInt  bool
+		expectHandleIdxs   []int
+		expectHandleLayout []string
+	}
+
+	cases := []handleCase{
+		{
+			name:   "tidb_rowid",
+			baseID: 1001,
+			mlogID: 1002,
+			mvID:   1003,
+			baseCols: []handleColDef{
+				{id: 1, name: "a", tp: mysql.TypeLong},
+			},
+			buildMV: func(baseID, mvID int64) *model.TableInfo {
+				return &model.TableInfo{
+					ID:    mvID,
+					Name:  pmodel.NewCIStr("mv_tidb_rowid"),
+					State: model.StatePublic,
+					Columns: []*model.ColumnInfo{
+						mkTestCol(1, "x", 0, mysql.TypeLong),
+						mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+					},
+					MaterializedView: &model.MaterializedViewInfo{
+						BaseTableIDs: []int64{baseID},
+						SQLContent:   "select a, count(1) from t group by a",
+					},
+				}
+			},
+			expectHandleIsInt:  true,
+			expectHandleIdxs:   []int{3},
+			expectHandleLayout: []string{"__mvmerge_mv_rowid"},
+		},
+		{
+			name:   "int_handle",
+			baseID: 2001,
+			mlogID: 2002,
+			mvID:   2003,
+			baseCols: []handleColDef{
+				{id: 1, name: "a", tp: mysql.TypeLong},
+			},
+			buildMV: func(baseID, mvID int64) *model.TableInfo {
+				pkCol := mkTestCol(2, "x", 1, mysql.TypeLong)
+				pkCol.AddFlag(mysql.PriKeyFlag)
+				pkCol.AddFlag(mysql.NotNullFlag)
+				return &model.TableInfo{
+					ID:         mvID,
+					Name:       pmodel.NewCIStr("mv_int_handle"),
+					State:      model.StatePublic,
+					PKIsHandle: true,
+					Columns: []*model.ColumnInfo{
+						mkTestCol(1, "cnt", 0, mysql.TypeLonglong),
+						pkCol,
+					},
+					MaterializedView: &model.MaterializedViewInfo{
+						BaseTableIDs: []int64{baseID},
+						SQLContent:   "select count(1), a from t group by a",
+					},
+				}
+			},
+			expectHandleIsInt:  true,
+			expectHandleIdxs:   []int{2},
+			expectHandleLayout: []string{"x"},
+		},
+		{
+			name:   "common_handle",
+			baseID: 3001,
+			mlogID: 3002,
+			mvID:   3003,
+			baseCols: []handleColDef{
+				{id: 1, name: "a", tp: mysql.TypeLong},
+				{id: 2, name: "b", tp: mysql.TypeLong},
+			},
+			buildMV: func(baseID, mvID int64) *model.TableInfo {
+				return &model.TableInfo{
+					ID:             mvID,
+					Name:           pmodel.NewCIStr("mv_common_handle"),
+					State:          model.StatePublic,
+					IsCommonHandle: true,
+					Columns: []*model.ColumnInfo{
+						mkTestCol(1, "x", 0, mysql.TypeLong),
+						mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+						mkTestCol(3, "y", 2, mysql.TypeLong),
+					},
+					Indices: []*model.IndexInfo{
+						{
+							ID:      1,
+							Name:    pmodel.NewCIStr("PRIMARY"),
+							Primary: true,
+							Unique:  true,
+							State:   model.StatePublic,
+							Columns: []*model.IndexColumn{
+								{Name: pmodel.NewCIStr("y"), Offset: 2},
+								{Name: pmodel.NewCIStr("x"), Offset: 0},
+							},
+						},
+					},
+					MaterializedView: &model.MaterializedViewInfo{
+						BaseTableIDs: []int64{baseID},
+						SQLContent:   "select a, count(1), b from t group by a, b",
+					},
+				}
+			},
+			expectHandleIsInt:  false,
+			expectHandleIdxs:   []int{3, 1},
+			expectHandleLayout: []string{"y", "x"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			baseTbl, mlogTbl := buildBaseAndMLogForHandleTest(tc.baseID, tc.mlogID, tc.baseCols)
+			mvTbl := tc.buildMV(tc.baseID, tc.mvID)
+			res, outputNames := buildMVMergeResultForHandleTest(t, baseTbl, mlogTbl, mvTbl)
+			require.NotNil(t, res.MVTablePKCols)
+			require.Equal(t, tc.expectHandleIsInt, res.MVTablePKCols.IsInt())
+			require.Equal(t, len(tc.expectHandleIdxs), res.MVTablePKCols.NumCols())
+			for i, idx := range tc.expectHandleIdxs {
+				require.Equal(t, idx, res.MVTablePKCols.GetCol(i).Index)
+			}
+			assertHandleColsMatchMergeSourceLayout(t, res, outputNames, tc.expectHandleLayout)
+		})
+	}
+}
+
+type handleColDef struct {
+	id   int64
+	name string
+	tp   byte
+}
+
+func buildBaseAndMLogForHandleTest(baseID, mlogID int64, cols []handleColDef) (*model.TableInfo, *model.TableInfo) {
+	baseCols := make([]*model.ColumnInfo, 0, len(cols))
+	mlogCols := make([]*model.ColumnInfo, 0, len(cols)+2)
+	mlogPayloadCols := make([]pmodel.CIStr, 0, len(cols))
+	maxColID := int64(0)
+	for i, col := range cols {
+		if col.id > maxColID {
+			maxColID = col.id
+		}
+		baseCols = append(baseCols, mkTestCol(col.id, col.name, i, col.tp))
+		mlogCols = append(mlogCols, mkTestCol(col.id, col.name, i, col.tp))
+		mlogPayloadCols = append(mlogPayloadCols, pmodel.NewCIStr(col.name))
+	}
+
+	mlogCols = append(
+		mlogCols,
+		mkTestCol(maxColID+1, model.MaterializedViewLogDMLTypeColumnName, len(cols), mysql.TypeVarchar),
+		mkTestCol(maxColID+2, model.MaterializedViewLogOldNewColumnName, len(cols)+1, mysql.TypeTiny),
+	)
+
+	baseTbl := &model.TableInfo{
+		ID:      baseID,
+		Name:    pmodel.NewCIStr("t"),
+		State:   model.StatePublic,
+		Columns: baseCols,
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{
+			MLogID: mlogID,
+		},
+	}
+	mlogTbl := &model.TableInfo{
+		ID:      mlogID,
+		Name:    pmodel.NewCIStr("$mlog$t"),
+		State:   model.StatePublic,
+		Columns: mlogCols,
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     mlogPayloadCols,
+		},
+	}
+	return baseTbl, mlogTbl
+}
+
+func buildMVMergeResultForHandleTest(
+	t *testing.T,
+	baseTbl, mlogTbl, mvTbl *model.TableInfo,
+) (*mvmerge.BuildResult, types.NameSlice) {
+	t.Helper()
+	sctx := plannercore.MockContext()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mvTbl,
+		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		nil,
+	)
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(res.MergeSourceSelect)
+	err = plannercore.Preprocess(
+		context.Background(),
+		sctx,
+		nodeW,
+		plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}),
+	)
+	require.NoError(t, err)
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), nodeW)
+	require.NoError(t, err)
+	return res, p.OutputNames()
+}
+
+func assertHandleColsMatchMergeSourceLayout(
+	t *testing.T,
+	res *mvmerge.BuildResult,
+	outputNames types.NameSlice,
+	expectedCols []string,
+) {
+	t.Helper()
+	require.NotNil(t, res)
+	require.NotNil(t, res.MVTablePKCols)
+	require.NotNil(t, res.MergeSourceSelect)
+	require.NotNil(t, res.MergeSourceSelect.Fields)
+	fields := res.MergeSourceSelect.Fields.Fields
+	require.Len(t, fields, res.SourceColumnCount)
+	require.Len(t, outputNames, res.SourceColumnCount)
+	require.Equal(t, len(expectedCols), res.MVTablePKCols.NumCols())
+	for i, expectedCol := range expectedCols {
+		idx := res.MVTablePKCols.GetCol(i).Index
+		require.GreaterOrEqual(t, idx, 0)
+		require.Less(t, idx, len(fields))
+		require.Equal(t, expectedCol, fields[idx].AsName.O)
+		require.Equal(t, expectedCol, outputNames[idx].ColName.O)
+	}
 }
 
 func mkTestCol(id int64, name string, offset int, tp byte) *model.ColumnInfo {

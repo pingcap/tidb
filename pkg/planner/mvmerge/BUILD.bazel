@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/mvmerge",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/expression",
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser",
@@ -15,6 +16,8 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",
         "//pkg/planner/planctx",
+        "//pkg/planner/util",
+        "//pkg/table/tables",
         "@com_github_pingcap_errors//:errors",
     ],
 )

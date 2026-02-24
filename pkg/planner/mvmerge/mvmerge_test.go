@@ -166,6 +166,7 @@ func TestBuildCountSum(t *testing.T) {
 		{Pos: 4, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
 		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
 		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
+		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "__mvmerge_mv_rowid", OrigCol: "_tidb_rowid"},
 	})
 }
 
@@ -264,6 +265,7 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 		{Pos: 4, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_star", OrigTbl: mv.Name.O, OrigCol: "cnt_star"},
 		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
 		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "s_expr", OrigTbl: mv.Name.O, OrigCol: "s_expr"},
+		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "__mvmerge_mv_rowid", OrigCol: "_tidb_rowid"},
 	})
 }
 
@@ -361,6 +363,7 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
 		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
 		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
+		{Pos: 8, DB: mvDBName, Tbl: mvTableAlias, Col: "__mvmerge_mv_rowid", OrigCol: "_tidb_rowid"},
 	})
 }
 
