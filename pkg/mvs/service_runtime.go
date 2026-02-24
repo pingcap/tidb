@@ -111,8 +111,10 @@ func (t *MVService) Run() {
 					zap.Error(err),
 				)
 				logutil.BgLogger().Warn("fetch materialized view metadata failed", fields...)
-				// Avoid tight retries when metadata fetch keeps failing.
-				t.lastRefresh.Store(now.UnixMilli())
+				// Keep retries bounded:
+				// - periodic fetch failure keeps existing fetchInterval throttling.
+				// - DDL-triggered failure retries sooner to reduce stale-window.
+				t.markFetchFailure(now, ddlDirty)
 			}
 		}
 
@@ -123,6 +125,24 @@ func (t *MVService) Run() {
 		next := t.nextScheduleTime(now)
 		resetTimer(timer, mvsUntil(next))
 	}
+}
+
+// markFetchFailure records a synthetic lastRefresh to control next fetch time.
+func (t *MVService) markFetchFailure(now time.Time, ddlTriggered bool) {
+	if !ddlTriggered {
+		t.lastRefresh.Store(now.UnixMilli())
+		return
+	}
+
+	retryDelay := t.basicInterval
+	if retryDelay <= 0 {
+		retryDelay = defaultMVBasicInterval
+	}
+	if retryDelay > t.fetchInterval {
+		retryDelay = t.fetchInterval
+	}
+	// next fetch time = lastRefresh + fetchInterval = now + retryDelay
+	t.lastRefresh.Store(now.Add(retryDelay - t.fetchInterval).UnixMilli())
 }
 
 // shouldFetchMVMeta reports whether a periodic metadata refresh is due.

@@ -368,7 +368,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		return ver, nil
 
 	case model.StateWriteReorganization:
-		// Phase-2: run initial build and persist refresh result in mysql.tidb_mview_refresh.
+		// Phase-2: run initial build and persist refresh result in mysql.tidb_mview_refresh_info.
 		// CREATE MATERIALIZED VIEW build is non-resumable in this stage. For normal retry/recovery
 		// paths, if this step restarts without an active reorg context and MV table already has
 		// rows, fail fast and roll back the whole job to avoid duplicate build writes.
@@ -612,7 +612,7 @@ func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, ml
 		mlogTblInfo.MaterializedViewLog.PurgeMethod,
 		mlogTblInfo.MaterializedViewLog.PurgeStartWith,
 	)
-	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mlog_purge (
+	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mlog_purge_info (
 		MLOG_ID,
 		NEXT_TIME
 	) VALUES (%?, %?)
@@ -624,11 +624,11 @@ func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, ml
 	_, err := w.sess.Execute(ctx, upsertSQL, "mlog-purge-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewLogPurgeInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge")
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
 		}
 	})
 	if infoschema.ErrTableNotExists.Equal(err) {
-		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: required system table mysql.tidb_mlog_purge does not exist")
+		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: required system table mysql.tidb_mlog_purge_info does not exist")
 	}
 	return errors.Trace(err)
 }
@@ -727,11 +727,11 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvT
 	_, err := w.sess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
 		}
 	})
 	if infoschema.ErrTableNotExists.Equal(err) {
-		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: required system table mysql.tidb_mview_refresh does not exist")
+		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
 	}
 	return errors.Trace(err)
 }
@@ -741,11 +741,11 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %?", mviewID)
+	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?", mviewID)
 	_, err := w.sess.Execute(ctx, deleteSQL, "mview-refresh-info-delete")
 	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
 		}
 	})
 	if infoschema.ErrTableNotExists.Equal(err) {
@@ -805,7 +805,7 @@ func buildCreateMaterializedViewRefreshInfoUpsertSQL(mvTblInfo *model.TableInfo,
 		successfulReadTS = readTS
 	}
 	nextTime := buildCreateMaterializedViewRefreshInitialNextTime(mvTblInfo.MaterializedView, time.Now())
-	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
+	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
 		MVIEW_ID,
 		LAST_SUCCESS_READ_TSO,
 		NEXT_TIME
