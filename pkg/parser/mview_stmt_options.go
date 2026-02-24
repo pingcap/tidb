@@ -26,3 +26,9 @@ type mviewCreateOptions struct {
 	hasPreSplitRegion bool
 	options           []*ast.TableOption
 }
+
+type mlogCreateOptions struct {
+	hasShardRowIDBits bool
+	hasPreSplitRegion bool
+	options           []*ast.TableOption
+}

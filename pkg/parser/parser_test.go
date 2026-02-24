@@ -5199,6 +5199,14 @@ func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 			sql:       "CREATE MATERIALIZED VIEW mv (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2 AS SELECT 1",
 			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW",
 		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2",
+			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW LOG",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2",
+			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW LOG",
+		},
 	}
 	for _, c := range dupCases {
 		_, err := p.ParseOneStmt(c.sql, "", "")
@@ -5321,9 +5329,19 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`)",
 		},
 		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a,b) SHARD_ROW_ID_BITS = 4 PRE_SPLIT_REGIONS = 2",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`) SHARD_ROW_ID_BITS = 4 PRE_SPLIT_REGIONS = 2",
+		},
+		{
 			"CREATE MATERIALIZED VIEW LOG ON t (a,b) PURGE IMMEDIATE",
 			true,
 			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`) PURGE IMMEDIATE",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a) PRE_SPLIT_REGIONS = 2 SHARD_ROW_ID_BITS = 4 PURGE IMMEDIATE",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) PRE_SPLIT_REGIONS = 2 SHARD_ROW_ID_BITS = 4 PURGE IMMEDIATE",
 		},
 		{
 			"CREATE MATERIALIZED VIEW LOG ON t (a) PURGE START WITH now() NEXT 300",

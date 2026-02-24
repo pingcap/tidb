@@ -1811,9 +1811,10 @@ func (n *MLogPurgeClause) Restore(ctx *format.RestoreCtx) error {
 type CreateMaterializedViewLogStmt struct {
 	ddlNode
 
-	Table *TableName
-	Cols  []model.CIStr
-	Purge *MLogPurgeClause
+	Table   *TableName
+	Cols    []model.CIStr
+	Options []*TableOption
+	Purge   *MLogPurgeClause
 }
 
 // Restore implements Node interface.
@@ -1830,6 +1831,12 @@ func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(col.O)
 	}
 	ctx.WritePlain(")")
+	for _, opt := range n.Options {
+		ctx.WritePlain(" ")
+		if err := opt.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Options")
+		}
+	}
 	if n.Purge != nil {
 		ctx.WritePlain(" ")
 		if err := n.Purge.Restore(ctx); err != nil {
@@ -1852,6 +1859,13 @@ func (n *CreateMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Table = node.(*TableName)
+	}
+	for i, option := range n.Options {
+		node, ok := option.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Options[i] = node.(*TableOption)
 	}
 	if n.Purge != nil {
 		if n.Purge.StartWith != nil {
