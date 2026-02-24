@@ -6,7 +6,7 @@ This document describes the current implementation and behavior of:
 PURGE MATERIALIZED VIEW LOG ON <base_table>
 ```
 
-It also records the design rationale and follow-up items.
+It also records the design rationale and follow-up items for the refined MV/MLog system-table schema.
 
 ## Current status
 
@@ -14,6 +14,10 @@ It also records the design rationale and follow-up items.
 - The statement runs as a **utility statement** (not a DDL statement).
 - Execution is handled by a dedicated utility executor (`PurgeMaterializedViewLogExec`).
 - No DDL job is submitted for purge execution.
+- Purge metadata is split into:
+  - `mysql.tidb_mlog_purge_info`: metadata + lock-row carrier.
+  - `mysql.tidb_mlog_purge_hist`: per-purge lifecycle/result records.
+- After lock acquisition, purge inserts one `running` history row; when purge finishes, it updates the same history row to final status.
 
 ## Why utility execution (not DDL statement execution)
 
@@ -60,10 +64,11 @@ The statement must run as a standalone statement.
 1. Resolve base table and corresponding MLog table (`$mlog$<base_table>`).
 2. Create/get an internal system session.
 3. Execute purge in a batch loop, each batch in a separate pessimistic transaction.
-4. Use a row lock in `mysql.tidb_mlog_purge` as the cross-node mutex.
+4. Use a row lock in `mysql.tidb_mlog_purge_info` as the cross-node mutex.
 5. Compute safe purge tso once.
-6. Delete eligible MLog rows in batches.
-7. Update latest purge status in `mysql.tidb_mlog_purge`.
+6. After first successful lock acquisition, insert one `running` row into `mysql.tidb_mlog_purge_hist`.
+7. Delete eligible MLog rows in batches.
+8. At statement end, update that history row to final status (`success` / `failed`) and fill completion fields.
 
 ## Internal context
 
@@ -76,13 +81,14 @@ The statement must run as a standalone statement.
 Each batch does:
 
 1. `BEGIN PESSIMISTIC`
-2. Acquire lock row with `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mlog_purge`
-3. (First successful lock only) calculate safe purge tso
+2. Acquire lock row with `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mlog_purge_info`
+3. (First successful lock only) calculate safe purge tso and create purge history (`running`) with a statement-unique `PURGE_JOB_ID`
 4. `DELETE ... WHERE _tidb_commit_ts <= safe_purge_tso LIMIT batch_size`
-5. Update `mysql.tidb_mlog_purge` latest state
-6. `COMMIT`
+5. `COMMIT`
 
 Loop stops when deleted rows `< batch_size`.
+
+After the loop exits (or exits with error), purge finalizes the `mysql.tidb_mlog_purge_hist` row for this `PURGE_JOB_ID`.
 
 ## Batch size variable
 
@@ -109,21 +115,21 @@ Inputs:
 
 Rule:
 
-- Use `MIN(COALESCE(LAST_SUCCESSFUL_REFRESH_READ_TSO, 0))` across all dependent MV ids.
+- Use `MIN(COALESCE(LAST_SUCCESS_READ_TSO, 0))` across all dependent MV ids.
 - Cap by current purge transaction start tso.
 - If no dependent MV exists, `safe_purge_tso` is purge transaction start tso.
 
 Consistency guard for public MVs:
 
-- For public dependent MVs, all of them must have rows in `mysql.tidb_mview_refresh`.
+- For public dependent MVs, all of them must have rows in `mysql.tidb_mview_refresh_info`.
 - Missing rows are treated as metadata inconsistency and purge fails.
 
 ## Concurrency semantics
 
-Mutex granularity is per `MLOG_ID` via row lock in `mysql.tidb_mlog_purge`.
+Mutex granularity is per `MLOG_ID` via row lock in `mysql.tidb_mlog_purge_info`.
 
 - Lock SQL:
-  - `SELECT 1 FROM mysql.tidb_mlog_purge WHERE MLOG_ID = ? FOR UPDATE NOWAIT`
+  - `SELECT 1 FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = ? FOR UPDATE NOWAIT`
 
 Outcomes:
 
@@ -132,7 +138,7 @@ Outcomes:
    - if no rows were deleted yet in this statement: return error.
    - if some rows were already deleted in previous batches: return success with warning:
      - purge stopped before deleting all eligible rows due to lock conflict; retry later.
-3. Lock row missing: return error (`mlog purge lock row does not exist for mlog id ...`).
+3. Lock row missing in `tidb_mlog_purge_info`: return error (`mlog purge lock row does not exist for mlog id ...`).
 
 Different `MLOG_ID`s can be purged concurrently.
 
@@ -140,34 +146,40 @@ Different `MLOG_ID`s can be purged concurrently.
 
 Bootstrap creates:
 
-- `mysql.tidb_mlog_purge` (latest state table)
-- `mysql.tidb_mlog_purge_hist` (history table)
+- `mysql.tidb_mlog_purge_info`
+  - `MLOG_ID` (PK, lock row carrier)
+  - `NEXT_TIME` (scheduling metadata)
+- `mysql.tidb_mlog_purge_hist`
+  - `PURGE_JOB_ID` (PK, one row per purge statement)
+  - `MLOG_ID`
+  - `PURGE_METHOD`
+  - `PURGE_TIME` / `PURGE_ENDTIME`
+  - `PURGE_ROWS`
+  - `PURGE_STATUS` (`running` / `success` / `failed`)
 
-Current implementation updates only:
+Write responsibilities:
 
-- `mysql.tidb_mlog_purge`
-  - `LAST_PURGE_TIME`
-  - `LAST_PURGE_ROWS`
-  - `LAST_PURGE_DURATION`
-
-History table writes (`mysql.tidb_mlog_purge_hist`) are not implemented yet.
+- `tidb_mlog_purge_info`: only lock-row/scheduling metadata, no per-run result write.
+- `tidb_mlog_purge_hist`:
+  - insert one `running` row after lock acquisition;
+  - update the same row when statement finishes.
 
 ## Dependency on MLog creation path
 
-Purge requires an existing lock row in `mysql.tidb_mlog_purge`.
+Purge requires an existing lock row in `mysql.tidb_mlog_purge_info`.
 
 `CREATE MATERIALIZED VIEW LOG` initializes this row in DDL worker:
 
-- `INSERT IGNORE INTO mysql.tidb_mlog_purge (MLOG_ID) VALUES (...)`
+- `INSERT IGNORE INTO mysql.tidb_mlog_purge_info (MLOG_ID) VALUES (...)`
 
 If this system table is missing, create MLog fails with explicit error.
 
 ## Error handling notes
 
 - Missing database / table / MLog metadata returns explicit errors.
-- Missing system tables (`mysql.tidb_mlog_purge`, `mysql.tidb_mview_refresh`, `mysql.tidb_ddl_job`) return explicit errors.
+- Missing system tables (`mysql.tidb_mlog_purge_info`, `mysql.tidb_mlog_purge_hist`, `mysql.tidb_mview_refresh_info`, `mysql.tidb_ddl_job`) return explicit errors.
 - Delete execution errors do not leak partial delete writes from failed batch transaction.
-- Purge state update is kept even when the current batch fails after partial statement progress bookkeeping.
+- For statement failures, purge finalizes the history row with `failed` status before returning the error.
 
 ## TiFlash behavior for purge delete
 
@@ -207,8 +219,6 @@ This matches MV maintenance behavior and allows intended optimizer behavior for 
 
 ## Known gaps and follow-ups
 
-1. `mysql.tidb_mlog_purge_hist` write path is not implemented yet.
-2. No background/asynchronous purge scheduler; purge is statement-driven.
-3. No resumable task/checkpoint framework (retry by rerunning statement).
-4. Additional observability (batch-level metrics / progress) can be improved.
-
+1. No background/asynchronous purge scheduler; purge is statement-driven.
+2. No resumable task/checkpoint framework (retry by rerunning statement).
+3. Additional observability (batch-level metrics / progress) can be improved.
