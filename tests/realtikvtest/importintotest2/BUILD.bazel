@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "from_select_test.go",
         "main_test.go",
+        "subtask_count_test.go",
         "write_after_import_test.go",
     ],
     flaky = True,
@@ -13,7 +14,12 @@ go_test(
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/domain",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/schstatus",
+        "//pkg/dxf/framework/storage",
         "//pkg/dxf/framework/testutil",
+        "//pkg/dxf/importinto",
         "//pkg/executor/importer",
         "//pkg/infoschema",
         "//pkg/kv",
@@ -23,7 +29,10 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/util/dbterror/plannererrors",
         "//tests/realtikvtest",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
+        "@com_github_tikv_client_go_v2//util",
     ],
 )

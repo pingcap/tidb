@@ -180,7 +180,8 @@ func CalculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 }
 
 func getNeededNodes(task *proto.TaskBase) int {
-	// for below steps of IMPORT INTO task, we only have 1 subtask now.
+	// for below steps of IMPORT INTO task, we only have 1 subtask and only need
+	// 1 node.
 	if task.Type == proto.ImportInto && (task.Step == proto.ImportStepCollectConflicts ||
 		task.Step == proto.ImportStepConflictResolution ||
 		task.Step == proto.ImportStepPostProcess) {
