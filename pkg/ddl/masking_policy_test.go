@@ -84,3 +84,21 @@ func TestMaskingPolicyModifyExpressionAndRestrictOn(t *testing.T) {
 	tk.MustQuery("select restrict_on from mysql.tidb_masking_policy where policy_name = 'p'").
 		Check(testkit.Rows("NONE"))
 }
+
+func TestMaskingPolicyCurrentIdentityOperators(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c char(120))")
+
+	tk.MustExec(`create masking policy p on t(c) as
+		case when current_user() != 'root@%' then mask_full(c, '*') else c end enable`)
+	tk.MustQuery("select expression like '%CURRENT_USER()%' from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("1"))
+
+	tk.MustExec(`alter table t modify masking policy p set expression =
+		case when current_role() = 'NONE' then c else mask_full(c, '*') end`)
+	tk.MustQuery("select expression like '%CURRENT_ROLE()%' from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("1"))
+}
