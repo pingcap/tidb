@@ -733,6 +733,11 @@ func (w *worker) prewriteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, m
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Run a lightweight statement right after BEGIN so startTS remains available
+	// even if transaction start becomes lazy in future implementations.
+	if err = warmupCreateMaterializedViewRefreshInfoTxn(ctx, ddlSess, mviewID); err != nil {
+		return errors.Trace(err)
+	}
 	committed := false
 	defer func() {
 		if !committed {
@@ -784,6 +789,19 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(
 	))
 }
 
+func warmupCreateMaterializedViewRefreshInfoTxn(
+	ctx context.Context,
+	ddlSess *sess.Session,
+	mviewID int64,
+) error {
+	warmupSQL := sqlescape.MustEscapeSQL(
+		"SELECT 1 FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %? LIMIT 1",
+		mviewID,
+	)
+	_, err := ddlSess.Execute(ctx, warmupSQL, "mview-refresh-info-prewrite-warmup")
+	return errors.Trace(convertCreateMaterializedViewRefreshInfoTableNotExistsErr(err))
+}
+
 func execCreateMaterializedViewRefreshInfoUpsert(
 	ctx context.Context,
 	ddlSess *sess.Session,
@@ -800,10 +818,14 @@ func execCreateMaterializedViewRefreshInfoUpsert(
 			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
 		}
 	})
+	return errors.Trace(convertCreateMaterializedViewRefreshInfoTableNotExistsErr(err))
+}
+
+func convertCreateMaterializedViewRefreshInfoTableNotExistsErr(err error) error {
 	if infoschema.ErrTableNotExists.Equal(err) {
-		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: required system table mysql.tidb_mview_refresh does not exist")
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: required system table mysql.tidb_mview_refresh does not exist")
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64) error {
