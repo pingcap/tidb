@@ -86,8 +86,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Equal(t, "FAST", mvTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "NOW()", mvTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "300", mvTable.Meta().MaterializedView.RefreshNext)
-	tk.MustQuery(fmt.Sprintf("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE, LAST_SUCCESSFUL_REFRESH_READ_TSO > 0, LAST_REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh where MVIEW_ID = %d", mvTable.Meta().ID)).
-		Check(testkit.Rows("success complete 1 1"))
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0, NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvTable.Meta().ID)).
+		Check(testkit.Rows("1 1"))
 
 	// Base table reverse mapping maintained by DDL.
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
@@ -195,7 +195,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view log on t_sum_nullable")
 	tk.MustExec("drop materialized view log on t_minmax_bad")
 	tk.MustExec("drop materialized view log on t_minmax_ok")
-	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
 
 	// Reverse mapping cleared.
 	is = dom.InfoSchema()
@@ -221,7 +221,7 @@ func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
 	require.Error(t, err)
 
 	tk.MustQuery("show tables like 'mv_fail'").Check(testkit.Rows())
-	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
 
 	is := dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -248,7 +248,7 @@ func TestCreateMaterializedViewBuildContextCanceledRollback(t *testing.T) {
 	require.Error(t, err)
 
 	tk.MustQuery("show tables like 'mv_ctx_cancel'").Check(testkit.Rows())
-	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
 
 	is := dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -322,7 +322,7 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	require.Equal(t, "rollback done", rows[0][len(rows[0])-2])
 
 	tk.MustQuery("show tables like 'mv_cancel'").Check(testkit.Rows())
-	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
 
 	is := dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -421,7 +421,7 @@ func TestCreateMaterializedViewRollbackIgnoreMissingRefreshInfoTable(t *testing.
 	require.Error(t, err)
 
 	tk.MustQuery("show tables like 'mv_missing_refresh_meta'").Check(testkit.Rows())
-	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
 
 	is := dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -446,12 +446,12 @@ func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 
 	err := tk.ExecToErr("create materialized view mv_upsert_fail (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
 	require.Error(t, err)
-	require.ErrorContains(t, err, "tidb_mview_refresh")
+	require.ErrorContains(t, err, "tidb_mview_refresh_info")
 	require.NotContains(t, err.Error(), "Information schema is changed")
 	require.NotContains(t, err.Error(), "Duplicate entry")
 
 	tk.MustQuery("show tables like 'mv_upsert_fail'").Check(testkit.Rows())
-	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
 	rows := tk.MustQuery("admin show ddl jobs where JOB_TYPE='create materialized view'").Rows()
 	require.NotEmpty(t, rows)
 	jobID := fmt.Sprint(rows[0][0])
@@ -484,7 +484,7 @@ func TestCreateMaterializedViewRetryWithResidualBuildRowsRollback(t *testing.T) 
 	require.NotContains(t, err.Error(), "Duplicate entry")
 
 	tk.MustQuery("show tables like 'mv_retry_residual'").Check(testkit.Rows())
-	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
 
 	is := dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -554,7 +554,7 @@ func TestCreateMaterializedViewRetryAfterUpsertFailure(t *testing.T) {
 
 	err := tk.ExecToErr("create materialized view mv_retry (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
 	require.Error(t, err)
-	require.ErrorContains(t, err, "tidb_mview_refresh")
+	require.ErrorContains(t, err, "tidb_mview_refresh_info")
 	require.NotContains(t, err.Error(), "Information schema is changed")
 	tk.MustQuery("show tables like 'mv_retry'").Check(testkit.Rows())
 
