@@ -53,6 +53,8 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("purge_job_id"))
 	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' order by ordinal_position limit 1").
 		Check(testkit.Rows("purge_job_id"))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_FAILED_REASON' and lower(data_type)='text'").
+		Check(testkit.Rows("1"))
 }
 
 func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
