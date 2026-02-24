@@ -393,6 +393,18 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 			"      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
 	})
 
+	// Regression test for https://github.com/pingcap/tidb/issues/66339
+	// Read-only user variables with uppercase names should be converted to constant
+	// and use IndexRangeScan, same as lowercase names.
+	t.Run("issue-66339-readonly-var-uppercase-uses-index-range", func(t *testing.T) {
+		tk := newTestKit(t)
+		tk.MustExec("create table t(a int, key(a))")
+		tk.MustExec("set @a=1")
+		tk.MustHavePlan("select a from t where a=@a", "IndexRangeScan")
+		tk.MustExec("set @A=1")
+		tk.MustHavePlan("select a from t where a=@A", "IndexRangeScan")
+	})
+
 	t.Run("plan-cache-explain-for-connection", func(t *testing.T) {
 		tk := newTestKit(t)
 		tk.MustExec("create table t(a int, b int, c int)")
