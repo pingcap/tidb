@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -259,6 +261,73 @@ func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, finalTS, initTS)
 	require.Equal(t, "1", fmt.Sprint(rows[0][3]))
+}
+
+func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	const afterUpsertFailpoint = "github.com/pingcap/tidb/pkg/ddl/afterCreateMaterializedViewSuccessRefreshInfoUpsert"
+	const postUpsertRetryableErr = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewPostBuildAfterRefreshInfoUpsertRetryableErr"
+
+	paused := make(chan struct{})
+	resume := make(chan struct{})
+	var pausedOnce sync.Once
+	var resumeOnce sync.Once
+	release := func() {
+		resumeOnce.Do(func() {
+			close(resume)
+		})
+	}
+	testfailpoint.EnableCall(t, afterUpsertFailpoint, func() {
+		pausedOnce.Do(func() {
+			close(paused)
+		})
+		<-resume
+	})
+
+	require.NoError(t, failpoint.Enable(postUpsertRetryableErr, "1*return(true)"))
+	defer func() {
+		release()
+		require.NoError(t, failpoint.Disable(postUpsertRetryableErr))
+	}()
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_upsert_visibility (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	}()
+
+	select {
+	case <-paused:
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for post-upsert failpoint")
+	}
+
+	// The post-build success status should stay invisible before this DDL step commits.
+	tk.MustQuery("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE from mysql.tidb_mview_refresh").Check(testkit.Rows("running complete"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh where LAST_REFRESH_RESULT='success'").Check(testkit.Rows("0"))
+
+	release()
+
+	err := <-ddlDone
+	require.Error(t, err)
+	require.ErrorContains(t, err, "detected residual build rows on retry")
+	require.NotContains(t, err.Error(), "Duplicate entry")
+	tk.MustQuery("show tables like 'mv_upsert_visibility'").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
+	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
 
 func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {

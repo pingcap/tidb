@@ -357,6 +357,13 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		// Prewrite a virtual refresh watermark before entering build stage.
+		// Keep this in an independent transaction so running status can be observed
+		// while the initial build is still in progress.
+		if err = w.prewriteCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID); err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
 
 		job.SchemaState = model.StateWriteReorganization
 		job.State = model.JobStateRunning
@@ -376,11 +383,6 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			if hasRows {
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: detected residual build rows on retry")
-			}
-			// Prewrite a virtual refresh watermark before init build starts.
-			if err = w.prewriteCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID); err != nil {
-				job.State = model.JobStateRollingback
-				return ver, errors.Trace(err)
 			}
 		}
 		reorg := &reorgInfo{Job: job, jobCtx: jobCtx}
@@ -431,6 +433,12 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
+		failpoint.InjectCall("afterCreateMaterializedViewSuccessRefreshInfoUpsert")
+		failpoint.Inject("mockCreateMaterializedViewPostBuildAfterRefreshInfoUpsertRetryableErr", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(ver, dbterror.ErrWaitReorgTimeout)
+			}
+		})
 
 		if job.BinlogInfo != nil {
 			ver = job.BinlogInfo.SchemaVersion
@@ -750,16 +758,9 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	sessCtx, err := w.sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ddlSess := sess.NewSession(sessCtx)
-	defer w.sessPool.Put(sessCtx)
-
 	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(
 		ctx,
-		ddlSess,
+		w.sess,
 		mviewID,
 		refreshResult,
 		refreshType,

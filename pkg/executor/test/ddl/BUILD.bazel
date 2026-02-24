@@ -10,7 +10,7 @@ go_test(
         "mview_log_ddl_test.go",
     ],
     flaky = True,
-    shard_count = 44,
+    shard_count = 45,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
@@ -31,6 +31,7 @@ go_test(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testutil",
         "//pkg/types",
         "//pkg/util/chunk",
