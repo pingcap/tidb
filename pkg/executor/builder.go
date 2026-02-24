@@ -4950,7 +4950,7 @@ type dataReaderBuilder struct {
 	selectResultHook // for testing
 	// indexJoinKeyUniqueIDs records the inner join key unique IDs for index join inner build.
 	indexJoinKeyUniqueIDs []int64
-	once *dataReaderBuilderOnce
+	once                  *dataReaderBuilderOnce
 }
 
 type dataReaderBuilderOnce struct {
