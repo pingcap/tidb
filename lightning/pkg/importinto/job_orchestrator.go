@@ -281,7 +281,7 @@ func (o *DefaultJobOrchestrator) updateCheckpointsAfterCancel(
 			cpStatus = CheckpointStatusFinished
 		case st != nil && st.IsFailed():
 			cpStatus = CheckpointStatusFailed
-			cpMessage = st.ResultMessage
+			cpMessage = st.ErrorMessage
 		case st != nil && st.IsCancelled():
 			cpStatus = CheckpointStatusFailed
 			cpMessage = cancelledByUserMessage

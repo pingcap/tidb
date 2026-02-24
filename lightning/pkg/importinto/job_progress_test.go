@@ -17,6 +17,7 @@ package importinto
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
@@ -30,13 +31,14 @@ func TestJobProgressEstimator_NonGlobalSort(t *testing.T) {
 	job := &ImportJob{JobID: jobID, TableMeta: &importsdk.TableMeta{TotalSize: 100 * mb}}
 
 	status := &importsdk.JobStatus{
-		JobID:         jobID,
-		Status:        "running",
-		Phase:         "importing",
-		Step:          "import",
-		Percent:       "50",
-		TotalSize:     "100MB",
-		ProcessedSize: "50MB",
+		JobID:  jobID,
+		Status: "running",
+		Phase:  "importing",
+		CurrentStep: &importer.RawImportJobStepStats{
+			Name:           "import",
+			ProcessedBytes: 50 * mb,
+			TotalBytes:     100 * mb,
+		},
 	}
 
 	require.False(t, estimator.isGlobalSort)
@@ -62,13 +64,14 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 	job := &ImportJob{JobID: jobID, TableMeta: &importsdk.TableMeta{TotalSize: 100 * mb}}
 
 	encode := &importsdk.JobStatus{
-		JobID:         jobID,
-		Status:        "running",
-		Phase:         "global-sorting",
-		Step:          "encode",
-		Percent:       "50",
-		TotalSize:     "100MB",
-		ProcessedSize: "50MB",
+		JobID:  jobID,
+		Status: "running",
+		Phase:  "global-sorting",
+		CurrentStep: &importer.RawImportJobStepStats{
+			Name:           "encode",
+			ProcessedBytes: 50 * mb,
+			TotalBytes:     100 * mb,
+		},
 	}
 
 	jobTotalSize := map[int64]int64{}
@@ -82,19 +85,19 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 	estimator.updateJobProgress(job, &importsdk.JobStatus{
 		JobID:  jobID,
 		Phase:  "importing",
-		Step:   "import",
 		Status: "running",
 	}, jobTotalSize, jobFinishedSize)
 	require.True(t, estimator.isGlobalSort)
 
 	mergeSort := &importsdk.JobStatus{
-		JobID:         jobID,
-		Status:        "running",
-		Phase:         "global-sorting",
-		Step:          "merge-sort",
-		Percent:       "0",
-		TotalSize:     "100MB",
-		ProcessedSize: "0MB",
+		JobID:  jobID,
+		Status: "running",
+		Phase:  "global-sorting",
+		CurrentStep: &importer.RawImportJobStepStats{
+			Name:           "merge-sort",
+			ProcessedBytes: 0,
+			TotalBytes:     100 * mb,
+		},
 	}
 	require.Equal(t, 0.125, estimator.jobProgress(mergeSort))
 }

@@ -15,13 +15,9 @@
 package importinto
 
 import (
-	"strconv"
-
-	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"go.uber.org/zap"
 )
 
 type jobProgressEstimator struct {
@@ -31,18 +27,6 @@ type jobProgressEstimator struct {
 
 func newJobProgressEstimator(logger log.Logger) *jobProgressEstimator {
 	return &jobProgressEstimator{logger: logger}
-}
-
-func (e *jobProgressEstimator) parseHumanSize(jobID int64, sizeText string, warnMsg string) (int64, bool) {
-	if sizeText == "" {
-		return 0, false
-	}
-	size, err := units.FromHumanSize(sizeText)
-	if err != nil {
-		e.logger.Warn(warnMsg, zap.String("size", sizeText), zap.Int64("jobID", jobID), zap.Error(err))
-		return 0, false
-	}
-	return size, true
 }
 
 func (e *jobProgressEstimator) updateJobTotalSize(
@@ -56,13 +40,11 @@ func (e *jobProgressEstimator) updateJobTotalSize(
 		total = max(total, job.TableMeta.TotalSize)
 	}
 	if total <= 0 {
-		if size, ok := e.parseHumanSize(jobID, status.SourceFileSize, "failed to parse source file size"); ok {
-			total = max(total, size)
-		}
+		total = max(total, status.SourceFileSizeBytes)
 	}
 	if total <= 0 {
-		if size, ok := e.parseHumanSize(jobID, status.TotalSize, "failed to parse total size"); ok {
-			total = max(total, size)
+		if status.CurrentStep != nil {
+			total = max(total, status.CurrentStep.TotalBytes)
 		}
 	}
 	if total > 0 && total != jobTotalSize[jobID] {
@@ -81,7 +63,10 @@ func (*jobProgressEstimator) isGlobalSortStatus(status *importsdk.JobStatus) boo
 	case "global-sorting", "resolving-conflicts":
 		return true
 	}
-	switch status.Step {
+	if status.CurrentStep == nil {
+		return false
+	}
+	switch status.CurrentStep.Name {
 	case "encode", "merge-sort", "ingest", "collect-conflicts", "conflict-resolution":
 		return true
 	}
@@ -104,16 +89,11 @@ func jobProgressPhases(isGlobalSort bool) []jobProgressPhase {
 }
 
 func (e *jobProgressEstimator) stepRatio(status *importsdk.JobStatus) float64 {
-	if status.Percent == "" || status.Percent == "N/A" {
+	if status.CurrentStep == nil || status.CurrentStep.TotalBytes <= 0 {
 		return 0
 	}
-
-	p, err := strconv.ParseFloat(status.Percent, 64)
-	if err != nil {
-		e.logger.Warn("failed to parse progress percent", zap.String("percent", status.Percent), zap.Int64("jobID", status.JobID), zap.Error(err))
-		return 0
-	}
-	return mathutil.Clamp(p/100.0, 0, 1)
+	ratio := float64(status.CurrentStep.ProcessedBytes) / float64(status.CurrentStep.TotalBytes)
+	return mathutil.Clamp(ratio, 0, 1)
 }
 
 func findPhase(phases []jobProgressPhase, phase string) (int, bool) {
@@ -151,7 +131,11 @@ func (e *jobProgressEstimator) jobProgress(status *importsdk.JobStatus) float64 
 	}
 
 	ratio := e.stepRatio(status)
-	stepIdx, ok := findStep(phases[phaseIdx].steps, status.Step)
+	step := ""
+	if status.CurrentStep != nil {
+		step = status.CurrentStep.Name
+	}
+	stepIdx, ok := findStep(phases[phaseIdx].steps, step)
 	if !ok {
 		stepIdx = 0
 		ratio = 0
