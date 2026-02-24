@@ -17,6 +17,7 @@ package core_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -51,4 +52,34 @@ func TestMaskingPolicyBlobAndClob(t *testing.T) {
 
 	tk.MustQuery("select c, hex(b), b2 is null from t_blob_clob").
 		Check(testkit.Rows("###### 2A2A2A2A 1"))
+}
+
+func TestMaskingPolicyCurrentIdentityOperators(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tkRoot := testkit.NewTestKit(t, store)
+	require.NoError(t, tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tkRoot.MustExec("use test")
+
+	tkRoot.MustExec("drop table if exists t_identity")
+	tkRoot.MustExec("create table t_identity(id int primary key, c varchar(20))")
+	tkRoot.MustExec("insert into t_identity values (1, 'secret')")
+	tkRoot.MustExec("drop user if exists u_identity")
+	tkRoot.MustExec("create user u_identity")
+	tkRoot.MustExec("grant select on test.t_identity to u_identity")
+	tkRoot.MustExec(`create masking policy p_identity on t_identity(c) as
+		case when current_user() != 'root@%' then mask_full(c, '*') else c end enable`)
+
+	tkRoot.MustQuery("select c from t_identity").Check(testkit.Rows("secret"))
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "u_identity", Hostname: "%"}, nil, nil, nil))
+	tkUser.MustExec("use test")
+	tkUser.MustQuery("select c from t_identity").Check(testkit.Rows("******"))
+
+	tkRoot.MustExec(`alter table t_identity modify masking policy p_identity set expression =
+		case when current_role() = 'NONE' then mask_full(c, '*') else c end`)
+	tkUser.MustQuery("select c from t_identity").Check(testkit.Rows("******"))
+	tkRoot.MustExec(`alter table t_identity modify masking policy p_identity set expression =
+		case when current_role() != 'NONE' then mask_full(c, '*') else c end`)
+	tkUser.MustQuery("select c from t_identity").Check(testkit.Rows("secret"))
 }
