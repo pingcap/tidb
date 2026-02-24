@@ -3480,6 +3480,13 @@ mask_full('abc', '*')	mask_full(cast('2012-01-02' as date), '*')	mask_full(cast(
 select mask_null('abc'), mask_null(cast('2012-01-02' as date)), mask_null(cast('03:04:05' as time)), mask_null(cast('2012' as year));
 mask_null('abc')	mask_null(cast('2012-01-02' as date))	mask_null(cast('03:04:05' as time))	mask_null(cast('2012' as year))
 NULL	NULL	NULL	NULL
+drop table if exists t_mask_blob_clob;
+create table t_mask_blob_clob(c longtext, b longblob, b2 longblob);
+insert into t_mask_blob_clob values('secret', x'31323334', x'616263');
+select mask_full(c, '#'), hex(mask_full(b, '*')), mask_null(b2) is null from t_mask_blob_clob;
+mask_full(c, '#')	hex(mask_full(b, '*'))	mask_null(b2) is null
+######	2A2A2A2A	1
+drop table if exists t_mask_blob_clob;
 select mask_partial('abcdef','*',1,3), mask_partial('abcdef','*',10,3), mask_partial('abcdef','*',1,0);
 mask_partial('abcdef','*',1,3)	mask_partial('abcdef','*',10,3)	mask_partial('abcdef','*',1,0)
 a***ef	abcdef	abcdef
