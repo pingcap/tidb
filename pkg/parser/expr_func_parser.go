@@ -125,6 +125,17 @@ func (p *HandParser) parseWindowFuncExpr(name string, funcExpr ast.ExprNode) ast
 			p.error(p.peek().Offset, "%s requires 1 to 3 arguments", strings.ToUpper(name))
 			return nil
 		}
+		// Validate second argument: goyacc grammar restricts to NumLiteral (unsigned),
+		// not a general Expression. Reject unary minus (-1) etc. at parse time.
+		if len(wf.Args) >= 2 {
+			switch wf.Args[1].(type) {
+			case ast.ValueExpr, ast.ParamMarkerExpr:
+				// OK: numeric literal or parameter marker
+			default:
+				p.syntaxErrorAt(p.peek().Offset)
+				return nil
+			}
+		}
 	}
 
 	// Parse window specification: ( [PARTITION BY ...] [ORDER BY ...] [frame] )
