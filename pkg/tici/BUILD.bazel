@@ -52,7 +52,7 @@ go_test(
     ],
     embed = [":tici"],
     flaky = True,
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//pkg/kv",
         "//pkg/lightning/membuf",
