@@ -534,20 +534,27 @@ func validateCreateMaterializedViewQuery(
 			if expr.Distinct {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support DISTINCT aggregate function")
 			}
-			if expr.F != ast.AggFuncCount && expr.F != ast.AggFuncSum && expr.F != ast.AggFuncMin && expr.F != ast.AggFuncMax {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW")
+			aggFunc := strings.ToLower(expr.F)
+			if aggFunc != ast.AggFuncCount && aggFunc != ast.AggFuncSum && aggFunc != ast.AggFuncMin && aggFunc != ast.AggFuncMax {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW" + " agg " + expr.F)
 			}
-			switch expr.F {
+			switch aggFunc {
 			case ast.AggFuncCount:
 				if len(expr.Args) != 1 {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("count(*)/count(1) must have exactly one argument in CREATE MATERIALIZED VIEW")
 				}
+				if argCol, ok := expr.Args[0].(*ast.ColumnNameExpr); ok {
+					// count(column) is supported.
+					colName, err := resolveMViewColumnName(argCol.Name, baseTableName, fromAlias, baseColMap)
+					if err != nil {
+						return nil, err
+					}
+					usedCols[colName] = struct{}{}
+					continue
+				}
 				if expr.Args[0] == nil {
 					hasCountStarOrOne = true
 					continue
-				}
-				if _, ok := expr.Args[0].(*ast.ColumnNameExpr); ok {
-					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports count(*)/count(1)")
 				}
 				if !isCountStarOrOne(expr.Args[0]) {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports count(*)/count(1)")
@@ -568,12 +575,12 @@ func validateCreateMaterializedViewQuery(
 				if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports SUM/MIN/MAX on NOT NULL column")
 				}
-				if expr.F == ast.AggFuncMin || expr.F == ast.AggFuncMax {
+				if aggFunc == ast.AggFuncMin || aggFunc == ast.AggFuncMax {
 					hasMinOrMax = true
 				}
 				usedCols[colName] = struct{}{}
 			default:
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW")
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW" + " agg " + expr.F)
 			}
 		default:
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported SELECT expression in CREATE MATERIALIZED VIEW")

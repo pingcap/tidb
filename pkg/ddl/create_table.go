@@ -519,7 +519,7 @@ func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.Ta
 
 func getCreateMaterializedViewBuildReadTS(ctx context.Context, ddlSess *sess.Session) (uint64, error) {
 	rows, err := ddlSess.Execute(ctx,
-		"SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@@tidb_last_query_info, '$.start_ts')) AS UNSIGNED), 0)",
+		"SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@@tidb_last_query_info, '$.start_ts')) AS UNSIGNED), CAST(0 AS UNSIGNED))",
 		"create-materialized-view-build-read-ts",
 	)
 	if err != nil {
