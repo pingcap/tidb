@@ -247,10 +247,9 @@ func (p *HandParser) parseAssignment() *ast.Assignment {
 	node := Alloc[ast.Assignment](p.arena)
 	node.Column = col
 
-	if _, ok := p.accept(defaultKwd); ok {
-		node.Expr = p.arena.AllocDefaultExpr()
-	} else {
-		node.Expr = p.parseExpression(precNone)
+	node.Expr = p.parseExpression(precNone)
+	if node.Expr == nil {
+		return nil
 	}
 	return node
 }
@@ -437,6 +436,26 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 			}
 			if stmt.TableRefs.TableRefs != nil {
 				clearWildcard(stmt.TableRefs.TableRefs)
+			}
+		}
+	}
+
+	if !stmt.IsMultiTable {
+		// Single-table delete must be a simple TableName, not a Join or Subquery
+		if stmt.TableRefs != nil && stmt.TableRefs.TableRefs != nil {
+			var isTableName bool
+			j := stmt.TableRefs.TableRefs
+			if j.Right == nil { // no multiple tables
+				if ts, ok := j.Left.(*ast.TableSource); ok {
+					if _, ok2 := ts.Source.(*ast.TableName); ok2 {
+						isTableName = true
+					}
+				}
+			}
+			if !isTableName {
+				// It's a subquery or join
+				p.syntaxErrorAt(p.peek().Offset)
+				return nil
 			}
 		}
 	}

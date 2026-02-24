@@ -223,6 +223,7 @@ func (s *Scanner) Lex(v *Token) int {
 	s.lastKeyword2 = s.lastKeyword
 	s.lastKeyword = 0
 	v.Offset = pos.Offset
+	v.EndOffset = s.r.pos().Offset
 	v.Lit = lit
 	if tok == identifier {
 		tok = s.handleIdent(v)

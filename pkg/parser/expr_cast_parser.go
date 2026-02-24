@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
@@ -98,7 +97,7 @@ func (p *HandParser) parseConvertFunc() ast.ExprNode {
 		charsetTok := p.next()
 		charsetName := strings.ToLower(charsetTok.Lit)
 		if !charset.ValidCharsetAndCollation(charsetName, "") {
-			p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).
+			p.errs = append(p.errs, ErrUnknownCharacterSet.
 				GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
 			return nil
 		}
@@ -224,7 +223,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 			csTok := p.next()
 			csName := strings.ToUpper(csTok.Lit)
 			if !charset.ValidCharsetAndCollation(csName, "") {
-				p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).
+				p.errs = append(p.errs, ErrUnknownCharacterSet.
 					GenWithStack("Unknown character set: '%s'", csName))
 				return nil, false
 			}

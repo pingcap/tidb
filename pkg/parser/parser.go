@@ -238,9 +238,9 @@ func (p *HandParser) expect(expected int) (Token, bool) {
 	tok := p.next()
 	if tok.Tp != expected {
 		// Use errorNear for yacc-compatible error format:
-		// - colOffset = next token's offset (= scanner position after consumed token)
+		// - colOffset = end of consumed token to match yacc parser offset
 		// - nearOffset = consumed token's offset (= start of error context)
-		p.errorNear(p.peek().Offset, tok.Offset)
+		p.errorNear(tok.EndOffset, tok.Offset)
 		return tok, false
 	}
 	return tok, true
@@ -256,7 +256,7 @@ func (p *HandParser) expectAny(expected ...int) (Token, bool) {
 		}
 	}
 	// Use errorNear for yacc-compatible error format.
-	p.errorNear(p.peek().Offset, tok.Offset)
+	p.errorNear(tok.EndOffset, tok.Offset)
 	return tok, false
 }
 

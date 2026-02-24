@@ -271,6 +271,11 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 							p.error(p.peek().Offset, "invalid expression in partition value")
 							return nil
 						}
+						// Check for NULL explicitly
+						if v, ok := expr.(ast.ValueExpr); ok && v.GetValue() == nil {
+							p.errs = append(p.errs, ErrNullInValuesLessThan.GenWithStackByArgs())
+							return nil
+						}
 						if _, ok := expr.(*ast.DefaultExpr); ok {
 							p.error(p.peek().Offset, "DEFAULT not allowed in RANGE/VALUES LESS THAN")
 							return nil
@@ -282,9 +287,12 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 					}
 				}
 				p.expect(')')
-			} else {
+			} else if _, ok := p.accept(maxValue); ok {
 				// MAXVALUE without parens
-				clause.Exprs = append(clause.Exprs, p.parseExpression(precNone))
+				clause.Exprs = append(clause.Exprs, &ast.MaxValueExpr{})
+			} else {
+				p.syntaxErrorAt(p.peek().Offset)
+				return nil
 			}
 			pDef.Clause = clause
 		} else if _, ok := p.accept(in); ok {

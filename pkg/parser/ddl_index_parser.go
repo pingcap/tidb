@@ -207,16 +207,30 @@ func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 	}
 
 	// Parse optional ON DELETE / ON UPDATE
+	hasOnDelete, hasOnUpdate := false, false
 	for p.peek().Tp == on {
-		p.next() // consume ON
-		switch p.peek().Tp {
+		startOffset := p.peek().Offset
+		switch p.peekN(1).Tp {
 		case deleteKwd:
-			p.next()
+			if hasOnDelete {
+				p.errorNear(p.peekN(1).Offset+6, startOffset)
+				return nil
+			}
+			hasOnDelete = true
+			p.next() // consume ON
+			p.next() // consume DELETE
 			ref.OnDelete = &ast.OnDeleteOpt{ReferOpt: p.parseReferAction()}
 		case update:
-			p.next()
+			if hasOnUpdate {
+				p.errorNear(p.peekN(1).Offset+6, startOffset)
+				return nil
+			}
+			hasOnUpdate = true
+			p.next() // consume ON
+			p.next() // consume UPDATE
 			ref.OnUpdate = &ast.OnUpdateOpt{ReferOpt: p.parseReferAction()}
 		default:
+			// "ON" not followed by DELETE or UPDATE; leave the tokens for later context.
 			return ref
 		}
 	}

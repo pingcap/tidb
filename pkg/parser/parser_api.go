@@ -45,6 +45,8 @@ var (
 	ErrUnknownAlterLock = terror.ClassParser.NewStd(mysql.ErrUnknownAlterLock)
 	// ErrUnknownAlterAlgorithm returns for no alter algorithm found error.
 	ErrUnknownAlterAlgorithm = terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)
+	// ErrNullInValuesLessThan is the error for using NULL in VALUES LESS THAN
+	ErrNullInValuesLessThan = terror.ClassParser.NewStd(mysql.ErrNullInValuesLessThan)
 	// ErrWrongValue returns for wrong value
 	ErrWrongValue = terror.ClassParser.NewStd(mysql.ErrWrongValue)
 	// ErrWarnDeprecatedSyntax return when the syntax was deprecated

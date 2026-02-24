@@ -19,9 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
 // parseKeywordFuncCall parses a function call where the function name is a
@@ -555,7 +553,7 @@ func (p *HandParser) parseCharFuncCall(node *ast.FuncCallExpr, lowerName string)
 		charsetTok := p.next()
 		charsetName := strings.ToLower(charsetTok.Lit)
 		if !charset.ValidCharsetAndCollation(charsetName, "") {
-			p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet).
+			p.errs = append(p.errs, ErrUnknownCharacterSet.
 				GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
 			return nil
 		}

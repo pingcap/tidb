@@ -113,9 +113,8 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			if left == nil {
 				return nil
 			}
-			// Do NOT continue — IS does not chain. Return so that a second IS
 			// at the same precedence level produces a syntax error.
-			return left
+			continue
 
 		case collate:
 			if minPrec > precCollate {

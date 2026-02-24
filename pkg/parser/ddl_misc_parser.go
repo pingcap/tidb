@@ -19,8 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
 // ---------------------------------------------------------------------------
@@ -120,7 +118,7 @@ func (p *HandParser) parseIndexLockAndAlgorithm() *ast.IndexLockAndAlgorithm {
 				case "EXCLUSIVE":
 					lockTp = ast.LockTypeExclusive
 				default:
-					p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownAlterLock).GenWithStackByArgs(tok.Lit))
+					p.errs = append(p.errs, ErrUnknownAlterLock.GenWithStackByArgs(tok.Lit))
 					return nil
 				}
 			}
@@ -139,7 +137,7 @@ func (p *HandParser) parseIndexLockAndAlgorithm() *ast.IndexLockAndAlgorithm {
 				case instant:
 					algTp = ast.AlgorithmTypeInstant
 				default:
-					p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm).GenWithStackByArgs(tok.Lit))
+					p.errs = append(p.errs, ErrUnknownAlterAlgorithm.GenWithStackByArgs(tok.Lit))
 					return nil
 				}
 			}

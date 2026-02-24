@@ -23,8 +23,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
 // parseAlterAdd handles ALTER TABLE ... ADD {COLUMN|PARTITION|CONSTRAINT|STATS_EXTENDED|(col_defs)}.
@@ -601,7 +599,7 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 		} else {
 			// Unknown lock type
 			tok := p.next()
-			p.errs = append(p.errs, terror.ClassParser.NewStd(mysql.ErrUnknownAlterLock).GenWithStackByArgs(tok.Lit))
+			p.errs = append(p.errs, ErrUnknownAlterLock.GenWithStackByArgs(tok.Lit))
 			return true
 		}
 		return true

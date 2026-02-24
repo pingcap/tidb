@@ -70,11 +70,20 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 		col := &ast.ColumnNameExpr{Name: &ast.ColumnName{}}
 		nameTok := p.next()
 		col.Name.Name = ast.NewCIStr(nameTok.Lit)
-		// Support qualified form: VALUES(t.col)
+		// Support qualified form: VALUES(db.t.col) or VALUES(t.col)
 		if _, ok := p.accept('.'); ok {
 			nextTok := p.next()
-			col.Name.Table = col.Name.Name
-			col.Name.Name = ast.NewCIStr(nextTok.Lit)
+			if _, ok2 := p.accept('.'); ok2 {
+				// schema.table.column
+				thirdTok := p.next()
+				col.Name.Schema = col.Name.Name
+				col.Name.Table = ast.NewCIStr(nextTok.Lit)
+				col.Name.Name = ast.NewCIStr(thirdTok.Lit)
+			} else {
+				// table.column
+				col.Name.Table = col.Name.Name
+				col.Name.Name = ast.NewCIStr(nextTok.Lit)
+			}
 		}
 		p.expect(')')
 		return &ast.ValuesExpr{Column: col}

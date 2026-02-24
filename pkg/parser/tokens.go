@@ -27,6 +27,8 @@ type Token struct {
 	Tp int
 	// Offset is the byte offset in the original SQL string.
 	Offset int
+	// EndOffset is the byte offset of the end of the token.
+	EndOffset int
 	// Lit is the literal string value (identifier name, string content, etc.).
 	Lit string
 	// Item holds converted values (int64, float64, etc.) for numeric literals.
