@@ -1474,7 +1474,11 @@ func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
 	// `idx_ab` is non-unique, planner may append handle column to execution ranges.
 	// The estimation path should still use ranges aligned with index columns.
 	require.NotPanics(t, func() {
-		tk.MustQuery("explain format='brief' select * from t use index(idx_ab) where a = 1 and b = 2 and id = 3")
+		tk.MustQuery("explain format='brief' select * from t use index(idx_ab) where a = 1 and b = 2 and id = 3").
+			Check(testkit.Rows(
+				`IndexLookUp 1.00 root  `,
+				`├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1 2 3,1 2 3], keep order:false, stats:partial[idx_ab:missing]`,
+				`└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[idx_ab:missing]`))
 	})
 }
 
