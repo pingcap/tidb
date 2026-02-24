@@ -417,6 +417,16 @@ func (hp *hintParser) parseIndexLevelHint(name string) []*ast.TableOptimizerHint
 	}
 
 	qb := hp.parseQBName()
+
+	// USE_INDEX_MERGE allows empty arguments: USE_INDEX_MERGE()
+	if strings.EqualFold(name, "use_index_merge") && hp.peek().tp == ')' {
+		hp.next() // consume ')'
+		return []*ast.TableOptimizerHint{{
+			HintName: ast.NewCIStr(name),
+			QBName:   ast.NewCIStr(qb),
+		}}
+	}
+
 	tbl := hp.parseHintTable()
 
 	h := &ast.TableOptimizerHint{
@@ -683,15 +693,41 @@ func (hp *hintParser) parseQBNameHint(name string) []*ast.TableOptimizerHint {
 		hp.parseError()
 		return nil
 	}
-	// Must be followed immediately by ')' — no extra tokens
+	h := &ast.TableOptimizerHint{
+		HintName: ast.NewCIStr(name),
+		QBName:   ast.NewCIStr(tok.ident),
+	}
+	// Optional second argument: qb_name(name, viewName[.subViewName[...]])
+	// The planner peels off Tables entries one-by-one during nested view
+	// resolution, so v1.v produces [{TableName: v1}, {TableName: v}].
+	if hp.match(',') {
+		for {
+			viewTok := hp.next()
+			if viewTok.tp == hintSingleAtIdentifier {
+				// @sel_N — query block reference, stored as QBName
+				h.Tables = append(h.Tables, ast.HintTable{
+					QBName: ast.NewCIStr(viewTok.ident),
+				})
+				break // @sel_N is always the last segment
+			}
+			if viewTok.tp != hintIdentifier && !hp.isHintKeyword(viewTok.tp) {
+				hp.skipToCloseParen()
+				hp.parseError()
+				return nil
+			}
+			h.Tables = append(h.Tables, ast.HintTable{
+				TableName: ast.NewCIStr(viewTok.ident),
+			})
+			if !hp.match('.') {
+				break
+			}
+		}
+	}
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
 		return nil
 	}
-	return []*ast.TableOptimizerHint{{
-		HintName: ast.NewCIStr(name),
-		QBName:   ast.NewCIStr(tok.ident),
-	}}
+	return []*ast.TableOptimizerHint{h}
 }
 
 // ─── RESOURCE_GROUP ──────────────────────────────────────────────

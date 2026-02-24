@@ -15,6 +15,7 @@ package parser
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
@@ -609,7 +610,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 					break
 				}
 				var opt ast.AlterJobOption
-				opt.Name = p.next().Lit
+				opt.Name = strings.ToLower(p.next().Lit)
 				p.expectAny(eq, assignmentEq)
 				opt.Value = p.parseExpression(precNone)
 				if opt.Value == nil {

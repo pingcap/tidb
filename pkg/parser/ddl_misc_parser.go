@@ -267,24 +267,25 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			p.accept(eq)
 			opt.Tp = ast.DatabaseOptionCharset
 			rawCharset := p.next().Lit
-			opt.Value = strings.ToLower(rawCharset)
-			// Validate charset — empty check needed because ValidCharsetAndCollation
-			// defaults empty to utf8
-			if opt.Value == "" || !charset.ValidCharsetAndCollation(opt.Value, "") {
+			csName := strings.ToLower(rawCharset)
+			cs, err := charset.GetCharsetInfo(csName)
+			if err != nil || cs.Name == "" {
 				p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: '%s'", rawCharset))
 				return nil
 			}
+			opt.Value = cs.Name
 		case collate:
 			p.next()
 			p.accept(eq)
 			opt.Tp = ast.DatabaseOptionCollate
 			rawCollation := p.next().Lit
-			opt.Value = strings.ToLower(rawCollation)
-			// Validate collation
-			if _, err := charset.GetCollationByName(opt.Value); err != nil {
+			collName := strings.ToLower(rawCollation)
+			coll, err := charset.GetCollationByName(collName)
+			if err != nil {
 				p.errs = append(p.errs, fmt.Errorf("[ddl:1273]Unknown collation: '%s'", rawCollation))
 				return nil
 			}
+			opt.Value = coll.Name
 		case placement:
 			p.next()
 			p.accept(policy)

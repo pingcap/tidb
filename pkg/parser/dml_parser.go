@@ -97,6 +97,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		}
 		p.expect(')')
 		tn.PartitionNames = names
+		stmt.PartitionNames = names
 	}
 
 	// Wrap TableName in standard TableSource -> Join -> TableRefsClause.
@@ -217,7 +218,7 @@ func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode
 			return nil
 		}
 		p.expect('(')
-		var list []ast.ExprNode
+		list := make([]ast.ExprNode, 0)
 		if p.peek().Tp != ')' {
 			for {
 				list = append(list, p.parseExpression(precNone))
@@ -623,6 +624,9 @@ func (p *HandParser) parseSelectStmtSuffix(stmt *ast.SelectStmt) {
 	}
 	if p.peek().Tp == limit {
 		stmt.Limit = p.parseLimitClause()
+	}
+	if p.peek().Tp == forKwd || p.peek().Tp == lock {
+		stmt.LockInfo = p.parseSelectLock()
 	}
 	if p.peek().Tp == into {
 		stmt.SelectIntoOpt = p.parseSelectIntoOption()

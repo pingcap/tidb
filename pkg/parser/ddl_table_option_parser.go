@@ -14,9 +14,11 @@
 package parser
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 )
 
 // parseCreateTableOptions parses table options like ENGINE=InnoDB, CHARSET=utf8
@@ -61,20 +63,44 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.accept(eq)
 		if tok, ok := p.acceptStringName(); ok {
 			opt.Tp = ast.TableOptionCharset
-			opt.StrValue = strings.ToLower(tok.Lit)
+			csName := strings.ToLower(tok.Lit)
+			cs, err := charset.GetCharsetInfo(csName)
+			if err != nil {
+				p.errs = append(p.errs, err)
+				return nil
+			}
+			opt.StrValue = cs.Name
 		} else if tok, ok := p.accept(binaryType); ok {
 			opt.Tp = ast.TableOptionCharset
-			opt.StrValue = strings.ToLower(tok.Lit)
+			csName := strings.ToLower(tok.Lit)
+			cs, err := charset.GetCharsetInfo(csName)
+			if err != nil {
+				p.errs = append(p.errs, err)
+				return nil
+			}
+			opt.StrValue = cs.Name
 		}
 	case collate:
 		p.next()
 		p.accept(eq)
 		if tok, ok := p.acceptStringName(); ok {
 			opt.Tp = ast.TableOptionCollate
-			opt.StrValue = strings.ToLower(tok.Lit)
+			collName := strings.ToLower(tok.Lit)
+			coll, err := charset.GetCollationByName(collName)
+			if err != nil {
+				p.errs = append(p.errs, err)
+				return nil
+			}
+			opt.StrValue = coll.Name
 		} else if tok, ok := p.accept(binaryType); ok {
 			opt.Tp = ast.TableOptionCollate
-			opt.StrValue = strings.ToLower(tok.Lit)
+			collName := strings.ToLower(tok.Lit)
+			coll, err := charset.GetCollationByName(collName)
+			if err != nil {
+				p.errs = append(p.errs, err)
+				return nil
+			}
+			opt.StrValue = coll.Name
 		}
 	case force:
 		p.next()
@@ -249,19 +275,26 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		}
 	case pageChecksum, pageCompressed, pageCompressionLevel, transactional:
 		var optTp ast.TableOptionType
+		var optName string
 		switch p.peek().Tp {
 		case pageChecksum:
 			optTp = ast.TableOptionPageChecksum
+			optName = "PAGE_CHECKSUM"
 		case pageCompressed:
 			optTp = ast.TableOptionPageCompressed
+			optName = "PAGE_COMPRESSED"
 		case pageCompressionLevel:
 			optTp = ast.TableOptionPageCompressionLevel
+			optName = "PAGE_COMPRESSION_LEVEL"
 		default:
 			optTp = ast.TableOptionTransactional
+			optName = "TRANSACTIONAL"
 		}
 		p.parseTableOptionUint(opt, optTp)
+		p.warns = append(p.warns, fmt.Errorf("The %s option is parsed but ignored by all storage engines.", optName))
 	case ietfQuotes:
 		p.parseTableOptionString(opt, ast.TableOptionIetfQuotes)
+		p.warns = append(p.warns, fmt.Errorf("The IETF_QUOTES option is parsed but ignored by all storage engines."))
 	case sequence:
 		// SEQUENCE [=] {1|0}
 		p.next()
@@ -270,6 +303,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		if tok, ok := p.expect(intLit); ok {
 			opt.UintValue = tokenItemToUint64(tok.Item)
 		}
+		p.warns = append(p.warns, fmt.Errorf("The SEQUENCE option is parsed but ignored by all storage engines. Use CREATE SEQUENCE instead."))
 	case autoextendSize:
 		p.next()
 		p.accept(eq)
@@ -278,6 +312,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		if tok, ok := p.expectAny(identifier, intLit, decLit); ok {
 			opt.StrValue = tok.Lit
 		}
+		p.warns = append(p.warns, fmt.Errorf("The AUTOEXTEND_SIZE option is parsed but ignored by all storage engines."))
 	case autoIdCache:
 		p.parseTableOptionUint(opt, ast.TableOptionAutoIdCache)
 	case preSplitRegions:

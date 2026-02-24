@@ -103,7 +103,8 @@ func isIdentLike(tp int) bool {
 // parseColumnName parses a column name identifier, potentially qualified (col, tbl.col, db.tbl.col).
 func (p *HandParser) parseColumnName() *ast.ColumnName {
 	tok := p.next()
-	if !isIdentLike(tok.Tp) {
+	if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+		p.syntaxErrorAt(tok.Offset)
 		return nil
 	}
 	name := ast.NewCIStr(tok.Lit)

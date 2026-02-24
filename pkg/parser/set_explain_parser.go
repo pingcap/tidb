@@ -646,9 +646,8 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 			showStmt.Tp = ast.ShowColumns
 			showStmt.Table = tn
 			// Check for column specifier after table name
-			if p.peek().Tp == identifier || p.peek().Tp == stringLit {
-				col := &ast.ColumnName{Name: ast.NewCIStr(p.next().Lit)}
-				showStmt.Column = col
+			if isIdentLike(p.peek().Tp) {
+				showStmt.Column = p.parseColumnName()
 			}
 			stmt.Stmt = showStmt
 			return stmt

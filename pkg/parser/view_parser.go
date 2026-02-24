@@ -110,45 +110,8 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 	selectStartOff := p.peek().Offset
 
 	// AS select_stmt (SELECT, TABLE, VALUES, WITH, or parenthesized)
-	switch p.peek().Tp {
-	case selectKwd:
-		sel := p.parseSelectStmt()
-		stmt.Select = p.maybeParseUnion(sel).(ast.StmtNode)
-	case with:
-		// CTE: WITH ... SELECT ... — call the CTE parser directly.
-		if withNode := p.parseWithStmt(); withNode != nil {
-			stmt.Select = withNode
-		}
-	case tableKwd:
-		stmt.Select = p.parseTableStmt()
-	case values:
-		stmt.Select = p.parseValuesStmt()
-	case '(':
-		// (SELECT ...) or (TABLE t) or (VALUES ...)
-		p.next() // consume '('
-		var inner ast.ResultSetNode
-		switch p.peek().Tp {
-		case tableKwd:
-			inner = p.parseTableStmt().(*ast.SelectStmt)
-		case values:
-			inner = p.parseValuesStmt().(*ast.SelectStmt)
-		default:
-			inner = p.parseSelectStmt()
-		}
-		// Handle UNION/EXCEPT/INTERSECT inside parentheses.
-		inner = p.maybeParseUnion(inner)
-		p.expect(')')
-		if inner != nil {
-			switch n := inner.(type) {
-			case *ast.SelectStmt:
-				n.IsInBraces = true
-			case *ast.SetOprStmt:
-				n.IsInBraces = true
-			}
-			stmt.Select = inner.(ast.StmtNode)
-		}
-	default:
-		stmt.Select = p.parseSelectStmt()
+	if sub := p.parseSubquery(); sub != nil {
+		stmt.Select = sub.(ast.StmtNode)
 	}
 
 	// Compute end offset BEFORE parsing optional WITH CHECK OPTION.

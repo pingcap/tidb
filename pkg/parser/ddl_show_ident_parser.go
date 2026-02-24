@@ -226,21 +226,25 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	case "STATS_META":
 		p.next()
 		stmt.Tp = ast.ShowStatsMeta
+		stmt.Table = &ast.TableName{Name: ast.NewCIStr("STATS_META"), Schema: ast.NewCIStr("mysql")}
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case "STATS_LOCKED":
 		p.next()
 		stmt.Tp = ast.ShowStatsLocked
+		stmt.Table = &ast.TableName{Name: ast.NewCIStr("STATS_TABLE_LOCKED"), Schema: ast.NewCIStr("mysql")}
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case "STATS_HISTOGRAMS":
 		p.next()
 		stmt.Tp = ast.ShowStatsHistograms
+		stmt.Table = &ast.TableName{Name: ast.NewCIStr("STATS_HISTOGRAMS"), Schema: ast.NewCIStr("mysql")}
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case "STATS_BUCKETS":
 		p.next()
 		stmt.Tp = ast.ShowStatsBuckets
+		stmt.Table = &ast.TableName{Name: ast.NewCIStr("STATS_BUCKETS"), Schema: ast.NewCIStr("mysql")}
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case "STATS_HEALTHY":

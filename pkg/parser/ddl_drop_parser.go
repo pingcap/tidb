@@ -94,6 +94,15 @@ func (p *HandParser) parseDropStmt() ast.StmtNode {
 	case stats:
 		return p.parseDropStatsStmt()
 	default:
+		if p.peek().IsKeyword("HYPO") && p.peekN(1).Tp == index {
+			p.next() // consume HYPO
+			p.next() // consume INDEX
+			stmt := p.parseDropIndex()
+			if s, ok := stmt.(*ast.DropIndexStmt); ok {
+				s.IsHypo = true
+			}
+			return stmt
+		}
 		return nil
 	}
 }
