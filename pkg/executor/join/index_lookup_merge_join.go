@@ -201,7 +201,6 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 }
 
 func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMergeJoinTask) *outerMergeWorker {
-	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
 	omw := &outerMergeWorker{
 		OuterMergeCtx:         e.OuterMergeCtx,
 		ctx:                   e.Ctx(),
@@ -210,7 +209,7 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 		resultCh:              resultCh,
 		innerCh:               innerCh,
 		batchSize:             32,
-		maxBatchSize:          maxBatchSize,
+		maxBatchSize:          e.Ctx().GetSessionVars().IndexJoinBatchSize,
 		parentMemTracker:      e.memTracker,
 		nextColCompareFilters: e.LastColHelper,
 	}

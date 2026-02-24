@@ -4983,53 +4983,6 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildStreamAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
-	case *physicalop.PhysicalLimit:
-		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
-		if err != nil {
-			return nil, err
-		}
-		n := int(min(v.Count, uint64(builder.ctx.GetSessionVars().MaxChunkSize)))
-		baseExec := exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec)
-		baseExec.SetInitCap(n)
-		limitExec := &LimitExec{
-			BaseExecutor: baseExec,
-			begin:        v.Offset,
-			end:          v.Offset + v.Count,
-		}
-
-		childSchemaLen := v.Children()[0].Schema().Len()
-		childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
-		limitExec.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
-		limitExec.columnIdxsUsedByChild = append(limitExec.columnIdxsUsedByChild, childUsedSchema...)
-		if len(limitExec.columnIdxsUsedByChild) == childSchemaLen {
-			limitExec.columnIdxsUsedByChild = nil
-		} else {
-			limitExec.columnSwapHelper = chunk.NewColumnSwapHelper(limitExec.columnIdxsUsedByChild)
-		}
-		err = limitExec.open(ctx)
-		return limitExec, err
-	case *physicalop.PhysicalTopN:
-		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
-		if err != nil {
-			return nil, err
-		}
-		sortExec := sortexec.SortExec{
-			BaseExecutor: exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
-			ByItems:      v.ByItems,
-			ExecSchema:   v.Schema(),
-		}
-		topNExec := &sortexec.TopNExec{
-			SortExec:    sortExec,
-			Limit:       &physicalop.PhysicalLimit{Count: v.Count, Offset: v.Offset},
-			Concurrency: builder.ctx.GetSessionVars().Concurrency.ExecutorConcurrency,
-		}
-		columnIdxsUsedByChild, columnMissing := retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
-		if columnIdxsUsedByChild != nil && columnMissing {
-			columnIdxsUsedByChild = nil
-		}
-		topNExec.ColumnIdxsUsedByChild = columnIdxsUsedByChild
-		err = topNExec.OpenSelf()
-		return topNExec, err
 	case *physicalop.PhysicalHashJoin:
 		childIdx, ok := builder.indexJoinLookupChildIdx(v, lookUpContents)
 		if !ok {
