@@ -35,6 +35,9 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// 64 is chosen based on nextgen import shape: subtask size is ~100 GiB and each region is ~1 GiB,
+// so split key count is often around 100. A threshold of 100 may miss coarse split/scatter on boundary
+// cases, while 64 triggers early load spreading and still avoids this stage for smaller tasks.
 const coarseGrainedSplitKeysThreshold = 64
 
 var (
