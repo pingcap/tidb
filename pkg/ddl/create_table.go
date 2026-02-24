@@ -357,9 +357,8 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Prewrite a virtual refresh watermark before entering build stage.
-		// Keep this in an independent transaction so running status can be observed
-		// while the initial build is still in progress.
+		// Publish the prewrite row before entering build stage.
+		// See prewriteCreateMaterializedViewRefreshInfo for the purge-safety contract.
 		if err = w.prewriteCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID); err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
@@ -702,6 +701,22 @@ const (
 	mviewRefreshTypeComplete  = "complete"
 )
 
+// prewriteCreateMaterializedViewRefreshInfo writes a "running" row for CREATE
+// MATERIALIZED VIEW before the initial build starts, in an independent
+// transaction.
+//
+// Rationale (see docs/design/materialized_view/mv_log_purge.md):
+//  1. PURGE MATERIALIZED VIEW LOG computes safe_purge_tso from
+//     MIN(COALESCE(LAST_SUCCESSFUL_REFRESH_READ_TSO, 0)) across dependent MVs,
+//     including in-building CREATE MATERIALIZED VIEW jobs.
+//  2. If the refresh row is only visible after the DDL step transaction commits,
+//     purge can miss this in-building MV and delete MLog rows that are still
+//     needed by the initial build.
+//  3. Prewrite stores this transaction startTS as a conservative lower bound
+//     during build. The final success upsert (in the DDL step transaction)
+//     overwrites it with the actual build readTS (job.SnapshotVer).
+//  4. If CREATE MATERIALIZED VIEW rolls back, rollbackCreateMaterializedView
+//     deletes this row, so failed jobs do not leave stale refresh metadata.
 func (w *worker) prewriteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64) error {
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
@@ -816,15 +831,30 @@ func buildCreateMaterializedViewRefreshInfoUpsertSQL(
 	readTS uint64,
 	failedReason string,
 ) string {
-	var successfulReadTS any = readTS
-	if readTS == 0 {
-		successfulReadTS = nil
-	}
-	var refreshFailedReason any
 	if failedReason != "" {
-		refreshFailedReason = failedReason
+		// Failed refresh should only overwrite failure reason and keep successful read tso unchanged.
+		return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
+		MVIEW_ID,
+		LAST_REFRESH_RESULT,
+		LAST_REFRESH_TYPE,
+		LAST_REFRESH_TIME,
+		LAST_SUCCESSFUL_REFRESH_READ_TSO,
+		LAST_REFRESH_FAILED_REASON
+	) VALUES (%?, %?, %?, NOW(6), NULL, %?)
+	ON DUPLICATE KEY UPDATE
+		LAST_REFRESH_RESULT = VALUES(LAST_REFRESH_RESULT),
+		LAST_REFRESH_TYPE = VALUES(LAST_REFRESH_TYPE),
+		LAST_REFRESH_TIME = VALUES(LAST_REFRESH_TIME),
+		LAST_REFRESH_FAILED_REASON = VALUES(LAST_REFRESH_FAILED_REASON)`,
+			mviewID,
+			refreshResult,
+			refreshType,
+			failedReason,
+		)
 	}
-	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
+
+	// Running/success refresh updates the successful read tso and keeps failed reason untouched.
+	return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
 		MVIEW_ID,
 		LAST_REFRESH_RESULT,
 		LAST_REFRESH_TYPE,
@@ -836,15 +866,13 @@ func buildCreateMaterializedViewRefreshInfoUpsertSQL(
 		LAST_REFRESH_RESULT = VALUES(LAST_REFRESH_RESULT),
 		LAST_REFRESH_TYPE = VALUES(LAST_REFRESH_TYPE),
 		LAST_REFRESH_TIME = VALUES(LAST_REFRESH_TIME),
-		LAST_SUCCESSFUL_REFRESH_READ_TSO = VALUES(LAST_SUCCESSFUL_REFRESH_READ_TSO),
-		LAST_REFRESH_FAILED_REASON = VALUES(LAST_REFRESH_FAILED_REASON)`,
+		LAST_SUCCESSFUL_REFRESH_READ_TSO = VALUES(LAST_SUCCESSFUL_REFRESH_READ_TSO)`,
 		mviewID,
 		refreshResult,
 		refreshType,
-		successfulReadTS,
-		refreshFailedReason,
+		readTS,
+		nil,
 	)
-	return upsertSQL
 }
 
 // updateMaterializedViewBaseInfoOnCreate keeps base-table reverse metadata in sync
