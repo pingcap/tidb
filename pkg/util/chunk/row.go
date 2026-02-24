@@ -314,14 +314,13 @@ func (r Row) SerializeToBytesForOneColumn(typeCtx types.Context, ft *types.Field
 		if mysql.HasEnumSetAsIntFlag(ft.GetFlag()) {
 			v := r.c.columns[colIdx].GetEnum(r.idx).Value
 			return unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64), nil
-		} else {
-			v := r.c.columns[colIdx].GetEnum(r.idx).Value
-			str := ""
-			if enum, err := types.ParseEnumValue(ft.GetElems(), v); err == nil {
-				str = enum.Name
-			}
-			return collator.ImmutableKey(str), nil
 		}
+		v := r.c.columns[colIdx].GetEnum(r.idx).Value
+		str := ""
+		if enum, err := types.ParseEnumValue(ft.GetElems(), v); err == nil {
+			str = enum.Name
+		}
+		return collator.ImmutableKey(str), nil
 	case mysql.TypeSet:
 		s, err := types.ParseSetValue(ft.GetElems(), r.c.columns[colIdx].GetSet(r.idx).Value)
 		if err != nil {
