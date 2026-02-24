@@ -1260,6 +1260,7 @@ func TestDBAStmt(t *testing.T) {
 		{`SHOW KEYS FROM t FROM test where true;`, true, "SHOW INDEX IN `test`.`t` WHERE TRUE"},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true, "SHOW EVENTS IN `test_db` WHERE `definer`=_UTF8MB4'current_user'"},
 		{`SHOW PLUGINS`, true, "SHOW PLUGINS"},
+		{`SHOW PLUGINS LIKE 'Validate%'`, true, "SHOW PLUGINS LIKE _UTF8MB4'Validate%'"},
 		{`SHOW PROFILES`, true, "SHOW PROFILES"},
 		{`SHOW PROFILE`, true, "SHOW PROFILE"},
 		{`SHOW PROFILE FOR QUERY 1`, true, "SHOW PROFILE FOR QUERY 1"},

@@ -68,6 +68,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	case "PLUGINS":
 		p.next()
 		stmt.Tp = ast.ShowPlugins
+		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case "PRIVILEGES":
 		p.next()
