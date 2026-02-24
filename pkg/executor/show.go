@@ -825,10 +825,32 @@ func (e *ShowExec) fetchShowMaskingPolicies() error {
 			policy.ColumnName.O,
 			policy.Expression,
 			policy.Status.String(),
-			string(policy.FunctionType),
+			string(policy.MaskingType),
+			formatMaskingPolicyRestrictOps(policy.RestrictOps),
 		})
 	}
 	return nil
+}
+
+func formatMaskingPolicyRestrictOps(ops ast.MaskingPolicyRestrictOps) string {
+	if ops == ast.MaskingPolicyRestrictOpNone {
+		return "NONE"
+	}
+
+	vals := make([]string, 0, 4)
+	if ops&ast.MaskingPolicyRestrictOpInsertIntoSelect != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameInsertIntoSelect)
+	}
+	if ops&ast.MaskingPolicyRestrictOpUpdateSelect != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameUpdateSelect)
+	}
+	if ops&ast.MaskingPolicyRestrictOpDeleteSelect != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameDeleteSelect)
+	}
+	if ops&ast.MaskingPolicyRestrictOpCTAS != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameCTAS)
+	}
+	return strings.Join(vals, ",")
 }
 
 func (e *ShowExec) fetchShowIndex() error {

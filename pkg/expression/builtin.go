@@ -658,12 +658,12 @@ var functionSetForReturnTypeNotNullOnNotNull = set.StringSet{
 // any set there.
 var funcs = map[string]functionClass{
 	// common functions
-	ast.Coalesce: &coalesceFunctionClass{baseFunctionClass{ast.Coalesce, 1, -1}},
-	ast.IsNull:   &isNullFunctionClass{baseFunctionClass{ast.IsNull, 1, 1}},
-	ast.Greatest: &greatestFunctionClass{baseFunctionClass{ast.Greatest, 2, -1}},
-	ast.Least:    &leastFunctionClass{baseFunctionClass{ast.Least, 2, -1}},
-	ast.Interval: &intervalFunctionClass{baseFunctionClass{ast.Interval, 2, -1}},
-	ast.MaskFull:    &maskFullFunctionClass{baseFunctionClass{ast.MaskFull, 1, 1}},
+	ast.Coalesce:    &coalesceFunctionClass{baseFunctionClass{ast.Coalesce, 1, -1}},
+	ast.IsNull:      &isNullFunctionClass{baseFunctionClass{ast.IsNull, 1, 1}},
+	ast.Greatest:    &greatestFunctionClass{baseFunctionClass{ast.Greatest, 2, -1}},
+	ast.Least:       &leastFunctionClass{baseFunctionClass{ast.Least, 2, -1}},
+	ast.Interval:    &intervalFunctionClass{baseFunctionClass{ast.Interval, 2, -1}},
+	ast.MaskFull:    &maskFullFunctionClass{baseFunctionClass{ast.MaskFull, 2, 2}},
 	ast.MaskPartial: &maskPartialFunctionClass{baseFunctionClass{ast.MaskPartial, 4, 4}},
 	ast.MaskNull:    &maskNullFunctionClass{baseFunctionClass{ast.MaskNull, 1, 1}},
 	ast.MaskDate:    &maskDateFunctionClass{baseFunctionClass{ast.MaskDate, 2, 2}},

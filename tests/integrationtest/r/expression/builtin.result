@@ -3474,9 +3474,9 @@ GET_FORMAT(TIME, 'usa')	GET_FORMAT(TIME, 'USA')	GET_FORMAT(TIME, 'UsA')	GET_FORM
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
 GET_FORMAT(DATE, 'jis')	GET_FORMAT(DATETIME, 'iso')	GET_FORMAT(TIMESTAMP, 'eur')	GET_FORMAT(TIME, 'internal')
 %Y-%m-%d	%Y-%m-%d %H:%i:%s	%Y-%m-%d %H.%i.%s	%H%i%s
-select mask_full('abc'), mask_full(cast('2012-01-02' as date)), mask_full(cast('2012-01-02 03:04:05' as datetime)), mask_full(cast('03:04:05' as time)), mask_full(cast('2012' as year));
-mask_full('abc')	mask_full(cast('2012-01-02' as date))	mask_full(cast('2012-01-02 03:04:05' as datetime))	mask_full(cast('03:04:05' as time))	mask_full(cast('2012' as year))
-XXXX	1970-01-01	1970-01-01 00:00:00	00:00:00	1970
+select mask_full('abc', '*'), mask_full(cast('2012-01-02' as date), '*'), mask_full(cast('2012-01-02 03:04:05' as datetime), '*'), mask_full(cast('03:04:05' as time), '*'), mask_full(cast('2012' as year), '*');
+mask_full('abc', '*')	mask_full(cast('2012-01-02' as date), '*')	mask_full(cast('2012-01-02 03:04:05' as datetime), '*')	mask_full(cast('03:04:05' as time), '*')	mask_full(cast('2012' as year), '*')
+***	1970-01-01	1970-01-01 00:00:00	00:00:00	1970
 select mask_null('abc'), mask_null(cast('2012-01-02' as date)), mask_null(cast('03:04:05' as time)), mask_null(cast('2012' as year));
 mask_null('abc')	mask_null(cast('2012-01-02' as date))	mask_null(cast('03:04:05' as time))	mask_null(cast('2012' as year))
 NULL	NULL	NULL	NULL

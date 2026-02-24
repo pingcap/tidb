@@ -41,33 +41,35 @@ func (s MaskingPolicyStatus) String() string {
 	}
 }
 
-// MaskingPolicyFuncType describes the masking function type.
-type MaskingPolicyFuncType string
+// MaskingPolicyType describes the masking policy type.
+type MaskingPolicyType string
 
-// MaskingPolicyFuncType values.
+// MaskingPolicyType values.
 const (
-	MaskingPolicyFuncTypeFull    MaskingPolicyFuncType = "FULL"
-	MaskingPolicyFuncTypePartial MaskingPolicyFuncType = "PARTIAL"
-	MaskingPolicyFuncTypeNull    MaskingPolicyFuncType = "NULL"
-	MaskingPolicyFuncTypeCustom  MaskingPolicyFuncType = "CUSTOM"
+	MaskingPolicyTypeFull    MaskingPolicyType = "MASK_FULL"
+	MaskingPolicyTypePartial MaskingPolicyType = "MASK_PARTIAL"
+	MaskingPolicyTypeNull    MaskingPolicyType = "MASK_NULL"
+	MaskingPolicyTypeDate    MaskingPolicyType = "MASK_DATE"
+	MaskingPolicyTypeCustom  MaskingPolicyType = "CUSTOM"
 )
 
 // MaskingPolicyInfo is the struct to store the masking policy.
 type MaskingPolicyInfo struct {
-	ID           int64                 `json:"id"`
-	Name         ast.CIStr             `json:"name"`
-	DBName       ast.CIStr             `json:"db_name"`
-	TableName    ast.CIStr             `json:"table_name"`
-	TableID      int64                 `json:"table_id"`
-	ColumnName   ast.CIStr             `json:"column_name"`
-	ColumnID     int64                 `json:"column_id"`
-	Expression   string                `json:"expression"`
-	Status       MaskingPolicyStatus   `json:"status"`
-	FunctionType MaskingPolicyFuncType `json:"function_type,omitempty"`
-	CreatedAt    time.Time             `json:"created_at,omitempty"`
-	UpdatedAt    time.Time             `json:"updated_at,omitempty"`
-	CreatedBy    string                `json:"created_by,omitempty"`
-	State        SchemaState           `json:"state"`
+	ID          int64                        `json:"id"`
+	Name        ast.CIStr                    `json:"name"`
+	DBName      ast.CIStr                    `json:"db_name"`
+	TableName   ast.CIStr                    `json:"table_name"`
+	TableID     int64                        `json:"table_id"`
+	ColumnName  ast.CIStr                    `json:"column_name"`
+	ColumnID    int64                        `json:"column_id"`
+	Expression  string                       `json:"expression"`
+	Status      MaskingPolicyStatus          `json:"status"`
+	MaskingType MaskingPolicyType            `json:"masking_type,omitempty"`
+	RestrictOps ast.MaskingPolicyRestrictOps `json:"restrict_ops,omitempty"`
+	CreatedAt   time.Time                    `json:"created_at,omitempty"`
+	UpdatedAt   time.Time                    `json:"updated_at,omitempty"`
+	CreatedBy   string                       `json:"created_by,omitempty"`
+	State       SchemaState                  `json:"state"`
 }
 
 // Clone clones MaskingPolicyInfo.

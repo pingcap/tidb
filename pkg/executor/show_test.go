@@ -140,8 +140,8 @@ func TestShowMaskingPolicies(t *testing.T) {
 	tk.MustExec("create table t (id int, c char(120))")
 	tk.MustExec("create masking policy p on t(c) as c")
 
-	tk.MustQuery("show masking policies for t").Check(testkit.Rows("p c `c` ENABLE CUSTOM"))
-	tk.MustQuery("show masking policies for t where column_name = 'c'").Check(testkit.Rows("p c `c` ENABLE CUSTOM"))
+	tk.MustQuery("show masking policies for t").Check(testkit.Rows("p c `c` ENABLE CUSTOM NONE"))
+	tk.MustQuery("show masking policies for t where column_name = 'c'").Check(testkit.Rows("p c `c` ENABLE CUSTOM NONE"))
 	tk.MustQuery("show masking policies for t where column_name = 'missing'").Check(testkit.Rows())
 
 	rows := tk.MustQuery("show create table t").Rows()

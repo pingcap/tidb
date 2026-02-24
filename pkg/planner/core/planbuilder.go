@@ -4531,6 +4531,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	if err != nil {
 		return err
 	}
+	if lp, ok := selectPlan.(base.LogicalPlan); ok {
+		if err = b.checkMaskingPolicyRestrictOnSelectPlan(ctx, lp, ast.MaskingPolicyRestrictOpInsertIntoSelect); err != nil {
+			return err
+		}
+	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
 	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
@@ -5441,7 +5446,10 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			} else if spec.Tp == ast.AlterTableAddMaskingPolicy {
 				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CREATE MASKING POLICY")
 				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CREATE MASKING POLICY"}, false, err)
-			} else if spec.Tp == ast.AlterTableEnableMaskingPolicy || spec.Tp == ast.AlterTableDisableMaskingPolicy {
+			} else if spec.Tp == ast.AlterTableEnableMaskingPolicy ||
+				spec.Tp == ast.AlterTableDisableMaskingPolicy ||
+				spec.Tp == ast.AlterTableModifyMaskingPolicyExpression ||
+				spec.Tp == ast.AlterTableModifyMaskingPolicyRestrictOn {
 				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ALTER MASKING POLICY")
 				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ALTER MASKING POLICY"}, false, err)
 			} else if spec.Tp == ast.AlterTableDropMaskingPolicy {
@@ -6066,7 +6074,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowCreateResourceGroup:
 		names = []string{"Resource_Group", "Create Resource Group"}
 	case ast.ShowMaskingPolicies:
-		names = []string{"Policy_name", "Column_name", "Expression", "Status", "Function_type"}
+		names = []string{"Policy_name", "Column_name", "Expression", "Status", "Masking_type", "Restrict_on"}
 	case ast.ShowCreateUser:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("CREATE USER for %s", s.User)}

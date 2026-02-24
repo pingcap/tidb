@@ -1148,6 +1148,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
 	ErrMaskingPolicyExists:             mysql.Message("Masking policy '%-.192s' already exists", nil),
 	ErrMaskingPolicyNotExists:          mysql.Message("Unknown masking policy '%-.192s'", nil),
+	ErrAccessDeniedToMaskedColumn:      mysql.Message("Access denied to masked column '%-.192s'. Obtain the required privileges and retry.", nil),
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),

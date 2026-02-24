@@ -1764,6 +1764,67 @@ type MaskingPolicyState struct {
 	Explicit bool
 }
 
+// MaskingPolicyRestrictOps is a bitmask of operations restricted by a masking policy.
+type MaskingPolicyRestrictOps uint64
+
+// Masking policy restricted operation values.
+const (
+	MaskingPolicyRestrictOpNone MaskingPolicyRestrictOps = 0
+
+	MaskingPolicyRestrictOpInsertIntoSelect MaskingPolicyRestrictOps = 1 << iota
+	MaskingPolicyRestrictOpUpdateSelect
+	MaskingPolicyRestrictOpDeleteSelect
+	MaskingPolicyRestrictOpCTAS
+)
+
+// Masking policy restricted operation names.
+const (
+	MaskingPolicyRestrictNameInsertIntoSelect = "INSERT_INTO_SELECT"
+	MaskingPolicyRestrictNameUpdateSelect     = "UPDATE_SELECT"
+	MaskingPolicyRestrictNameDeleteSelect     = "DELETE_SELECT"
+	MaskingPolicyRestrictNameCTAS             = "CTAS"
+)
+
+func (ops MaskingPolicyRestrictOps) names() []string {
+	if ops == MaskingPolicyRestrictOpNone {
+		return nil
+	}
+
+	names := make([]string, 0, 4)
+	if ops&MaskingPolicyRestrictOpInsertIntoSelect != 0 {
+		names = append(names, MaskingPolicyRestrictNameInsertIntoSelect)
+	}
+	if ops&MaskingPolicyRestrictOpUpdateSelect != 0 {
+		names = append(names, MaskingPolicyRestrictNameUpdateSelect)
+	}
+	if ops&MaskingPolicyRestrictOpDeleteSelect != 0 {
+		names = append(names, MaskingPolicyRestrictNameDeleteSelect)
+	}
+	if ops&MaskingPolicyRestrictOpCTAS != 0 {
+		names = append(names, MaskingPolicyRestrictNameCTAS)
+	}
+	return names
+}
+
+func restoreMaskingPolicyRestrictOn(ctx *format.RestoreCtx, ops MaskingPolicyRestrictOps, writeNone bool) {
+	if ops == MaskingPolicyRestrictOpNone {
+		if !writeNone {
+			return
+		}
+		ctx.WriteKeyWord("RESTRICT ON NONE")
+		return
+	}
+
+	ctx.WriteKeyWord("RESTRICT ON (")
+	for i, name := range ops.names() {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		ctx.WriteKeyWord(name)
+	}
+	ctx.WritePlain(")")
+}
+
 // CreateMaskingPolicyStmt is a statement to create a masking policy.
 type CreateMaskingPolicyStmt struct {
 	ddlNode
@@ -1774,6 +1835,7 @@ type CreateMaskingPolicyStmt struct {
 	Table              *TableName
 	Column             *ColumnName
 	Expr               ExprNode
+	RestrictOps        MaskingPolicyRestrictOps
 	MaskingPolicyState MaskingPolicyState
 }
 
@@ -1800,6 +1862,10 @@ func (n *CreateMaskingPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("AS ")
 	if err := n.Expr.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore CreateMaskingPolicyStmt.Expr")
+	}
+	if n.RestrictOps != MaskingPolicyRestrictOpNone {
+		ctx.WritePlain(" ")
+		restoreMaskingPolicyRestrictOn(ctx, n.RestrictOps, false)
 	}
 	if n.MaskingPolicyState.Explicit {
 		ctx.WritePlain(" ")
@@ -3362,6 +3428,8 @@ const (
 	AlterTableEnableMaskingPolicy
 	AlterTableDisableMaskingPolicy
 	AlterTableDropMaskingPolicy
+	AlterTableModifyMaskingPolicyExpression
+	AlterTableModifyMaskingPolicyRestrictOn
 )
 
 // LockType is the type for AlterTableSpec.
@@ -3434,38 +3502,39 @@ type AlterTableSpec struct {
 	NoWriteToBinlog bool
 	OnAllPartitions bool
 
-	Tp                  AlterTableType
-	Name                string
-	IndexName           CIStr
-	Constraint          *Constraint
-	Options             []*TableOption
-	OrderByList         []*AlterOrderItem
-	NewTable            *TableName
-	NewColumns          []*ColumnDef
-	NewConstraints      []*Constraint
-	OldColumnName       *ColumnName
-	NewColumnName       *ColumnName
-	Position            *ColumnPosition
-	LockType            LockType
-	Algorithm           AlgorithmType
-	Comment             string
-	FromKey             CIStr
-	ToKey               CIStr
-	Partition           *PartitionOptions
-	PartitionNames      []CIStr
-	PartDefinitions     []*PartitionDefinition
-	WithValidation      bool
-	Num                 uint64
-	Visibility          IndexVisibility
-	TiFlashReplica      *TiFlashReplicaSpec
-	Writeable           bool
-	Statistics          *StatisticsSpec
-	MaskingPolicyName   CIStr
-	MaskingPolicyColumn *ColumnName
-	MaskingPolicyExpr   ExprNode
-	MaskingPolicyState  MaskingPolicyState
-	AttributesSpec      *AttributesSpec
-	StatsOptionsSpec    *StatsOptionsSpec
+	Tp                       AlterTableType
+	Name                     string
+	IndexName                CIStr
+	Constraint               *Constraint
+	Options                  []*TableOption
+	OrderByList              []*AlterOrderItem
+	NewTable                 *TableName
+	NewColumns               []*ColumnDef
+	NewConstraints           []*Constraint
+	OldColumnName            *ColumnName
+	NewColumnName            *ColumnName
+	Position                 *ColumnPosition
+	LockType                 LockType
+	Algorithm                AlgorithmType
+	Comment                  string
+	FromKey                  CIStr
+	ToKey                    CIStr
+	Partition                *PartitionOptions
+	PartitionNames           []CIStr
+	PartDefinitions          []*PartitionDefinition
+	WithValidation           bool
+	Num                      uint64
+	Visibility               IndexVisibility
+	TiFlashReplica           *TiFlashReplicaSpec
+	Writeable                bool
+	Statistics               *StatisticsSpec
+	MaskingPolicyName        CIStr
+	MaskingPolicyColumn      *ColumnName
+	MaskingPolicyExpr        ExprNode
+	MaskingPolicyRestrictOps MaskingPolicyRestrictOps
+	MaskingPolicyState       MaskingPolicyState
+	AttributesSpec           *AttributesSpec
+	StatsOptionsSpec         *StatsOptionsSpec
 }
 
 type TiFlashReplicaSpec struct {
@@ -3566,6 +3635,10 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		if err := n.MaskingPolicyExpr.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.MaskingPolicyExpr")
 		}
+		if n.MaskingPolicyRestrictOps != MaskingPolicyRestrictOpNone {
+			ctx.WritePlain(" ")
+			restoreMaskingPolicyRestrictOn(ctx, n.MaskingPolicyRestrictOps, false)
+		}
 		if n.MaskingPolicyState.Explicit {
 			ctx.WritePlain(" ")
 			if n.MaskingPolicyState.Enabled {
@@ -3583,6 +3656,18 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropMaskingPolicy:
 		ctx.WriteKeyWord("DROP MASKING POLICY ")
 		ctx.WriteName(n.MaskingPolicyName.O)
+	case AlterTableModifyMaskingPolicyExpression:
+		ctx.WriteKeyWord("MODIFY MASKING POLICY ")
+		ctx.WriteName(n.MaskingPolicyName.O)
+		ctx.WriteKeyWord(" SET EXPRESSION = ")
+		if err := n.MaskingPolicyExpr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.MaskingPolicyExpr")
+		}
+	case AlterTableModifyMaskingPolicyRestrictOn:
+		ctx.WriteKeyWord("MODIFY MASKING POLICY ")
+		ctx.WriteName(n.MaskingPolicyName.O)
+		ctx.WriteKeyWord(" SET ")
+		restoreMaskingPolicyRestrictOn(ctx, n.MaskingPolicyRestrictOps, true)
 	case AlterTableOption:
 		switch {
 		case len(n.Options) == 2 && n.Options[0].Tp == TableOptionCharset && n.Options[1].Tp == TableOptionCollate:
