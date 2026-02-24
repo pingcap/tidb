@@ -2,6 +2,7 @@ CREATE DATABASE IF NOT EXISTS tici_integration;
 USE tici_integration;
 DROP TABLE IF EXISTS t1;
 DROP TABLE IF EXISTS t2;
+DROP TABLE IF EXISTS t3;
 CREATE TABLE IF NOT EXISTS t1(id varchar(10),body TEXT,PRIMARY KEY (id) CLUSTERED);
 ALTER TABLE t1 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
 INSERT INTO t1 VALUES
@@ -18,6 +19,11 @@ INSERT INTO t2 VALUES
 (3, 'Third entry: verifying the TEXT field''s ability to store longer content'),
 (4, 'Fourth data row, which can be used for subsequent query or analysis tests'),
 (5, 'Fifth sample entry to complete the basic insertion example');
+CREATE TABLE IF NOT EXISTS t3(id varchar(10), body TEXT, PRIMARY KEY (id) CLUSTERED);
+INSERT INTO t3 VALUES
+(1, 'hello world from non-empty table case'),
+(2, 'another row for fulltext query');
+ALTER TABLE t3 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
 DO SLEEP(10);
 SELECT * FROM t1 WHERE fts_match_word('first', body);
 id	body
@@ -25,3 +31,6 @@ id	body
 SELECT * FROM t2 WHERE fts_match_word('first', content);
 id	content
 1	This is the first test data, used to demonstrate the insert operation
+SELECT * FROM t3 WHERE fts_match_word('hello', body);
+id	body
+1	hello world from non-empty table case

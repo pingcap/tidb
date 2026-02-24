@@ -1162,6 +1162,7 @@ func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1466,6 +1467,7 @@ func TestHybridIndexOnPartitionedTable(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	tk.MustExec("drop table if exists pt_create, pt_alter;")
 	tk.MustExec(`create table pt_create(a int, b varchar(255), c int)
@@ -1709,6 +1711,7 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexRequest", `return(1)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	tk.MustExec("create table sw (value varchar(20))")
 	tk.MustExec("insert into sw values ('a'), ('the'), ('foo'), ('foo')")
@@ -1734,6 +1737,50 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	raw = tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
 	assertTiCIFulltextParserInfo(t, raw)
+}
+
+func TestFulltextIndexCheckAddIndexProgressTransition(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `1*return(false)->return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(id int, c text)")
+	tk.MustExec("insert into t values (1, 'hello world')")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- tk.ExecToErr("alter table t add fulltext index fts_idx(c) with parser standard")
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case err := <-doneCh:
+			doneCh <- err
+			return false
+		default:
+		}
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		if err != nil {
+			return false
+		}
+		idx := tbl.Meta().FindIndexByName("fts_idx")
+		return idx != nil && idx.State != model.StatePublic
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, <-doneCh)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("fts_idx")
+	require.NotNil(t, idx)
+	require.Equal(t, model.StatePublic, idx.State)
 }
 
 func assertTiCIFulltextParserInfo(t *testing.T, raw []byte) {
@@ -1875,6 +1922,7 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 func TestHybridIndexShardingKeyColumns(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
@@ -1914,6 +1962,7 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `1*return(true)->return(false)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
@@ -1930,7 +1979,56 @@ func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 		"inverted": {"columns": ["col2"]},
 		"sort": {"columns": ["col1"]},
 		"sharding_key": {"columns": ["col1", "col4"]}
-	}'`)
+		}'`)
+}
+
+func TestHybridIndexCheckAddIndexProgressTransition(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `1*return(false)->return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(col1 int, col2 varchar(255), col3 int, col4 int)")
+	tk.MustExec("insert into t values (1, 'a', 2, 3)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	createHybridIndexSQL := `create hybrid index idx_progress on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
+		"sharding_key": {"columns": ["col1", "col4"]}
+	}'`
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- tk.ExecToErr(createHybridIndexSQL)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case err := <-doneCh:
+			doneCh <- err
+			return false
+		default:
+		}
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		if err != nil {
+			return false
+		}
+		idx := tbl.Meta().FindIndexByName("idx_progress")
+		return idx != nil && idx.State != model.StatePublic
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, <-doneCh)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("idx_progress")
+	require.NotNil(t, idx)
+	require.Equal(t, model.StatePublic, idx.State)
 }
 
 func TestUniqueTiCIHybridIndexRejected(t *testing.T) {

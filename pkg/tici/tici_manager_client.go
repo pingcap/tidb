@@ -44,6 +44,14 @@ var (
 	newManagerCtxFunc = NewManagerCtx
 )
 
+type addIndexProgressLogKey struct {
+	keyspaceID uint32
+	tableID    int64
+	indexID    int64
+}
+
+var addIndexProgressLogState sync.Map // map[addIndexProgressLogKey]GetIndexProgressResponse_State
+
 var mockTiCICreateIndexRequest atomic.Value // stores []byte of CreateIndexRequest for tests.
 
 // GetMockTiCICreateIndexRequest returns the marshaled CreateIndexRequest bytes captured by the
@@ -496,6 +504,118 @@ func (t *ManagerCtx) FinishIndexUpload(
 	return nil
 }
 
+// CheckAddIndexProgress checks whether a TiCI index build has completed.
+func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID int64) (bool, error) {
+	if handled, ready, err := maybeMockCheckAddIndexProgress(tableID, indexID); handled {
+		return ready, err
+	}
+	req := &GetIndexProgressRequest{
+		TableId:    tableID,
+		IndexId:    indexID,
+		KeyspaceId: t.getKeyspaceID(),
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if err := t.checkMetaClient(); err != nil {
+		return false, err
+	}
+	resp, err := t.metaClient.client.GetIndexProgress(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	logGetIndexProgressResponse(addIndexProgressLogKey{
+		keyspaceID: t.getKeyspaceID(),
+		tableID:    tableID,
+		indexID:    indexID,
+	}, resp)
+	// State is the source of truth for GetIndexProgress.
+	// Some TiCI implementations may only return state and omit status/error_message.
+	switch resp.State {
+	case GetIndexProgressResponse_COMPLETED:
+		if resp.Status != ErrorCode_SUCCESS {
+			logutil.BgLogger().Warn("GetIndexProgress completed with non-success status",
+				zap.Int64("tableID", tableID),
+				zap.Int64("indexID", indexID),
+				zap.Int32("statusCode", int32(resp.Status)),
+				zap.String("status", resp.Status.String()),
+				zap.String("errorMessage", resp.ErrorMessage))
+		}
+		return true, nil
+	case GetIndexProgressResponse_PENDING, GetIndexProgressResponse_RUNNING, GetIndexProgressResponse_NOTFOUND:
+		if resp.Status != ErrorCode_SUCCESS {
+			logutil.BgLogger().Warn("GetIndexProgress in-progress with non-success status",
+				zap.Int64("tableID", tableID),
+				zap.Int64("indexID", indexID),
+				zap.Int32("stateCode", int32(resp.State)),
+				zap.String("state", resp.State.String()),
+				zap.Int32("statusCode", int32(resp.Status)),
+				zap.String("status", resp.Status.String()),
+				zap.String("errorMessage", resp.ErrorMessage))
+		}
+		return false, nil
+	case GetIndexProgressResponse_FAILED, GetIndexProgressResponse_ERROR:
+		errMsg := resp.ErrorMessage
+		if errMsg == "" {
+			errMsg = resp.State.String()
+		}
+		logutil.BgLogger().Error("TiCI index build failed",
+			zap.Int64("tableID", tableID),
+			zap.Int64("indexID", indexID),
+			zap.Int32("stateCode", int32(resp.State)),
+			zap.String("state", resp.State.String()),
+			zap.Int32("statusCode", int32(resp.Status)),
+			zap.String("status", resp.Status.String()),
+			zap.String("errorMessage", errMsg))
+		return false, fmt.Errorf("tici index build %s: %s", resp.State.String(), errMsg)
+	default:
+		if resp.Status != ErrorCode_SUCCESS {
+			errMsg := resp.ErrorMessage
+			if errMsg == "" {
+				errMsg = resp.Status.String()
+			}
+			logutil.BgLogger().Error("GetIndexProgress failed",
+				zap.Int64("tableID", tableID),
+				zap.Int64("indexID", indexID),
+				zap.Int32("stateCode", int32(resp.State)),
+				zap.String("state", resp.State.String()),
+				zap.Int32("statusCode", int32(resp.Status)),
+				zap.String("status", resp.Status.String()),
+				zap.String("errorMessage", errMsg))
+			return false, fmt.Errorf("tici GetIndexProgress error: %s", errMsg)
+		}
+		return false, fmt.Errorf("tici GetIndexProgress unknown state: %s", resp.State.String())
+	}
+}
+
+func logGetIndexProgressResponse(key addIndexProgressLogKey, resp *GetIndexProgressResponse) {
+	if resp == nil {
+		return
+	}
+	terminal := resp.State == GetIndexProgressResponse_COMPLETED ||
+		resp.State == GetIndexProgressResponse_FAILED ||
+		resp.State == GetIndexProgressResponse_ERROR
+	if terminal {
+		addIndexProgressLogState.Delete(key)
+	} else {
+		prev, loaded := addIndexProgressLogState.Load(key)
+		if loaded {
+			if prevState, ok := prev.(GetIndexProgressResponse_State); ok && prevState == resp.State {
+				return
+			}
+		}
+		addIndexProgressLogState.Store(key, resp.State)
+	}
+	logutil.BgLogger().Info("GetIndexProgress response",
+		zap.Int64("tableID", key.tableID),
+		zap.Int64("indexID", key.indexID),
+		zap.Uint32("keyspaceID", key.keyspaceID),
+		zap.Int32("statusCode", int32(resp.Status)),
+		zap.String("status", resp.Status.String()),
+		zap.Int32("stateCode", int32(resp.State)),
+		zap.String("state", resp.State.String()),
+		zap.String("errorMessage", resp.ErrorMessage))
+}
+
 func maybeMockFinishIndexUpload(tidbTaskID string) (bool, error) {
 	var (
 		handled bool
@@ -518,6 +638,41 @@ func maybeMockFinishIndexUpload(tidbTaskID string) (bool, error) {
 		}
 	})
 	return handled, err
+}
+
+func maybeMockCheckAddIndexProgress(tableID, indexID int64) (handled bool, ready bool, err error) {
+	failpoint.Inject("MockCheckAddIndexProgress", func(val failpoint.Value) {
+		handled = true
+		switch v := val.(type) {
+		case bool:
+			ready = v
+		case string:
+			if v != "" {
+				err = errors.New(v)
+			}
+		}
+		if err != nil {
+			logutil.BgLogger().Warn("MockCheckAddIndexProgress failpoint triggered with error",
+				zap.Int64("tableID", tableID),
+				zap.Int64("indexID", indexID),
+				zap.Error(err))
+			return
+		}
+		logutil.BgLogger().Info("MockCheckAddIndexProgress failpoint triggered",
+			zap.Int64("tableID", tableID),
+			zap.Int64("indexID", indexID),
+			zap.Bool("ready", ready))
+	})
+	return handled, ready, err
+}
+
+func closeEtcdClient(etcdClient *clientv3.Client) {
+	if etcdClient == nil || etcdClient.ActiveConnection() == nil {
+		return
+	}
+	if err := etcdClient.Close(); err != nil {
+		logutil.BgLogger().Warn("close TiCI etcd client failed", zap.Error(err))
+	}
 }
 
 // AbortIndexUpload notifies TiCI that the job has failed and the related TiCI job should be aborted.
@@ -705,6 +860,7 @@ func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.T
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
+	defer closeEtcdClient(etcdClient)
 	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
@@ -731,6 +887,7 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
+	defer closeEtcdClient(etcdClient)
 	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
@@ -757,6 +914,7 @@ func FinishIndexUpload(ctx context.Context, store kv.Storage, tidbTaskID string)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
+	defer closeEtcdClient(etcdClient)
 	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
@@ -771,6 +929,32 @@ func FinishIndexUpload(ctx context.Context, store kv.Storage, tidbTaskID string)
 		ticiManager.SetKeyspaceID(keyspaceID)
 	}
 	return ticiManager.FinishIndexUpload(ctx, tidbTaskID)
+}
+
+// CheckAddIndexProgress checks whether a TiCI index build has completed.
+func CheckAddIndexProgress(ctx context.Context, store kv.Storage, tableID, indexID int64) (bool, error) {
+	if handled, ready, err := maybeMockCheckAddIndexProgress(tableID, indexID); handled {
+		return ready, err
+	}
+	etcdClient, err := getEtcdClientFunc()
+	if err != nil {
+		return false, dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer closeEtcdClient(etcdClient)
+	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
+	if err != nil {
+		return false, dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer ticiManager.Close()
+	if store != nil {
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
+	return ticiManager.CheckAddIndexProgress(ctx, tableID, indexID)
 }
 
 // cloneAndNormalizeTableInfo deep-clones the given model.TableInfo via JSON
