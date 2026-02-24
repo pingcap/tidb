@@ -167,6 +167,8 @@ type RawImportJobStats struct {
 	CreatedBy string `json:"created_by,omitempty"`
 }
 
+// RawImportJobStepStats describes machine-friendly progress stats for the
+// currently running import step (if any).
 type RawImportJobStepStats struct {
 	Name             string `json:"name,omitempty"` // proto.Step2Str(...)
 	ProcessedBytes   int64  `json:"processed_bytes,omitempty"`

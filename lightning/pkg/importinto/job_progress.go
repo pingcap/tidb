@@ -29,7 +29,7 @@ func newJobProgressEstimator(logger log.Logger) *jobProgressEstimator {
 	return &jobProgressEstimator{logger: logger}
 }
 
-func (e *jobProgressEstimator) updateJobTotalSize(
+func (*jobProgressEstimator) updateJobTotalSize(
 	jobID int64,
 	job *ImportJob,
 	status *importsdk.JobStatus,
@@ -88,7 +88,7 @@ func jobProgressPhases(isGlobalSort bool) []jobProgressPhase {
 	}
 }
 
-func (e *jobProgressEstimator) stepRatio(status *importsdk.JobStatus) float64 {
+func (*jobProgressEstimator) stepRatio(status *importsdk.JobStatus) float64 {
 	if status.CurrentStep == nil || status.CurrentStep.TotalBytes <= 0 {
 		return 0
 	}
