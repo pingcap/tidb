@@ -1164,6 +1164,12 @@ const (
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
 
+	// Reserved for future use.
+	ErrEngineAttributeInvalidFormat             = 8270
+	ErrStorageClassInvalidSpec                  = 8271
+	ErrModifyColumnReferencedByPartialCondition = 8272
+	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrAccessDeniedToMaskedColumn               = 8274
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

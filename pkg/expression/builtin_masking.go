@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-const maskFullStringDefault = "XXXX"
-
 type maskFullFunctionClass struct {
 	baseFunctionClass
 }
@@ -34,13 +32,16 @@ func (c *maskFullFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	}
 	argType := args[0].GetType(ctx.GetEvalCtx())
 	evalTp := argType.EvalType()
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTp, argType.Clone())
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTp, evalTp, types.ETString)
 	if err != nil {
 		return nil, err
 	}
 	bf.tp = argType.Clone()
 	switch evalTp {
 	case types.ETString:
+		if types.IsBinaryStr(argType) || types.IsBinaryStr(args[1].GetType(ctx.GetEvalCtx())) {
+			return &builtinMaskFullBinarySig{bf}, nil
+		}
 		return &builtinMaskFullStringSig{bf}, nil
 	case types.ETDatetime, types.ETTimestamp:
 		if !types.IsTypeTime(argType.GetType()) {
@@ -76,11 +77,47 @@ func (b *builtinMaskFullStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinMaskFullStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	_, isNull, err := b.args[0].EvalString(ctx, row)
+	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	return maskFullStringDefault, false, nil
+	mask, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+	maskRunes := []rune(mask)
+	if len(maskRunes) != 1 {
+		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
+	}
+	return strings.Repeat(string(maskRunes[0]), len([]rune(str))), false, nil
+}
+
+type builtinMaskFullBinarySig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskFullBinarySig) Clone() builtinFunc {
+	newSig := &builtinMaskFullBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskFullBinarySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+	mask, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+	if len(mask) != 1 {
+		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
+	}
+	return strings.Repeat(mask, len(str)), false, nil
 }
 
 type builtinMaskFullTimeSig struct {

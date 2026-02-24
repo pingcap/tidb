@@ -28,8 +28,8 @@ func TestMaskingPolicyDDLBasic(t *testing.T) {
 	tk.MustExec("create table t (id int primary key auto_increment, c char(120))")
 
 	tk.MustExec("create masking policy p on t(c) as c")
-	tk.MustQuery("select policy_name, db_name, table_name, column_name, expression, status, function_type from mysql.tidb_masking_policy where policy_name = 'p'").
-		Check(testkit.Rows("p test t c `c` ENABLE CUSTOM"))
+	tk.MustQuery("select policy_name, db_name, table_name, column_name, expression, status, masking_type, restrict_on from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("p test t c `c` ENABLE CUSTOM NONE"))
 
 	tk.MustExec("alter table t disable masking policy p")
 	tk.MustQuery("select status from mysql.tidb_masking_policy where policy_name = 'p'").
@@ -39,9 +39,9 @@ func TestMaskingPolicyDDLBasic(t *testing.T) {
 	tk.MustQuery("select status from mysql.tidb_masking_policy where policy_name = 'p'").
 		Check(testkit.Rows("ENABLE"))
 
-	tk.MustExec("create or replace masking policy p on t(c) as mask_full(c)")
-	tk.MustQuery("select function_type from mysql.tidb_masking_policy where policy_name = 'p'").
-		Check(testkit.Rows("FULL"))
+	tk.MustExec("create or replace masking policy p on t(c) as mask_full(c, '*')")
+	tk.MustQuery("select masking_type from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("MASK_FULL"))
 
 	tk.MustExec("alter table t drop masking policy p")
 	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p'").

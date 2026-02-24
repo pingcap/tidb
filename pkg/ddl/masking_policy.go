@@ -76,7 +76,8 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 		replacePolicy := existPolicy.Clone()
 		replacePolicy.Expression = policyInfo.Expression
 		replacePolicy.Status = policyInfo.Status
-		replacePolicy.FunctionType = policyInfo.FunctionType
+		replacePolicy.MaskingType = policyInfo.MaskingType
+		replacePolicy.RestrictOps = policyInfo.RestrictOps
 		replacePolicy.UpdatedAt = policyInfo.UpdatedAt
 		if err = metaMut.UpdateMaskingPolicy(replacePolicy); err != nil {
 			job.State = model.JobStateCancelled
@@ -153,7 +154,8 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 	newPolicy := oldPolicy.Clone()
 	newPolicy.Expression = args.Policy.Expression
 	newPolicy.Status = args.Policy.Status
-	newPolicy.FunctionType = args.Policy.FunctionType
+	newPolicy.MaskingType = args.Policy.MaskingType
+	newPolicy.RestrictOps = args.Policy.RestrictOps
 	newPolicy.UpdatedAt = args.Policy.UpdatedAt
 	if err = metaMut.UpdateMaskingPolicy(newPolicy); err != nil {
 		job.State = model.JobStateCancelled
@@ -309,7 +311,7 @@ func isMaskingPolicySupportedType(ft *types.FieldType) bool {
 	if types.IsTypeChar(tp) || types.IsTypeVarchar(tp) {
 		return true
 	}
-	if types.IsTypeBlob(tp) && !types.IsBinaryStr(ft) {
+	if types.IsTypeBlob(tp) {
 		return true
 	}
 	if types.IsTypeTime(tp) || tp == mysql.TypeDuration || tp == mysql.TypeYear {
@@ -325,6 +327,7 @@ func buildMaskingPolicyInfo(
 	policyName ast.CIStr,
 	columnName ast.CIStr,
 	expr ast.ExprNode,
+	restrictOps ast.MaskingPolicyRestrictOps,
 	state ast.MaskingPolicyState,
 ) (*model.MaskingPolicyInfo, error) {
 	tblInfo := tbl.Meta()
@@ -343,26 +346,27 @@ func buildMaskingPolicyInfo(
 		return nil, err
 	}
 	status := maskingPolicyStatusFromState(state)
-	funcType := maskingPolicyFuncTypeFromExpr(expr)
+	maskingType := maskingPolicyTypeFromExpr(expr)
 	now := time.Now()
 	createdBy := ""
 	if user := ctx.GetSessionVars().User; user != nil {
 		createdBy = user.String()
 	}
 	return &model.MaskingPolicyInfo{
-		Name:         policyName,
-		DBName:       schema.Name,
-		TableName:    tblInfo.Name,
-		TableID:      tblInfo.ID,
-		ColumnName:   col.Name,
-		ColumnID:     col.ID,
-		Expression:   exprStr,
-		Status:       status,
-		FunctionType: funcType,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		CreatedBy:    createdBy,
-		State:        model.StateNone,
+		Name:        policyName,
+		DBName:      schema.Name,
+		TableName:   tblInfo.Name,
+		TableID:     tblInfo.ID,
+		ColumnName:  col.Name,
+		ColumnID:    col.ID,
+		Expression:  exprStr,
+		Status:      status,
+		MaskingType: maskingType,
+		RestrictOps: restrictOps,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		CreatedBy:   createdBy,
+		State:       model.StateNone,
 	}, nil
 }
 
@@ -382,29 +386,29 @@ func maskingPolicyStatusFromState(state ast.MaskingPolicyState) model.MaskingPol
 	return model.MaskingPolicyStatusEnable
 }
 
-func maskingPolicyFuncTypeFromExpr(expr ast.ExprNode) model.MaskingPolicyFuncType {
+func maskingPolicyTypeFromExpr(expr ast.ExprNode) model.MaskingPolicyType {
 	fn, ok := expr.(*ast.FuncCallExpr)
 	if !ok {
-		return model.MaskingPolicyFuncTypeCustom
+		return model.MaskingPolicyTypeCustom
 	}
 	switch strings.ToLower(fn.FnName.L) {
 	case "mask_full":
-		return model.MaskingPolicyFuncTypeFull
+		return model.MaskingPolicyTypeFull
 	case "mask_partial":
-		return model.MaskingPolicyFuncTypePartial
+		return model.MaskingPolicyTypePartial
 	case "mask_null":
-		return model.MaskingPolicyFuncTypeNull
+		return model.MaskingPolicyTypeNull
 	case "mask_date":
-		return model.MaskingPolicyFuncTypeCustom
+		return model.MaskingPolicyTypeDate
 	default:
-		return model.MaskingPolicyFuncTypeCustom
+		return model.MaskingPolicyTypeCustom
 	}
 }
 
 func (w *worker) insertMaskingPolicyIntoSysTable(jobCtx *jobContext, policy *model.MaskingPolicyInfo) error {
 	const insertSQL = `INSERT INTO mysql.tidb_masking_policy
-		(policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, function_type, created_at, updated_at, created_by)
-		VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`
+		(policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
+		VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`
 	_, err := w.sess.Execute(jobCtx.stepCtx, insertSQL, "create-masking-policy",
 		policy.ID,
 		policy.Name.O,
@@ -415,7 +419,8 @@ func (w *worker) insertMaskingPolicyIntoSysTable(jobCtx *jobContext, policy *mod
 		policy.ColumnID,
 		policy.Expression,
 		policy.Status.String(),
-		string(policy.FunctionType),
+		string(policy.MaskingType),
+		maskingPolicyRestrictOpsToString(policy.RestrictOps),
 		policy.CreatedAt,
 		policy.UpdatedAt,
 		policy.CreatedBy,
@@ -426,7 +431,7 @@ func (w *worker) insertMaskingPolicyIntoSysTable(jobCtx *jobContext, policy *mod
 func (w *worker) updateMaskingPolicyInSysTable(jobCtx *jobContext, policy *model.MaskingPolicyInfo) error {
 	const updateSQL = `UPDATE mysql.tidb_masking_policy
 		SET policy_name = %?, db_name = %?, table_name = %?, table_id = %?, column_name = %?, column_id = %?, expression = %?,
-			status = %?, function_type = %?, updated_at = %?
+			status = %?, masking_type = %?, restrict_on = %?, updated_at = %?
 		WHERE policy_id = %?`
 	_, err := w.sess.Execute(jobCtx.stepCtx, updateSQL, "update-masking-policy",
 		policy.Name.O,
@@ -437,11 +442,33 @@ func (w *worker) updateMaskingPolicyInSysTable(jobCtx *jobContext, policy *model
 		policy.ColumnID,
 		policy.Expression,
 		policy.Status.String(),
-		string(policy.FunctionType),
+		string(policy.MaskingType),
+		maskingPolicyRestrictOpsToString(policy.RestrictOps),
 		policy.UpdatedAt,
 		policy.ID,
 	)
 	return errors.Trace(err)
+}
+
+func maskingPolicyRestrictOpsToString(ops ast.MaskingPolicyRestrictOps) string {
+	if ops == ast.MaskingPolicyRestrictOpNone {
+		return "NONE"
+	}
+
+	vals := make([]string, 0, 4)
+	if ops&ast.MaskingPolicyRestrictOpInsertIntoSelect != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameInsertIntoSelect)
+	}
+	if ops&ast.MaskingPolicyRestrictOpUpdateSelect != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameUpdateSelect)
+	}
+	if ops&ast.MaskingPolicyRestrictOpDeleteSelect != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameDeleteSelect)
+	}
+	if ops&ast.MaskingPolicyRestrictOpCTAS != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameCTAS)
+	}
+	return strings.Join(vals, ",")
 }
 
 func (w *worker) deleteMaskingPolicyFromSysTable(jobCtx *jobContext, policyID int64) error {

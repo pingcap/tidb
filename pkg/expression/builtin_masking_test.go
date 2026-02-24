@@ -28,28 +28,33 @@ import (
 func TestMaskFull(t *testing.T) {
 	ctx := createContext(t)
 
-	f, err := newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{"abc"})...)
+	f, err := newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{"abc", "*"})...)
 	require.NoError(t, err)
 	d, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.Equal(t, "XXXX", d.GetString())
+	require.Equal(t, "***", d.GetString())
+
+	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{"abc", "**"})...)
+	require.NoError(t, err)
+	_, err = f.Eval(ctx, chunk.Row{})
+	require.Error(t, err)
 
 	dateInput := types.NewTime(types.FromDate(2020, 1, 2, 0, 0, 0, 0), mysql.TypeDate, 0)
-	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{dateInput})...)
+	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{dateInput, "*"})...)
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "1970-01-01", d.GetMysqlTime().String())
 
 	dtInput := types.NewTime(types.FromDate(2020, 1, 2, 3, 4, 5, 0), mysql.TypeDatetime, 0)
-	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{dtInput})...)
+	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{dtInput, "*"})...)
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "1970-01-01 00:00:00", d.GetMysqlTime().String())
 
 	durationInput := types.Duration{Duration: time.Hour + time.Minute, Fsp: 0}
-	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{durationInput})...)
+	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{durationInput, "*"})...)
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -57,7 +62,7 @@ func TestMaskFull(t *testing.T) {
 
 	yearType := types.NewFieldType(mysql.TypeYear)
 	yearArg := &Constant{Value: types.NewIntDatum(2020), RetType: yearType}
-	f, err = newFunctionForTest(ctx, ast.MaskFull, yearArg)
+	f, err = newFunctionForTest(ctx, ast.MaskFull, yearArg, primitiveValsToConstants(ctx, []any{"*"})[0])
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
