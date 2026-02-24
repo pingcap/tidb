@@ -75,7 +75,7 @@ func getCoarseGrainedSplitKeys(splitKeys [][]byte) [][]byte {
 	for ; i < len(splitKeys); i += sqrtCnt {
 		coarseGrainedSplitKeys = append(coarseGrainedSplitKeys, splitKeys[i])
 	}
-	if i != len(splitKeys) {
+	if i-sqrtCnt != len(splitKeys)-1 {
 		coarseGrainedSplitKeys = append(coarseGrainedSplitKeys, splitKeys[len(splitKeys)-1])
 	}
 	return coarseGrainedSplitKeys

@@ -416,3 +416,28 @@ func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 		require.Equal(t, int32(1), splitCli.splitCount.Load())
 	})
 }
+
+func TestGetCoarseGrainedSplitKeys(t *testing.T) {
+	makeSplitKeys := func(n int) [][]byte {
+		keys := make([][]byte, n)
+		for i := 0; i < n; i++ {
+			keys[i] = []byte{byte(i >> 8), byte(i)}
+		}
+		return keys
+	}
+
+	t.Run("last key selected in loop is not appended twice", func(t *testing.T) {
+		splitKeys := makeSplitKeys(122)
+		coarseGrainedSplitKeys := getCoarseGrainedSplitKeys(splitKeys)
+		lastKey := splitKeys[len(splitKeys)-1]
+
+		lastKeyCount := 0
+		for _, key := range coarseGrainedSplitKeys {
+			if bytes.Equal(key, lastKey) {
+				lastKeyCount++
+			}
+		}
+
+		require.Equal(t, 1, lastKeyCount)
+	})
+}
