@@ -400,7 +400,7 @@ func TestIndexJoinBatchModeInSimpleApply(t *testing.T) {
 		found := false
 		var walk func(base.PhysicalPlan)
 		walk = func(plan base.PhysicalPlan) {
-			switch plan.(type) {
+			switch v := plan.(type) {
 			case *physicalop.PhysicalIndexHashJoin:
 				require.False(t, v.ForceRowMode)
 				require.Contains(t, v.ExplainInfo(), "batch-mode:true")
