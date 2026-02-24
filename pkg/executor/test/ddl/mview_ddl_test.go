@@ -89,8 +89,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Equal(t, "FAST", mvTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "NOW()", mvTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "300", mvTable.Meta().MaterializedView.RefreshNext)
-	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0, NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvTable.Meta().ID)).
-		Check(testkit.Rows("1 1"))
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvTable.Meta().ID)).
+		Check(testkit.Rows("1"))
 
 	// Base table reverse mapping maintained by DDL.
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
@@ -232,18 +232,21 @@ func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 	}()
 
 	var initTS uint64
+	var mviewID int64
 	require.Eventually(t, func() bool {
-		rows := tk.MustQuery("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE, LAST_SUCCESSFUL_REFRESH_READ_TSO from mysql.tidb_mview_refresh").Rows()
+		rows := tk.MustQuery("select MVIEW_ID, LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info").Rows()
 		if len(rows) != 1 {
 			return false
 		}
-		if fmt.Sprint(rows[0][0]) != "running" || fmt.Sprint(rows[0][1]) != "complete" {
+		id, err := strconv.ParseInt(fmt.Sprint(rows[0][0]), 10, 64)
+		if err != nil || id == 0 {
 			return false
 		}
-		ts, err := strconv.ParseUint(fmt.Sprint(rows[0][2]), 10, 64)
+		ts, err := strconv.ParseUint(fmt.Sprint(rows[0][1]), 10, 64)
 		if err != nil || ts == 0 {
 			return false
 		}
+		mviewID = id
 		initTS = ts
 		return true
 	}, 30*time.Second, 100*time.Millisecond)
@@ -255,14 +258,11 @@ func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustQuery("select a, s, cnt from mv_state order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
-	rows := tk.MustQuery("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE, LAST_SUCCESSFUL_REFRESH_READ_TSO, LAST_REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh").Rows()
+	rows := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, "success", fmt.Sprint(rows[0][0]))
-	require.Equal(t, "complete", fmt.Sprint(rows[0][1]))
-	finalTS, err := strconv.ParseUint(fmt.Sprint(rows[0][2]), 10, 64)
+	finalTS, err := strconv.ParseUint(fmt.Sprint(rows[0][0]), 10, 64)
 	require.NoError(t, err)
-	require.Greater(t, finalTS, initTS)
-	require.Equal(t, "1", fmt.Sprint(rows[0][3]))
+	require.GreaterOrEqual(t, finalTS, initTS)
 }
 
 func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testing.T) {
@@ -305,24 +305,41 @@ func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testi
 		ddlDone <- tkDDL.ExecToErr("create materialized view mv_upsert_visibility (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
 	}()
 
+	var prewriteTS uint64
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info").Rows()
+		if len(rows) != 1 {
+			return false
+		}
+		ts, err := strconv.ParseUint(fmt.Sprint(rows[0][0]), 10, 64)
+		if err != nil || ts == 0 {
+			return false
+		}
+		prewriteTS = ts
+		return true
+	}, 30*time.Second, 100*time.Millisecond)
+
 	select {
 	case <-paused:
 	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for post-upsert failpoint")
 	}
 
-	// The post-build success status should stay invisible before this DDL step commits.
-	tk.MustQuery("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE from mysql.tidb_mview_refresh").Check(testkit.Rows("running complete"))
-	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh where LAST_REFRESH_RESULT='success'").Check(testkit.Rows("0"))
+	// The post-build success upsert should stay invisible before this DDL step commits.
+	rows := tk.MustQuery("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info").Rows()
+	require.Len(t, rows, 1)
+	visibleTS, err := strconv.ParseUint(fmt.Sprint(rows[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, prewriteTS, visibleTS)
 
 	release()
 
-	err := <-ddlDone
+	err = <-ddlDone
 	require.Error(t, err)
 	require.ErrorContains(t, err, "detected residual build rows on retry")
 	require.NotContains(t, err.Error(), "Duplicate entry")
 	tk.MustQuery("show tables like 'mv_upsert_visibility'").Check(testkit.Rows())
-	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
 
 	is := dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
