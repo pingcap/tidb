@@ -910,23 +910,23 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	}
 
 	// This rule is empirical but not always correct.
-	// If one path has significantly fewer seeks than the other, for example, 40 times, we think
+	// If one path has significantly fewer seeks than the other, for example, 10 times, we think
 	// that path is better. See #63487 for why this is necessary.
 	lhsRangeCnt := float64(len(lhs.path.Ranges))
 	rhsRangeCnt := float64(len(rhs.path.Ranges))
-	if lhsRangeCnt > 100 || rhsRangeCnt > 100 {
-		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, 40))
+	if lhsRangeCnt > 50 || rhsRangeCnt > 50 {
+		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, 10))
 		sctx.GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix63487)
 		if threshold > 0 { // set it to 0 to disable this rule
 			seekCostDiff := math.Abs(lhsRangeCnt-rhsRangeCnt) * cost.SeekFactor
 
 			// Case 1: Consider pruning lhs (high seeks) in favor of rhs (low seeks).
 			// Prune lhs only if ALL of the following conditions are satisfied:
-			// 1. lhs has significantly more seeks than rhs (exceeds threshold, e.g., 40x)
+			// 1. lhs has significantly more seeks than rhs (exceeds threshold, e.g., 10x)
 			// 2. Seek cost savings outweigh any sort penalty from choosing rhs:
 			//    - If rhs matches ORDER BY: no sort penalty (sortCost = 0)
 			//    - If rhs doesn't match ORDER BY: sortCost = rhs.MaxRows × SortFactor
-			// 3. We don't unintentionally favor a table scan over an index scan (scanResult <= 0)
+			// 3. We don't unintentionally favor non-covering index over a covering index (scanResult <= 0)
 			if lhsRangeCnt/rhsRangeCnt > threshold && scanResult <= 0 {
 				sortCost := 0.0
 				if matchResult > 0 {
@@ -945,11 +945,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 			// Case 2: Consider pruning rhs (high seeks) in favor of lhs (low seeks).
 			// Prune rhs only if ALL of the following conditions are satisfied:
-			// 1. rhs has significantly more seeks than lhs (exceeds threshold, e.g., 40x)
+			// 1. rhs has significantly more seeks than lhs (exceeds threshold, e.g., 10x)
 			// 2. Seek cost savings outweigh any sort penalty from choosing lhs:
 			//    - If lhs matches ORDER BY: no sort penalty (sortCost = 0)
 			//    - If lhs doesn't match ORDER BY: sortCost = lhs.MaxRows × SortFactor
-			// 3. We don't unintentionally favor a table scan over an index scan (scanResult >= 0)
+			// 3. We don't unintentionally favor a non-covering index over a covering index (scanResult >= 0)
 			if rhsRangeCnt/lhsRangeCnt > threshold && scanResult >= 0 {
 				sortCost := 0.0
 				if matchResult < 0 {

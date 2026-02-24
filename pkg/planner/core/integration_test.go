@@ -2309,8 +2309,89 @@ func TestINListMatchPruning(t *testing.T) {
 	})
 }
 
+func TestOptimalIndexWhenSeekNumHigh(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+
+	tk.MustExec(`create table t1 (
+		a int,
+		b int,
+		c int,
+		d int,
+		e int,
+		primary key(a, b, c, d, e) /*T![clustered_index] NONCLUSTERED */,
+		index idx_abdec (a, b, d, e, c)
+	)`)
+
+	// Insert 9K rows: a=1, b=1, c=1-60, d=1-150, e=0
+	tk.MustExec("set @@cte_max_recursion_depth=9000")
+	tk.MustExec(`insert into t1 (a, b, c, d, e)
+		select * from (
+			with recursive tt as (
+				select 1 as a, 1 as b, 1 as c, 1 as d, 0 as e
+				union all
+				select
+					a,
+					b,
+					case when d = 150 then c + 1 else c end,
+					case when d = 150 then 1 else d + 1 end,
+					e
+				from tt
+				where c < 60 or (c = 60 and d < 150)
+			)
+			select * from tt
+		) t
+	`)
+
+	// sleep(1) is necessary for statistics to reflect recently committed changes
+	tk.MustExec("select sleep(1)")
+	tk.MustExec("analyze table t1 all columns")
+
+	// c values: 1-60
+	var cValues []string
+	for i := 1; i <= 60; i++ {
+		cValues = append(cValues, fmt.Sprintf("%d", i))
+	}
+
+	// d values: 1, 151-169
+	dValues := []string{"1"}
+	for i := 151; i <= 169; i++ {
+		dValues = append(dValues, fmt.Sprintf("%d", i))
+	}
+
+	query := fmt.Sprintf(`select c, d, e from t1
+		where a = 1
+		and b = 1
+		and c in (%s)
+		and d in (%s)`, strings.Join(cValues, ","), strings.Join(dValues, ","))
+
+	var ranges []string
+	for _, d := range dValues {
+		ranges = append(ranges, fmt.Sprintf("[1 1 %s,1 1 %s]", d, d))
+	}
+	rangesStr := strings.Join(ranges, ", ")
+	cValuesStr := strings.Join(cValues, ", ")
+
+	// Test that with IN-list match pruning and accounting for seek cost in skyline pruning, idx_abdec
+	// is used instead with ranges on [a, b, d]. Assuming that a seek is 30x as expensive as a
+	// next operation and a sort is 1/135x as expensive as a next operation, the cost is roughly as follows:
+	// - Ranges on PRIMARY[a, b, c, d]: 1,200 x 30 + 60 = 36,060
+	// - Ranges on PRIMARY[a, b, c]: 60 x 30 + 9,000 + 9,000/135 = 10,866.67
+	// - Ranges on PRIMARY[a, b]: 1 x 30 + 9,000 + 9,000/135 = 9,096.67
+	// - Ranges on idx_abdec[a, b, d]: 20 x 30 + 60 = 660
+	// - Ranges on idx_abdec[a, b]: 1 x 30 + 9,000/135 = 9,096.67
+	expectedPlan := [][]any{
+		{"IndexReader", "root", "", "index:Projection"},
+		{"└─Projection", "cop[tikv]", "", "test.t1.c, test.t1.d, test.t1.e"},
+		{"  └─Selection", "cop[tikv]", "", fmt.Sprintf("in(test.t1.c, %s)", cValuesStr)},
+		{"    └─IndexRangeScan", "cop[tikv]", "table:t1, index:idx_abdec(a, b, d, e, c)", fmt.Sprintf("range:%s, keep order:false", rangesStr)},
+	}
+	tk.MustQuery("explain format='brief' "+query).CheckAt([]int{0, 2, 3, 4}, expectedPlan)
+}
+
 // https://github.com/pingcap/tidb/issues/62499
-// https://github.com/pingcap/tidb/issues/63487
 func TestHashJoinWhenSeekNumHigh(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2399,83 +2480,4 @@ func TestHashJoinWhenSeekNumHigh(t *testing.T) {
 	require.True(t, hasHashJoin && !hasIndexJoin,
 		"Optimizer should prefer HashJoin over IndexJoin due to high seek cost.\nPlan:\n%s",
 		plan)
-}
-
-func TestOptimalIndexWhenSeekNumHigh(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-
-	tk.MustExec(`create table t1 (
-		a int,
-		b int,
-		c int,
-		d int,
-		e int,
-		primary key(a, b, c, d, e) /*T![clustered_index] NONCLUSTERED */,
-		index idx_abdec (a, b, d, e, c)
-	)`)
-
-	// Insert 9K rows: a=1, b=1, c=1-60, d=1-150, e=0
-	tk.MustExec("set @@cte_max_recursion_depth=9000")
-	tk.MustExec(`insert into t1 (a, b, c, d, e)
-		select * from (
-			with recursive tt as (
-				select 1 as a, 1 as b, 1 as c, 1 as d, 0 as e
-				union all
-				select
-					a,
-					b,
-					case when d = 150 then c + 1 else c end,
-					case when d = 150 then 1 else d + 1 end,
-					e
-				from tt
-				where c < 60 or (c = 60 and d < 150)
-			)
-			select * from tt
-		) t
-	`)
-	tk.MustExec("analyze table t1")
-
-	// c values: 1-60
-	var cValues []string
-	for i := 1; i <= 60; i++ {
-		cValues = append(cValues, fmt.Sprintf("%d", i))
-	}
-
-	// d values: 1, 151-169
-	dValues := []string{"1"}
-	for i := 151; i <= 169; i++ {
-		dValues = append(dValues, fmt.Sprintf("%d", i))
-	}
-
-	query := fmt.Sprintf(`select c, d, e from t1
-		where a = 1
-		and b = 1
-		and c in (%s)
-		and d in (%s)`, strings.Join(cValues, ","), strings.Join(dValues, ","))
-
-	var ranges []string
-	for _, d := range dValues {
-		ranges = append(ranges, fmt.Sprintf("[1 1 %s,1 1 %s]", d, d))
-	}
-	rangesStr := strings.Join(ranges, ", ")
-	cValuesStr := strings.Join(cValues, ", ")
-
-	// Test that with IN-list match pruning and accounting for seek cost in skyline pruning, idx_abdec
-	// is used instead with ranges on [a, b, d]. Assuming that a seek is 30x as expensive as a
-	// next operation, the cost is roughly as follows:
-	// - Ranges on PRIMARY[a, b, c, d]: 1,200 x 30 + 60 = 36,060
-	// - Ranges on PRIMARY[a, b, c]: 60 x 30 + 9,000 = 10,800
-	// - Ranges on PRIMARY[a, b]: 1 x 30 + 9,000 = 9,030
-	// - Ranges on idx_abdec[a, b, d]: 20 x 30 + 60 = 660
-	// - Ranges on idx_abdec[a, b]: 1 x 30 + 9,000 = 9,030
-	expectedPlan := []string{
-		"IndexReader 98.00 root  index:Projection",
-		"└─Projection 98.00 cop[tikv]  test.t1.c, test.t1.d, test.t1.e",
-		fmt.Sprintf("  └─Selection 98.00 cop[tikv]  in(test.t1.c, %s)", cValuesStr),
-		fmt.Sprintf("    └─IndexRangeScan 98.00 cop[tikv] table:t1, index:idx_abdec(a, b, d, e, c) range:%s, keep order:false", rangesStr),
-	}
-	tk.MustQuery("explain format='brief' " + query).Check(testkit.Rows(expectedPlan...))
 }
