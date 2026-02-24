@@ -1,0 +1,61 @@
+# TestIssue65289: Exchange partition then create global index may cause data/index inconsistency
+# https://github.com/pingcap/tidb/issues/65289
+
+# Create non-partitioned table with nonclustered primary key
+drop table if exists t,tp;
+CREATE TABLE t (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED);
+
+# Create partitioned table with nonclustered primary key
+CREATE TABLE tp (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED)
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (5),
+ PARTITION p1 VALUES LESS THAN (11),
+ PARTITION p2 VALUES LESS THAN (20)
+);
+
+# Insert data into partitioned table
+# p0 will have a=2,4 (2 rows)
+# p1 will have a=6 (1 row)
+# p2 will be empty
+insert into tp (a,b) values (2,2),(4,4),(6,6);
+
+# Insert data into non-partitioned table
+insert into t (a,b) values (12,2),(14,4),(16,6);
+
+# Verify initial data
+--sorted_result
+select a, b, _tidb_rowid from tp;
+--sorted_result
+select a, b, _tidb_rowid from t;
+
+# Exchange partition p2 with table t
+# After this, p2 will have a=12,14,16 (3 rows)
+ALTER TABLE tp EXCHANGE PARTITION p2 WITH TABLE t;
+
+# Verify data after exchange
+--sorted_result
+select a, b, _tidb_rowid from tp;
+
+# Note: There are now duplicate _tidb_rowid values:
+# - p0 has _tidb_rowid 1,2
+# - p1 has _tidb_rowid 3
+# - p2 has _tidb_rowid 1,2,3
+
+# Create global index on column b
+create index idx_b on tp(b) global;
+
+# These two queries should return the same count
+# Bug: use index returns 3 rows, ignore index returns 6 rows
+select count(*) from tp use index(idx_b);
+select count(*) from tp ignore index(idx_b);
+
+# Verify all rows are accessible via the global index
+--sorted_result
+select a, b, _tidb_rowid from tp use index(idx_b);
+--sorted_result
+select a, b, _tidb_rowid from tp ignore index(idx_b);
+
+# Check for data/index inconsistency
+admin check table tp;
+
+drop table t, tp;

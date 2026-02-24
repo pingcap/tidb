@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package binaryplan
 
 import (
 	"encoding/base64"
@@ -106,6 +106,42 @@ func TestBinaryPlanSwitch(t *testing.T) {
 	require.Len(t, result, 1)
 	s = result[0]
 	require.Empty(t, s)
+
+	// issue:41458
+	tk.MustExec("create database special")
+	tk.MustExec("use special")
+	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
+	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
+	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'special' and STMT_TYPE = 'Select';").Sort().Rows()
+	plan := rawRows[0][0].(string)
+	rows := strings.Split(plan, "\n")
+	rows = rows[1:]
+	expectedRes := []string{
+		"Projection",
+		"└─HashJoin",
+		"  ├─HashJoin",
+		"  │ ├─HashJoin",
+		"  │ │ ├─IndexLookUp",
+		"  │ │ │ ├─IndexRangeScan",
+		"  │ │ │ └─Selection",
+		"  │ │ │   └─TableRowIDScan",
+		"  │ │ └─IndexLookUp",
+		"  │ │   ├─IndexRangeScan",
+		"  │ │   └─Selection",
+		"  │ │     └─TableRowIDScan",
+		"  │ └─TableReader",
+		"  │   └─Selection",
+		"  │     └─TableFullScan",
+		"  └─TableReader",
+		"    └─Selection",
+		"      └─TableFullScan",
+	}
+	for i, row := range rows {
+		fields := strings.Split(row, "\t")
+		fields = strings.Split(fields[1], "_")
+		op := fields[0]
+		require.Equalf(t, expectedRes[i], op, fmt.Sprintf("Mismatch at index %d.", i))
+	}
 }
 
 // TestTooLongBinaryPlan asserts that if the binary plan is larger than 1024*1024 bytes, it should be output to slow query but not to stmt summary.

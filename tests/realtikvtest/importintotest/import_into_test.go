@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/docker/go-units"
@@ -1373,14 +1374,17 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	if kerneltype.IsClassic() {
 		s.T().Skip("max node and thread auto calculation is not supported in classic")
 	}
-	content := []byte(`1,1
-	2,2`)
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "mock-datasize-test",
-			Name:       "t.csv",
-		},
-		Content: content,
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "mock-datasize-test", Name: "t.csv"},
+		Content:     []byte("1,1\n2,2"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "mock-datasize-test", Name: "t2.csv"},
+		Content:     []byte("3,3\n4,4"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "mock-datasize-test", Name: "t3.csv"},
+		Content:     []byte("5,5"),
 	})
 	s.prepareAndUseDB("import_into")
 	// set amplify factor to 2
@@ -1397,37 +1401,51 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	setAmplifyFactorFn(2)
 	defer setAmplifyFactorFn(1)
 	s.tk.MustExec("create table t (a int, b int);")
-	testCases := []struct {
-		tblName    string
-		size       int64
-		threadCnt  int
-		maxNodeCnt int
-	}{
-		{tblName: "t1", size: 15 * units.GiB, threadCnt: 1, maxNodeCnt: 1},
-		{tblName: "t2", size: 25 * units.GiB, threadCnt: 2, maxNodeCnt: 1},
-		{tblName: "t3", size: 100 * units.GiB, threadCnt: 8, maxNodeCnt: 1},
-		{tblName: "t4", size: 150 * units.GiB, threadCnt: 12, maxNodeCnt: 1},
-		{tblName: "t5", size: 40 * units.TiB, threadCnt: 16, maxNodeCnt: 32},
-	}
-	for _, tc := range testCases {
-		s.tk.MustExec("create table import_into." + tc.tblName + " (a int, b int);")
-		testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/mockImportDataSize", func(totalSize *int64) {
-			*totalSize = tc.size
-		})
-		sql := fmt.Sprintf(`IMPORT INTO import_into.%s FROM 'gs://mock-datasize-test/t.csv?endpoint=%s'`, tc.tblName, gcsEndpoint)
-		s.tk.MustQuery(sql)
-		s.tk.MustQuery("SELECT * FROM import_into." + tc.tblName + ";").Check(testkit.Rows("1 1", "2 2"))
+	checkResourceParamFn := func(thread, maxNode int) {
 		s.tk.MustQuery(`
 		with
 		all_subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history order by end_time desc limit 1)
 		select concurrency from all_subtasks
-		`).Check(testkit.Rows(fmt.Sprintf("%d", tc.threadCnt)))
+		`).Check(testkit.Rows(fmt.Sprintf("%d", thread)))
 		s.tk.MustQuery(`
 		with
 		global_tasks as (table mysql.tidb_global_task union table mysql.tidb_global_task_history order by end_time desc limit 1)
 		select max_node_count from global_tasks
-		`).Check(testkit.Rows(fmt.Sprintf("%d", tc.maxNodeCnt)))
+		`).Check(testkit.Rows(fmt.Sprintf("%d", maxNode)))
 	}
+	testCases := []struct {
+		tblName    string
+		factor     int64
+		threadCnt  int
+		maxNodeCnt int
+	}{
+		{tblName: "t1", factor: 2 * units.GiB, threadCnt: 1, maxNodeCnt: 1},
+		{tblName: "t2", factor: 3 * units.GiB, threadCnt: 2, maxNodeCnt: 1},
+		{tblName: "t3", factor: 14 * units.GiB, threadCnt: 8, maxNodeCnt: 1},
+		{tblName: "t4", factor: 21 * units.GiB, threadCnt: 12, maxNodeCnt: 1},
+		{tblName: "t5", factor: 5 * units.TiB, threadCnt: 16, maxNodeCnt: 32},
+	}
+	for _, tc := range testCases {
+		s.T().Run(tc.tblName, func(t *testing.T) {
+			s.tk.MustExec("create table import_into." + tc.tblName + " (a int, b int);")
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", fmt.Sprintf("return(%d)", tc.factor))
+			sql := fmt.Sprintf(`IMPORT INTO import_into.%s FROM 'gs://mock-datasize-test/t.csv?endpoint=%s'`, tc.tblName, gcsEndpoint)
+			s.tk.MustQuery(sql)
+			s.tk.MustQuery("SELECT * FROM import_into." + tc.tblName + ";").Check(testkit.Rows("1 1", "2 2"))
+			checkResourceParamFn(tc.threadCnt, tc.maxNodeCnt)
+		})
+	}
+
+	s.T().Run("multiple files", func(t *testing.T) {
+		setAmplifyFactorFn(1)
+		s.tk.MustExec("create table import_into.t_files(a int, b int);")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", fmt.Sprintf("return(%d)", 10*units.GiB))
+		sql := fmt.Sprintf(`IMPORT INTO import_into.t_files FROM 'gs://mock-datasize-test/*.csv?endpoint=%s'`, gcsEndpoint)
+		s.tk.MustQuery(sql)
+		s.tk.MustQuery("SELECT * FROM import_into.t_files;").Sort().Check(testkit.Rows(
+			"1 1", "2 2", "3 3", "4 4", "5 5"))
+		checkResourceParamFn(7, 1)
+	})
 }
 
 func (s *mockGCSSuite) TestTableMode() {

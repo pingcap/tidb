@@ -381,10 +381,10 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 	}
 
 	switch node := in.(type) {
-	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr, *ast.OnCondition,
-		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.Assignment, *ast.ParenthesesExpr, *ast.RowExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr,
-		*ast.TableOptimizerHint:
+	case *ast.AggregateFuncExpr, *ast.Assignment, *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.ByItem,
+		*ast.ColumnNameExpr, *ast.DeleteStmt, *ast.FieldList, *ast.InsertStmt, *ast.IsNullExpr, *ast.Join,
+		*ast.OnCondition, *ast.ParenthesesExpr, *ast.PatternInExpr, *ast.RowExpr, *ast.SelectField,
+		*ast.SelectStmt, *ast.TableOptimizerHint, *ast.TableRefsClause, *ast.TableSource, *ast.UpdateStmt:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.Limit:
 		if !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
@@ -489,7 +489,7 @@ func (checker *nonPreparedPlanCacheableChecker) Leave(in ast.Node) (out ast.Node
 
 func (*nonPreparedPlanCacheableChecker) isFilterNode(node ast.Node) bool {
 	switch node.(type) {
-	case *ast.BetweenExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr:
+	case *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.IsNullExpr, *ast.PatternInExpr:
 		return true
 	}
 	return false
@@ -543,6 +543,10 @@ func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum
 
 // isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
 func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+	if reason := p.GetNoncacheableReason(); reason != "" {
+		return false, reason
+	}
+
 	var subPlans []base.PhysicalPlan
 	switch x := p.(type) {
 	case *physicalop.PhysicalTableDual:
@@ -571,9 +575,6 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 	case *physicalop.PhysicalIndexScan:
 		if underIndexMerge && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
-		}
-		if x.Index.HasCondition() && x.NotAlwaysValid {
-			return false, "IndexScan of partial index is un-cacheable"
 		}
 	case *physicalop.PhysicalTableScan:
 		if underIndexMerge && x.IsFullScan() {

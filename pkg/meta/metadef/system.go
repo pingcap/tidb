@@ -152,6 +152,8 @@ const (
 	TiDBWorkloadValuesTableID = ReservedGlobalIDUpperBound - 59
 	// SysDatabaseID is the database ID of `sys`.
 	SysDatabaseID = ReservedGlobalIDUpperBound - 60
+	// TiDBSoftDeleteTableStatusTableID is the table ID of `tidb_softdelete_table_status`.
+	TiDBSoftDeleteTableStatusTableID = ReservedGlobalIDUpperBound - 61
 )
 
 // IsReservedID checks if the given ID is a reserved global ID.

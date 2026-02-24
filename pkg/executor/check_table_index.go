@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -336,13 +337,54 @@ type checkIndexWorker struct {
 	e          *FastCheckTableExec
 }
 
+type fastCheckSysSessionVarsBackup struct {
+	optimizerUseInvisibleIndexes bool
+	memQuotaQuery                int64
+	distSQLScanConcurrency       int
+	executorConcurrency          int
+	maxExecutionTime             uint64
+	tikvClientReadTimeout        uint64
+}
+
+func backupFastCheckSysSessionVars(sv *variable.SessionVars) fastCheckSysSessionVarsBackup {
+	return fastCheckSysSessionVarsBackup{
+		optimizerUseInvisibleIndexes: sv.OptimizerUseInvisibleIndexes,
+		memQuotaQuery:                sv.MemQuotaQuery,
+		distSQLScanConcurrency:       sv.DistSQLScanConcurrency(),
+		executorConcurrency:          sv.ExecutorConcurrency,
+		maxExecutionTime:             sv.MaxExecutionTime,
+		tikvClientReadTimeout:        sv.TiKVClientReadTimeout,
+	}
+}
+
+func (b fastCheckSysSessionVarsBackup) restoreTo(sv *variable.SessionVars) {
+	sv.OptimizerUseInvisibleIndexes = b.optimizerUseInvisibleIndexes
+	sv.MemQuotaQuery = b.memQuotaQuery
+	if sv.MemTracker != nil {
+		sv.MemTracker.SetBytesLimit(sv.MemQuotaQuery)
+	}
+	sv.SetDistSQLScanConcurrency(b.distSQLScanConcurrency)
+	sv.ExecutorConcurrency = b.executorConcurrency
+	sv.MaxExecutionTime = b.maxExecutionTime
+	sv.TiKVClientReadTimeout = b.tikvClientReadTimeout
+}
+
+func applyFastCheckSysSessionVars(sysVars, userVars *variable.SessionVars) {
+	sysVars.OptimizerUseInvisibleIndexes = true
+	sysVars.MemQuotaQuery = userVars.MemQuotaQuery
+	if sysVars.MemTracker != nil {
+		sysVars.MemTracker.SetBytesLimit(sysVars.MemQuotaQuery)
+	}
+	sysVars.SetDistSQLScanConcurrency(userVars.DistSQLScanConcurrency())
+	sysVars.ExecutorConcurrency = userVars.ExecutorConcurrency
+	sysVars.MaxExecutionTime = userVars.MaxExecutionTime
+	sysVars.TiKVClientReadTimeout = userVars.TiKVClientReadTimeout
+}
+
 func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	sessVars := se.GetSessionVars()
-	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
-	originMemQuotaQuery := sessVars.MemQuotaQuery
-
-	sessVars.OptimizerUseInvisibleIndexes = true
-	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	backup := backupFastCheckSysSessionVars(sessVars)
+	applyFastCheckSysSessionVars(sessVars, w.sctx.GetSessionVars())
 	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
 	if snapshot != 0 {
 		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
@@ -352,8 +394,7 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	}
 
 	return func() {
-		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
-		sessVars.MemQuotaQuery = originMemQuotaQuery
+		backup.restoreTo(sessVars)
 		if snapshot != 0 {
 			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
 			if err != nil {
@@ -449,6 +490,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		restoreCtx()
 		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
 	}()
+	var fpErr error
+	failpoint.InjectCall("fastCheckTableAfterInitSessCtx", se.GetSessionVars(), &fpErr)
+	if fpErr != nil {
+		return fpErr
+	}
 
 	tblMeta := w.table.Meta()
 	tblName := TableName(w.e.dbName, tblMeta.Name.String())

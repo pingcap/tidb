@@ -5,6 +5,9 @@ package backup
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -19,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -36,13 +41,15 @@ const (
 )
 
 type schemaInfo struct {
-	tableInfo  *model.TableInfo
-	dbInfo     *model.DBInfo
-	crc64xor   uint64
-	totalKvs   uint64
-	totalBytes uint64
-	stats      *util.JSONTable
-	statsIndex []*backuppb.StatsFileIndex
+	tableInfo                   *model.TableInfo
+	dbInfo                      *model.DBInfo
+	crc64xor                    uint64
+	totalKvs                    uint64
+	totalBytes                  uint64
+	stats                       *util.JSONTable
+	statsIndex                  []*backuppb.StatsFileIndex
+	isMergeOptionAllowed        bool
+	partitionMergeOptionAllowed map[string]bool
 }
 
 type iterFuncTp func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error
@@ -161,6 +168,14 @@ func (ss *Schemas) BackupSchemas(
 						logger.Error("dump table stats failed", logutil.ShortError(err))
 						return errors.Trace(err)
 					}
+				}
+				// Check merge option allowed (network I/O)
+				isMergeOptionAllowed, partitionMergeOptionAllowed, err := schema.checkMergeOptionAllowed(ectx)
+				if err != nil {
+					logger.Warn("failed to check merge_option for table", logutil.ShortError(err))
+				} else {
+					schema.isMergeOptionAllowed = isMergeOptionAllowed
+					schema.partitionMergeOptionAllowed = partitionMergeOptionAllowed
 				}
 			}
 			// Send schema to metawriter
@@ -294,12 +309,79 @@ func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 	}
 
 	return &backuppb.Schema{
-		Db:         dbBytes,
-		Table:      tableBytes,
-		Crc64Xor:   s.crc64xor,
-		TotalKvs:   s.totalKvs,
-		TotalBytes: s.totalBytes,
-		Stats:      statsBytes,
-		StatsIndex: s.statsIndex,
+		Db:                          dbBytes,
+		Table:                       tableBytes,
+		Crc64Xor:                    s.crc64xor,
+		TotalKvs:                    s.totalKvs,
+		TotalBytes:                  s.totalBytes,
+		Stats:                       statsBytes,
+		StatsIndex:                  s.statsIndex,
+		IsMergeOptionAllowed:        s.isMergeOptionAllowed,
+		PartitionMergeOptionAllowed: s.partitionMergeOptionAllowed,
 	}, nil
+}
+
+// checkMergeOptionAllowed checks if merge_option=allow is set for this table and its partitions.
+// Returns:
+//   - tableMergeOptionAllowed: whether merge_option=allow is set for the table itself
+//   - partitionMergeOptionAllowed: a map from partition name to whether merge_option=allow is set for that partition
+func (s *schemaInfo) checkMergeOptionAllowed(ctx context.Context) (bool, map[string]bool, error) {
+	partitionMergeOptionAllowed := make(map[string]bool)
+
+	// Construct the rule ID for this table using the same format as ddl/label
+	// Use .L (lowercase) to match DDL behavior for case-insensitive matching
+	dbName := s.dbInfo.Name.L
+	tableName := s.tableInfo.Name.L
+	ruleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, dbName, tableName)
+
+	// Collect all rule IDs to check (table + partitions if any)
+	ruleIDs := []string{ruleID}
+	if s.tableInfo.Partition != nil && len(s.tableInfo.Partition.Definitions) > 0 {
+		for _, def := range s.tableInfo.Partition.Definitions {
+			partitionRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, tableName, def.Name.L)
+			ruleIDs = append(ruleIDs, partitionRuleID)
+		}
+	}
+
+	// Get the specific label rules for this table and its partitions in batches
+	// to avoid overwhelming PD with too many requests at once
+	rules := make(map[string]*label.Rule)
+	for batch := range slices.Chunk(ruleIDs, utils.LabelRuleBatchSize) {
+		batchRules, err := infosync.GetLabelRules(ctx, batch)
+		if err != nil {
+			return false, nil, errors.Trace(err)
+		}
+
+		// Merge batch results into the main rules map
+		maps.Copy(rules, batchRules)
+	}
+
+	// Check if the table rule exists and has merge_option=allow
+	tableMergeOptionAllowed := false
+	if rule, exists := rules[ruleID]; exists {
+		for _, label := range rule.Labels {
+			if label.Key == "merge_option" && label.Value == "allow" {
+				tableMergeOptionAllowed = true
+				break
+			}
+		}
+	}
+
+	// Check partition rules if this is a partitioned table
+	if s.tableInfo.Partition != nil && len(s.tableInfo.Partition.Definitions) > 0 {
+		for _, def := range s.tableInfo.Partition.Definitions {
+			partitionRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, tableName, def.Name.L)
+			if rule, exists := rules[partitionRuleID]; exists {
+				for _, label := range rule.Labels {
+					if label.Key == "merge_option" && label.Value == "allow" {
+						// Use .O (original) for the map key to preserve case, but .L for rule ID matching
+						partitionMergeOptionAllowed[def.Name.O] = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return tableMergeOptionAllowed, partitionMergeOptionAllowed, nil
 }
