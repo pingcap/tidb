@@ -56,7 +56,7 @@ var sampleLogger = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(loguti
 
 // Manager is used to detect and record runaway queries.
 type Manager struct {
-	exit chan struct{}
+	exit <-chan struct{}
 	// queryLock is used to avoid repeated additions. Since we will add new items to the system table,
 	// in order to avoid repeated additions, we need a lock to ensure that
 	// action "judging whether there is this record in the current watch list and adding records" have atomicity.
@@ -403,7 +403,7 @@ func (rm *Manager) AddWatch(record *QuarantineRecord) {
 	ttl := time.Until(record.EndTime)
 	if record.EndTime.Equal(NullTime) {
 		ttl = 0
-	} else if ttl <= 0 {
+	} else if ttl <= 0 && record.ID != 0 {
 		rm.staleQuarantineFlusher.add(record.ID, record)
 		return
 	}

@@ -291,6 +291,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(RunawayFlusherCounter)
 	prometheus.MustRegister(RunawayFlusherAddCounter)
+	prometheus.MustRegister(RunawayFlusherDropCounter)
 	prometheus.MustRegister(RunawayFlusherBatchSizeHistogram)
 	prometheus.MustRegister(RunawayFlusherDurationHistogram)
 	prometheus.MustRegister(RunawayFlusherIntervalHistogram)

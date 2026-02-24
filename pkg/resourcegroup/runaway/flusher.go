@@ -100,11 +100,12 @@ func newBatchFlusher[K comparable, V any](
 }
 
 func (f *batchFlusher[K, V]) run() {
+	defer close(f.done)
+	defer util.Recover(metrics.LabelDomain, "batchFlusher-"+f.name, nil, false)
 	defer func() {
 		logutil.BgLogger().Info("flushing remaining records before stop", zap.String("name", f.name))
 		f.flush()
 		logutil.BgLogger().Info("stopped flusher", zap.String("name", f.name))
-		close(f.done)
 	}()
 	for {
 		select {

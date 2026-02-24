@@ -256,9 +256,10 @@ func TestBatchFlusherRunAndStop(t *testing.T) {
 	flusher.add("b", 2)
 	flusher.notifyFlush()
 
-	// Wait briefly for the flush goroutine to process.
-	time.Sleep(50 * time.Millisecond)
-	re.Equal(int32(1), flushCount.Load())
+	// Wait for the flush goroutine to process.
+	require.Eventually(t, func() bool {
+		return flushCount.Load() == 1
+	}, time.Second, 100*time.Millisecond)
 	re.Equal(0, flusher.bufferLen())
 
 	// Add more items, then stop. stop() should flush remaining.
