@@ -337,7 +337,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
 	// Current code will exclude partitioned tables from this optimization.
 	// TODO: Enhance this optimization to support partitioned tables.
-	if lenAccessConds == 0 && ds.Table.GetPartitionedTable() == nil {
+	if lenAccessConds == 0 && len(path.Ranges) > 0 && ds.Table.GetPartitionedTable() == nil {
 		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	} else {
 		var countEst statistics.RowEstimate

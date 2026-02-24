@@ -195,6 +195,80 @@ ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 			"<nil> Bob <nil> <nil>"))
 	})
 
+	t.Run("right-outer-join-view-rollup-runtime-panic", func(t *testing.T) {
+		tk := newTestKit(t)
+		tk.MustExec("drop database if exists shiro_fuzz_r2")
+		tk.MustExec("create database shiro_fuzz_r2")
+		tk.MustExec("use shiro_fuzz_r2")
+		tk.MustExec("set foreign_key_checks = 0")
+		tk.MustExec("drop view if exists v1")
+		tk.MustExec("drop view if exists v0")
+		tk.MustExec("drop table if exists t4")
+		tk.MustExec("drop table if exists t3")
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop table if exists t0")
+		tk.MustExec(`CREATE TABLE t0 (
+  id bigint NOT NULL,
+  k0 varchar(64) NOT NULL,
+  k1 varchar(64) NOT NULL,
+  k2 int NOT NULL,
+  k3 int NOT NULL,
+  p0 float NOT NULL,
+  p1 tinyint(1) NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+		tk.MustExec(`CREATE TABLE t1 (
+  id bigint NOT NULL,
+  k0 varchar(64) NOT NULL,
+  d0 bigint NOT NULL,
+  d1 double NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+		tk.MustExec(`CREATE TABLE t2 (
+  id bigint NOT NULL,
+  k1 varchar(64) NOT NULL,
+  k0 varchar(64) NOT NULL,
+  d0 decimal(12,2) NOT NULL,
+  d1 double NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+		tk.MustExec(`CREATE TABLE t3 (
+  id bigint NOT NULL,
+  k2 int NOT NULL,
+  k0 varchar(64) NOT NULL,
+  d0 float NOT NULL,
+  d1 date NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+		tk.MustExec(`CREATE TABLE t4 (
+  id bigint NOT NULL,
+  k3 int NOT NULL,
+  k0 varchar(64) NOT NULL,
+  d0 date NOT NULL,
+  d1 bigint NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+		tk.MustExec(`CREATE ALGORITHM=UNDEFINED SQL SECURITY INVOKER VIEW v0 (cnt, sum1) AS SELECT COUNT(1) AS cnt,SUM(t2.d0) AS sum1 FROM ((shiro_fuzz_r2.t0 LEFT JOIN shiro_fuzz_r2.t1 ON ((t0.k0=t1.k0) AND ((t0.k0>t1.k0) AND (t0.k0<=>t1.k0)))) JOIN shiro_fuzz_r2.t2 ON ((t0.k0=t2.k0) AND (t1.k0<t2.k0))) JOIN shiro_fuzz_r2.t3 ON ((t0.k0=t3.k0) AND ((t1.k0<=>t2.k0) OR (t2.k0!=t3.k0))) WHERE NOT EXISTS (SELECT t2.k0 AS c0 FROM shiro_fuzz_r2.t2 WHERE (t2.k0=t0.k0))`)
+		tk.MustExec(`CREATE ALGORITHM=UNDEFINED SQL SECURITY INVOKER VIEW v1 (g0, g1, cnt, sum1, grp_flag) AS SELECT t4.d0 AS g0,t0.k3 AS g1,COUNT(1) AS cnt,SUM(t0.p0) AS sum1,GROUPING(t4.d0) AS grp_flag FROM ((shiro_fuzz_r2.t0 LEFT JOIN (SELECT t4.id AS id,t4.k3 AS k3,t4.k0 AS k0,t4.d0 AS d0,t4.d1 AS d1 FROM shiro_fuzz_r2.t4) AS t4 ON ((t0.k0=t4.k0) AND ((t0.k0=t4.k0) OR (t0.k0>t4.k0)))) RIGHT JOIN (SELECT t2.id AS id,t2.k1 AS k1,t2.k0 AS k0,t2.d0 AS d0,t2.d1 AS d1 FROM shiro_fuzz_r2.t2) AS t2 ON ((t0.k0=t2.k0) AND NOT (t0.k0 IN (_UTF8MB4's83')))) LEFT JOIN shiro_fuzz_r2.t3 ON ((t0.k0=t3.k0) AND (t4.k0=t3.k0)) WHERE (t2.k0=t3.k0) GROUP BY t4.d0,t0.k3 WITH ROLLUP`)
+		tk.MustExec("set foreign_key_checks = 1")
+
+		for _, stmt := range []string{
+			"INSERT INTO t0 (id, k0, k1, k2, k3, p0, p1) VALUES (1, 's35', 's156', 54, -36, 99.55, 0), (2, 's733', 's156', -26, 80, 40.33, 0), (3, 's506', 's156', -67, -9, 86.13, 1), (4, 's157', 's156', -16, 80, 70.4, 1), (5, 's827', 's248', -26, -96, 61.86, 1), (6, 's649', 's156', 67, -61, 71.38, 0), (7, 's664', 's991', 67, -96, 26.42, 0), (8, 's157', 's92', -76, 1, 19.68, 1), (9, 's35', 's156', 67, -36, 25.25, 0), (10, 's664', 's733', 67, -8, 89.77, 1), (11, 's35', 's156', -16, -9, 71.91, 0), (12, 's649', 's769', -76, -31, 33.04, 0), (13, 's733', 's169', -76, 1, 73.46, 0), (14, 's733', 's156', -26, 37, 53.77, 1), (15, 's578', 's156', 74, -8, 47.52, 0), (16, 's664', 's92', 99, -36, 75.27, 1), (17, 's578', 's267', -26, 37, 62.07, 1), (18, 's966', 's277', -67, -8, 0.04, 1), (19, 's664', 's991', 54, -96, 2.26, 0), (20, 's649', 's769', -16, -8, 53.82, 1), (21, 's676', 's248', -76, -36, 56.23, 1), (22, 's649', 's92', 67, -96, 36, 0), (23, 's733', 's92', -16, -31, 20.98, 0), (24, 's676', 's277', -26, -31, 52.63, 1), (25, 's676', 's844', -81, -61, 28.79, 0), (26, 's157', 's248', 54, 37, 52.61, 0), (27, 's578', 's248', -36, -8, 57.88, 1), (28, 's827', 's277', -76, -96, 30.05, 0), (29, 's35', 's156', 74, 37, 88.52, 1), (30, 's157', 's991', -16, -8, 1.56, 1), (31, 's676', 's267', -81, -31, 71.77, 0), (32, 's649', 's844', 67, -36, 72.12, 1), (33, 's506', 's277', -81, -61, 83.16, 1), (34, 's506', 's991', -67, -8, 98.62, 0), (35, 's733', 's991', -26, 80, 96.65, 1), (36, 's157', 's844', -26, 19, 97, 0), (37, 's664', 's156', 54, -9, 22.41, 1), (38, 's157', 's92', -76, -96, 40.3, 0), (39, 's676', 's844', 74, -61, 38.42, 1), (40, 's827', 's92', -26, -96, 11.05, 0), (41, 's157', 's769', -16, -8, 8.13, 0), (42, 's733', 's248', -81, -31, 72.3, 0), (43, 's733', 's991', -67, 37, 62.38, 1), (44, 's733', 's169', -76, -8, 2.6, 0), (45, 's676', 's156', -76, 19, 25.15, 0), (46, 's664', 's156', 54, 1, 61.16, 1), (47, 's966', 's267', 99, 19, 83.03, 0), (48, 's35', 's248', 54, 37, 9.97, 0), (49, 's506', 's169', -81, 19, 80.52, 1), (50, 's506', 's92', -26, 1, 62.34, 0)",
+			"INSERT INTO t1 (id, k0, d0, d1) VALUES (10, 's676', 454, 29.59), (2, 's733', 837, 16.28), (3, 's506', 560, 93.54), (5, 's827', 23, 2.75), (6, 's649', 84, 9.43), (8, 's578', 1, 2.16), (9, 's966', 829, 28.93), (1, 's35', 804, 8.34), (4, 's157', 11, 39.04), (7, 's664', 115, 72.9)",
+			"INSERT INTO t2 (id, k1, k0, d0, d1) VALUES (1, 's156', 's649', 17.74, 44.47), (2, 's248', 's966', 58.06, 88.69), (4, 's92', 's649', 2.01, 32.74), (6, 's769', 's157', 49.17, 28.47), (7, 's169', 's827', 3.87, 42.93), (8, 's267', 's966', 16.78, 38.34), (3, 's991', 's35', 63.85, 18.17), (5, 's733', 's157', 13.61, 63.55), (9, 's277', 's966', 50.85, 24.95), (10, 's844', 's157', 62.86, 66.16)",
+			"INSERT INTO t3 (id, k2, k0, d0, d1) VALUES (6, -76, 's157', 98.47, '2026-09-17'), (9, -81, 's35', 23.19, '2025-01-25'), (1, 54, 's649', 24.81, '2023-09-05'), (2, -26, 's649', 55.2, '2024-07-26'), (7, 74, 's157', 44.92, '2025-06-01'), (8, 99, 's676', 90.33, '2023-07-16'), (10, -36, 's664', 49.36, '2024-07-20'), (3, -67, 's578', 69.12, '2023-02-06'), (4, -16, 's578', 78.39, '2023-07-10'), (5, 67, 's35', 88.45, '2026-09-07')",
+			"INSERT INTO t4 (id, k3, k0, d0, d1) VALUES (7, -8, 's664', '2025-01-01', 377), (10, 19, 's664', '2024-02-11', 220), (1, -36, 's506', '2025-05-22', 62), (2, 80, 's664', '2024-10-21', 360), (5, -61, 's506', '2024-08-21', 963), (6, 1, 's966', '2026-12-30', 596), (8, -31, 's157', '2025-08-12', 608), (9, 37, 's506', '2024-11-05', 28), (3, -9, 's35', '2023-12-27', 53), (4, -96, 's664', '2026-06-12', 492)",
+		} {
+			tk.MustExec(stmt)
+		}
+
+		// issue:66170
+		query := "SELECT /* issue:66170 */ 70.26 AS c0, ROUND(v0.sum1) AS c1 FROM (SELECT t4.id AS id, t4.k3 AS k3, t4.k0 AS k0, t4.d0 AS d0, t4.d1 AS d1 FROM t4) AS t4 RIGHT JOIN (SELECT v1.g0 AS g0, v1.g1 AS g1, v1.cnt AS cnt, v1.sum1 AS sum1, v1.grp_flag AS grp_flag FROM v1) AS v1 ON (1 = 0) RIGHT JOIN t2 ON ((t4.k0 = t2.k0) AND (v1.sum1 <=> t2.d1)) LEFT JOIN v0 ON (1 = 0) LEFT JOIN t0 ON ((t4.k0 = t0.k0) AND ((t0.k0 = t2.k0) AND (t2.id <= t0.k2))) JOIN t3 ON ((t0.k0 = t3.k0) AND NOT (t4.k0 IN ('s82'))) ORDER BY v0.sum1"
+		tk.MustQuery(query)
+		tk.MustExec("drop database if exists shiro_fuzz_r2")
+	})
+
 	t.Run("row-in-subquery-with-exists", func(t *testing.T) {
 		tk := newTestKit(t)
 		tk.MustExec("create table t1 (a1 int, b1 int);")
@@ -220,6 +294,17 @@ GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer 
 FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
+	})
+
+	t.Run("rollup-having-exists-nil-expression", func(t *testing.T) {
+		tk := newTestKit(t)
+		tk.MustExec("create table t_panic(a int primary key, b int)")
+		tk.MustExec("insert into t_panic values (1, 2)")
+		// issue:66165
+		tk.MustQuery(`SELECT a*0+1 AS x
+FROM t_panic
+GROUP BY x WITH ROLLUP
+HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<nil>"))
 	})
 
 	t.Run("merge-join-with-correlated-count", func(t *testing.T) {

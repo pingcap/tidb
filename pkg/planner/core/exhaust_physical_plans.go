@@ -265,16 +265,11 @@ func constructIndexJoinStatic(
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
 		isNullEQ      []bool
-		hasNullEQ     bool
 	)
 	if outerIdx == 0 {
-		outerJoinKeys, innerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
+		outerJoinKeys, innerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	} else {
-		innerJoinKeys, outerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
-	}
-	// TODO: support null equal join keys for index join
-	if hasNullEQ {
-		return nil
+		innerJoinKeys, outerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	// outer side expected cnt will be amplified by the prop.ExpectedCnt / p.StatsInfo().RowCount with same ratio.
@@ -475,16 +470,11 @@ func constructIndexJoin(
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
 		isNullEQ      []bool
-		hasNullEQ     bool
 	)
 	if outerIdx == 0 {
-		outerJoinKeys, innerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
+		outerJoinKeys, innerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	} else {
-		innerJoinKeys, outerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
-	}
-	// TODO: support null equal join keys for index join
-	if hasNullEQ {
-		return nil
+		innerJoinKeys, outerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64,
@@ -583,6 +573,10 @@ func constructIndexMergeJoin(
 	hintExists := false
 	if (outerIdx == 1 && (p.PreferJoinType&h.PreferLeftAsINLMJInner) > 0) || (outerIdx == 0 && (p.PreferJoinType&h.PreferRightAsINLMJInner) > 0) {
 		hintExists = true
+	}
+	_, _, _, hasNullEQ := p.GetJoinKeys()
+	if hasNullEQ {
+		return nil
 	}
 	indexJoins := constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, !hintExists)
 	indexMergeJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
@@ -827,20 +821,78 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 	}
 }
 
+// checkIndexJoinInnerTaskWithAgg checks if join key set is subset of group by items.
+// Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
+// Current limitation:
+// This check currently relies on UniqueID matching between:
+// 1) columns extracted from GroupByItems, and
+// 2) columns from DataSource that are used as inner join keys.
+// It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
+// columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+c2).
+// In those cases, semantically equivalent keys may carry different UniqueIDs, so we may
+// reject some valid index join plans (false negatives) to keep correctness.
+// TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
+func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinRuntimeProp) bool {
+	groupByCols := expression.ExtractColumnsMapFromExpressions(nil, la.GroupByItems...)
+
+	var dataSourceSchema *expression.Schema
+	var iterChild base.LogicalPlan = la
+	for iterChild != nil {
+		if ds, ok := iterChild.(*logicalop.DataSource); ok {
+			dataSourceSchema = ds.Schema()
+			break
+		}
+		if iterChild.Children() == nil || len(iterChild.Children()) != 1 {
+			return false
+		}
+		iterChild = iterChild.Children()[0]
+	}
+	if dataSourceSchema == nil {
+		return false
+	}
+
+	// Only check the inner keys that is from the DataSource, and newly generated keys like agg func or projection column
+	// will not be considerted here. Because we only need to make sure the keys from DataSource is not split by group by,
+	// and the newly generated keys will not cause the split.
+	innerKeysFromDataSource := make(map[int64]struct{}, len(indexJoinProp.InnerJoinKeys))
+	for _, key := range indexJoinProp.InnerJoinKeys {
+		if expression.ExprFromSchema(key, dataSourceSchema) {
+			innerKeysFromDataSource[key.UniqueID] = struct{}{}
+		}
+	}
+	if len(innerKeysFromDataSource) > len(groupByCols) {
+		return false
+	}
+	for keyColID := range innerKeysFromDataSource {
+		if _, ok := groupByCols[keyColID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // admitIndexJoinInnerChildPattern is used to check whether current physical choosing is under an index join's
 // probe side. If it is, and we ganna check the original inner pattern check here to keep compatible with the old.
 // the @first bool indicate whether current logical plan is valid of index join inner side.
-func admitIndexJoinInnerChildPattern(p base.LogicalPlan) bool {
+func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property.IndexJoinRuntimeProp) bool {
 	switch x := p.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).Self().(type) {
 	case *logicalop.DataSource:
 		// DS that prefer tiFlash reading couldn't walk into index join.
 		if x.PreferStoreType&h.PreferTiFlash != 0 {
 			return false
 		}
-	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
+	case *logicalop.LogicalProjection, *logicalop.LogicalSelection:
 		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return false
 		}
+	case *logicalop.LogicalAggregation:
+		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return false
+		}
+		if !checkIndexJoinInnerTaskWithAgg(x, indexJoinProp) {
+			return false
+		}
+
 	case *logicalop.LogicalUnionScan:
 	default: // index join inner side couldn't allow join, sort, limit, etc. todo: open it.
 		return false
