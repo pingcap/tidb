@@ -52,7 +52,7 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
 	require.Equal(t, mlogTable.Meta().ID, baseTable.Meta().MaterializedViewBase.MLogID)
 	// Lock row for PURGE MATERIALIZED VIEW LOG should be inserted on CREATE MATERIALIZED VIEW LOG success.
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge where mlog_id = %d", mlogTable.Meta().ID)).
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogTable.Meta().ID)).
 		Check(testkit.Rows("1"))
 
 	mlogInfo := mlogTable.Meta().MaterializedViewLog
@@ -258,11 +258,11 @@ func TestDropMaterializedViewLogRemovesPurgeState(t *testing.T) {
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
 
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
 		Check(testkit.Rows("1"))
 
 	tk.MustExec("drop materialized view log on t_drop_mlog_purge_state")
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
 		Check(testkit.Rows("0"))
 }
 
@@ -313,7 +313,7 @@ func TestPurgeMaterializedViewLogLockRowMissing(t *testing.T) {
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
 
-	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_mlog_purge where mlog_id = %d", mlogID))
+	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID))
 	err = tk.ExecToErr("purge materialized view log on t_purge_lock_row_missing")
 	require.ErrorContains(t, err, "mlog purge lock row does not exist")
 }
@@ -333,7 +333,7 @@ func TestPurgeMaterializedViewLogNowaitConflict(t *testing.T) {
 	mlogID := mlogTable.Meta().ID
 
 	tk1.MustExec("begin pessimistic")
-	tk1.MustQuery(fmt.Sprintf("select 1 from mysql.tidb_mlog_purge where mlog_id = %d for update", mlogID)).
+	tk1.MustQuery(fmt.Sprintf("select 1 from mysql.tidb_mlog_purge_info where mlog_id = %d for update", mlogID)).
 		Check(testkit.Rows("1"))
 	rolledBack := false
 	defer func() {
@@ -369,8 +369,8 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 	tk.MustExec("purge materialized view log on t_purge_batch_delete")
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_batch_delete`").Check(testkit.Rows("0"))
-	tk.MustQuery(fmt.Sprintf("select LAST_PURGE_ROWS from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("5"))
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("success 5"))
 }
 
 func TestPurgeMaterializedViewLogDeleteErrorNoDirtyWrite(t *testing.T) {
@@ -396,8 +396,8 @@ func TestPurgeMaterializedViewLogDeleteErrorNoDirtyWrite(t *testing.T) {
 	require.ErrorContains(t, err, "mock purge mlog delete error")
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_delete_err`").Check(testkit.Rows("3"))
-	tk.MustQuery(fmt.Sprintf("select LAST_PURGE_ROWS from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("failed 0 1"))
 }
 
 func TestPurgeMaterializedViewLogLockConflictAfterPartialSuccess(t *testing.T) {
@@ -424,8 +424,8 @@ func TestPurgeMaterializedViewLogLockConflictAfterPartialSuccess(t *testing.T) {
 	tk.MustQuery("show warnings").CheckContain("lock conflict after deleting 1 rows")
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_partial_conflict`").Check(testkit.Rows("2"))
-	tk.MustQuery(fmt.Sprintf("select LAST_PURGE_ROWS from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("success 1"))
 }
 
 func TestPurgeMaterializedViewLogMissingPublicMViewRefreshRow(t *testing.T) {
@@ -445,16 +445,13 @@ func TestPurgeMaterializedViewLogMissingPublicMViewRefreshRow(t *testing.T) {
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
 
-	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_mview_refresh where mview_id = %d", mvID))
+	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_mview_refresh_info where mview_id = %d", mvID))
 	err = tk.ExecToErr("purge materialized view log on t_purge_missing_public_refresh")
 	require.ErrorContains(t, err, "materialized view refresh info is missing")
 
-	// Purge failure should still be recorded in the state table.
-	tk.MustQuery(fmt.Sprintf("select LAST_PURGE_TIME is not null, LAST_PURGE_ROWS, LAST_PURGE_DURATION >= 0 from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("1 0 1"))
-	// This version does not write mysql.tidb_mlog_purge_hist yet.
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("0"))
+	// Purge failure should still be finalized in history.
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("failed 0 1"))
 }
 
 func TestPurgeMaterializedViewLogWritesState(t *testing.T) {
@@ -471,17 +468,14 @@ func TestPurgeMaterializedViewLogWritesState(t *testing.T) {
 	mlogID := mlogTable.Meta().ID
 
 	tk.MustExec("purge materialized view log on t_purge_state")
-
-	tk.MustQuery(fmt.Sprintf("select LAST_PURGE_TIME is not null, LAST_PURGE_ROWS, LAST_PURGE_DURATION >= 0 from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("1 0 1"))
-	// This version does not write mysql.tidb_mlog_purge_hist yet.
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("success 0 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("0"))
+		Check(testkit.Rows("1"))
 
 	tk.MustExec("purge materialized view log on t_purge_state")
-	tk.MustQuery(fmt.Sprintf("select LAST_PURGE_ROWS from mysql.tidb_mlog_purge where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("0"))
-	// Still no history records.
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("success 0 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("0"))
+		Check(testkit.Rows("2"))
 }
