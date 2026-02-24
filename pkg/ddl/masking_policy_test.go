@@ -63,3 +63,24 @@ func TestMaskingPolicyCaseExpression(t *testing.T) {
 	tk.MustQuery("select expression like '%CURRENT_USER()%' from mysql.tidb_masking_policy where policy_name = 'p_case'").
 		Check(testkit.Rows("1"))
 }
+
+func TestMaskingPolicyModifyExpressionAndRestrictOn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c char(120))")
+
+	tk.MustExec("create masking policy p on t(c) as c enable")
+	tk.MustExec("alter table t modify masking policy p set expression = mask_full(c, '*')")
+	tk.MustQuery("select expression, masking_type from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("MASK_FULL(`c`, _UTF8MB4'*') MASK_FULL"))
+
+	tk.MustExec("alter table t modify masking policy p set restrict on (insert_into_select, delete_select)")
+	tk.MustQuery("select restrict_on from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("INSERT_INTO_SELECT,DELETE_SELECT"))
+
+	tk.MustExec("alter table t modify masking policy p set restrict on none")
+	tk.MustQuery("select restrict_on from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("NONE"))
+}
