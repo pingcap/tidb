@@ -453,12 +453,10 @@ func pruneEstimateRange(ranges []*ranger.Range, keepColCnt int) []*ranger.Range 
 			LowExclude:  ran.LowExclude,
 			HighExclude: ran.HighExclude,
 		}
-		for idx := range keepColCnt {
-			if idx < len(ran.LowVal) {
-				newRange.LowVal = append(newRange.LowVal, ran.LowVal[idx])
-				newRange.HighVal = append(newRange.HighVal, ran.HighVal[idx])
-				newRange.Collators = append(newRange.Collators, ran.Collators[idx])
-			}
+		for idx := range min(keepColCnt, len(ran.LowVal)) {
+			newRange.LowVal = append(newRange.LowVal, ran.LowVal[idx])
+			newRange.HighVal = append(newRange.HighVal, ran.HighVal[idx])
+			newRange.Collators = append(newRange.Collators, ran.Collators[idx])
 		}
 		estimateRanges = append(estimateRanges, newRange)
 	}
