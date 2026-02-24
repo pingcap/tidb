@@ -58,9 +58,6 @@ type IndexLookUpMergeJoin struct {
 	OuterMergeCtx OuterMergeCtx
 	InnerMergeCtx InnerMergeCtx
 
-	// OuterBatchSize overrides IndexJoinBatchSize when > 0.
-	OuterBatchSize int
-
 	Joiners           []Joiner
 	joinChkResourceCh []chan *chunk.Chunk
 	IsOuterJoin       bool
@@ -205,9 +202,6 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMergeJoinTask) *outerMergeWorker {
 	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
-	if e.OuterBatchSize > 0 {
-		maxBatchSize = e.OuterBatchSize
-	}
 	omw := &outerMergeWorker{
 		OuterMergeCtx:         e.OuterMergeCtx,
 		ctx:                   e.Ctx(),

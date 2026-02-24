@@ -3647,7 +3647,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 		Finished:      &atomic.Value{},
 	}
 	if v.ForceRowMode {
-		e.OuterBatchSize = 1
+		e.ApplyMode = true
 	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
@@ -3785,9 +3785,6 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 		IndexRanges:   v.Ranges,
 		KeyOff2IdxOff: v.KeyOff2IdxOff,
 		LastColHelper: v.CompareFilters,
-	}
-	if v.ForceRowMode {
-		e.OuterBatchSize = 1
 	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {

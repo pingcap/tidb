@@ -69,8 +69,9 @@ type IndexLookUpJoin struct {
 	OuterCtx OuterCtx
 	InnerCtx InnerCtx
 
-	// OuterBatchSize overrides IndexJoinBatchSize when > 0.
-	OuterBatchSize int
+	// ApplyMode indicates this index join comes from apply mode and must process
+	// one outer row per task.
+	ApplyMode bool
 
 	task       *lookUpJoinTask
 	JoinResult *chunk.Chunk
@@ -157,6 +158,7 @@ type outerWorker struct {
 
 	maxBatchSize int
 	batchSize    int
+	applyMode    bool
 
 	resultCh chan<- *lookUpJoinTask
 	innerCh  chan<- *lookUpJoinTask
@@ -227,10 +229,6 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context, initBatchSize int) {
 
 func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask, initBatchSize int) *outerWorker {
 	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
-	if e.OuterBatchSize > 0 {
-		maxBatchSize = e.OuterBatchSize
-		initBatchSize = maxBatchSize
-	}
 	batchSize := min(initBatchSize, maxBatchSize)
 	ow := &outerWorker{
 		OuterCtx:         e.OuterCtx,
@@ -240,6 +238,7 @@ func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask,
 		innerCh:          innerCh,
 		batchSize:        batchSize,
 		maxBatchSize:     maxBatchSize,
+		applyMode:        e.ApplyMode,
 		parentMemTracker: e.memTracker,
 		lookup:           e,
 	}
@@ -518,8 +517,13 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		}
 	}
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
-	if ow.maxBatchSize == 1 {
+	if ow.applyMode {
 		// row-mode: force 1 row per task
+		failpoint.Inject("testIndexJoinApplyMode", func(val failpoint.Value) {
+			if val.(bool) {
+				panic("testIndexJoinApplyMode")
+			}
+		})
 		hasPending := ow.consumePendingForce1Row(task, maxChunkSize)
 		for !hasPending {
 			// has no pending rows, need to cache an outer chunk.
