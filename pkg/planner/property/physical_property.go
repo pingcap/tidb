@@ -388,8 +388,8 @@ type IndexJoinRuntimeProp struct {
 
 // CloneEssentialFields clone the essential fields for IndexJoinRuntimeProp.
 func (ijr *IndexJoinRuntimeProp) CloneEssentialFields() *IndexJoinRuntimeProp {
-	new := *ijr
-	return &new
+	one := *ijr
+	return &one
 }
 
 // NewPhysicalProperty builds property from columns.
