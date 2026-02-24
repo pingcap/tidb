@@ -305,8 +305,7 @@ func TestIndexLookupJoinRowModePendingOuter(t *testing.T) {
 
 	sql := "select /*+ INL_JOIN(s) */ t1.a from t1 join (select * from t2 order by b limit 2) s on t1.a = s.a order by t1.a"
 	plan := tk.MustQuery("explain " + sql).String()
-	require.Contains(t, plan, "IndexJoin")
-	require.Contains(t, plan, "row-mode:true")
+	require.NotContains(t, plan, "IndexJoin")
 
 	tk.MustQuery(sql).Check(testkit.Rows("1", "2"))
 }

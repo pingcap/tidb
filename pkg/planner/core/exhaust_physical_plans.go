@@ -917,9 +917,15 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property
 		if x.PreferStoreType&h.PreferTiFlash != 0 {
 			return false
 		}
-	case *logicalop.LogicalProjection, *logicalop.LogicalSelection,
-		*logicalop.LogicalLimit, *logicalop.LogicalTopN, *logicalop.LogicalJoin:
+	case *logicalop.LogicalProjection, *logicalop.LogicalSelection:
 		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return false
+		}
+	case *logicalop.LogicalJoin:
+		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return false
+		}
+		if x.JoinType != base.InnerJoin {
 			return false
 		}
 	case *logicalop.LogicalAggregation:
@@ -931,7 +937,7 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property
 		}
 
 	case *logicalop.LogicalUnionScan:
-	default: // index join inner side couldn't allow join, sort, limit, etc. todo: open it.
+	default: // index join inner side couldn't allow join, sort, limit, because they are Optimization Fence.
 		return false
 	}
 	return true

@@ -400,7 +400,7 @@ func TestIndexJoinBatchModeInSimpleApply(t *testing.T) {
 		found := false
 		var walk func(base.PhysicalPlan)
 		walk = func(plan base.PhysicalPlan) {
-			switch v := plan.(type) {
+			switch plan.(type) {
 			case *physicalop.PhysicalIndexHashJoin:
 				require.False(t, v.ForceRowMode)
 				require.Contains(t, v.ExplainInfo(), "batch-mode:true")
@@ -451,18 +451,12 @@ func TestIndexJoinRowModeWithInnerTopN(t *testing.T) {
 		found := false
 		var walk func(base.PhysicalPlan)
 		walk = func(plan base.PhysicalPlan) {
-			switch v := plan.(type) {
+			switch plan.(type) {
 			case *physicalop.PhysicalIndexHashJoin:
-				require.True(t, v.ForceRowMode)
-				require.Contains(t, v.ExplainInfo(), "row-mode:true")
 				found = true
 			case *physicalop.PhysicalIndexMergeJoin:
-				require.True(t, v.ForceRowMode)
-				require.Contains(t, v.ExplainInfo(), "row-mode:true")
 				found = true
 			case *physicalop.PhysicalIndexJoin:
-				require.True(t, v.ForceRowMode)
-				require.Contains(t, v.ExplainInfo(), "row-mode:true")
 				found = true
 			}
 			for _, child := range plan.Children() {
@@ -470,7 +464,7 @@ func TestIndexJoinRowModeWithInnerTopN(t *testing.T) {
 			}
 		}
 		walk(pp)
-		require.True(t, found, "expected index join with inner topn")
+		require.False(t, found, "expected no index join with inner topn")
 	})
 }
 
@@ -504,16 +498,10 @@ func TestIndexJoinRowModeWithInnerTopNOuterJoin(t *testing.T) {
 		walk = func(plan base.PhysicalPlan) {
 			switch v := plan.(type) {
 			case *physicalop.PhysicalIndexHashJoin:
-				require.True(t, v.ForceRowMode)
-				require.Contains(t, v.ExplainInfo(), "row-mode:true")
 				found = true
 			case *physicalop.PhysicalIndexMergeJoin:
-				require.True(t, v.ForceRowMode)
-				require.Contains(t, v.ExplainInfo(), "row-mode:true")
 				found = true
 			case *physicalop.PhysicalIndexJoin:
-				require.True(t, v.ForceRowMode)
-				require.Contains(t, v.ExplainInfo(), "row-mode:true")
 				found = true
 			}
 			for _, child := range plan.Children() {
@@ -521,7 +509,7 @@ func TestIndexJoinRowModeWithInnerTopNOuterJoin(t *testing.T) {
 			}
 		}
 		walk(pp)
-		require.True(t, found, "expected index join with inner topn (outer join)")
+		require.False(t, found, "expected no index join with inner topn (outer join)")
 	})
 }
 
