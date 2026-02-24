@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
-	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -46,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/store"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -276,15 +274,10 @@ func (sch *importScheduler) unregisterTask(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta *TaskMeta) error {
-	idAlloc := lkv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
-	if err != nil {
-		return err
-	}
 	return sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		// Only check once when generating the import step plan to avoid repeated checks
 		// when executors are recreated in HA tests.
-		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskStore, se, tbl)
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskStore, se, taskMeta.Plan.TableInfo)
 		if err2 != nil {
 			return err2
 		}
