@@ -1720,15 +1720,41 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 				return ver, err
 			}
 
-			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			checkAndMarkNonRevertible(job)
-		case model.AnalyzeStateRunning:
-			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-			checkAndMarkNonRevertible(job)
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
+			// AnalyzeStateSkipped may come from older owners before this branch
+			// was split; run FinishIndexUpload once for compatibility.
 			taskID := strconv.FormatInt(job.ID, 10)
+			// FinishIndexUpload should run after the reorg ingest
+			// completes using the lightweight helper
+			// to finalize TiCI uploads here.
 			if err := tici.FinishIndexUpload(jobCtx.stepCtx, jobCtx.store, taskID); err != nil {
 				return ver, errors.Trace(err)
+			}
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateDone, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			var done bool
+			if done, err = tici.CheckAddIndexProgress(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("[ddl] check TiCI fulltext index progress failed",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", job.ReorgMeta.AnalyzeState),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID),
+					zap.Error(err))
+				return ver, errors.Trace(err)
+			}
+			if !done {
+				logutil.DDLLogger().Debug("[ddl] wait for TiCI fulltext index ready",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", job.ReorgMeta.AnalyzeState),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID))
+				if err := waitTiCIAddIndexProgressPoll(jobCtx.stepCtx); err != nil {
+					return ver, errors.Trace(err)
+				}
+				return ver, nil
 			}
 
 			AddIndexColumnFlag(tblInfo, indexInfo)
@@ -1883,18 +1909,41 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 				return ver, err
 			}
 
-			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			checkAndMarkNonRevertible(job)
-		case model.AnalyzeStateRunning:
-			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-			checkAndMarkNonRevertible(job)
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
+			// AnalyzeStateSkipped may come from older owners before this branch
+			// was split; run FinishIndexUpload once for compatibility.
 			taskID := strconv.FormatInt(job.ID, 10)
 			// FinishIndexUpload should run after the reorg ingest
 			// completes using the lightweight helper
 			// to finalize TiCI uploads here.
 			if err := tici.FinishIndexUpload(jobCtx.stepCtx, jobCtx.store, taskID); err != nil {
 				return ver, errors.Trace(err)
+			}
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateDone, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			var done bool
+			if done, err = tici.CheckAddIndexProgress(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("[ddl] check TiCI hybrid index progress failed",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", job.ReorgMeta.AnalyzeState),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID),
+					zap.Error(err))
+				return ver, errors.Trace(err)
+			}
+			if !done {
+				logutil.DDLLogger().Debug("[ddl] wait for TiCI hybrid index ready",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", job.ReorgMeta.AnalyzeState),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID))
+				if err := waitTiCIAddIndexProgressPoll(jobCtx.stepCtx); err != nil {
+					return ver, errors.Trace(err)
+				}
+				return ver, nil
 			}
 
 			AddIndexColumnFlag(tblInfo, indexInfo)
@@ -1941,6 +1990,22 @@ func ensureHybridIndexReorgMeta(job *model.Job) error {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires ingest backfill")
 	}
 	return nil
+}
+
+const ticiAddIndexProgressPollInterval = 2 * time.Second
+
+func waitTiCIAddIndexProgressPoll(ctx context.Context) error {
+	timer := time.NewTimer(ticiAddIndexProgressPollInterval)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+		return ctx.Err()
+	}
 }
 
 func ensureFulltextIndexReorgMeta(job *model.Job) error {
