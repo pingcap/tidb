@@ -493,7 +493,7 @@ func TestCutKey(t *testing.T) {
 	require.Equal(t, types.NewIntDatum(100), handleVal)
 }
 
-func TestDecodeBadDecical(t *testing.T) {
+func TestDecodeBadDecimal(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/codec/errorInDecodeDecimal", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/codec/errorInDecodeDecimal"))
