@@ -55,6 +55,8 @@ This file provides guidance to agents when working with code in this repository.
 - Notes rules: update existing sections when topics overlap; append new sections only for new topics. Purpose: capture decisions, pitfalls, and test patterns.
 - Planner rule notes: `docs/note/planner/rule/rule_ai_notes.md`.
 - If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
+- Predicate pushdown testdata (`pkg/planner/core/casetest/rule/testdata/predicate_pushdown_suite_in.json`) should contain SQL-only cases; put DDL in the test setup to avoid `EXPLAIN` parsing DDL during record runs.
+- Integration test recording uses `./run-tests.sh -r <name>` (not `-record`).
 
 ## Building
 
@@ -82,6 +84,12 @@ make gogenerate
 
 # optional: keep Go modules tidy if go.mod/go.sum changed
 go mod tidy
+
+# keep remote refs fresh so base-branch auto-detection is accurate
+git fetch origin --prune
+
+# Run before committing or finishing tasks, to ensure we pass the static check
+make bazel_lint_changed
 ```
 
 ## Testing 

@@ -33,12 +33,12 @@ explain format='plan_tree' select /*+ use_index_merge(t2, idx2, idx, idx4) */ * 
 drop table if exists t1, t2;
 create table t1(pk int primary key, a json, b json, c int, d int, index idx((cast(a as signed array))), index idx2((cast(b as signed array))));
 create table t2(pk int primary key, a json, b json, c int, d int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d));
-explain select /*+ use_index_merge(t1, idx2, idx) */ * from t1 where 1 member of (a) and 2 member of (b); -- 1: AND index merge from multi member mv index predicate, since member of is single partial path, it can be merged with outer index merge.;
-explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b); -- 2: AND index merge from multi complicated mv index;
-explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b) and d=3; -- 3: AND index merge from multi complicated mv indexes and normal indexes;
-explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 4: AND index merge from multi complicated mv indexes (json_contains (intersection))and normal indexes;
-explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 5: AND index merge from multi complicated mv indexes (json_overlap (intersection))and normal indexes;
-explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and c=2; -- 6: AND index merge from multi complicated mv indexes (empty range);
+explain format = 'brief' select /*+ use_index_merge(t1, idx2, idx) */ * from t1 where 1 member of (a) and 2 member of (b); -- 1: AND index merge from multi member mv index predicate, since member of is single partial path, it can be merged with outer index merge.;
+explain format = 'brief' select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b); -- 2: AND index merge from multi complicated mv index;
+explain format = 'brief' select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b) and d=3; -- 3: AND index merge from multi complicated mv indexes and normal indexes;
+explain format = 'brief' select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 4: AND index merge from multi complicated mv indexes (json_contains (intersection))and normal indexes;
+explain format = 'brief' select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 5: AND index merge from multi complicated mv indexes (json_overlap (intersection))and normal indexes;
+explain format = 'brief' select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and c=2; -- 6: AND index merge from multi complicated mv indexes (empty range);
 
 
 # TestIndexMerge
