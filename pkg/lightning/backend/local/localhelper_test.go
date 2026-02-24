@@ -35,13 +35,14 @@ import (
 
 type testSplitClient struct {
 	split.SplitClient
-	mu           sync.RWMutex
-	stores       map[uint64]*metapb.Store
-	regions      map[uint64]*split.RegionInfo
-	regionsInfo  *pdtypes.RegionTree // For now it's only used in ScanRegions
-	nextRegionID uint64
-	splitCount   atomic.Int32
-	hook         clientHook
+	mu                   sync.RWMutex
+	stores               map[uint64]*metapb.Store
+	regions              map[uint64]*split.RegionInfo
+	regionsInfo          *pdtypes.RegionTree // For now it's only used in ScanRegions
+	nextRegionID         uint64
+	splitCount           atomic.Int32
+	splitKeysAndScatterF func(context.Context, [][]byte, int32) ([]*split.RegionInfo, error)
+	hook                 clientHook
 }
 
 func newTestSplitClient(
@@ -92,6 +93,18 @@ func (c *testSplitClient) GetRegionByID(ctx context.Context, regionID uint64) (*
 		return nil, errors.Errorf("region not found: id=%d", regionID)
 	}
 	return region, nil
+}
+
+func (c *testSplitClient) SplitKeysAndScatter(ctx context.Context, splitKeys [][]byte) ([]*split.RegionInfo, error) {
+	cnt := c.splitCount.Inc()
+	if c.splitKeysAndScatterF != nil {
+		return c.splitKeysAndScatterF(ctx, splitKeys, cnt)
+	}
+	return []*split.RegionInfo{
+		{
+			Region: &metapb.Region{Id: 1},
+		},
+	}, nil
 }
 
 func (c *testSplitClient) SplitWaitAndScatter(ctx context.Context, region *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
@@ -326,46 +339,6 @@ func TestStoreWriteLimiter(t *testing.T) {
 	wg.Wait()
 }
 
-type splitAndScatterCounterClient struct {
-	split.SplitClient
-	splitCount atomic.Int32
-}
-
-func (c *splitAndScatterCounterClient) SplitKeysAndScatter(_ context.Context, _ [][]byte) ([]*split.RegionInfo, error) {
-	c.splitCount.Inc()
-	return []*split.RegionInfo{
-		{
-			Region: &metapb.Region{Id: 1},
-		},
-	}, nil
-}
-
-func (*splitAndScatterCounterClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
-	return 0, nil
-}
-
-type splitAndScatterErrClient struct {
-	split.SplitClient
-	splitCount atomic.Int32
-	failAt     int32
-}
-
-func (c *splitAndScatterErrClient) SplitKeysAndScatter(_ context.Context, _ [][]byte) ([]*split.RegionInfo, error) {
-	cnt := c.splitCount.Inc()
-	if cnt == c.failAt {
-		return nil, errors.New("mock split error")
-	}
-	return []*split.RegionInfo{
-		{
-			Region: &metapb.Region{Id: 1},
-		},
-	}, nil
-}
-
-func (*splitAndScatterErrClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
-	return 0, nil
-}
-
 func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 	makeSplitKeys := func(n int) [][]byte {
 		keys := make([][]byte, n)
@@ -376,7 +349,7 @@ func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 	}
 
 	t.Run("large split keys trigger coarse and fine layers", func(t *testing.T) {
-		splitCli := &splitAndScatterCounterClient{}
+		splitCli := &testSplitClient{}
 		local := &Backend{splitCli: splitCli}
 
 		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
@@ -386,16 +359,27 @@ func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 	})
 
 	t.Run("small split keys only use fine layer", func(t *testing.T) {
-		splitCli := &splitAndScatterCounterClient{}
+		splitCli := &testSplitClient{}
 		local := &Backend{splitCli: splitCli}
 
-		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(100), 50, 0)
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(coarseGrainedSplitKeysThreshold), 50, 0)
 		require.NoError(t, err)
 		require.Equal(t, int32(2), splitCli.splitCount.Load())
 	})
 
 	t.Run("coarse layer error returns immediately", func(t *testing.T) {
-		splitCli := &splitAndScatterErrClient{failAt: 1}
+		splitCli := &testSplitClient{
+			splitKeysAndScatterF: func(_ context.Context, _ [][]byte, splitCnt int32) ([]*split.RegionInfo, error) {
+				if splitCnt == 1 {
+					return nil, errors.New("mock split error")
+				}
+				return []*split.RegionInfo{
+					{
+						Region: &metapb.Region{Id: 1},
+					},
+				}, nil
+			},
+		}
 		local := &Backend{splitCli: splitCli}
 
 		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
@@ -404,7 +388,7 @@ func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 	})
 
 	t.Run("limiter is still enforced after restoring two levels", func(t *testing.T) {
-		splitCli := &splitAndScatterCounterClient{}
+		splitCli := &testSplitClient{}
 		local := &Backend{splitCli: splitCli}
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()

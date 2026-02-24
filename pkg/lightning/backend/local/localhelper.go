@@ -35,6 +35,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const coarseGrainedSplitKeysThreshold = 64
+
 var (
 
 	// the base exponential backoff time
@@ -57,7 +59,7 @@ func (local *Backend) splitAndScatterRegionInBatches(
 		limiter = rate.NewLimiter(rate.Limit(eventLimit), burstPerSec*ratePerSecMultiplier)
 		batchCnt = min(batchCnt, burstPerSec)
 	}
-	if len(splitKeys) > 100 {
+	if len(splitKeys) > coarseGrainedSplitKeysThreshold {
 		// Split and scatter a coarse-grained set of keys first to spread regions
 		// before the fine-grained split stage.
 		coarseGrainedSplitKeys := getCoarseGrainedSplitKeys(splitKeys)
