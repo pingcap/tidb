@@ -502,6 +502,58 @@ func TestLateralJoinComplexScenarios(t *testing.T) {
 	}
 }
 
+// TestLateralJoinScopeIsolationForNonLateralDerivedTable verifies that adding a
+// LATERAL sibling does not make non-LATERAL derived tables see outer columns.
+func TestLateralJoinScopeIsolationForNonLateralDerivedTable(t *testing.T) {
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.Background()
+
+	sql := "SELECT * FROM t AS t1 JOIN ((SELECT t1.a) AS s JOIN LATERAL (SELECT 1) AS l ON true) ON true"
+	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(stmt)
+	_, err = BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+	require.Error(t, err, "non-LATERAL derived table must not capture outer columns")
+	require.Contains(t, err.Error(), "Unknown column 't1.a' in 'field list'")
+}
+
+// TestLateralJoinDecorrelateWithUSINGAndON verifies that DecorrelateSolver correctly
+// identifies correlated columns on merged USING columns when the outer plan is wrapped
+// by LogicalSelection (from ON clauses). Without the fix, CorCols would be empty and
+// the Apply would be incorrectly rewritten to a Join, producing wrong results.
+func TestLateralJoinDecorrelateWithUSINGAndON(t *testing.T) {
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.Background()
+
+	// t1 JOIN t2 USING(a) produces a merged column; JOIN t3 ON ... wraps in LogicalSelection.
+	// The LATERAL subquery references t2.a (the merged column).
+	sql := "SELECT * FROM t AS t1 JOIN t AS t2 USING(a) JOIN t AS t3 ON t2.b=t3.b, LATERAL (SELECT COUNT(*) AS c FROM t AS t4 WHERE t4.a=t2.a) AS dt"
+	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(stmt)
+	p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+	require.NoError(t, err)
+
+	lp, ok := p.(base.LogicalPlan)
+	require.True(t, ok)
+
+	// Run DecorrelateSolver on the plan.
+	solver := &DecorrelateSolver{}
+	optimized, _, err := solver.Optimize(ctx, lp)
+	require.NoError(t, err)
+
+	// The LATERAL subquery correlates on t2.a, so it must remain a LogicalApply
+	// after decorrelation (not be converted to a plain Join).
+	apply := findFirstLogicalApply(optimized)
+	require.NotNil(t, apply, "Expected LogicalApply to survive decorrelation")
+	require.Greater(t, len(apply.CorCols), 0,
+		"CorCols must not be empty; the LATERAL subquery references a merged USING column")
+}
+
 // Helper functions
 
 // findLogicalApply recursively searches for LogicalApply in a plan tree

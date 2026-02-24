@@ -95,7 +95,13 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) (base.
 		return nil, err
 	}
 
-	la.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(la.Children()[1], la.Children()[0].Schema())
+	// Use FullSchema when available to capture redundant USING/NATURAL columns.
+	// Without this, LATERAL over USING joins would lose correlation during pruning.
+	outerSchema := la.Children()[0].Schema()
+	if fs := findChildFullSchema(la.Children()[0]); fs != nil {
+		outerSchema = fs
+	}
+	la.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(la.Children()[1], outerSchema)
 	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}

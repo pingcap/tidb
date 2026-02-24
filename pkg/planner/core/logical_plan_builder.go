@@ -437,6 +437,37 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
 	case *ast.TableSource:
+		// Scope lateral outer schemas based on whether this table source is LATERAL.
+		if b.lateralOuterCount > 0 {
+			if !x.Lateral {
+				// Non-LATERAL derived table: temporarily hide outer schemas pushed
+				// for LATERAL so the subquery cannot resolve outer columns that are
+				// only available to LATERAL siblings.
+				n := b.lateralOuterCount
+				savedSchemas := make([]*expression.Schema, n)
+				savedNames := make([][]*types.FieldName, n)
+				copy(savedSchemas, b.outerSchemas[len(b.outerSchemas)-n:])
+				copy(savedNames, b.outerNames[len(b.outerNames)-n:])
+				b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-n]
+				b.outerNames = b.outerNames[:len(b.outerNames)-n]
+				savedCount := b.lateralOuterCount
+				b.lateralOuterCount = 0
+				defer func() {
+					b.outerSchemas = append(b.outerSchemas, savedSchemas...)
+					b.outerNames = append(b.outerNames, savedNames...)
+					b.lateralOuterCount = savedCount
+				}()
+			} else {
+				// LATERAL derived table: "adopt" the lateral outer schemas into
+				// regular correlated scope so that non-LATERAL subqueries nested
+				// inside this LATERAL table can still resolve outer columns.
+				savedCount := b.lateralOuterCount
+				b.lateralOuterCount = 0
+				defer func() {
+					b.lateralOuterCount = savedCount
+				}()
+			}
+		}
 		var isTableName bool
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
@@ -661,6 +692,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		}
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, outerNames)
+		b.lateralOuterCount++
 		// Set flag to allow ORDER BY/LIMIT in LATERAL subqueries within recursive CTEs
 		saveBuildingLateral := b.buildingLateralSubquery
 		b.buildingLateralSubquery = true
@@ -668,6 +700,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		defer func() {
 			b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-1]
 			b.outerNames = b.outerNames[:len(b.outerNames)-1]
+			b.lateralOuterCount--
 			b.buildingLateralSubquery = saveBuildingLateral
 		}()
 	}
@@ -865,18 +898,6 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 
 	ap.SetChildren(leftPlan, rightPlan)
 	ap.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
-
-	// CRITICAL FIX: After MergeSchema, update the Index values for right-side columns.
-	// MergeSchema clones columns but preserves their original Index values (positions in the
-	// original child schema). For LATERAL joins, when a projection above the Apply references
-	// a column from the right side, it uses the Column's Index field to determine which
-	// position to read from the input row. Without this fix, right-side columns would still
-	// have Index=0,1,... instead of their new positions (leftLen+0, leftLen+1, ...) in the
-	// merged schema, causing incorrect data to be read.
-	leftLen := leftPlan.Schema().Len()
-	for i := range rightPlan.Schema().Len() {
-		ap.Schema().Columns[leftLen+i].Index = leftLen + i
-	}
 
 	// Clone output names to avoid sharing FieldName structs that might be mutated later.
 	// Clear DBName for the right-side (derived table) outputs to prevent confusion with

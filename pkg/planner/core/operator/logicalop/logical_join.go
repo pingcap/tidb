@@ -1215,6 +1215,29 @@ func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 	return expression.NewSchema(joinKeys...)
 }
 
+// findChildFullSchema returns the FullSchema of a child plan if it is a
+// LogicalJoin or LogicalApply (possibly wrapped by LogicalSelection from
+// ON clauses on inner joins). This is needed so that column pruning and
+// used-column extraction can find redundant USING/NATURAL columns.
+func findChildFullSchema(p base.LogicalPlan) *expression.Schema {
+	for {
+		switch x := p.(type) {
+		case *LogicalJoin:
+			return x.FullSchema // may be nil
+		case *LogicalApply:
+			return x.FullSchema // may be nil
+		case *LogicalSelection:
+			children := p.Children()
+			if len(children) != 1 {
+				return nil
+			}
+			p = children[0]
+		default:
+			return nil
+		}
+	}
+}
+
 // ExtractUsedCols extracts all the needed columns.
 func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
 	for _, eqCond := range p.EqualConditions {
@@ -1236,16 +1259,11 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	rChild := p.Children()[1]
 	lSchema := lChild.Schema()
 	rSchema := rChild.Schema()
-	var lFullSchema, rFullSchema *expression.Schema
-	// parentused col = t2.a
-	// leftChild schema = t1.a(t2.a) + and others
-	// rightChild schema = t3 related + and others
-	if join, ok := lChild.(*LogicalJoin); ok {
-		lFullSchema = join.FullSchema
-	}
-	if join, ok := rChild.(*LogicalJoin); ok {
-		rFullSchema = join.FullSchema
-	}
+	// Also check FullSchema which includes redundant USING/NATURAL columns.
+	// Walk through wrapper operators (e.g., LogicalSelection from ON clauses)
+	// and handle LogicalApply (from LATERAL joins) in addition to LogicalJoin.
+	lFullSchema := findChildFullSchema(lChild)
+	rFullSchema := findChildFullSchema(rChild)
 	for _, col := range parentUsedCols {
 		if (lSchema != nil && lSchema.Contains(col)) ||
 			(lFullSchema != nil && lFullSchema.Contains(col)) {

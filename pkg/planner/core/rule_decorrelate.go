@@ -233,11 +233,12 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 		innerPlan := apply.Children()[1]
 		// Use FullSchema when outer plan is a USING/NATURAL join, so we capture
 		// correlated columns that reference the redundant (merged) join columns.
-		// This must match the schema used for name resolution in LATERAL subqueries
-		// (see logical_plan_builder.go buildJoin for LATERAL).
+		// Walk through wrapper operators (e.g., LogicalSelection from ON clauses)
+		// to find the underlying LogicalJoin, matching the schema used for name
+		// resolution in LATERAL subqueries (see logical_plan_builder.go buildJoin).
 		outerSchema := outerPlan.Schema()
-		if join, ok := outerPlan.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-			outerSchema = join.FullSchema
+		if fullSchema, _ := findJoinFullSchema(outerPlan); fullSchema != nil {
+			outerSchema = fullSchema
 		}
 		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlan, outerSchema)
 		if len(apply.CorCols) == 0 {
