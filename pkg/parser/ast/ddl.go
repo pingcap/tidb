@@ -1193,6 +1193,7 @@ type CreateTableStmt struct {
 	ReferTable     *TableName
 	Cols           []*ColumnDef
 	Constraints    []*Constraint
+	SplitIndex     []*SplitIndexOption
 	Options        []*TableOption
 	Partition      *PartitionOptions
 	OnDuplicate    OnDuplicateKeyHandlingType
@@ -1261,6 +1262,13 @@ func (n *CreateTableStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
+	for _, opt := range n.SplitIndex {
+		ctx.WritePlain(" ")
+		if err := opt.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing CreateTableStmt SplitIndex")
+		}
+	}
+
 	if n.Select != nil {
 		switch n.OnDuplicate {
 		case OnDuplicateKeyHandlingError:
@@ -1319,6 +1327,13 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Constraints[i] = node.(*Constraint)
+	}
+	for i, val := range n.SplitIndex {
+		node, ok = val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SplitIndex[i] = node.(*SplitIndexOption)
 	}
 	if n.Select != nil {
 		node, ok := n.Select.Accept(v)
@@ -3424,6 +3439,7 @@ const (
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
 	AlterTableRemoveTTL
+	AlterTableSplitIndex
 	AlterTableAddMaskingPolicy
 	AlterTableEnableMaskingPolicy
 	AlterTableDisableMaskingPolicy
@@ -3506,6 +3522,7 @@ type AlterTableSpec struct {
 	Name                     string
 	IndexName                CIStr
 	Constraint               *Constraint
+	SplitIndex               *SplitIndexOption
 	Options                  []*TableOption
 	OrderByList              []*AlterOrderItem
 	NewTable                 *TableName
@@ -4164,6 +4181,11 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AlterTableRemoveTTL:
 		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTTL, "REMOVE TTL")
+	case AlterTableSplitIndex:
+		spec := n.SplitIndex
+		if err := spec.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.SplitIndex")
+		}
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
@@ -4191,6 +4213,13 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.NewTable = node.(*TableName)
+	}
+	if n.SplitIndex != nil {
+		node, ok := n.SplitIndex.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SplitIndex = node.(*SplitIndexOption)
 	}
 	for i, col := range n.NewColumns {
 		node, ok := col.Accept(v)
