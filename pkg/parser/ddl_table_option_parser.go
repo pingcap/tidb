@@ -291,10 +291,10 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			optName = "TRANSACTIONAL"
 		}
 		p.parseTableOptionUint(opt, optTp)
-		p.warns = append(p.warns, fmt.Errorf("The %s option is parsed but ignored by all storage engines.", optName))
+		p.warns = append(p.warns, fmt.Errorf("the %s option is parsed but ignored by all storage engines", optName))
 	case ietfQuotes:
 		p.parseTableOptionString(opt, ast.TableOptionIetfQuotes)
-		p.warns = append(p.warns, fmt.Errorf("The IETF_QUOTES option is parsed but ignored by all storage engines."))
+		p.warns = append(p.warns, fmt.Errorf("the IETF_QUOTES option is parsed but ignored by all storage engines"))
 	case sequence:
 		// SEQUENCE [=] {1|0}
 		p.next()
@@ -303,7 +303,8 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		if tok, ok := p.expect(intLit); ok {
 			opt.UintValue = tokenItemToUint64(tok.Item)
 		}
-		p.warns = append(p.warns, fmt.Errorf("The SEQUENCE option is parsed but ignored by all storage engines. Use CREATE SEQUENCE instead."))
+		p.warns = append(p.warns,
+			fmt.Errorf("the SEQUENCE option is parsed but ignored by all storage engines, use CREATE SEQUENCE instead"))
 	case autoextendSize:
 		p.next()
 		p.accept(eq)
@@ -312,7 +313,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		if tok, ok := p.expectAny(identifier, intLit, decLit); ok {
 			opt.StrValue = tok.Lit
 		}
-		p.warns = append(p.warns, fmt.Errorf("The AUTOEXTEND_SIZE option is parsed but ignored by all storage engines."))
+		p.warns = append(p.warns, fmt.Errorf("the AUTOEXTEND_SIZE option is parsed but ignored by all storage engines"))
 	case autoIdCache:
 		p.parseTableOptionUint(opt, ast.TableOptionAutoIdCache)
 	case preSplitRegions:
