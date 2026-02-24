@@ -405,15 +405,17 @@ func cloneLimit(lim *logicalop.LogicalLimit) (*logicalop.LogicalLimit, bool) {
 // that fillIndexPath / deriveTablePathStats start from a clean state.
 func freshAccessPath(src *util.AccessPath) *util.AccessPath {
 	return &util.AccessPath{
-		Index:              src.Index,
-		StoreType:          src.StoreType,
-		IsIntHandlePath:    src.IsIntHandlePath,
-		IsCommonHandlePath: src.IsCommonHandlePath,
-		Forced:             src.Forced,
-		ForceKeepOrder:     src.ForceKeepOrder,
-		ForceNoKeepOrder:   src.ForceNoKeepOrder,
-		ForcePartialOrder:  src.ForcePartialOrder,
-		IsUkShardIndexPath: src.IsUkShardIndexPath,
+		Index:                 src.Index,
+		StoreType:             src.StoreType,
+		IsIntHandlePath:       src.IsIntHandlePath,
+		IsCommonHandlePath:    src.IsCommonHandlePath,
+		Forced:                src.Forced,
+		ForceKeepOrder:        src.ForceKeepOrder,
+		ForceNoKeepOrder:      src.ForceNoKeepOrder,
+		ForcePartialOrder:     src.ForcePartialOrder,
+		IsUkShardIndexPath:    src.IsUkShardIndexPath,
+		IndexLookUpPushDownBy: src.IndexLookUpPushDownBy,
+		NoncacheableReason:    src.NoncacheableReason,
 	}
 }
 
