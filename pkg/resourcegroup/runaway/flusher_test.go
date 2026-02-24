@@ -65,11 +65,10 @@ func TestBatchFlusherAdd(t *testing.T) {
 	re.Equal(2, flusher.bufferLen())
 	re.Equal(int32(0), flushCount.Load())
 
-	// Threshold reached: notifyFlush is called but flush happens asynchronously in run().
-	// Since run() is not started in this test, we manually flush.
+	// The global flushThreshold (512) is not reached with only 3 items,
+	// so no automatic flush is triggered. Flush manually to verify behavior.
 	flusher.add("c", 3)
-	// The buffer still has 3 items because run() is not consuming flushCh.
-	// Manually flush to simulate what run() would do.
+	// Manually flush to verify the buffer is properly drained.
 	flusher.flush()
 	re.Equal(0, flusher.bufferLen())
 	re.Equal(int32(1), flushCount.Load())
@@ -268,4 +267,38 @@ func TestBatchFlusherRunAndStop(t *testing.T) {
 
 	re.Equal(int32(2), flushCount.Load())
 	re.Equal(0, flusher.bufferLen())
+}
+
+func TestBatchFlusherStopWithoutRun(t *testing.T) {
+	flusher := newTestBatchFlusher(
+		10,
+		func(m map[string]int, k string, v int) { m[k] = v },
+		func(m map[string]int) error { return nil },
+	)
+
+	// stop() without run() must not deadlock.
+	done := make(chan struct{})
+	go func() {
+		flusher.stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stop() deadlocked without run()")
+	}
+}
+
+func TestBatchFlusherDoubleStop(t *testing.T) {
+	flusher := newTestBatchFlusher(
+		10,
+		func(m map[string]int, k string, v int) { m[k] = v },
+		func(m map[string]int) error { return nil },
+	)
+
+	go flusher.run()
+
+	// Double stop must not panic (double close of stopCh).
+	flusher.stop()
+	flusher.stop()
 }

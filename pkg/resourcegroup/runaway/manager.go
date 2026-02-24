@@ -182,6 +182,11 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 	go rm.runawayRecordFlusher.run()
 	go rm.quarantineRecordFlusher.run()
 	go rm.staleQuarantineFlusher.run()
+	defer func() {
+		rm.runawayRecordFlusher.stop()
+		rm.quarantineRecordFlusher.stop()
+		rm.staleQuarantineFlusher.stop()
+	}()
 
 	gcInterval := runawayRecordGCInterval
 	failpoint.Inject("FastRunawayGC", func() {
@@ -192,9 +197,6 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 	for {
 		select {
 		case <-rm.exit:
-			rm.runawayRecordFlusher.stop()
-			rm.quarantineRecordFlusher.stop()
-			rm.staleQuarantineFlusher.stop()
 			logutil.BgLogger().Info("runaway record flush loop exit")
 			return
 		case <-runawayRecordGCTicker.C:
@@ -261,25 +263,23 @@ func (rm *Manager) addWatchList(record *QuarantineRecord, ttl time.Duration, for
 			rm.watchList.Delete(key)
 		}
 		rm.watchList.Set(key, record, ttl)
-	} else {
-		if item == nil {
-			rm.queryLock.Lock()
-			// When watchList get record, it will check whether the record is stale, so add new record if returns nil.
-			if rm.watchList.Get(key) == nil {
-				rm.watchList.Set(key, record, ttl)
-			} else {
-				rm.staleQuarantineFlusher.add(record.ID, record)
-			}
-			rm.queryLock.Unlock()
-		} else if item.ID == 0 {
-			// to replace the record without ID.
-			rm.queryLock.Lock()
-			defer rm.queryLock.Unlock()
+	} else if item == nil {
+		rm.queryLock.Lock()
+		// When watchList get record, it will check whether the record is stale, so add new record if returns nil.
+		if rm.watchList.Get(key) == nil {
 			rm.watchList.Set(key, record, ttl)
-		} else if item.ID != record.ID {
-			// check the ID because of the earlier scan.
+		} else if record.ID != 0 {
 			rm.staleQuarantineFlusher.add(record.ID, record)
 		}
+		rm.queryLock.Unlock()
+	} else if item.ID == 0 {
+		// to replace the record without ID.
+		rm.queryLock.Lock()
+		defer rm.queryLock.Unlock()
+		rm.watchList.Set(key, record, ttl)
+	} else if record.ID != 0 && item.ID != record.ID {
+		// check the ID because of the earlier scan.
+		rm.staleQuarantineFlusher.add(record.ID, record)
 	}
 }
 

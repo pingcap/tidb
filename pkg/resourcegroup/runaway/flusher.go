@@ -16,6 +16,7 @@ package runaway
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -49,6 +50,8 @@ type batchFlusher[K comparable, V any] struct {
 	flushCh       chan struct{} // capacity 1, threshold-triggered signal
 	stopCh        chan struct{} // close to trigger stop
 	done          chan struct{} // closed after run() exits
+	stopOnce      sync.Once
+	started       atomic.Bool
 	lastFlushTime time.Time
 	mergeFn       func(map[K]V, K, V)
 	flushFn       func(map[K]V) error
@@ -100,6 +103,7 @@ func newBatchFlusher[K comparable, V any](
 }
 
 func (f *batchFlusher[K, V]) run() {
+	f.started.Store(true)
 	defer close(f.done)
 	defer util.Recover(metrics.LabelDomain, "batchFlusher-"+f.name, nil, false)
 	defer func() {
@@ -120,9 +124,13 @@ func (f *batchFlusher[K, V]) run() {
 }
 
 func (f *batchFlusher[K, V]) stop() {
-	f.ticker.Stop()
-	close(f.stopCh)
-	<-f.done
+	f.stopOnce.Do(func() {
+		f.ticker.Stop()
+		close(f.stopCh)
+	})
+	if f.started.Load() {
+		<-f.done
+	}
 }
 
 func (f *batchFlusher[K, V]) notifyFlush() {
