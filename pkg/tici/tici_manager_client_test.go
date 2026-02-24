@@ -54,6 +54,10 @@ func (m *MockMetaServiceClient) FinishImportIndexUpload(ctx context.Context, in 
 	args := m.Called(ctx, in)
 	return args.Get(0).(*FinishImportResponse), args.Error(1)
 }
+func (m *MockMetaServiceClient) GetIndexProgress(ctx context.Context, in *GetIndexProgressRequest, opts ...grpc.CallOption) (*GetIndexProgressResponse, error) {
+	args := m.Called(ctx, in)
+	return args.Get(0).(*GetIndexProgressResponse), args.Error(1)
+}
 func (m *MockMetaServiceClient) GetShardLocalCacheInfo(ctx context.Context, in *GetShardLocalCacheRequest, opts ...grpc.CallOption) (*GetShardLocalCacheResponse, error) {
 	args := m.Called(ctx, in)
 	return args.Get(0).(*GetShardLocalCacheResponse), args.Error(1)
@@ -213,6 +217,62 @@ func TestFinishIndexUpload(t *testing.T) {
 		Once()
 	err = ctx.FinishIndexUpload(context.Background(), taskID)
 	assert.Error(t, err)
+}
+
+func TestCheckAddIndexProgress(t *testing.T) {
+	mockClient := new(MockMetaServiceClient)
+	ctx := newTestTiCIManagerCtx(mockClient)
+	tableID, indexID := int64(1), int64(2)
+
+	matchReq := mock.MatchedBy(func(req *GetIndexProgressRequest) bool {
+		return req.GetTableId() == tableID && req.GetIndexId() == indexID
+	})
+
+	mockClient.
+		On("GetIndexProgress", mock.Anything, matchReq).
+		Return(&GetIndexProgressResponse{Status: ErrorCode_SUCCESS, State: GetIndexProgressResponse_COMPLETED}, nil).
+		Once()
+	ready, err := ctx.CheckAddIndexProgress(context.Background(), tableID, indexID)
+	require.NoError(t, err)
+	require.True(t, ready)
+
+	mockClient.
+		On("GetIndexProgress", mock.Anything, matchReq).
+		Return(&GetIndexProgressResponse{Status: ErrorCode_SUCCESS, State: GetIndexProgressResponse_RUNNING}, nil).
+		Once()
+	ready, err = ctx.CheckAddIndexProgress(context.Background(), tableID, indexID)
+	require.NoError(t, err)
+	require.False(t, ready)
+
+	mockClient.
+		On("GetIndexProgress", mock.Anything, matchReq).
+		Return(&GetIndexProgressResponse{Status: ErrorCode_SUCCESS, State: GetIndexProgressResponse_FAILED, ErrorMessage: "failed"}, nil).
+		Once()
+	ready, err = ctx.CheckAddIndexProgress(context.Background(), tableID, indexID)
+	require.Error(t, err)
+	require.False(t, ready)
+
+	mockClient.
+		On("GetIndexProgress", mock.Anything, matchReq).
+		Return(&GetIndexProgressResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "bad"}, nil).
+		Once()
+	ready, err = ctx.CheckAddIndexProgress(context.Background(), tableID, indexID)
+	require.NoError(t, err)
+	require.False(t, ready)
+
+	mockClient.
+		On("GetIndexProgress", mock.Anything, matchReq).
+		Return(&GetIndexProgressResponse{
+			Status:       ErrorCode_UNKNOWN_ERROR,
+			State:        GetIndexProgressResponse_State(99),
+			ErrorMessage: "bad",
+		}, nil).
+		Once()
+	ready, err = ctx.CheckAddIndexProgress(context.Background(), tableID, indexID)
+	require.Error(t, err)
+	require.False(t, ready)
+
+	mockClient.AssertExpectations(t)
 }
 
 func TestFinishIndexUploadHelper(t *testing.T) {
