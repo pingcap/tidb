@@ -656,6 +656,15 @@ func (index *IndexInfo) HasExtraTiCIShardingKey() bool {
 	return false
 }
 
+// HybridShardingColumns returns the sharding columns for a hybrid index.
+// It returns nil when the index is not hybrid or sharding is not configured.
+func (index *IndexInfo) HybridShardingColumns() []*IndexColumn {
+	if index == nil || index.HybridInfo == nil || index.HybridInfo.Sharding == nil {
+		return nil
+	}
+	return index.HybridInfo.Sharding.Columns
+}
+
 // GetColumnarIndexType returns the type of columnar index.
 func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 	if index.VectorInfo != nil {

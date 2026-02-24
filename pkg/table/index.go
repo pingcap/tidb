@@ -15,6 +15,7 @@
 package table
 
 import (
+	"encoding/hex"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -22,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // IndexIterator is the interface for iterator of index data on KV store.
@@ -192,6 +195,11 @@ func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool,
 		return nil, nil, false, err
 	}
 	iter.i++
+	logutil.BgLogger().Info("ffffffffffff IndexKVGenerator Next",
+		zap.String("key", hex.EncodeToString(key)),
+		zap.String("idxVal", hex.EncodeToString(idxVal)),
+		zap.Bool("distinct", distinct),
+		zap.Error(err))
 	return key, idxVal, distinct, err
 }
 
