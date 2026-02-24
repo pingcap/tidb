@@ -342,6 +342,11 @@ func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode 
 				needsWrap = true
 			}
 		}
+		if s, ok := res.(*ast.SelectStmt); ok && s.IsInBraces {
+			if s.OrderBy != nil || s.Limit != nil {
+				needsWrap = true
+			}
+		}
 		if needsWrap {
 			// Wrap the existing result (which has inner ORDER BY/LIMIT) as a child
 			// of a new SetOprStmt. The outer ORDER BY/LIMIT will be set on the wrapper.
