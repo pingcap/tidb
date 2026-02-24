@@ -94,7 +94,10 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	for _, idx := range e.indexes {
 		if idx.IsTiCIIndex() {
 			taskID := strconv.FormatInt(e.job.ID, 10)
-			if err := bd.InitTiCIWriterGroup(ctx, e.ptbl.Meta(), e.job.SchemaName, taskID); err != nil {
+			// Create a TiCI writer group for this index.
+			newIndexIDs := make([]int64, 0, 1)
+			newIndexIDs = append(newIndexIDs, idx.ID)
+			if err := bd.InitTiCIWriterGroup(ctx, e.ptbl.Meta(), e.job.SchemaName, taskID, newIndexIDs); err != nil {
 				return err
 			}
 			break
