@@ -368,6 +368,22 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	var res ast.ResultSetNode
 
 	switch p.peek().Tp {
+	case '{':
+		// ODBC escaped table reference: { OJ table_ref }
+		// The braces are stripped and the identifier after '{' must be "OJ".
+		p.next() // consume '{'
+		if !p.peek().IsKeyword("OJ") {
+			p.syntaxErrorAt(p.peek().Offset)
+			return nil
+		}
+		p.next() // consume OJ
+		res = p.parseJoin()
+		p.expect('}')
+		// After { OJ ... }, handle alias if present
+		if res != nil {
+			return res
+		}
+		return nil
 	case '(':
 		p.next()
 		if p.peek().Tp == selectKwd || p.peek().Tp == with || p.peek().Tp == tableKwd || p.peek().Tp == values {

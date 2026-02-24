@@ -104,8 +104,8 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 
 		case is:
 			// IS is at the same precedence as comparison operators (=, >=, etc.)
-			// in MySQL grammar — both are at the bool_primary level with left-to-right
-			// associativity. So "A = B IS NULL" parses as "(A = B) IS NULL".
+			// in MySQL grammar — both are at the bool_primary level.
+			// IS [NOT] TRUE/FALSE/NULL does NOT chain: "A IS TRUE IS TRUE" is a syntax error.
 			if minPrec > precComparison {
 				return left
 			}
@@ -113,7 +113,9 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			if left == nil {
 				return nil
 			}
-			continue
+			// Do NOT continue — IS does not chain. Return so that a second IS
+			// at the same precedence level produces a syntax error.
+			return left
 
 		case collate:
 			if minPrec > precCollate {
@@ -251,10 +253,8 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 	case '{': // ODBC escape sequence
 		p.next() // consume '{'
 		tok := p.next()
-		if tok.Tp != identifier {
-			p.syntaxErrorAt(tok.Offset)
-			return nil
-		}
+		// The ODBC type identifier can be 'd', 't', 'ts', 'fn', 'date', 'time', 'timestamp', etc.
+		// These may be tokenized as keywords (e.g. DATE → dateType), so we match on Lit, not Tp.
 		typ := strings.ToLower(tok.Lit)
 
 		// Parse the inner expression (not just string literal).
@@ -266,27 +266,27 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 		p.expect('}')
 
 		switch typ {
-		case "d":
+		case "d", "date":
 			// Clear charset on the inner expression to match expected behavior.
 			if ve, ok := innerExpr.(ast.ValueExpr); ok {
 				ve.GetType().SetCharset("")
 				ve.GetType().SetCollate("")
 			}
 			return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{innerExpr}}
-		case "t":
+		case "t", "time":
 			if ve, ok := innerExpr.(ast.ValueExpr); ok {
 				ve.GetType().SetCharset("")
 				ve.GetType().SetCollate("")
 			}
 			return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TimeLiteral), Args: []ast.ExprNode{innerExpr}}
-		case "ts":
+		case "ts", "timestamp":
 			if ve, ok := innerExpr.(ast.ValueExpr); ok {
 				ve.GetType().SetCharset("")
 				ve.GetType().SetCollate("")
 			}
 			return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TimestampLiteral), Args: []ast.ExprNode{innerExpr}}
 		default:
-			// Unknown ODBC identifier: pass through inner expression with original charset.
+			// Unknown ODBC identifier (e.g. fn): pass through inner expression.
 			return innerExpr
 		}
 

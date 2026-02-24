@@ -64,12 +64,18 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 		return p.parseMatchAgainstExpr()
 
 	case values:
-		// VALUES(column) in ON DUPLICATE KEY UPDATE context.
+		// VALUES(column) or VALUES(table.column) in ON DUPLICATE KEY UPDATE context.
 		p.next()
 		p.expect('(')
 		col := &ast.ColumnNameExpr{Name: &ast.ColumnName{}}
 		nameTok := p.next()
 		col.Name.Name = ast.NewCIStr(nameTok.Lit)
+		// Support qualified form: VALUES(t.col)
+		if _, ok := p.accept('.'); ok {
+			nextTok := p.next()
+			col.Name.Table = col.Name.Name
+			col.Name.Name = ast.NewCIStr(nextTok.Lit)
+		}
 		p.expect(')')
 		return &ast.ValuesExpr{Column: col}
 
