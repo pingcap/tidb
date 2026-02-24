@@ -164,8 +164,8 @@ type BuildLocalResult struct {
 	countStarMVOffset int
 }
 
-// Build constructs the merge-source plan and metadata for one MV incremental merge window.
-func Build(
+// BuildForTest constructs the merge-source plan and metadata for one MV incremental merge window.
+func BuildForTest(
 	sctx planctx.PlanContext,
 	is infoschema.InfoSchema,
 	mv *model.TableInfo,
