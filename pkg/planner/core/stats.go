@@ -465,8 +465,8 @@ func detachCondAndBuildOptimalRangeForIndex(
 	}
 
 	indexCols := cols
-	if len(indexCols) > len(colLens) {
-		indexCols = indexCols[0:len(colLens)]
+	if idx := histColl.GetIdx(indexID); idx != nil && len(indexCols) > len(idx.Info.Columns) {
+		indexCols = indexCols[:len(idx.Info.Columns)] // remove clustered primary key if it has been added to cols
 	}
 
 	// Calculate estimated row count for this configuration
@@ -491,7 +491,10 @@ func detachCondAndBuildOptimalRangeForIndex(
 	bestScanCost := rowCount.Est
 	bestCost := bestSeekCost + bestScanCost
 
-	for cutoff := max(1, res.EqCondCount); cutoff < res.EqOrInCount; cutoff++ {
+	// Note that after removing the clustered primary key if it has been added to cols,
+	// indexCols may be shorter than res.EqOrInCount. So we take the upper bound to be
+	// min(res.EqOrInCount, len(indexCols))
+	for cutoff := max(1, res.EqCondCount); cutoff < min(res.EqOrInCount, len(indexCols)); cutoff++ {
 		altIndexCols := indexCols[:cutoff]
 		altIndexColLens := colLens[:cutoff]
 
