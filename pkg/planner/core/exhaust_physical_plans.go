@@ -233,13 +233,12 @@ func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *proper
 			res = append(res, hashJoin)
 		}
 		return res
-	} else {
-		chReqProps := newTwoBaseProps()
-		adjustStats(chReqProps)
-		hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps[0], chReqProps[1])
-		hashJoin.SetSchema(p.Schema())
-		res = append(res, hashJoin)
 	}
+	chReqProps := newTwoBaseProps()
+	adjustStats(chReqProps)
+	hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps[0], chReqProps[1])
+	hashJoin.SetSchema(p.Schema())
+	res = append(res, hashJoin)
 	return res
 }
 
