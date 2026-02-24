@@ -399,9 +399,6 @@ func detachCondAndBuildRangeForPath(
 		path.TableFilters = conds
 		return nil
 	}
-	if !sctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return err
