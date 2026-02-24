@@ -157,7 +157,7 @@ func CalculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 	// run the subtask on existing nodes, if not enough resources, we will create
 	// new nodes.
 	for _, t := range tasks {
-		needed := t.MaxNodeCount
+		needed := getNeededNodes(t)
 		for i, avail := range availResources {
 			if needed <= 0 {
 				break
@@ -177,6 +177,16 @@ func CalculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 	// make sure 1 node exist for DXF owner and works as a reserved node, to make
 	// small tasks more responsive.
 	return max(len(availResources), 1)
+}
+
+func getNeededNodes(task *proto.TaskBase) int {
+	// for below steps of IMPORT INTO task, we only have 1 subtask now.
+	if task.Type == proto.ImportInto && (task.Step == proto.ImportStepCollectConflicts ||
+		task.Step == proto.ImportStepConflictResolution ||
+		task.Step == proto.ImportStepPostProcess) {
+		return 1
+	}
+	return task.MaxNodeCount
 }
 
 // GetScheduleFlags returns the schedule flags, such as pause-scale-in flag.
