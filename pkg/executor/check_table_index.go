@@ -477,7 +477,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	})
 
 	idxInfo := w.indexInfos[task.indexOffset]
-	bucketSize := int(CheckTableFastBucketSize.Load()) * 10
+	bucketSize := int(CheckTableFastBucketSize.Load())
 
 	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
 
