@@ -61,6 +61,10 @@ This file provides guidance to agents working in this repository.
 ## Notes
 
 - Follow `docs/agents/notes-guide.md`.
+- DDL module-only rules (applies to changes under `pkg/ddl/` and `docs/agents/ddl/`):
+  - **REQUIRED**: Before making/reviewing any DDL changes in the DDL module, read `docs/agents/ddl/README.md` first and use it as the default map of the execution framework.
+  - Debugging: You may reference `docs/agents/ddl/*`, but you **MUST NOT** treat it as authoritative. Treat it as hypotheses until verified in code/tests (avoid hallucination/outdated assumptions).
+  - Doc drift: If implementation and `docs/agents/ddl/*` differ, you **MUST** update the docs to match reality and call it out in the PR/issue. Do not defer.
 
 ## Build Flow
 
@@ -148,7 +152,7 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 - Bug reports should include minimal reproduction, expected/actual behavior, and TiDB version (for example `SELECT tidb_version()` output).
 - Search existing issues/PRs first (for example `gh search issues --repo pingcap/tidb --include-prs "<keywords>"`), then add relevant logs/configuration/SQL plans.
 - Labeling requirements:
-  - `type/*` usually comes from template; add `type/regression` when applicable.
+  - `type/*` is usually applied by the issue template (GitHub UI); if creating issues via `gh issue create`, add it explicitly via `--label` (or follow up with `gh issue edit --add-label`).
   - Add at least one `component/*` label.
   - For bug/regression, include `severity/*` and affected-version labels (for example `affects-8.5`, or `may-affects-*` if unsure).
   - If label permissions are missing, include `Suggested labels: ...` in issue body.
@@ -160,6 +164,7 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
   - `*: what is changed`
 - PR description MUST follow `.github/pull_request_template.md`.
 - PR description MUST contain one line starting with `Issue Number:` and reference related issue(s) using `close #<id>` or `ref #<id>`.
+- If you create PRs via GitHub CLI, start from the template to avoid breaking required HTML comments: `gh pr create -T .github/pull_request_template.md` (then fill in the fields; do not delete/alter the HTML comment markers).
 - Keep HTML comments unchanged, including `Tests <!-- At least one of them must be included. -->`, because CI tooling depends on them.
 - Avoid force-push when possible; prefer follow-up commits and squash merge.
 - If force-push is unavoidable, use `--force-with-lease` and coordinate with reviewers.
