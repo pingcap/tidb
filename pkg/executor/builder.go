@@ -127,6 +127,10 @@ type executorBuilder struct {
 
 	// Used when building MPPGather.
 	encounterUnionScan bool
+
+	// stmtCtxLock guards statement context and telemetry updates when executor building happens concurrently.
+	// It is only set for dataReaderBuilder instances used by index join inner workers.
+	stmtCtxLock *sync.Mutex
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -148,6 +152,16 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}
+}
+
+func (b *executorBuilder) withStmtCtxLock(fn func()) {
+	if b.stmtCtxLock == nil {
+		fn()
+		return
+	}
+	b.stmtCtxLock.Lock()
+	defer b.stmtCtxLock.Unlock()
+	fn()
 }
 
 // MockExecutorBuilder is a wrapper for executorBuilder.
@@ -3537,10 +3551,14 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 	builderForDataReader := *b
 	builderForDataReader.forDataReaderBuilder = true
 	builderForDataReader.dataReaderTS = ts
+	if builderForDataReader.stmtCtxLock == nil {
+		builderForDataReader.stmtCtxLock = &sync.Mutex{}
+	}
 
 	return &dataReaderBuilder{
 		plan:            p,
 		executorBuilder: &builderForDataReader,
+		once:            &dataReaderBuilderOnce{},
 	}, nil
 }
 
@@ -4030,7 +4048,10 @@ func (b *executorBuilder) buildTableReader(v *physicalop.PhysicalTableReader) ex
 	ret.ranges = ts.Ranges
 	ret.groupedRanges = ts.GroupedRanges
 	ret.groupByColIdxs = ts.GroupByColIdxs
-	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	b.withStmtCtxLock(func() {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	})
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ret
@@ -4426,8 +4447,10 @@ func (b *executorBuilder) buildIndexReader(v *physicalop.PhysicalIndexReader) ex
 	}
 
 	ret.ranges = is.Ranges
-	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+	b.withStmtCtxLock(func() {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+	})
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ret
@@ -4689,9 +4712,11 @@ func (b *executorBuilder) buildIndexLookUpReader(v *physicalop.PhysicalIndexLook
 	ret.ranges = is.Ranges
 	executor_metrics.ExecutorCounterIndexLookUpExecutor.Inc()
 
-	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
-	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	b.withStmtCtxLock(func() {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+		sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	})
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ret
@@ -4840,8 +4865,10 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader, load
 
 func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMergeReader) exec.Executor {
 	if b.Ti != nil {
-		b.Ti.UseIndexMerge = true
-		b.Ti.UseTableLookUp.Store(true)
+		b.withStmtCtxLock(func() {
+			b.Ti.UseIndexMerge = true
+			b.Ti.UseTableLookUp.Store(true)
+		})
 	}
 	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
 	assertByItemsAreColumns(ts.ByItems)
@@ -4856,13 +4883,15 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 		return nil
 	}
 	ret.ranges = make([][]*ranger.Range, 0, len(v.PartialPlans))
-	sctx := b.ctx.GetSessionVars().StmtCtx
 	hasGlobalIndex := false
 	for i := range v.PartialPlans {
 		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
 			assertByItemsAreColumns(is.ByItems)
 			ret.ranges = append(ret.ranges, is.Ranges)
-			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+			b.withStmtCtxLock(func() {
+				sctx := b.ctx.GetSessionVars().StmtCtx
+				sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+			})
 			if is.Index.Global {
 				hasGlobalIndex = true
 			}
@@ -4872,11 +4901,17 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 			ret.ranges = append(ret.ranges, partialTS.Ranges)
 			if ret.table.Meta().IsCommonHandle {
 				tblInfo := ret.table.Meta()
-				sctx.IndexNames = append(sctx.IndexNames, tblInfo.Name.O+":"+tables.FindPrimaryIndex(tblInfo).Name.O)
+				b.withStmtCtxLock(func() {
+					sctx := b.ctx.GetSessionVars().StmtCtx
+					sctx.IndexNames = append(sctx.IndexNames, tblInfo.Name.O+":"+tables.FindPrimaryIndex(tblInfo).Name.O)
+				})
 			}
 		}
 	}
-	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	b.withStmtCtxLock(func() {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	})
 	executor_metrics.ExecutorCounterIndexMergeReaderExecutor.Inc()
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -4915,11 +4950,13 @@ type dataReaderBuilder struct {
 	selectResultHook // for testing
 	// indexJoinKeyUniqueIDs records the inner join key unique IDs for index join inner build.
 	indexJoinKeyUniqueIDs []int64
-	once                  struct {
-		sync.Once
-		condPruneResult []table.PhysicalTable
-		err             error
-	}
+	once *dataReaderBuilderOnce
+}
+
+type dataReaderBuilderOnce struct {
+	sync.Once
+	condPruneResult []table.PhysicalTable
+	err             error
 }
 
 type mockPhysicalIndexReader struct {
@@ -4933,10 +4970,23 @@ func (*mockPhysicalIndexReader) MemoryUsage() (sum int64) {
 	return
 }
 
+func (builder *dataReaderBuilder) cloneForIndexJoinBuild() *dataReaderBuilder {
+	clonedExecBuilder := *builder.executorBuilder
+	clonedExecBuilder.err = nil
+	return &dataReaderBuilder{
+		plan:                  builder.plan,
+		executorBuilder:       &clonedExecBuilder,
+		selectResultHook:      builder.selectResultHook,
+		indexJoinKeyUniqueIDs: builder.indexJoinKeyUniqueIDs,
+		once:                  builder.once,
+	}
+}
+
 func (builder *dataReaderBuilder) BuildExecutorForIndexJoin(ctx context.Context, lookUpContents []*join.IndexJoinLookUpContent,
 	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
 ) (exec.Executor, error) {
-	return builder.buildExecutorForIndexJoinInternal(ctx, builder.plan, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	localBuilder := builder.cloneForIndexJoinBuild()
+	return localBuilder.buildExecutorForIndexJoinInternal(ctx, localBuilder.plan, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan base.Plan, lookUpContents []*join.IndexJoinLookUpContent,
@@ -5871,8 +5921,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 	}
 
 	if plan.IndexInfo != nil {
-		sctx := b.ctx.GetSessionVars().StmtCtx
-		sctx.IndexNames = append(sctx.IndexNames, plan.TblInfo.Name.O+":"+plan.IndexInfo.Name.O)
+		b.withStmtCtxLock(func() {
+			sctx := b.ctx.GetSessionVars().StmtCtx
+			sctx.IndexNames = append(sctx.IndexNames, plan.TblInfo.Name.O+":"+plan.IndexInfo.Name.O)
+		})
 	}
 
 	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
@@ -5951,6 +6003,9 @@ func getPhysicalTableID(t table.Table) int64 {
 }
 
 func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, planPartInfo *physicalop.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
+	if builder.once == nil {
+		builder.once = &dataReaderBuilderOnce{}
+	}
 	builder.once.Do(func() {
 		condPruneResult, err := partitionPruning(builder.executorBuilder.ctx, tbl, planPartInfo)
 		builder.once.condPruneResult = condPruneResult
