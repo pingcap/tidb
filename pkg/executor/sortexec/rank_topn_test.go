@@ -87,7 +87,6 @@ func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Sche
 		}
 
 		for i := 0; i < rankTopNCase.rowCount; {
-			// groupSize := rand.Intn(10) + 1  // TODO(x)
 			groupSize := rand.Intn(200) + 1
 			for j := 0; j < groupSize && i < rankTopNCase.rowCount; j++ {
 				_, err := crand.Read(buf)
@@ -106,12 +105,6 @@ func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Sche
 		}
 		opt.Datums[i] = prefixData
 	}
-
-	// TODO(x) remove debug info
-	// fmt.Println("---------- Origin Data ----------")
-	// for _, output := range outputs {
-	// 	fmt.Println(output)
-	// }
 
 	return testutil.BuildMockDataSource(opt)
 }

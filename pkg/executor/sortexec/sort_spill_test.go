@@ -111,14 +111,6 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count i
 			fieldTypes = append(fieldTypes, col.GetType(ctx))
 		}
 
-		// results := fmt.Sprintf("------------- before sorting result rows ------------- %d %d", offset, count)
-		// for _, ptr := range r.rowPtrs {
-		// 	expectRow := r.savedChunks[ptr.ChkIdx].GetRow(int(ptr.RowIdx))
-		// 	expect := expectRow.ToString(fieldTypes)
-		// 	results = fmt.Sprintf("%s\n%s", results, expect)
-		// }
-		// fmt.Println(results) // TODO(x) remove debug info
-
 		sort.Slice(r.rowPtrs, r.keyColumnsLess)
 		if offset < 0 {
 			offset = 0
@@ -126,14 +118,6 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count i
 		if count < 0 {
 			count = (int64(len(r.rowPtrs)) - offset)
 		}
-
-		// results = fmt.Sprintf("------------- result rows ------------- %d %d", offset, count)
-		// for _, ptr := range r.rowPtrs {
-		// 	expectRow := r.savedChunks[ptr.ChkIdx].GetRow(int(ptr.RowIdx))
-		// 	expect := expectRow.ToString(fieldTypes)
-		// 	results = fmt.Sprintf("%s\n%s", results, expect)
-		// }
-		// fmt.Println(results) // TODO(x) remove debug info
 
 		start := min(int64(len(r.rowPtrs)), offset)
 		end := min(int64(len(r.rowPtrs)), offset+count)
