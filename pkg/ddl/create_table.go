@@ -421,14 +421,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 		}
 
-		if err = w.upsertCreateMaterializedViewRefreshInfo(
-			jobCtx,
-			mvTblInfo.ID,
-			mviewRefreshResultSuccess,
-			mviewRefreshTypeComplete,
-			job.SnapshotVer,
-			"",
-		); err != nil {
+		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID, job.SnapshotVer); err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
@@ -695,19 +688,13 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 	return w.buildCreateMaterializedViewDataByImport(ctx, job, mvTblInfo)
 }
 
-const (
-	mviewRefreshResultRunning = "running"
-	mviewRefreshResultSuccess = "success"
-	mviewRefreshTypeComplete  = "complete"
-)
-
-// prewriteCreateMaterializedViewRefreshInfo writes a "running" row for CREATE
+// prewriteCreateMaterializedViewRefreshInfo upserts a metadata row for CREATE
 // MATERIALIZED VIEW before the initial build starts, in an independent
 // transaction.
 //
 // Rationale (see docs/design/materialized_view/mv_log_purge.md):
 //  1. PURGE MATERIALIZED VIEW LOG computes safe_purge_tso from
-//     MIN(COALESCE(LAST_SUCCESSFUL_REFRESH_READ_TSO, 0)) across dependent MVs,
+//     MIN(COALESCE(LAST_SUCCESS_READ_TSO, 0)) across dependent MVs,
 //     including in-building CREATE MATERIALIZED VIEW jobs.
 //  2. If the refresh row is only visible after the DDL step transaction commits,
 //     purge can miss this in-building MV and delete MLog rows that are still
@@ -748,15 +735,7 @@ func (w *worker) prewriteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, m
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = execCreateMaterializedViewRefreshInfoUpsert(
-		ctx,
-		ddlSess,
-		mviewID,
-		mviewRefreshResultRunning,
-		mviewRefreshTypeComplete,
-		startTS,
-		"",
-	); err != nil {
+	if err = execCreateMaterializedViewRefreshInfoUpsert(ctx, ddlSess, mviewID, startTS); err != nil {
 		return errors.Trace(err)
 	}
 	if err = ddlSess.Commit(ctx); err != nil {
@@ -766,27 +745,12 @@ func (w *worker) prewriteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, m
 	return nil
 }
 
-func (w *worker) upsertCreateMaterializedViewRefreshInfo(
-	jobCtx *jobContext,
-	mviewID int64,
-	refreshResult string,
-	refreshType string,
-	readTS uint64,
-	failedReason string,
-) error {
+func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64, readTS uint64) error {
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(
-		ctx,
-		w.sess,
-		mviewID,
-		refreshResult,
-		refreshType,
-		readTS,
-		failedReason,
-	))
+	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mviewID, readTS))
 }
 
 func warmupCreateMaterializedViewRefreshInfoTxn(
@@ -795,7 +759,7 @@ func warmupCreateMaterializedViewRefreshInfoTxn(
 	mviewID int64,
 ) error {
 	warmupSQL := sqlescape.MustEscapeSQL(
-		"SELECT 1 FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %? LIMIT 1",
+		"SELECT 1 FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? LIMIT 1",
 		mviewID,
 	)
 	_, err := ddlSess.Execute(ctx, warmupSQL, "mview-refresh-info-prewrite-warmup")
@@ -806,12 +770,9 @@ func execCreateMaterializedViewRefreshInfoUpsert(
 	ctx context.Context,
 	ddlSess *sess.Session,
 	mviewID int64,
-	refreshResult string,
-	refreshType string,
 	readTS uint64,
-	failedReason string,
 ) error {
-	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, refreshResult, refreshType, readTS, failedReason)
+	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS)
 	_, err := ddlSess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
@@ -823,7 +784,7 @@ func execCreateMaterializedViewRefreshInfoUpsert(
 
 func convertCreateMaterializedViewRefreshInfoTableNotExistsErr(err error) error {
 	if infoschema.ErrTableNotExists.Equal(err) {
-		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: required system table mysql.tidb_mview_refresh does not exist")
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
 	}
 	return err
 }
@@ -846,50 +807,15 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	return errors.Trace(err)
 }
 
-func buildCreateMaterializedViewRefreshInfoUpsertSQL(
-	mviewID int64,
-	refreshResult string,
-	refreshType string,
-	readTS uint64,
-	failedReason string,
-) string {
-	if failedReason != "" {
-		// Failed refresh should only overwrite failure reason and keep successful read tso unchanged.
-		return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
-		MVIEW_ID,
-		LAST_REFRESH_RESULT,
-		LAST_REFRESH_TYPE,
-		LAST_REFRESH_TIME,
-		LAST_SUCCESSFUL_REFRESH_READ_TSO,
-		LAST_REFRESH_FAILED_REASON
-	) VALUES (%?, %?, %?, NOW(6), NULL, %?)
-	ON DUPLICATE KEY UPDATE
-		LAST_REFRESH_RESULT = VALUES(LAST_REFRESH_RESULT),
-		LAST_REFRESH_TYPE = VALUES(LAST_REFRESH_TYPE),
-		LAST_REFRESH_TIME = VALUES(LAST_REFRESH_TIME),
-		LAST_REFRESH_FAILED_REASON = VALUES(LAST_REFRESH_FAILED_REASON)`,
-			mviewID,
-			refreshResult,
-			refreshType,
-			failedReason,
-		)
-	}
-
-	// Running/success refresh updates the successful read tso and keeps failed reason untouched.
-	return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
+func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64) string {
+	return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
 		MVIEW_ID,
 		LAST_SUCCESS_READ_TSO
 	) VALUES (%?, %?)
 	ON DUPLICATE KEY UPDATE
-		LAST_REFRESH_RESULT = VALUES(LAST_REFRESH_RESULT),
-		LAST_REFRESH_TYPE = VALUES(LAST_REFRESH_TYPE),
-		LAST_REFRESH_TIME = VALUES(LAST_REFRESH_TIME),
-		LAST_SUCCESSFUL_REFRESH_READ_TSO = VALUES(LAST_SUCCESSFUL_REFRESH_READ_TSO)`,
+		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO)`,
 		mviewID,
-		refreshResult,
-		refreshType,
 		readTS,
-		nil,
 	)
 }
 
