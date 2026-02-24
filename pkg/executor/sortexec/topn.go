@@ -351,7 +351,10 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 }
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
-	e.initBeforeLoadingChunks()
+	err := e.initBeforeLoadingChunks()
+	if err != nil {
+		return err
+	}
 
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
@@ -379,7 +382,10 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 }
 
 func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) error {
-	e.initBeforeLoadingChunks()
+	err := e.initBeforeLoadingChunks()
+	if err != nil {
+		return err
+	}
 
 	// Check types, we need string types as prefix index only supports string types.
 	for i := range e.TruncateKeyExprs {
@@ -470,7 +476,6 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 
 	if remainingNeedRowCnt > 0 {
 		idx += remainingNeedRowCnt
-		savedRowCount += remainingNeedRowCnt
 	}
 
 	// both idx == 0 and len(e.prevPrefixKeys) == 0 is impossible
