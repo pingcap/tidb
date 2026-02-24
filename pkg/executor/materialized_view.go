@@ -54,7 +54,7 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 }
 
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) error {
-	refreshType, err := validateRefreshMaterializedViewStmt(s)
+	refreshMethod, err := validateRefreshMaterializedViewStmt(s)
 	if err != nil {
 		return err
 	}
@@ -72,16 +72,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	sqlExec := refreshSctx.GetSQLExecutor()
 	sessVars := refreshSctx.GetSessionVars()
 
-	restoreConstraintCheck, err := forceConstraintCheckInPlacePessimisticOnForRefresh(sessVars)
-	if err != nil {
-		return err
-	}
-	defer restoreConstraintCheck()
-
 	txnStarted := false
-	txnCommitted := false
+	txnFinished := false
 	defer func() {
-		if !txnStarted || txnCommitted {
+		if !txnStarted || txnFinished {
 			return
 		}
 		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
@@ -97,23 +91,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	failpoint.Inject("pauseRefreshMaterializedViewAfterBegin", func() {})
 
 	mviewID := tblInfo.ID
-	lockedReadTSO, lockedReadTSONull, persistFailureOnErr, err := lockAndValidateRefreshInfoRow(kctx, sqlExec, mviewID)
+	lockedReadTSO, lockedReadTSONull, err := lockRefreshInfoRow(kctx, sqlExec, mviewID)
 	if err != nil {
-		if persistFailureOnErr {
-			return persistRefreshFailureAndCommit(kctx, sqlExec, refreshType, mviewID, err, &txnCommitted)
-		}
 		return err
 	}
-
-	var lastSuccessfulRefreshReadTSO int64
-	if s.Type == ast.RefreshMaterializedViewTypeFast {
-		// LAST_SUCCESSFUL_REFRESH_READ_TSO is BIGINT DEFAULT NULL. FAST refresh requires it to be non-NULL.
-		if lockedReadTSONull {
-			return errors.New("refresh materialized view fast: LAST_SUCCESSFUL_REFRESH_READ_TSO is NULL")
-		}
-		lastSuccessfulRefreshReadTSO = lockedReadTSO
-	}
-
 	txn, err := refreshSctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
@@ -122,12 +103,63 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if startTS == 0 {
 		return errors.New("refresh materialized view: invalid transaction start tso")
 	}
+	refreshJobID := startTS
 
-	// Use a savepoint so we can keep the mutex lock, rollback MV data changes on failure,
-	// but still commit refresh metadata updates (failed reason) as requested.
-	const refreshSavepoint = "tidb_mview_refresh_sp"
-	if _, err := sqlExec.ExecuteInternal(kctx, "SAVEPOINT "+refreshSavepoint); err != nil {
-		return errors.Trace(err)
+	histSctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(kctx, histSctx)
+	histSQLExec := histSctx.GetSQLExecutor()
+
+	if err := insertRefreshHistRunning(kctx, histSQLExec, refreshJobID, mviewID, refreshMethod); err != nil {
+		return err
+	}
+
+	finalizeFailure := func(refreshErr error) error {
+		refreshErrMsg := refreshErr.Error()
+		var rollbackErr error
+		if !txnFinished {
+			if _, err := sqlExec.ExecuteInternal(kctx, "ROLLBACK"); err != nil {
+				rollbackErr = errors.Trace(err)
+				refreshErrMsg = refreshErrMsg + "; rollback error: " + err.Error()
+			}
+			txnFinished = true
+		}
+		if histErr := finalizeRefreshHist(
+			kctx,
+			histSQLExec,
+			refreshJobID,
+			mviewID,
+			refreshHistStatusFailed,
+			nil,
+			&refreshErrMsg,
+		); histErr != nil {
+			if rollbackErr != nil {
+				return errors.Annotatef(histErr, "refresh materialized view: rollback failed (%v) and failed to finalize refresh history after error %v", rollbackErr, refreshErr)
+			}
+			return errors.Annotatef(histErr, "refresh materialized view: failed to finalize refresh history after error %v", refreshErr)
+		}
+		if rollbackErr != nil {
+			return errors.Annotatef(rollbackErr, "refresh materialized view: rollback failed after error %v", refreshErr)
+		}
+		return errors.Trace(refreshErr)
+	}
+
+	failpoint.InjectCall("refreshMaterializedViewAfterInsertRefreshHistRunning")
+	failpoint.Inject("pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", func() {})
+
+	if err := recheckRefreshInfoRow(kctx, sqlExec, mviewID, lockedReadTSO, lockedReadTSONull); err != nil {
+		return finalizeFailure(err)
+	}
+
+	var lastSuccessfulRefreshReadTSO int64
+	if s.Type == ast.RefreshMaterializedViewTypeFast {
+		// LAST_SUCCESS_READ_TSO is BIGINT DEFAULT NULL. FAST refresh requires it to be non-NULL.
+		if lockedReadTSONull {
+			return finalizeFailure(errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL"))
+		}
+		lastSuccessfulRefreshReadTSO = lockedReadTSO
 	}
 
 	if err := executeRefreshMaterializedViewDataChanges(
@@ -139,17 +171,32 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		tblInfo,
 		lastSuccessfulRefreshReadTSO,
 	); err != nil {
-		if _, rollbackErr := sqlExec.ExecuteInternal(kctx, "ROLLBACK TO SAVEPOINT "+refreshSavepoint); rollbackErr != nil {
-			return errors.Annotatef(rollbackErr, "refresh materialized view: failed to rollback MV data changes after error %v", err)
-		}
-		return persistRefreshFailureAndCommit(kctx, sqlExec, refreshType, mviewID, err, &txnCommitted)
+		return finalizeFailure(err)
 	}
 
 	refreshReadTSO, err := getRefreshReadTSOForSuccess(s.Type, sessVars, startTS)
 	if err != nil {
-		return err
+		return finalizeFailure(err)
 	}
-	return persistRefreshSuccessAndCommit(kctx, sqlExec, refreshType, mviewID, refreshReadTSO, &txnCommitted)
+	if err := persistRefreshSuccess(kctx, sqlExec, mviewID, refreshReadTSO); err != nil {
+		return finalizeFailure(err)
+	}
+	if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
+		return finalizeFailure(err)
+	}
+	txnFinished = true
+	if err := finalizeRefreshHist(
+		kctx,
+		histSQLExec,
+		refreshJobID,
+		mviewID,
+		refreshHistStatusSuccess,
+		&refreshReadTSO,
+		nil,
+	); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt) (string, error) {
@@ -171,7 +218,7 @@ func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt) (st
 func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
 	s *ast.RefreshMaterializedViewStmt,
 ) (pmodel.CIStr, *model.TableInfo, error) {
-	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
 	schemaName := s.ViewName.Schema
 	if schemaName.O == "" {
 		if e.Ctx().GetSessionVars().CurrentDB == "" {
@@ -198,81 +245,77 @@ func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
 	return schemaName, tblInfo, nil
 }
 
-func forceConstraintCheckInPlacePessimisticOnForRefresh(sessVars *variable.SessionVars) (func(), error) {
-	// Savepoint is required for transactional refresh-with-failure-record (rollback MV data changes but persist failure info).
-	// Savepoint is not supported in pessimistic txn when `tidb_constraint_check_in_place_pessimistic` is OFF, so we
-	// force it to ON for the duration of this statement and then restore it.
-	oldConstraintCheckInPlacePessimistic, err := sessVars.SetSystemVarWithOldValAsRet(variable.TiDBConstraintCheckInPlacePessimistic, variable.On)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return func() {
-		_ = sessVars.SetSystemVar(variable.TiDBConstraintCheckInPlacePessimistic, oldConstraintCheckInPlacePessimistic)
-	}, nil
-}
-
-func lockAndValidateRefreshInfoRow(
+func lockRefreshInfoRow(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	mviewID int64,
-) (lockedReadTSO int64, lockedReadTSONull bool, persistFailureOnErr bool, err error) {
+) (lockedReadTSO int64, lockedReadTSONull bool, err error) {
 	lockRS, err := sqlExec.ExecuteInternal(
 		kctx,
-		// Also select LAST_SUCCESSFUL_REFRESH_READ_TSO so FAST refresh can reuse this mutex/metadata load path.
-		"SELECT MVIEW_ID, LAST_SUCCESSFUL_REFRESH_READ_TSO FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
+		// Also select LAST_SUCCESS_READ_TSO so FAST refresh can reuse this mutex/metadata load path.
+		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
 		mviewID,
 	)
 	if infoschema.ErrTableNotExists.Equal(err) {
-		return 0, false, false, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
+		return 0, false, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
 	}
 	if err != nil {
-		return 0, false, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	if lockRS == nil {
-		return 0, false, false, errors.New("refresh materialized view: cannot lock mysql.tidb_mview_refresh row")
+		return 0, false, errors.New("refresh materialized view: cannot lock mysql.tidb_mview_refresh_info row")
 	}
 	lockRows, drainErr := sqlexec.DrainRecordSet(kctx, lockRS, 1)
 	closeErr := lockRS.Close()
 	if drainErr != nil {
-		return 0, false, false, errors.Trace(drainErr)
+		return 0, false, errors.Trace(drainErr)
 	}
 	if closeErr != nil {
-		return 0, false, false, errors.Trace(closeErr)
+		return 0, false, errors.Trace(closeErr)
 	}
 	if len(lockRows) == 0 {
-		return 0, false, false, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh")
+		return 0, false, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
 	}
 
-	// In pessimistic txn, `SELECT ... FOR UPDATE` reads at txn's `for_update_ts`, while normal `SELECT`
-	// reads at txn's `start_ts`. Re-check LAST_SUCCESSFUL_REFRESH_READ_TSO using a normal SELECT to
-	// ensure the refresh info row is consistent between these 2 read timestamps.
 	lockedRow := lockRows[0]
 	lockedReadTSONull = lockedRow.IsNull(1)
 	if !lockedReadTSONull {
 		lockedReadTSO = lockedRow.GetInt64(1)
 	}
+	return lockedReadTSO, lockedReadTSONull, nil
+}
 
+func recheckRefreshInfoRow(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mviewID int64,
+	lockedReadTSO int64,
+	lockedReadTSONull bool,
+) error {
+	// In pessimistic txn, `SELECT ... FOR UPDATE` reads at txn's `for_update_ts`, while normal `SELECT`
+	// reads at txn's `start_ts`. Re-check LAST_SUCCESS_READ_TSO using a normal SELECT to
+	// ensure the refresh info row is consistent between these 2 read timestamps.
 	recheckRS, err := sqlExec.ExecuteInternal(
 		kctx,
-		"SELECT LAST_SUCCESSFUL_REFRESH_READ_TSO FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %?",
+		"SELECT LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
 		mviewID,
 	)
 	if err != nil {
-		return 0, false, false, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if recheckRS == nil {
-		return 0, false, false, errors.New("refresh materialized view: cannot re-check mysql.tidb_mview_refresh row")
+		return errors.New("refresh materialized view: cannot re-check mysql.tidb_mview_refresh_info row")
 	}
 	recheckRows, drainErr := sqlexec.DrainRecordSet(kctx, recheckRS, 1)
-	closeErr = recheckRS.Close()
+	closeErr := recheckRS.Close()
 	if drainErr != nil {
-		return 0, false, false, errors.Trace(drainErr)
+		return errors.Trace(drainErr)
 	}
 	if closeErr != nil {
-		return 0, false, false, errors.Trace(closeErr)
+		return errors.Trace(closeErr)
 	}
 	if len(recheckRows) == 0 {
-		return 0, false, false, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh")
+		return errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
 	}
 	recheckRow := recheckRows[0]
 	recheckReadTSONull := recheckRow.IsNull(0)
@@ -281,9 +324,9 @@ func lockAndValidateRefreshInfoRow(
 		recheckReadTSO = recheckRow.GetInt64(0)
 	}
 	if lockedReadTSONull != recheckReadTSONull || (!lockedReadTSONull && lockedReadTSO != recheckReadTSO) {
-		return 0, false, true, errors.New("refresh materialized view: inconsistent LAST_SUCCESSFUL_REFRESH_READ_TSO between locking read and snapshot read")
+		return errors.New("refresh materialized view: inconsistent LAST_SUCCESS_READ_TSO between locking read and snapshot read")
 	}
-	return lockedReadTSO, lockedReadTSONull, false, nil
+	return nil
 }
 
 func executeRefreshMaterializedViewDataChanges(
@@ -383,34 +426,6 @@ func drainRefreshRecordSet(kctx context.Context, rs sqlexec.RecordSet) error {
 	}
 }
 
-func persistRefreshFailureAndCommit(
-	kctx context.Context,
-	sqlExec sqlexec.SQLExecutor,
-	refreshType string,
-	mviewID int64,
-	refreshErr error,
-	txnCommitted *bool,
-) error {
-	updateFailedSQL := `UPDATE mysql.tidb_mview_refresh
-SET
-	LAST_REFRESH_RESULT = 'failed',
-	LAST_REFRESH_TYPE = %?,
-	LAST_REFRESH_TIME = NOW(6),
-	LAST_REFRESH_FAILED_REASON = %?
-WHERE MVIEW_ID = %?`
-	if _, err := sqlExec.ExecuteInternal(kctx, updateFailedSQL, refreshType, refreshErr.Error(), mviewID); err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
-		}
-		return errors.Annotatef(err, "refresh materialized view: failed to persist refresh failure info (original error: %v)", refreshErr)
-	}
-	if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
-		return errors.Trace(err)
-	}
-	*txnCommitted = true
-	return errors.Trace(refreshErr)
-}
-
 func getRefreshReadTSOForSuccess(
 	refreshType ast.RefreshMaterializedViewType,
 	sessVars *variable.SessionVars,
@@ -418,7 +433,7 @@ func getRefreshReadTSOForSuccess(
 ) (uint64, error) {
 	// COMPLETE refresh uses `DELETE + INSERT INTO ... SELECT ...` and the SELECT part reads at txn's
 	// `for_update_ts` in pessimistic txn, so record `for_update_ts` to ensure
-	// LAST_SUCCESSFUL_REFRESH_READ_TSO matches the MV data snapshot.
+	// LAST_SUCCESS_READ_TSO matches the MV data snapshot.
 	//
 	// For FAST refresh, the actual execution is not implemented yet; keep the original behavior and
 	// record txn start_ts when it succeeds in the future.
@@ -432,31 +447,98 @@ func getRefreshReadTSOForSuccess(
 	return refreshReadTSO, nil
 }
 
-func persistRefreshSuccessAndCommit(
+func persistRefreshSuccess(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
-	refreshType string,
 	mviewID int64,
 	refreshReadTSO uint64,
-	txnCommitted *bool,
 ) error {
-	updateSQL := `UPDATE mysql.tidb_mview_refresh
+	updateSQL := `UPDATE mysql.tidb_mview_refresh_info
 SET
-	LAST_REFRESH_RESULT = 'success',
-	LAST_REFRESH_TYPE = %?,
-	LAST_REFRESH_TIME = NOW(6),
-	LAST_SUCCESSFUL_REFRESH_READ_TSO = %?,
-	LAST_REFRESH_FAILED_REASON = NULL
+	LAST_SUCCESS_READ_TSO = %?
 WHERE MVIEW_ID = %?`
-	if _, err := sqlExec.ExecuteInternal(kctx, updateSQL, refreshType, refreshReadTSO, mviewID); err != nil {
+	if _, err := sqlExec.ExecuteInternal(kctx, updateSQL, refreshReadTSO, mviewID); err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
-			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh does not exist")
+			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
 		}
 		return errors.Trace(err)
 	}
-	if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
+	return nil
+}
+
+const (
+	refreshHistStatusRunning = "running"
+	refreshHistStatusSuccess = "success"
+	refreshHistStatusFailed  = "failed"
+)
+
+func insertRefreshHistRunning(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	refreshJobID uint64,
+	mviewID int64,
+	refreshMethod string,
+) error {
+	insertSQL := `INSERT INTO mysql.tidb_mview_refresh_hist (
+	REFRESH_JOB_ID,
+	MVIEW_ID,
+	REFRESH_METHOD,
+	REFRESH_TIME,
+	REFRESH_STATUS
+) VALUES (
+	%?,
+	%?,
+	%?,
+	NOW(6),
+	%?
+)`
+	if _, err := sqlExec.ExecuteInternal(kctx, insertSQL, refreshJobID, mviewID, refreshMethod, refreshHistStatusRunning); err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_hist does not exist")
+		}
 		return errors.Trace(err)
 	}
-	*txnCommitted = true
+	return nil
+}
+
+func finalizeRefreshHist(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	refreshJobID uint64,
+	mviewID int64,
+	refreshStatus string,
+	refreshReadTSO *uint64,
+	refreshFailedReason *string,
+) error {
+	var refreshReadTSOArg any
+	if refreshReadTSO != nil {
+		refreshReadTSOArg = *refreshReadTSO
+	}
+	var refreshFailedReasonArg any
+	if refreshFailedReason != nil {
+		refreshFailedReasonArg = *refreshFailedReason
+	}
+	updateSQL := `UPDATE mysql.tidb_mview_refresh_hist
+SET
+	REFRESH_ENDTIME = NOW(6),
+	REFRESH_STATUS = %?,
+	REFRESH_READ_TSO = %?,
+	REFRESH_FAILED_REASON = %?
+WHERE REFRESH_JOB_ID = %?
+  AND MVIEW_ID = %?`
+	if _, err := sqlExec.ExecuteInternal(
+		kctx,
+		updateSQL,
+		refreshStatus,
+		refreshReadTSOArg,
+		refreshFailedReasonArg,
+		refreshJobID,
+		mviewID,
+	); err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_hist does not exist")
+		}
+		return errors.Trace(err)
+	}
 	return nil
 }

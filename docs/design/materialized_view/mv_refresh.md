@@ -7,20 +7,23 @@ At the moment:
 - `COMPLETE` refresh is implemented with transactional semantics.
 - `FAST` refresh already has the internal statement framework path (it can go through compile/optimize/executor), but the real incremental refresh logic is not implemented yet (planner still returns a placeholder "not supported" error).
 
-> Note: the current system table used to persist refresh status is `mysql.tidb_mview_refresh` (not `mv_refresh_info`).
-> The key field is `LAST_SUCCESSFUL_REFRESH_READ_TSO`.
-> See `pkg/session/bootstrap.go` for the system table definition.
+> Note: refresh metadata and refresh history are now split:
+> - `mysql.tidb_mview_refresh_info` stores per-MV metadata for next refresh (for example `LAST_SUCCESS_READ_TSO`).
+> - `mysql.tidb_mview_refresh_hist` stores per-refresh lifecycle and results (`running/success/failed`).
+> See `pkg/session/bootstrap.go` for system table definitions.
 
 ## Goals (scope of the current implementation)
 
-1. **Transactional all-or-nothing**: one refresh must commit or roll back data replacement and refresh metadata in the same transaction.
+1. **Transactional all-or-nothing for MV data**: one refresh must commit or roll back data replacement atomically.
 2. **Concurrency mutex**: for one MV, when multiple sessions refresh concurrently, only one can enter the execution path; others fail immediately with a locking error.
-3. **Refresh metadata update**: before success commit, update the MV row in `mysql.tidb_mview_refresh`, especially:
-   - `LAST_SUCCESSFUL_REFRESH_READ_TSO = <for_update_ts of this COMPLETE refresh transaction>`
-4. **Persist failure metadata too**: if refresh fails, still write `LAST_REFRESH_RESULT='failed'` and failure reason back to `mysql.tidb_mview_refresh` (and guarantee no partial MV table writes).
-5. **Usable COMPLETE refresh**: do full data replacement with transactional `DELETE + INSERT`.
-6. **FAST framework first**: build an internal-only AST and run it via `ExecuteInternalStmt`, so real incremental execution can be plugged in later (currently planner/build still returns "not supported").
-7. **Privilege semantics scoped to MVP**: for outer SQL semantics, only check `ALTER` on MV; run refresh with internal session so system-table privileges on `mysql.tidb_mview_refresh` do not leak to business users.
+3. **Success-only refresh metadata update**: only when refresh succeeds, update the MV row in `mysql.tidb_mview_refresh_info`, especially:
+   - `LAST_SUCCESS_READ_TSO = <for_update_ts of this COMPLETE refresh transaction>`
+4. **Refresh lifecycle history**: after lock acquisition, insert a `running` row into `mysql.tidb_mview_refresh_hist` using an independent session.
+   - `REFRESH_JOB_ID` uses this refresh's `start_tso`.
+5. **Finalize history after refresh commit**: after refresh transaction commit outcome is known, update the same history row to `success` or `failed`.
+6. **Usable COMPLETE refresh**: do full data replacement with transactional `DELETE + INSERT`.
+7. **FAST framework first**: build an internal-only AST and run it via `ExecuteInternalStmt`, so real incremental execution can be plugged in later (currently planner/build still returns "not supported").
+8. **Privilege semantics scoped to MVP**: for outer SQL semantics, only check `ALTER` on MV; run refresh with internal sessions so system-table privileges on `mysql.tidb_mview_refresh_info` / `mysql.tidb_mview_refresh_hist` do not leak to business users.
 
 ## Non-goals (not included yet)
 
@@ -29,16 +32,17 @@ At the moment:
   Refresh is synchronous today, so `WITH SYNC MODE` is parsed/executed but behaves the same as without it.
   If async refresh is introduced later, semantics can be redefined.
 - Performance optimization for large MVs (for example large-transaction mitigation, delete cost reduction, swap table strategies).
-- History-table (`mysql.tidb_mview_refresh_hist`) write and retention policy.
-  MVP updates current status table only.
+- Long-term retention/cleanup strategy for `mysql.tidb_mview_refresh_hist` (TTL/archival policy).
 
 ## Data and metadata sources
 
 - MV physical storage is a normal table marked by `TableInfo.MaterializedView != nil`.
 - MV definition SQL is stored in `TableInfo.MaterializedView.SQLContent`, canonical `SELECT ...`.
   See `pkg/meta/model/table.go` and `pkg/ddl/materialized_view.go`.
-- Refresh status table:
-  - `mysql.tidb_mview_refresh` (PK `MVIEW_ID`, fields include `LAST_REFRESH_RESULT / LAST_REFRESH_TYPE / LAST_REFRESH_TIME / LAST_SUCCESSFUL_REFRESH_READ_TSO / LAST_REFRESH_FAILED_REASON`).
+- Refresh metadata table:
+  - `mysql.tidb_mview_refresh_info` (PK `MVIEW_ID`, fields include success metadata used by next refresh, for example `LAST_SUCCESS_READ_TSO`).
+- Refresh history table:
+  - `mysql.tidb_mview_refresh_hist` (per-job lifecycle/status, keyed by `MVIEW_ID + REFRESH_JOB_ID`).
 
 `MVIEW_ID` directly uses MV physical table `TableInfo.ID`.
 
@@ -60,59 +64,69 @@ Current limitation: `FAST` returns "not supported" at planner/build stage (place
 Current privilege semantics (MVP):
 
 - `REFRESH MATERIALIZED VIEW` requires `ALTER` privilege on target MV (outer semantic privilege).
-- Internal `DELETE/INSERT` and updates to `mysql.tidb_mview_refresh` run on internal session, so caller does not need direct DML privilege on `mysql.tidb_mview_refresh`.
+- Internal `DELETE/INSERT`, `mysql.tidb_mview_refresh_info` updates, and `mysql.tidb_mview_refresh_hist` writes run on internal sessions, so caller does not need direct DML privilege on those system tables.
 - If finer-grained privilege semantics are introduced later (for example base-table `SELECT` checks), extend from this MVP baseline.
 
 ## Core execution flow (transactional refresh framework)
 
-The most direct implementation is: transaction + row-lock mutex + savepoint + data refresh + metadata update.
+The most direct implementation is: transaction + row-lock mutex + history lifecycle + savepoint + data refresh + success-metadata update.
 
 `COMPLETE` and `FAST` share the same outer framework; only the "refresh implementation" step differs.
 
 1. Get an internal session from session pool and start a transaction on it (recommended **pessimistic**, so `FOR UPDATE NOWAIT` works immediately).
-2. In transaction, lock refresh-info row by `SELECT ... FOR UPDATE NOWAIT` (used as refresh mutex).
-3. Read `LAST_SUCCESSFUL_REFRESH_READ_TSO` once again by plain `SELECT` and compare with step 2:
-   - if mismatch, treat as refresh failure: update failure metadata and `COMMIT`, then return error to abort refresh.
+2. In transaction, lock refresh-info row by `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh_info` (used as refresh mutex).
+3. Read `LAST_SUCCESS_READ_TSO` once again by plain `SELECT` and compare with step 2:
+   - if mismatch, fail this refresh (refresh metadata changed concurrently).
    - this avoids using inconsistent refresh metadata snapshots inside one refresh flow.
-4. Set a savepoint (used to roll back MV data changes while still committing failure metadata).
-5. Run refresh implementation by refresh type:
+4. Record refresh `start_tso` as `REFRESH_JOB_ID`.
+5. Use an independent session to insert one `mysql.tidb_mview_refresh_hist` row with `STATUS='running'` and `REFRESH_JOB_ID=<start_tso>`.
+6. Set a savepoint (used to roll back MV data changes while keeping transaction control flow explicit).
+7. Run refresh implementation by refresh type:
    - `COMPLETE`: `DELETE FROM <mv_table>` + `INSERT INTO <mv_table> <mv_select_sql>`.
    - `FAST`: construct internal statement and run via `ExecuteInternalStmt` (currently planner/build returns "not supported" placeholder).
-6. Before commit, update `mysql.tidb_mview_refresh` row (success case):
-   - `LAST_REFRESH_RESULT='success'`
-   - `LAST_REFRESH_TYPE = <'complete' | 'fast'>`
-   - `LAST_REFRESH_TIME=NOW(6)`
-   - `LAST_SUCCESSFUL_REFRESH_READ_TSO = <COMPLETE refresh: txn for_update_ts>`
-   - `LAST_REFRESH_FAILED_REASON = NULL`
-7. Commit transaction.
+8. Success path: before commit, update `mysql.tidb_mview_refresh_info` row:
+   - `LAST_SUCCESS_READ_TSO = <COMPLETE refresh: txn for_update_ts>`
+   - and other success metadata used by next refresh.
+9. Commit refresh transaction.
+10. After commit returns success, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID` to `STATUS='success'` and fill completion fields.
 
 Failure path (for example `INSERT INTO ... SELECT ...` fails):
 
 1. `ROLLBACK TO SAVEPOINT` to roll back MV data changes (no partial MV data update).
-2. Update `mysql.tidb_mview_refresh` row (failure case):
-   - `LAST_REFRESH_RESULT='failed'`
-   - `LAST_REFRESH_TYPE = <'complete' | 'fast'>`
-   - `LAST_REFRESH_TIME=NOW(6)`
-   - `LAST_REFRESH_FAILED_REASON = <error string>`
-   - `LAST_SUCCESSFUL_REFRESH_READ_TSO` is **not updated** (keeps last successful value).
-3. `COMMIT` failure metadata, then return original error to user.
+2. Do **not** update `mysql.tidb_mview_refresh_info` (failure does not change success watermark).
+3. End refresh transaction (`COMMIT`/`ROLLBACK` according to implementation path).
+4. After refresh transaction finishes and failure is known, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID`:
+   - `STATUS='failed'`
+   - failure reason / error message
+   - completion timestamp.
+5. Return original error to user.
 
 Pseudo SQL (key points only):
 
 ```sql
--- all SQL below runs in an internal session
+-- refresh transaction SQL runs on one internal session
 BEGIN PESSIMISTIC;
 
 -- (A) mutex: lock row; if NOWAIT fails, fail immediately
-SELECT MVIEW_ID, LAST_SUCCESSFUL_REFRESH_READ_TSO
-  FROM mysql.tidb_mview_refresh
+SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO
+  FROM mysql.tidb_mview_refresh_info
  WHERE MVIEW_ID = <mview_id>
  FOR UPDATE NOWAIT;
 
 -- (A2) consistency check: plain read must match step (A)
-SELECT LAST_SUCCESSFUL_REFRESH_READ_TSO
-  FROM mysql.tidb_mview_refresh
+SELECT LAST_SUCCESS_READ_TSO
+  FROM mysql.tidb_mview_refresh_info
  WHERE MVIEW_ID = <mview_id>;
+
+-- (A3) use transaction start_tso as refresh job id
+-- refresh_job_id := <start_tso>;
+
+-- (A4) independent internal session (not this transaction) inserts running history
+INSERT INTO mysql.tidb_mview_refresh_hist (
+    MVIEW_ID, REFRESH_JOB_ID, REFRESH_TYPE, STATUS, START_TIME
+) VALUES (
+    <mview_id>, <refresh_job_id>, <refresh_type>, 'running', NOW(6)
+);
 
 SAVEPOINT tidb_mview_refresh_sp;
 
@@ -126,21 +140,35 @@ INSERT INTO <db>.<mv> <SQLContent>;
   -- SQLContent is MV definition SELECT (rollback to savepoint on failure)
   -- so COMPLETE refresh can leverage TiFlash for heavy scans.
 
--- (C) update refresh metadata in the same transaction
-UPDATE mysql.tidb_mview_refresh
-   SET LAST_REFRESH_RESULT = 'success',
-       LAST_REFRESH_TYPE = <refresh_type>,
+-- (C) success-only metadata update in the same refresh transaction
+UPDATE mysql.tidb_mview_refresh_info
+   SET LAST_SUCCESS_READ_TSO = <for_update_ts>,
        LAST_REFRESH_TIME = NOW(6),
-       LAST_SUCCESSFUL_REFRESH_READ_TSO = <for_update_ts>,
-       LAST_REFRESH_FAILED_REASON = NULL
+       LAST_REFRESH_TYPE = <refresh_type>
  WHERE MVIEW_ID = <mview_id>;
 
 COMMIT;
+
+-- (D) independent internal session finalizes history AFTER refresh commit
+UPDATE mysql.tidb_mview_refresh_hist
+   SET STATUS = 'success',
+       END_TIME = NOW(6),
+       ERROR_MESSAGE = NULL
+ WHERE MVIEW_ID = <mview_id>
+   AND REFRESH_JOB_ID = <refresh_job_id>;
+
+-- (D-failed) if refresh transaction ends as failure, finalize the same row as failed
+UPDATE mysql.tidb_mview_refresh_hist
+   SET STATUS = 'failed',
+       END_TIME = NOW(6),
+       ERROR_MESSAGE = <refresh_error>
+ WHERE MVIEW_ID = <mview_id>
+   AND REFRESH_JOB_ID = <refresh_job_id>;
 ```
 
 ### Lock behavior and error semantics
 
-For `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh`, there are 3 outcomes:
+For `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh_info`, there are 3 outcomes:
 
 1. **Returns 1 row**: lock acquired, refresh can continue.
 2. **Returns lock-conflict error**: another session is refreshing (or at least holding this row lock).
@@ -157,11 +185,11 @@ Explicit `BEGIN PESSIMISTIC` ensures lock acquisition and conflict behavior matc
 
 ### COMPLETE refresh read tso (`for_update_ts`)
 
-Requirement: on successful COMPLETE refresh, `LAST_SUCCESSFUL_REFRESH_READ_TSO` must store the transaction `for_update_ts` used for refresh read.
+Requirement: on successful COMPLETE refresh, `LAST_SUCCESS_READ_TSO` must store the transaction `for_update_ts` used for refresh read.
 
 Reason: in `BEGIN PESSIMISTIC`, DML reads (such as `INSERT INTO ... SELECT ...`) use `for_update_ts`.
 So MV data snapshot corresponds to `for_update_ts`.
-If only `start_ts` is stored, users may observe that MV data includes rows newer than `LAST_SUCCESSFUL_REFRESH_READ_TSO`,
+If only `start_ts` is stored, users may observe that MV data includes rows newer than `LAST_SUCCESS_READ_TSO`,
 which also misleads later incremental-refresh/check logic.
 
 `FAST` real incremental logic is not implemented yet (planner still returns placeholder),
@@ -174,7 +202,7 @@ Implementation options:
 
 Option (1) is preferred (direct and no extra SQL), and guarantees transaction-context `for_update_ts`.
 
-Current code uses option (1): after COMPLETE DML finishes, read `for_update_ts` from `TxnCtx` and persist it to `LAST_SUCCESSFUL_REFRESH_READ_TSO`.
+Current code uses option (1): after COMPLETE DML finishes, read `for_update_ts` from `TxnCtx` and persist it to `LAST_SUCCESS_READ_TSO`.
 
 ## Code placement (current implementation)
 
@@ -188,14 +216,14 @@ Execution path:
    - `PlanBuilder.buildRefreshMaterializedView` builds plan and enforces outer privilege check (MVP: `ALTER` on MV).
 3. Executor:
    - executor builder maps plan to `RefreshMaterializedViewExec`.
-   - `RefreshMaterializedViewExec` runs refresh service directly (`Validate + Lock + Savepoint + DataChanges + RefreshInfo Persist + Commit`).
+   - `RefreshMaterializedViewExec` runs refresh service directly (`Validate + Lock + HistRunning Persist + Savepoint + DataChanges + SuccessInfo Persist + Commit + HistFinalize`).
 
 Core execution semantics:
 
 - Refresh uses internal session, not caller session transaction/variables.
 - Refresh path uses dedicated internal source type (`kv.InternalTxnMVMaintenance`).
-- Uses `BEGIN PESSIMISTIC` + `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh` for mutex.
-- Uses `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` so data changes can be rolled back while failure metadata still commits.
+- Uses `BEGIN PESSIMISTIC` + `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh_info` for mutex.
+- Uses `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` so data changes can be rolled back cleanly on failure.
 - `COMPLETE` rebuilds data with `DELETE FROM mv` + `INSERT INTO mv SELECT ...`.
 - `FAST` uses internal-only statement `RefreshMaterializedViewImplementStmt` as framework entry
   (planner still returns placeholder "not supported").
@@ -210,7 +238,7 @@ Core execution semantics:
 
 Phase-3 turns current FAST framework (internal statement + planner placeholder) into a real executable incremental path:
 
-1. Build incremental input set from MLOG and `LAST_SUCCESSFUL_REFRESH_READ_TSO`.
+1. Build incremental input set from MLOG and `LAST_SUCCESS_READ_TSO`.
 2. Generate executable plan tree / executor for `RefreshMaterializedViewImplementStmt` instead of returning "not supported".
 3. Define success/failure metadata updates and replay semantics for FAST, with observability/recovery parity with COMPLETE.
 
@@ -227,7 +255,7 @@ Considerations:
 - Reusing generic `RENAME TABLE` for MV swap is not recommended.
   TiDB already has MV-specific restrictions (for example rename on MV tables is blocked;
   rename on base tables with MV dependencies is also blocked), so cutover semantics should be designed explicitly.
-- MV metadata is table-ID bound (for example `mysql.tidb_mview_refresh.MVIEW_ID`,
+- MV metadata is table-ID bound (for example `mysql.tidb_mview_refresh_info.MVIEW_ID` and `mysql.tidb_mview_refresh_hist.MVIEW_ID`,
   `MaterializedViewBase.MViewIDs` on base table), so cutover must define ID-binding preservation/migration explicitly.
 
 ## Test suggestions (for future implementation)
@@ -239,13 +267,18 @@ Add executor UT coverage in `pkg/executor/test/executor/` (refresh-focused) and 
    - insert base data
    - execute `REFRESH MATERIALIZED VIEW mv COMPLETE`
    - verify MV content equals `SELECT ... GROUP BY ...`
-   - verify `mysql.tidb_mview_refresh.LAST_SUCCESSFUL_REFRESH_READ_TSO > 0` and `LAST_REFRESH_RESULT='success'`
+   - verify `mysql.tidb_mview_refresh_info.LAST_SUCCESS_READ_TSO > 0`
+   - verify one row in `mysql.tidb_mview_refresh_hist` has `STATUS='success'` and `REFRESH_JOB_ID=<start_tso>`
 2. **Concurrency mutex**:
    - session A starts refresh and pauses after lock acquisition (`FOR UPDATE`) via failpoint or manual lock hold
    - session B executes refresh and should get NOWAIT lock conflict
 3. **Missing metadata row**:
-   - delete row from `mysql.tidb_mview_refresh`
+   - delete row from `mysql.tidb_mview_refresh_info`
    - execute refresh and expect "refresh info row missing" error
+4. **Failure semantics**:
+   - force COMPLETE refresh failure (for example injected `INSERT ... SELECT` error)
+   - verify `mysql.tidb_mview_refresh_info.LAST_SUCCESS_READ_TSO` is unchanged
+   - verify corresponding `mysql.tidb_mview_refresh_hist` row is finalized to `STATUS='failed'` with error reason
 
 ## Known limitations and future direction
 
@@ -254,14 +287,14 @@ Add executor UT coverage in `pkg/executor/test/executor/` (refresh-focused) and 
     It is constructed inside executor and is not parsed from SQL text.
   - This AST carries:
     1. original `RefreshMaterializedViewStmt` (must be `Type=FAST`)
-    2. `LAST_SUCCESSFUL_REFRESH_READ_TSO` value
+    2. `LAST_SUCCESS_READ_TSO` value
        (FAST assumes this must be non-NULL `int64`, else fail immediately)
   - Execution uses `ExecuteInternalStmt(ctx, stmtNode)` to enable future integration with regular
     compile/optimize/executor pipeline, instead of simple SQL-text execution path.
   - Planner already routes `RefreshMaterializedViewImplementStmt` through a dedicated build branch,
     but currently returns "not supported" as placeholder.
   - `RefreshMaterializedViewImplementStmt.Restore()` renders
-    `IMPLEMENT FOR <RefreshStmt> USING TIMESTAMP <LAST_SUCCESSFUL_REFRESH_READ_TSO>` for log/toString.
+    `IMPLEMENT FOR <RefreshStmt> USING TIMESTAMP <LAST_SUCCESS_READ_TSO>` for log/toString.
     Since parser grammar does not expose this syntax, restore output is not required to be parse-roundtrippable.
   - If `ExecuteInternalStmt` returns non-nil `RecordSet`, call `Next()` to drain before `Close()`;
     this guarantees full executor-tree execution for future plans (for example `INSERT ... SELECT ...`).
@@ -272,11 +305,10 @@ Add executor UT coverage in `pkg/executor/test/executor/` (refresh-focused) and 
 - For future advanced refresh flows (FAST/incremental, MLOG merge/upsert, or operators not easily represented by SQL text),
   dependency on "build SQL text + ExecuteInternal" should be reduced gradually:
   - current `RefreshMaterializedViewImplementStmt` is step 1: use structured internal AST to carry
-    executor-only parameters (for example `LAST_SUCCESSFUL_REFRESH_READ_TSO`) through compile/optimize/executor.
+    executor-only parameters (for example `LAST_SUCCESS_READ_TSO`) through compile/optimize/executor.
   - next, planner should generate dedicated plan tree / executor for this statement
     (possibly `INSERT INTO mv SELECT ...` or more advanced merge/upsert plans),
     so SQL-text execution can be fully replaced.
-- Persisting failure reason (`LAST_REFRESH_FAILED_REASON`) without polluting MV data relies on
-  `SAVEPOINT`/`ROLLBACK TO SAVEPOINT`.
-  If future execution environments cannot support savepoint (or need stronger consistency semantics),
-  metadata persistence may need to be split into a separate transaction, with concurrency and visibility semantics redesigned.
+- History finalization is intentionally after refresh transaction commit, because only then final status is definitive.
+  If process crash happens between refresh commit and history finalize update, recovery/reconciliation for
+  stale `running` rows is still a future enhancement.

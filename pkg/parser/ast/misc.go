@@ -491,7 +491,7 @@ type RefreshMaterializedViewStmt struct {
 // (rather than parsed from SQL text) to execute a materialized view refresh implementation plan.
 //
 // It is mainly used to avoid string-concatenated SQL in refresh implementation (e.g. replacing `DELETE FROM` + `INSERT INTO`)
-// and to pass executor-only parameters (like `LAST_SUCCESSFUL_REFRESH_READ_TSO`) through the normal
+// and to pass executor-only parameters (like `LAST_SUCCESS_READ_TSO`) through the normal
 // parse/preprocess/plan/execute pipeline.
 //
 // NOTE: This statement is not exposed by the parser grammar, so Restore() is primarily used for logging / toString.
