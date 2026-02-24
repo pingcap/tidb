@@ -369,7 +369,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		return ver, nil
 
 	case model.StateWriteReorganization:
-		// Phase-2: run initial build and persist refresh result in mysql.tidb_mview_refresh.
+		// Phase-2: run initial build and persist refresh read tso in mysql.tidb_mview_refresh_info.
 		// CREATE MATERIALIZED VIEW build is non-resumable in this stage. For normal retry/recovery
 		// paths, if this step restarts without an active reorg context and MV table already has
 		// rows, fail fast and roll back the whole job to avoid duplicate build writes.
@@ -815,7 +815,7 @@ func execCreateMaterializedViewRefreshInfoUpsert(
 	_, err := ddlSess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
 		}
 	})
 	return errors.Trace(convertCreateMaterializedViewRefreshInfoTableNotExistsErr(err))
@@ -833,11 +833,11 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %?", mviewID)
+	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?", mviewID)
 	_, err := w.sess.Execute(ctx, deleteSQL, "mview-refresh-info-delete")
 	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
 		}
 	})
 	if infoschema.ErrTableNotExists.Equal(err) {
@@ -878,12 +878,8 @@ func buildCreateMaterializedViewRefreshInfoUpsertSQL(
 	// Running/success refresh updates the successful read tso and keeps failed reason untouched.
 	return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
 		MVIEW_ID,
-		LAST_REFRESH_RESULT,
-		LAST_REFRESH_TYPE,
-		LAST_REFRESH_TIME,
-		LAST_SUCCESSFUL_REFRESH_READ_TSO,
-		LAST_REFRESH_FAILED_REASON
-	) VALUES (%?, %?, %?, NOW(6), %?, %?)
+		LAST_SUCCESS_READ_TSO
+	) VALUES (%?, %?)
 	ON DUPLICATE KEY UPDATE
 		LAST_REFRESH_RESULT = VALUES(LAST_REFRESH_RESULT),
 		LAST_REFRESH_TYPE = VALUES(LAST_REFRESH_TYPE),
