@@ -69,6 +69,9 @@ type BuildResult struct {
 	// MVColumnCount indicates how many columns in the merge-source output schema belong to the MV row shape.
 	// The MV columns are always put after all delta columns.
 	MVColumnCount int
+	// DeltaColumnCount indicates how many columns in the merge-source output schema belong to delta payload.
+	// Delta columns are always at the beginning of merge-source output schema.
+	DeltaColumnCount int
 
 	// MVTablePKCols stores MV table handle columns with their positions in merge-source output schema.
 	// For extra row-id handle, it points to the trailing _tidb_rowid column.
@@ -426,6 +429,7 @@ func BuildFromLocal(
 		BaseTableID:       local.baseTableID,
 		MLogTableID:       local.mlogTableID,
 		MVColumnCount:     len(local.mv.Columns),
+		DeltaColumnCount:  len(deltaColumns),
 		MVTablePKCols:     mvTablePKCols,
 		GroupKeyMVOffsets: append([]int(nil), local.groupKeyOffs...),
 		CountStarMVOffset: local.countStarMVOffset,

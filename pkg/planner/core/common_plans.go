@@ -575,6 +575,7 @@ type MVDeltaMerge struct {
 	// Source is the merge-source physical plan. Its row layout is:
 	//  1. delta columns first
 	//  2. MV output columns after delta columns (count = MVColumnCount)
+	//  3. optional handle-only columns (for example _tidb_rowid) after MV columns
 	Source base.PhysicalPlan
 
 	// SourceOutputNames matches the result schema of Source (delta columns first, then MV columns).
@@ -585,8 +586,11 @@ type MVDeltaMerge struct {
 	BaseTableID int64
 	MLogTableID int64
 
-	MVColumnCount     int
-	GroupKeyMVOffsets []int `plan-cache-clone:"shallow"`
+	MVColumnCount    int
+	DeltaColumnCount int
+	// MVTablePKCols stores MV table handle columns with positions in Source row layout.
+	MVTablePKCols     util.HandleCols `plan-cache-clone:"shallow"`
+	GroupKeyMVOffsets []int           `plan-cache-clone:"shallow"`
 	CountStarMVOffset int
 
 	AggInfos []mvmerge.AggInfo `plan-cache-clone:"shallow"`
@@ -671,7 +675,7 @@ func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfInt64*3 + size.SizeOfInt*2 + size.SizeOfSlice*2 + size.SizeOfPointer
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64*3 + size.SizeOfInt*3 + size.SizeOfSlice*2 + size.SizeOfPointer
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
 	sum += int64(cap(p.SourceOutputNames)) * size.SizeOfPointer
