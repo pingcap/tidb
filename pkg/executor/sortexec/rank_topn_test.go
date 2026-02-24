@@ -126,7 +126,6 @@ func buildRankTopNExec(rankTopNCase *rankTopNCase, dataSource *testutil.MockData
 	for _, idx := range rankTopNCase.orderByIdx {
 		sortExec.ByItems = append(sortExec.ByItems, &plannerutil.ByItems{Expr: rankTopNCase.cols[idx]})
 	}
-	// fmt.Printf("xzxdebug len(sortExec.ByItems): %d\n", len(sortExec.ByItems)) // TODO(x) remove debug info
 
 	topNexec := &sortexec.TopNExec{
 		SortExec:    sortExec,
