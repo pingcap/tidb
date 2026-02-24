@@ -380,14 +380,17 @@ func isNDVClose(lhs, rhs float64) bool {
 	if lhs == 0 || rhs == 0 {
 		return lhs == rhs
 	}
-	const ndvFloor = 20
+	const (
+		ndvFloor         = 20  // lower bound where absolute-difference heuristics start to make sense
+		ndvDiffThreshold = 200 // for medium NDVs, an absolute diff < 200 is treated as "close" before falling back to relative diff
+	)
 	minVal := math.Min(lhs, rhs)
 	diff := math.Abs(lhs - rhs)
 	maxVal := math.Max(lhs, rhs)
 	if maxVal <= ndvFloor {
 		return true
 	}
-	if diff < 200 && minVal >= ndvFloor {
+	if diff < ndvDiffThreshold && minVal >= ndvFloor {
 		return true
 	}
 	return diff/maxVal < 0.2
