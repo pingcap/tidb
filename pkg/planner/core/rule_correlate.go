@@ -197,6 +197,12 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	ap := logicalop.LogicalApply{}.Init(join.SCtx(), join.QueryBlockOffset())
 	ap.JoinType = join.JoinType
 	ap.CorCols = corCols
+	// Copy hint fields so hint behavior is preserved in the alternative.
+	ap.HintInfo = join.HintInfo
+	ap.PreferJoinType = join.PreferJoinType
+	ap.PreferJoinOrder = join.PreferJoinOrder
+	ap.LeftPreferJoinType = join.LeftPreferJoinType
+	ap.RightPreferJoinType = join.RightPreferJoinType
 	ap.SetChildren(join.Children()[0], innerPlan)
 	ap.SetSchema(join.Schema().Clone())
 	ap.SetOutputNames(join.OutputNames())

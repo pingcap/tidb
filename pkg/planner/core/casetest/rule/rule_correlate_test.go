@@ -15,10 +15,12 @@
 package rule
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCorrelateNullSemantics verifies that CorrelateSolver does not break
@@ -51,6 +53,38 @@ func TestCorrelateNullSemantics(t *testing.T) {
 	tk.MustExec("insert into tnn values (1), (2), (3)")
 	tk.MustExec("insert into snn values (1), (2)")
 	tk.MustQuery("select tnn.a in (select snn.a from snn) as r from tnn order by tnn.a").Check(testkit.Rows("1", "1", "0"))
+}
+
+// TestCorrelatePreservesHints verifies that when the CorrelateSolver builds an
+// Apply alternative, user-specified join hints (e.g., HASH_JOIN) are preserved
+// and respected during physical plan selection.
+func TestCorrelatePreservesHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_enable_correlate_subquery = ON")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int not null, b int, key(a))")
+	tk.MustExec("create table t2 (a int not null, b int, key(a))")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3)")
+	tk.MustExec("insert into t2 values (1,10),(2,20)")
+
+	// With HASH_JOIN hint, the plan should use HashJoin even when the correlate
+	// optimization is enabled and could produce an Apply alternative.
+	rows := tk.MustQuery("explain format = 'brief' select /*+ HASH_JOIN(t1, t2) */ * from t1 where a in (select a from t2)").Rows()
+	hasHashJoin := false
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), "HashJoin") {
+			hasHashJoin = true
+			break
+		}
+	}
+	require.True(t, hasHashJoin, "HASH_JOIN hint should be preserved when correlate optimization is enabled")
+
+	// Verify the same query produces correct results.
+	tk.MustQuery("select /*+ HASH_JOIN(t1, t2) */ * from t1 where a in (select a from t2) order by t1.a").
+		Check(testkit.Rows("1 1", "2 2"))
 }
 
 func TestCorrelate(tt *testing.T) {

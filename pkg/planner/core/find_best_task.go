@@ -3051,6 +3051,13 @@ func findBestTask4LogicalJoin(super base.LogicalPlan, prop *property.PhysicalPro
 		return nil, err
 	}
 
+	// If the user specified explicit join hints (e.g., HASH_JOIN, INL_JOIN),
+	// respect them and skip the Apply alternative. Hints are a user override
+	// that should not be silently overridden by the correlate optimization.
+	if join.PreferJoinType > 0 {
+		return joinTask, nil
+	}
+
 	// Step 2: Try the Apply alternative. The Apply path may encounter issues
 	// (e.g., unsupported operator types in the inner subtree, correlated
 	// conditions that confuse the ranger, etc.). Use a recovery mechanism to
