@@ -118,6 +118,7 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 
 	ImportJobID       *int64
+	ImportJobRaw      bool
 	DistributionJobID *int64
 	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 }
@@ -288,6 +289,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowSessionStates:
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
+		if e.ImportJobRaw {
+			return e.fetchShowRawImportJobs(ctx)
+		}
 		return e.fetchShowImportJobs(ctx)
 	case ast.ShowImportGroups:
 		return e.fetchShowImportGroups(ctx)
@@ -2499,24 +2503,111 @@ func handleImportJobInfo(
 	ctx context.Context, location *time.Location,
 	info *importer.JobInfo, result *chunk.Chunk,
 ) error {
-	var (
-		runInfo *importinto.RuntimeInfo
-		err     error
-	)
-
-	if info.Status == importer.JobStatusRunning {
-		// need to get more info from distributed framework for running jobs
-		runInfo, err = importinto.GetRuntimeInfoForJob(ctx, location, info.ID)
-		if err != nil {
-			return err
-		}
-		if runInfo.Status == proto.TaskStateAwaitingResolution {
-			info.Status = string(runInfo.Status)
-			info.ErrorMessage = runInfo.ErrorMsg
-		}
+	runInfo, err := getRuntimeInfoForShowImportJob(ctx, location, info)
+	if err != nil {
+		return err
 	}
 	FillOneImportJobInfo(result, info, runInfo)
 	return nil
+}
+
+func getRuntimeInfoForShowImportJob(
+	ctx context.Context,
+	location *time.Location,
+	info *importer.JobInfo,
+) (*importinto.RuntimeInfo, error) {
+	if info.Status != importer.JobStatusRunning {
+		return nil, nil
+	}
+
+	// Need to get more info from distributed framework for running jobs.
+	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, location, info.ID)
+	if err != nil {
+		return nil, err
+	}
+	if runInfo.Status == proto.TaskStateAwaitingResolution {
+		info.Status = string(runInfo.Status)
+		info.ErrorMessage = runInfo.ErrorMsg
+	}
+	return runInfo, nil
+}
+
+// BuildRawImportJobStats converts import job info (and optional runtime info) into a machine-friendly contract.
+func BuildRawImportJobStats(
+	location *time.Location,
+	info *importer.JobInfo,
+	runInfo *importinto.RuntimeInfo,
+) (*importer.RawImportJobStats, error) {
+	if location == nil {
+		location = time.UTC
+	}
+
+	setUnix := func(dst *int64, t types.Time) error {
+		if t.IsZero() {
+			return nil
+		}
+		gt, err := t.GoTime(location)
+		if err != nil {
+			return err
+		}
+		*dst = gt.Unix()
+		return nil
+	}
+
+	stats := &importer.RawImportJobStats{
+		JobID:               info.ID,
+		GroupKey:            info.GroupKey,
+		DataSource:          info.Parameters.FileLocation,
+		TargetTable:         utils.EncloseDBAndTable(info.TableSchema, info.TableName),
+		TableID:             info.TableID,
+		Phase:               info.Step,
+		Status:              info.Status,
+		SourceFileSizeBytes: info.SourceFileSize,
+		ErrorMessage:        info.ErrorMessage,
+		Summary:             info.Summary,
+		CreatedBy:           info.CreatedBy,
+	}
+
+	if runInfo != nil {
+		importedRows := runInfo.ImportRows
+		stats.ImportedRows = &importedRows
+
+		step := importer.RawImportJobStepStats{
+			Name:             proto.Step2Str(proto.ImportInto, runInfo.Step),
+			ProcessedBytes:   runInfo.Processed,
+			TotalBytes:       runInfo.Total,
+			SpeedBytesPerSec: runInfo.Speed,
+		}
+		if runInfo.Speed > 0 && runInfo.Total > 0 {
+			remainSeconds := max((runInfo.Total-runInfo.Processed)/runInfo.Speed, 0)
+			step.RemainingSeconds = &remainSeconds
+		}
+		stats.CurrentStep = &step
+	} else if info.IsSuccess() && info.Summary != nil {
+		// For finished job, use summary.ImportedRows if available.
+		importedRows := info.Summary.ImportedRows
+		stats.ImportedRows = &importedRows
+	}
+
+	if err := setUnix(&stats.CreateTimeUnix, info.CreateTime); err != nil {
+		return nil, err
+	}
+	if err := setUnix(&stats.StartTimeUnix, info.StartTime); err != nil {
+		return nil, err
+	}
+	if err := setUnix(&stats.EndTimeUnix, info.EndTime); err != nil {
+		return nil, err
+	}
+
+	updateTime := info.UpdateTime
+	if runInfo != nil && !runInfo.UpdateTime.IsZero() {
+		updateTime = runInfo.UpdateTime
+	}
+	if err := setUnix(&stats.UpdateTimeUnix, updateTime); err != nil {
+		return nil, err
+	}
+
+	return stats, nil
 }
 
 const balanceRangeScheduler = "balance-range-scheduler"
@@ -2765,6 +2856,81 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		}
 	}
 	// TODO: does not support filtering for now
+	return nil
+}
+
+// fetchShowRawImportJobs fills the result with the schema:
+// {"Job_ID", "Group_Key", "Raw_Stats"}.
+func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
+	sctx := e.Ctx()
+
+	var hasSuperPriv bool
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		hasSuperPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	}
+	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
+	taskManager, err := fstorage.GetTaskManager()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return err
+	}
+
+	loc := sctx.GetSessionVars().Location()
+	appendJob := func(info *importer.JobInfo) error {
+		runInfo, err2 := getRuntimeInfoForShowImportJob(ctx, loc, info)
+		if err2 != nil {
+			return err2
+		}
+		stats, err2 := BuildRawImportJobStats(loc, info, runInfo)
+		if err2 != nil {
+			return err2
+		}
+		statsBytes, err2 := gjson.Marshal(stats)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		statsJSON := types.BinaryJSON{}
+		if err2 := statsJSON.UnmarshalJSON(statsBytes); err2 != nil {
+			return err2
+		}
+
+		e.result.AppendInt64(0, info.ID)
+		if info.GroupKey == "" {
+			e.result.AppendNull(1)
+		} else {
+			e.result.AppendString(1, info.GroupKey)
+		}
+		e.result.AppendJSON(2, statsJSON)
+		return nil
+	}
+
+	if e.ImportJobID != nil {
+		var info *importer.JobInfo
+		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+			exec := se.GetSQLExecutor()
+			var err2 error
+			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, sctx.GetSessionVars().User.String(), hasSuperPriv)
+			return err2
+		}); err != nil {
+			return err
+		}
+		return appendJob(info)
+	}
+
+	var infos []*importer.JobInfo
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.GetSQLExecutor()
+		var err2 error
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)
+		return err2
+	}); err != nil {
+		return err
+	}
+	for _, info := range infos {
+		if err2 := appendJob(info); err2 != nil {
+			return err2
+		}
+	}
 	return nil
 }
 
