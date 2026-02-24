@@ -773,8 +773,7 @@ func MockTiDBStatusPort(ctx context.Context, b *testing.B, port string) *util.Wa
 
 // LoadTableStats loads table stats from json file.
 func LoadTableStats(fileName string, dom *domain.Domain) error {
-	statsDir := "testdata"
-	statsPath := filepath.Join(statsDir, fileName)
+	statsPath := filepath.Join("testdata", fileName)
 	bytes, err := os.ReadFile(statsPath)
 	if err != nil {
 		return err
@@ -791,8 +790,6 @@ func LoadTableStats(fileName string, dom *domain.Domain) error {
 	}
 	return nil
 }
-
-// unzip is handled in package-specific TestMain when necessary.
 
 // MockGCSavePoint mocks a GC save point. It's used in tests that need to set TiDB snapshot.
 func (tk *TestKit) MockGCSavePoint() {
