@@ -680,6 +680,7 @@ var Keywords = []KeywordsType{
 	{"OPTIMISTIC", false, "tidb"},
 	{"PESSIMISTIC", false, "tidb"},
 	{"POLICIES", false, "tidb"},
+	{"RAW", false, "tidb"},
 	{"REGION", false, "tidb"},
 	{"REGIONS", false, "tidb"},
 	{"RESET", false, "tidb"},
