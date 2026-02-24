@@ -66,7 +66,10 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 			cfg.TiCIWriteEnabled = true
 			if !bc.ticiWriterGroupInitialized {
 				taskID := strconv.FormatInt(bc.jobID, 10)
-				if err := bc.backend.InitTiCIWriterGroup(bc.ctx, tbl.Meta(), bc.schemaName, taskID); err != nil {
+				// Create a TiCI writer group for this index.
+				newIndexIDs := make([]int64, 0, 1)
+				newIndexIDs = append(newIndexIDs, indexID)
+				if err := bc.backend.InitTiCIWriterGroup(bc.ctx, tbl.Meta(), bc.schemaName, taskID, newIndexIDs); err != nil {
 					return nil, err
 				}
 				bc.ticiWriterGroupInitialized = true

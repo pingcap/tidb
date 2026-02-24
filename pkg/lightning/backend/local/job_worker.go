@@ -286,7 +286,7 @@ func (*regionJobBaseWorker) isRetryableImportTiKVError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-// blkStoreRegionJobWorker is the retion job worker for block storage engine.
+// blkStoreRegionJobWorker is the region job worker for block storage engine.
 type blkStoreRegionJobWorker struct {
 	*regionJobBaseWorker
 	checkTiKVSpace bool
