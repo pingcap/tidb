@@ -22,7 +22,6 @@ go_library(
         "//pkg/objstore",
         "//pkg/parser/ast",
         "//pkg/util/mathutil",
-        "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",
         "@com_github_joho_sqltocsv//:sqltocsv",
         "@com_github_pingcap_errors//:errors",
@@ -50,6 +49,7 @@ go_test(
     deps = [
         "//lightning/pkg/importinto/mock",
         "//lightning/pkg/precheck",
+        "//pkg/executor/importer",
         "//pkg/importsdk",
         "//pkg/importsdk/mock",
         "//pkg/lightning/common",

@@ -15,6 +15,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/importsdk",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/executor/importer",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
