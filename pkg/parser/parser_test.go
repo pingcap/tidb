@@ -1463,8 +1463,6 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
-		{"flush stats_delta", true, "FLUSH STATS_DELTA"},
-		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA CLUSTER"},
 
 		// for call statement
 		{"call ", false, ""},
@@ -3968,13 +3966,20 @@ func TestDDL(t *testing.T) {
 		{"create masking policy p on t(c) as c enable", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS `c` ENABLE"},
 		{"create masking policy if not exists p on t(c) as c disable", true, "CREATE MASKING POLICY IF NOT EXISTS `p` ON `t` (`c`) AS `c` DISABLE"},
 		{"create or replace masking policy p on t(c) as c", true, "CREATE OR REPLACE MASKING POLICY `p` ON `t` (`c`) AS `c`"},
+		{"create masking policy p on t(c) as case when current_user() = 'root' then c else 'xxx' end enable", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS CASE WHEN CURRENT_USER()=_UTF8MB4'root' THEN `c` ELSE _UTF8MB4'xxx' END ENABLE"},
+		{"create masking policy p on t(c) as c restrict on (insert_into_select, delete_select) enable", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS `c` RESTRICT ON (INSERT_INTO_SELECT, DELETE_SELECT) ENABLE"},
+		{"create masking policy p on t(c) as case when current_user() not in ('root@%', 'u@%') then 'x' else c end", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS CASE WHEN CURRENT_USER() NOT IN (_UTF8MB4'root@%',_UTF8MB4'u@%') THEN _UTF8MB4'x' ELSE `c` END"},
 		{"alter table t add masking policy p on (c) as c", true, "ALTER TABLE `t` ADD MASKING POLICY `p` ON (`c`) AS `c`"},
 		{"alter table t add masking policy p on (c) as c disable", true, "ALTER TABLE `t` ADD MASKING POLICY `p` ON (`c`) AS `c` DISABLE"},
+		{"alter table t add masking policy p on (c) as c restrict on (update_select, ctas) disable", true, "ALTER TABLE `t` ADD MASKING POLICY `p` ON (`c`) AS `c` RESTRICT ON (UPDATE_SELECT, CTAS) DISABLE"},
+		{"alter table t modify masking policy p set expression = case when current_role() in ('r1', 'r2') then c else 'x' end", true, "ALTER TABLE `t` MODIFY MASKING POLICY `p` SET EXPRESSION = CASE WHEN CURRENT_ROLE() IN (_UTF8MB4'r1',_UTF8MB4'r2') THEN `c` ELSE _UTF8MB4'x' END"},
+		{"alter table t modify masking policy p set restrict on (insert_into_select, update_select, delete_select, ctas)", true, "ALTER TABLE `t` MODIFY MASKING POLICY `p` SET RESTRICT ON (INSERT_INTO_SELECT, UPDATE_SELECT, DELETE_SELECT, CTAS)"},
+		{"alter table t modify masking policy p set restrict on none", true, "ALTER TABLE `t` MODIFY MASKING POLICY `p` SET RESTRICT ON NONE"},
 		{"alter table t enable masking policy p", true, "ALTER TABLE `t` ENABLE MASKING POLICY `p`"},
 		{"alter table t disable masking policy p", true, "ALTER TABLE `t` DISABLE MASKING POLICY `p`"},
 		{"alter table t drop masking policy p", true, "ALTER TABLE `t` DROP MASKING POLICY `p`"},
 		{"show masking policies for t", true, "SHOW MASKING POLICIES FOR `t`"},
-		{"show masking policies for t where col = 'c'", true, "SHOW MASKING POLICIES FOR `t` WHERE `col`=_UTF8MB4'c'"},
+		{"show masking policies for t where column_name = 'c'", true, "SHOW MASKING POLICIES FOR `t` WHERE `column_name`=_UTF8MB4'c'"},
 
 		{"alter placement policy x primary_region='us'", true, "ALTER PLACEMENT POLICY `x` PRIMARY_REGION = 'us'"},
 		{"alter placement policy x region='us, 3'", false, ""},
@@ -8168,16 +8173,4 @@ func TestTableAffinityOption(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
-}
-
-func TestSplitPartition(t *testing.T) {
-	cases := []testCase{
-		{`create table t (id BIGINT, user_id BIGINT, action_type VARCHAR(20), PRIMARY KEY (id), INDEX idx_user_id (user_id)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx_user_id BETWEEN (1000) AND (100000) REGIONS 3`, true, "CREATE TABLE `t` (`id` BIGINT,`user_id` BIGINT,`action_type` VARCHAR(20),PRIMARY KEY(`id`),INDEX `idx_user_id`(`user_id`)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3"},
-		{`alter table t SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4`, true, "ALTER TABLE `t` SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4"},
-		{`alter table t SPLIT INDEX ss BETWEEN (0) AND (1000000) REGIONS 3`, true, "ALTER TABLE `t` SPLIT INDEX `ss` BETWEEN (0) AND (1000000) REGIONS 3"},
-		{`create table t (id BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4`, true, "CREATE TABLE `t` (`id` BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4"},
-		{`create table t (id BIGINT, INDEX idx(id)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx BETWEEN (0) AND (1000000) REGIONS 2`, true, "CREATE TABLE `t` (`id` BIGINT,INDEX `idx`(`id`)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx` BETWEEN (0) AND (1000000) REGIONS 2"},
-		{`alter table t SPLIT BETWEEN (0) AND (1000000) REGIONS 3`, true, "ALTER TABLE `t` SPLIT BETWEEN (0) AND (1000000) REGIONS 3"},
-	}
-	RunTest(t, cases, false)
 }

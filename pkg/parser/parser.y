@@ -37,6 +37,20 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 )
+
+func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool) {
+	switch strings.ToUpper(name) {
+	case ast.MaskingPolicyRestrictNameInsertIntoSelect:
+		return ast.MaskingPolicyRestrictOpInsertIntoSelect, true
+	case ast.MaskingPolicyRestrictNameUpdateSelect:
+		return ast.MaskingPolicyRestrictOpUpdateSelect, true
+	case ast.MaskingPolicyRestrictNameDeleteSelect:
+		return ast.MaskingPolicyRestrictOpDeleteSelect, true
+	case ast.MaskingPolicyRestrictNameCTAS:
+		return ast.MaskingPolicyRestrictOpCTAS, true
+	}
+	return ast.MaskingPolicyRestrictOpNone, false
+}
 %}
 
 %union {
@@ -904,7 +918,6 @@ import (
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
-	statsDelta                 "STATS_DELTA"
 	statsExtended              "STATS_EXTENDED"
 	statsHealthy               "STATS_HEALTHY"
 	statsHistograms            "STATS_HISTOGRAMS"
@@ -1133,6 +1146,9 @@ import (
 	AlterTableSpecList                     "Alter table specification list"
 	AlterTableSpecListOpt                  "Alter table specification list optional"
 	MaskingPolicyStateOpt                  "Optional masking policy state"
+	MaskingPolicyRestrictOnOpt             "Optional masking policy restriction"
+	MaskingPolicyRestrictOperationList     "Masking policy restrict operation list"
+	MaskingPolicyRestrictOperation         "Masking policy restrict operation"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
 	ArrayKwdOpt                            "Array options"
@@ -1203,7 +1219,6 @@ import (
 	Fields                                 "Fields clause"
 	FieldList                              "field expression list"
 	FlushOption                            "Flush option"
-	ClusterOpt                             "Cluster option"
 	ForceOpt                               "Force opt"
 	InstanceOption                         "Instance option"
 	FulltextSearchModifierOpt              "Fulltext modifier"
@@ -1572,10 +1587,6 @@ import (
 	ProcedureFetchList                     "Procedure fetch into variables"
 	ProcedureHandlerType                   "Procedure handler operation type"
 	ProcedureHcondList                     "Procedure handler condition value list"
-	SplitOptionBetween                     "Split index option, between format"
-	SplitIndexOption                       "Split index option in CREATE/ALTER table"
-	SplitIndexList                         "Split index option list in CREATE table"
-	SplitIndexListOpt                      "Optional split index option list"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1795,50 +1806,6 @@ AlterTableStmt:
 			Table:          $4.(*ast.TableName),
 			PartitionNames: $7.([]ast.CIStr),
 			ReplicaKind:    ast.CompactReplicaKindTiFlash,
-		}
-	}
-
-SplitIndexListOpt:
-	/* empty */ %prec lowerThanCreateTableSelect
-	{
-		$$ = nil
-	}
-|   SplitIndexList %prec lowerThanComma
-	{
-		$$ = $1.([]*ast.SplitIndexOption)
-	}
-
-SplitIndexList:
-    SplitIndexOption
-	{
-		$$ = []*ast.SplitIndexOption{$1.(*ast.SplitIndexOption)}
-	}
-|   SplitIndexList SplitIndexOption
-	{
-		$$ = append($1.([]*ast.SplitIndexOption), $2.(*ast.SplitIndexOption))
-	}
-
-SplitIndexOption:
-	"SPLIT" "PRIMARY" "KEY" SplitOptionBetween
-	{
-		$$ = &ast.SplitIndexOption{
-			PrimaryKey: true,
-			IndexName: ast.NewCIStr(mysql.PrimaryKeyName),
-			SplitOpt: $4.(*ast.SplitOption),
-		}
-	}
-|	"SPLIT" "INDEX" Identifier SplitOptionBetween
-	{
-		$$ = &ast.SplitIndexOption{
-			IndexName: ast.NewCIStr($3),
-			SplitOpt: $4.(*ast.SplitOption),
-		}
-	}
-|	"SPLIT" SplitOptionBetween
-	{
-		$$ = &ast.SplitIndexOption{
-			TableLevel: true,
-			SplitOpt: $2.(*ast.SplitOption),
 		}
 	}
 
@@ -2222,13 +2189,6 @@ AlterTableSpecSingleOpt:
 		ret.NoWriteToBinlog = $3.(bool)
 		$$ = ret
 	}
-|	SplitIndexOption
-	{
-		$$ = &ast.AlterTableSpec{
-			Tp:             ast.AlterTableSplitIndex,
-			SplitIndex:		$1.(*ast.SplitIndexOption),
-		}
-	}
 |	"SPLIT" "MAXVALUE" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
 	{
 		partitionMethod := ast.PartitionMethod{Expr: $7}
@@ -2437,15 +2397,16 @@ AlterTableSpec:
 			Statistics:  statsSpec,
 		}
 	}
-|	"ADD" "MASKING" "POLICY" PolicyName "ON" '(' Identifier ')' "AS" Expression MaskingPolicyStateOpt
+|	"ADD" "MASKING" "POLICY" PolicyName "ON" '(' Identifier ')' "AS" Expression MaskingPolicyRestrictOnOpt MaskingPolicyStateOpt
 	{
-		state := $11.(*ast.MaskingPolicyState)
+		state := $12.(*ast.MaskingPolicyState)
 		$$ = &ast.AlterTableSpec{
-			Tp:                 ast.AlterTableAddMaskingPolicy,
-			MaskingPolicyName:  ast.NewCIStr($4),
-			MaskingPolicyColumn: &ast.ColumnName{Name: ast.NewCIStr($7)},
-			MaskingPolicyExpr:  $10,
-			MaskingPolicyState: *state,
+			Tp:                       ast.AlterTableAddMaskingPolicy,
+			MaskingPolicyName:        ast.NewCIStr($4),
+			MaskingPolicyColumn:      &ast.ColumnName{Name: ast.NewCIStr($7)},
+			MaskingPolicyExpr:        $10,
+			MaskingPolicyRestrictOps: $11.(ast.MaskingPolicyRestrictOps),
+			MaskingPolicyState:       *state,
 		}
 	}
 |	"ENABLE" "MASKING" "POLICY" PolicyName
@@ -2467,6 +2428,34 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:                ast.AlterTableDropMaskingPolicy,
 			MaskingPolicyName: ast.NewCIStr($4),
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" Identifier EqOpt Expression
+	{
+		if !strings.EqualFold($6, "expression") {
+			yylex.AppendError(yylex.Errorf("unsupported masking policy modify option: %s", $6))
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableModifyMaskingPolicyExpression,
+			MaskingPolicyName: ast.NewCIStr($4),
+			MaskingPolicyExpr: $8,
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" "RESTRICT" "ON" '(' MaskingPolicyRestrictOperationList ')'
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                       ast.AlterTableModifyMaskingPolicyRestrictOn,
+			MaskingPolicyName:        ast.NewCIStr($4),
+			MaskingPolicyRestrictOps: $9.(ast.MaskingPolicyRestrictOps),
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" "RESTRICT" "ON" "NONE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                       ast.AlterTableModifyMaskingPolicyRestrictOn,
+			MaskingPolicyName:        ast.NewCIStr($4),
+			MaskingPolicyRestrictOps: ast.MaskingPolicyRestrictOpNone,
 		}
 	}
 |	AttributesOpt
@@ -3357,7 +3346,7 @@ SplitRegionStmt:
 		}
 	}
 
-SplitOptionBetween:
+SplitOption:
 	"BETWEEN" RowValue "AND" RowValue "REGIONS" Int64Num
 	{
 		$$ = &ast.SplitOption{
@@ -3365,12 +3354,6 @@ SplitOptionBetween:
 			Upper: $4.([]ast.ExprNode),
 			Num:   $6.(int64),
 		}
-	}
-
-SplitOption:
-	SplitOptionBetween
-	{
-		$$ = $1
 	}
 |	"BY" ValuesList
 	{
@@ -4679,7 +4662,7 @@ DatabaseOptionList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" OptTemporary "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt SplitIndexListOpt DuplicateOpt AsOpt CreateTableSelectOpt OnCommitOpt
+	"CREATE" OptTemporary "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt DuplicateOpt AsOpt CreateTableSelectOpt OnCommitOpt
 	{
 		stmt := $6.(*ast.CreateTableStmt)
 		stmt.Table = $5.(*ast.TableName)
@@ -4689,16 +4672,13 @@ CreateTableStmt:
 		if $8 != nil {
 			stmt.Partition = $8.(*ast.PartitionOptions)
 		}
-		if $9 != nil {
-			stmt.SplitIndex = $9.([]*ast.SplitIndexOption)
-		}
-		stmt.OnDuplicate = $10.(ast.OnDuplicateKeyHandlingType)
-		stmt.Select = $12.(*ast.CreateTableStmt).Select
-		if ($13 != nil && stmt.TemporaryKeyword != ast.TemporaryGlobal) || (stmt.TemporaryKeyword == ast.TemporaryGlobal && $13 == nil) {
+		stmt.OnDuplicate = $9.(ast.OnDuplicateKeyHandlingType)
+		stmt.Select = $11.(*ast.CreateTableStmt).Select
+		if ($12 != nil && stmt.TemporaryKeyword != ast.TemporaryGlobal) || (stmt.TemporaryKeyword == ast.TemporaryGlobal && $12 == nil) {
 			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if stmt.TemporaryKeyword == ast.TemporaryGlobal {
-				stmt.OnCommitDelete = $13.(bool)
+				stmt.OnCommitDelete = $12.(bool)
 			}
 		}
 		$$ = stmt
@@ -7492,7 +7472,6 @@ TiDBKeyword:
 |	"STATISTICS"
 |	"STATS"
 |	"STATS_BUCKETS"
-|	"STATS_DELTA"
 |	"STATS_EXTENDED"
 |	"STATS_HEALTHY"
 |	"STATS_HISTOGRAMS"
@@ -12592,13 +12571,6 @@ FlushOption:
 			Tp: ast.FlushClientErrorsSummary,
 		}
 	}
-|	"STATS_DELTA" ClusterOpt
-	{
-		$$ = &ast.FlushStmt{
-			Tp:        ast.FlushStatsDelta,
-			IsCluster: $2.(bool),
-		}
-	}
 
 LogTypeOpt:
 	/* empty */
@@ -12624,16 +12596,6 @@ LogTypeOpt:
 |	"SLOW"
 	{
 		$$ = ast.LogTypeSlow
-	}
-
-ClusterOpt:
-	/* empty */
-	{
-		$$ = false
-	}
-|	"CLUSTER"
-	{
-		$$ = true
 	}
 
 NoWriteToBinLogAliasOpt:
@@ -16008,10 +15970,44 @@ MaskingPolicyStateOpt:
 		}
 	}
 
-CreateMaskingPolicyStmt:
-	"CREATE" OrReplace "MASKING" "POLICY" IfNotExists PolicyName "ON" TableName '(' Identifier ')' "AS" Expression MaskingPolicyStateOpt
+MaskingPolicyRestrictOnOpt:
 	{
-		state := $14.(*ast.MaskingPolicyState)
+		$$ = ast.MaskingPolicyRestrictOpNone
+	}
+|	"RESTRICT" "ON" '(' MaskingPolicyRestrictOperationList ')'
+	{
+		$$ = $4.(ast.MaskingPolicyRestrictOps)
+	}
+|	"RESTRICT" "ON" "NONE"
+	{
+		$$ = ast.MaskingPolicyRestrictOpNone
+	}
+
+MaskingPolicyRestrictOperationList:
+	MaskingPolicyRestrictOperation
+	{
+		$$ = $1.(ast.MaskingPolicyRestrictOps)
+	}
+|	MaskingPolicyRestrictOperationList ',' MaskingPolicyRestrictOperation
+	{
+		$$ = $1.(ast.MaskingPolicyRestrictOps) | $3.(ast.MaskingPolicyRestrictOps)
+	}
+
+MaskingPolicyRestrictOperation:
+	Identifier
+	{
+		op, ok := getMaskingPolicyRestrictOp($1)
+		if !ok {
+			yylex.AppendError(yylex.Errorf("unsupported masking policy restrict operation: %s", $1))
+			return 1
+		}
+		$$ = op
+	}
+
+CreateMaskingPolicyStmt:
+	"CREATE" OrReplace "MASKING" "POLICY" IfNotExists PolicyName "ON" TableName '(' Identifier ')' "AS" Expression MaskingPolicyRestrictOnOpt MaskingPolicyStateOpt
+	{
+		state := $15.(*ast.MaskingPolicyState)
 		$$ = &ast.CreateMaskingPolicyStmt{
 			OrReplace:           $2.(bool),
 			IfNotExists:         $5.(bool),
@@ -16019,6 +16015,7 @@ CreateMaskingPolicyStmt:
 			Table:               $8.(*ast.TableName),
 			Column:              &ast.ColumnName{Name: ast.NewCIStr($10)},
 			Expr:                $13,
+			RestrictOps:         $14.(ast.MaskingPolicyRestrictOps),
 			MaskingPolicyState:  *state,
 		}
 	}
