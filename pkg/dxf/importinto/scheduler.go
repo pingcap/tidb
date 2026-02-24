@@ -275,8 +275,6 @@ func (sch *importScheduler) unregisterTask(ctx context.Context, task *proto.Task
 
 func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta *TaskMeta) error {
 	return sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		// Only check once when generating the import step plan to avoid repeated checks
-		// when executors are recreated in HA tests.
 		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskStore, se, taskMeta.Plan.TableInfo)
 		if err2 != nil {
 			return err2
