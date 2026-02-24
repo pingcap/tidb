@@ -416,31 +416,8 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	indexCols := path.IdxCols
-	if len(indexCols) > len(path.Index.Columns) {
-		// Trim appended handle dimensions and keep only real index-definition columns for stats estimation.
-		indexCols = indexCols[0:len(path.Index.Columns)]
-	}
-	needPruneEstimateRange := false
-	if len(indexCols) < len(path.IdxCols) {
-		for _, ran := range path.Ranges {
-			if len(ran.LowVal) > len(indexCols) || len(ran.HighVal) > len(indexCols) {
-				needPruneEstimateRange = true
-				break
-			}
-		}
-	}
-	var estimateRanges []*ranger.Range
-	if needPruneEstimateRange {
-		// Non-unique index paths may append handle columns in `path.IdxCols` for execution ranges.
-		// Rebuild estimation ranges with the same column set used in row-count estimation.
-		estimateRanges = pruneEstimateRange(path.Ranges, len(indexCols))
-	} else {
-		estimateRanges = path.Ranges
-	}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, estimateRanges, indexCols)
-	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
-	return err
+	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = countAfterAccess.Est, countAfterAccess.MinEst, countAfterAccess.MaxEst
+	return nil
 }
 
 // detachCondAndBuildOptimalRangeForIndex attempts to build the optimal ranges for an index
@@ -466,12 +443,25 @@ func detachCondAndBuildOptimalRangeForIndex(
 
 	indexCols := cols
 	if idx := histColl.GetIdx(indexID); idx != nil && len(indexCols) > len(idx.Info.Columns) {
-		indexCols = indexCols[:len(idx.Info.Columns)] // remove clustered primary key if it has been added to cols
+		// Trim appended handle dimensions and keep only real index-definition columns for stats estimation.
+		indexCols = indexCols[:len(idx.Info.Columns)]
+	}
+
+	// Non-unique index paths may append handle columns in `cols` for execution ranges.
+	// Rebuild estimation ranges with the same column set used in row-count estimation.
+	estimateRanges := res.Ranges
+	if len(indexCols) < len(cols) {
+		for _, ran := range res.Ranges {
+			if len(ran.LowVal) > len(indexCols) || len(ran.HighVal) > len(indexCols) {
+				estimateRanges = pruneEstimateRange(res.Ranges, len(indexCols))
+				break
+			}
+		}
 	}
 
 	// Calculate estimated row count for this configuration
 	rowCount, err := cardinality.GetRowCountByIndexRanges(
-		sctx, histColl, indexID, res.Ranges, indexCols)
+		sctx, histColl, indexID, estimateRanges, indexCols)
 	if err != nil {
 		return nil, statistics.RowEstimate{}, err
 	}

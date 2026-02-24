@@ -2292,7 +2292,6 @@ func TestINListMatchPruning(t *testing.T) {
 
 		// sleep(1) is necessary for statistics to reflect recently committed changes
 		tk.MustQuery("select sleep(1)")
-
 		tk.MustExec("analyze table t2 all columns")
 
 		var ranges []string
