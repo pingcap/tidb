@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -510,7 +510,7 @@ func NewMergeKVIter(
 	ctx context.Context,
 	paths []string,
 	pathsStartOffset []uint64,
-	exStorage objstore.Storage,
+	exStorage storeapi.Storage,
 	readBufferSize int,
 	checkHotspot bool,
 	outerConcurrency int,
@@ -634,7 +634,7 @@ var errMergePropBaseIterClosed = errors.New("mergePropBaseIter is closed")
 func newMergePropBaseIter(
 	ctx context.Context,
 	multiStat MultipleFilesStat,
-	exStorage objstore.Storage,
+	exStorage storeapi.Storage,
 ) (*mergePropBaseIter, error) {
 	var limit int64
 	if multiStat.MaxOverlappingNum <= 0 {
@@ -798,7 +798,7 @@ type MergePropIter struct {
 func NewMergePropIter(
 	ctx context.Context,
 	multiStat []MultipleFilesStat,
-	exStorage objstore.Storage,
+	exStorage storeapi.Storage,
 ) (*MergePropIter, error) {
 	// sort the multiStat by minKey
 	// otherwise, if the number of readers is less than the weight, the kv may not in order

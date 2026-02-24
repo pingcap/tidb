@@ -33,7 +33,10 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -133,7 +136,7 @@ type GCSStorage struct {
 }
 
 // CopyFrom implements Copier.
-func (s *GCSStorage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
+func (s *GCSStorage) CopyFrom(ctx context.Context, e storeapi.Storage, spec storeapi.CopySpec) error {
 	es, ok := e.(*GCSStorage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "GCSStorage.CopyFrom supports only GCSStorage, get %T", e)
@@ -267,7 +270,7 @@ func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) 
 }
 
 // Open a Reader by file path.
-func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
+func (s *GCSStorage) Open(ctx context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
 	object := s.objectName(path)
 	handle := s.GetBucketHandle().Object(object)
 
@@ -314,9 +317,9 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Fi
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (s *GCSStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
 	if opt == nil {
-		opt = &WalkOption{}
+		opt = &storeapi.WalkOption{}
 	}
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
@@ -360,7 +363,7 @@ func (s *GCSStorage) URI() string {
 }
 
 // Create implements Storage interface.
-func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (FileWriter, error) {
+func (s *GCSStorage) Create(ctx context.Context, name string, wo *storeapi.WriterOption) (objectio.Writer, error) {
 	// NewGCSWriter requires real testing environment on Google Cloud.
 	mockGCS := intest.InTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
 	if wo == nil || wo.Concurrency <= 1 || mockGCS {
@@ -368,7 +371,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
 		wc.PredefinedACL = s.gcs.PredefinedAcl
-		return newFlushStorageWriter(wc, &emptyFlusher{}, wc, s.accessRec), nil
+		return newFlushStorageWriter(wc, &objectio.EmptyFlusher{}, wc, s.accessRec), nil
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
@@ -377,9 +380,9 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fw := newFlushStorageWriter(w, &emptyFlusher{}, w, s.accessRec)
+	fw := newFlushStorageWriter(w, &objectio.EmptyFlusher{}, w, s.accessRec)
 	// we already pass the accessRec to flushStorageWriter.
-	bw := newBufferedWriter(fw, int(partSize), NoCompression, nil)
+	bw := objectio.NewBufferedWriter(fw, int(partSize), compressedio.NoCompression, nil)
 	return bw, nil
 }
 
@@ -412,7 +415,7 @@ var mustReportCredErr = false
 const gcsClientCnt = 16
 
 // NewGCSStorage creates a GCS external storage implementation.
-func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *Options) (*GCSStorage, error) {
+func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *storeapi.Options) (*GCSStorage, error) {
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {
 		clientOps = append(clientOps, option.WithoutAuthentication())

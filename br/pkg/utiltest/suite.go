@@ -20,13 +20,14 @@ import (
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
 type TestRestoreSchemaSuite struct {
 	Mock     *mock.Cluster
 	MockGlue *gluemock.MockGlue
-	Storage  objstore.Storage
+	Storage  storeapi.Storage
 }
 
 func CreateRestoreSchemaSuite(t *testing.T) *TestRestoreSchemaSuite {

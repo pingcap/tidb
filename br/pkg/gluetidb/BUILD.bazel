@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "gluetidb",
-    srcs = ["glue.go"],
+    srcs = [
+        "glue.go",
+        "infoschema_filter.go",
+    ],
     importpath = "github.com/pingcap/tidb/br/pkg/gluetidb",
     visibility = ["//visibility:public"],
     deps = [
@@ -13,7 +16,10 @@ go_library(
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/executor",
+        "//pkg/infoschema",
+        "//pkg/infoschema/issyncer",
         "//pkg/kv",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/session",

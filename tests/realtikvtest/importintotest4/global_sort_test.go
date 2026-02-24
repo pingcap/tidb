@@ -368,42 +368,6 @@ func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.Task
 	return &accumSummary
 }
 
-func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
-	if kerneltype.IsClassic() {
-		s.T().Skip("Classic kernel cannot resolve unique key conflict during import")
-	}
-	var allData []string
-	for i := range 10 {
-		var content []byte
-		keyCnt := 1000
-		for j := range keyCnt {
-			idx := i*keyCnt + j
-			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
-		}
-		if i == 9 {
-			// add a duplicate key "test-123"
-			content = append(content, []byte("99999999,test-123\n")...)
-		}
-		s.server.CreateObject(fakestorage.Object{
-			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files-uk", Name: fmt.Sprintf("t.%d.csv", i)},
-			Content:     content,
-		})
-	}
-	slices.Sort(allData)
-	s.prepareAndUseDB("gs_multi_files")
-	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-	s.tk.MustExec("create table t (a bigint primary key , b varchar(100) unique key);")
-	// 1 subtask, encoding 10 files using 4 threads.
-	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
-	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files-uk/t.*.csv?endpoint=%s'
-		with cloud_storage_uri='%s', __max_engine_size='1', thread=8`, gcsEndpoint, sortStorageURI)
-	err := s.tk.QueryToErr(importSQL)
-	require.ErrorContains(s.T(), err, "duplicate key found")
-	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
-	// TODO: decode the key to use readable value in the error message.
-	require.ErrorContains(s.T(), err, "746573742d313233")
-}
-
 func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
@@ -549,7 +513,7 @@ func TestNextGenMetering(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Contains(gotMeterData.Load(), "requests{get: 16, put: 13}")
+	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 13}")
 	// note: the read/write of subtask meta file is also counted in obj_store part,
 	// but meta file contains file name which contains task and subtask ID, so
 	// the length may vary, we just use regexp to match here.
@@ -560,18 +524,18 @@ func TestNextGenMetering(t *testing.T) {
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(3, sum.RowCnt.Load())
 	s.EqualValues(27, sum.Bytes.Load())
-	s.EqualValues(2, sum.GetReqCnt.Load())
+	s.EqualValues(1, sum.GetReqCnt.Load())
 	s.EqualValues(5, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
 	s.EqualValues(288, sum.Bytes.Load())
-	s.EqualValues(6, sum.GetReqCnt.Load())
+	s.EqualValues(4, sum.GetReqCnt.Load())
 	s.EqualValues(6, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
 	// if we retry write, the bytes may be larger than 288
 	s.GreaterOrEqual(sum.Bytes.Load(), int64(288))
-	s.EqualValues(8, sum.GetReqCnt.Load())
+	s.EqualValues(6, sum.GetReqCnt.Load())
 	s.EqualValues(2, sum.PutReqCnt.Load())
 
 	s.Eventually(func() bool {

@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
@@ -49,7 +49,7 @@ func (rc *LogClient) pitrIDMapHasRestoreIDColumn() bool {
 
 func (rc *LogClient) tryGetCheckpointStorage(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) objstore.Storage {
+) storeapi.Storage {
 	if !rc.useCheckpoint {
 		return nil
 	}
@@ -92,7 +92,7 @@ func (rc *LogClient) saveIDMap(
 
 func (rc *LogClient) saveIDMap2Storage(
 	ctx context.Context,
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	dbMaps []*backuppb.PitrDBMap,
 ) error {
 	clusterID := rc.GetClusterID(ctx)
@@ -174,7 +174,7 @@ func (rc *LogClient) loadSchemasMap(
 
 func (rc *LogClient) loadSchemasMapFromStorage(
 	ctx context.Context,
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	restoredTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
 	clusterID := rc.GetClusterID(ctx)

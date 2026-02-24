@@ -992,7 +992,7 @@ func TestNextGenMetering(t *testing.T) {
 		return gotMeterData.Load() != ""
 	}, 30*time.Second, 300*time.Millisecond)
 	require.Contains(t, gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	require.Contains(t, gotMeterData.Load(), "requests{get: 7, put: 6}")
+	require.Contains(t, gotMeterData.Load(), "requests{get: 5, put: 6}")
 	// the read bytes is not stable, but it's more than 100B.
 	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
 	require.Regexp(t, `cluster{r: 1\d\dB, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
@@ -1004,13 +1004,13 @@ func TestNextGenMetering(t *testing.T) {
 	readIndexSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepReadIndex)
 	mergeSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepMergeSort)
 	ingestSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepWriteAndIngest)
-	require.EqualValues(t, 1, readIndexSum.GetReqCnt.Load())
+	require.EqualValues(t, 0, readIndexSum.GetReqCnt.Load())
 	require.EqualValues(t, 3, readIndexSum.PutReqCnt.Load())
 	require.Greater(t, readIndexSum.ReadBytes.Load(), int64(0))
 	require.EqualValues(t, 153, readIndexSum.Bytes.Load())
 	require.EqualValues(t, 3, readIndexSum.RowCnt.Load())
 
-	require.EqualValues(t, 3, mergeSum.GetReqCnt.Load())
+	require.EqualValues(t, 2, mergeSum.GetReqCnt.Load())
 	require.EqualValues(t, 3, mergeSum.PutReqCnt.Load())
 	require.EqualValues(t, 0, mergeSum.ReadBytes.Load())
 	require.EqualValues(t, 0, mergeSum.Bytes.Load())

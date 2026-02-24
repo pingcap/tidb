@@ -17,7 +17,7 @@ package external
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 )
 
 const (
@@ -29,7 +29,7 @@ const (
 
 // KeyValueStore stores key-value pairs and maintains the range properties.
 type KeyValueStore struct {
-	dataWriter objstore.FileWriter
+	dataWriter objectio.Writer
 
 	rc     *rangePropertiesCollector
 	ctx    context.Context
@@ -41,7 +41,7 @@ type KeyValueStore struct {
 // rangePropertiesCollector.
 func NewKeyValueStore(
 	ctx context.Context,
-	dataWriter objstore.FileWriter,
+	dataWriter objectio.Writer,
 	rangePropertiesCollector *rangePropertiesCollector,
 ) *KeyValueStore {
 	kvStore := &KeyValueStore{

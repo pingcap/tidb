@@ -9,7 +9,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/tests/br_key_locked",
     visibility = ["//visibility:private"],
     deps = [
-        "//br/pkg/httputil",
         "//br/pkg/task",
         "//pkg/config",
         "//pkg/kv",
@@ -17,6 +16,7 @@ go_library(
         "//pkg/store/driver",
         "//pkg/tablecodec",
         "//pkg/util/codec",
+        "//pkg/util/httputil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",

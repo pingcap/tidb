@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -59,6 +61,8 @@ type ClientMgr interface {
 	GetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
 	ResetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
 	GetPDClient() pd.Client
+	GetStorage() kv.Storage
+	GetGCManager() gc.Manager
 	GetLockResolver() *txnlock.LockResolver
 	Close()
 }
@@ -395,7 +399,7 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-	storage    objstore.Storage
+	storage    storeapi.Storage
 	backend    *backuppb.StorageBackend
 	apiVersion kvrpcpb.APIVersion
 
@@ -486,7 +490,7 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 	}
 
 	// check backup time do not exceed GCSafePoint
-	err = utils.CheckGCSafePoint(ctx, bc.mgr.GetPDClient(), backupTS)
+	err = gc.CheckGCSafePoint(ctx, bc.mgr.GetGCManager(), backupTS)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -507,13 +511,13 @@ func (bc *Client) GetSafePointID() string {
 		log.Info("reuse the checkpoint gc-safepoint service id", zap.String("service-id", bc.checkpointMeta.GCServiceId))
 		return bc.checkpointMeta.GCServiceId
 	}
-	return utils.MakeSafePointID()
+	return gc.MakeSafePointID()
 }
 
 // SetGCTTL set gcTTL for client.
 func (bc *Client) SetGCTTL(ttl int64) {
 	if ttl <= 0 {
-		ttl = utils.DefaultBRGCSafePointTTL
+		ttl = gc.DefaultBRGCSafePointTTL
 	}
 	bc.gcTTL = ttl
 }
@@ -529,7 +533,7 @@ func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 }
 
 // GetStorage gets storage for this backup.
-func (bc *Client) GetStorage() objstore.Storage {
+func (bc *Client) GetStorage() storeapi.Storage {
 	return bc.storage
 }
 
@@ -537,7 +541,7 @@ func (bc *Client) GetStorage() objstore.Storage {
 func (bc *Client) SetStorageAndCheckNotInUse(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
-	opts *objstore.Options,
+	opts *storeapi.Options,
 ) error {
 	err := bc.SetStorage(ctx, backend, opts)
 	if err != nil {
@@ -656,7 +660,7 @@ func (bc *Client) getProgressRange(r rtree.KeyRange, sharedFreeListG *btree.Free
 func (bc *Client) SetStorage(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
-	opts *objstore.Options,
+	opts *storeapi.Options,
 ) error {
 	var err error
 
@@ -701,13 +705,13 @@ func (bc *Client) BuildBackupRangeAndSchema(
 // CheckBackupStorageIsLocked checks whether backups is locked.
 // which means we found other backup progress already write
 // some data files into the same backup directory or cloud prefix.
-func CheckBackupStorageIsLocked(ctx context.Context, s objstore.Storage) error {
+func CheckBackupStorageIsLocked(ctx context.Context, s storeapi.Storage) error {
 	exist, err := s.FileExists(ctx, metautil.LockFile)
 	if err != nil {
 		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
 	}
 	if exist {
-		err = s.WalkDir(ctx, &objstore.WalkOption{}, func(path string, size int64) error {
+		err = s.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 			// should return error to break the walkDir when found lock file and other .sst files.
 			if strings.HasSuffix(path, ".sst") {
 				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+

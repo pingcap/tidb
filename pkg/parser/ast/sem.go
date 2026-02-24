@@ -315,6 +315,8 @@ const (
 	AdminAlterDDLJobsCommand = "ADMIN ALTER DDL JOBS"
 	// AdminCreateWorkloadSnapshotCommand represents ADMIN CREATE WORKLOAD SNAPSHOT statement
 	AdminCreateWorkloadSnapshotCommand = "ADMIN CREATE WORKLOAD SNAPSHOT"
+	// AdminReloadClusterBindingsCommand represents ADMIN RELOAD CLUSTER BINDINGS statement
+	AdminReloadClusterBindingsCommand = "ADMIN RELOAD CLUSTER BINDINGS"
 )
 
 // BRIE Commands
@@ -912,6 +914,8 @@ func (n *AdminStmt) SEMCommand() string {
 		return AdminAlterDDLJobsCommand
 	case AdminWorkloadRepoCreate:
 		return AdminCreateWorkloadSnapshotCommand
+	case AdminReloadClusterBindings:
+		return AdminReloadClusterBindingsCommand
 	default:
 		return UnknownCommand
 	}

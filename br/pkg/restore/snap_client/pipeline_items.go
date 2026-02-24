@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -185,7 +185,7 @@ type PipelineContext struct {
 
 	// pipeline item tool client
 	KvClient   kv.Client
-	ExtStorage objstore.Storage
+	ExtStorage storeapi.Storage
 	Glue       glue.Glue
 }
 
@@ -559,7 +559,7 @@ func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, s
 
 func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	builder *PipelineConcurrentBuilder,
-	s objstore.Storage,
+	s storeapi.Storage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
 ) {

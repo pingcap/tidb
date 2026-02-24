@@ -17,6 +17,7 @@ package loaddatatest
 import (
 	"fmt"
 	"io"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor"
@@ -43,10 +44,13 @@ func checkCases(
 ) {
 	for _, tt := range tests {
 		var reader io.ReadCloser = mydump.NewStringReader(string(tt.data))
-		var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (
-			r io.ReadCloser, err error,
-		) {
-			return reader, nil
+		var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
+			Build: func(_ string) (
+				r io.ReadCloser, err error,
+			) {
+				return reader, nil
+			},
+			Wg: &sync.WaitGroup{},
 		}
 
 		ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)

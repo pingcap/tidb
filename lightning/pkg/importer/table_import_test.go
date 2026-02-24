@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -86,7 +87,7 @@ type tableRestoreSuiteBase struct {
 	tableMeta  *mydump.MDTableMeta
 	tableMeta2 *mydump.MDTableMeta
 
-	store objstore.Storage
+	store storeapi.Storage
 }
 
 func mockTiflashTableInfo(t *testing.T, sql string, replica uint64) *model.TableInfo {
@@ -1197,7 +1198,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			pdHTTPCli:           cli,
 		}
 		var sourceSize int64
-		err = rc.store.WalkDir(ctx, &objstore.WalkOption{}, func(path string, size int64) error {
+		err = rc.store.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 			sourceSize += size
 			return nil
 		})

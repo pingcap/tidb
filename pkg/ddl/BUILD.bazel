@@ -127,6 +127,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/objstore",
         "//pkg/objstore/recording",
+        "//pkg/objstore/storeapi",
         "//pkg/owner",
         "//pkg/parser",
         "//pkg/parser/ast",

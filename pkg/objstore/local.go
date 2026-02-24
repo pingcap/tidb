@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
 
@@ -130,9 +132,9 @@ func (l *LocalStorage) FileExists(_ context.Context, name string) (bool, error) 
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (l *LocalStorage) WalkDir(_ context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
 	if opt == nil {
-		opt = &WalkOption{}
+		opt = &storeapi.WalkOption{}
 	}
 	base := filepath.Join(l.base, opt.SubDir)
 	return filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
@@ -209,7 +211,7 @@ func (l *LocalStorage) URI() string {
 }
 
 // Open a Reader by file path, path is a relative path to base path.
-func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (FileReader, error) {
+func (l *LocalStorage) Open(_ context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
 	//nolint: gosec
 	f, err := os.Open(filepath.Join(l.base, path))
 	if err != nil {
@@ -273,7 +275,7 @@ func (f *localFile) GetFileSize() (int64, error) {
 }
 
 // Create implements Storage interface.
-func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (FileWriter, error) {
+func (l *LocalStorage) Create(_ context.Context, name string, _ *storeapi.WriterOption) (objectio.Writer, error) {
 	filename := filepath.Join(l.base, name)
 	dir := filepath.Dir(filename)
 	err := os.MkdirAll(dir, 0750)
@@ -297,7 +299,7 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 func (*LocalStorage) Close() {}
 
 // CopyFrom implements Storage interface.
-func (l *LocalStorage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
+func (l *LocalStorage) CopyFrom(ctx context.Context, e storeapi.Storage, spec storeapi.CopySpec) error {
 	sl, ok := e.(*LocalStorage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "expect source to be LocalStorage, got %T", e)

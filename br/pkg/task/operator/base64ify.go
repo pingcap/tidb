@@ -8,6 +8,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 func Base64ify(ctx context.Context, cfg Base64ifyConfig) error {
@@ -20,7 +21,7 @@ func runEncode(ctx context.Context, cfg Base64ifyConfig) error {
 		return err
 	}
 	if cfg.LoadCerd {
-		_, err := objstore.New(ctx, s, &objstore.Options{
+		_, err := objstore.New(ctx, s, &storeapi.Options{
 			SendCredentials: true,
 		})
 		if err != nil {

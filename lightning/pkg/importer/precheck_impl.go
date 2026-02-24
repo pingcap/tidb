@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -435,10 +436,10 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
-	_, err = objstore.New(ctx, u, &objstore.Options{
-		CheckPermissions: []objstore.Permission{
-			objstore.ListObjects,
-			objstore.GetObject,
+	_, err = objstore.New(ctx, u, &storeapi.Options{
+		CheckPermissions: []storeapi.Permission{
+			storeapi.ListObjects,
+			storeapi.GetObject,
 		},
 	})
 	if err != nil {

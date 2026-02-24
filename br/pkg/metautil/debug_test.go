@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +35,7 @@ func flushMetaFile(
 	t *testing.T,
 	fname string,
 	metaFile *backuppb.MetaFile,
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo,
 ) *backuppb.File {
 	content, err := metaFile.Marshal()
@@ -62,7 +63,7 @@ func flushStatsFile(
 	t *testing.T,
 	fname string,
 	statsFile *backuppb.StatsFile,
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo,
 ) *backuppb.StatsFileIndex {
 	content, err := proto.Marshal(statsFile)

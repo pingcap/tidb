@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -57,7 +58,7 @@ type DBSourceData struct {
 type ImportSource struct {
 	dbSrcDataMap  map[string]*DBSourceData
 	dbFileMetaMap map[string]*mydump.MDDatabaseMeta
-	srcStorage    objstore.Storage
+	srcStorage    storeapi.Storage
 }
 
 // NewImportSource creates a ImportSource object.
@@ -150,7 +151,7 @@ func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, erro
 }
 
 // GetStorage gets the External Storage object on the mock source.
-func (m *ImportSource) GetStorage() objstore.Storage {
+func (m *ImportSource) GetStorage() storeapi.Storage {
 	return m.srcStorage
 }
 

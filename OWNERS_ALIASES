@@ -6,6 +6,9 @@ aliases:
     - 0xPoe
     - time-and-fate
     - terry1purcell
+    - henrybw
+    - wddevries
+    - fixdb
   sig-critical-approvers-tidb-server:
     - yudongusa
     - BenMeadowcroft
@@ -116,6 +119,7 @@ aliases:
     - henrybw
     - wddevries
     - King-Dylan
+    - guo-shaoge
   sig-approvers-metrics:
     - XuHuaiyu
     - zimulala
@@ -126,7 +130,6 @@ aliases:
     - ChenPeng2013
     - LittleFall
     - MoCuishle28
-    - RidRisR
     - SeaRise
     - Tjianke
     - TonsnakeLin
@@ -185,6 +188,7 @@ aliases:
     - MyonKeminta
     - OliverS929
     - Reminiscent
+    - RidRisR
     - SunRunAway
     - Tammyxia
     - WangXiangUSTC

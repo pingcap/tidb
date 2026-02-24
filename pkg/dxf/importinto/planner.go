@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -514,7 +514,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 
 func splitForOneSubtask(
 	ctx context.Context,
-	extStorage objstore.Storage,
+	extStorage storeapi.Storage,
 	kvGroup string,
 	kvMeta *external.SortedKVMeta,
 	ts uint64,
@@ -591,7 +591,7 @@ func splitForOneSubtask(
 	return ret, nil
 }
 
-func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, store objstore.Storage) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, store storeapi.Storage) (map[string]*external.SortedKVMeta, error) {
 	dataKVMeta := &external.SortedKVMeta{}
 	indexKVMetas := make(map[int64]*external.SortedKVMeta)
 	for _, subTaskMeta := range subTaskMetas {
@@ -622,7 +622,7 @@ func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, st
 	return res, nil
 }
 
-func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, store objstore.Storage) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, store storeapi.Storage) (map[string]*external.SortedKVMeta, error) {
 	result := make(map[string]*external.SortedKVMeta, len(subTaskMetas))
 	for _, subTaskMeta := range subTaskMetas {
 		var stepMeta MergeSortStepMeta
@@ -645,7 +645,7 @@ func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, sto
 	return result, nil
 }
 
-func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store objstore.Storage) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store storeapi.Storage) (map[string]*external.SortedKVMeta, error) {
 	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort], store)
 	if err != nil {
 		return nil, err
@@ -672,7 +672,7 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store ob
 
 func getRangeSplitter(
 	ctx context.Context,
-	store objstore.Storage,
+	store storeapi.Storage,
 	kvMeta *external.SortedKVMeta,
 ) (*external.RangeSplitter, error) {
 	regionSplitSize, regionSplitKeys, err := importer.GetRegionSplitSizeKeys(ctx)
@@ -756,7 +756,7 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([
 	}, nil
 }
 
-func collectConflictInfos(ctx context.Context, store objstore.Storage, planCtx planner.PlanCtx) (*KVGroupConflictInfos, error) {
+func collectConflictInfos(ctx context.Context, store storeapi.Storage, planCtx planner.PlanCtx) (*KVGroupConflictInfos, error) {
 	m := &KVGroupConflictInfos{}
 	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort] {
 		var stepMeta ImportStepMeta

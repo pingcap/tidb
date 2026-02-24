@@ -13,7 +13,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
 
@@ -23,7 +24,7 @@ type globalMetadata struct {
 	afterConnBuffer bytes.Buffer
 	snapshot        string
 
-	storage objstore.Storage
+	storage storeapi.Storage
 }
 
 const (
@@ -35,7 +36,7 @@ const (
 	gtidSetFieldIndex = 4
 )
 
-func newGlobalMetadata(tctx *tcontext.Context, s objstore.Storage, snapshot string) *globalMetadata {
+func newGlobalMetadata(tctx *tcontext.Context, s storeapi.Storage, snapshot string) *globalMetadata {
 	return &globalMetadata{
 		tctx:     tctx,
 		storage:  s,
@@ -227,7 +228,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 
 func (m *globalMetadata) writeGlobalMetaData() error {
 	// keep consistent with mydumper. Never compress metadata
-	fileWriter, tearDown, err := buildFileWriter(m.tctx, m.storage, metadataPath, objstore.NoCompression)
+	fileWriter, tearDown, err := buildFileWriter(m.tctx, m.storage, metadataPath, compressedio.NoCompression)
 	if err != nil {
 		return err
 	}

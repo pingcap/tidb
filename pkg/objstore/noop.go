@@ -16,6 +16,9 @@ package objstore
 
 import (
 	"context"
+
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 type noopStorage struct{}
@@ -46,12 +49,12 @@ func (*noopStorage) FileExists(_ context.Context, _ string) (bool, error) {
 }
 
 // Open a Reader by file path.
-func (*noopStorage) Open(_ context.Context, _ string, _ *ReaderOption) (FileReader, error) {
+func (*noopStorage) Open(_ context.Context, _ string, _ *storeapi.ReaderOption) (objectio.Reader, error) {
 	return noopReader{}, nil
 }
 
 // WalkDir traverse all the files in a dir.
-func (*noopStorage) WalkDir(_ context.Context, _ *WalkOption, _ func(string, int64) error) error {
+func (*noopStorage) WalkDir(_ context.Context, _ *storeapi.WalkOption, _ func(string, int64) error) error {
 	return nil
 }
 
@@ -60,7 +63,7 @@ func (*noopStorage) URI() string {
 }
 
 // Create implements Storage interface.
-func (*noopStorage) Create(_ context.Context, _ string, _ *WriterOption) (FileWriter, error) {
+func (*noopStorage) Create(_ context.Context, _ string, _ *storeapi.WriterOption) (objectio.Writer, error) {
 	return &NoopWriter{}, nil
 }
 
@@ -97,12 +100,12 @@ func (noopReader) GetFileSize() (int64, error) {
 // NoopWriter is a writer that does nothing.
 type NoopWriter struct{}
 
-// Write implements FileWriter interface.
+// Write implements objectio.Writer interface.
 func (NoopWriter) Write(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Close implements FileWriter interface.
+// Close implements objectio.Writer interface.
 func (NoopWriter) Close(_ context.Context) error {
 	return nil
 }

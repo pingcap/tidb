@@ -24,7 +24,7 @@ import (
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +40,7 @@ func testReadAndCompare(
 	ctx context.Context,
 	t *testing.T,
 	kvs []common.KvPair,
-	store objstore.Storage,
+	store storeapi.Storage,
 	datas []string,
 	stats []string,
 	startKey dbkv.Key,
