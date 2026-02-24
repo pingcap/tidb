@@ -262,7 +262,8 @@ func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 	require.Len(t, rows, 1)
 	finalTS, err := strconv.ParseUint(fmt.Sprint(rows[0][0]), 10, 64)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, finalTS, initTS)
+	// finalTS must be greater than initTS when the build is successful.
+	require.Greater(t, finalTS, initTS)
 }
 
 func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testing.T) {
