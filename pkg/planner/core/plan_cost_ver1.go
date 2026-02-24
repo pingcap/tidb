@@ -891,8 +891,9 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, _ bool, costFlag uint64, 
 	probeCost /= float64(p.Concurrency)
 	// Cost of additional concurrent goroutines.
 	cpuCost += probeCost + float64(p.Concurrency+1)*concurrencyFactor
-	// Cost of traveling the hash table to resolve missing matched cases when building the hash table from the outer table
-	if p.UseOuterToBuild {
+	// Cost of traveling the hash table to resolve missing matched cases after probing.
+	// Full outer join always needs this tail scan to emit unmatched build-side rows.
+	if p.UseOuterToBuild || p.JoinType == logicalop.FullOuterJoin {
 		if spill {
 			// It runs in sequence when build data is on disk. See handleUnmatchedRowsFromHashTableInDisk
 			cpuCost += buildCnt * cpuFactor

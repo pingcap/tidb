@@ -254,6 +254,40 @@ func TestFullOuterJoinHashJoinV1(t *testing.T) {
 	basicSQL := "select t1.a, t1.b, t2.a, t2.b from t1 full outer join t2 on t1.a = t2.a order by isnull(t1.a), t1.a, isnull(t2.a), t2.a, t1.b, t2.b"
 	tk.MustQuery(basicSQL).Check(expectedBasicRows)
 
+	// No equi keys: full join should still work via cartesian hash-join path.
+	tk.MustExec("drop table if exists t13, t14")
+	tk.MustExec("create table t13(a int)")
+	tk.MustExec("create table t14(a int)")
+	tk.MustExec("insert into t13 values (1), (2)")
+	tk.MustExec("insert into t14 values (10)")
+
+	onTrueSQL := "select t13.a, t14.a from t13 full outer join t14 on true order by t13.a, t14.a"
+	tk.MustHavePlan(onTrueSQL, "HashJoin")
+	onTrueExplain := tk.MustQuery("explain format = 'brief' " + onTrueSQL).Rows()
+	onTruePlan := make([]string, 0, len(onTrueExplain))
+	for _, row := range onTrueExplain {
+		onTruePlan = append(onTruePlan, fmt.Sprint(row))
+	}
+	require.Contains(t, strings.Join(onTruePlan, "\n"), "CARTESIAN", "sql=%s, explain=%v", onTrueSQL, onTrueExplain)
+	tk.MustQuery(onTrueSQL).Check(testkit.Rows(
+		"1 10",
+		"2 10",
+	))
+
+	nonEquiOnlySQL := "select t13.a, t14.a from t13 full outer join t14 on t13.a > t14.a order by isnull(t13.a), t13.a, isnull(t14.a), t14.a"
+	tk.MustHavePlan(nonEquiOnlySQL, "HashJoin")
+	nonEquiOnlyExplain := tk.MustQuery("explain format = 'brief' " + nonEquiOnlySQL).Rows()
+	nonEquiOnlyPlan := make([]string, 0, len(nonEquiOnlyExplain))
+	for _, row := range nonEquiOnlyExplain {
+		nonEquiOnlyPlan = append(nonEquiOnlyPlan, fmt.Sprint(row))
+	}
+	require.Contains(t, strings.Join(nonEquiOnlyPlan, "\n"), "CARTESIAN", "sql=%s, explain=%v", nonEquiOnlySQL, nonEquiOnlyExplain)
+	tk.MustQuery(nonEquiOnlySQL).Check(testkit.Rows(
+		"1 <nil>",
+		"2 <nil>",
+		"<nil> 10",
+	))
+
 	assertBuildSide := func(sql, buildTable string) {
 		rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 		explain := make([]string, 0, len(rows))
