@@ -382,7 +382,7 @@ func admitIndexJoinProps(children []*property.PhysicalProperty, prop *property.P
 		newChildren := children[:0]
 		for _, child := range children {
 			if child.TaskTp != property.MppTaskType {
-				child.IndexJoinProp = prop.IndexJoinProp
+				child.IndexJoinProp = prop.IndexJoinProp.CloneEssentialFields()
 				// when parents ask for batch mode, and current op support batch mode, then we call for batch mode down.
 				child.IndexJoinProp.IndexJoinBatchMode = alreadyBatchMode && supportBatchMode
 				// only admit non-mpp task prop.
@@ -404,7 +404,7 @@ func admitIndexJoinProp(child, prop *property.PhysicalProperty, supportBatchMode
 	if prop.IndexJoinProp != nil {
 		alreadyBatchMode := prop.IndexJoinProp.IndexJoinBatchMode
 		if child.TaskTp != property.MppTaskType {
-			child.IndexJoinProp = prop.IndexJoinProp
+			child.IndexJoinProp = prop.IndexJoinProp.CloneEssentialFields()
 			// when parents ask for batch mode, and current op support batch mode, then we call for batch mode down.
 			child.IndexJoinProp.IndexJoinBatchMode = alreadyBatchMode && supportBatchMode
 		} else {
