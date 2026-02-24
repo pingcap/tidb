@@ -496,7 +496,7 @@ func TestIndexJoinRowModeWithInnerTopNOuterJoin(t *testing.T) {
 		found := false
 		var walk func(base.PhysicalPlan)
 		walk = func(plan base.PhysicalPlan) {
-			switch v := plan.(type) {
+			switch plan.(type) {
 			case *physicalop.PhysicalIndexHashJoin:
 				found = true
 			case *physicalop.PhysicalIndexMergeJoin:
