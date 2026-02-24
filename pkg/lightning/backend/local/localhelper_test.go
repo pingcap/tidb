@@ -36,13 +36,14 @@ import (
 
 type testSplitClient struct {
 	split.SplitClient
-	mu           sync.RWMutex
-	stores       map[uint64]*metapb.Store
-	regions      map[uint64]*split.RegionInfo
-	regionsInfo  *pdtypes.RegionTree // For now it's only used in ScanRegions
-	nextRegionID uint64
-	splitCount   atomic.Int32
-	hook         clientHook
+	mu                   sync.RWMutex
+	stores               map[uint64]*metapb.Store
+	regions              map[uint64]*split.RegionInfo
+	regionsInfo          *pdtypes.RegionTree // For now it's only used in ScanRegions
+	nextRegionID         uint64
+	splitCount           atomic.Int32
+	splitKeysAndScatterF func(context.Context, [][]byte, int32) ([]*split.RegionInfo, error)
+	hook                 clientHook
 }
 
 func newTestSplitClient(
@@ -93,6 +94,18 @@ func (c *testSplitClient) GetRegionByID(ctx context.Context, regionID uint64) (*
 		return nil, errors.Errorf("region not found: id=%d", regionID)
 	}
 	return region, nil
+}
+
+func (c *testSplitClient) SplitKeysAndScatter(ctx context.Context, splitKeys [][]byte) ([]*split.RegionInfo, error) {
+	cnt := c.splitCount.Inc()
+	if c.splitKeysAndScatterF != nil {
+		return c.splitKeysAndScatterF(ctx, splitKeys, cnt)
+	}
+	return []*split.RegionInfo{
+		{
+			Region: &metapb.Region{Id: 1},
+		},
+	}, nil
 }
 
 func (c *testSplitClient) SplitWaitAndScatter(ctx context.Context, region *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
@@ -327,6 +340,7 @@ func TestStoreWriteLimiter(t *testing.T) {
 	wg.Wait()
 }
 
+<<<<<<< HEAD
 func TestTuneStoreWriteLimiter(t *testing.T) {
 	limiter := newStoreWriteLimiter(100)
 	testLimiter := func(ctx context.Context, maxT int) {
@@ -362,4 +376,91 @@ func TestTuneStoreWriteLimiter(t *testing.T) {
 	ctx1, cancel1 := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel1()
 	testLimiter(ctx1, 200)
+=======
+func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
+	makeSplitKeys := func(n int) [][]byte {
+		keys := make([][]byte, n)
+		for i := 0; i < n; i++ {
+			keys[i] = []byte{byte(i >> 8), byte(i)}
+		}
+		return keys
+	}
+
+	t.Run("large split keys trigger coarse and fine layers", func(t *testing.T) {
+		splitCli := &testSplitClient{}
+		local := &Backend{splitCli: splitCli}
+
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
+		require.NoError(t, err)
+		// 121 keys => coarse pass(11 keys, 1 batch) + fine pass(121 keys, 3 batches) = 4 calls.
+		require.Equal(t, int32(4), splitCli.splitCount.Load())
+	})
+
+	t.Run("small split keys only use fine layer", func(t *testing.T) {
+		splitCli := &testSplitClient{}
+		local := &Backend{splitCli: splitCli}
+
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(coarseGrainedSplitKeysThreshold), 50, 0)
+		require.NoError(t, err)
+		require.Equal(t, int32(2), splitCli.splitCount.Load())
+	})
+
+	t.Run("coarse layer error returns immediately", func(t *testing.T) {
+		splitCli := &testSplitClient{
+			splitKeysAndScatterF: func(_ context.Context, _ [][]byte, splitCnt int32) ([]*split.RegionInfo, error) {
+				if splitCnt == 1 {
+					return nil, errors.New("mock split error")
+				}
+				return []*split.RegionInfo{
+					{
+						Region: &metapb.Region{Id: 1},
+					},
+				}, nil
+			},
+		}
+		local := &Backend{splitCli: splitCli}
+
+		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
+		require.ErrorContains(t, err, "mock split error")
+		require.Equal(t, int32(1), splitCli.splitCount.Load())
+	})
+
+	t.Run("limiter is still enforced after restoring two levels", func(t *testing.T) {
+		splitCli := &testSplitClient{}
+		local := &Backend{splitCli: splitCli}
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		// maxCntPerSec=0.5 => burstPerSec=1, so after first batch, limiter blocks
+		// and should hit context deadline before entering fine-grained stage.
+		err := local.splitAndScatterRegionInBatches(ctx, makeSplitKeys(121), 50, 0.5)
+		require.ErrorContains(t, err, "context deadline")
+		require.Equal(t, int32(1), splitCli.splitCount.Load())
+	})
+}
+
+func TestGetCoarseGrainedSplitKeys(t *testing.T) {
+	makeSplitKeys := func(n int) [][]byte {
+		keys := make([][]byte, n)
+		for i := 0; i < n; i++ {
+			keys[i] = []byte{byte(i >> 8), byte(i)}
+		}
+		return keys
+	}
+
+	t.Run("last key selected in loop is not appended twice", func(t *testing.T) {
+		splitKeys := makeSplitKeys(122)
+		coarseGrainedSplitKeys := getCoarseGrainedSplitKeys(splitKeys)
+		lastKey := splitKeys[len(splitKeys)-1]
+
+		lastKeyCount := 0
+		for _, key := range coarseGrainedSplitKeys {
+			if bytes.Equal(key, lastKey) {
+				lastKeyCount++
+			}
+		}
+
+		require.Equal(t, 1, lastKeyCount)
+	})
+>>>>>>> 4ffecda589a (lightning: restore two-level split/scatter while keeping limiter behavior (#66312))
 }
