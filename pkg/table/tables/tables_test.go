@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -40,6 +41,9 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1280,4 +1284,78 @@ func TestDupKeyCheckMode(t *testing.T) {
 		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
 		tk.MustExec("rollback")
 	})
+}
+
+// Similar to `TestFulltextIndexEncodingCommonHandleRestoredData` in tablecodec_test.go,
+// but for the case of pk column with tailing spaces.
+// This test rely on `TryGetHandleRestoredDataWrapper` so the test is put in tables_test.go to avoid circular import.
+func TestFulltextIndexEncodingCommonHandlePkRestoredData(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	colPKType := types.NewFieldType(mysql.TypeVarchar)
+	colPKType.SetCharset(charset.CharsetUTF8MB4)
+	colPKType.SetCollate(charset.CollationUTF8MB4)
+	colPK := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *colPKType}
+	colPK.AddFlag(mysql.PriKeyFlag)
+	colDoc := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeBlob)}
+	pkIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+	}
+	fulltextIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_fts"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	tblInfo := &model.TableInfo{
+		ID:                  22,
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
+		Columns:             []*model.ColumnInfo{colPK, colDoc},
+		Indices:             []*model.IndexInfo{pkIdx, fulltextIdx},
+	}
+
+	indexedValues := []types.Datum{
+		types.NewStringDatum("doc"),
+	}
+	// the pk column with charset UTF8MB4, the raw value with tailing spaces should be encoded to restore data directly for fulltext index
+	pkDatum := types.NewCollationStringDatum("pk    ", charset.CollationUTF8MB4)
+	row := []types.Datum{pkDatum, indexedValues[0]}
+
+	handleRaw, err := codec.EncodeKey(time.UTC, nil, pkDatum)
+	require.NoError(t, err)
+	handle, err := kv.NewCommonHandle(handleRaw)
+	require.NoError(t, err)
+
+	handleRestoredData := tables.TryGetHandleRestoredDataWrapper(tblInfo, row, nil, fulltextIdx)
+	// verify the result of `TryGetHandleRestoredDataWrapper`
+	require.Len(t, handleRestoredData, 1)
+	require.Equal(t, pkDatum.GetString(), handleRestoredData[0].GetString())
+	require.Equal(t, "pk    ", handleRestoredData[0].GetString())
+
+	value, err := tablecodec.GenIndexValuePortal(time.UTC, tblInfo, fulltextIdx, false, false, false, indexedValues, handle, tblInfo.ID, handleRestoredData, nil)
+	require.NoError(t, err)
+
+	segs := tablecodec.SplitIndexValue(value)
+	require.NotNil(t, segs.RestoredValues)
+	decoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
+		{ID: colPK.ID, Ft: &colPK.FieldType},
+		{ID: colDoc.ID, Ft: &colDoc.FieldType},
+	}, time.UTC)
+	decodedMap, err := decoder.DecodeToDatumMap(segs.RestoredValues, nil)
+	require.NoError(t, err)
+	require.Len(t, decodedMap, 2)
+
+	decodedPk := decodedMap[colPK.ID]
+	require.Equal(t, pkDatum.GetString(), decodedPk.GetString())
+	require.Equal(t, "pk    ", decodedPk.GetString())
+	decodedDoc := decodedMap[colDoc.ID]
+	require.Equal(t, indexedValues[0].GetString(), decodedDoc.GetString())
 }

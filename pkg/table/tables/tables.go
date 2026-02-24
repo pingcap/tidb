@@ -1777,6 +1777,10 @@ func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum
 	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
+	// If an index is a hybrid index or fulltext index, we should not convert the datum to tail space count.
+	// Instead, we encoded the raw value to restored data to satisfy TiCI's data ingestion.
+	forceAllColumns := idx != nil &&
+		(idx.FullTextInfo != nil || (idx.HybridInfo != nil && idx.HybridInfo.Sharding != nil && len(idx.HybridInfo.Sharding.Columns) > 0))
 	rsData := make([]types.Datum, 0, 4)
 	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
@@ -1791,7 +1795,9 @@ func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum
 			datum = row[pkCol.Offset]
 		}
 		TryTruncateRestoredData(&datum, pkCol, pkIdxCol, idx)
-		ConvertDatumToTailSpaceCount(&datum, pkCol)
+		if !forceAllColumns {
+			ConvertDatumToTailSpaceCount(&datum, pkCol)
+		}
 		rsData = append(rsData, datum)
 	}
 	return rsData

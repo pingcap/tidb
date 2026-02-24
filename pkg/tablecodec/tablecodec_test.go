@@ -763,6 +763,7 @@ func TestFulltextIndexEncodingCommonHandleRestoredData(t *testing.T) {
 	}
 
 	indexedValues := []types.Datum{
+		// the column with charset UTF8MB4, the raw value with tailing spaces should be encoded but not the padding
 		types.NewCollationStringDatum("keep  ", charset.CollationUTF8MB4),
 		types.NewIntDatum(888),
 	}
