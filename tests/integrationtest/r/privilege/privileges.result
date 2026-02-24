@@ -92,6 +92,27 @@ drop user mask_alter;
 drop user mask_drop;
 drop user mask_none;
 drop table privilege__privileges.mask_t;
+drop table if exists privilege__privileges.mask_src;
+drop table if exists privilege__privileges.mask_dst;
+create table privilege__privileges.mask_src (c char(10));
+create table privilege__privileges.mask_dst (c char(10));
+insert into privilege__privileges.mask_src values ('secret');
+create user mask_restrict;
+grant select, insert, update, delete on privilege__privileges.* to mask_restrict;
+create masking policy p_restrict on mask_src(c) as
+case when current_user() = 'root@%' then c else mask_full(c, '*') end
+restrict on (insert_into_select, update_select, delete_select) enable;
+insert into mask_dst select c from mask_src;
+Error 8274 (HY000): Access denied to masked column 'c'. Obtain the required privileges and retry.
+insert into mask_dst values ('secret');
+update mask_dst set c = (select c from mask_src limit 1);
+Error 8274 (HY000): Access denied to masked column 'c'. Obtain the required privileges and retry.
+delete from mask_dst where c = (select c from mask_src limit 1);
+Error 8274 (HY000): Access denied to masked column 'c'. Obtain the required privileges and retry.
+alter table privilege__privileges.mask_src drop masking policy p_restrict;
+drop user mask_restrict;
+drop table privilege__privileges.mask_src;
+drop table privilege__privileges.mask_dst;
 CREATE USER resource_group_admin;
 CREATE USER resource_group_user;
 set @@global.tidb_enable_resource_control = 1;
