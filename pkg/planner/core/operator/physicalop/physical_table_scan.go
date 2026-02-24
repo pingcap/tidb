@@ -468,16 +468,16 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
-	if p.SCtx().GetSessionVars().EnableLateMaterialization && len(p.FilterCondition) > 0 && p.StoreType == kv.TiFlash {
-		if len(p.LateMaterializationFilterCondition) > 0 {
-			buffer.WriteString("pushed down filter:")
-			if normalized {
-				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
-			} else {
-				buffer.Write(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.LateMaterializationFilterCondition))
-			}
-			buffer.WriteString(", ")
+	showPushedFilter := (p.StoreType == kv.TiFlash && p.SCtx().GetSessionVars().EnableLateMaterialization && len(p.FilterCondition) > 0) ||
+		(p.StoreType == kv.TiKV && len(p.LateMaterializationFilterCondition) > 0)
+	if showPushedFilter && len(p.LateMaterializationFilterCondition) > 0 {
+		buffer.WriteString("pushed down filter:")
+		if normalized {
+			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
+		} else {
+			buffer.Write(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.LateMaterializationFilterCondition))
 		}
+		buffer.WriteString(", ")
 	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
@@ -616,6 +616,9 @@ func (p *PhysicalTableScan) BuildPushedDownSelection(stats *property.StatsInfo, 
 			return nil
 		}
 		return PhysicalSelection{Conditions: conditions}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+	}
+	if p.SCtx().GetSessionVars().TiKVPredicatePushDown && len(p.FilterCondition) > 0 {
+		p.LateMaterializationFilterCondition = selectTiKVBlockFilterPredicates(p.FilterCondition)
 	}
 	return PhysicalSelection{Conditions: p.FilterCondition}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 }

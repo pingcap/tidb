@@ -2742,6 +2742,10 @@ var defaultSysVars = []*SysVar{
 		s.AnalyzeUseSSTMetadata = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTiKVPredicatePushDown, Value: BoolToOnOff(vardef.DefTiDBTiKVPredicatePushDown), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiKVPredicatePushDown = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinBuild, Value: BoolToOnOff(vardef.DefTiDBOptIndexJoinBuild), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnhanceIndexJoinBuildV2 = TiDBOptOn(val)
 		return nil
