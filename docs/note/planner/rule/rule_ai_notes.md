@@ -74,7 +74,7 @@ Test and verification:
 - Add regression test `TestIndexRangeEstimationWithAppendedHandleColumn` in `pkg/planner/cardinality/selectivity_test.go`.
 - The test uses a non-unique index + PK handle shape and mocked stats (`missing index stats + available column stats`) and verifies `EXPLAIN` does not panic.
 - Reference command:
-  - `GOROOT=/Users/weizhenwang/.gvm/gos/go1.25.7 GOPATH=/Users/weizhenwang/go GOMODCACHE=/Users/weizhenwang/go/pkg/mod GOCACHE=/Users/weizhenwang/Library/Caches/go-build /Users/weizhenwang/.gvm/gos/go1.25.7/bin/go test ./pkg/planner/cardinality -run TestIndexRangeEstimationWithAppendedHandleColumn --tags=intest -count=1`
+  - `go test ./pkg/planner/cardinality -run TestIndexRangeEstimationWithAppendedHandleColumn --tags=intest -count=1`
 
 Reusable lessons:
 - Prefer fixing cross-layer shape mismatch at the producer boundary (planner/stats boundary), not by adding deep defensive guards in estimation internals.
