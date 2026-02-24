@@ -3,4 +3,4 @@
 This directory contains internal, developer-oriented notes (decisions, pitfalls, code-reading maps).
 
 - `planner/`: planner notes.
-For DDL execution framework docs, see `docs/agents/ddl/`.
+- `docs/agents/ddl/`: DDL execution framework docs.
