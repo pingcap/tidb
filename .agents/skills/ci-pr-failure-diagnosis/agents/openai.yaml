@@ -1,0 +1,4 @@
+interface:
+  display_name: "CI PR Failure Diagnosis"
+  short_description: "Diagnose PR CI failures (Actions/Jenkins/Prow)"
+  default_prompt: "Use $ci-pr-failure-diagnosis to diagnose CI job failures for a GitHub PR without loading full logs."
