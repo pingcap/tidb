@@ -144,6 +144,8 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.BackoffTimeStr)].Match(ctx.GetSessionVars(), items, copExec.BackoffTime.Seconds()))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.ProcessedKeys))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.TotalKeys))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.49))
+	require.False(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.5))
 
 	// fields not in Fields should be zero at this point
 	require.Equal(t, uint64(0), items.ExecRetryCount)
@@ -336,6 +338,26 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		}
 		seVars.SessionAlias = "sessA"
 		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+	})
+
+	t.Run("session rules match by cop_mvcc_read_amplification", func(t *testing.T) {
+		tk.MustExec(`set global tidb_slow_log_rules=""`)
+		tk.MustExec(`set session tidb_slow_log_rules="cop_mvcc_read_amplification:10"`)
+		seVars := tk.Session().GetSessionVars()
+		items := &variable.SlowQueryLogItems{
+			ExecDetail: &execdetails.ExecDetails{
+				CopExecDetails: execdetails.CopExecDetails{
+					ScanDetail: &util.ScanDetail{
+						TotalKeys:     100,
+						ProcessedKeys: 10,
+					},
+				},
+			},
+		}
+		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, items))
+
+		tk.MustExec(`set session tidb_slow_log_rules="cop_mvcc_read_amplification:10.01"`)
+		require.False(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, items))
 	})
 }
 
