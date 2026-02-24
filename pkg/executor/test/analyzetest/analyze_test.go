@@ -613,11 +613,13 @@ func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t0")
 	tk.MustExec("analyze table t1")
-	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows(""+
-		"test t0  PRIMARY 1 1111 1",
-		"test t0  a 0 1111 1",
-		"test t1  PRIMARY 1 1111 1",
-		"test t1  a 0 1111 1"))
+	// unique single column topN is not collected (max count = 1) #66221
+	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows())
+	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows(
+		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
+		"test t0  a 0 0 1 1 1111 1111 0",
+		"test t1  PRIMARY 1 0 1 1 1111 1111 0",
+		"test t1  a 0 0 1 1 1111 1111 0"))
 }
 
 func TestAnalyzeSamplingWorkPanic(t *testing.T) {

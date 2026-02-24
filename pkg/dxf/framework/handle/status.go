@@ -76,6 +76,21 @@ func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
 	return status, nil
 }
 
+// GetActiveTaskSummary returns the number of active tasks (i.e. rows in `mysql.tidb_global_task`)
+// and their breakdown by keyspace.
+func GetActiveTaskSummary(ctx context.Context) (*storage.ActiveTaskSummary, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	if err != nil {
+		return nil, err
+	}
+	summary, err := manager.GetActiveTaskCountsByKeyspace(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return summary, nil
+}
+
 // GetNodesInfo retrieves the number of managed nodes and their CPU count.
 // exported for test.
 func GetNodesInfo(ctx context.Context, manager *storage.TaskManager) (nodeCount int, cpuCount int, err error) {

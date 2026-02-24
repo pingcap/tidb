@@ -210,7 +210,7 @@ type TxnCtxNoNeedToRestore struct {
 	StaleReadTs uint64
 
 	// unchangedKeys is used to store the unchanged keys that needs to lock for pessimistic transaction.
-	unchangedKeys map[string]struct{}
+	unchangedKeys map[string]bool
 
 	PessimisticCacheHit int
 
@@ -329,20 +329,38 @@ func (s *SessionVars) GetRowIDShardGenerator() *RowIDShardGenerator {
 }
 
 // AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte) {
+func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte, shared bool) {
 	if tc.unchangedKeys == nil {
-		tc.unchangedKeys = map[string]struct{}{}
+		tc.unchangedKeys = map[string]bool{}
 	}
-	tc.unchangedKeys[string(key)] = struct{}{}
+	k := string(key)
+	alreadyShared, exist := tc.unchangedKeys[k]
+	tc.unchangedKeys[k] = shared && (!exist || (exist && alreadyShared))
 }
 
-// CollectUnchangedKeysForLock collects unchanged keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedKeys {
-		buf = append(buf, kv.Key(key))
+// CollectUnchangedKeysForXLock collects unchanged keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedKeysForXLock(buf []kv.Key) []kv.Key {
+	for key, shared := range tc.unchangedKeys {
+		if !shared {
+			buf = append(buf, kv.Key(key))
+		}
 	}
-	tc.unchangedKeys = nil
 	return buf
+}
+
+// CollectUnchangedKeysForSLock collects unchanged keys for pessimistic lock in share mode.
+func (tc *TransactionContext) CollectUnchangedKeysForSLock(buf []kv.Key) []kv.Key {
+	for key, shared := range tc.unchangedKeys {
+		if shared {
+			buf = append(buf, kv.Key(key))
+		}
+	}
+	return buf
+}
+
+// ResetUnchangedKeysForLock resets unchanged keys for lock.
+func (tc *TransactionContext) ResetUnchangedKeysForLock() {
+	tc.unchangedKeys = nil
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -361,7 +379,6 @@ func (tc *TransactionContext) UpdateDeltaForTable(
 	item := tc.TableDeltaMap[physicalTableID]
 	item.Delta += delta
 	item.Count += count
-	item.TableID = physicalTableID
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
@@ -1595,6 +1612,9 @@ type SessionVars struct {
 
 	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
 	ForeignKeyChecks bool
+
+	// ForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
+	ForeignKeyCheckInSharedLock bool
 
 	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
@@ -3125,7 +3145,17 @@ type TableDelta struct {
 	Delta    int64
 	Count    int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
-	TableID  int64
+}
+
+// MergeFrom merges another delta into the receiver and keeps the earliest InitTime.
+func (td *TableDelta) MergeFrom(incoming TableDelta) {
+	td.Delta += incoming.Delta
+	td.Count += incoming.Count
+	if td.InitTime.IsZero() {
+		td.InitTime = incoming.InitTime
+	} else if !incoming.InitTime.IsZero() && incoming.InitTime.Before(td.InitTime) { // This can happen when merges arrive out of order (e.g., overlapping dump/merge runs).
+		td.InitTime = incoming.InitTime
+	}
 }
 
 // Clone returns a cloned TableDelta.
@@ -3134,7 +3164,6 @@ func (td TableDelta) Clone() TableDelta {
 		Delta:    td.Delta,
 		Count:    td.Count,
 		InitTime: td.InitTime,
-		TableID:  td.TableID,
 	}
 }
 

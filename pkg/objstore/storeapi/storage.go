@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/uuid"
@@ -167,6 +168,13 @@ type Storage interface {
 	Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
+
+	// PresignFile creates a presigned URL for sharing a file without writing any code.
+	// For S3, it returns a presigned URL. For local storage, it returns the file name only.
+	// Unsupported backends (Azure, HDFS, etc.) return an error.
+	// See https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+	PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error)
+
 	// Close release the resources of the storage.
 	Close()
 }
@@ -239,6 +247,14 @@ func (p Prefix) ObjectKey(name string) string {
 	// key.
 	// this is existing behavior, we keep it.
 	return string(p) + name
+}
+
+// ToPath convert the object storage prefix into a URL path.
+// we expect `p` relative to the bucket, not to another prefix, so we add a
+// leading '/' directly. if p is empty, it will return '/', which is also a
+// valid path.
+func (p Prefix) ToPath() string {
+	return "/" + string(p)
 }
 
 // String implements fmt.Stringer interface.
