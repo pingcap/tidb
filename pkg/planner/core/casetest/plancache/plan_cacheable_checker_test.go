@@ -87,7 +87,6 @@ func TestFixControl44823(t *testing.T) {
 	tk.MustQuery(query).Check(testkit.Rows())
 	tk.MustQuery(query).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-
 }
 
 func TestCacheable(t *testing.T) {
