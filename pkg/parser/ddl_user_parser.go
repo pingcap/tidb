@@ -15,7 +15,6 @@ package parser
 
 import (
 	"encoding/hex"
-	"fmt"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -101,10 +100,17 @@ func (p *HandParser) parseTLSOptions() []*ast.AuthTokenOrTLSOption {
 			return opts
 		}
 		if seen[opt.Type] {
-			p.errs = append(p.errs,
-				fmt.Errorf("Duplicate require %s clause", //nolint:revive
-					opt.Type.String()))
-			return opts
+			// Only reject ssl/x509/none duplicates at parser level (error 1064).
+			// Duplicate cipher/issuer/subject are accepted by the parser
+			// and rejected at runtime (error 1105).
+			switch opt.Type {
+			case ast.Ssl, ast.X509, ast.TlsNone:
+				// Yacc and MySQL expect a generic parse error here rather
+				// than a "Duplicate" message. The error should point to
+				// the duplicate token.
+				p.errorNear(tok.EndOffset, tok.Offset)
+				return opts
+			}
 		}
 		seen[opt.Type] = true
 		opts = append(opts, opt)
