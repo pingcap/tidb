@@ -220,7 +220,7 @@ func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode
 		list := make([]ast.ExprNode, 0)
 		if p.peek().Tp != ')' {
 			for {
-				list = append(list, p.parseExpression(precNone))
+				list = append(list, p.parseExprOrDefault())
 				if _, ok := p.accept(','); !ok {
 					break
 				}
@@ -236,6 +236,16 @@ func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode
 	return lists
 }
 
+// parseExprOrDefault parses an expression or bare DEFAULT keyword.
+// Used in INSERT VALUES and SET assignment contexts where bare DEFAULT is valid.
+func (p *HandParser) parseExprOrDefault() ast.ExprNode {
+	if p.peek().Tp == defaultKwd && p.peekN(1).Tp != '(' {
+		p.next() // consume DEFAULT
+		return p.arena.AllocDefaultExpr()
+	}
+	return p.parseExpression(precNone)
+}
+
 // parseAssignment parses col = expr | col = DEFAULT
 func (p *HandParser) parseAssignment() *ast.Assignment {
 	col := p.parseColumnName()
@@ -247,7 +257,7 @@ func (p *HandParser) parseAssignment() *ast.Assignment {
 	node := Alloc[ast.Assignment](p.arena)
 	node.Column = col
 
-	node.Expr = p.parseExpression(precNone)
+	node.Expr = p.parseExprOrDefault()
 	if node.Expr == nil {
 		return nil
 	}
@@ -365,8 +375,12 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	// When BeforeFrom==true ("DELETE t1, t2 FROM t JOIN t1 ON ..."), the USING
 	// keyword does not belong to DELETE; it may be part of an outer statement
 	// (e.g., CREATE BINDING ... FOR ... USING ...).
+	// Also, only accept USING when followed by table references (identifiers/backtick),
+	// not when followed by DML keywords (delete/select/update/insert) which indicates
+	// the USING belongs to an outer CREATE BINDING statement.
 	if !stmt.BeforeFrom {
-		if _, ok := p.accept(using); ok {
+		if p.peek().Tp == using && !p.isUsingForBinding() {
+			p.next() // consume USING
 			// DELETE FROM t1, t2 USING t1, t2, t3 ...
 			if stmt.IsMultiTable { //revive:disable-line
 				// Already is multi-table. e.g. DELETE t1 FROM t2 USING t3
@@ -484,6 +498,19 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	}
 
 	return stmt
+}
+
+// isUsingForBinding returns true when a USING keyword at the current position
+// belongs to an outer CREATE BINDING ... USING ... statement rather than to
+// a DELETE ... USING ... multi-table form. We distinguish by looking at what
+// follows USING: if it's a DML keyword (SELECT/DELETE/UPDATE/INSERT), it's a
+// binding hint clause, not a DELETE USING table list.
+func (p *HandParser) isUsingForBinding() bool {
+	if p.peek().Tp != using {
+		return false
+	}
+	next := p.peekN(1).Tp
+	return next == selectKwd || next == deleteKwd || next == update || next == insert
 }
 
 // convertToTableList converts TableRefsClause (from parsing FROM ...) into DeleteTableList.

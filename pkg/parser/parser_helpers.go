@@ -523,15 +523,24 @@ func (p *HandParser) acceptNoWriteToBinlog() bool {
 
 // parsePartitionLessThanExpr parses: PARTITION LESS THAN '(' expr ')'
 // and sets spec.Partition to a new PartitionOptions with the parsed expression.
+// Also captures the OriginalText on the embedded PartitionMethod so that the
+// DDL executor can locate and replace the syntactic sugar in the query string.
 func (p *HandParser) parsePartitionLessThanExpr(spec *ast.AlterTableSpec) {
+	startOff := p.peek().Offset
 	p.expect(partition)
 	p.expect(less)
 	p.expect(than)
 	p.expect('(')
 	expr := p.parseExpression(0)
 	p.expect(')')
+	endOff := p.peek().Offset
 	spec.Partition = Alloc[ast.PartitionOptions](p.arena)
 	spec.Partition.Expr = expr
+	// Set OriginalText on the PartitionMethod so DDL executor can find it
+	// in the query string for syntactic sugar replacement.
+	if endOff > startOff && endOff <= len(p.src) {
+		spec.Partition.PartitionMethod.SetText(nil, p.src[startOff:endOff])
+	}
 }
 
 // parseSimpleColumnNameList parses a comma-separated list of simple (non-dotted) column names.

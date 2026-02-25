@@ -116,14 +116,19 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			// IS is at the same precedence as comparison operators (=, >=, etc.)
 			// in MySQL grammar — both are at the bool_primary level.
 			// IS [NOT] TRUE/FALSE/NULL does NOT chain: "A IS TRUE IS TRUE" is a syntax error.
+			// We detect chaining by checking if left is already an IS expression.
 			if minPrec > precComparison {
+				return left
+			}
+			switch left.(type) {
+			case *ast.IsNullExpr, *ast.IsTruthExpr:
+				// Already an IS expression — don't chain.
 				return left
 			}
 			left = p.parseIsExpr(left)
 			if left == nil {
 				return nil
 			}
-			// at the same precedence level produces a syntax error.
 			continue
 
 		case collate:
@@ -378,10 +383,23 @@ func (p *HandParser) parseLiteral() ast.ExprNode {
 	case stringLit:
 		// MySQL concatenates adjacent string literals: 'a' 'b' → 'ab'
 		val := tok.Lit
+		firstLen := -1
 		for p.peek().Tp == stringLit {
+			if firstLen < 0 {
+				firstLen = len(val)
+			}
 			val += p.next().Lit
 		}
-		return p.newValueExpr(val)
+		node := p.newValueExpr(val)
+		// When adjacent string literals are concatenated, set projectionOffset
+		// to the length of the first literal so that the column name in SELECT
+		// uses only the first literal (matching MySQL behavior).
+		if firstLen >= 0 {
+			if ve, ok := node.(ast.ValueExpr); ok {
+				ve.SetProjectionOffset(firstLen)
+			}
+		}
+		return node
 	case hexLit, bitLit:
 		var ctor func(string) (interface{}, error)
 		if tok.Tp == hexLit {
@@ -537,10 +555,14 @@ func (p *HandParser) parseBetweenExpr(left ast.ExprNode, isNot bool) ast.ExprNod
 	node.Expr = left
 	node.Not = isNot
 
-	// Parse the low bound at high precedence so AND binds to BETWEEN, not to logical AND.
+	// Parse the low bound at BitExpr level (precPredicate + 1) so AND binds to BETWEEN,
+	// not to logical AND.
 	node.Left = p.parseExpression(precPredicate + 1)
 	p.expect(and)
-	node.Right = p.parseExpression(precPredicate + 1)
+	// Parse the high bound at PredicateExpr level (precPredicate) so nested BETWEEN/IN/LIKE
+	// are allowed on the right. This matches the yacc grammar:
+	//   BitExpr BETWEEN BitExpr AND PredicateExpr
+	node.Right = p.parseExpression(precPredicate)
 
 	return node
 }

@@ -140,7 +140,7 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 				break
 			}
 			p.expectAny(eq, assignmentEq)
-			expr := p.parseExpression(0)
+			expr := p.parseExprOrDefault()
 			stmt.ColumnAssignments = append(stmt.ColumnAssignments, &ast.Assignment{Column: col, Expr: expr})
 			if _, ok := p.accept(','); !ok {
 				break

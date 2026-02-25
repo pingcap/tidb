@@ -246,8 +246,14 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 	}
 	pDef := &ast.PartitionDefinition{}
 	// Partition name — can be identifier, string literal, or unreserved keyword
-	if tok, ok := p.expectAny(identifier, stringLit); ok {
+	// (e.g., PARTITION max VALUES LESS THAN (10))
+	tok := p.peek()
+	if isIdentLike(tok.Tp) || tok.Tp == stringLit {
+		p.next()
 		pDef.Name = ast.NewCIStr(tok.Lit)
+	} else {
+		p.syntaxErrorAt(tok)
+		return nil
 	}
 
 	// --- Parse PartDefValuesOpt ---
@@ -266,7 +272,7 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 			clause := &ast.PartitionDefinitionClauseLessThan{}
 			if _, ok := p.accept('('); ok {
 				for {
-					expr := p.parseExpression(precNone)
+					expr := p.parseExprOrDefault()
 					if partType != 0 {
 						if !p.isValidPartitionExpr(expr) {
 							p.error(p.peek().Offset, "invalid expression in partition value")
@@ -331,7 +337,7 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 					var valList []ast.ExprNode
 					for {
 						startTok := p.peek()
-						expr := p.parseExpression(precNone)
+						expr := p.parseExprOrDefault()
 						if rejectMaxValue(expr, startTok) {
 							return nil
 						}
@@ -345,7 +351,7 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 				} else {
 					// Single value
 					startTok := p.peek()
-					expr := p.parseExpression(precNone)
+					expr := p.parseExprOrDefault()
 					if rejectMaxValue(expr, startTok) {
 						return nil
 					}

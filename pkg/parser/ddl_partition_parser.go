@@ -55,7 +55,8 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 			}
 		}
 
-		if _, ok := p.accept(interval); ok {
+		if intervalTok, ok := p.accept(interval); ok {
+			intervalStartOff := intervalTok.Offset
 			p.expect('(')
 			intervalExpr := p.parseExpression(0)
 
@@ -98,6 +99,13 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 			if pi.FirstRangeEnd != nil && pi.LastRangeEnd == nil {
 				p.error(p.peek().Offset, "FIRST PARTITION must be followed by LAST PARTITION")
 				return nil
+			}
+
+			// Set OriginalText on PartitionInterval so DDL executor can
+			// find and replace the INTERVAL syntactic sugar in the query.
+			intervalEndOff := p.peek().Offset
+			if intervalEndOff > intervalStartOff && intervalEndOff <= len(p.src) {
+				pi.SetText(nil, p.src[intervalStartOff:intervalEndOff])
 			}
 
 			opt.Interval = pi

@@ -127,6 +127,9 @@ func (p *HandParser) parseExistsSubquery() ast.ExprNode {
 	if query == nil {
 		return nil
 	}
+	// After parseSubquery, there may be set operators (UNION/EXCEPT/INTERSECT)
+	// at this level, e.g. EXISTS ( (SELECT ...) UNION (SELECT ...) ).
+	query = p.maybeParseUnion(query)
 	// Clear IsInBraces since EXISTS's own parens provide the wrapping.
 	if s, ok := query.(*ast.SelectStmt); ok {
 		s.IsInBraces = false
@@ -176,11 +179,20 @@ func (p *HandParser) parseCaseExpr() ast.ExprNode {
 	return node
 }
 
-// parseDefaultExpr parses DEFAULT or DEFAULT(column).
+// parseDefaultExpr parses DEFAULT(column).
+// Bare DEFAULT (without parentheses) is only valid in INSERT VALUES and
+// SET col = DEFAULT contexts, not as a general expression. Those contexts
+// handle bare DEFAULT via parseExprOrDefault before calling parseExpression.
 func (p *HandParser) parseDefaultExpr() ast.ExprNode {
-	p.next() // consume DEFAULT
+	defTok := p.next() // consume DEFAULT
 	node := p.arena.AllocDefaultExpr()
 
+	if p.peek().Tp != '(' {
+		// Bare DEFAULT is not a valid general expression (only valid in
+		// VALUES and SET assignment contexts). Produce a syntax error.
+		p.syntaxErrorAt(defTok)
+		return nil
+	}
 	if _, ok := p.accept('('); ok {
 		col := p.arena.AllocColumnName()
 		// Parse potentially dotted column name: col / tbl.col / schema.tbl.col

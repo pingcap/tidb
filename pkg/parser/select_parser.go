@@ -169,10 +169,14 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 	for {
 		cte := Alloc[ast.CommonTableExpression](p.arena)
 		cte.IsRecursive = withInfo.IsRecursive
-		nameTok, ok := p.expect(identifier)
-		if !ok {
+		// CTE name: accept any identifier-like token (including unreserved keywords
+		// like COLUMNS, STATUS, etc.) to match MySQL behavior.
+		nameTok := p.peek()
+		if !isIdentLike(nameTok.Tp) || IsReserved(nameTok.Tp) {
+			p.syntaxErrorAt(nameTok)
 			return nil
 		}
+		p.next()
 		cte.Name = ast.NewCIStr(nameTok.Lit)
 
 		if p.peek().Tp == '(' {
