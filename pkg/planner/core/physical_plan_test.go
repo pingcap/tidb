@@ -529,11 +529,12 @@ func TestIndexJoinHintInSubquery(t *testing.T) {
 		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=0.1")
 		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=0.1")
 
-		sql := "select /*+ QB_NAME(main) INL_JOIN(t1, @subq t2) */ * from t1 where exists (select /*+ QB_NAME(subq) */ 1 from t2 where t2.c = t1.c)"
+		sql := "select /*+ INL_JOIN(t1, t2@subq) */ * from t1 where exists (select /*+ QB_NAME(subq) */ 1 from t2 where t2.c = t1.c)"
 		stmt, err := parser.New().ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 
 		nodeW := resolve.NewNodeW(stmt)
+		tk.Session().GetSessionVars().StmtCtx.OriginalSQL = sql
 		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, domain.GetDomain(tk.Session()).InfoSchema())
 		require.NoError(t, err)
 
