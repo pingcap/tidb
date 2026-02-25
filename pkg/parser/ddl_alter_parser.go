@@ -14,7 +14,6 @@
 package parser
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -311,20 +310,8 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 			p.expect('(')
 			rejectMaxValue := func(expr ast.ExprNode, startTok Token) bool {
 				if _, ok := expr.(*ast.MaxValueExpr); ok {
-					// Report error at token's EndOffset (column) and Offset (near text)
-					// matching yacc scanner position semantics. Append custom message.
-					line, col := p.calcLineCol(startTok.EndOffset)
-					near := ""
-					if startTok.Offset < len(p.src) {
-						near = p.src[startTok.Offset:]
-						if len(near) > 80 {
-							near = near[:80]
-						}
-					}
-					msg := "MAXVALUE cannot be used in LIST partition"
-					p.errs = append(p.errs, fmt.Errorf(
-						"line %d column %d near \"%s\"%s ",
-						line, col, near, msg))
+					// Use standard syntax error format to match yacc parser output.
+					p.syntaxErrorAt(startTok)
 					return true
 				}
 				return false
