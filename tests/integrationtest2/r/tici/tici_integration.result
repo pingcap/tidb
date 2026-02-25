@@ -31,7 +31,8 @@ INSERT INTO t4 VALUES
 (2, 'The second record contains some sample text for testing', 'backfilling data'),
 (3, 'Third entry: verifying the TEXT field''s ability to store longer content', 'some text'),
 (4, 'Fourth data row, which can be used for subsequent query or analysis tests', 'index engine'),
-(5, 'Fifth sample entry to complete the basic insertion example', 'import engine');
+(5, 'Fifth sample entry to complete the basic insertion example', 'import engine'),
+('ts1 ', 'This is the first test x data, used to demonstrate trailing-space PK', 'trailing pk row');
 ALTER TABLE t4 ADD FULLTEXT INDEX ft_idx1 (body1) WITH PARSER standard;
 ALTER TABLE t4 ADD FULLTEXT INDEX ft_idx2 (body2) WITH PARSER standard;
 DO SLEEP(10);
@@ -44,9 +45,10 @@ id	content
 SELECT * FROM t3 WHERE fts_match_word('hello', body);
 id	body
 1	hello world from non-empty table case
-SELECT id,body1 FROM t4 WHERE fts_match_word('first', body1);
-id	body1
-1	This is the first test x data, used to demonstrate the insert operation
+SELECT id, HEX(id) AS id_hex, body1 FROM t4 WHERE fts_match_word('first', body1) ORDER BY HEX(id);
+id	id_hex	body1
+1	31	This is the first test x data, used to demonstrate the insert operation
+ts1 	74733120	This is the first test x data, used to demonstrate trailing-space PK
 SELECT id,body2 FROM t4 WHERE fts_match_word('data', body2);
 id	body2
 2	backfilling data
