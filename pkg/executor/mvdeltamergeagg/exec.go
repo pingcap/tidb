@@ -515,10 +515,10 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 		switch {
 		case newCount == 0:
 			if oldExists {
-				rowOps = append(rowOps, RowOp{RowIdx: rowIdx, Tp: RowOpDelete})
+				rowOps = append(rowOps, RowOp{RowIdx: rowIdx, Tp: RowOpDelete, updateOrdinal: -1})
 			}
 		case !oldExists:
-			rowOps = append(rowOps, RowOp{RowIdx: rowIdx, Tp: RowOpInsert})
+			rowOps = append(rowOps, RowOp{RowIdx: rowIdx, Tp: RowOpInsert, updateOrdinal: -1})
 		default:
 			updateOrdinal := len(updateRows)
 			rowOps = append(rowOps, RowOp{

@@ -19,7 +19,6 @@ import (
 	"math/bits"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -32,9 +31,10 @@ func (noopWriter) WriteChunk(_ context.Context, _ *ChunkResult) error {
 type tableResultWriter struct {
 	exec *Exec
 
-	writableCols   []*table.Column
-	writableColIDs []int
-	aggWritableIDs []int
+	writableColIDs        []int
+	writableFieldTypes    []*types.FieldType
+	aggWritableIDs        []int
+	aggWritableInputColID []int
 
 	oldRow  []types.Datum
 	newRow  []types.Datum
@@ -118,16 +118,25 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 			aggWritableIDs = append(aggWritableIDs, writableIdx)
 		}
 	}
+	writableFieldTypes := make([]*types.FieldType, len(writableCols))
+	for i := range writableCols {
+		writableFieldTypes[i] = &writableCols[i].FieldType
+	}
+	aggWritableInputColID := make([]int, len(aggWritableIDs))
+	for i, writableIdx := range aggWritableIDs {
+		aggWritableInputColID[i] = colIDs[writableIdx]
+	}
 
 	return &tableResultWriter{
-		exec:           e,
-		writableCols:   writableCols,
-		writableColIDs: colIDs,
-		aggWritableIDs: aggWritableIDs,
-		oldRow:         make([]types.Datum, len(writableCols)),
-		newRow:         make([]types.Datum, len(writableCols)),
-		touched:        make([]bool, len(writableCols)),
-		prevTouched:    make([]int, 0, len(aggWritableIDs)),
+		exec:                  e,
+		writableColIDs:        colIDs,
+		writableFieldTypes:    writableFieldTypes,
+		aggWritableIDs:        aggWritableIDs,
+		aggWritableInputColID: aggWritableInputColID,
+		oldRow:                make([]types.Datum, len(writableCols)),
+		newRow:                make([]types.Datum, len(writableCols)),
+		touched:               make([]bool, len(writableCols)),
+		prevTouched:           make([]int, 0, len(aggWritableIDs)),
 	}, nil
 }
 
@@ -135,6 +144,10 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 	if len(result.RowOps) == 0 {
 		return nil
 	}
+	if err := w.validateChunkResult(result); err != nil {
+		return err
+	}
+
 	txn, err := w.exec.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -147,20 +160,15 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 		case RowOpNoOp:
 			continue
 		case RowOpInsert:
-			if err := w.buildRows(result, op.RowIdx); err != nil {
-				return err
-			}
+			w.buildInsertRow(result, op.RowIdx)
 			_, err = w.exec.TargetTable.AddRecord(tableCtx, txn, w.newRow)
 			if err != nil {
 				return err
 			}
 		case RowOpUpdate:
-			if err := w.buildRows(result, op.RowIdx); err != nil {
-				return err
-			}
-			if err := w.buildTouchedFromBitmap(result, &op); err != nil {
-				return err
-			}
+			w.buildUpdateRows(result, op.RowIdx)
+			updateOrdinal := int(op.updateOrdinal)
+			w.buildTouchedFromBitmap(result.UpdateTouchedBitmap, result.UpdateTouchedStride, updateOrdinal)
 			handle, err := w.exec.TargetHandleCols.BuildHandleByDatums(stmtCtx, w.oldRow)
 			if err != nil {
 				return err
@@ -169,9 +177,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 				return err
 			}
 		case RowOpDelete:
-			if err := w.buildRows(result, op.RowIdx); err != nil {
-				return err
-			}
+			w.buildDeleteRow(result, op.RowIdx)
 			handle, err := w.exec.TargetHandleCols.BuildHandleByDatums(stmtCtx, w.oldRow)
 			if err != nil {
 				return err
@@ -186,25 +192,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 	return txn.MayFlush()
 }
 
-func (w *tableResultWriter) buildRows(result *ChunkResult, rowIdx int) error {
-	row := result.Input.GetRow(rowIdx)
-	for writableIdx, col := range w.writableCols {
-		retType := &col.FieldType
-		colID := w.writableColIDs[writableIdx]
-
-		oldDatum := row.GetDatum(colID, retType)
-		w.oldRow[writableIdx] = oldDatum
-
-		if computedCol := result.ComputedCols[colID]; computedCol != nil {
-			w.newRow[writableIdx] = chunkRowColDatum(computedCol, rowIdx, retType)
-			continue
-		}
-		w.newRow[writableIdx] = oldDatum
-	}
-	return nil
-}
-
-func (w *tableResultWriter) buildTouchedFromBitmap(result *ChunkResult, op *RowOp) error {
+func (w *tableResultWriter) validateChunkResult(result *ChunkResult) error {
 	if result.UpdateTouchedBitCnt != len(w.aggWritableIDs) {
 		return errors.Errorf(
 			"update touched bit count mismatch, result=%d writer=%d",
@@ -212,39 +200,91 @@ func (w *tableResultWriter) buildTouchedFromBitmap(result *ChunkResult, op *RowO
 			len(w.aggWritableIDs),
 		)
 	}
+	expectedStride := (result.UpdateTouchedBitCnt + 7) >> 3
+	if result.UpdateTouchedStride != expectedStride {
+		return errors.Errorf(
+			"update touched stride mismatch, result=%d expected=%d",
+			result.UpdateTouchedStride,
+			expectedStride,
+		)
+	}
+	updateCandidateCnt := 0
+	for _, op := range result.RowOps {
+		if op.Tp == RowOpUpdate || (op.Tp == RowOpNoOp && op.updateOrdinal >= 0) {
+			if int(op.updateOrdinal) != updateCandidateCnt {
+				return errors.Errorf(
+					"update touched ordinal mismatch, expected=%d got=%d",
+					updateCandidateCnt,
+					op.updateOrdinal,
+				)
+			}
+			updateCandidateCnt++
+		}
+	}
+	if len(result.UpdateTouchedBitmap) != updateCandidateCnt*result.UpdateTouchedStride {
+		return errors.Errorf(
+			"update touched bitmap size mismatch, bitmap_len=%d expected=%d",
+			len(result.UpdateTouchedBitmap),
+			updateCandidateCnt*result.UpdateTouchedStride,
+		)
+	}
+	for _, colID := range w.aggWritableInputColID {
+		if colID < 0 || colID >= len(result.ComputedCols) {
+			return errors.Errorf("agg computed col id %d out of range [0,%d)", colID, len(result.ComputedCols))
+		}
+		if result.ComputedCols[colID] == nil {
+			return errors.Errorf("agg computed col %d is nil in chunk result", colID)
+		}
+	}
+	return nil
+}
+
+func (w *tableResultWriter) buildDeleteRow(result *ChunkResult, rowIdx int) {
+	row := result.Input.GetRow(rowIdx)
+	for writableIdx, colID := range w.writableColIDs {
+		row.DatumWithBuffer(colID, w.writableFieldTypes[writableIdx], &w.oldRow[writableIdx])
+	}
+}
+
+func (w *tableResultWriter) buildInsertRow(result *ChunkResult, rowIdx int) {
+	row := result.Input.GetRow(rowIdx)
+	for writableIdx, colID := range w.writableColIDs {
+		row.DatumWithBuffer(colID, w.writableFieldTypes[writableIdx], &w.newRow[writableIdx])
+	}
+	for aggPos, writableIdx := range w.aggWritableIDs {
+		colID := w.aggWritableInputColID[aggPos]
+		w.newRow[writableIdx] = chunkRowColDatum(result.ComputedCols[colID], rowIdx, w.writableFieldTypes[writableIdx])
+	}
+}
+
+func (w *tableResultWriter) buildUpdateRows(result *ChunkResult, rowIdx int) {
+	row := result.Input.GetRow(rowIdx)
+	for writableIdx, colID := range w.writableColIDs {
+		row.DatumWithBuffer(colID, w.writableFieldTypes[writableIdx], &w.oldRow[writableIdx])
+	}
+	copy(w.newRow, w.oldRow)
+	for aggPos, writableIdx := range w.aggWritableIDs {
+		colID := w.aggWritableInputColID[aggPos]
+		w.newRow[writableIdx] = chunkRowColDatum(result.ComputedCols[colID], rowIdx, w.writableFieldTypes[writableIdx])
+	}
+}
+
+func (w *tableResultWriter) buildTouchedFromBitmap(updateTouchedBitmap []uint8, updateTouchedStride, updateOrdinal int) {
 	for _, idx := range w.prevTouched {
 		w.touched[idx] = false
 	}
 	w.prevTouched = w.prevTouched[:0]
 
-	updateOrdinal := int(op.updateOrdinal)
-	if updateOrdinal < 0 {
-		return errors.New("update row op has negative touched ordinal")
-	}
-	stride := result.UpdateTouchedStride
-	if stride <= 0 {
-		return errors.Errorf("invalid update touched stride %d", stride)
-	}
-	offset := updateOrdinal * stride
-	if offset+stride > len(result.UpdateTouchedBitmap) {
-		return errors.Errorf(
-			"update touched bitmap out of range: ordinal=%d stride=%d bitmap_len=%d",
-			updateOrdinal, stride, len(result.UpdateTouchedBitmap),
-		)
-	}
-	rowBits := result.UpdateTouchedBitmap[offset : offset+stride]
+	offset := updateOrdinal * updateTouchedStride
+	rowBits := updateTouchedBitmap[offset : offset+updateTouchedStride]
 	for byteIdx, b := range rowBits {
 		for b != 0 {
 			bitInByte := bits.TrailingZeros8(b)
 			bitPos := (byteIdx << 3) + bitInByte
-			if bitPos >= result.UpdateTouchedBitCnt {
-				break
-			}
 			idx := w.aggWritableIDs[bitPos]
 			w.touched[idx] = true
 			w.prevTouched = append(w.prevTouched, idx)
 			b &= b - 1
 		}
 	}
-	return nil
 }
