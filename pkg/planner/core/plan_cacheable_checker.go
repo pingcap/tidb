@@ -71,7 +71,6 @@ func IsASTCacheable(ctx context.Context, sctx base.PlanContext, node ast.Node, i
 		sumInListLen: 0,
 		maxNumParam:  getMaxParamLimit(sctx),
 		cteCanUsed:   make([]string, 0),
-		cteOffset:    make([]int, 0),
 	}
 	node.Accept(&checker)
 	return checker.cacheable, checker.reason
@@ -89,8 +88,6 @@ type cacheableChecker struct {
 	maxNumParam  int
 	// cteCanUsed tracks CTE names visible at current traversal point.
 	cteCanUsed []string
-	// cteOffset stores stack offsets for restoring cteCanUsed in Leave for CTE/subquery scopes.
-	cteOffset []int
 	// withScopeOffset stores offsets for query block scopes that have WITH clause.
 	withScopeOffset []int
 }
@@ -129,13 +126,11 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 	case *ast.ExistsSubqueryExpr:
 		return in, checker.skipForSubqueryDisabled()
 	case *ast.CommonTableExpression:
-		checker.cteOffset = append(checker.cteOffset, len(checker.cteCanUsed))
 		if node.IsRecursive {
 			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
 		}
 		return in, false
 	case *ast.SubqueryExpr:
-		checker.cteOffset = append(checker.cteOffset, len(checker.cteCanUsed))
 		return in, checker.skipForSubqueryDisabled()
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
@@ -207,15 +202,9 @@ func (checker *cacheableChecker) skipForSubqueryDisabled() bool {
 // Leave implements Visitor interface.
 func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch node := in.(type) {
-	case *ast.CommonTableExpression, *ast.SubqueryExpr:
-		l := len(checker.cteOffset)
-		if l > 0 {
-			offset := checker.cteOffset[l-1]
-			checker.cteOffset = checker.cteOffset[:l-1]
-			checker.cteCanUsed = checker.cteCanUsed[:offset]
-		}
-		if cteNode, ok := node.(*ast.CommonTableExpression); ok {
-			checker.cteCanUsed = append(checker.cteCanUsed, cteNode.Name.L)
+	case *ast.CommonTableExpression:
+		if !node.IsRecursive {
+			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
 		}
 	case *ast.SelectStmt:
 		if node.With != nil {

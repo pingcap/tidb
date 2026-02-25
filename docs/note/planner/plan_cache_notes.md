@@ -10,39 +10,54 @@
 - Profiling regression signals: higher cum time in `NormalizeStmtForBinding`,
   `NormalizeDigestForBinding`, and `MatchSQLBinding` under `GetPlanFromPlanCache`.
 
-## 2026-02-25: CTE Scope Tracking in Prepared Plan Cache Checker (Issue #66351)
+## 2026-02-25: Prepared Plan Cache Checker Notes (Issue #66351)
 
-### Symptoms Observed During Debugging
+### Scope and Entry Points
 
-- Existing tests did not prove whether `SubqueryExpr` scope tracking was required.
-- A crafted query shape failed only when a specific scope offset update was removed:
-  scalar subquery + `WITH` + set operation, combined with an outer partitioned table.
-- An early test draft produced a misleading error
-  (`find table .t1 failed: [schema:1146]Table '.t1' doesn't exist`)
-  because the SQL used `from t1` instead of `from test.t1` in this test context.
+- Source file: `pkg/planner/core/plan_cacheable_checker.go`.
+- Prepared path entry: `IsASTCacheable` -> `cacheableChecker`.
+- Non-prepared path entry: `NonPreparedPlanCacheableWithCtx` ->
+  `nonPreparedPlanCacheableChecker`.
+- Shared table-level checks are centralized in `checkTableCacheable`.
 
-### Root Cause Summary
+### Prepared Checker Traversal Rules
 
-- `cacheableChecker` tracks CTE visibility using scoped offsets.
-- Entering `*ast.SubqueryExpr` must push current `cteCanUsed` length into `cteOffset`.
-- If that push is missing, CTE visibility can leak across subquery boundaries and trigger
-  wrong table-resolution/cacheability behavior.
+- `cacheableChecker` performs AST traversal and short-circuits once
+  `checker.cacheable` becomes `false`.
+- `skipForSubqueryDisabled()` is used by both `*ast.ExistsSubqueryExpr` and
+  `*ast.SubqueryExpr` to keep the subquery gating logic in one place.
+- `*ast.TableName` nodes go through InfoSchema validation, partition pruning
+  mode checks, generated column checks, and temporary table checks.
 
-### Practical Lessons
+### CTE Visibility Rules
 
-- Prepared and non-prepared paths are not interchangeable test surfaces.
-  Both paths may need coverage when the bug touches shared checker logic.
-- Prefer adding regression cases to existing suites (`tidb-test-guidelines`) to reduce
-  scaffolding and keep review focused.
-- Keep test SQL fully qualified when parser/session default DB can vary in test setup.
+- `cteCanUsed` stores CTE names visible in the current query block.
+- `withScopeOffset` records CTE list boundaries for each `SelectStmt` that
+  has a `WITH` clause, and `leaveWithScope()` restores the outer scope.
+- `*ast.CommonTableExpression` handling:
+  - Enter: recursive CTE names are pre-registered so self-reference can pass.
+  - Leave: non-recursive CTE names are published after their query is visited.
+- For `*ast.TableName` with empty schema and name in `cteCanUsed`, skip
+  physical table lookup because the name refers to a CTE, not InfoSchema.
 
-### Regression Test Placement and Shape
+### Why Issue #66351 Happened
 
-- Appended a regression case to existing `TestCacheable` in
+- The bug area is CTE name visibility while traversing nested query shapes.
+- The practical failure pattern includes CTE + subquery/set-op combinations
+  where checker state transitions are easy to break.
+- The fix direction is to keep state transitions minimal and explicit, and lock
+  behavior with regression tests in the existing plan cache checker suite.
+
+### Test and Debugging Checklist
+
+- Prefer adding cases into existing tests first:
   `pkg/planner/core/casetest/plancache/plan_cacheable_checker_test.go`.
-- Kept prepared-path validation via `TestPreparedPlanCacheWithCTE`.
-- Representative SQL shape used for regression locking:
-  `select (with t1 as (select 1 as a) select a from t1 union all select a from t1) as x from test.t1`
+- Verify both:
+  - AST-level cacheability (`CacheableWithCtx`) for specific SQL shapes.
+  - Prepared execution behavior (`@@last_plan_from_cache`) for runtime effect.
+- Use fully qualified table names in regression SQL when test DB context can
+  vary (`test.t1` instead of `t1`).
+- If new tests are added, run `make bazel_prepare` before running tests.
 
 ### Targeted Validation Commands
 
