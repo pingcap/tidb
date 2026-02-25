@@ -27,9 +27,10 @@ set -o pipefail
 # http://fileserver.pingcap.net.
 branch=${1:-master}
 file_server_url=${2:-http://fileserver.pingcap.net}
+pd_branch=${3:-master} # use master branch for pd by default
 
 tikv_sha1_url="${file_server_url}/download/refs/pingcap/tikv/${branch}/sha1"
-pd_sha1_url="${file_server_url}/download/refs/pingcap/pd/${branch}/sha1"
+pd_sha1_url="${file_server_url}/download/refs/pingcap/pd/${pd_branch}/sha1"
 tiflash_sha1_url="${file_server_url}/download/refs/pingcap/tiflash/${branch}/sha1"
 ticdc_sha1_url="${file_server_url}/download/refs/pingcap/ticdc/${branch}/sha1"
 
