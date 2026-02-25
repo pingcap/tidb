@@ -49,6 +49,10 @@ func (p *HandParser) parseCurrentFunc() ast.ExprNode {
 		node.FnName = ast.NewCIStr("LOCALTIME")
 	case localTs:
 		node.FnName = ast.NewCIStr("LOCALTIMESTAMP")
+	case curDate:
+		node.FnName = ast.NewCIStr("CURDATE")
+	case curTime:
+		node.FnName = ast.NewCIStr("CURTIME")
 	default:
 		p.syntaxErrorAt(tok)
 		return nil

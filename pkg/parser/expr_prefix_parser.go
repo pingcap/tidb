@@ -96,7 +96,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 	case singleAtIdentifier, doubleAtIdentifier:
 		return p.parseVariableExpr()
 
-	case currentDate, currentTime, currentTs, currentUser, currentRole, localTime, localTs:
+	case currentDate, currentTime, currentTs, currentUser, currentRole, localTime, localTs, curDate, curTime:
 		return p.parseCurrentFunc()
 
 	case builtinFnCast:
