@@ -25,9 +25,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
