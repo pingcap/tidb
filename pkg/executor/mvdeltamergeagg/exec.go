@@ -34,13 +34,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// MVDeltaMergeAggMapping describes one aggregate merge rule.
+// Mapping describes one aggregate merge rule.
 //
 // ColID contains the target aggregate column positions in child output schema.
 // DependencyColID can reference:
 // 1. child chunk delta-agg columns (col id < DeltaAggColCount), or
 // 2. columns already produced by previous mappings.
-type MVDeltaMergeAggMapping struct {
+type Mapping struct {
 	// AggFunc must be set; aggregate function name is read from AggFunc.Name.
 	AggFunc         *aggregation.AggFuncDesc
 	ColID           []int
@@ -55,53 +55,53 @@ type MinMaxRecomputeExec struct {
 	exec      []exec.Executor
 }
 
-// MVDeltaMergeAggRowOpType is the row operation for MV table write.
-type MVDeltaMergeAggRowOpType uint8
+// RowOpType is the row operation for MV table write.
+type RowOpType uint8
 
 const (
-	// MVDeltaMergeAggRowOpNoOp means there is no MV row to touch.
-	MVDeltaMergeAggRowOpNoOp MVDeltaMergeAggRowOpType = iota
-	// MVDeltaMergeAggRowOpInsert means insert a new MV row.
-	MVDeltaMergeAggRowOpInsert
-	// MVDeltaMergeAggRowOpUpdate means update an existing MV row.
-	MVDeltaMergeAggRowOpUpdate
-	// MVDeltaMergeAggRowOpDelete means delete an existing MV row.
-	MVDeltaMergeAggRowOpDelete
+	// RowOpNoOp means there is no MV row to touch.
+	RowOpNoOp RowOpType = iota
+	// RowOpInsert means insert a new MV row.
+	RowOpInsert
+	// RowOpUpdate means update an existing MV row.
+	RowOpUpdate
+	// RowOpDelete means delete an existing MV row.
+	RowOpDelete
 )
 
-// MVDeltaMergeAggRowOp describes one row-level write action.
-type MVDeltaMergeAggRowOp struct {
+// RowOp describes one row-level write action.
+type RowOp struct {
 	RowIdx int
-	Tp     MVDeltaMergeAggRowOpType
+	Tp     RowOpType
 }
 
-// MVDeltaMergeAggChunkResult contains worker result for one input chunk.
-type MVDeltaMergeAggChunkResult struct {
+// ChunkResult contains worker result for one input chunk.
+type ChunkResult struct {
 	// Input is the original joined chunk (delta agg + MV columns).
 	Input *chunk.Chunk
 	// ComputedCols is indexed by input column position.
 	// A nil item means this column is not computed by merge mappings.
 	ComputedCols []*chunk.Column
 	// RowOps indicates insert/update/delete rows in Input.
-	RowOps []MVDeltaMergeAggRowOp
+	RowOps []RowOp
 }
 
-// MVDeltaMergeAggResultWriter consumes merged chunk results and writes to MV table.
-type MVDeltaMergeAggResultWriter interface {
-	WriteChunk(ctx context.Context, result *MVDeltaMergeAggChunkResult) error
+// ResultWriter consumes merged chunk results and writes to MV table.
+type ResultWriter interface {
+	WriteChunk(ctx context.Context, result *ChunkResult) error
 }
 
-// MVDeltaMergeAggExec is the sink executor for incremental MV merge.
+// Exec is the sink executor for incremental MV merge.
 // It currently supports COUNT / SUM merge.
-type MVDeltaMergeAggExec struct {
+type Exec struct {
 	exec.BaseExecutor
 
-	AggMappings      []MVDeltaMergeAggMapping
+	AggMappings      []Mapping
 	DeltaAggColCount int
 	MinMaxRecompute  map[int]MinMaxRecomputeExec
 
 	WorkerCnt int
-	Writer    MVDeltaMergeAggResultWriter
+	Writer    ResultWriter
 
 	TargetTable table.Table
 	TargetInfo  *model.TableInfo
@@ -124,7 +124,7 @@ type mvMergeAggWorkerData struct {
 }
 
 // Open implements the Executor interface.
-func (e *MVDeltaMergeAggExec) Open(ctx context.Context) error {
+func (e *Exec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -154,11 +154,11 @@ func (e *MVDeltaMergeAggExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor interface.
-// MVDeltaMergeAggExec is a sink executor and always returns an empty chunk.
-func (e *MVDeltaMergeAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
+// Exec is a sink executor and always returns an empty chunk.
+func (e *Exec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.prepared {
-		return errors.New("MVDeltaMergeAggExec is not opened")
+		return errors.New("Exec is not opened")
 	}
 	if e.executed {
 		return nil
@@ -168,7 +168,7 @@ func (e *MVDeltaMergeAggExec) Next(ctx context.Context, req *chunk.Chunk) error 
 }
 
 // Close implements the Executor interface.
-func (e *MVDeltaMergeAggExec) Close() error {
+func (e *Exec) Close() error {
 	e.compiledMergers = nil
 	e.compiledOutputColCnt = 0
 	e.aggOutputColIDs = nil
@@ -177,7 +177,7 @@ func (e *MVDeltaMergeAggExec) Close() error {
 	return e.BaseExecutor.Close()
 }
 
-func (e *MVDeltaMergeAggExec) runMergePipeline(ctx context.Context) error {
+func (e *Exec) runMergePipeline(ctx context.Context) error {
 	workerCnt := e.WorkerCnt
 	if workerCnt <= 0 {
 		workerCnt = 1
@@ -187,7 +187,7 @@ func (e *MVDeltaMergeAggExec) runMergePipeline(ctx context.Context) error {
 
 	inputCh := make(chan *chunk.Chunk, inputBufSize)
 	freeInputCh := make(chan *chunk.Chunk, inputBufSize)
-	resultCh := make(chan *MVDeltaMergeAggChunkResult, workerCnt)
+	resultCh := make(chan *ChunkResult, workerCnt)
 
 	for i := 0; i < inputBufSize; i++ {
 		freeInputCh <- exec.NewFirstChunk(e.Children(0))
@@ -219,7 +219,7 @@ func (e *MVDeltaMergeAggExec) runMergePipeline(ctx context.Context) error {
 	return g.Wait()
 }
 
-func (e *MVDeltaMergeAggExec) runReader(
+func (e *Exec) runReader(
 	ctx context.Context,
 	inputCh chan<- *chunk.Chunk,
 	freeInputCh <-chan *chunk.Chunk,
@@ -251,10 +251,10 @@ func (e *MVDeltaMergeAggExec) runReader(
 	}
 }
 
-func (e *MVDeltaMergeAggExec) runWorker(
+func (e *Exec) runWorker(
 	ctx context.Context,
 	inputCh <-chan *chunk.Chunk,
-	resultCh chan<- *MVDeltaMergeAggChunkResult,
+	resultCh chan<- *ChunkResult,
 ) error {
 	var workerData mvMergeAggWorkerData
 	for {
@@ -284,9 +284,9 @@ func (e *MVDeltaMergeAggExec) runWorker(
 	}
 }
 
-func (e *MVDeltaMergeAggExec) runWriter(
+func (e *Exec) runWriter(
 	ctx context.Context,
-	resultCh <-chan *MVDeltaMergeAggChunkResult,
+	resultCh <-chan *ChunkResult,
 	freeInputCh chan<- *chunk.Chunk,
 ) error {
 	for {
@@ -338,12 +338,12 @@ func aggFuncForErr(aggFunc *aggregation.AggFuncDesc) string {
 	return aggFunc.StringWithCtx(exprctx.EmptyParamValues, errors.RedactLogDisable)
 }
 
-func (e *MVDeltaMergeAggExec) prepareMergers() error {
+func (e *Exec) prepareMergers() error {
 	if e.ChildrenLen() != 1 {
-		return errors.Errorf("MVDeltaMergeAggExec expects exactly 1 child, got %d", e.ChildrenLen())
+		return errors.Errorf("Exec expects exactly 1 child, got %d", e.ChildrenLen())
 	}
 	if len(e.AggMappings) == 0 {
-		return errors.New("MVDeltaMergeAggExec requires non-empty AggMappings")
+		return errors.New("Exec requires non-empty AggMappings")
 	}
 
 	childTypes := exec.RetTypes(e.Children(0))
@@ -399,7 +399,7 @@ func (e *MVDeltaMergeAggExec) prepareMergers() error {
 		case ast.AggFuncMin, ast.AggFuncMax:
 			err = errors.Errorf("%s merge is not implemented yet", aggName)
 		default:
-			err = errors.Errorf("unsupported agg function in MVDeltaMergeAggExec: %s", aggName)
+			err = errors.Errorf("unsupported agg function in Exec: %s", aggName)
 		}
 		if err != nil {
 			return err
@@ -423,7 +423,7 @@ func (e *MVDeltaMergeAggExec) prepareMergers() error {
 	return nil
 }
 
-func (e *MVDeltaMergeAggExec) mergeOneChunk(chk *chunk.Chunk, workerData *mvMergeAggWorkerData) (*MVDeltaMergeAggChunkResult, error) {
+func (e *Exec) mergeOneChunk(chk *chunk.Chunk, workerData *mvMergeAggWorkerData) (*ChunkResult, error) {
 	computedByOrder := make([]*chunk.Column, e.compiledOutputColCnt)
 	computedBuiltCnt := 0
 	computedByColID := make([]*chunk.Column, chk.NumCols())
@@ -457,16 +457,16 @@ func (e *MVDeltaMergeAggExec) mergeOneChunk(chk *chunk.Chunk, workerData *mvMerg
 	if err != nil {
 		return nil, err
 	}
-	return &MVDeltaMergeAggChunkResult{
+	return &ChunkResult{
 		Input:        chk,
 		ComputedCols: computedByColID,
 		RowOps:       rowOps,
 	}, nil
 }
 
-func (e *MVDeltaMergeAggExec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mvMergeAggWorkerData) ([]MVDeltaMergeAggRowOp, error) {
+func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mvMergeAggWorkerData) ([]RowOp, error) {
 	if len(e.aggOutputColIDs) == 0 {
-		return nil, errors.New("no aggregate outputs in MVDeltaMergeAggExec")
+		return nil, errors.New("no aggregate outputs in Exec")
 	}
 	countStarOutputColID := e.aggOutputColIDs[0]
 	if countStarOutputColID < 0 || countStarOutputColID >= input.NumCols() {
@@ -486,7 +486,7 @@ func (e *MVDeltaMergeAggExec) buildRowOps(input *chunk.Chunk, computedByColID []
 	if err != nil {
 		return nil, err
 	}
-	rowOps := make([]MVDeltaMergeAggRowOp, 0, input.NumRows())
+	rowOps := make([]RowOp, 0, input.NumRows())
 	for rowIdx := 0; rowIdx < input.NumRows(); rowIdx++ {
 		newCount := newCountStarVals[rowIdx]
 		if newCount < 0 {
@@ -495,22 +495,22 @@ func (e *MVDeltaMergeAggExec) buildRowOps(input *chunk.Chunk, computedByColID []
 		// Left outer join: old MV row is absent when this side is NULL.
 		oldExists := !oldCountStarCol.IsNull(rowIdx)
 
-		opTp := MVDeltaMergeAggRowOpNoOp
+		opTp := RowOpNoOp
 		switch {
 		case newCount == 0:
 			if oldExists {
-				opTp = MVDeltaMergeAggRowOpDelete
+				opTp = RowOpDelete
 			}
 		case !oldExists:
-			opTp = MVDeltaMergeAggRowOpInsert
+			opTp = RowOpInsert
 		default:
 			if changedMask[rowIdx] {
-				opTp = MVDeltaMergeAggRowOpUpdate
+				opTp = RowOpUpdate
 			}
 		}
 
-		if opTp != MVDeltaMergeAggRowOpNoOp {
-			rowOps = append(rowOps, MVDeltaMergeAggRowOp{
+		if opTp != RowOpNoOp {
+			rowOps = append(rowOps, RowOp{
 				RowIdx: rowIdx,
 				Tp:     opTp,
 			})
@@ -519,7 +519,7 @@ func (e *MVDeltaMergeAggExec) buildRowOps(input *chunk.Chunk, computedByColID []
 	return rowOps, nil
 }
 
-func (e *MVDeltaMergeAggExec) buildAggChangedMask(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mvMergeAggWorkerData) ([]bool, error) {
+func (e *Exec) buildAggChangedMask(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mvMergeAggWorkerData) ([]bool, error) {
 	rowCnt := input.NumRows()
 	var changedMask []bool
 	if workerData != nil {

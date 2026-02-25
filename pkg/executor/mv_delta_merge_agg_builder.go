@@ -16,17 +16,17 @@ package executor
 
 import "github.com/pingcap/tidb/pkg/executor/mvdeltamergeagg"
 
-type MVDeltaMergeAggExec = mvdeltamergeagg.MVDeltaMergeAggExec
-type MVDeltaMergeAggMapping = mvdeltamergeagg.MVDeltaMergeAggMapping
+type MVDeltaMergeAggExec = mvdeltamergeagg.Exec
+type MVDeltaMergeAggMapping = mvdeltamergeagg.Mapping
 type MinMaxRecomputeExec = mvdeltamergeagg.MinMaxRecomputeExec
-type MVDeltaMergeAggRowOpType = mvdeltamergeagg.MVDeltaMergeAggRowOpType
-type MVDeltaMergeAggRowOp = mvdeltamergeagg.MVDeltaMergeAggRowOp
-type MVDeltaMergeAggChunkResult = mvdeltamergeagg.MVDeltaMergeAggChunkResult
-type MVDeltaMergeAggResultWriter = mvdeltamergeagg.MVDeltaMergeAggResultWriter
+type MVDeltaMergeAggRowOpType = mvdeltamergeagg.RowOpType
+type MVDeltaMergeAggRowOp = mvdeltamergeagg.RowOp
+type MVDeltaMergeAggChunkResult = mvdeltamergeagg.ChunkResult
+type MVDeltaMergeAggResultWriter = mvdeltamergeagg.ResultWriter
 
 const (
-	MVDeltaMergeAggRowOpNoOp   = mvdeltamergeagg.MVDeltaMergeAggRowOpNoOp
-	MVDeltaMergeAggRowOpInsert = mvdeltamergeagg.MVDeltaMergeAggRowOpInsert
-	MVDeltaMergeAggRowOpUpdate = mvdeltamergeagg.MVDeltaMergeAggRowOpUpdate
-	MVDeltaMergeAggRowOpDelete = mvdeltamergeagg.MVDeltaMergeAggRowOpDelete
+	MVDeltaMergeAggRowOpNoOp   = mvdeltamergeagg.RowOpNoOp
+	MVDeltaMergeAggRowOpInsert = mvdeltamergeagg.RowOpInsert
+	MVDeltaMergeAggRowOpUpdate = mvdeltamergeagg.RowOpUpdate
+	MVDeltaMergeAggRowOpDelete = mvdeltamergeagg.RowOpDelete
 )

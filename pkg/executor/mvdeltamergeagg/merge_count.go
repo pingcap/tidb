@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-func (e *MVDeltaMergeAggExec) buildCountMerger(
-	mapping MVDeltaMergeAggMapping,
+func (e *Exec) buildCountMerger(
+	mapping Mapping,
 	colID2ComputedIdx map[int]int,
 	childTypes []*types.FieldType,
 ) (aggMerger, error) {
