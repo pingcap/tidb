@@ -1263,6 +1263,12 @@ const (
 	TiDBModelCacheCapacity = "tidb_model_cache_capacity"
 	// TiDBModelCacheTTL indicates the process-level model session cache TTL.
 	TiDBModelCacheTTL = "tidb_model_cache_ttl"
+	// TiDBEnableLLMInference indicates whether LLM inference is enabled.
+	TiDBEnableLLMInference = "tidb_enable_llm_inference"
+	// TiDBLLMDefaultModel indicates the default LLM model name.
+	TiDBLLMDefaultModel = "tidb_llm_default_model"
+	// TiDBLLMTimeout indicates the timeout for LLM requests.
+	TiDBLLMTimeout = "tidb_llm_timeout"
 	// TiDBResourceControlStrictMode indicates whether resource control strict mode is enabled.
 	// When strict mode is enabled, user need certain privilege to change session or statement resource group.
 	TiDBResourceControlStrictMode = "tidb_resource_control_strict_mode"
@@ -1742,6 +1748,9 @@ const (
 	DefTiDBModelAllowNondeterministic                 = false
 	DefTiDBEnableModelCustomOps                       = false
 	DefTiDBModelNullBehavior                          = ModelNullBehaviorError
+	DefTiDBEnableLLMInference                         = false
+	DefTiDBLLMDefaultModel                            = ""
+	DefTiDBLLMTimeout                                 = 30 * time.Second
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
@@ -1930,6 +1939,9 @@ var (
 	ModelAllowNondeterministic      = atomic.NewBool(DefTiDBModelAllowNondeterministic)
 	EnableModelCustomOps            = atomic.NewBool(DefTiDBEnableModelCustomOps)
 	ModelNullBehavior               = atomic.NewString(DefTiDBModelNullBehavior)
+	EnableLLMInference              = atomic.NewBool(DefTiDBEnableLLMInference)
+	LLMDefaultModel                 = atomic.NewString(DefTiDBLLMDefaultModel)
+	LLMTimeout                      = atomic.NewDuration(DefTiDBLLMTimeout)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
