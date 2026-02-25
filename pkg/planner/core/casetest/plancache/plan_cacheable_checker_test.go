@@ -482,7 +482,7 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
 }
 
-func TestIssue66351PreparedPlanCacheWithCTE(t *testing.T) {
+func TestPreparedPlanCacheWithCTE(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
