@@ -640,15 +640,18 @@ func TestGetRestoreDataFulltextKeepsRawHandleDatum(t *testing.T) {
 		Indices:             []*model.IndexInfo{pkIdx, fulltextIdx, normalIdx},
 	}
 
+	// the pk column with charset UTF8MB4, the raw value with tailing spaces should be encoded to restore data directly for fulltext index
 	rawPK := "pk   "
 	makeHandleDts := func() []types.Datum {
 		return []types.Datum{types.NewCollationStringDatum(rawPK, charset.CollationUTF8MB4)}
 	}
 
 	rsData := getRestoreData(tblInfo, fulltextIdx, pkIdx, makeHandleDts())
+	// verify the result of `getRestoreData`
 	require.Len(t, rsData, 1)
 	require.Equal(t, types.KindString, rsData[0].Kind())
 	require.Equal(t, rawPK, rsData[0].GetString())
+	require.Equal(t, "pk   ", rsData[0].GetString())
 
 	rsData = getRestoreData(tblInfo, normalIdx, pkIdx, makeHandleDts())
 	require.Len(t, rsData, 1)
