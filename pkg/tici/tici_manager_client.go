@@ -386,14 +386,14 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 		logutil.BgLogger().Error("GetCloudStoragePrefix failed",
 			zap.String("tidbTaskID", tidbTaskID),
 			zap.Int64("tableID", tableID),
-			zap.Int64s("indexID", indexIDs),
+			zap.Int64s("indexIDs", indexIDs),
 			zap.String("errorMessage", resp.ErrorMessage))
 		return "", 0, fmt.Errorf("tici GetCloudStoragePrefix error: %s", resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("GetCloudStoragePrefix success",
 		zap.String("tidbTaskID", tidbTaskID),
 		zap.Int64("tableID", tableID),
-		zap.Int64s("indexID", indexIDs),
+		zap.Int64s("indexIDs", indexIDs),
 		// log down the tici job ID for tracking
 		zap.Uint64("ticiJobID", resp.JobId),
 		zap.String("ticiStorageURI", resp.StorageUri),

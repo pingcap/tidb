@@ -2081,7 +2081,7 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 
 // InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema
 // in the TiDB instance level. The `taskID` is a unique identifier for this Job.
-func (local *Backend) InitTiCIWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Client, error), tblInfo *model.TableInfo, schema string, taskID string) error {
+func (local *Backend) InitTiCIWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Client, error), tblInfo *model.TableInfo, schema string, taskID string, newIndexIDs []int64) error {
 	if getEtcdClient == nil {
 		getEtcdClient = func() (*etcd.Client, error) {
 			tidbCfg := tidbconfig.GetGlobalConfig()
@@ -2100,7 +2100,7 @@ func (local *Backend) InitTiCIWriterGroup(ctx context.Context, getEtcdClient fun
 		}
 	}
 	keyspaceID := uint32(local.tikvCodec.GetKeyspaceID())
-	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, getEtcdClient, tblInfo, schema, taskID, keyspaceID)
+	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, getEtcdClient, tblInfo, schema, taskID, keyspaceID, newIndexIDs)
 	if err != nil {
 		return err
 	}
