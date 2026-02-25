@@ -290,7 +290,6 @@ func TestFailJobBeforeStart(t *testing.T) {
 			Format: importer.DataFormatCSV,
 		},
 		SourceFileSize: 123,
-		Status:         "pending",
 	}
 
 	jobID, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
