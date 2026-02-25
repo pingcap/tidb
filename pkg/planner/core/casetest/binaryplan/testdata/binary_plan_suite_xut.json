@@ -68,19 +68,19 @@
         "SQL": "explain analyze format = 'binary' select sum(t.a) from t join t2",
         "BinaryPlan": {
           "main": {
-            "name": "HashAgg_12",
+            "name": "HashAgg_11",
             "children": [
               {
-                "name": "Projection_60",
+                "name": "Projection_53",
                 "children": [
                   {
-                    "name": "HashJoin_31",
+                    "name": "HashJoin_28",
                     "children": [
                       {
-                        "name": "IndexReader_36",
+                        "name": "IndexReader_33",
                         "children": [
                           {
-                            "name": "IndexFullScan_35",
+                            "name": "IndexFullScan_32",
                             "cost": 1628000.000001,
                             "est_rows": 10000,
                             "act_rows": 2,
@@ -97,13 +97,13 @@
                         "act_rows": 2,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "index:IndexFullScan_35"
+                        "operator_info": "index:IndexFullScan_32"
                       },
                       {
-                        "name": "TableReader_38",
+                        "name": "TableReader_35",
                         "children": [
                           {
-                            "name": "TableFullScan_37",
+                            "name": "TableFullScan_34",
                             "cost": 4546159.475587022,
                             "est_rows": 10000,
                             "act_rows": 4,
@@ -120,7 +120,7 @@
                         "act_rows": 4,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "data:TableFullScan_37"
+                        "operator_info": "data:TableFullScan_34"
                       }
                     ],
                     "cost": 1128387.631705868,
@@ -139,7 +139,7 @@
                 "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#10"
               }
             ],
-            "cost": 2007109896.2117057,
+            "cost": 1997129896.2117057,
             "est_rows": 1,
             "act_rows": 1,
             "task_type": 1,
