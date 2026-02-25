@@ -74,7 +74,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "ingest, DXF, cloud, max_node_count=5", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 	}
