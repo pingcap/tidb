@@ -2,13 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "vertex",
-    srcs = ["client.go"],
+    srcs = [
+        "auth.go",
+        "client.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/llm/vertex",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/backoff",
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_oauth2//:oauth2",
+        "@org_golang_x_oauth2//google",
     ],
 )
 

@@ -15,11 +15,16 @@
 package expression
 
 import (
+	"context"
+	"strings"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/llm/vertex"
 )
 
 var (
@@ -162,12 +167,70 @@ func runLLMComplete(model, prompt string) (string, error) {
 	if llmCompleteHook != nil {
 		return llmCompleteHook(model, prompt)
 	}
-	return "", errors.New("llm test hook not set")
+	client, ctx, cancel, err := newVertexClient()
+	if err != nil {
+		return "", err
+	}
+	if cancel != nil {
+		defer cancel()
+	}
+	return client.Complete(ctx, model, prompt)
 }
 
 func runLLMEmbed(model, text string) ([]float32, error) {
 	if llmEmbedHook != nil {
 		return llmEmbedHook(model, text)
 	}
-	return nil, errors.New("llm test hook not set")
+	client, ctx, cancel, err := newVertexClient()
+	if err != nil {
+		return nil, err
+	}
+	if cancel != nil {
+		defer cancel()
+	}
+	return client.EmbedText(ctx, model, text)
+}
+
+func newVertexClient() (*vertex.Client, context.Context, context.CancelFunc, error) {
+	cfg := config.GetGlobalConfig().LLM
+	provider := strings.ToLower(cfg.Provider)
+	if provider == "" {
+		provider = "vertex"
+	}
+	if provider != "vertex" {
+		return nil, nil, nil, errors.Errorf("unsupported llm provider: %s", cfg.Provider)
+	}
+	if cfg.VertexProject == "" || cfg.VertexLocation == "" {
+		return nil, nil, nil, errors.New("llm config requires vertex_project and vertex_location")
+	}
+
+	timeout := vardef.LLMTimeout.Load()
+	if timeout <= 0 {
+		timeout = cfg.RequestTimeout
+	}
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	tokenSource, err := vertex.NewTokenSource(ctx, cfg.CredentialFile)
+	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		return nil, nil, nil, err
+	}
+	client, err := vertex.NewClient(vertex.Config{
+		Project:     cfg.VertexProject,
+		Location:    cfg.VertexLocation,
+		TokenSource: tokenSource,
+		Timeout:     timeout,
+	})
+	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		return nil, nil, nil, err
+	}
+	return client, ctx, cancel, nil
 }
