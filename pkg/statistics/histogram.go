@@ -1251,7 +1251,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
-	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, uint64(topN.TotalCount()))
+	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, topN.TotalCount())
 	// If addedRows is too small, it may be caused by a delay in updates to modifyCount.
 	// ModifyCount == 0 is a known issue - where large tables can have a large time
 	// delay before the first update to ModifyCount.
