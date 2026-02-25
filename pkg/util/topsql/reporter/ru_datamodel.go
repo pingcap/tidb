@@ -118,8 +118,8 @@ func newRURecord(sqlDigest, planDigest []byte) *ruRecord {
 	return &ruRecord{
 		sqlDigest:  sqlDigest,
 		planDigest: planDigest,
-		items:      make(ruItems, 0, 64),
-		tsIndex:    make(map[uint64]int, 64),
+		items:      make(ruItems, 0, 16),
+		tsIndex:    make(map[uint64]int, 16),
 	}
 }
 
@@ -155,6 +155,16 @@ func (r *ruRecord) merge(other *ruRecord) {
 	}
 	for _, item := range other.items {
 		r.add(item.timestamp, item.totalRU, item.execCount, item.execDuration)
+	}
+}
+
+// mergeWithTimestamp merges another ruRecord into this one, rewriting all timestamps to the given value.
+func (r *ruRecord) mergeWithTimestamp(other *ruRecord, ts uint64) {
+	if other == nil {
+		return
+	}
+	for _, item := range other.items {
+		r.add(ts, item.totalRU, item.execCount, item.execDuration)
 	}
 }
 
@@ -521,30 +531,31 @@ func (c *ruCollecting) toTopRURecords(keyspaceName []byte) []tipb.TopRURecord {
 }
 
 // compactWithLimits applies TopN filtering and returns a compacted *ruCollecting.
-// Unlike getReportRecordsWithLimits (which converts to proto), this preserves internal structure
-// for efficient multi-stage merging (avoids proto -> internal -> proto round-trips).
+// It preserves internal structure for efficient multi-stage merging (avoids proto -> internal -> proto round-trips).
 //
 // The returned ruCollecting is a new instance with evicted users/SQLs merged into "others".
 // The original ruCollecting is not modified.
+//
+// Optimization: for top users, directly assigns record pointers (no merge needed for fresh user).
+// For evicted users, merges at record level into othersRec.
 func (c *ruCollecting) compactWithLimits(maxUsers, maxSQLsPerUser int) *ruCollecting {
 	maxUsers, maxSQLsPerUser = normalizeTopNLimits(maxUsers, maxSQLsPerUser)
 	if len(c.users) == 0 && c.othersUser == nil {
 		return nil
 	}
 
+	// mergeUserIntoOthers merges all records from src user into dst's othersRec (as "others SQL").
+	// Uses record-level merge: 1 merge call per record instead of 1 add per item.
 	mergeUserIntoOthers := func(dst, src *userRUCollecting) {
 		if dst == nil || src == nil {
 			return
 		}
 		for _, rec := range src.records {
-			for _, item := range rec.items {
-				dst.addItem(item)
-			}
+			// All records from evicted users go to "others SQL" (nil digests)
+			dst.mergeRecord(nil, nil, rec, 0, false)
 		}
 		if src.othersRec != nil {
-			for _, item := range src.othersRec.items {
-				dst.addItem(item)
-			}
+			dst.mergeRecord(nil, nil, src.othersRec, 0, false)
 		}
 	}
 
@@ -563,18 +574,21 @@ func (c *ruCollecting) compactWithLimits(maxUsers, maxSQLsPerUser int) *ruCollec
 		// Apply per-user SQL TopN and get compacted records
 		userRecords := userCollecting.getReportRecordsWithLimit(maxSQLsPerUser)
 		compactedUser := newUserRUCollectingWithCap(userCollecting.user, maxSQLsPerUser)
+		// Directly assign records to fresh compactedUser (no merge needed, no map lookup)
 		for _, rec := range userRecords {
-			for _, item := range rec.items {
-				if len(rec.sqlDigest) == 0 && len(rec.planDigest) == 0 {
-					compactedUser.addItem(item)
+			if len(rec.sqlDigest) == 0 && len(rec.planDigest) == 0 {
+				// "others SQL" record
+				if compactedUser.othersRec == nil {
+					compactedUser.othersRec = rec
 				} else {
-					compactedUser.add(item.timestamp, rec.sqlDigest, rec.planDigest, &stmtstats.RUIncrement{
-						TotalRU:      item.totalRU,
-						ExecCount:    item.execCount,
-						ExecDuration: item.execDuration,
-					})
+					compactedUser.othersRec.merge(rec)
 				}
+			} else {
+				// Normal SQL record: directly put into map (no lookup needed, fresh map)
+				key := encodeKey(compactedUser.keyBuf, rec.sqlDigest, rec.planDigest)
+				compactedUser.records[key] = rec
 			}
+			compactedUser.totalRU += rec.totalRU
 		}
 		result.users[compactedUser.user] = compactedUser
 	}
@@ -598,23 +612,82 @@ func (c *ruCollecting) compactWithLimits(maxUsers, maxSQLsPerUser int) *ruCollec
 	return result
 }
 
-// getReportRecordsWithLimits applies two-level TopN filtering and returns records ready for reporting.
-func (c *ruCollecting) getReportRecordsWithLimits(keyspaceName []byte, maxUsers, maxSQLsPerUser int) []tipb.TopRURecord {
-	compacted := c.compactWithLimits(maxUsers, maxSQLsPerUser)
-	if compacted == nil {
-		return nil
+// mergeRecord merges a source ruRecord into this user's records (or othersRec if at capacity or nil digests).
+// This is more efficient than per-item add: 1 map lookup per record instead of 1 per item.
+func (u *userRUCollecting) mergeRecord(sqlDigest, planDigest []byte, srcRec *ruRecord, targetTs uint64, rewriteTs bool) {
+	if srcRec == nil || len(srcRec.items) == 0 {
+		return
 	}
-	return compacted.toTopRURecords(keyspaceName)
+
+	// "others SQL" path: nil digests go to othersRec
+	if len(sqlDigest) == 0 && len(planDigest) == 0 {
+		if u.othersRec == nil {
+			u.othersRec = newRURecord(nil, nil)
+		}
+		u.mergeRecordInto(u.othersRec, srcRec, targetTs, rewriteTs)
+		return
+	}
+
+	// Normal SQL path
+	key := encodeKey(u.keyBuf, sqlDigest, planDigest)
+	dstRec, ok := u.records[key]
+	if !ok {
+		// Check pre-TopN cap before adding new SQL
+		if len(u.records) >= u.preTopNSQLsPerUser {
+			// At capacity - merge into "others SQL" instead
+			if u.othersRec == nil {
+				u.othersRec = newRURecord(nil, nil)
+			}
+			u.mergeRecordInto(u.othersRec, srcRec, targetTs, rewriteTs)
+			return
+		}
+		dstRec = newRURecord(sqlDigest, planDigest)
+		u.records[key] = dstRec
+	}
+	u.mergeRecordInto(dstRec, srcRec, targetTs, rewriteTs)
 }
 
-// getReportRecords applies two-level TopN filtering and returns records ready for reporting.
-func (c *ruCollecting) getReportRecords(keyspaceName []byte) []tipb.TopRURecord {
-	return c.getReportRecordsWithLimits(keyspaceName, maxTopUsers, maxTopSQLsPerUser)
+// mergeRecordInto merges srcRec into dstRec and updates totalRU.
+func (u *userRUCollecting) mergeRecordInto(dstRec, srcRec *ruRecord, targetTs uint64, rewriteTs bool) {
+	if rewriteTs {
+		dstRec.mergeWithTimestamp(srcRec, targetTs)
+	} else {
+		dstRec.merge(srcRec)
+	}
+	u.totalRU += srcRec.totalRU
+}
+
+// getOrCreateUser returns the userRUCollecting for the given user, creating it if necessary.
+// If at user capacity, returns othersUser instead. Must be called with c.mu held.
+func (c *ruCollecting) getOrCreateUser(user string) *userRUCollecting {
+	if user == keyRUOthersUser {
+		return c.getOrCreateOthersUser()
+	}
+	u, ok := c.users[user]
+	if !ok {
+		if len(c.users) >= c.preTopNUsers {
+			return c.getOrCreateOthersUser()
+		}
+		u = newUserRUCollectingWithCap(user, c.preTopNSQLsPerUser)
+		c.users[user] = u
+	}
+	return u
+}
+
+// getOrCreateOthersUser returns the othersUser, creating it if necessary. Must be called with c.mu held.
+func (c *ruCollecting) getOrCreateOthersUser() *userRUCollecting {
+	if c.othersUser == nil {
+		c.othersUser = newUserRUCollectingWithCap(keyRUOthersUser, c.preTopNSQLsPerUser)
+	}
+	return c.othersUser
 }
 
 // mergeFrom merges data from a source ruCollecting (typically a compacted snapshot) into this one.
 // If rewriteTimestamp is true, all timestamps are rewritten to the given timestamp value.
 // This enables efficient multi-stage aggregation without proto conversion.
+//
+// Optimization: merges at record level (1 map lookup per record) instead of item level
+// (1 map lookup per item), significantly reducing CPU and allocations for large datasets.
 func (c *ruCollecting) mergeFrom(src *ruCollecting, targetTimestamp uint64, rewriteTimestamp bool) {
 	if src == nil {
 		return
@@ -623,35 +696,27 @@ func (c *ruCollecting) mergeFrom(src *ruCollecting, targetTimestamp uint64, rewr
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	mergeRecordIntoUser := func(user string, sqlDigest, planDigest []byte, rec *ruRecord) {
-		if rec == nil {
-			return
-		}
-		for _, item := range rec.items {
-			ts := item.timestamp
-			if rewriteTimestamp {
-				ts = targetTimestamp
-			}
-			c.addRecordItemRaw(ts, user, sqlDigest, planDigest,
-				item.totalRU, item.execCount, item.execDuration)
-		}
-	}
-
-	// Merge regular users
+	// Merge regular users: 1 user lookup per srcUser, 1 record lookup per srcRec
 	for _, srcUser := range src.users {
+		dstUser := c.getOrCreateUser(srcUser.user)
 		for _, srcRec := range srcUser.records {
-			mergeRecordIntoUser(srcUser.user, srcRec.sqlDigest, srcRec.planDigest, srcRec)
+			dstUser.mergeRecord(srcRec.sqlDigest, srcRec.planDigest, srcRec, targetTimestamp, rewriteTimestamp)
 		}
 		// Also merge user's othersRec
-		mergeRecordIntoUser(srcUser.user, nil, nil, srcUser.othersRec)
+		if srcUser.othersRec != nil {
+			dstUser.mergeRecord(nil, nil, srcUser.othersRec, targetTimestamp, rewriteTimestamp)
+		}
 	}
 
 	// Merge "others user"
 	if src.othersUser != nil {
+		dstOthersUser := c.getOrCreateOthersUser()
 		// Compatibility: merge potential legacy records map into "others user" as "others SQL".
 		for _, srcRec := range src.othersUser.records {
-			mergeRecordIntoUser(keyRUOthersUser, nil, nil, srcRec)
+			dstOthersUser.mergeRecord(nil, nil, srcRec, targetTimestamp, rewriteTimestamp)
 		}
-		mergeRecordIntoUser(keyRUOthersUser, nil, nil, src.othersUser.othersRec)
+		if src.othersUser.othersRec != nil {
+			dstOthersUser.mergeRecord(nil, nil, src.othersUser.othersRec, targetTimestamp, rewriteTimestamp)
+		}
 	}
 }

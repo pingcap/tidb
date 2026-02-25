@@ -152,7 +152,7 @@ func normalizeTopRUItemIntervalSeconds(intervalSeconds tipb.ItemInterval) int64 
 // SetTopRUItemInterval sets the report interval for TopRU (in seconds).
 // Called from pubSubDataSink when processing subscription request.
 // Valid values: 15, 30, 60 (from tipb.ItemInterval enum).
-// This value controls TopRURecordItem.timestamp_sec aggregation granularity only.
+// This value controls TopRURecordItem.timestamp_sec aggregation interval only.
 // It does not define stream push cadence, which is driven by reporter report tick.
 // Invalid values are normalized to the default 60s before storing.
 //

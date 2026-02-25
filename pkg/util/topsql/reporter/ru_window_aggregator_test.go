@@ -23,8 +23,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// makeRUBatch creates a RUIncrementMap with numUsers users and numSQLsPerUser SQLs per user (up to numUsers*numSQLsPerUser keys).
+func makeRUBatch(numUsers, numSQLsPerUser int) stmtstats.RUIncrementMap {
+	batch := make(stmtstats.RUIncrementMap, numUsers*numSQLsPerUser)
+	for u := 0; u < numUsers; u++ {
+		for s := 0; s < numSQLsPerUser; s++ {
+			key := stmtstats.RUKey{
+				User:       fmt.Sprintf("u%04d", u),
+				SQLDigest:  stmtstats.BinaryDigest(fmt.Sprintf("sql%04d_%04d", u, s)),
+				PlanDigest: stmtstats.BinaryDigest("plan"),
+			}
+			batch[key] = &stmtstats.RUIncrement{TotalRU: float64(numUsers*numSQLsPerUser - u*numSQLsPerUser - s), ExecCount: 1, ExecDuration: 1}
+		}
+	}
+	return batch
+}
+
+// fillAggregatorForWindow fills the aggregator so that takeReportRecords(windowEnd, ...) has four 15s buckets (0,15,30,45) with data.
+// Used by benchmarks to set up state before measuring takeReportRecords.
+func fillAggregatorForWindow(agg *ruWindowAggregator, windowEnd uint64, numUsers, numSQLsPerUser int) {
+	if windowEnd < ruReportWindowSeconds {
+		return
+	}
+	batch := makeRUBatch(numUsers, numSQLsPerUser)
+	// One batch per 15s bucket so we have 4 buckets for a 60s window.
+	agg.addBatchToBucket(1, batch)
+	agg.addBatchToBucket(16, batch)
+	agg.addBatchToBucket(31, batch)
+	agg.addBatchToBucket(46, batch)
+}
+
 func TestRUWindowAggregatorReportGranularity(t *testing.T) {
-	run := func(granularity uint64, expectedTS []uint64, expectedRU []float64) {
+	run := func(interval uint64, expectedTS []uint64, expectedRU []float64) {
 		agg := newRUWindowAggregator()
 		key := stmtstats.RUKey{
 			User:       "u1",
@@ -44,7 +74,7 @@ func TestRUWindowAggregatorReportGranularity(t *testing.T) {
 			key: {TotalRU: 4, ExecCount: 1, ExecDuration: 40},
 		})
 
-		records := agg.takeReportRecords(60, granularity, []byte("ks"))
+		records := agg.takeReportRecords(60, interval, []byte("ks"))
 		require.NotEmpty(t, records)
 
 		rec := findRURecord(t, records, "u1", "sql1", "plan1")
@@ -90,7 +120,7 @@ func TestRUWindowAggregatorCompactTo200(t *testing.T) {
 
 	// Count normal users in compacted snapshot
 	normalUsers := len(bucket.compactedCollecting.users)
-	require.LessOrEqual(t, normalUsers, ruCompactedTopNUsers)
+	require.LessOrEqual(t, normalUsers, maxTopUsers)
 }
 
 func TestRUWindowAggregatorTakeOncePerWindow(t *testing.T) {
@@ -179,4 +209,64 @@ func findRURecord(t *testing.T, records []tipb.TopRURecord, user, sqlDigest, pla
 	}
 	t.Fatalf("record not found: user=%s sql=%s plan=%s", user, sqlDigest, planDigest)
 	return tipb.TopRURecord{}
+}
+
+// Benchmarks for takeReportRecords. Each iteration does fill + takeReportRecords (take consumes buckets, so we must re-fill).
+// Use -bench=TakeReportRecords -benchmem to compare ns/op and B/op when judging whether to move this path into collectWorker.
+// For takeReportRecords-only cost, compare with BenchmarkFillAggregatorOnly_* and subtract fill time from (fill+take) time.
+
+func BenchmarkTakeReportRecords_Small_60s(b *testing.B) {
+	keyspace := []byte("ks")
+	const numUsers, numSQLsPerUser = 10, 10
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+		_ = agg.takeReportRecords(60, 60, keyspace)
+	}
+}
+
+func BenchmarkTakeReportRecords_Medium_60s(b *testing.B) {
+	keyspace := []byte("ks")
+	const numUsers, numSQLsPerUser = 100, 100
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+		_ = agg.takeReportRecords(60, 60, keyspace)
+	}
+}
+
+func BenchmarkTakeReportRecords_Large_60s(b *testing.B) {
+	keyspace := []byte("ks")
+	const numUsers, numSQLsPerUser = 200, 200
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+		_ = agg.takeReportRecords(60, 60, keyspace)
+	}
+}
+
+func BenchmarkTakeReportRecords_Medium_15s(b *testing.B) {
+	keyspace := []byte("ks")
+	const numUsers, numSQLsPerUser = 100, 100
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+		_ = agg.takeReportRecords(60, 15, keyspace)
+	}
+}
+
+// BenchmarkFillAggregatorOnly_Medium measures only the cost to fill the aggregator (no takeReportRecords).
+// takeReportRecords cost ≈ (BenchmarkTakeReportRecords_Medium_60s time) - (this benchmark time).
+func BenchmarkFillAggregatorOnly_Medium(b *testing.B) {
+	const numUsers, numSQLsPerUser = 100, 100
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+		_ = agg
+	}
 }

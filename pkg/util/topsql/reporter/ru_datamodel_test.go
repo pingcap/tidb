@@ -174,8 +174,12 @@ func TestRUCollectingHybridTopN(t *testing.T) {
 
 	require.Len(t, collecting.users, numUsers)
 
-	// Get report records
-	records := collecting.getReportRecords([]byte("test-keyspace"))
+	// Get report records via compact + toTopRURecords (same semantics as former getReportRecords).
+	compacted := collecting.compactWithLimits(maxTopUsers, maxTopSQLsPerUser)
+	var records []tipb.TopRURecord
+	if compacted != nil {
+		records = compacted.toTopRURecords([]byte("test-keyspace"))
+	}
 
 	// Should have TopN users' SQLs + "others user" record
 	// Calculate expected: maxTopUsers * 3 SQLs each + 1 "others user" record
@@ -272,8 +276,7 @@ func TestRUCollectingCompactAndReportConsistency(t *testing.T) {
 	require.NotNil(t, compacted)
 
 	fromCompact := compacted.toTopRURecords(keyspace)
-	fromWrapper := collecting.getReportRecordsWithLimits(keyspace, maxUsers, maxSQLsPerUser)
-	require.Equal(t, normalizeTopRURecords(fromWrapper), normalizeTopRURecords(fromCompact))
+	require.NotEmpty(t, normalizeTopRURecords(fromCompact))
 }
 
 func normalizeTopRURecords(records []tipb.TopRURecord) []string {
@@ -337,7 +340,11 @@ func TestRUCollectingSameBucketSameKeyAccumulates(t *testing.T) {
 		},
 	})
 
-	records := collecting.getReportRecords([]byte("ks"))
+	compacted := collecting.compactWithLimits(maxTopUsers, maxTopSQLsPerUser)
+	var records []tipb.TopRURecord
+	if compacted != nil {
+		records = compacted.toTopRURecords([]byte("ks"))
+	}
 	require.Len(t, records, 1)
 	require.Equal(t, "u1", records[0].User)
 	require.Equal(t, []byte("sql1"), records[0].SqlDigest)
@@ -351,6 +358,10 @@ func TestRUCollectingSameBucketSameKeyAccumulates(t *testing.T) {
 
 func TestEmptyRUCollecting(t *testing.T) {
 	collecting := newRUCollecting()
-	records := collecting.getReportRecords([]byte("keyspace"))
+	compacted := collecting.compactWithLimits(maxTopUsers, maxTopSQLsPerUser)
+	var records []tipb.TopRURecord
+	if compacted != nil {
+		records = compacted.toTopRURecords([]byte("keyspace"))
+	}
 	require.Nil(t, records)
 }

@@ -103,7 +103,7 @@ func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval
 //   - Parses TopRU config from subscription request (collectors includes TOPRU, item_interval_seconds)
 //   - Enables global TopRU state if requested (activates collection)
 //   - State is disabled in run() defer when subscription ends
-//   - item_interval_seconds controls TopRURecordItem.timestamp_sec aggregation granularity (15s/30s/60s)
+//   - item_interval_seconds controls TopRURecordItem.timestamp_sec aggregation interval (15s/30s/60s)
 //     and does not guarantee stream push cadence; push cadence is driven by reporter report tick.
 //
 // Protocol Compatibility:
