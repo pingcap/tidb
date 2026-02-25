@@ -133,7 +133,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			return in, true
 		}
 		return in, false
-
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
