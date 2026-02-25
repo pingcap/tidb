@@ -573,6 +573,50 @@ func TestMVServiceRefreshMVSuccessUpdatesNextRefreshAndOrderTS(t *testing.T) {
 	svc.mvRefreshMu.Unlock()
 }
 
+func TestMVServiceExecuteRefreshTaskSkipWhenDeleted(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		refreshNext: mvsNow().Add(time.Minute).Round(0),
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+
+	m := &mv{
+		ID:          403,
+		nextRefresh: mvsNow().Add(-time.Minute).Round(0),
+	}
+	svc.buildMVRefreshTasks(map[int64]*mv{m.ID: m})
+	svc.buildMVRefreshTasks(map[int64]*mv{})
+
+	err := svc.executeRefreshTask(m)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), helper.lastRefreshID)
+	require.Equal(t, int64(0), svc.metrics.runningMVRefreshCount.Load())
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultFailed))
+}
+
+func TestMVServiceExecutePurgeTaskSkipWhenDeleted(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		purgeNext: mvsNow().Add(time.Minute).Round(0),
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+
+	l := &mvLog{
+		ID:        303,
+		nextPurge: mvsNow().Add(-time.Minute).Round(0),
+	}
+	svc.buildMVLogPurgeTasks(map[int64]*mvLog{l.ID: l})
+	svc.buildMVLogPurgeTasks(map[int64]*mvLog{})
+
+	err := svc.executePurgeTask(l)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), helper.lastPurgeID)
+	require.Equal(t, int64(0), svc.metrics.runningMVLogPurgeCount.Load())
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultFailed))
+}
+
 func TestMVServiceTaskExecutionReportsDuration(t *testing.T) {
 	installMockTimeForTest(t)
 	nextRefresh := mvsNow().Add(time.Minute).Round(0)

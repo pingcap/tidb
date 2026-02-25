@@ -217,6 +217,10 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 }
 
 func (t *MVService) executeRefreshTask(m *mv) error {
+	if !t.hasPendingMVTask(m) {
+		return nil
+	}
+
 	t.metrics.runningMVRefreshCount.Add(1)
 	defer t.metrics.runningMVRefreshCount.Add(-1)
 
@@ -227,6 +231,10 @@ func (t *MVService) executeRefreshTask(m *mv) error {
 }
 
 func (t *MVService) executePurgeTask(l *mvLog) error {
+	if !t.hasPendingMVLogTask(l) {
+		return nil
+	}
+
 	t.metrics.runningMVLogPurgeCount.Add(1)
 	defer t.metrics.runningMVLogPurgeCount.Add(-1)
 
@@ -234,6 +242,24 @@ func (t *MVService) executePurgeTask(l *mvLog) error {
 	nextPurge, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
 	t.observeTaskDuration(mvTaskDurationTypePurge, taskStart, err)
 	return t.handlePurgeTaskResult(l, nextPurge, err)
+}
+
+// hasPendingMVTask reports whether this exact refresh task is still tracked.
+func (t *MVService) hasPendingMVTask(m *mv) bool {
+	t.mvRefreshMu.Lock()
+	defer t.mvRefreshMu.Unlock()
+
+	it, ok := t.mvRefreshMu.pending[m.ID]
+	return ok && it.Value == m
+}
+
+// hasPendingMVLogTask reports whether this exact purge task is still tracked.
+func (t *MVService) hasPendingMVLogTask(l *mvLog) bool {
+	t.mvLogPurgeMu.Lock()
+	defer t.mvLogPurgeMu.Unlock()
+
+	it, ok := t.mvLogPurgeMu.pending[l.ID]
+	return ok && it.Value == l
 }
 
 func (t *MVService) observeTaskDuration(taskType string, taskStart time.Time, err error) {
