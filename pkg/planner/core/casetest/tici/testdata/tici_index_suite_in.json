@@ -44,6 +44,7 @@
       "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, t, d limit 10 offset 5",
       "explain format='brief' select * from t4 where i in (1, 2, 3) and d between '2025-11-01' and '2025-11-30' order by i, ts desc, d limit 10",
       "explain format='brief' select i from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc limit 10",
+      "explain format='brief' select * from t1, t4 where t1.id = t4.i and t4.ts < '2025-11-30 00:00:00' and fts_match_word('hello', t1.title)",
       "explain format='brief' select /*+ inl_join(t4), use_index(t4, idx) */ * from t4, t2 where t2.a=t4.i and t4.t = 'apple'",
       "explain format='brief' select * from t5 where t = 'apple'",
       "explain format='brief' select * from t5 where t = 'apple' and ts < '2025-11-30 00:00:00'",

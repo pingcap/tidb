@@ -402,6 +402,20 @@
         "Warn": null
       },
       {
+        "SQL": "explain format='brief' select * from t1, t4 where t1.id = t4.i and t4.ts < '2025-11-30 00:00:00' and fts_match_word('hello', t1.title)",
+        "Plan": [
+          "Projection 4154.17 root  test.t1.id, test.t1.title, test.t1.body, test.t1.field1, test.t4.i, test.t4.ts, test.t4.d, test.t4.t",
+          "└─IndexJoin 4154.17 root  inner join, inner:TableReader, outer key:test.t1.id, inner key:test.t4.i, equal cond:eq(test.t1.id, test.t4.i)",
+          "  ├─IndexLookUp(Build) 1000.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 332.33 root  data:Selection",
+          "    └─Selection 332.33 cop[tikv]  lt(test.t4.ts, 2025-11-30 00:00:00.000000)",
+          "      └─TableRangeScan 1000.00 cop[tikv] table:t4 range: decided by [test.t1.id], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain format='brief' select /*+ inl_join(t4), use_index(t4, idx) */ * from t4, t2 where t2.a=t4.i and t4.t = 'apple'",
         "Plan": [
           "HashJoin 12.50 root  inner join, equal:[eq(test.t4.i, test.t2.a)]",
