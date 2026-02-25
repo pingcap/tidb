@@ -43,10 +43,18 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_info' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mlog_id"))
 
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_newest' order by seq_in_index").
-		Check(testkit.Rows("mview_id", "is_newest_refresh"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_mlog_newest' order by seq_in_index").
-		Check(testkit.Rows("mlog_id", "is_newest_purge"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='PRIMARY' order by seq_in_index").
+		Check(testkit.Rows("refresh_job_id"))
+	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' order by ordinal_position limit 1").
+		Check(testkit.Rows("refresh_job_id"))
+	tk.MustQuery("select lower(data_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_JOB_ID'").
+		Check(testkit.Rows("bigint"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='PRIMARY' order by seq_in_index").
+		Check(testkit.Rows("purge_job_id"))
+	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' order by ordinal_position limit 1").
+		Check(testkit.Rows("purge_job_id"))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_FAILED_REASON' and lower(data_type)='text'").
+		Check(testkit.Rows("1"))
 }
 
 func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {

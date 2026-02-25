@@ -762,50 +762,43 @@ const (
 	        description text,
 	        primary key(module, name))`
 
-	// CreateTiDBMViewRefreshTable is a table to store current (latest) refresh state for each materialized view.
-	CreateTiDBMViewRefreshTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
-		MVIEW_ID bigint(21) NOT NULL,
-		LAST_SUCCESS_READ_TSO bigint(21) DEFAULT NULL,
+	// CreateTiDBMViewRefreshInfoTable is a table to store current refresh scheduling info for each materialized view.
+	CreateTiDBMViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
+		MVIEW_ID bigint NOT NULL,
+		LAST_SUCCESS_READ_TSO bigint DEFAULT NULL,
 		NEXT_TIME datetime DEFAULT NULL,
-		PRIMARY KEY (MVIEW_ID))`
+		PRIMARY KEY(MVIEW_ID))`
 
-	// CreateTiDBMLogPurgeTable is a table to store current (latest) purge state for each materialized view log.
-	CreateTiDBMLogPurgeTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
-		MLOG_ID bigint(21) NOT NULL,
+	// CreateTiDBMLogPurgeInfoTable is a table to store current purge scheduling info for each materialized view log.
+	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
+		MLOG_ID bigint NOT NULL,
 		NEXT_TIME datetime DEFAULT NULL,
-		PRIMARY KEY (MLOG_ID))`
+		PRIMARY KEY(MLOG_ID))`
 
 	// CreateTiDBMViewRefreshHistTable is a table to store mview refresh history.
-	// Note: REFRESH_JOB_ID is auto-increment BIGINT (internal).
 	CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
+		REFRESH_JOB_ID bigint NOT NULL,
 		MVIEW_ID bigint NOT NULL,
-		MVIEW_NAME varchar(64) NOT NULL,
-		REFRESH_JOB_ID bigint NOT NULL AUTO_INCREMENT,
-		IS_NEWEST_REFRESH varchar(3) NOT NULL,
 		REFRESH_METHOD varchar(32) NOT NULL,
 		REFRESH_TIME datetime DEFAULT NULL,
 		REFRESH_ENDTIME datetime DEFAULT NULL,
-		REFRESH_ROWS bigint DEFAULT NULL,
 		REFRESH_STATUS varchar(16) DEFAULT NULL,
+		REFRESH_ROWS bigint DEFAULT NULL,
 		REFRESH_READ_TSO bigint DEFAULT NULL,
 		REFRESH_FAILED_REASON text DEFAULT NULL,
-		PRIMARY KEY(REFRESH_JOB_ID),
-		KEY idx_mview_newest(MVIEW_ID, IS_NEWEST_REFRESH))`
+		PRIMARY KEY(REFRESH_JOB_ID))`
 
 	// CreateTiDBMLogPurgeHistTable is a table to store mlog purge history.
-	// Note: PURGE_JOB_ID is auto-increment BIGINT (internal).
 	CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
+		PURGE_JOB_ID bigint NOT NULL,
 		MLOG_ID bigint NOT NULL,
-		MLOG_NAME varchar(64) NOT NULL,
-		PURGE_JOB_ID bigint NOT NULL AUTO_INCREMENT,
-		IS_NEWEST_PURGE varchar(3) NOT NULL,
 		PURGE_METHOD varchar(32) NOT NULL,
 		PURGE_TIME datetime DEFAULT NULL,
 		PURGE_ENDTIME datetime DEFAULT NULL,
-		PURGE_ROWS bigint DEFAULT NULL,
+		PURGE_ROWS bigint NOT NULL,
 		PURGE_STATUS varchar(16) DEFAULT NULL,
-		PRIMARY KEY(PURGE_JOB_ID),
-		KEY idx_mlog_newest(MLOG_ID, IS_NEWEST_PURGE))`
+		PURGE_FAILED_REASON text DEFAULT NULL,
+		PRIMARY KEY(PURGE_JOB_ID))`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -3317,8 +3310,8 @@ func upgradeToVer221(s sessiontypes.Session, ver int64) {
 	if ver >= version221 {
 		return
 	}
-	doReentrantDDL(s, CreateTiDBMViewRefreshTable)
-	doReentrantDDL(s, CreateTiDBMLogPurgeTable)
+	doReentrantDDL(s, CreateTiDBMViewRefreshInfoTable)
+	doReentrantDDL(s, CreateTiDBMLogPurgeInfoTable)
 	doReentrantDDL(s, CreateTiDBMViewRefreshHistTable)
 	doReentrantDDL(s, CreateTiDBMLogPurgeHistTable)
 }
@@ -3474,8 +3467,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
 	// create mysql.tidb_mview_refresh_info/mysql.tidb_mlog_purge_info/mysql.tidb_mview_refresh_hist/mysql.tidb_mlog_purge_hist
-	mustExecute(s, CreateTiDBMViewRefreshTable)
-	mustExecute(s, CreateTiDBMLogPurgeTable)
+	mustExecute(s, CreateTiDBMViewRefreshInfoTable)
+	mustExecute(s, CreateTiDBMLogPurgeInfoTable)
 	mustExecute(s, CreateTiDBMViewRefreshHistTable)
 	mustExecute(s, CreateTiDBMLogPurgeHistTable)
 }

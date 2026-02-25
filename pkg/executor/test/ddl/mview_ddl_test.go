@@ -17,7 +17,9 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,8 +89,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Equal(t, "FAST", mvTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "NOW()", mvTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "300", mvTable.Meta().MaterializedView.RefreshNext)
-	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0, NEXT_TIME is not null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvTable.Meta().ID)).
-		Check(testkit.Rows("1 1"))
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvTable.Meta().ID)).
+		Check(testkit.Rows("1"))
 
 	// Base table reverse mapping maintained by DDL.
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
@@ -169,9 +172,11 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("create index idx_mv_s on mv (s)")
 	tk.MustExec("drop index idx_mv_s on mv")
 
-	// ALTER TABLE ... SET TIFLASH REPLICA is allowed on MV table, but still forbidden on base.
+	// ALTER TABLE ... SET TIFLASH REPLICA is allowed on both base table and MV table.
 	err = tk.ExecToErr("alter table t set tiflash replica 1")
-	require.ErrorContains(t, err, "ALTER TABLE on base table with materialized view dependencies")
+	if err != nil {
+		require.NotContains(t, err.Error(), "ALTER TABLE on base table with materialized view dependencies")
+	}
 	err = tk.ExecToErr("alter table mv set tiflash replica 1")
 	if err != nil {
 		require.NotContains(t, err.Error(), "ALTER TABLE on materialized view table")
@@ -200,6 +205,149 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	baseTable, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
+}
+
+func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	const pauseBuildFailpoint = "github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild"
+	require.NoError(t, failpoint.Enable(pauseBuildFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+		}
+	}()
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_state (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	}()
+
+	var initTS uint64
+	var mviewID int64
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("select MVIEW_ID, LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info").Rows()
+		if len(rows) != 1 {
+			return false
+		}
+		id, err := strconv.ParseInt(fmt.Sprint(rows[0][0]), 10, 64)
+		if err != nil || id == 0 {
+			return false
+		}
+		ts, err := strconv.ParseUint(fmt.Sprint(rows[0][1]), 10, 64)
+		if err != nil || ts == 0 {
+			return false
+		}
+		mviewID = id
+		initTS = ts
+		return true
+	}, 30*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+	enabled = false
+
+	err := <-ddlDone
+	require.NoError(t, err)
+	tk.MustQuery("select a, s, cnt from mv_state order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	rows := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Rows()
+	require.Len(t, rows, 1)
+	finalTS, err := strconv.ParseUint(fmt.Sprint(rows[0][0]), 10, 64)
+	require.NoError(t, err)
+	// finalTS must be greater than initTS when the build is successful.
+	require.Greater(t, finalTS, initTS)
+}
+
+func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	const afterUpsertFailpoint = "github.com/pingcap/tidb/pkg/ddl/afterCreateMaterializedViewSuccessRefreshInfoUpsert"
+	const postUpsertRetryableErr = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewPostBuildAfterRefreshInfoUpsertRetryableErr"
+
+	paused := make(chan struct{})
+	resume := make(chan struct{})
+	var pausedOnce sync.Once
+	var resumeOnce sync.Once
+	release := func() {
+		resumeOnce.Do(func() {
+			close(resume)
+		})
+	}
+	testfailpoint.EnableCall(t, afterUpsertFailpoint, func() {
+		pausedOnce.Do(func() {
+			close(paused)
+		})
+		<-resume
+	})
+
+	require.NoError(t, failpoint.Enable(postUpsertRetryableErr, "1*return(true)"))
+	defer func() {
+		release()
+		require.NoError(t, failpoint.Disable(postUpsertRetryableErr))
+	}()
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_upsert_visibility (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	}()
+
+	var prewriteTS uint64
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info").Rows()
+		if len(rows) != 1 {
+			return false
+		}
+		ts, err := strconv.ParseUint(fmt.Sprint(rows[0][0]), 10, 64)
+		if err != nil || ts == 0 {
+			return false
+		}
+		prewriteTS = ts
+		return true
+	}, 30*time.Second, 100*time.Millisecond)
+
+	select {
+	case <-paused:
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for post-upsert failpoint")
+	}
+
+	// The post-build success upsert should stay invisible before this DDL step commits.
+	rows := tk.MustQuery("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info").Rows()
+	require.Len(t, rows, 1)
+	visibleTS, err := strconv.ParseUint(fmt.Sprint(rows[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, prewriteTS, visibleTS)
+
+	release()
+
+	err = <-ddlDone
+	require.Error(t, err)
+	require.ErrorContains(t, err, "detected residual build rows on retry")
+	require.NotContains(t, err.Error(), "Duplicate entry")
+	tk.MustQuery("show tables like 'mv_upsert_visibility'").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
+	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
 
 func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
