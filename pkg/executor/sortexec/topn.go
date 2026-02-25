@@ -475,7 +475,19 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 		}
 	}
 
-	// Now, len(e.prevPrefixKeys) must be greater than 0
+	// Now, len(e.prevPrefixKeys) must be greater than 0 when we reach to here
+
+	lastRowPrefixKeys, err := e.getPrefixKeys(chk.GetRow(rowCnt - 1))
+	if err != nil {
+		return 0, err
+	}
+
+	if slices.Equal(lastRowPrefixKeys, e.prevTruncateKeys) {
+		// Fast path: if the last row in the chunk is equal to the current prefix key,
+		// we can skip this chunk
+		return rowCnt, nil
+	}
+
 	for ; idx < rowCnt; idx++ {
 		currentPrefixKeys, err := e.getPrefixKeys(chk.GetRow(idx))
 		if err != nil {
