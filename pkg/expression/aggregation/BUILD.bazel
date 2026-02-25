@@ -70,7 +70,7 @@ go_test(
     ],
     embed = [":aggregation"],
     flaky = True,
-    shard_count = 17,
+    shard_count = 18,
     deps = [
         "//pkg/expression",
         "//pkg/kv",
@@ -82,6 +82,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/codec",
         "//pkg/util/mock",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
