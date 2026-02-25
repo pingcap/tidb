@@ -66,7 +66,8 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			csName := strings.ToLower(tok.Lit)
 			cs, err := charset.GetCharsetInfo(csName)
 			if err != nil {
-				p.errs = append(p.errs, err)
+				p.errs = append(p.errs,
+					ErrUnknownCharacterSet.GenWithStackByArgs(csName))
 				return nil
 			}
 			opt.StrValue = cs.Name
@@ -75,7 +76,8 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			csName := strings.ToLower(tok.Lit)
 			cs, err := charset.GetCharsetInfo(csName)
 			if err != nil {
-				p.errs = append(p.errs, err)
+				p.errs = append(p.errs,
+					ErrUnknownCharacterSet.GenWithStackByArgs(csName))
 				return nil
 			}
 			opt.StrValue = cs.Name

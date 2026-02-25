@@ -15,6 +15,7 @@ package parser
 
 import (
 	"encoding/hex"
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -71,6 +72,7 @@ func (p *HandParser) parseCreateUserStmt() ast.StmtNode {
 // parseTLSOptions parses SSL / X509 / CIPHER / ISSUER / SUBJECT (after REQUIRE is already consumed)
 func (p *HandParser) parseTLSOptions() []*ast.AuthTokenOrTLSOption {
 	var opts []*ast.AuthTokenOrTLSOption
+	seen := make(map[ast.AuthTokenOrTLSOptionType]bool)
 	for {
 		opt := Alloc[ast.AuthTokenOrTLSOption](p.arena)
 		tok := p.peek()
@@ -98,6 +100,13 @@ func (p *HandParser) parseTLSOptions() []*ast.AuthTokenOrTLSOption {
 			// Unknown option
 			return opts
 		}
+		if seen[opt.Type] {
+			p.errs = append(p.errs,
+				fmt.Errorf("Duplicate require %s clause", //nolint:revive
+					opt.Type.String()))
+			return opts
+		}
+		seen[opt.Type] = true
 		opts = append(opts, opt)
 		if _, ok := p.accept(and); !ok {
 			// Check if next is a TLS option keyword
