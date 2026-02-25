@@ -45,9 +45,9 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t group by a",
         "Plan": [
-          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
+          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#5)->Column#4",
           "└─TableReader 2.00 root  data:HashAgg",
-          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
+          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#5",
           "    └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
         ]
       }
@@ -378,11 +378,11 @@
     "Name": "TestCorrelatedEstimation",
     "Cases": [
       [
-        "Projection 10.00 root  Column#22",
-        "└─Apply 10.00 root  CARTESIAN left outer semi join, left side:IndexReader, other cond:eq(test.t.c, Column#21)",
+        "Projection 10.00 root  Column#27",
+        "└─Apply 10.00 root  CARTESIAN left outer semi join, left side:IndexReader, other cond:eq(test.t.c, Column#26)",
         "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
         "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
-        "  └─StreamAgg(Probe) 10.00 root  funcs:count(1)->Column#21",
+        "  └─StreamAgg(Probe) 10.00 root  funcs:count(1)->Column#26",
         "    └─HashJoin 10.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
         "      ├─IndexReader(Build) 10.00 root  index:Selection",
         "      │ └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
@@ -392,12 +392,12 @@
         "          └─IndexFullScan 100.00 cop[tikv] table:s, index:idx(c, b, a) keep order:false"
       ],
       [
-        "Projection 10.00 root  Column#13",
+        "Projection 10.00 root  Column#16",
         "└─Apply 10.00 root  CARTESIAN left outer join, left side:IndexReader",
         "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
         "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
         "  └─MaxOneRow(Probe) 10.00 root  ",
-        "    └─Projection 10.00 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
+        "    └─Projection 10.00 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#16",
         "      └─IndexReader 10.00 root  index:Selection",
         "        └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a)",
         "          └─IndexRangeScan 10.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
@@ -410,7 +410,7 @@
       {
         "SQL": "explain format = 'brief' select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:max(test.t.e)->Column#7",
+          "StreamAgg 1.00 root  funcs:max(test.t.e)->Column#8",
           "└─TopN 1.00 root  test.t.e:desc, offset:0, count:1",
           "  └─IndexLookUp 1.00 root  ",
           "    ├─IndexRangeScan(Build) 1.25 cop[tikv] table:t, index:idx1(d, a) range:[\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\",\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\"], keep order:false",

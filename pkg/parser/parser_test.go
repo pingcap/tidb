@@ -1463,6 +1463,8 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
+		{"flush stats_delta", true, "FLUSH STATS_DELTA"},
+		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA CLUSTER"},
 
 		// for call statement
 		{"call ", false, ""},
@@ -7546,6 +7548,9 @@ func TestPlanReplayer(t *testing.T) {
 		{"PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'", true, "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'"},
 		{"PLAN REPLAYER DUMP EXPLAIN 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'"},
 		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'"},
+		{"PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1')", true, "PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1')"},
+		{"PLAN REPLAYER DUMP EXPLAIN ( 'SELECT * FROM t1' , 'SELECT * FROM t2' )", true, "PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1', 'SELECT * FROM t2 WHERE id = 1')", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1', 'SELECT * FROM t2 WHERE id = 1')"},
 		{"PLAN REPLAYER CAPTURE '123' '123'", true, "PLAN REPLAYER CAPTURE '123' '123'"},
 		{"PLAN REPLAYER CAPTURE REMOVE '123' '123'", true, "PLAN REPLAYER CAPTURE REMOVE '123' '123'"},
 	}
@@ -7565,6 +7570,23 @@ func TestPlanReplayer(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "SELECT a FROM t", v.Stmt.Text())
 	require.True(t, v.Analyze)
+
+	// Multiple SQL records: EXPLAIN ( "sql1", "sql2", ... )
+	sms, _, err = p.Parse("PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')", "", "")
+	require.NoError(t, err)
+	v, ok = sms[0].(*ast.PlanReplayerStmt)
+	require.True(t, ok)
+	require.Nil(t, v.Stmt)
+	require.False(t, v.Analyze)
+	require.Equal(t, []string{"SELECT * FROM t1", "SELECT * FROM t2"}, v.StmtList)
+
+	sms, _, err = p.Parse("PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1')", "", "")
+	require.NoError(t, err)
+	v, ok = sms[0].(*ast.PlanReplayerStmt)
+	require.True(t, ok)
+	require.Nil(t, v.Stmt)
+	require.True(t, v.Analyze)
+	require.Equal(t, []string{"SELECT * FROM t1"}, v.StmtList)
 }
 
 func TestTrafficStmt(t *testing.T) {
@@ -8153,4 +8175,16 @@ func TestTableAffinityOption(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestSplitPartition(t *testing.T) {
+	cases := []testCase{
+		{`create table t (id BIGINT, user_id BIGINT, action_type VARCHAR(20), PRIMARY KEY (id), INDEX idx_user_id (user_id)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx_user_id BETWEEN (1000) AND (100000) REGIONS 3`, true, "CREATE TABLE `t` (`id` BIGINT,`user_id` BIGINT,`action_type` VARCHAR(20),PRIMARY KEY(`id`),INDEX `idx_user_id`(`user_id`)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3"},
+		{`alter table t SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4`, true, "ALTER TABLE `t` SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4"},
+		{`alter table t SPLIT INDEX ss BETWEEN (0) AND (1000000) REGIONS 3`, true, "ALTER TABLE `t` SPLIT INDEX `ss` BETWEEN (0) AND (1000000) REGIONS 3"},
+		{`create table t (id BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4`, true, "CREATE TABLE `t` (`id` BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4"},
+		{`create table t (id BIGINT, INDEX idx(id)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx BETWEEN (0) AND (1000000) REGIONS 2`, true, "CREATE TABLE `t` (`id` BIGINT,INDEX `idx`(`id`)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx` BETWEEN (0) AND (1000000) REGIONS 2"},
+		{`alter table t SPLIT BETWEEN (0) AND (1000000) REGIONS 3`, true, "ALTER TABLE `t` SPLIT BETWEEN (0) AND (1000000) REGIONS 3"},
+	}
+	RunTest(t, cases, false)
 }

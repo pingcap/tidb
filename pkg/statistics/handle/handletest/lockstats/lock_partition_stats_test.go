@@ -475,7 +475,7 @@ func TestNewPartitionShouldBeLockedIfWholeTableLocked(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(21,'a')")
 	tk.MustExec("insert into t(a, b) values(22,'b')")
 	// Dump stats delta to KV.
-	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	// Check the mysql.stats_table_locked is updated correctly.
 	// And the new partition is locked.
 	rows = tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
@@ -516,7 +516,7 @@ func TestUnlockSomePartitionsWouldUpdateGlobalCountCorrectly(t *testing.T) {
 	require.Equal(t, int64(0), tblStats.RealtimeCount)
 
 	// Dump stats delta to KV.
-	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	// Check the mysql.stats_table_locked is updated correctly.
 	rows := tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
 	require.Len(t, rows, 2)

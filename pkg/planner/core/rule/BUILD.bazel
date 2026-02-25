@@ -11,6 +11,7 @@ go_library(
         "rule_constant_propagation.go",
         "rule_init.go",
         "rule_max_min_eliminate.go",
+        "rule_outer_join_to_semi_join.go",
         "rule_partition_processor.go",
         "rule_predicate_simplification.go",
         "rule_prune_indexes.go",

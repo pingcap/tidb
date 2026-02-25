@@ -660,6 +660,10 @@ const (
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
+
 	// TiDBSlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
@@ -961,6 +965,9 @@ const (
 	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
 	// TODO(crazycs520): remove this after foreign key GA.
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
+
+	// TiDBForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
+	TiDBForeignKeyCheckInSharedLock = "tidb_foreign_key_check_in_shared_lock"
 
 	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
@@ -1515,6 +1522,7 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
 	DefTiDBSkipIsolationLevelCheck          = false
@@ -1660,6 +1668,7 @@ const (
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
+	DefTiDBForeignKeyCheckInSharedLock           = false
 	DefTiDBOptAdvancedJoinHint                   = true
 	DefTiDBAnalyzePartitionConcurrency           = 2
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
@@ -1673,7 +1682,7 @@ const (
 	DefTiDBGOGCMaxValue                               = 500
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
-	DefTiDBOptPartialOrderedIndexForTopN              = false
+	DefTiDBOptPartialOrderedIndexForTopN              = "DISABLE"
 	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false

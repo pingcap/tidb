@@ -112,7 +112,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	tk.MustExec("create table if not exists t(a int, b int, index ia(a));")
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	ctx := context.Background()
 	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
 	// Trigger async load of index histogram by using the index in a query.

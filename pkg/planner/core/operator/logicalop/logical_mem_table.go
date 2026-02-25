@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -109,7 +110,62 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (bas
 
 // BuildKeyInfo inherits BaseLogicalPlan.<4th> implementation.
 
-// PushDownTopN inherits BaseLogicalPlan.<5th> implementation.
+// PushDownTopN implements base.LogicalPlan.<5th> interface.
+func (p *LogicalMemTable) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
+	// TODO(lance6716): why don't change function signature to use *LogicalTopN directly?
+	topN, ok := topNLogicalPlan.(*LogicalTopN)
+	if !ok {
+		return p.Self()
+	}
+
+	if len(topN.PartitionBy) > 0 {
+		return p.Self()
+	}
+
+	rowLimitSetter, okRowLimit := p.Extractor.(base.MemTableRowLimitHintSetter)
+	descSetter, okDesc := p.Extractor.(base.MemTableDescHintSetter)
+
+	switch {
+	case topN.IsLimit():
+		if okRowLimit {
+			p.pushDownRowLimit(topN, rowLimitSetter)
+		}
+	case p.isSlowLogTopNByTime(topN):
+		if okDesc {
+			descSetter.SetDesc(topN.ByItems[0].Desc)
+		}
+		if okRowLimit {
+			p.pushDownRowLimit(topN, rowLimitSetter)
+		}
+	}
+
+	return topN.AttachChild(p)
+}
+
+func (*LogicalMemTable) pushDownRowLimit(topN *LogicalTopN, limitSetter base.MemTableRowLimitHintSetter) {
+	end := topN.Offset + topN.Count
+	if end < topN.Offset {
+		end = ^uint64(0)
+	}
+	limitSetter.SetRowLimitHint(end)
+}
+
+func (p *LogicalMemTable) isSlowLogTopNByTime(topN *LogicalTopN) bool {
+	if len(topN.ByItems) != 1 {
+		return false
+	}
+	col, ok := topN.ByItems[0].Expr.(*expression.Column)
+	if !ok {
+		return false
+	}
+	if p.TableInfo.Name.O != infoschema.TableSlowQuery &&
+		p.TableInfo.Name.O != infoschema.ClusterTableSlowLog {
+		return false
+	}
+	return slices.ContainsFunc(p.TableInfo.Columns, func(column *model.ColumnInfo) bool {
+		return column.Name.O == variable.SlowLogTimeStr && column.ID == col.ID
+	})
+}
 
 // DeriveTopN inherits BaseLogicalPlan.<6th> implementation.
 
