@@ -100,15 +100,15 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 		joinType, natural, straight, _ = p.parseJoinType()
 
 		// Parse the right side.
-		// NATURAL JOIN and STRAIGHT_JOIN never take ON/USING, so they complete
-		// immediately at this level (left-associative per the %left join
-		// keyword precedence — same precedence means reduce wins). Use
-		// parseTableSource() for these to avoid absorbing subsequent joins.
-		// For all other joins, use parseJoinRHS() which recursively absorbs
-		// subsequent JOINs and their ON/USING clauses, building a right-leaning
-		// subtree for stacked ON clauses.
+		// NATURAL JOIN never takes ON/USING, so it completes immediately
+		// at this level (left-associative). Use parseTableSource() for it
+		// to avoid absorbing subsequent joins.
+		// STRAIGHT_JOIN CAN take ON clause (like regular joins).
+		// For all other joins (including STRAIGHT_JOIN), use parseJoinRHS()
+		// which recursively absorbs subsequent JOINs and their ON/USING
+		// clauses, building a right-leaning subtree for stacked ON clauses.
 		var rhs ast.ResultSetNode
-		if natural || straight {
+		if natural {
 			rhs = p.parseTableSource()
 		} else {
 			rhs = p.parseJoinRHS()
@@ -118,22 +118,21 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 		}
 
 		// Check for ON/USING clause for THIS join level.
-		// NATURAL JOIN and STRAIGHT_JOIN never take ON/USING — check these
-		// FIRST to avoid accidentally consuming ON from DML clauses like
-		// ON DUPLICATE KEY UPDATE.
-		if natural || straight {
+		// NATURAL JOIN never takes ON/USING — check it FIRST to avoid
+		// accidentally consuming ON from DML clauses like ON DUPLICATE KEY.
+		if natural {
 			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
-			join.NaturalJoin = natural
-			join.StraightJoin = straight
+			join.NaturalJoin = true
 			lhs = join
 		} else if _, ok := p.accept(on); ok {
 			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
+			join.StraightJoin = straight
 			on := Alloc[ast.OnCondition](p.arena)
 			on.Expr = p.parseExpression(precNone)
 			join.On = on
@@ -143,6 +142,7 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
+			join.StraightJoin = straight
 			p.expect('(')
 			join.Using = p.parseColumnNameList()
 			p.expect(')')
@@ -153,9 +153,17 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 				p.error(p.peek().Offset, "Outer join requires ON/USING clause")
 				return nil
 			}
-			// Pure cross join — apply tree rotation to match MySQL's
-			// left-associative cross join semantics.
-			lhs = p.makeCrossJoin(lhs, rhs)
+			// Pure cross/straight join without ON.
+			join := p.arena.AllocJoin()
+			join.Left = lhs
+			join.Right = rhs
+			join.Tp = joinType
+			join.StraightJoin = straight
+			if !straight {
+				lhs = p.makeCrossJoin(lhs, rhs)
+			} else {
+				lhs = join
+			}
 		}
 	}
 
@@ -191,11 +199,10 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 		joinType, natural, straight, _ = p.parseJoinType()
 
 		// Parse the right side.
-		// For NATURAL/STRAIGHT: use parseTableSource (left-associative, no ON).
-		// For all other joins: recurse into parseJoinRHS which will handle
-		// any further nested joins and consume their ON clauses.
+		// NATURAL JOIN: uses parseTableSource (left-associative, no ON).
+		// All others (including STRAIGHT_JOIN): recurse into parseJoinRHS.
 		var rhs ast.ResultSetNode
-		if natural || straight {
+		if natural {
 			rhs = p.parseTableSource()
 		} else {
 			rhs = p.parseJoinRHS()
@@ -205,21 +212,20 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 		}
 
 		// Check for ON/USING clause for THIS join level.
-		// NATURAL JOIN and STRAIGHT_JOIN never take ON/USING — check these
-		// FIRST to avoid accidentally consuming ON from outer context.
-		if natural || straight {
+		// NATURAL JOIN never takes ON/USING — check it FIRST.
+		if natural {
 			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
-			join.NaturalJoin = natural
-			join.StraightJoin = straight
+			join.NaturalJoin = true
 			lhs = join
 		} else if _, ok := p.accept(on); ok {
 			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
+			join.StraightJoin = straight
 			cond := Alloc[ast.OnCondition](p.arena)
 			cond.Expr = p.parseExpression(precNone)
 			join.On = cond
@@ -229,6 +235,7 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
+			join.StraightJoin = straight
 			p.expect('(')
 			join.Using = p.parseColumnNameList()
 			p.expect(')')
@@ -239,8 +246,17 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 				p.error(p.peek().Offset, "Outer join requires ON/USING clause")
 				return nil
 			}
-			// Pure cross join — apply tree rotation.
-			lhs = p.makeCrossJoin(lhs, rhs)
+			// Pure cross/straight join without ON.
+			join := p.arena.AllocJoin()
+			join.Left = lhs
+			join.Right = rhs
+			join.Tp = joinType
+			join.StraightJoin = straight
+			if !straight {
+				lhs = p.makeCrossJoin(lhs, rhs)
+			} else {
+				lhs = join
+			}
 		}
 	}
 

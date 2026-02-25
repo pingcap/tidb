@@ -17,8 +17,8 @@ func TestJoinEdgeCases(t *testing.T) {
 	}{
 		// NATURAL JOIN should NOT consume ON from DML
 		{"natural_join_on_dup_key", "INSERT INTO t1 SELECT 1, a FROM t2 NATURAL JOIN t3 ON DUPLICATE KEY UPDATE j= a", false},
-		// STRAIGHT_JOIN should NOT consume ON from DML (same as NATURAL JOIN)
-		{"straight_join_on_dup_key", "INSERT INTO t1 SELECT 1, a FROM t2 STRAIGHT_JOIN t3 ON DUPLICATE KEY UPDATE j= a", false},
+		// STRAIGHT_JOIN takes ON, so it consumes ON and tries to parse 'DUPLICATE' as expression → error
+		{"straight_join_on_dup_key", "INSERT INTO t1 SELECT 1, a FROM t2 STRAIGHT_JOIN t3 ON DUPLICATE KEY UPDATE j= a", true},
 		// Stacked ON clauses
 		{"stacked_on", "SELECT * FROM t1 LEFT JOIN t2 LEFT JOIN t3 ON t2.a = t3.a ON t1.a = t2.a", false},
 		// NATURAL JOIN inside stacked context (in parseJoinRHS recursion)

@@ -509,6 +509,12 @@ func (p *HandParser) convertToTableList(refs *ast.TableRefsClause) *ast.DeleteTa
 			return true
 		}
 		if ts, ok := node.(*ast.TableSource); ok {
+			// In DELETE FROM ... USING, target tables cannot have aliases.
+			// MySQL grammar uses table_ident_opt_wild (no alias) here.
+			if ts.AsName.L != "" {
+				p.syntaxErrorAt(p.peek())
+				return false
+			}
 			if tn, ok := ts.Source.(*ast.TableName); ok {
 				list.Tables = append(list.Tables, tn)
 				return true

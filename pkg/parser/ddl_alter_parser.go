@@ -14,6 +14,7 @@
 package parser
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -303,9 +304,19 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 			}
 			clause := &ast.PartitionDefinitionClauseIn{}
 			p.expect('(')
-			rejectMaxValue := func(expr ast.ExprNode) bool {
+			rejectMaxValue := func(expr ast.ExprNode, startTok Token) bool {
 				if _, ok := expr.(*ast.MaxValueExpr); ok {
-					p.error(p.peek().Offset, "MAXVALUE cannot be used in LIST partition")
+					// Report error at token's EndOffset (column) and Offset (near text)
+					// matching yacc scanner position semantics. Append custom message.
+					line, col := p.calcLineCol(startTok.EndOffset)
+					near := ""
+					if startTok.Offset < len(p.src) {
+						near = p.src[startTok.Offset:]
+						if len(near) > 80 {
+							near = near[:80]
+						}
+					}
+					p.errs = append(p.errs, fmt.Errorf("line %d column %d near \"%s\"%s ", line, col, near, "MAXVALUE cannot be used in LIST partition"))
 					return true
 				}
 				return false
@@ -316,8 +327,9 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 					p.next()
 					var valList []ast.ExprNode
 					for {
+						startTok := p.peek()
 						expr := p.parseExpression(precNone)
-						if rejectMaxValue(expr) {
+						if rejectMaxValue(expr, startTok) {
 							return nil
 						}
 						valList = append(valList, expr)
@@ -329,8 +341,9 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 					clause.Values = append(clause.Values, valList)
 				} else {
 					// Single value
+					startTok := p.peek()
 					expr := p.parseExpression(precNone)
-					if rejectMaxValue(expr) {
+					if rejectMaxValue(expr, startTok) {
 						return nil
 					}
 					clause.Values = append(clause.Values, []ast.ExprNode{expr})
