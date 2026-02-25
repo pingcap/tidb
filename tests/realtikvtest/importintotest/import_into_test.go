@@ -1448,7 +1448,7 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	})
 }
 
-func (s *mockGCSSuite) TestTableMode() {
+func (s *mockGCSSuite) TestTableModtests/realtikvtest/importintotest/import_into_test.go:1544e() {
 	if kerneltype.IsNextGen() {
 		s.T().Skip("switching table mode is not supported in nextgen")
 	}
@@ -1527,7 +1527,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	// Test executor recreation during import step won't re-check table empty.
 	s.tk.MustExec("truncate table table_mode")
 	loadDataSQLWithSmallEngine := fmt.Sprintf(`IMPORT INTO table_mode
-		FROM 'gs://table-mode-test/data-*.csv?endpoint=%s' WITH __max_engine_size='1'`, gcsEndpoint)
+		FROM 'gs://table-mode-test/data*.csv?endpoint=%s' WITH __max_engine_size='1'`, gcsEndpoint)
 	recreated := atomic.NewBool(false)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {

@@ -317,8 +317,6 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	// Check table emptyness again after the task is started.
 	if kerneltype.IsClassic() && task.Step == proto.StepInit {
 		if err = sch.checkImportTableEmpty(ctx, taskMeta); err != nil {
-			logger.Warn("meet error when checking import table empty",
-				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 	}
