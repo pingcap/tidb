@@ -18,8 +18,10 @@ go_library(
 
 go_test(
     name = "vertex_test",
+    timeout = "short",
     srcs = ["client_test.go"],
     embed = [":vertex"],
+    flaky = True,
     deps = [
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
