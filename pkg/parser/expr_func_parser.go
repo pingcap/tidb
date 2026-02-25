@@ -92,6 +92,13 @@ func (p *HandParser) parseFuncCall(name string) ast.ExprNode {
 
 // parseWindowFuncExpr wraps a function call in a WindowFuncExpr with an OVER clause.
 func (p *HandParser) parseWindowFuncExpr(name string, funcExpr ast.ExprNode) ast.ExprNode {
+	// Normalize aggregate function aliases so downstream TypeInfer recognizes them.
+	switch strings.ToLower(name) {
+	case "std", "stddev":
+		name = "STDDEV_POP"
+	case "variance":
+		name = "VAR_POP"
+	}
 	wf := &ast.WindowFuncExpr{
 		Name: name,
 	}

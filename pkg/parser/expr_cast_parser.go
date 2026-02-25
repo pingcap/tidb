@@ -241,11 +241,11 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 			if err == nil {
 				tp.SetCollate(defCollation)
 			}
-			return tp, true
+		} else {
+			tp.SetCharset(p.charset)
+			tp.SetCollate(p.collation)
 		}
-		tp.SetCharset(p.charset)
-		tp.SetCollate(p.collation)
-		return tp, false
+		return tp, hasCharset
 
 	case dateType:
 		p.next()

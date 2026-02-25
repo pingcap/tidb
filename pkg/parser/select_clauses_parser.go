@@ -315,6 +315,11 @@ func (p *HandParser) toUint64Value(expr ast.ExprNode) ast.ExprNode {
 	if expr == nil {
 		return nil
 	}
+	// ParamMarkerExpr embeds ValueExpr, so check for it first to avoid
+	// destroying parameter markers (e.g., LIMIT ? in prepared statements).
+	if _, ok := expr.(ast.ParamMarkerExpr); ok {
+		return expr
+	}
 	if ve, ok := expr.(ast.ValueExpr); ok {
 		switch val := ve.GetValue().(type) {
 		case int64:
