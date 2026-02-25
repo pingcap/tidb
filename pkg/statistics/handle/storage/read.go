@@ -882,6 +882,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 
 	tbl, ok := statsHandle.Get(idx.TableID)
 	if !ok {
+		// This could happen when the table is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
 			"Table statistics item not found, possibly due to table being dropped",
 			zap.Int64("tableID", idx.TableID),
@@ -891,6 +892,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	}
 	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
 	if !ok {
+		// This could happen when the table is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
 			"Table information not found, possibly due to table being dropped",
 			zap.Int64("tableID", idx.TableID),
@@ -900,6 +902,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	}
 	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
 	if idxInfo == nil {
+		// This could happen when the index is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
 			"Index information not found, possibly due to index being dropped",
 			zap.Int64("tableID", idx.TableID),
@@ -953,6 +956,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 
 	tbl, ok = statsHandle.Get(idx.TableID)
 	if !ok {
+		// This could happen when the table is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
 			"Table statistics item not found, possibly due to table being dropped",
 			zap.Int64("tableID", idx.TableID),
