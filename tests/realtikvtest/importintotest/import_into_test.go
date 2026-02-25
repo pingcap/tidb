@@ -1448,7 +1448,7 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	})
 }
 
-func (s *mockGCSSuite) TestTableModtests/realtikvtest/importintotest/import_into_test.go:1544e() {
+func (s *mockGCSSuite) TestTableMode() {
 	if kerneltype.IsNextGen() {
 		s.T().Skip("switching table mode is not supported in nextgen")
 	}
