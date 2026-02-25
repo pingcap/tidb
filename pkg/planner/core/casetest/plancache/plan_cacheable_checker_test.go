@@ -480,13 +480,7 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (c int)`)
 	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
-}
 
-func TestPreparedPlanCacheWithCTE(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
 	tk.MustExec("drop table if exists v2")
 	tk.MustExec(`create table v2 (
