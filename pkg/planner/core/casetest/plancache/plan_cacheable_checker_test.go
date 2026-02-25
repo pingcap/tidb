@@ -292,14 +292,6 @@ func TestCacheable(t *testing.T) {
 	c, reason = core.CacheableWithCtx(mockCtx, derivedWithCTE, is)
 	require.False(t, c)
 	require.Equal(t, "query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'", reason)
-	derivedWithCTESetOpr, err := p.ParseOneStmt(
-		"select * from (with t1 as (select 1 as a) select * from t1 union all select * from t1) dt, test.t1",
-		mysql.DefaultCharset, mysql.DefaultCollationName,
-	)
-	require.NoError(t, err)
-	c, reason = core.CacheableWithCtx(mockCtx, derivedWithCTESetOpr, is)
-	require.False(t, c)
-	require.Equal(t, "query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'", reason)
 	mockCtx.GetSessionVars().PartitionPruneMode.Store(prevPruneMode)
 
 	limitStmt = &ast.Limit{

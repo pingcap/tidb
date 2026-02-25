@@ -102,14 +102,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		if node.With != nil {
 			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
 		}
-	case *ast.SetOprStmt:
-		if node.With != nil {
-			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
-		}
-	case *ast.SetOprSelectList:
-		if node.With != nil {
-			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
-		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
 			nRows := len(node.Lists)
@@ -226,14 +218,6 @@ func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 			checker.cteCanUsed = append(checker.cteCanUsed, cteNode.Name.L)
 		}
 	case *ast.SelectStmt:
-		if node.With != nil {
-			checker.leaveWithScope()
-		}
-	case *ast.SetOprStmt:
-		if node.With != nil {
-			checker.leaveWithScope()
-		}
-	case *ast.SetOprSelectList:
 		if node.With != nil {
 			checker.leaveWithScope()
 		}
