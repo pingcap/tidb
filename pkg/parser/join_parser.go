@@ -424,32 +424,40 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			res = inner
 			p.expect(')')
 		} else if p.peek().Tp == '(' && p.peeksThroughParensToSubquery() {
-			// Ambiguous: could be nested subquery ((select ...)) or parenthesized join ((t1 join t2)).
-			// peeksThroughParensToSubquery confirmed a subquery keyword exists; try subquery first.
-			saved := p.mark()
-			savedErrs := len(p.errs)
+			// Ambiguous: could be nested subquery ((select ...)) or
+			// parenthesized join containing a derived table ((select ...) t1 join t2).
+			//
+			// Since the inner '(' leads to a subquery keyword, parse the
+			// subquery committed (no mark/restore) and decide based on
+			// what follows the inner ')'.
 			inner := p.parseSubquery()
 			if inner != nil {
-				// Consume UNION/EXCEPT/INTERSECT at this paren level.
+				// Check for UNION/EXCEPT/INTERSECT at this paren level.
 				inner = p.maybeParseUnion(inner)
 			}
 			if inner != nil && p.peek().Tp == ')' {
-				// Successfully parsed as subquery, and next is ')'. Use it.
-				// Discard any errors from the successful speculative parse.
-				p.errs = p.errs[:savedErrs]
+				// Next is ')' — this is a nested subquery: ((select ...))
 				res = inner
 				p.expect(')')
-			} else {
-				// Not a subquery (or leftover tokens before ')'), restore and parse as join.
-				p.errs = p.errs[:savedErrs]
-				p.restore(saved)
-				join := p.parseCommaJoin()
+			} else if inner != nil {
+				// Not ')' — this is a derived table inside a
+				// parenthesized join: ((select ...) alias join ...).
+				// Clear IsInBraces since the parens are structural for the
+				// FROM clause, not semantic braces around a subquery.
+				if s, ok := inner.(*ast.SelectStmt); ok {
+					s.IsInBraces = false
+				}
+				// Wrap inner as a TableSource with alias, then
+				// continue parsing joins within these parens.
+				ts := p.wrapAsTableSource(inner)
+				join := p.continueParsingJoinFrom(ts)
 				if join == nil {
 					return nil
 				}
 				p.expect(')')
-				join.ExplicitParens = true
 				res = join
+			} else {
+				return nil
 			}
 		} else {
 			// Parenthesized join.
@@ -618,6 +626,120 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	}
 
 	return res
+}
+
+// wrapAsTableSource takes a parsed subquery ResultSetNode and wraps it
+// in a TableSource, parsing optional alias from the token stream.
+// Used when a subquery was parsed inside outer parens and is followed by
+// more tokens (alias, join), not an immediate ')'.
+func (p *HandParser) wrapAsTableSource(inner ast.ResultSetNode) *ast.TableSource {
+	ts := Alloc[ast.TableSource](p.arena)
+	ts.Source = inner
+
+	// Parse optional alias.
+	if _, ok := p.accept(as); ok {
+		aliasTok := p.next()
+		ts.AsName = ast.NewCIStr(aliasTok.Lit)
+	} else if p.CanBeImplicitAlias(p.peek()) {
+		aliasTok := p.next()
+		ts.AsName = ast.NewCIStr(aliasTok.Lit)
+	}
+	return ts
+}
+
+// continueParsingJoinFrom takes a pre-parsed left-hand table source and
+// continues parsing keyword (and comma) joins within the current paren level.
+// Mirrors the logic of parseJoin() exactly to produce identical AST structure.
+func (p *HandParser) continueParsingJoinFrom(left ast.ResultSetNode) *ast.Join {
+	lhs := left
+
+	for {
+		joinType, natural, straight, commaJoin := p.peekJoinType()
+		if commaJoin || (joinType == 0 && !natural && !straight) {
+			break
+		}
+
+		// Consume the join keyword(s).
+		joinType, natural, straight, _ = p.parseJoinType()
+
+		// Parse the right side — mirror parseJoin exactly.
+		var rhs ast.ResultSetNode
+		if natural {
+			rhs = p.parseTableSource()
+		} else {
+			rhs = p.parseJoinRHS()
+		}
+		if rhs == nil {
+			return nil
+		}
+
+		// Handle ON/USING — mirror parseJoin exactly.
+		if natural {
+			join := p.arena.AllocJoin()
+			join.Left = lhs
+			join.Right = rhs
+			join.Tp = joinType
+			join.NaturalJoin = true
+			lhs = join
+		} else if _, ok := p.accept(on); ok {
+			join := p.arena.AllocJoin()
+			join.Left = lhs
+			join.Right = rhs
+			join.Tp = joinType
+			join.StraightJoin = straight
+			onCond := Alloc[ast.OnCondition](p.arena)
+			onCond.Expr = p.parseExpression(precNone)
+			join.On = onCond
+			lhs = join
+		} else if _, ok := p.accept(using); ok {
+			join := p.arena.AllocJoin()
+			join.Left = lhs
+			join.Right = rhs
+			join.Tp = joinType
+			join.StraightJoin = straight
+			p.expect('(')
+			join.Using = p.parseColumnNameList()
+			p.expect(')')
+			lhs = join
+		} else {
+			if joinType == ast.LeftJoin || joinType == ast.RightJoin {
+				p.error(p.peek().Offset, "Outer join requires ON/USING clause")
+				return nil
+			}
+			if !straight {
+				lhs = p.makeCrossJoin(lhs, rhs)
+			} else {
+				join := p.arena.AllocJoin()
+				join.Left = lhs
+				join.Right = rhs
+				join.Tp = joinType
+				join.StraightJoin = true
+				lhs = join
+			}
+		}
+	}
+
+	// Handle comma-joins at this level.
+	for {
+		joinType, _, _, commaJoin := p.peekJoinType()
+		if !commaJoin || joinType == 0 {
+			break
+		}
+		p.parseJoinType()
+		right := p.parseJoin()
+		if right == nil {
+			return nil
+		}
+		lhs = p.makeCrossJoin(lhs, right)
+	}
+
+	// Return as Join — wrap if needed.
+	if j, ok := lhs.(*ast.Join); ok {
+		return j
+	}
+	j := Alloc[ast.Join](p.arena)
+	j.Left = lhs
+	return j
 }
 
 // parseTableName parses [schema.]table.
