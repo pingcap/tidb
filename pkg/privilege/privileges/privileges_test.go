@@ -1477,6 +1477,17 @@ func TestDynamicPrivsRegistration(t *testing.T) {
 	}
 }
 
+func TestLLMDynamicPrivilegeRegistered(t *testing.T) {
+	registered := false
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		if priv == "LLM_EXECUTE" {
+			registered = true
+			break
+		}
+	}
+	require.True(t, registered, "LLM_EXECUTE must be registered as a dynamic privilege")
+}
+
 func TestInfoSchemaUserPrivileges(t *testing.T) {
 	// Being able to read all privileges from information_schema.user_privileges requires a very specific set of permissions.
 	// SUPER user is not sufficient. It was observed in MySQL to require SELECT on mysql.*

@@ -78,6 +78,7 @@ var dynamicPrivs = []string{
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
 	"MODEL_ADMIN",                     // Create/Alter/Drop MODEL
 	"MODEL_EXECUTE",                   // Execute MODEL_PREDICT
+	"LLM_EXECUTE",                     // Execute LLM functions
 	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
 	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
 }
