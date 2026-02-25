@@ -77,6 +77,7 @@ type FMSketch struct {
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
 	result := fmSketchPool.Get().(*FMSketch)
+	result.reset()
 	result.maxSize = maxSize
 	return result
 }
@@ -214,6 +215,7 @@ func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 		return nil
 	}
 	sketch := fmSketchPool.Get().(*FMSketch)
+	sketch.reset()
 	sketch.mask = protoSketch.Mask
 	for _, val := range protoSketch.Hashset {
 		sketch.hashset.Put(val, true)
