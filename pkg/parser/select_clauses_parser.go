@@ -532,6 +532,23 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 			wrapper.With = s.With
 			s.With = nil
 			lhsNode = wrapper
+		} else if s, ok := lhs.(*ast.SetOprStmt); ok && s.IsInBraces {
+			// Parenthesized set operation as LHS (e.g., "(SELECT UNION ALL SELECT) INTERSECT ...").
+			// Wrap in SetOprSelectList so the planner can handle it — it only handles
+			// *ast.SelectStmt and *ast.SetOprSelectList children, not bare *ast.SetOprStmt.
+			wrapper := &ast.SetOprSelectList{
+				Selects: s.SelectList.Selects,
+			}
+			if s.OrderBy != nil {
+				wrapper.OrderBy = s.OrderBy
+			}
+			if s.Limit != nil {
+				wrapper.Limit = s.Limit
+			}
+			if s.With != nil {
+				wrapper.With = s.With
+			}
+			lhsNode = wrapper
 		}
 
 		var stmt *ast.SetOprStmt
