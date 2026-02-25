@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -281,14 +282,17 @@ func TestCacheable(t *testing.T) {
 	require.True(t, c)
 	require.Empty(t, reason)
 	p := parser.New()
+	prevPruneMode := mockCtx.GetSessionVars().PartitionPruneMode.Load()
+	mockCtx.GetSessionVars().PartitionPruneMode.Store(string(variable.Static))
 	derivedWithCTE, err := p.ParseOneStmt(
-		"select * from (with t1 as (select 1 as a) select * from t1) dt, t1",
+		"select * from (with t1 as (select 1 as a) select * from t1) dt, test.t1",
 		mysql.DefaultCharset, mysql.DefaultCollationName,
 	)
 	require.NoError(t, err)
 	c, reason = core.CacheableWithCtx(mockCtx, derivedWithCTE, is)
 	require.False(t, c)
 	require.Equal(t, "query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'", reason)
+	mockCtx.GetSessionVars().PartitionPruneMode.Store(prevPruneMode)
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
