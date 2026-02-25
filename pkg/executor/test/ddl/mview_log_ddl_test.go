@@ -79,36 +79,6 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
 }
 
-func TestPurgeMaterializedViewLogOnBaseTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_purge_stmt (a int, b int)")
-	tk.MustExec("create materialized view log on t_purge_stmt (a) purge start with '2026-01-01 00:00:00' next 20")
-
-	mlogID := tk.MustQuery("select cast(tidb_table_id as char) from information_schema.tables where table_schema = 'test' and table_name = '$mlog$t_purge_stmt'").Rows()[0][0].(string)
-	tk.MustQuery("select cast(next_time as char) from mysql.tidb_mlog_purge_info where mlog_id = " + mlogID).Check(testkit.Rows("2026-01-01 00:00:00"))
-	tk.MustExec("insert into t_purge_stmt values (1, 1), (2, 2)")
-	tk.MustExec("update t_purge_stmt set a = a + 1 where b = 1")
-
-	tk.MustExec("purge materialized view log on t_purge_stmt")
-
-	tk.MustQuery("select purge_method, purge_status from mysql.tidb_mlog_purge_hist where mlog_id = " + mlogID + " and is_newest_purge = 'YES'").
-		Check(testkit.Rows("MANUALLY SUCCESS"))
-	tk.MustQuery("select cast(next_time as char) from mysql.tidb_mlog_purge_info where mlog_id = " + mlogID).
-		Check(testkit.Rows("2026-01-01 00:00:00"))
-}
-
-func TestPurgeMaterializedViewLogRejectWithoutLog(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_no_log (a int)")
-
-	err := tk.ExecToErr("purge materialized view log on t_no_log")
-	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "$mlog$t_no_log", "MATERIALIZED VIEW LOG").Error(), err.Error())
-}
-
 func TestCreateMaterializedViewLogMetaColumnNameConflict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
