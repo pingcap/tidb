@@ -397,6 +397,17 @@ type LoadDataController struct {
 	ExecuteNodesCnt int
 }
 
+func (e *LoadDataController) buildParquetTargetColumns() []*model.ColumnInfo {
+	targets := make([]*model.ColumnInfo, len(e.FieldMappings))
+	for i, mapping := range e.FieldMappings {
+		if mapping == nil || mapping.Column == nil {
+			continue
+		}
+		targets[i] = mapping.Column.ToInfo()
+	}
+	return targets
+}
+
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 	res := map[string]string{}
 	for k, defVal := range common.DefaultImportantVariables {
@@ -1658,6 +1669,7 @@ func (e *LoadDataController) GetParser(
 			reader,
 			dataFileInfo.Remote.Path,
 			dataFileInfo.Remote.ParquetMeta,
+			e.buildParquetTargetColumns(),
 		)
 	}
 	if err != nil {

@@ -17,12 +17,14 @@ package importer
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
@@ -38,10 +40,15 @@ type TableKVEncoder struct {
 	columnAssignments []expression.Expression
 	fieldMappings     []*FieldMapping
 	insertColumns     []*table.Column
+	normalColIdxs     []int
+	specialColIdxs    []int
+
 	// Following cache use to avoid `runtime.makeslice`.
 	insertColumnRowCache []types.Datum
 	rowCache             []types.Datum
 	hasValueCache        []bool
+
+	insertColumnSkipCastInfos []mydump.ColumnSkipCastInfo
 }
 
 // NewTableKVEncoder creates a new TableKVEncoder.
@@ -77,12 +84,106 @@ func newTableKVEncoderInner(
 		return nil, err
 	}
 
-	return &TableKVEncoder{
+	encoder := &TableKVEncoder{
 		BaseKVEncoder:     baseKVEncoder,
 		columnAssignments: colAssignExprs,
 		fieldMappings:     fieldMappings,
 		insertColumns:     insertColumns,
-	}, nil
+	}
+	encoder.initFillRowColumnMetadata()
+	return encoder, nil
+}
+
+func (en *TableKVEncoder) initFillRowColumnMetadata() {
+	en.normalColIdxs = en.normalColIdxs[:0]
+	en.specialColIdxs = en.specialColIdxs[:0]
+	for i, col := range en.Columns {
+		colInfo := col.ToInfo()
+		if kv.IsAutoIncCol(colInfo) || en.IsAutoRandomCol(colInfo) || colInfo.IsGenerated() {
+			en.specialColIdxs = append(en.specialColIdxs, i)
+		} else {
+			en.normalColIdxs = append(en.normalColIdxs, i)
+		}
+	}
+}
+
+// SetSkipCastInfos sets per-input-column precheck results.
+// The input infos are in file-column order and will be remapped into
+// insert-column order so getRow can decide cast-or-skip quickly.
+func (en *TableKVEncoder) SetSkipCastInfos(infos []mydump.ColumnSkipCastInfo) {
+	if len(infos) == 0 {
+		en.insertColumnSkipCastInfos = nil
+		return
+	}
+
+	mapped := make([]mydump.ColumnSkipCastInfo, 0, len(en.fieldMappings))
+	for i, mapping := range en.fieldMappings {
+		if mapping == nil || mapping.Column == nil {
+			continue
+		}
+		if i < len(infos) {
+			mapped = append(mapped, infos[i])
+		} else {
+			mapped = append(mapped, mydump.ColumnSkipCastInfo{})
+		}
+	}
+
+	plans := make([]mydump.ColumnSkipCastInfo, len(en.insertColumns))
+	copy(plans, mapped)
+	en.insertColumnSkipCastInfos = plans
+}
+
+func (en *TableKVEncoder) canSkipCastColumnValue(idx int, val types.Datum) bool {
+	if val.IsNull() {
+		return true
+	}
+	if idx >= len(en.insertColumnSkipCastInfos) {
+		return false
+	}
+	info := en.insertColumnSkipCastInfos[idx]
+
+	switch info.CastingCheck {
+	case mydump.CastingCheckSkip:
+		return true
+	case mydump.CastingCheckStringLength:
+		return passStringLengthPostCheck(val, info)
+	case mydump.CastingCheckDecimal:
+		return passDecimalPostCheck(val, info)
+	default:
+		return false
+	}
+}
+
+func passStringLengthPostCheck(val types.Datum, info mydump.ColumnSkipCastInfo) bool {
+	if val.Kind() != types.KindString && val.Kind() != types.KindBytes {
+		return false
+	}
+	if info.TargetFlen < 0 {
+		return true
+	}
+	b := val.GetBytes()
+	if len(b) <= info.TargetFlen {
+		return true
+	}
+	return utf8.RuneCount(b) <= info.TargetFlen
+}
+
+func passDecimalPostCheck(val types.Datum, info mydump.ColumnSkipCastInfo) bool {
+	if val.Kind() != types.KindMysqlDecimal {
+		return false
+	}
+	dec := val.GetMysqlDecimal()
+	if info.Unsigned && dec.IsNegative() && !dec.IsZero() {
+		return false
+	}
+	precision, frac := dec.PrecisionAndFrac()
+	if info.TargetFlen > 0 && precision > info.TargetFlen {
+		return false
+	}
+	if info.TargetDecimal >= 0 && frac != info.TargetDecimal {
+		return false
+	}
+	return true
 }
 
 // Encode table row into KVs.
@@ -186,12 +287,16 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
 	row := en.rowCache
 	for i := range en.insertColumns {
+		offset := en.insertColumns[i].Offset
+		if en.canSkipCastColumnValue(i, vals[i]) {
+			row[offset] = vals[i]
+			continue
+		}
+
 		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
 			return nil, err
 		}
-
-		offset := en.insertColumns[i].Offset
 		row[offset] = casted
 	}
 
@@ -202,8 +307,31 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	var value types.Datum
 	var err error
 
-	record := en.GetOrCreateRecord()
-	for i, col := range en.Columns {
+	record := en.GetOrCreateRecord()[:len(en.Columns)]
+
+	exprCtx := en.SessionCtx.GetExprCtx()
+	errCtx := exprCtx.GetEvalCtx().ErrCtx()
+	for _, i := range en.normalColIdxs {
+		col := en.Columns[i]
+		if hasValue[i] {
+			value = row[i]
+		} else {
+			value, err = table.GetColDefaultValue(exprCtx, col.ToInfo())
+			if err != nil {
+				return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
+			}
+		}
+		if value.IsNull() && (mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag())) {
+			err := col.HandleBadNull(errCtx, &value, 0)
+			if err != nil {
+				return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
+			}
+		}
+		record[i] = value
+	}
+
+	for _, i := range en.specialColIdxs {
+		col := en.Columns[i]
 		var theDatum *types.Datum
 		doCast := true
 		if hasValue[i] {
@@ -215,7 +343,7 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 			return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
 		}
 
-		record = append(record, value)
+		record[i] = value
 	}
 
 	if common.TableHasAutoRowID(en.TableMeta()) {
