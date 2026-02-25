@@ -87,7 +87,6 @@ type cacheableChecker struct {
 
 	sumInListLen int // the accumulated number of elements in all in-lists
 	maxNumParam  int
-
 	// cteCanUsed tracks CTE names visible at current traversal point.
 	cteCanUsed []string
 	// cteOffset stores stack offsets for restoring cteCanUsed in Leave.
