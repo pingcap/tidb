@@ -70,7 +70,7 @@ func (p *HandParser) parseSetStmt() ast.StmtNode {
 	if p.peek().IsKeyword("SESSION_STATES") {
 		p.next() // consume SESSION_STATES
 		if p.peek().Tp != stringLit {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		sess := Alloc[ast.SetSessionStatesStmt](p.arena)
@@ -332,7 +332,7 @@ func (p *HandParser) parseRoleList() []*auth.RoleIdentity {
 		// Use parseUserIdentity which parses 'user'@'host'
 		user := p.parseUserIdentity()
 		if user == nil {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		role := &auth.RoleIdentity{Username: user.Username, Hostname: user.Hostname}
@@ -365,7 +365,7 @@ func (p *HandParser) parseSetDefaultRole() ast.StmtNode {
 	for {
 		user := p.parseUserIdentity()
 		if user == nil {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		users = append(users, user)
@@ -391,14 +391,14 @@ func (p *HandParser) parseSetConfig() ast.StmtNode {
 	} else if isIdentLike(tok.Tp) {
 		stmt.Type = p.parseVariableName() // Assuming Type is identifier-like (e.g. TIKV)
 	} else {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 
 	// Parse Name (e.g. log.level, auto-compaction-mode)
 	stmt.Name = p.parseConfigName()
 	if stmt.Name == "" {
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 
@@ -471,7 +471,7 @@ func (p *HandParser) parseSetTransaction(isGlobal bool, hasScope bool) ast.StmtN
 			} else if _, ok := p.accept(serializable); ok {
 				level = "SERIALIZABLE"
 			} else {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			if hasScope {
@@ -502,7 +502,7 @@ func (p *HandParser) parseSetTransaction(isGlobal bool, hasScope bool) ast.StmtN
 						asOfTs = p.next().Lit
 					} else {
 						// Just 'AS' without 'OF'? Should not happen here in valid SQL
-						p.syntaxErrorAt(p.peek().Offset)
+						p.syntaxErrorAt(p.peek())
 					}
 				}
 
@@ -536,7 +536,7 @@ func (p *HandParser) parseSetBindingStmt() ast.StmtNode {
 	} else if tok.IsKeyword("DISABLED") {
 		stmt.BindingStatusType = ast.BindingStatusTypeDisabled
 	} else {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 

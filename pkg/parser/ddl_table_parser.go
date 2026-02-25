@@ -208,7 +208,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 	// is unambiguous (always followed by a data type).
 	tok := p.peek()
 	if !isIdentLike(tok.Tp) {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 	col.Name = p.parseColumnName()
@@ -240,7 +240,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 	// Parse data type
 	col.Tp = p.parseFieldType()
 	if col.Tp == nil {
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 
@@ -338,7 +338,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			p.next()
 			option.Tp = ast.ColumnOptionComment
 			if p.peek().Tp != stringLit {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			expr := p.newValueExpr(p.peek().Lit)
@@ -353,7 +353,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			option.Tp = ast.ColumnOptionSecondaryEngineAttribute
 			p.accept(eq) // optional =
 			if p.peek().Tp != stringLit {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			option.StrValue = p.peek().Lit
@@ -490,7 +490,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				option.StrValue = charset.CollationBin
 				p.next()
 			} else {
-				p.syntaxErrorAt(tok.Offset)
+				p.syntaxErrorAt(tok)
 				return nil
 			}
 		case columnFormat:
@@ -507,7 +507,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				p.next()
 				option.StrValue = "DYNAMIC"
 			default:
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 		case storage:
@@ -524,7 +524,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				p.next()
 				option.StrValue = "MEMORY"
 			default:
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			p.warn("The STORAGE clause is parsed but ignored by all storage engines.")

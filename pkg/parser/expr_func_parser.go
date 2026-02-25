@@ -34,7 +34,7 @@ func (p *HandParser) parseKeywordFuncCall() ast.ExprNode {
 	case insert:
 		name = "insert_func"
 	default:
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 	return p.parseFuncCall(name)
@@ -130,7 +130,7 @@ func (p *HandParser) parseWindowFuncExpr(name string, funcExpr ast.ExprNode) ast
 			case ast.ValueExpr, ast.ParamMarkerExpr:
 				// OK: numeric literal or parameter marker
 			default:
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 		}

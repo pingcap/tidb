@@ -208,7 +208,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			case "OFF":
 				opt.BoolValue = false
 			default:
-				p.syntaxErrorAt(tok.Offset)
+				p.syntaxErrorAt(tok)
 				return nil
 			}
 		}
@@ -517,7 +517,7 @@ func (p *HandParser) parseTableOptionString(opt *ast.TableOption, optTp ast.Tabl
 	if tok.Tp == stringLit || isIdentLike(tok.Tp) {
 		opt.StrValue = p.next().Lit
 	} else {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 	}
 }
 

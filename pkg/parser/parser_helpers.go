@@ -30,7 +30,7 @@ import (
 func (p *HandParser) parseUint64() uint64 {
 	tok := p.next()
 	if tok.Tp != intLit {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return 0
 	}
 	return tokenItemToUint64(tok.Item)
@@ -66,7 +66,7 @@ func tokenItemToInt64(item interface{}) (int64, bool) {
 func (p *HandParser) parseInt64() (int64, bool) {
 	tok := p.next()
 	if tok.Tp != intLit {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return 0, false
 	}
 	v, ok := tokenItemToInt64(tok.Item)
@@ -104,7 +104,7 @@ func isIdentLike(tp int) bool {
 func (p *HandParser) parseColumnName() *ast.ColumnName {
 	tok := p.next()
 	if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 	name := ast.NewCIStr(tok.Lit)
@@ -117,7 +117,7 @@ func (p *HandParser) parseColumnName() *ast.ColumnName {
 		p.next() // consume '.'
 		tok2 := p.next()
 		if !isIdentLike(tok2.Tp) && tok2.Tp != '*' {
-			p.syntaxErrorAt(tok2.Offset)
+			p.syntaxErrorAt(tok2)
 			return nil
 		}
 
@@ -134,7 +134,7 @@ func (p *HandParser) parseColumnName() *ast.ColumnName {
 			p.next() // consume second '.'
 			tok3 := p.next()
 			if !isIdentLike(tok3.Tp) && tok3.Tp != '*' {
-				p.syntaxErrorAt(tok3.Offset)
+				p.syntaxErrorAt(tok3)
 				return nil
 			}
 
@@ -462,7 +462,7 @@ func (p *HandParser) parseProxyLevel(privs []*ast.PrivElem, _ string) (*ast.Gran
 		if priv.Priv == mysql.ExtendedPriv && strings.ToUpper(priv.Name) == "PROXY" {
 			spec := p.parseUserSpec()
 			if spec == nil {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil, true
 			}
 			level := Alloc[ast.GrantLevel](p.arena)

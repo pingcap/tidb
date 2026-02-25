@@ -181,7 +181,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			// It compiles to a CONCAT() function call instead of a BinaryExpr.
 			right := p.parseExpression(prec + 1)
 			if right == nil {
-				p.syntaxErrorAt(op.Offset)
+				p.syntaxErrorAt(op)
 				return nil
 			}
 			node := p.arena.AllocFuncCallExpr()
@@ -193,7 +193,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 
 		opCode := tokenToOp(op.Tp)
 		if opCode == 0 {
-			p.syntaxErrorAt(op.Offset)
+			p.syntaxErrorAt(op)
 			return nil
 		}
 
@@ -225,7 +225,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 		// Right-hand side parsed at higher precedence for left-associativity.
 		right := p.parseExpression(prec + 1)
 		if right == nil {
-			p.syntaxErrorAt(op.Offset)
+			p.syntaxErrorAt(op)
 			return nil
 		}
 
@@ -376,7 +376,7 @@ func (p *HandParser) parseLiteral() ast.ExprNode {
 		}
 		return p.newLiteralExpr(ctor, tok.Lit)
 	default:
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 }
@@ -478,7 +478,7 @@ func (p *HandParser) parseNotInfixExpr(left ast.ExprNode) ast.ExprNode {
 	case regexpKwd, rlike:
 		return p.parseRegexpExpr(left, true)
 	default:
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 }
@@ -614,7 +614,7 @@ func (p *HandParser) parseIsExpr(left ast.ExprNode) ast.ExprNode {
 			node.Not = isNot
 			return node
 		}
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 }
@@ -734,7 +734,7 @@ func (p *HandParser) parseCharsetIntroducer() ast.ExprNode {
 		}
 		expr = ast.NewValueExpr(val, csName, co)
 	default:
-		p.syntaxErrorAt(valTok.Offset)
+		p.syntaxErrorAt(valTok)
 		return nil
 	}
 
@@ -838,7 +838,7 @@ func (p *HandParser) parseMatchAgainstExpr() ast.ExprNode {
 				node.Modifier = ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode)
 			}
 		} else {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 	} else if _, ok := p.accept(with); ok {
@@ -910,11 +910,11 @@ func (p *HandParser) parseTimeFunc(fnName string) ast.ExprNode {
 				if lit := p.parseLiteral(); lit != nil { //revive:disable-line
 					args = append(args, lit)
 				} else {
-					p.syntaxErrorAt(p.peek().Offset)
+					p.syntaxErrorAt(p.peek())
 					return nil
 				}
 			} else {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 		}

@@ -138,11 +138,12 @@ func (p *HandParser) calcLineCol(limit int) (line int, col int) {
 	line = 1
 	col = 0
 	for i := 0; i < limit && i < len(p.src); i++ {
-		col++
+		// Match reader.inc() semantics: check newline FIRST, then increment.
 		if p.src[i] == '\n' {
 			line++
 			col = 0
 		}
+		col++
 	}
 	return line, col
 }
@@ -191,15 +192,12 @@ func (p *HandParser) errorNear(colOffset, nearOffset int) {
 	p.errs = append(p.errs, fmt.Errorf("line %d column %d near \"%s\" ", line, col, near))
 }
 
-// syntaxErrorAt records a yacc-compatible syntax error at the given token offset.
+// syntaxErrorAt records a yacc-compatible syntax error for the given token.
 // This is the preferred method for reporting unexpected tokens during parsing.
-// It uses the token's offset for both column calculation and near-text display.
-func (p *HandParser) syntaxErrorAt(offset int) {
-	limit := offset
-	if limit < len(p.src) {
-		limit++
-	}
-	p.errorNear(limit, offset)
+// It uses tok.EndOffset for column (matching yacc scanner position after consuming
+// token bytes) and tok.Offset for near-text display.
+func (p *HandParser) syntaxErrorAt(tok Token) {
+	p.errorNear(tok.EndOffset, tok.Offset)
 }
 
 // errSyntax is the [parser:1149] error instance.
@@ -238,8 +236,9 @@ func (p *HandParser) expect(expected int) (Token, bool) {
 	tok := p.next()
 	if tok.Tp != expected {
 		// Use errorNear for yacc-compatible error format:
-		// - colOffset = end of consumed token to match yacc parser offset
-		// - nearOffset = consumed token's offset (= start of error context)
+		// - colOffset = tok.EndOffset (= scanner position after consuming token bytes,
+		//   matching yacc's s.r.p.Col at the time Errorf is called)
+		// - nearOffset = tok.Offset (= start of error context, matching yacc's lastScanOffset)
 		p.errorNear(tok.EndOffset, tok.Offset)
 		return tok, false
 	}
@@ -255,7 +254,8 @@ func (p *HandParser) expectAny(expected ...int) (Token, bool) {
 			return tok, true
 		}
 	}
-	// Use errorNear for yacc-compatible error format.
+	// Use errorNear for yacc-compatible error format:
+	// colOffset = tok.EndOffset (matches yacc scanner position after consuming token).
 	p.errorNear(tok.EndOffset, tok.Offset)
 	return tok, false
 }

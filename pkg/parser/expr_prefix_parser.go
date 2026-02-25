@@ -203,7 +203,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 
 	default:
 		if tok.Tp == invalid {
-			p.syntaxErrorAt(tok.Offset)
+			p.syntaxErrorAt(tok)
 			return nil
 		}
 		// Check if this is a builtin function token (COUNT, SUM, MAX, etc.).

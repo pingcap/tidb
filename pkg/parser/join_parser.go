@@ -346,7 +346,7 @@ func (p *HandParser) parseJoinType() (joinType ast.JoinType, isNatural bool, str
 			p.next()
 			return ast.CrossJoin, true, false, false
 		default:
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return 0, false, false, false
 		}
 
@@ -373,7 +373,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		// The braces are stripped and the identifier after '{' must be "OJ".
 		p.next() // consume '{'
 		if !p.peek().IsKeyword("OJ") {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		p.next() // consume OJ
@@ -493,7 +493,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		// AS OF TIMESTAMP expr — stale read / time travel
 		p.next() // consume AS OF (combined token)
 		if p.peek().Tp != timestampType {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		p.next() // consume TIMESTAMP
@@ -506,7 +506,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		aliasTok := p.next()
 		// Table alias cannot be a string literal (unlike column alias).
 		if !isIdentLike(aliasTok.Tp) || aliasTok.Tp == stringLit {
-			p.syntaxErrorAt(aliasTok.Offset)
+			p.syntaxErrorAt(aliasTok)
 			return nil
 		}
 		asName = ast.NewCIStr(aliasTok.Lit)
@@ -620,7 +620,7 @@ func (p *HandParser) parseTableName() *ast.TableName {
 		p.next() // consume '.'
 		nextTok := p.next()
 		if nextTok.Tp < identifier && nextTok.Tp != underscoreCS {
-			p.syntaxErrorAt(nextTok.Offset)
+			p.syntaxErrorAt(nextTok)
 			return nil
 		}
 		tn.Schema = ast.NewCIStr(tok.Lit)
@@ -677,7 +677,7 @@ func (p *HandParser) parseIndexHint() *ast.IndexHint {
 	// INDEX or KEY (both valid, treated identically).
 	if _, ok := p.accept(index); !ok {
 		if _, ok := p.accept(key); !ok {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 	}

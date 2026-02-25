@@ -263,7 +263,7 @@ func (p *HandParser) parseQueryWatchStmt() ast.StmtNode {
 				stmt.GroupNameStr = ast.NewCIStr(tok.Lit)
 			}
 		} else {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		return stmt

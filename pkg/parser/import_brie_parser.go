@@ -203,7 +203,7 @@ func (p *HandParser) parseCancelStmt() ast.StmtNode {
 		p.next() // consume BR
 		return p.parseCancelBRJobStmt()
 	default:
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 }
@@ -306,7 +306,7 @@ func (p *HandParser) parseBRIEStmt() ast.StmtNode {
 		}
 	} else {
 		// Missing DATABASE/TABLE/LOGS → error
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 

@@ -335,7 +335,7 @@ func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 		for {
 			spec := p.parseUserSpec()
 			if spec == nil {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			stmt.Specs = append(stmt.Specs, spec)

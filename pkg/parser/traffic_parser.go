@@ -134,7 +134,7 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 			stmt.Options = append(stmt.Options, opt)
 		}
 	default:
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 
@@ -148,7 +148,7 @@ func (p *HandParser) parseRefreshStmt() ast.StmtNode {
 	// STATS keyword (identifier, not reserved).
 	tok := p.next()
 	if !tok.IsKeyword("STATS") {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 

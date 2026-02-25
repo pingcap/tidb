@@ -92,6 +92,8 @@ go_test(
         "main_test.go",
         "parser_integration_test.go",
         "parser_test.go",
+        "test_default_test.go",
+        "test_fk_test.go",
     ],
     data = glob(["**"]),
     embed = [":parser"],

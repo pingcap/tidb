@@ -305,7 +305,7 @@ func (p *HandParser) parseSplitIndexOption() *ast.SplitIndexOption {
 		// Implicit Table Level if followed by BETWEEN or BY
 		tp := p.peek().Tp
 		if tp != between && tp != by {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		opt.TableLevel = true

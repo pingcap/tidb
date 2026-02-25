@@ -178,7 +178,7 @@ func (p *HandParser) parseAlterTableSpec() *ast.AlterTableSpec {
 			if p.peek().IsKeyword("LOCATION") {
 				p.next() // consume LOCATION
 				if !(p.peek().IsKeyword("LABELS")) {
-					p.syntaxErrorAt(p.peek().Offset)
+					p.syntaxErrorAt(p.peek())
 					return nil
 				}
 				p.next() // consume LABELS
@@ -291,7 +291,7 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 				// MAXVALUE without parens
 				clause.Exprs = append(clause.Exprs, &ast.MaxValueExpr{})
 			} else {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			pDef.Clause = clause

@@ -145,7 +145,7 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		// ROW/ROWS
 		if _, ok := p.acceptKeyword(row, "ROW"); !ok {
 			if _, ok := p.acceptKeyword(rows, "ROWS"); !ok {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 		}
@@ -198,7 +198,7 @@ func (p *HandParser) parseSelectLock() *ast.SelectLockInfo {
 		lockNode.LockType = ast.SelectLockForShare
 		p.parseLockTablesAndModifiers(lockNode, ast.SelectLockForShareNoWait, ast.SelectLockForShareSkipLocked, 0)
 	default:
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 	}
 
 	return lockNode

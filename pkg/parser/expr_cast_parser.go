@@ -46,7 +46,7 @@ func (p *HandParser) parseCurrentFunc() ast.ExprNode {
 	case currentRole:
 		node.FnName = ast.NewCIStr("CURRENT_ROLE")
 	default:
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 
@@ -357,7 +357,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 				p.expect('>')
 				return nil, false
 			default:
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil, false
 			}
 			p.expect('>')
@@ -370,7 +370,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		return tp, false
 
 	default:
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil, false
 	}
 }
@@ -419,7 +419,7 @@ func (p *HandParser) parseOptFieldLen() int {
 	}
 	tok := p.next()
 	if tok.Tp != intLit {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return types.UnspecifiedLength
 	}
 	val := tok.Item.(int64)
@@ -434,7 +434,7 @@ func (p *HandParser) parseFloatOpt() (flen, decimal int) {
 	}
 	tok := p.next()
 	if tok.Tp != intLit {
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return types.UnspecifiedLength, types.UnspecifiedLength
 	}
 	flen = int(tok.Item.(int64))
@@ -442,7 +442,7 @@ func (p *HandParser) parseFloatOpt() (flen, decimal int) {
 	if _, ok := p.accept(','); ok {
 		tok = p.next()
 		if tok.Tp != intLit {
-			p.syntaxErrorAt(tok.Offset)
+			p.syntaxErrorAt(tok)
 			return flen, types.UnspecifiedLength
 		}
 		decimal = int(tok.Item.(int64))
@@ -740,11 +740,11 @@ func (p *HandParser) parseTimeUnit() *ast.TimeUnitExpr {
 		case "SQL_TSI_YEAR":
 			unit = ast.TimeUnitYear
 		default:
-			p.syntaxErrorAt(tok.Offset)
+			p.syntaxErrorAt(tok)
 			return nil
 		}
 	default:
-		p.syntaxErrorAt(tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 	return &ast.TimeUnitExpr{Unit: unit}

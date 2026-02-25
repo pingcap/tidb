@@ -280,13 +280,13 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 				stmt.Tp = ast.ShowPlacementForTable
 			}
 		} else {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		// After FOR clause, only LIKE/WHERE or statement end is valid.
 		next := p.peek().Tp
 		if next != ';' && next != EOF && next != like && next != where {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 	} else {
@@ -318,7 +318,7 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 		for {
 			tok, ok := p.accept(identifier)
 			if !ok {
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			table.PartitionNames = append(table.PartitionNames, ast.NewCIStr(tok.Lit))
@@ -334,7 +334,7 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 	if _, ok := p.accept(index); ok {
 		tok, ok := p.accept(identifier)
 		if !ok {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		stmt.IndexName = ast.NewCIStr(tok.Lit)
@@ -363,7 +363,7 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	}
-	p.syntaxErrorAt(p.peek().Offset)
+	p.syntaxErrorAt(p.peek())
 	return nil
 }
 

@@ -161,7 +161,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		}
 	case set: // SET c1=v1
 		if hasColumnList {
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		// INSERT INTO t SET c1=v1
@@ -411,7 +411,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 				}
 
 				if hasWildcard && !stmt.IsMultiTable {
-					p.syntaxErrorAt(p.peek().Offset)
+					p.syntaxErrorAt(p.peek())
 					return nil
 				}
 			}
@@ -454,7 +454,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 			}
 			if !isTableName {
 				// It's a subquery or join
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 		}
@@ -620,14 +620,14 @@ func (p *HandParser) parseNonTransactionalDMLStmt() ast.StmtNode {
 	case deleteKwd:
 		dml = p.parseDeleteStmt()
 	default:
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 
 	if shardable, ok := dml.(ast.ShardableDMLStmt); ok { //revive:disable-line
 		stmt.DMLStmt = shardable
 	} else {
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 

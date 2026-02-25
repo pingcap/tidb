@@ -266,7 +266,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 				p.expect('>')
 				return nil
 			default:
-				p.syntaxErrorAt(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			p.expect('>')
@@ -495,7 +495,7 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 			tp.SetCollate(charset.CollationBin)
 			p.next()
 		} else {
-			p.syntaxErrorAt(tok.Offset)
+			p.syntaxErrorAt(tok)
 		}
 	}
 
@@ -656,6 +656,6 @@ func (p *HandParser) parseBinaryFieldType(tp *types.FieldType, mysqlType byte, r
 	if p.peek().Tp == '(' {
 		tp.SetFlen(p.parseFieldLen())
 	} else if requireLen {
-		p.syntaxErrorAt(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 	}
 }

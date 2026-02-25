@@ -350,7 +350,7 @@ func (p *HandParser) parseFieldList() *ast.FieldList {
 		if field == nil {
 			// Found nothing where a field was expected.
 			// This usually means we hit an unexpected token or EOF invalidly.
-			p.syntaxErrorAt(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		// Set field text from source SQL (matching the FieldList rule).
