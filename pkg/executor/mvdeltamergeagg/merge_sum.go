@@ -36,8 +36,8 @@ func validateSumValueTypes(outputTp, deltaTp *types.FieldType) error {
 	return nil
 }
 
-func (e *MVDeltaMergeAggExec) buildSumMerger(
-	mapping MVDeltaMergeAggMapping,
+func (e *Exec) buildSumMerger(
+	mapping Mapping,
 	colID2ComputedIdx map[int]int,
 	childTypes []*types.FieldType,
 ) (aggMerger, error) {

@@ -25,12 +25,12 @@ import (
 
 type noopWriter struct{}
 
-func (noopWriter) WriteChunk(context.Context, *MVDeltaMergeAggChunkResult) error {
+func (noopWriter) WriteChunk(_ context.Context, _ *ChunkResult) error {
 	return nil
 }
 
 type tableResultWriter struct {
-	exec *MVDeltaMergeAggExec
+	exec *Exec
 
 	writableCols   []*table.Column
 	writableColIDs []int
@@ -41,7 +41,7 @@ type tableResultWriter struct {
 	touched []bool
 }
 
-func (e *MVDeltaMergeAggExec) buildTableResultWriter() (MVDeltaMergeAggResultWriter, error) {
+func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 	if e.TargetTable == nil {
 		return nil, errors.New("TargetTable is nil")
 	}
@@ -58,7 +58,7 @@ func (e *MVDeltaMergeAggExec) buildTableResultWriter() (MVDeltaMergeAggResultWri
 	}
 	publicCols := e.TargetTable.Cols()
 	if len(publicCols) != len(writableCols) {
-		return nil, errors.New("MVDeltaMergeAggExec stage1 does not support target table with non-public writable columns")
+		return nil, errors.New("Exec stage1 does not support target table with non-public writable columns")
 	}
 
 	colIDs := e.TargetWritableColIDs
@@ -127,7 +127,7 @@ func (e *MVDeltaMergeAggExec) buildTableResultWriter() (MVDeltaMergeAggResultWri
 	}, nil
 }
 
-func (w *tableResultWriter) WriteChunk(ctx context.Context, result *MVDeltaMergeAggChunkResult) error {
+func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) error {
 	if len(result.RowOps) == 0 {
 		return nil
 	}
@@ -144,14 +144,14 @@ func (w *tableResultWriter) WriteChunk(ctx context.Context, result *MVDeltaMerge
 		}
 
 		switch op.Tp {
-		case MVDeltaMergeAggRowOpNoOp:
+		case RowOpNoOp:
 			continue
-		case MVDeltaMergeAggRowOpInsert:
+		case RowOpInsert:
 			_, err = w.exec.TargetTable.AddRecord(tableCtx, txn, w.newRow)
 			if err != nil {
 				return err
 			}
-		case MVDeltaMergeAggRowOpUpdate:
+		case RowOpUpdate:
 			if err := w.buildTouched(); err != nil {
 				return err
 			}
@@ -162,7 +162,7 @@ func (w *tableResultWriter) WriteChunk(ctx context.Context, result *MVDeltaMerge
 			if err := w.exec.TargetTable.UpdateRecord(tableCtx, txn, handle, w.oldRow, w.newRow, w.touched); err != nil {
 				return err
 			}
-		case MVDeltaMergeAggRowOpDelete:
+		case RowOpDelete:
 			handle, err := w.exec.TargetHandleCols.BuildHandleByDatums(stmtCtx, w.oldRow)
 			if err != nil {
 				return err
@@ -177,7 +177,7 @@ func (w *tableResultWriter) WriteChunk(ctx context.Context, result *MVDeltaMerge
 	return txn.MayFlush()
 }
 
-func (w *tableResultWriter) buildRows(result *MVDeltaMergeAggChunkResult, rowIdx int) error {
+func (w *tableResultWriter) buildRows(result *ChunkResult, rowIdx int) error {
 	row := result.Input.GetRow(rowIdx)
 	for writableIdx, col := range w.writableCols {
 		retType := &col.FieldType
