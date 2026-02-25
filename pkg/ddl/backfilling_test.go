@@ -658,3 +658,62 @@ func TestGetRestoreDataFulltextKeepsRawHandleDatum(t *testing.T) {
 	require.Equal(t, types.KindInt64, rsData[0].Kind())
 	require.Equal(t, int64(3), rsData[0].GetInt64())
 }
+
+func TestGetRestoreDataHybridKeepsRawHandleDatum(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	colPKType := types.NewFieldType(mysql.TypeVarchar)
+	colPKType.SetCharset(charset.CharsetUTF8MB4)
+	colPKType.SetCollate(charset.CollationUTF8MB4)
+	colPK := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *colPKType}
+	colPK.AddFlag(mysql.PriKeyFlag)
+	colDoc := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeBlob)}
+	pkIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+	}
+	hybridIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_hybrid"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+		HybridInfo: &model.HybridIndexInfo{
+			Sharding: &model.HybridShardingSpec{
+				Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+			},
+		},
+	}
+	normalIdx := &model.IndexInfo{
+		ID:      3,
+		Name:    ast.NewCIStr("idx_doc"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+	}
+	tblInfo := &model.TableInfo{
+		ID:                  23,
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
+		Columns:             []*model.ColumnInfo{colPK, colDoc},
+		Indices:             []*model.IndexInfo{pkIdx, hybridIdx, normalIdx},
+	}
+
+	// the pk column with charset UTF8MB4, the raw value with tailing spaces should be encoded to restore data directly for hybrid index
+	rawPK := "pk   "
+	makeHandleDts := func() []types.Datum {
+		return []types.Datum{types.NewCollationStringDatum(rawPK, charset.CollationUTF8MB4)}
+	}
+
+	rsData := getRestoreData(tblInfo, hybridIdx, pkIdx, makeHandleDts())
+	// verify the result of `getRestoreData`
+	require.Len(t, rsData, 1)
+	require.Equal(t, types.KindString, rsData[0].Kind())
+	require.Equal(t, rawPK, rsData[0].GetString())
+	require.Equal(t, "pk   ", rsData[0].GetString())
+
+	rsData = getRestoreData(tblInfo, normalIdx, pkIdx, makeHandleDts())
+	require.Len(t, rsData, 1)
+	require.Equal(t, types.KindInt64, rsData[0].Kind())
+	require.Equal(t, int64(3), rsData[0].GetInt64())
+}
