@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -35,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -597,4 +600,58 @@ func TestSplitRangesByKeys(t *testing.T) {
 		result := splitRangesByKeys(tt.ranges, tt.splitKeys)
 		require.EqualValues(t, len(tt.expected), len(result), "keys mismatch", tt.name)
 	}
+}
+
+func TestGetRestoreDataFulltextKeepsRawHandleDatum(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	colPKType := types.NewFieldType(mysql.TypeVarchar)
+	colPKType.SetCharset(charset.CharsetUTF8MB4)
+	colPKType.SetCollate(charset.CollationUTF8MB4)
+	colPK := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *colPKType}
+	colPK.AddFlag(mysql.PriKeyFlag)
+	colDoc := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeBlob)}
+	pkIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+	}
+	fulltextIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_fts"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	normalIdx := &model.IndexInfo{
+		ID:      3,
+		Name:    ast.NewCIStr("idx_doc"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+	}
+	tblInfo := &model.TableInfo{
+		ID:                  22,
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
+		Columns:             []*model.ColumnInfo{colPK, colDoc},
+		Indices:             []*model.IndexInfo{pkIdx, fulltextIdx, normalIdx},
+	}
+
+	rawPK := "pk   "
+	makeHandleDts := func() []types.Datum {
+		return []types.Datum{types.NewCollationStringDatum(rawPK, charset.CollationUTF8MB4)}
+	}
+
+	rsData := getRestoreData(tblInfo, fulltextIdx, pkIdx, makeHandleDts())
+	require.Len(t, rsData, 1)
+	require.Equal(t, types.KindString, rsData[0].Kind())
+	require.Equal(t, rawPK, rsData[0].GetString())
+
+	rsData = getRestoreData(tblInfo, normalIdx, pkIdx, makeHandleDts())
+	require.Len(t, rsData, 1)
+	require.Equal(t, types.KindInt64, rsData[0].Kind())
+	require.Equal(t, int64(3), rsData[0].GetInt64())
 }
