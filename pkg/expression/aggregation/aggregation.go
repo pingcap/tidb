@@ -211,13 +211,15 @@ func (af *aggFunction) updateSum(ctx types.Context, evalCtx *AggEvaluateContext,
 
 // NeedCount indicates whether the aggregate function should record count.
 func NeedCount(name string) bool {
-	return name == ast.AggFuncCount || name == ast.AggFuncAvg
+	return name == ast.AggFuncCount || name == ast.AggFuncAvg ||
+		name == ast.AggFuncMaxCount || name == ast.AggFuncMinCount
 }
 
 // NeedValue indicates whether the aggregate function should record value.
 func NeedValue(name string) bool {
 	switch name {
 	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
+		ast.AggFuncMaxCount, ast.AggFuncMinCount,
 		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor, ast.AggFuncApproxPercentile:
 		return true
 	default:
@@ -238,6 +240,10 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
 func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
+		return false
+	}
+	// max_count/min_count are currently implemented only in TiDB.
+	if aggFunc.Name == ast.AggFuncMaxCount || aggFunc.Name == ast.AggFuncMinCount {
 		return false
 	}
 	if aggFunc.Name == ast.AggFuncApproxPercentile {
