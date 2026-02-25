@@ -96,7 +96,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 	case singleAtIdentifier, doubleAtIdentifier:
 		return p.parseVariableExpr()
 
-	case currentDate, currentTime, currentTs, currentUser, currentRole:
+	case currentDate, currentTime, currentTs, currentUser, currentRole, localTime, localTs:
 		return p.parseCurrentFunc()
 
 	case builtinFnCast:
@@ -158,7 +158,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 	// NowSymFunc: NOW(), CURRENT_TIMESTAMP(), LOCALTIME(), LOCALTIMESTAMP()
 	// Originally, these all produce FnName "CURRENT_TIMESTAMP" (canonical name).
 	// The scanner may produce either builtinFnNow or now depending on context.
-	case builtinFnNow, now, builtinFnCurTime, localTime, localTs:
+	case builtinFnNow, now, builtinFnCurTime:
 		return p.tryBuiltinFunc(p.parseOptPrecisionFunc)
 
 	case builtinFnCurDate:
