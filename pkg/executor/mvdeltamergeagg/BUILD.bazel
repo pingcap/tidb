@@ -23,7 +23,6 @@ go_library(
         "//pkg/table",
         "//pkg/types",
         "//pkg/util/chunk",
-        "//pkg/util/collate",
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_sync//errgroup",
     ],
