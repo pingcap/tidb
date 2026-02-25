@@ -102,6 +102,8 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		if node.With != nil {
 			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
 		}
+	case *ast.SubqueryExpr:
+		return in, checker.skipForSubqueryDisabled()
 	case *ast.InsertStmt:
 		if node.Select == nil {
 			nRows := len(node.Lists)
@@ -126,17 +128,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.cacheable = false
 		checker.reason = "query has user-defined variables is un-cacheable"
 		return in, true
-	case *ast.ExistsSubqueryExpr:
-		return in, checker.skipForSubqueryDisabled()
-	case *ast.CommonTableExpression:
-		checker.cteOffset = append(checker.cteOffset, len(checker.cteCanUsed))
-		if node.IsRecursive {
-			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
-		}
-		return in, false
-	case *ast.SubqueryExpr:
-		checker.cteOffset = append(checker.cteOffset, len(checker.cteCanUsed))
-		return in, checker.skipForSubqueryDisabled()
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
