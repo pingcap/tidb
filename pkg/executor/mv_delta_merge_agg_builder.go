@@ -16,14 +16,28 @@ package executor
 
 import "github.com/pingcap/tidb/pkg/executor/mvdeltamergeagg"
 
+// MVDeltaMergeAggExec is the executor alias for delta MV merge.
 type MVDeltaMergeAggExec = mvdeltamergeagg.Exec
+
+// MVDeltaMergeAggMapping is the mapping alias for delta MV aggregate merge.
 type MVDeltaMergeAggMapping = mvdeltamergeagg.Mapping
+
+// MinMaxRecomputeExec is the alias for min/max recompute execution descriptor.
 type MinMaxRecomputeExec = mvdeltamergeagg.MinMaxRecomputeExec
+
+// MVDeltaMergeAggRowOpType is the alias of row operation type for MV merge.
 type MVDeltaMergeAggRowOpType = mvdeltamergeagg.RowOpType
+
+// MVDeltaMergeAggRowOp is the alias of row operation item for MV merge.
 type MVDeltaMergeAggRowOp = mvdeltamergeagg.RowOp
+
+// MVDeltaMergeAggChunkResult is the alias of one merged chunk result.
 type MVDeltaMergeAggChunkResult = mvdeltamergeagg.ChunkResult
+
+// MVDeltaMergeAggResultWriter is the alias of merge result writer interface.
 type MVDeltaMergeAggResultWriter = mvdeltamergeagg.ResultWriter
 
+// MVDeltaMergeAgg row operation constants.
 const (
 	MVDeltaMergeAggRowOpNoOp   = mvdeltamergeagg.RowOpNoOp
 	MVDeltaMergeAggRowOpInsert = mvdeltamergeagg.RowOpInsert
