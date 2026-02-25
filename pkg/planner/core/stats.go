@@ -470,6 +470,10 @@ func detachCondAndBuildOptimalRangeForIndex(
 	if res.EqOrInCount <= res.EqCondCount {
 		return res, rowCount, nil
 	}
+	// If the number of ranges is small, skip optimizing for seek cost
+	if len(res.Ranges) <= 20 {
+		return res, rowCount, nil
+	}
 
 	// Save original ColumnValues to preserve full-length array with all column information
 	origColumnValues := res.ColumnValues
