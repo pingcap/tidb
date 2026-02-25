@@ -46,6 +46,9 @@ func newAnalyzeSaveStatsWorker(
 
 func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *handle.Handle, analyzeSnapshot bool) {
 	errReported := false
+	// drainErr is only used for kill-signal handling. Save failures should not
+	// switch to drain mode, so we can still try to persist stats for later
+	// partitions. ANALYZE may already end up with partially persisted stats.
 	var drainErr error
 	defer func() {
 		if r := recover(); r != nil {
