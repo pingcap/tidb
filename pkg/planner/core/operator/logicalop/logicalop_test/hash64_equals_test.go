@@ -813,14 +813,14 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 		AggFuncs:     []*aggregation.AggFuncDesc{desc},
 		GroupByItems: []expression.Expression{col},
 		PossibleProperties: plannerbase.PossiblePropertiesInfo{
-			Order: [][]*expression.Column{{col}},
+			Orders: [][]*expression.Column{{col}},
 		},
 	}
 	la2 := &logicalop.LogicalAggregation{
 		AggFuncs:     []*aggregation.AggFuncDesc{desc},
 		GroupByItems: []expression.Expression{col},
 		PossibleProperties: plannerbase.PossiblePropertiesInfo{
-			Order: [][]*expression.Column{{col}},
+			Orders: [][]*expression.Column{{col}},
 		},
 	}
 	hasher1 := base.NewHashEqualer()
@@ -838,7 +838,7 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 
 	la2.GroupByItems = []expression.Expression{col}
 	la2.PossibleProperties = plannerbase.PossiblePropertiesInfo{
-		Order: [][]*expression.Column{{}},
+		Orders: [][]*expression.Column{{}},
 	}
 	hasher2.Reset()
 	la2.Hash64(hasher2)
@@ -846,7 +846,7 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 	require.False(t, la1.Equals(la2))
 
 	la2.PossibleProperties = plannerbase.PossiblePropertiesInfo{
-		Order:      [][]*expression.Column{{col}},
+		Orders:     [][]*expression.Column{{col}},
 		HasTiflash: true,
 	}
 	hasher2.Reset()

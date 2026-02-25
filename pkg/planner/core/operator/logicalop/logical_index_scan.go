@@ -145,7 +145,7 @@ func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ..
 		copy(result[i], is.IdxCols[i:])
 	}
 	return &base.PossiblePropertiesInfo{
-		Order:      result,
+		Orders:     result,
 		HasTiflash: is.hasTiflash,
 	}
 }

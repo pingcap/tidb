@@ -343,8 +343,8 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 	}
 	p.hasTiflash = childProperties.HasTiflash
 	tmpSchema := expression.NewSchema(oldCols...)
-	newProperties := make([][]*expression.Column, 0, len(childProperties.Order))
-	for _, childProperty := range childProperties.Order {
+	newProperties := make([][]*expression.Column, 0, len(childProperties.Orders))
+	for _, childProperty := range childProperties.Orders {
 		newChildProperty := make([]*expression.Column, 0, len(childProperty))
 		for _, col := range childProperty {
 			pos := tmpSchema.ColumnIndex(col)
@@ -358,7 +358,7 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 		}
 	}
 	return &base.PossiblePropertiesInfo{
-		Order:      newProperties,
+		Orders:     newProperties,
 		HasTiflash: p.hasTiflash,
 	}
 }

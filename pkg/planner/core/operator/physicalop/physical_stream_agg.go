@@ -109,7 +109,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	}
 
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
-	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties.Order)*(len(allTaskTypes)-1)+len(allTaskTypes))
+	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties.Orders)*(len(allTaskTypes)-1)+len(allTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt:   math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 		NoCopPushDown: prop.NoCopPushDown,
@@ -118,7 +118,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	if childProp == nil {
 		return nil
 	}
-	for _, possibleChildProperty := range la.PossibleProperties.Order {
+	for _, possibleChildProperty := range la.PossibleProperties.Orders {
 		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
 			continue

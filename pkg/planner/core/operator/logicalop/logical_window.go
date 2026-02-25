@@ -423,7 +423,7 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, infos ..
 		result = append(result, p.OrderBy[i].Col)
 	}
 	return &base.PossiblePropertiesInfo{
-		Order:      [][]*expression.Column{result},
+		Orders:     [][]*expression.Column{result},
 		HasTiflash: p.hasTiflash,
 	}
 }

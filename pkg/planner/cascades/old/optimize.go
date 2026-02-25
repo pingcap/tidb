@@ -376,7 +376,7 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group]*base.
 			continue
 		}
 		groupHasTiflash = groupHasTiflash || exprInfo.HasTiflash
-		exprProperties := exprInfo.Order
+		exprProperties := exprInfo.Orders
 		for _, newPropCols := range exprProperties {
 			// Check if the prop has already been in `groupPropertyMap`.
 			newProp := property.PhysicalProperty{SortItems: property.SortItemsFromCols(newPropCols, true)}
@@ -391,7 +391,7 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group]*base.
 		resultProps = append(resultProps, prop)
 	}
 	result := &base.PossiblePropertiesInfo{
-		Order:      resultProps,
+		Orders:     resultProps,
 		HasTiflash: groupHasTiflash,
 	}
 	propertyMap[g] = result

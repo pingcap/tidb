@@ -382,7 +382,7 @@ type PhysicalJoin interface {
 // PossiblePropertiesInfo is used to store all possible order properties.
 type PossiblePropertiesInfo struct {
 	// all possible order properties
-	Order [][]*expression.Column
+	Orders [][]*expression.Column
 	// HasTiflash is a runtime pruning signal and is intentionally excluded from hash/equals.
 	HasTiflash bool
 }
@@ -394,12 +394,12 @@ func (info *PossiblePropertiesInfo) Hash64(h base.Hasher) {
 		return
 	}
 	h.HashByte(base.NotNilFlag)
-	if info.Order == nil {
+	if info.Orders == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
-		h.HashInt(len(info.Order))
-		for _, one := range info.Order {
+		h.HashInt(len(info.Orders))
+		for _, one := range info.Orders {
 			h.HashInt(len(one))
 			for _, col := range one {
 				col.Hash64(h)
@@ -420,18 +420,18 @@ func (info *PossiblePropertiesInfo) Equals(other any) bool {
 	if info2 == nil {
 		return false
 	}
-	if (info.Order == nil && info2.Order != nil) || (info.Order != nil && info2.Order == nil) || len(info.Order) != len(info2.Order) {
+	if (info.Orders == nil && info2.Orders != nil) || (info.Orders != nil && info2.Orders == nil) || len(info.Orders) != len(info2.Orders) {
 		return false
 	}
-	for i, one := range info.Order {
-		if len(one) != len(info2.Order[i]) {
+	for i, one := range info.Orders {
+		if len(one) != len(info2.Orders[i]) {
 			return false
 		}
 		for j, col := range one {
-			if (col == nil && info2.Order[i][j] != nil) || (col != nil && info2.Order[i][j] == nil) {
+			if (col == nil && info2.Orders[i][j] != nil) || (col != nil && info2.Orders[i][j] == nil) {
 				return false
 			}
-			if col != nil && !col.Equals(info2.Order[i][j]) {
+			if col != nil && !col.Equals(info2.Orders[i][j]) {
 				return false
 			}
 		}

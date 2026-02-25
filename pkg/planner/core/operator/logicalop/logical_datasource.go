@@ -346,7 +346,7 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...*base
 	hasTiFlashReplica := ds.HasTiflash()
 	ds.hasTiflash = tiflashInIsolationRead && !preferTiKVOnly && hasTiFlashReplica && ds.SCtx().GetSessionVars().IsMPPAllowed()
 	return &base.PossiblePropertiesInfo{
-		Order:      result,
+		Orders:     result,
 		HasTiflash: ds.hasTiflash,
 	}
 }

@@ -132,7 +132,7 @@ func (p *LogicalUnionScan) PreparePossibleProperties(_ *expression.Schema, child
 	childProps := childrenProperties[0]
 	p.hasTiflash = false
 	return &base.PossiblePropertiesInfo{
-		Order:      childProps.Order,
+		Orders:     childProps.Orders,
 		HasTiflash: false,
 	}
 }

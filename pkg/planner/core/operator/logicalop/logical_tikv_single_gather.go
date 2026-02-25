@@ -93,7 +93,7 @@ func (sg *TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, chil
 	}
 	sg.hasTiflash = childrenProperties[0].HasTiflash
 	return &base.PossiblePropertiesInfo{
-		Order:      childrenProperties[0].Order,
+		Orders:     childrenProperties[0].Orders,
 		HasTiflash: sg.hasTiflash,
 	}
 }

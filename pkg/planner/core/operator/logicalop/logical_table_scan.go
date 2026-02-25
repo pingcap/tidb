@@ -106,12 +106,12 @@ func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ..
 			cols[i] = c
 		}
 		return &base.PossiblePropertiesInfo{
-			Order:      [][]*expression.Column{cols},
+			Orders:     [][]*expression.Column{cols},
 			HasTiflash: ts.hasTiflash,
 		}
 	}
 	return &base.PossiblePropertiesInfo{
-		Order:      nil,
+		Orders:     nil,
 		HasTiflash: ts.hasTiflash,
 	}
 }

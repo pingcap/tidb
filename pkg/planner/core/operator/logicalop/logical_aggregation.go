@@ -272,7 +272,7 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
 		la.PossibleProperties = base.PossiblePropertiesInfo{
-			Order:      [][]*expression.Column{nil},
+			Orders:     [][]*expression.Column{nil},
 			HasTiflash: la.hasTiflash,
 		}
 		return &la.PossibleProperties
@@ -283,9 +283,9 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 		}
 		return &la.PossibleProperties
 	}
-	resultProperties := make([][]*expression.Column, 0, len(childProps.Order))
+	resultProperties := make([][]*expression.Column, 0, len(childProps.Orders))
 	groupByCols := la.GetGroupByCols()
-	for _, possibleChildProperty := range childProps.Order {
+	for _, possibleChildProperty := range childProps.Orders {
 		sortColOffsets := util.GetMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
 			prop := possibleChildProperty[:len(groupByCols)]
@@ -293,7 +293,7 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 		}
 	}
 	la.PossibleProperties = base.PossiblePropertiesInfo{
-		Order:      resultProperties,
+		Orders:     resultProperties,
 		HasTiflash: la.hasTiflash,
 	}
 	return &la.PossibleProperties

@@ -154,7 +154,7 @@ func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, infos ...
 		}
 	}
 	return &base.PossiblePropertiesInfo{
-		Order:      [][]*expression.Column{propCols},
+		Orders:     [][]*expression.Column{propCols},
 		HasTiflash: lt.hasTiflash,
 	}
 }

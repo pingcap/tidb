@@ -229,7 +229,7 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 		childStats = append(childStats, childGProp.Stats)
 		childSchema = append(childSchema, childGProp.Schema)
 		childProperties = append(childProperties, &base.PossiblePropertiesInfo{
-			Order:      childGProp.PossibleProps,
+			Orders:     childGProp.PossibleProps,
 			HasTiflash: childGProp.HasTiflash,
 		})
 	}
@@ -258,7 +258,7 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 		// prepare the possible sort columns for the group, which require fillIndexPath to fill index cols.
 		tmp := e.LogicalPlan.PreparePossibleProperties(tmpSchema, childProperties...)
 		if tmp != nil {
-			tmpPossibleProps = tmp.Order
+			tmpPossibleProps = tmp.Orders
 			tmpHasTiflash = tmp.HasTiflash
 		}
 	}

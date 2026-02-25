@@ -702,8 +702,8 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
-	leftProperties := childrenProperties[0].Order
-	rightProperties := childrenProperties[1].Order
+	leftProperties := childrenProperties[0].Orders
+	rightProperties := childrenProperties[1].Orders
 	p.hasTiflash = childrenProperties[0].HasTiflash && childrenProperties[1].HasTiflash
 	// TODO: We should consider properties propagation.
 	p.LeftProperties = leftProperties
@@ -724,7 +724,7 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 		copy(resultProperties[leftLen+i], cols)
 	}
 	return &base.PossiblePropertiesInfo{
-		Order:      resultProperties,
+		Orders:     resultProperties,
 		HasTiflash: p.hasTiflash,
 	}
 }
