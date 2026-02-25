@@ -16,7 +16,6 @@ package tables
 
 import (
 	"context"
-	"encoding/hex"
 	"sync"
 	"time"
 
@@ -357,9 +356,6 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		if err != nil {
 			return nil, err
 		}
-		logutil.BgLogger().Info("ffffffffffff Index Create",
-			zap.String("key", hex.EncodeToString(key)),
-			zap.String("idxVal", hex.EncodeToString(idxVal)))
 
 		ignoreAssertion := opt.IgnoreAssertion() || c.idxInfo.State != model.StatePublic
 

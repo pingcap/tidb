@@ -35,11 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
 )
 
 var (
@@ -1696,22 +1694,12 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 	// The sharding columns are only used to identify the hybrid-index case and to build the key;
 	// the value side intentionally carries all index columns to satisfy TiCi’s data ingest.
 	forceAllColumns := idxInfo.FullTextInfo != nil || len(idxInfo.HybridShardingColumns()) > 0
-	logutil.BgLogger().Info("ffffffffffff GenIndexValueForClusteredIndexVersion1",
-		zap.Any("indexInfo.FullTextInfo", idxInfo.FullTextInfo),
-		zap.Any("hybridShardingIndexColumns", idxInfo.HybridShardingColumns()),
-		zap.Bool("forceAllColumns", forceAllColumns))
 	if idxValNeedRestoredData || len(handleRestoredData) > 0 || forceAllColumns {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
 		colIDSet := make(map[int64]struct{}, len(idxInfo.Columns)+len(handleRestoredData))
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
 			col := tblInfo.Columns[idxCol.Offset]
-			logutil.BgLogger().Info("ffffffffffff GenIndexValueForClusteredIndexVersion1 loop",
-				zap.Int64("colID", col.ID),
-				zap.String("colName", col.Name.O),
-				zap.Bool("hasPriKeyFlag", mysql.HasPriKeyFlag(col.GetFlag())),
-				zap.Bool("forceAllColumns", forceAllColumns),
-				zap.Bool("needRestoredData", model.ColumnNeedRestoredData(idxCol, tblInfo.Columns)))
 			// If the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
 			if !forceAllColumns && mysql.HasPriKeyFlag(col.GetFlag()) {
@@ -1735,16 +1723,10 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 
 		if len(handleRestoredData) > 0 {
 			pkColIDs := TryGetCommonPkColumnRestoredIds(tblInfo)
-			logutil.BgLogger().Info("ffffffffffff GenIndexValueForClusteredIndexVersion1 handleRestoredData",
-				zap.Any("handleRestoredData", handleRestoredData), zap.Any("pkColIDs", pkColIDs))
 			for i, colID := range pkColIDs {
 				if _, exists := colIDSet[colID]; exists {
-					logutil.BgLogger().Info("ffffffffffff GenIndexValueForClusteredIndexVersion1 handleRestoredData skip",
-						zap.Int64("colID", colID))
 					continue
 				}
-				logutil.BgLogger().Info("ffffffffffff GenIndexValueForClusteredIndexVersion1 handleRestoredData append",
-					zap.Int64("colID", colID))
 				colIds = append(colIds, colID)
 				allRestoredData = append(allRestoredData, handleRestoredData[i])
 			}

@@ -1780,12 +1780,10 @@ func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum
 	// If an index is a hybrid index or fulltext index, we should not convert the datum to tail space count.
 	// Instead, we encoded the raw value to restored data to satisfy TiCI's data ingestion.
 	forceAllColumns := idx != nil && (idx.FullTextInfo != nil || len(idx.HybridShardingColumns()) > 0)
-	logutil.BgLogger().Info("ffffffffffff try to get restored data for handle", zap.Any("idx", idx), zap.Bool("forceAllColumns", forceAllColumns))
 	rsData := make([]types.Datum, 0, 4)
 	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		logutil.BgLogger().Info("ffffffffffff try to get restored data for handle", zap.Any("pkCol", pkCol), zap.Any("pkIdxCol", pkIdxCol), zap.Bool("needRestoredData", types.NeedRestoredData(&pkCol.FieldType)))
 		if !types.NeedRestoredData(&pkCol.FieldType) {
 			continue
 		}
@@ -1799,7 +1797,6 @@ func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum
 		if !forceAllColumns {
 			ConvertDatumToTailSpaceCount(&datum, pkCol)
 		}
-		logutil.BgLogger().Info("ffffffffffff try to get restored data for handle", zap.Bool("forceAllColumns", forceAllColumns), zap.Any("pkCol", pkCol), zap.Any("datum", datum))
 		rsData = append(rsData, datum)
 	}
 	return rsData
