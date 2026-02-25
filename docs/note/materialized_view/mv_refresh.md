@@ -69,7 +69,7 @@ Current privilege semantics (MVP):
 
 ## Core execution flow (transactional refresh framework)
 
-The most direct implementation is: transaction + row-lock mutex + history lifecycle + savepoint + data refresh + success-metadata update.
+The most direct implementation is: transaction + row-lock mutex + history lifecycle + data refresh + success-metadata update.
 
 `COMPLETE` and `FAST` share the same outer framework; only the "refresh implementation" step differs.
 
@@ -80,26 +80,24 @@ The most direct implementation is: transaction + row-lock mutex + history lifecy
    - this avoids using inconsistent refresh metadata snapshots inside one refresh flow.
 4. Record refresh `start_tso` as `REFRESH_JOB_ID`.
 5. Use an independent session to insert one `mysql.tidb_mview_refresh_hist` row with `STATUS='running'` and `REFRESH_JOB_ID=<start_tso>`.
-6. Set a savepoint (used to roll back MV data changes while keeping transaction control flow explicit).
-7. Run refresh implementation by refresh type:
+6. Run refresh implementation by refresh type:
    - `COMPLETE`: `DELETE FROM <mv_table>` + `INSERT INTO <mv_table> <mv_select_sql>`.
    - `FAST`: construct internal statement and run via `ExecuteInternalStmt` (currently planner/build returns "not supported" placeholder).
-8. Success path: before commit, update `mysql.tidb_mview_refresh_info` row:
+7. Success path: before commit, update `mysql.tidb_mview_refresh_info` row:
    - `LAST_SUCCESS_READ_TSO = <COMPLETE refresh: txn for_update_ts>`
    - and other success metadata used by next refresh.
-9. Commit refresh transaction.
-10. After commit returns success, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID` to `STATUS='success'` and fill completion fields.
+8. Commit refresh transaction.
+9. After commit returns success, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID` to `STATUS='success'` and fill completion fields.
 
 Failure path (for example `INSERT INTO ... SELECT ...` fails):
 
-1. `ROLLBACK TO SAVEPOINT` to roll back MV data changes (no partial MV data update).
+1. `ROLLBACK` the refresh transaction to roll back MV data changes (no partial MV data update).
 2. Do **not** update `mysql.tidb_mview_refresh_info` (failure does not change success watermark).
-3. End refresh transaction (`COMMIT`/`ROLLBACK` according to implementation path).
-4. After refresh transaction finishes and failure is known, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID`:
+3. After refresh transaction finishes and failure is known, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID`:
    - `STATUS='failed'`
    - failure reason / error message
    - completion timestamp.
-5. Return original error to user.
+4. Return original error to user.
 
 Pseudo SQL (key points only):
 
@@ -128,8 +126,6 @@ INSERT INTO mysql.tidb_mview_refresh_hist (
     <mview_id>, <refresh_job_id>, <refresh_type>, 'running', NOW(6)
 );
 
-SAVEPOINT tidb_mview_refresh_sp;
-
 -- (B) full replacement
 DELETE FROM <db>.<mv>;
 -- note: in strict mode TiDB normally blocks TiFlash/MPP on the SELECT part of a write statement.
@@ -137,7 +133,7 @@ DELETE FROM <db>.<mv>;
 -- (for example `SessionVars.InMaterializedViewMaintenance`) so optimizer bypasses that strict-mode guard,
 -- allowing the SELECT side of INSERT ... SELECT to use TiFlash/MPP.
 INSERT INTO <db>.<mv> <SQLContent>;
-  -- SQLContent is MV definition SELECT (rollback to savepoint on failure)
+  -- SQLContent is MV definition SELECT (rollback whole refresh txn on failure)
   -- so COMPLETE refresh can leverage TiFlash for heavy scans.
 
 -- (C) success-only metadata update in the same refresh transaction
@@ -216,14 +212,14 @@ Execution path:
    - `PlanBuilder.buildRefreshMaterializedView` builds plan and enforces outer privilege check (MVP: `ALTER` on MV).
 3. Executor:
    - executor builder maps plan to `RefreshMaterializedViewExec`.
-   - `RefreshMaterializedViewExec` runs refresh service directly (`Validate + Lock + HistRunning Persist + Savepoint + DataChanges + SuccessInfo Persist + Commit + HistFinalize`).
+   - `RefreshMaterializedViewExec` runs refresh service directly (`Validate + Lock + HistRunning Persist + DataChanges + SuccessInfo Persist + Commit + HistFinalize`).
 
 Core execution semantics:
 
 - Refresh uses internal session, not caller session transaction/variables.
 - Refresh path uses dedicated internal source type (`kv.InternalTxnMVMaintenance`).
 - Uses `BEGIN PESSIMISTIC` + `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh_info` for mutex.
-- Uses `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` so data changes can be rolled back cleanly on failure.
+- On refresh execution failure, rolls back the whole refresh transaction to guarantee all-or-nothing MV data replacement.
 - `COMPLETE` rebuilds data with `DELETE FROM mv` + `INSERT INTO mv SELECT ...`.
 - `FAST` uses internal-only statement `RefreshMaterializedViewImplementStmt` as framework entry
   (planner still returns placeholder "not supported").
