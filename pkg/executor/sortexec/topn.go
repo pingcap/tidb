@@ -387,17 +387,6 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		return err
 	}
 
-	// Check types, we need string types as prefix index only supports string types.
-	for i := range e.TruncateKeyExprs {
-		prefixKeyType := e.TruncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetType()
-		switch prefixKeyType {
-		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		default:
-			return errors.NewNoStackErrorf("Get unexpected type %d", prefixKeyType)
-		}
-	}
-
 	needMoreChunks := true
 	for (uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit) || needMoreChunks {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
