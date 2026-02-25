@@ -87,6 +87,7 @@ func TestFixControl44823(t *testing.T) {
 	tk.MustQuery(query).Check(testkit.Rows())
 	tk.MustQuery(query).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
 }
 
 func TestCacheable(t *testing.T) {
@@ -480,9 +481,15 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (c int)`)
 	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
+}
 
-	tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
-	tk.MustExec("drop table if exists v2")
+func TestPreparedPlanCacheWithCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache = 1`)
+	tk.MustExec(`drop table if exists v2`)
 	tk.MustExec(`create table v2 (
 		id int primary key auto_increment,
 		group_name varchar(50),
