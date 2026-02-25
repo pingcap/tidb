@@ -324,8 +324,8 @@ func (p *HandParser) parseAnalyzeTableStmt() ast.StmtNode {
 	// Optional: INDEX [idx1[, idx2]]
 	if _, ok := p.accept(index); ok {
 		stmt.IndexFlag = true
-		// Parse optional index names
-		for isIdentLike(p.peek().Tp) {
+		// Parse optional index names. PRIMARY is a valid index name here.
+		for isIdentLike(p.peek().Tp) || p.peek().Tp == primary {
 			idxTok := p.next()
 			stmt.IndexNames = append(stmt.IndexNames, ast.NewCIStr(idxTok.Lit))
 			if _, ok := p.accept(','); !ok {

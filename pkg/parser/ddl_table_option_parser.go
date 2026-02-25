@@ -112,7 +112,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.parseTableOptionUint(opt, ast.TableOptionAutoIncrement)
 	case autoRandomBase:
 		p.parseTableOptionUint(opt, ast.TableOptionAutoRandomBase)
-	case comment, connection, password, encryption, secondaryEngineAttribute:
+	case comment, connection, password, encryption, engine_attribute, secondaryEngineAttribute:
 		var optTp ast.TableOptionType
 		switch p.peek().Tp {
 		case comment:
@@ -123,6 +123,8 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			optTp = ast.TableOptionPassword
 		case encryption:
 			optTp = ast.TableOptionEncryption
+		case engine_attribute:
+			optTp = ast.TableOptionEngineAttribute
 		default:
 			optTp = ast.TableOptionSecondaryEngineAttribute
 		}

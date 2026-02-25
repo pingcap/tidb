@@ -277,7 +277,11 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 		case defaultKwd:
 			p.next()
 			option.Tp = ast.ColumnOptionDefaultValue
-			option.Expr = p.parseExpression(precNone)
+			// MySQL grammar: DEFAULT value is a signed_literal or NOW()/CURRENT_TIMESTAMP.
+			// Use parsePrefixExpr which handles literals, function calls, parenthesized
+			// expressions, and unary +/- but does NOT consume infix operators like
+			// NOT/AND/OR, which avoids greedily consuming column options like NOT NULL.
+			option.Expr = p.parsePrefixExpr(0)
 
 			// Unwrap nested parentheses for inspection and normalization
 			var inner ast.ExprNode = option.Expr

@@ -489,26 +489,22 @@ func (p *HandParser) parseSetTransaction(isGlobal bool, hasScope bool) ast.StmtN
 			} else {
 				p.expect(only)
 				// Check for AS OF clause
-				var asOfTs string
 				if p.peek().Tp == asof {
 					p.next()
 					p.expect(timestampType)
-					asOfTs = p.next().Lit
+					va.Name = "tx_read_ts"
+					va.Value = p.parseExpression(precNone)
 				} else if p.peek().Tp == as {
 					p.next()
 					if p.peek().Tp == of {
 						p.next()
 						p.expect(timestampType)
-						asOfTs = p.next().Lit
+						va.Name = "tx_read_ts"
+						va.Value = p.parseExpression(precNone)
 					} else {
 						// Just 'AS' without 'OF'? Should not happen here in valid SQL
 						p.syntaxErrorAt(p.peek())
 					}
-				}
-
-				if asOfTs != "" {
-					va.Name = "tx_read_ts"
-					va.Value = p.newValueExpr(asOfTs)
 				} else {
 					va.Name = "tx_read_only"
 					va.Value = p.newValueExpr("1")
