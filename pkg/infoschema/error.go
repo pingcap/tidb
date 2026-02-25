@@ -48,6 +48,8 @@ var (
 	ErrModelDDLDisabled = dbterror.ClassSchema.NewStd(mysql.ErrModelDDLDisabled)
 	// ErrModelInferenceDisabled returns for model inference feature is disabled.
 	ErrModelInferenceDisabled = dbterror.ClassSchema.NewStd(mysql.ErrModelInferenceDisabled)
+	// ErrLLMInferenceDisabled returns for LLM inference feature is disabled.
+	ErrLLMInferenceDisabled = dbterror.ClassSchema.NewStd(mysql.ErrLLMInferenceDisabled)
 	// ErrReservedSyntax for internal syntax.
 	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.

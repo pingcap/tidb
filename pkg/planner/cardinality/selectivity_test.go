@@ -969,6 +969,44 @@ func TestSelectivityModelPredictDefault(t *testing.T) {
 	require.Truef(t, math.Abs(ratio-0.1) < eps, "expected model default selectivity, got: %v", ratio)
 }
 
+func TestSelectivityLLMDefault(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	statsTbl, err := prepareSelectivity(testKit, dom)
+	require.NoError(t, err)
+
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl := tb.Meta()
+	colInfo := tbl.Columns[0]
+	col := &expression.Column{
+		ID:       colInfo.ID,
+		UniqueID: colInfo.ID,
+		RetType:  colInfo.FieldType.Clone(),
+	}
+	histColl := statsTbl.GenerateHistCollFromColumnInfo(tbl, []*expression.Column{col})
+
+	sctx := testKit.Session().(sessionctx.Context)
+	ectx := sctx.GetExprCtx()
+	llmExpr := expression.NewFunctionInternal(
+		ectx,
+		ast.LLMComplete,
+		types.NewFieldType(mysql.TypeString),
+		expression.NewStrConst("hello"),
+	)
+	llmPred := expression.NewFunctionInternal(
+		ectx,
+		ast.EQ,
+		types.NewFieldType(mysql.TypeTiny),
+		llmExpr,
+		expression.NewStrConst("ok"),
+	)
+
+	ratio, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, []expression.Expression{llmPred}, nil)
+	require.NoError(t, err)
+	require.Truef(t, math.Abs(ratio-0.1) < eps, "expected llm default selectivity, got: %v", ratio)
+}
+
 // TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.
 func TestDNFCondSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)

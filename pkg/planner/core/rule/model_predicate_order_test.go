@@ -66,3 +66,43 @@ func TestPredicateSimplificationModelPredictOrder(t *testing.T) {
 	require.False(t, isModelPredicate(conds[0]), "model predicate should be ordered after cheap predicate")
 	require.True(t, isModelPredicate(conds[1]), "expected model predicate in the second position")
 }
+
+func TestPredicateSimplificationLLMOrder(t *testing.T) {
+	sctx := mock.NewContext()
+	ectx := sctx.GetExprCtx()
+
+	col := &expression.Column{
+		ID:       1,
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	llmExpr := expression.NewFunctionInternal(
+		ectx,
+		ast.LLMComplete,
+		types.NewFieldType(mysql.TypeString),
+		expression.NewStrConst("hello"),
+	)
+	llmPred := expression.NewFunctionInternal(
+		ectx,
+		ast.EQ,
+		types.NewFieldType(mysql.TypeTiny),
+		llmExpr,
+		expression.NewStrConst("ok"),
+	)
+	cheapPred := expression.NewFunctionInternal(
+		ectx,
+		ast.GT,
+		types.NewFieldType(mysql.TypeTiny),
+		col,
+		expression.NewInt64Const(1),
+	)
+	conds := applyPredicateSimplification(sctx.GetPlanCtx(), []expression.Expression{llmPred, cheapPred}, false, nil)
+	require.Len(t, conds, 2)
+
+	isLLMPredicate := func(expr expression.Expression) bool {
+		return expression.CheckFuncInExpr(expr, ast.LLMComplete) || expression.CheckFuncInExpr(expr, ast.LLMEmbedText)
+	}
+
+	require.False(t, isLLMPredicate(conds[0]), "llm predicate should be ordered after cheap predicate")
+	require.True(t, isLLMPredicate(conds[1]), "expected llm predicate in the second position")
+}
