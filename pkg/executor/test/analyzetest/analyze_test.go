@@ -621,57 +621,35 @@ func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
 		"test t1  a 0 0 1 1 1111 1111 0"))
 }
 
-func analyzeCollationCaseInsensitiveSubtest(t *testing.T) {
+// TestAnalyzeCollationCaseInsensitive verifies that synthesized index stats
+// match the underlying column stats across different collations and types.
+func TestAnalyzeCollationCaseInsensitive(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 
-	// Test 1: Simple case — only the collation-equivalent values
-	tk.MustExec("drop table if exists t")
+	// Test 1: utf8mb4_0900_ai_ci — basic collation equivalence
+	// Under this collation: HELLO = Hello = hello (3 rows), HELLP = Hellp (2 rows)
 	tk.MustExec("create table t (a varchar(255) collate utf8mb4_0900_ai_ci, index idx_a(a))")
 	tk.MustExec("insert into t values ('HELLO'), ('Hello'), ('HELLP'), ('Hellp'), ('hello')")
 	tk.MustExec("analyze table t with 10 topn, 10 buckets")
 
-	// Under utf8mb4_0900_ai_ci collation:
-	//   HELLO = Hello = hello  (3 rows, same collation key)
-	//   HELLP = Hellp          (2 rows, same collation key)
-	//
-	// Binary sort order would be: HELLO < HELLP < Hello < Hellp < hello
-	// This interleaves the two collation groups.
-	t.Log("====== Test 1: utf8mb4_0900_ai_ci — basic collation equivalence ======")
-	t.Log("--- Collation behavior (GROUP BY) ---")
-	for _, row := range tk.MustQuery("select a, count(*) cnt from t group by a order by a").Rows() {
-		t.Logf("  %s: count=%s", row[0], row[1])
-	}
-	t.Log("--- Column TopN (is_index=0) ---")
-	for _, row := range tk.MustQuery("show stats_topn where table_name = 't' and is_index = 0").Sort().Rows() {
-		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
-	}
-	t.Log("--- Index TopN (is_index=1) ---")
-	for _, row := range tk.MustQuery("show stats_topn where table_name = 't' and is_index = 1").Sort().Rows() {
-		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
-	}
-	t.Log("--- Column Buckets ---")
-	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't' and is_index = 0").Sort().Rows() {
-		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
-			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
-	}
-	t.Log("--- Index Buckets ---")
-	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't' and is_index = 1").Sort().Rows() {
-		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
-			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
-	}
-	t.Log("--- Histograms (distinct_count, null_count) ---")
-	for _, row := range tk.MustQuery("show stats_histograms where table_name = 't'").Sort().Rows() {
-		t.Logf("  col=%s is_index=%s distinct_count=%s null_count=%s", row[3], row[4], row[6], row[7])
-	}
+	// All values fit in TopN, no buckets.
+	tk.MustQuery("show stats_topn where table_name = 't' and is_index = 0").Sort().Check(testkit.RowsWithSep("|",
+		"test t  a 0 \x1d\x18\x1c\xaa\x1dw\x1dw\x1d\xdd|3",
+		"test t  a 0 \x1d\x18\x1c\xaa\x1dw\x1dw\x1e\f|2"))
+	// Synthesized index TopN must match column TopN values.
+	tk.MustQuery("show stats_topn where table_name = 't' and is_index = 1").Sort().Check(testkit.RowsWithSep("|",
+		"test t  idx_a 1 \x1d\x18\x1c\xaa\x1dw\x1dw\x1d\xdd|3",
+		"test t  idx_a 1 \x1d\x18\x1c\xaa\x1dw\x1dw\x1e\f|2"))
+	tk.MustQuery("show stats_buckets where table_name = 't' and is_index = 0").Check(testkit.Rows())
+	tk.MustQuery("show stats_buckets where table_name = 't' and is_index = 1").Check(testkit.Rows())
+	tk.MustQuery("show stats_histograms where table_name = 't'").Sort().CheckAt([]int{3, 4, 6, 7}, testkit.Rows(
+		"a 0 2 0",
+		"idx_a 1 2 0"))
 
-	// Test 2: More values to force histogram buckets (not just TopN)
-	// Add enough distinct values so only some fit in TopN (2 topn), rest go to buckets
-	t.Log("")
-	t.Log("====== Test 2: utf8mb4_0900_ai_ci — force histogram buckets with 2 topn ======")
-	tk.MustExec("drop table if exists t2")
+	// Test 2: utf8mb4_0900_ai_ci — enough values to force histogram buckets (2 topn)
 	tk.MustExec("create table t2 (a varchar(255) collate utf8mb4_0900_ai_ci, index idx_a(a))")
 	tk.MustExec(`insert into t2 values
 		('HELLO'), ('Hello'), ('hello'), ('hElLo'), ('hELLO'),
@@ -684,84 +662,66 @@ func analyzeCollationCaseInsensitiveSubtest(t *testing.T) {
 		('fig'), ('FIG'), ('Fig'), ('fIg')`)
 	tk.MustExec("analyze table t2 with 2 topn, 10 buckets")
 
-	t.Log("--- Collation behavior (GROUP BY) ---")
-	for _, row := range tk.MustQuery("select a, count(*) cnt from t2 group by a order by cnt desc, a").Rows() {
-		t.Logf("  %s: count=%s", row[0], row[1])
-	}
-	t.Log("--- Column TopN (is_index=0) ---")
-	for _, row := range tk.MustQuery("show stats_topn where table_name = 't2' and is_index = 0").Sort().Rows() {
-		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
-	}
-	t.Log("--- Index TopN (is_index=1) ---")
-	for _, row := range tk.MustQuery("show stats_topn where table_name = 't2' and is_index = 1").Sort().Rows() {
-		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
-	}
-	t.Log("--- Column Buckets ---")
-	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't2' and is_index = 0").Sort().Rows() {
-		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
-			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
-	}
-	t.Log("--- Index Buckets ---")
-	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't2' and is_index = 1").Sort().Rows() {
-		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
-			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
-	}
-	t.Log("--- Histograms (distinct_count, null_count) ---")
-	for _, row := range tk.MustQuery("show stats_histograms where table_name = 't2'").Sort().Rows() {
-		t.Logf("  col=%s is_index=%s distinct_count=%s null_count=%s", row[3], row[4], row[6], row[7])
-	}
+	tk.MustQuery("show stats_topn where table_name = 't2' and is_index = 0").Sort().Check(testkit.RowsWithSep("|",
+		"test t2  a 0 \x1c\xe5\x1d2\x1c\xf4|4",
+		"test t2  a 0 \x1d\x18\x1c\xaa\x1dw\x1dw\x1d\xdd|5"))
+	tk.MustQuery("show stats_topn where table_name = 't2' and is_index = 1").Sort().Check(testkit.RowsWithSep("|",
+		"test t2  idx_a 1 \x1c\xe5\x1d2\x1c\xf4|4",
+		"test t2  idx_a 1 \x1d\x18\x1c\xaa\x1dw\x1dw\x1d\xdd|5"))
+	// Column and index buckets must be identical.
+	tk.MustQuery("show stats_buckets where table_name = 't2' and is_index = 0").Sort().Check(testkit.Rows(
+		"test t2  a 0 0 3 3 \x1cG\x1e\f\x1e\f\x1dw\x1c\xaa \x1cG\x1e\f\x1e\f\x1dw\x1c\xaa 0",
+		"test t2  a 0 1 5 1 \x1c`\x1cG\x1d\xb9\x1cG\x1d\xb9\x1cG \x1cz\x1d\x18\x1c\xaa\x1e3\x1e3\x1f\v 0",
+		"test t2  a 0 2 7 2 \x1c\x8f\x1cG\x1e\x95\x1c\xaa \x1c\x8f\x1cG\x1e\x95\x1c\xaa 0",
+		"test t2  a 0 3 10 2 \x1c\xaa\x1dw\x1c\x8f\x1c\xaa\x1e3\x1c`\x1c\xaa\x1e3\x1e3\x1f\v \x1d\x18\x1c\xaa\x1dw\x1dw\x1e\f 0"))
+	tk.MustQuery("show stats_buckets where table_name = 't2' and is_index = 1").Sort().Check(testkit.Rows(
+		"test t2  idx_a 1 0 3 3 \x1cG\x1e\f\x1e\f\x1dw\x1c\xaa \x1cG\x1e\f\x1e\f\x1dw\x1c\xaa 0",
+		"test t2  idx_a 1 1 5 1 \x1c`\x1cG\x1d\xb9\x1cG\x1d\xb9\x1cG \x1cz\x1d\x18\x1c\xaa\x1e3\x1e3\x1f\v 0",
+		"test t2  idx_a 1 2 7 2 \x1c\x8f\x1cG\x1e\x95\x1c\xaa \x1c\x8f\x1cG\x1e\x95\x1c\xaa 0",
+		"test t2  idx_a 1 3 10 2 \x1c\xaa\x1dw\x1c\x8f\x1c\xaa\x1e3\x1c`\x1c\xaa\x1e3\x1e3\x1f\v \x1d\x18\x1c\xaa\x1dw\x1dw\x1e\f 0"))
+	tk.MustQuery("show stats_histograms where table_name = 't2'").Sort().CheckAt([]int{3, 4, 6, 7}, testkit.Rows(
+		"a 0 8 0",
+		"idx_a 1 8 0"))
 
-	// Test 3: INT column — compare column vs index stats encoding
-	t.Log("")
-	t.Log("====== Test 3: INT column — encoding difference ======")
-	tk.MustExec("drop table if exists t3")
+	// Test 3: INT column — synthesized index stats match column stats
 	tk.MustExec("create table t3 (a int, index idx_a(a))")
 	tk.MustExec("insert into t3 values (1),(1),(1),(2),(2),(3),(4),(5)")
 	tk.MustExec("analyze table t3 with 2 topn, 10 buckets")
-	t.Log("--- Column TopN (is_index=0) ---")
-	for _, row := range tk.MustQuery("show stats_topn where table_name = 't3' and is_index = 0").Sort().Rows() {
-		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
-	}
-	t.Log("--- Index TopN (is_index=1) ---")
-	for _, row := range tk.MustQuery("show stats_topn where table_name = 't3' and is_index = 1").Sort().Rows() {
-		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
-	}
-	t.Log("--- Column Buckets ---")
-	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't3' and is_index = 0").Sort().Rows() {
-		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
-			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
-	}
-	t.Log("--- Index Buckets ---")
-	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't3' and is_index = 1").Sort().Rows() {
-		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
-			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
-	}
 
-	// Test 4: VARCHAR with binary collation (utf8mb4_bin) — preserves original strings
-	t.Log("")
-	t.Log("====== Test 4: VARCHAR utf8mb4_bin — case-sensitive baseline ======")
-	tk.MustExec("drop table if exists t4")
+	tk.MustQuery("show stats_topn where table_name = 't3' and is_index = 0").Sort().Check(testkit.RowsWithSep("|",
+		"test t3  a 0 1|3",
+		"test t3  a 0 2|2"))
+	tk.MustQuery("show stats_topn where table_name = 't3' and is_index = 1").Sort().Check(testkit.RowsWithSep("|",
+		"test t3  idx_a 1 1|3",
+		"test t3  idx_a 1 2|2"))
+	tk.MustQuery("show stats_buckets where table_name = 't3' and is_index = 0").Sort().Check(testkit.Rows(
+		"test t3  a 0 0 1 1 3 3 0",
+		"test t3  a 0 1 2 1 4 4 0",
+		"test t3  a 0 2 3 1 5 5 0"))
+	tk.MustQuery("show stats_buckets where table_name = 't3' and is_index = 1").Sort().Check(testkit.Rows(
+		"test t3  idx_a 1 0 1 1 3 3 0",
+		"test t3  idx_a 1 1 2 1 4 4 0",
+		"test t3  idx_a 1 2 3 1 5 5 0"))
+
+	// Test 4: VARCHAR utf8mb4_bin — case-sensitive baseline
 	tk.MustExec("create table t4 (a varchar(255) collate utf8mb4_bin, index idx_a(a))")
 	tk.MustExec("insert into t4 values ('HELLO'),('HELLO'),('HELLO'),('Hello'),('Hello'),('hello'),('HELLP'),('Hellp')")
 	tk.MustExec("analyze table t4 with 2 topn, 10 buckets")
-	t.Log("--- Column TopN (is_index=0) ---")
-	for _, row := range tk.MustQuery("show stats_topn where table_name = 't4' and is_index = 0").Sort().Rows() {
-		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
-	}
-	t.Log("--- Index TopN (is_index=1) ---")
-	for _, row := range tk.MustQuery("show stats_topn where table_name = 't4' and is_index = 1").Sort().Rows() {
-		t.Logf("  col=%s value=%q count=%s", row[3], row[5], row[6])
-	}
-	t.Log("--- Column Buckets ---")
-	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't4' and is_index = 0").Sort().Rows() {
-		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
-			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
-	}
-	t.Log("--- Index Buckets ---")
-	for _, row := range tk.MustQuery("show stats_buckets where table_name = 't4' and is_index = 1").Sort().Rows() {
-		t.Logf("  col=%s bucket=%s count=%s repeats=%s lower=%q upper=%q ndv=%s",
-			row[3], row[5], row[6], row[7], row[8], row[9], row[10])
-	}
+
+	tk.MustQuery("show stats_topn where table_name = 't4' and is_index = 0").Sort().Check(testkit.RowsWithSep("|",
+		"test t4  a 0 HELLO|3",
+		"test t4  a 0 Hello|2"))
+	tk.MustQuery("show stats_topn where table_name = 't4' and is_index = 1").Sort().Check(testkit.RowsWithSep("|",
+		"test t4  idx_a 1 HELLO|3",
+		"test t4  idx_a 1 Hello|2"))
+	tk.MustQuery("show stats_buckets where table_name = 't4' and is_index = 0").Sort().Check(testkit.Rows(
+		"test t4  a 0 0 1 1 HELLP HELLP 0",
+		"test t4  a 0 1 2 1 Hellp Hellp 0",
+		"test t4  a 0 2 3 1 hello hello 0"))
+	tk.MustQuery("show stats_buckets where table_name = 't4' and is_index = 1").Sort().Check(testkit.Rows(
+		"test t4  idx_a 1 0 1 1 HELLP HELLP 0",
+		"test t4  idx_a 1 1 2 1 Hellp Hellp 0",
+		"test t4  idx_a 1 2 3 1 hello hello 0"))
 }
 
 func TestAnalyzeSamplingWorkPanic(t *testing.T) {
@@ -3465,8 +3425,6 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 // stats: no separate index stats rows are stored, and the cache synthesizes
 // Index entries from Column entries.
 func TestConsolidateSingleColIndexStats(t *testing.T) {
-	t.Run("CollationCaseInsensitive", analyzeCollationCaseInsensitiveSubtest)
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
