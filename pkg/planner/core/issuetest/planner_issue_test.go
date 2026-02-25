@@ -100,6 +100,45 @@ func TestPlannerIssueRegressions(t *testing.T) {
 				"    └─TableFullScan_12 2.00 cop[tikv] table:t7 keep order:false"))
 	})
 
+	t.Run("reduce-group-by-columns-by-pk", func(t *testing.T) {
+		tk := newTestKit(t)
+		tk.MustExec(`create table a (
+    pk int primary key,
+    id int not null,
+    col1 varchar(20),
+    col2 varchar(20),
+    col3 varchar(20),
+    key(id)
+);`)
+		tk.MustExec("create table b (id int primary key)")
+		tk.MustExec("insert into a values (1, 1, 'a1', 'a2', 'a3'), (2, 2, 'b1', 'b2', 'b3')")
+		tk.MustExec("insert into b values (1), (2)")
+		sql := "select a.pk, a.col1, a.col2, a.col3, approx_count_distinct(b.id) from a join b on a.id = b.id group by a.pk, a.col1, a.col2, a.col3"
+		tk.MustQuery(sql).Sort().Check(testkit.Rows("1 a1 a2 a3 1", "2 b1 b2 b3 1"))
+		planText := fmt.Sprint(tk.MustQuery("explain " + sql).Rows())
+		require.Contains(t, planText, "group by:test.a.pk")
+		require.NotContains(t, planText, "group by:test.a.pk, test.a.col1")
+
+		tk.MustExec(`create table customer (
+    c_custkey int primary key,
+    c_name varchar(20)
+);`)
+		tk.MustExec(`create table orders (
+    o_orderkey int primary key,
+    o_custkey int not null,
+    o_orderdate date,
+    o_totalprice decimal(10,2),
+    key(o_custkey)
+);`)
+		tk.MustExec("insert into customer values (1, 'alice'), (2, 'bob')")
+		tk.MustExec("insert into orders values (10, 1, '2024-01-01', 100.00), (20, 2, '2024-01-02', 200.00)")
+		q18LikeSQL := "select customer.c_name, customer.c_custkey, orders.o_orderkey, orders.o_orderdate, orders.o_totalprice, approx_count_distinct(orders.o_custkey) from customer join orders on customer.c_custkey = orders.o_custkey group by customer.c_name, customer.c_custkey, orders.o_orderkey, orders.o_orderdate, orders.o_totalprice"
+		tk.MustQuery(q18LikeSQL).Sort().Check(testkit.Rows("alice 1 10 2024-01-01 100.00 1", "bob 2 20 2024-01-02 200.00 1"))
+		q18LikePlanText := fmt.Sprint(tk.MustQuery("explain " + q18LikeSQL).Rows())
+		require.Contains(t, q18LikePlanText, "group by:test.orders.o_orderkey")
+		require.NotContains(t, q18LikePlanText, "group by:test.customer.c_name")
+	})
+
 	t.Run("inl-join-inner-multi-pattern", func(t *testing.T) {
 		tk := newTestKit(t)
 		tk.MustExec("set session tidb_enable_inl_join_inner_multi_pattern='ON'")

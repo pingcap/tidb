@@ -123,6 +123,129 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.Logica
 	}
 }
 
+func (*aggregationEliminateChecker) tryToReduceGroupByColumns(agg *logicalop.LogicalAggregation) bool {
+	if len(agg.GroupByItems) <= 1 {
+		return false
+	}
+	groupByCols := agg.GetGroupByCols()
+	if len(groupByCols) != len(agg.GroupByItems) {
+		return false
+	}
+	candidateKeys := getCandidateKeysForAggChild(agg.Children()[0])
+	if len(candidateKeys) == 0 {
+		return false
+	}
+	schemaByGroupby := expression.NewSchema(groupByCols...)
+	var chosenKey expression.KeyInfo
+	for _, key := range candidateKeys {
+		if schemaByGroupby.ColumnsIndices(key) == nil {
+			continue
+		}
+		if chosenKey == nil || len(key) < len(chosenKey) {
+			chosenKey = key
+		}
+	}
+	if len(chosenKey) == 0 || len(chosenKey) >= len(agg.GroupByItems) {
+		return false
+	}
+	keyColIDs := make(map[int64]struct{}, len(chosenKey))
+	for _, col := range chosenKey {
+		keyColIDs[col.UniqueID] = struct{}{}
+	}
+	seen := make(map[int64]struct{}, len(chosenKey))
+	newGroupByItems := make([]expression.Expression, 0, len(chosenKey))
+	for _, groupByItem := range agg.GroupByItems {
+		col := groupByItem.(*expression.Column)
+		if _, ok := keyColIDs[col.UniqueID]; !ok {
+			continue
+		}
+		if _, ok := seen[col.UniqueID]; ok {
+			continue
+		}
+		seen[col.UniqueID] = struct{}{}
+		newGroupByItems = append(newGroupByItems, groupByItem)
+	}
+	if len(newGroupByItems) == 0 || len(newGroupByItems) == len(agg.GroupByItems) {
+		return false
+	}
+	agg.GroupByItems = newGroupByItems
+	return true
+}
+
+func getCandidateKeysForAggChild(child base.LogicalPlan) []expression.KeyInfo {
+	if len(child.Schema().PKOrUK) > 0 {
+		return child.Schema().PKOrUK
+	}
+	selection, ok := child.(*logicalop.LogicalSelection)
+	if !ok {
+		return nil
+	}
+	join, ok := selection.Children()[0].(*logicalop.LogicalJoin)
+	if !ok || len(join.EqualConditions) != 0 {
+		return nil
+	}
+	if join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin {
+		return nil
+	}
+	leftCols := make([]*expression.Column, 0, len(selection.Conditions))
+	rightCols := make([]*expression.Column, 0, len(selection.Conditions))
+	leftSchema, rightSchema := join.Children()[0].Schema(), join.Children()[1].Schema()
+	for _, cond := range selection.Conditions {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.EQ {
+			continue
+		}
+		lCol, rCol := expression.ExtractColumnsFromColOpCol(sf)
+		if lCol == nil || rCol == nil {
+			continue
+		}
+		switch {
+		case leftSchema.Contains(lCol) && rightSchema.Contains(rCol):
+			leftCols = append(leftCols, lCol)
+			rightCols = append(rightCols, rCol)
+		case leftSchema.Contains(rCol) && rightSchema.Contains(lCol):
+			leftCols = append(leftCols, rCol)
+			rightCols = append(rightCols, lCol)
+		}
+	}
+	if len(leftCols) == 0 {
+		return nil
+	}
+	lOk := checkColumnsMatchPKOrUK(leftCols, leftSchema.PKOrUK)
+	rOk := checkColumnsMatchPKOrUK(rightCols, rightSchema.PKOrUK)
+	candidateKeys := make([]expression.KeyInfo, 0, len(leftSchema.PKOrUK)+len(rightSchema.PKOrUK))
+	if lOk && join.JoinType != base.LeftOuterJoin {
+		candidateKeys = append(candidateKeys, rightSchema.PKOrUK...)
+	}
+	if rOk && join.JoinType != base.RightOuterJoin {
+		candidateKeys = append(candidateKeys, leftSchema.PKOrUK...)
+	}
+	return candidateKeys
+}
+
+func checkColumnsMatchPKOrUK(cols []*expression.Column, pkOrUK []expression.KeyInfo) bool {
+	if len(pkOrUK) == 0 {
+		return false
+	}
+	colSet := make(map[int64]struct{}, len(cols))
+	for _, col := range cols {
+		colSet[col.UniqueID] = struct{}{}
+	}
+	for _, key := range pkOrUK {
+		allMatch := true
+		for _, k := range key {
+			if _, ok := colSet[k.UniqueID]; !ok {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			return true
+		}
+	}
+	return false
+}
+
 // CheckCanConvertAggToProj check whether a special old aggregation (which has already been pushed down) to projection.
 // link: issue#44795
 func CheckCanConvertAggToProj(agg *logicalop.LogicalAggregation) bool {
@@ -231,10 +354,11 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 	planChanged := false
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, planChanged, err := a.Optimize(ctx, child)
+		newChild, childChanged, err := a.Optimize(ctx, child)
 		if err != nil {
 			return nil, planChanged, err
 		}
+		planChanged = planChanged || childChanged
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
@@ -242,9 +366,12 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 	if !ok {
 		return p, planChanged, nil
 	}
+	if a.tryToReduceGroupByColumns(agg) {
+		planChanged = true
+	}
 	a.tryToEliminateDistinct(agg)
 	if proj := a.tryToEliminateAggregation(agg); proj != nil {
-		return proj, planChanged, nil
+		return proj, true, nil
 	}
 	return p, planChanged, nil
 }
