@@ -15,11 +15,10 @@
 package ddl
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -35,20 +34,17 @@ func buildAndValidateMViewScheduleExpr(sctx sessionctx.Context, expr ast.ExprNod
 		return "", err
 	}
 
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, resultFields, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
-		internalCtx,
-		nil,
-		"SELECT ("+exprSQL+") LIMIT 0",
-	)
+	builtExpr, err := expression.BuildSimpleExpr(sctx.GetExprCtx(), expr)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	if len(resultFields) != 1 || resultFields[0] == nil || resultFields[0].Column == nil {
+
+	ft := builtExpr.GetType(sctx.GetExprCtx().GetEvalCtx())
+	if ft == nil {
 		return "", errors.Errorf("failed to infer expression type for %s", clause)
 	}
 
-	tp := resultFields[0].Column.GetType()
+	tp := ft.GetType()
 	if tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
 		return "", dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
 			fmt.Sprintf("%s expression must return DATETIME/TIMESTAMP, but got %s", clause, types.TypeStr(tp)),
