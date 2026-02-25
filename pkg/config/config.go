@@ -207,6 +207,7 @@ type Config struct {
 	Status                     Status                  `toml:"status" json:"status"`
 	Performance                Performance             `toml:"performance" json:"performance"`
 	ModelMLflow                ModelMLflow             `toml:"model-mlflow" json:"model-mlflow"`
+	LLM                        LLMConfig               `toml:"llm" json:"llm"`
 	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
@@ -808,6 +809,15 @@ type ModelMLflow struct {
 	CacheEntries   int           `toml:"cache-entries" json:"cache-entries"`
 }
 
+// LLMConfig controls external LLM providers.
+type LLMConfig struct {
+	Provider       string        `toml:"provider" json:"provider"`
+	VertexProject  string        `toml:"vertex_project" json:"vertex_project"`
+	VertexLocation string        `toml:"vertex_location" json:"vertex_location"`
+	CredentialFile string        `toml:"credential_file" json:"credential_file"`
+	RequestTimeout time.Duration `toml:"request_timeout" json:"request_timeout"`
+}
+
 // PlanCache is the PlanCache section of the config.
 type PlanCache struct {
 	Enabled  bool `toml:"enabled" json:"enabled"`
@@ -1091,6 +1101,10 @@ var defaultConf = Config{
 		SidecarWorkers: 2,
 		RequestTimeout: 2 * time.Second,
 		CacheEntries:   64,
+	},
+	LLM: LLMConfig{
+		Provider:       "vertex",
+		RequestTimeout: 30 * time.Second,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

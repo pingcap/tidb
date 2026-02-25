@@ -672,6 +672,33 @@ engines = ["tikv", "tiflash", "tidb"]
 	require.NoError(t, err)
 }
 
+func TestLLMConfigDefaults(t *testing.T) {
+	conf := defaultConf
+	require.Equal(t, "vertex", conf.LLM.Provider)
+	require.Equal(t, "", conf.LLM.VertexProject)
+	require.Equal(t, "", conf.LLM.VertexLocation)
+	require.Equal(t, "", conf.LLM.CredentialFile)
+	require.Equal(t, 30*time.Second, conf.LLM.RequestTimeout)
+}
+
+func TestLLMConfigTomlDecode(t *testing.T) {
+	var conf Config
+	_, err := toml.Decode(`
+[llm]
+provider = "vertex"
+vertex_project = "p1"
+vertex_location = "us-central1"
+credential_file = "/tmp/sa.json"
+request_timeout = "12s"
+`, &conf)
+	require.NoError(t, err)
+	require.Equal(t, "vertex", conf.LLM.Provider)
+	require.Equal(t, "p1", conf.LLM.VertexProject)
+	require.Equal(t, "us-central1", conf.LLM.VertexLocation)
+	require.Equal(t, "/tmp/sa.json", conf.LLM.CredentialFile)
+	require.Equal(t, 12*time.Second, conf.LLM.RequestTimeout)
+}
+
 func TestConfig(t *testing.T) {
 	conf := new(Config)
 	conf.TempStoragePath = tempStorageDirName
