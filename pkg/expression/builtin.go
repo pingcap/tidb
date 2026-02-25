@@ -666,6 +666,8 @@ var funcs = map[string]functionClass{
 	// model functions
 	ast.ModelPredict:       &modelPredictFunctionClass{baseFunctionClass{ast.ModelPredict, 2, -1}},
 	ast.ModelPredictOutput: &modelPredictOutputFunctionClass{baseFunctionClass{ast.ModelPredictOutput, 3, -1}},
+	ast.LLMComplete:        &llmCompleteFunctionClass{baseFunctionClass{ast.LLMComplete, 1, 1}},
+	ast.LLMEmbedText:       &llmEmbedTextFunctionClass{baseFunctionClass{ast.LLMEmbedText, 1, 1}},
 
 	// math functions
 	ast.Abs:      &absFunctionClass{baseFunctionClass{ast.Abs, 1, 1}},

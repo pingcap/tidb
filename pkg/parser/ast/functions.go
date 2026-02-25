@@ -81,6 +81,8 @@ const (
 	// model functions
 	ModelPredict       = "model_predict"
 	ModelPredictOutput = "tidb_model_predict_output"
+	LLMComplete        = "llm_complete"
+	LLMEmbedText       = "llm_embed_text"
 
 	// common functions
 	Coalesce = "coalesce"
