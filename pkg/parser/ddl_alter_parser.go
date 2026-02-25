@@ -248,13 +248,12 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 	// Partition name — can be identifier, string literal, or unreserved keyword
 	// (e.g., PARTITION max VALUES LESS THAN (10))
 	tok := p.peek()
-	if isIdentLike(tok.Tp) || tok.Tp == stringLit {
-		p.next()
-		pDef.Name = ast.NewCIStr(tok.Lit)
-	} else {
+	if !isIdentLike(tok.Tp) && tok.Tp != stringLit {
 		p.syntaxErrorAt(tok)
 		return nil
 	}
+	p.next()
+	pDef.Name = ast.NewCIStr(tok.Lit)
 
 	// --- Parse PartDefValuesOpt ---
 	if _, ok := p.accept(values); ok {

@@ -322,6 +322,7 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 	}
 
 	// Argument list.
+	var firstComma *Token
 	for {
 		p.accept(all)
 
@@ -330,8 +331,13 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 			return nil
 		}
 		node.Args = append(node.Args, arg)
-		if _, ok := p.accept(','); !ok {
+		commaTok, ok := p.accept(',')
+		if !ok {
 			break
+		}
+		if firstComma == nil {
+			ct := commaTok // copy
+			firstComma = &ct
 		}
 	}
 
@@ -351,14 +357,22 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 	case "count":
 		// COUNT(DISTINCT a, b) is valid but COUNT(a, b) is not.
 		if len(node.Args) > 1 && !node.Distinct {
-			p.error(p.peek().Offset, "COUNT with multiple arguments requires DISTINCT")
+			if firstComma != nil {
+				p.errorNear(firstComma.EndOffset, firstComma.Offset)
+			} else {
+				p.syntaxErrorAt(p.peek())
+			}
 			return nil
 		}
 	case "approx_count_distinct", "approx_percentile":
 		// These accept multiple arguments.
 	default:
 		if len(node.Args) > 1 {
-			p.error(p.peek().Offset, "%s accepts at most 1 argument", name)
+			if firstComma != nil {
+				p.errorNear(firstComma.EndOffset, firstComma.Offset)
+			} else {
+				p.syntaxErrorAt(p.peek())
+			}
 			return nil
 		}
 	}
