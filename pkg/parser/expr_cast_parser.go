@@ -288,11 +288,9 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 	case signed, unsigned:
 		isUnsigned := tok.Tp == unsigned
 		p.next()
-		// Accept optional INTEGER/INT keyword.
+		// Accept optional INTEGER/INT keyword after SIGNED/UNSIGNED.
 		if _, ok := p.accept(intType); !ok {
-			if isUnsigned {
-				p.accept(integerType)
-			}
+			p.accept(integerType)
 		}
 		tp := types.NewFieldType(mysql.TypeLonglong)
 		if isUnsigned {

@@ -118,44 +118,34 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 		}
 
 		// Check for ON/USING clause for THIS join level.
-		if _, ok := p.accept(on); ok {
-			if natural {
-				p.error(p.peek().Offset, "natural join cannot have ON clause")
-				return nil
-			}
+		// NATURAL JOIN and STRAIGHT_JOIN never take ON/USING — check these
+		// FIRST to avoid accidentally consuming ON from DML clauses like
+		// ON DUPLICATE KEY UPDATE.
+		if natural || straight {
 			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
 			join.NaturalJoin = natural
 			join.StraightJoin = straight
+			lhs = join
+		} else if _, ok := p.accept(on); ok {
+			join := p.arena.AllocJoin()
+			join.Left = lhs
+			join.Right = rhs
+			join.Tp = joinType
 			on := Alloc[ast.OnCondition](p.arena)
 			on.Expr = p.parseExpression(precNone)
 			join.On = on
 			lhs = join
 		} else if _, ok := p.accept(using); ok {
-			if natural {
-				p.error(p.peek().Offset, "natural join cannot have USING clause")
-				return nil
-			}
 			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
-			join.NaturalJoin = natural
-			join.StraightJoin = straight
 			p.expect('(')
 			join.Using = p.parseColumnNameList()
 			p.expect(')')
-			lhs = join
-		} else if natural || straight {
-			// NATURAL JOIN and STRAIGHT_JOIN don't take ON/USING.
-			join := p.arena.AllocJoin()
-			join.Left = lhs
-			join.Right = rhs
-			join.Tp = joinType
-			join.NaturalJoin = natural
-			join.StraightJoin = straight
 			lhs = join
 		} else {
 			// No ON/USING. LEFT/RIGHT JOIN require ON or USING.
