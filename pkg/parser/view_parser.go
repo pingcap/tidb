@@ -110,7 +110,10 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 	selectStartOff := p.peek().Offset
 
 	// AS select_stmt (SELECT, TABLE, VALUES, WITH, or parenthesized)
+	// Must also handle set operations at the top level, e.g.
+	//   CREATE VIEW v AS (SELECT a) UNION (SELECT b)
 	if sub := p.parseSubquery(); sub != nil {
+		sub = p.maybeParseUnion(sub)
 		stmt.Select = sub.(ast.StmtNode)
 	}
 
