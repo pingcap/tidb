@@ -115,13 +115,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
-		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
-			checker.cacheable = false
-			checker.reason = "query has sub-queries is un-cacheable"
-			return in, true
-		}
-		return in, false
 	case *ast.PatternInExpr:
 		checker.sumInListLen += len(node.List)
 		if checker.sumInListLen > checker.maxNumParam { // to save memory
@@ -129,6 +122,13 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			checker.reason = "too many values in in-list"
 			return in, true
 		}
+	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+			checker.cacheable = false
+			checker.reason = "query has sub-queries is un-cacheable"
+			return in, true
+		}
+		return in, false
 	case *ast.VariableExpr:
 		checker.cacheable = false
 		checker.reason = "query has user-defined variables is un-cacheable"
