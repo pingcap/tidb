@@ -2260,3 +2260,54 @@ desc v_aes;
 show columns from v_aes;
 drop view v_aes;
 drop table t_aes;
+
+# TestIssue35302
+create table cb_ast (id int, tname varchar(64));
+insert into cb_ast values (1, 'a\\a'), (2, 'a\\a'), (3, '中\\中'), (4, '中\\中');
+# default values should be 'on'
+select @@tidb_enable_no_backslash_escapes_in_like;
+set session sql_mode='NO_BACKSLASH_ESCAPES';
+select * from cb_ast;
+select * from cb_ast where tname like '%%';
+# like expression should consider 'NO_BACKSLASH_ESCAPES' and behavior the same as MySQL
+select * from cb_ast where tname like '%\%';
+select 'David_' like 'David\_';
+select 'David_' like 'David\_' escape '\';
+set session sql_mode=default;
+# keep buggy behavior for old tidb compatibility, only fix on newer version
+set @@tidb_enable_no_backslash_escapes_in_like = 'off';
+set session sql_mode='NO_BACKSLASH_ESCAPES';
+select * from cb_ast;
+select * from cb_ast where tname like '%%';
+# like expression should consider 'NO_BACKSLASH_ESCAPES' and behavior the same as MySQL
+select * from cb_ast where tname like '%\%';
+select 'David_' like 'David\_';
+select 'David_' like 'David\_' escape '\';
+set session sql_mode=default;
+set @@tidb_enable_no_backslash_escapes_in_like = default;
+
+# TestIssue35302ViewEscape
+drop table if exists t_no_backslash_escapes;
+drop view if exists v_nbe_like;
+drop view if exists v_nbe_like_escape;
+create table t_no_backslash_escapes (test varchar(32) not null);
+set @@tidb_enable_no_backslash_escapes_in_like = 'on';
+set session sql_mode='NO_BACKSLASH_ESCAPES';
+insert into t_no_backslash_escapes values ('c:\jetson');
+select * from t_no_backslash_escapes where test like 'c:\j%';
+create view v_nbe_like as select * from t_no_backslash_escapes where test like 'c:\\j%';
+create view v_nbe_like_escape as select * from t_no_backslash_escapes where test like 'c:\\j%' escape '\';
+select * from v_nbe_like;
+select * from v_nbe_like_escape;
+set session sql_mode=default;
+select * from v_nbe_like;
+select * from v_nbe_like_escape;
+set @@tidb_enable_no_backslash_escapes_in_like = 'off';
+set session sql_mode='NO_BACKSLASH_ESCAPES';
+select * from v_nbe_like;
+select * from v_nbe_like_escape;
+set session sql_mode=default;
+set @@tidb_enable_no_backslash_escapes_in_like = default;
+drop view v_nbe_like;
+drop view v_nbe_like_escape;
+drop table t_no_backslash_escapes;

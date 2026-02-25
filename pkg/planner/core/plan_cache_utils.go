@@ -373,8 +373,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
 	// schemaVersion + relateVersion + pruneMode
 	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
-	// latestSchemaVersion + sqlMode + timeZoneOffset + isolationReadEngines + selectLimit
-	hashLen += 8 + 8 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
 	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
 	if len(stmt.limits) > 0 {
@@ -406,6 +406,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)
