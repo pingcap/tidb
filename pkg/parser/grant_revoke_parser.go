@@ -145,7 +145,13 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		priv.Priv = mysql.DeletePriv
 	case drop:
 		p.next()
-		priv.Priv = mysql.DropPriv
+		// DROP ROLE compound privilege
+		if p.peek().Tp == role {
+			p.next()
+			priv.Priv = mysql.DropRolePriv
+		} else {
+			priv.Priv = mysql.DropPriv
+		}
 	case grant:
 		p.next()
 		p.expect(option)
@@ -206,7 +212,8 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		}
 	case create:
 		p.next()
-		// CREATE VIEW, CREATE ROUTINE, CREATE USER, CREATE TEMPORARY TABLES, CREATE TABLESPACE
+		// CREATE VIEW, CREATE ROUTINE, CREATE USER, CREATE ROLE,
+		// CREATE TEMPORARY TABLES, CREATE TABLESPACE
 		switch p.peek().Tp {
 		case view:
 			p.next()
@@ -214,6 +221,9 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		case user:
 			p.next()
 			priv.Priv = mysql.CreateUserPriv
+		case role:
+			p.next()
+			priv.Priv = mysql.CreateRolePriv
 		case temporary:
 			p.next()
 			p.accept(tables) // TABLES

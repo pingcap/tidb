@@ -467,7 +467,7 @@ func (p *HandParser) parseTableOptionTTLJobInterval(opt *ast.TableOption) *ast.T
 	unitStr := strings.TrimSpace(val[i:])
 	validUnits := []string{
 		"YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND", "MICROSECOND",
-		"h", "m", "s", "ms", "us", "ns",
+		"d", "h", "m", "s", "ms", "us", "ns",
 	}
 	found := false
 	for _, u := range validUnits {

@@ -196,16 +196,21 @@ func (p *HandParser) parsePasswordAndLockOptions() []*ast.PasswordOrLockOption {
 				}
 			} else if next.Tp == reuse {
 				p.next() // REUSE
-				// INTERVAL N DAY
+				// INTERVAL [DEFAULT | N DAY]
 				if p.peek().Tp == interval {
 					p.next()
-					opt.Type = ast.PasswordReuseInterval
-					if val, ok := p.expect(intLit); ok {
-						count, _ := strconv.ParseInt(val.Lit, 10, 64)
-						opt.Count = count
-					}
-					if p.peekKeyword(day, "DAY") {
+					if p.peek().Tp == defaultKwd {
 						p.next()
+						opt.Type = ast.PasswordReuseDefault
+					} else {
+						opt.Type = ast.PasswordReuseInterval
+						if val, ok := p.expect(intLit); ok {
+							count, _ := strconv.ParseInt(val.Lit, 10, 64)
+							opt.Count = count
+						}
+						if p.peekKeyword(day, "DAY") {
+							p.next()
+						}
 					}
 				} else if p.peek().Tp == defaultKwd {
 					p.next()
