@@ -246,6 +246,17 @@ func TestCacheable(t *testing.T) {
 	}
 	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
+	mockCtx.GetSessionVars().EnablePlanCacheForSubquery = false
+	c, reason := core.CacheableWithCtx(mockCtx, stmt, is)
+	require.False(t, c)
+	require.Equal(t, "query has sub-queries is un-cacheable", reason)
+	stmt = &ast.SelectStmt{
+		Where: &ast.SubqueryExpr{Query: &ast.SelectStmt{}},
+	}
+	c, reason = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.False(t, c)
+	require.Equal(t, "query has sub-queries is un-cacheable", reason)
+	mockCtx.GetSessionVars().EnablePlanCacheForSubquery = true
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
