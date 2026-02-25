@@ -3809,6 +3809,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		return nil, err
 	}
 
+	if sel.Fields == nil {
+		sel.Fields = &ast.FieldList{}
+	}
 	originalFields := sel.Fields.Fields
 	sel.Fields.Fields, err = b.unfoldWildStar(p, sel.Fields.Fields)
 	if err != nil {
