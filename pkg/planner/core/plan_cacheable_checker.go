@@ -128,6 +128,12 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		return in, true
 	case *ast.ExistsSubqueryExpr:
 		return in, checker.skipForSubqueryDisabled()
+	case *ast.CommonTableExpression:
+		checker.cteOffset = append(checker.cteOffset, len(checker.cteCanUsed))
+		if node.IsRecursive {
+			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
+		}
+		return in, false
 	case *ast.SubqueryExpr:
 		checker.cteOffset = append(checker.cteOffset, len(checker.cteCanUsed))
 		return in, checker.skipForSubqueryDisabled()

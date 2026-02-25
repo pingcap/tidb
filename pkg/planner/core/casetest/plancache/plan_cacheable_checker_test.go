@@ -524,6 +524,19 @@ func TestPreparedPlanCacheWithCTE(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt").Check(testkit.Rows("5"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec(`prepare stmt_rec from 'with recursive cte1 as (
+		select 1 c1
+		union all
+		select c1 + 1 c1 from cte1 where c1 < ?
+	) select * from cte1 order by c1'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("set @a=3")
+	tk.MustQuery("execute stmt_rec using @a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt_rec using @a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
