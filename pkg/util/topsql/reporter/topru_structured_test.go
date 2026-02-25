@@ -34,6 +34,8 @@ func (s *structuredSignalSink) TrySend(data *ReportData, _ time.Time) error {
 func (s *structuredSignalSink) OnReporterClosing() {}
 
 func TestTopRUReporter_MockDataSinkStructured(t *testing.T) {
+	// End-to-end contract: a closed RU window should emit RURecords together with
+	// SQL/Plan meta for the same digests in one ReportData payload.
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	t.Cleanup(tsr.Close)
 
@@ -59,6 +61,7 @@ func TestTopRUReporter_MockDataSinkStructured(t *testing.T) {
 		},
 	})
 
+	// Use an aligned window boundary to avoid dependence on ticker timing.
 	reportTs := alignToInterval(ts, ruReportWindowSeconds) + ruReportWindowSeconds
 	tsr.doReport(&ReportData{
 		RURecords: tsr.ruAggregator.takeReportRecords(reportTs, 60, keyspace),

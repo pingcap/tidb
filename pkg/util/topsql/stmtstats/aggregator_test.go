@@ -173,6 +173,8 @@ func TestAggregatorDisableAggregateRUNoEmit(t *testing.T) {
 }
 
 func TestAggregatorRunOrderKeepsFinishedRU(t *testing.T) {
+	// aggregateAll must drain RU before removing finished sessions from statsSet.
+	// Otherwise the tail RU buffered at session close would be lost.
 	for state.TopRUEnabled() {
 		state.DisableTopRU()
 	}
@@ -251,6 +253,210 @@ func TestAggregatorTopRUOnlyDataFlow(t *testing.T) {
 	require.Len(t, ruCollected, 1)
 	require.InDelta(t, 42.0, ruCollected[ruKey].TotalRU, 1e-9)
 	require.Equal(t, uint64(1), ruCollected[ruKey].ExecCount)
+}
+
+func TestAggregatorTopSQLTopRUCoexistenceMatrix(t *testing.T) {
+	// Matrix contract: TopSQL forwarding and TopRU forwarding are independently gated
+	// by TopSQLEnabled and TopRUEnabled.
+	type tc struct {
+		name           string
+		enableTopSQL   bool
+		enableTopRU    bool
+		expectStmtData bool
+		expectRUData   bool
+	}
+
+	cases := []tc{
+		{
+			name:           "both-disabled",
+			enableTopSQL:   false,
+			enableTopRU:    false,
+			expectStmtData: false,
+			expectRUData:   false,
+		},
+		{
+			name:           "topsql-only",
+			enableTopSQL:   true,
+			enableTopRU:    false,
+			expectStmtData: true,
+			expectRUData:   false,
+		},
+		{
+			name:           "topru-only",
+			enableTopSQL:   false,
+			enableTopRU:    true,
+			expectStmtData: false,
+			expectRUData:   true,
+		},
+		{
+			name:           "both-enabled",
+			enableTopSQL:   true,
+			enableTopRU:    true,
+			expectStmtData: true,
+			expectRUData:   true,
+		},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			state.DisableTopSQL()
+			for state.TopRUEnabled() {
+				state.DisableTopRU()
+			}
+			if c.enableTopSQL {
+				state.EnableTopSQL()
+			}
+			if c.enableTopRU {
+				state.EnableTopRU()
+			}
+			t.Cleanup(func() {
+				state.DisableTopSQL()
+				for state.TopRUEnabled() {
+					state.DisableTopRU()
+				}
+			})
+
+			a := newAggregator()
+			stats := &StatementStats{
+				data: StatementStatsMap{
+					SQLPlanDigest{SQLDigest: "sql1", PlanDigest: "plan1"}: &StatementStatsItem{
+						ExecCount:     1,
+						SumDurationNs: uint64(time.Second.Nanoseconds()),
+					},
+				},
+				finished:         atomic.NewBool(false),
+				finishedRUBuffer: RUIncrementMap{},
+			}
+			ruKey := RUKey{User: "u1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
+			stats.finishedRUBuffer[ruKey] = &RUIncrement{
+				TotalRU:      42,
+				ExecCount:    1,
+				ExecDuration: uint64(time.Second.Nanoseconds()),
+			}
+			a.register(stats)
+
+			stmtCollected := StatementStatsMap{}
+			a.registerCollector(newMockCollector(func(data StatementStatsMap) {
+				stmtCollected.Merge(data)
+			}))
+			ruCollected := RUIncrementMap{}
+			a.registerRUCollector(&mockRUCollector{f: func(m RUIncrementMap) {
+				ruCollected.Merge(m)
+			}})
+
+			a.aggregateAll()
+
+			if c.expectStmtData {
+				require.Len(t, stmtCollected, 1)
+				item := stmtCollected[SQLPlanDigest{SQLDigest: "sql1", PlanDigest: "plan1"}]
+				require.NotNil(t, item)
+				require.Equal(t, uint64(1), item.ExecCount)
+			} else {
+				require.Empty(t, stmtCollected)
+			}
+
+			if c.expectRUData {
+				require.Len(t, ruCollected, 1)
+				require.InDelta(t, 42.0, ruCollected[ruKey].TotalRU, 1e-9)
+				require.Equal(t, uint64(1), ruCollected[ruKey].ExecCount)
+			} else {
+				require.Empty(t, ruCollected)
+			}
+		})
+	}
+}
+
+func TestAggregatorDrainTailIncrementMatrix(t *testing.T) {
+	// This matrix covers tail-RU draining during session close and concurrent
+	// unregister races. The blocking collector forces deterministic overlap.
+	type tc struct {
+		name               string
+		tailRU             float64
+		concurrentUnreg    bool
+		concurrentUnregRUC bool
+	}
+
+	cases := []tc{
+		{
+			name:   "set-finished-before-tick",
+			tailRU: 5,
+		},
+		{
+			name:               "tick-with-unregister-race",
+			tailRU:             7,
+			concurrentUnreg:    true,
+			concurrentUnregRUC: true,
+		},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			state.DisableTopSQL()
+			for state.TopRUEnabled() {
+				state.DisableTopRU()
+			}
+			state.EnableTopRU()
+			t.Cleanup(func() {
+				state.DisableTopSQL()
+				for state.TopRUEnabled() {
+					state.DisableTopRU()
+				}
+			})
+
+			a := newAggregator()
+			key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
+			stats := &StatementStats{
+				data:             StatementStatsMap{},
+				finished:         atomic.NewBool(true), // session close
+				finishedRUBuffer: RUIncrementMap{},
+			}
+			stats.finishedRUBuffer[key] = &RUIncrement{
+				TotalRU:      c.tailRU,
+				ExecCount:    1,
+				ExecDuration: uint64(time.Second.Nanoseconds()),
+			}
+			a.register(stats)
+
+			collected := RUIncrementMap{}
+			enterCollector := make(chan struct{}, 1)
+			releaseCollector := make(chan struct{})
+			collector := &mockRUCollector{
+				f: func(m RUIncrementMap) {
+					collected.Merge(m)
+					enterCollector <- struct{}{}
+					<-releaseCollector
+				},
+			}
+			a.registerRUCollector(collector)
+
+			done := make(chan struct{})
+			go func() {
+				// Tick path under test: drain RU first, then unregister finished stats.
+				a.aggregateAll()
+				close(done)
+			}()
+
+			// Wait until collector is entered before injecting unregister races.
+			<-enterCollector
+			if c.concurrentUnreg {
+				a.unregister(stats)
+			}
+			if c.concurrentUnregRUC {
+				a.unregisterRUCollector(collector)
+			}
+			close(releaseCollector)
+			<-done
+
+			require.Len(t, collected, 1)
+			require.InDelta(t, c.tailRU, collected[key].TotalRU, 1e-9)
+			require.Equal(t, uint64(1), collected[key].ExecCount)
+			require.Empty(t, stats.finishedRUBuffer)
+			_, ok := a.statsSet.Load(stats)
+			require.False(t, ok)
+		})
+	}
 }
 
 type mockRUCollector struct {

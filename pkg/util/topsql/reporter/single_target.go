@@ -270,10 +270,7 @@ func (ds *SingleTargetDataSink) sendBatchTopSQLRecord(ctx context.Context, recor
 }
 
 // sendBatchTopRURecord sends a batch of TopRU records by stream.
-// Uses ReportTopRURecords RPC from extended tipb protocol.
-//
-// Design: Parallel to sendBatchTopSQLRecord for consistency.
-// Phase 2: Records will be populated after two-level TopN filtering.
+// It uses the ReportTopRURecords RPC.
 func (ds *SingleTargetDataSink) sendBatchTopRURecord(ctx context.Context, records []tipb.TopRURecord) (err error) {
 	if len(records) == 0 {
 		return nil

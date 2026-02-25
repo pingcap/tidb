@@ -506,6 +506,8 @@ func TestExecCountBeginBased_BucketMergeSameTick(t *testing.T) {
 }
 
 func TestExecCountBeginBased_FinishAndTickConcurrent(t *testing.T) {
+	// Contract: begin-based ExecCount must remain 1 even when finish and tick race.
+	// We aggregate tickResult+tailResult to assert no double count across buckets.
 	const rounds = 100
 	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
 
@@ -560,6 +562,8 @@ func TestExecCountBeginBased_FinishAndTickConcurrent(t *testing.T) {
 }
 
 func TestExecCountBeginBased_FinishTickBucketSemantics(t *testing.T) {
+	// Bucket contract: whether tick or finish happens first, exactly one bucket
+	// gets the delta and the next bucket remains empty.
 	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
 
 	runCase := func(t *testing.T, tickFirst bool) {
@@ -606,6 +610,8 @@ func TestExecCountBeginBased_FinishTickBucketSemantics(t *testing.T) {
 }
 
 func TestExecCountBeginBased_TickThenGrowThenFinishAcrossBuckets(t *testing.T) {
+	// Cross-bucket contract: first tick emits begin-based count=1; later finish only
+	// emits tail RU/duration with count=0.
 	stats := CreateStatementStats()
 	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
 	ru := util.NewRUDetailsWith(0, 0, 0)
@@ -717,6 +723,8 @@ func TestExecCountBeginBased_TickThenResetThenFinishNoBucketB(t *testing.T) {
 }
 
 func TestExecCountBeginBased_KeySwitchNoCrossPollution(t *testing.T) {
+	// Key-switch contract: stale finish for keyA must not write into keyB, even when
+	// keyB is now the active execution context.
 	stats := CreateStatementStats()
 	keyA := RUKey{User: "u1", SQLDigest: BinaryDigest("sqlA"), PlanDigest: BinaryDigest("planA")}
 	keyB := RUKey{User: "u1", SQLDigest: BinaryDigest("sqlB"), PlanDigest: BinaryDigest("planB")}

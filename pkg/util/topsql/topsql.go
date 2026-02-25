@@ -53,8 +53,8 @@ func init() {
 
 // SetupTopProfiling sets up the Top Profiling pipeline.
 //
-// NOTE: Despite the legacy package name, this initializer wires the collectors
-// and reporters shared by TopSQL (and future TopRU).
+// NOTE: Despite the package name, this initializer wires the shared TopSQL and
+// TopRU pipeline.
 func SetupTopProfiling(keyspaceName []byte, updater collector.ProcessCPUTimeUpdater) {
 	globalTopProfilingReport.BindKeyspaceName(keyspaceName)
 	globalTopProfilingReport.BindProcessCPUTimeUpdater(updater)

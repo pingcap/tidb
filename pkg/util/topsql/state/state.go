@@ -32,7 +32,7 @@ const (
 
 // Default Top-RU state values.
 const (
-	// DefTiDBTopRUItemIntervalSeconds is the default value of item interval; can be 15s/30s/60s via subscription.
+	// DefTiDBTopRUItemIntervalSeconds is the default TopRU item interval in seconds.
 	DefTiDBTopRUItemIntervalSeconds = 60
 )
 
@@ -60,16 +60,10 @@ type State struct {
 	// The report data interval of top-sql.
 	ReportIntervalSeconds *atomic.Int64
 
-	// ruConsumerCount tracks the number of active TopRU subscribers.
-	// Phase 3 Design: Reference-counted subscriber tracking.
-	//   - TopRU is enabled when ruConsumerCount > 0
-	//   - TopRU is disabled when ruConsumerCount == 0
-	// This ensures subscriber isolation: one subscriber's unsubscribe
-	// does not affect others.
+	// ruConsumerCount is the number of active TopRU subscribers.
+	// TopRU is enabled when ruConsumerCount > 0.
 	ruConsumerCount *atomic.Int64
-	// The report data interval of top-ru.
-	// Set from subscription request (15s/30s/60s); defaults to 60s.
-	// Phase 3: Global last-write-wins while subscribers are active.
+	// TopRUItemIntervalSeconds is the TopRU item interval in seconds.
 	TopRUItemIntervalSeconds *atomic.Int64
 }
 
@@ -90,30 +84,19 @@ func TopSQLEnabled() bool {
 
 // TopProfilingEnabled returns true if either TopSQL or TopRU is enabled.
 //
-// NOTE: This helper is intended for execution-path hooks that should run when
-// any Top* consumer exists (e.g. registering SQL/plan metas, stmt lifecycle
-// callbacks). CPU profiling / parsing should still be gated by TopSQLEnabled().
+// NOTE: This helper is for hooks that should run when any Top* consumer exists.
 func TopProfilingEnabled() bool {
 	return TopSQLEnabled() || TopRUEnabled()
 }
 
 // EnableTopRU increments the TopRU consumer count.
-// Called by pubSubDataSink when subscription collectors include TOPRU.
-// This activates RU collection in aggregator.aggregateRU() when count becomes > 0.
-//
-// Phase 3 Design: Reference-counted subscriber tracking.
-// TopRU is enabled when at least one subscriber has enabled it.
+// TopRU is enabled when the count is greater than 0.
 func EnableTopRU() {
 	GlobalState.ruConsumerCount.Inc()
 }
 
 // DisableTopRU decrements the TopRU consumer count.
-// Called by pubSubDataSink when subscription ends (defer in run()).
-// TopRU collection stops only when count reaches 0 (no more subscribers).
-//
-// Phase 3 Design: Reference-counted subscriber tracking.
-// This ensures one subscriber's unsubscribe does not affect others.
-// When the last subscriber leaves, the report interval is reset to default.
+// When the count reaches 0, ResetTopRUItemInterval is called.
 func DisableTopRU() {
 	for {
 		current := GlobalState.ruConsumerCount.Load()
@@ -133,9 +116,7 @@ func DisableTopRU() {
 }
 
 // TopRUEnabled checks whether TopRU feature is enabled.
-// Returns true if at least one subscriber has enabled TopRU.
-//
-// Phase 3 Design: enable_topru == (ruConsumerCount > 0)
+// Returns true if at least one subscriber has enabled TopRU (ruConsumerCount > 0).
 func TopRUEnabled() bool {
 	return GlobalState.ruConsumerCount.Load() > 0
 }
@@ -150,15 +131,8 @@ func normalizeTopRUItemIntervalSeconds(intervalSeconds tipb.ItemInterval) int64 
 }
 
 // SetTopRUItemInterval sets the report interval for TopRU (in seconds).
-// Called from pubSubDataSink when processing subscription request.
-// Valid values: 15, 30, 60 (from tipb.ItemInterval enum).
-// This value controls TopRURecordItem.timestamp_sec aggregation interval only.
-// It does not define stream push cadence, which is driven by reporter report tick.
-// Invalid values are normalized to the default 60s before storing.
-//
-// Phase 3 Design: Global last-write-wins semantics.
-// The most recent SetTopRUItemInterval call determines the effective value.
-// The value remains until the last subscriber leaves and DisableTopRU resets it.
+// Valid values are 15, 30, and 60 from tipb.ItemInterval.
+// Invalid values are normalized to the default value before storing.
 func SetTopRUItemInterval(itemIntervalSeconds tipb.ItemInterval) {
 	intervalSeconds := normalizeTopRUItemIntervalSeconds(itemIntervalSeconds)
 	current := GlobalState.TopRUItemIntervalSeconds.Load()
@@ -172,15 +146,11 @@ func SetTopRUItemInterval(itemIntervalSeconds tipb.ItemInterval) {
 }
 
 // GetTopRUItemInterval returns the report interval for TopRU (in seconds).
-// Used by reporter to determine effective report interval.
 func GetTopRUItemInterval() int64 {
 	return GlobalState.TopRUItemIntervalSeconds.Load()
 }
 
 // ResetTopRUItemInterval resets the report interval to the default value.
-// Called when the last TopRU subscriber unsubscribes.
-// This allows the next subscriber to set their preferred interval without
-// inheriting the previous subscriber's last-write value.
 func ResetTopRUItemInterval() {
 	GlobalState.TopRUItemIntervalSeconds.Store(DefTiDBTopRUItemIntervalSeconds)
 }

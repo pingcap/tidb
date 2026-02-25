@@ -99,16 +99,10 @@ func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval
 
 // newPubSubDataSink creates a DataSink for PubSub subscription.
 //
-// Design: Subscription Lifecycle Management
-//   - Parses TopRU config from subscription request (collectors includes TOPRU, item_interval_seconds)
-//   - Enables global TopRU state if requested (activates collection)
-//   - State is disabled in run() defer when subscription ends
-//   - item_interval_seconds controls TopRURecordItem.timestamp_sec aggregation interval (15s/30s/60s)
-//     and does not guarantee stream push cadence; push cadence is driven by reporter report tick.
-//
-// Protocol Compatibility:
-//   - Old clients without TopRU collector entry will not enable TopRU (backward compatible)
-//   - TopRU data is sent only when collectors include TOPRU
+// It parses TopRU options from the request and stores them in the sink.
+// Subscribe enables TopRU, and run() disables it when the subscription ends.
+// item_interval_seconds controls TopRURecordItem.timestamp_sec (15s/30s/60s).
+// Requests without the TOPRU collector entry keep TopRU disabled for backward compatibility.
 func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer, registerer DataSinkRegisterer) *pubSubDataSink {
 	ctx, cancel := context.WithCancel(stream.Context())
 	enableTopRU, itemInterval := parseTopRUSubscription(req)
@@ -263,19 +257,14 @@ func (ds *pubSubDataSink) sendTopSQLRecords(ctx context.Context, records []tipb.
 
 // sendTopRURecords sends TopRU records to subscriber via PubSub stream.
 //
-// Design: Defense-in-depth gating
-//   - Early return if no records or TopRU disabled
-//   - Uses TopSQLSubResponse_RuRecord oneof (protocol field 4)
-//   - Parallel structure to sendTopSQLRecords for consistency
-//
-// Phase 2: Records will be populated after two-level TopN filtering in reporter.
+// It returns early if there is no record or TopRU is disabled.
+// It uses TopSQLSubResponse_RuRecord (protocol field 4).
 func (ds *pubSubDataSink) sendTopRURecords(ctx context.Context, records []tipb.TopRURecord) (err error) {
 	if len(records) == 0 {
 		return
 	}
 
-	// Defense-in-depth: Only send RU records if TopRU is enabled.
-	// Primary gate is in aggregator.aggregateRU().
+	// Defense in depth: only send RU records when TopRU is enabled.
 	if !ds.enableTopRU {
 		return
 	}

@@ -27,7 +27,6 @@ import (
 const maxStmtStatsSize = 1000000
 
 // maxRUKeysPerAggregate is the hard cap on distinct RU keys per aggregation cycle.
-// This implements Session-level backpressure (Phase 2 Decision E).
 // Excess keys are dropped early to protect hot paths.
 const maxRUKeysPerAggregate = 10000
 
@@ -109,10 +108,8 @@ func (m *aggregator) drainAndPushStmtStats() {
 	}
 }
 
-// drainAndPushRU drains RU increments from all sessions, applies backpressure caps,
-// then pushes the merged data to all registered RUCollectors when TopRU is enabled.
-// Same pattern as drainAndPushStmtStats: always drain (to avoid stale data), push
-// only when the feature is on.
+// drainAndPushRU drains RU increments from all sessions, applies key caps, and
+// pushes merged data to RUCollectors when TopRU is enabled.
 func (m *aggregator) drainAndPushRU() {
 	total := RUIncrementMap{}
 	var droppedKeys int64
@@ -230,39 +227,14 @@ func UnregisterCollector(collector Collector) {
 	globalAggregator.unregisterCollector(collector)
 }
 
-// RegisterRUCollector binds an RUCollector to globalAggregator.
-// Called at TopSQL startup to wire reporter into RU data flow.
-// RegisterRUCollector is thread-safe.
-func RegisterRUCollector(collector RUCollector) {
-	globalAggregator.registerRUCollector(collector)
-}
-
-// UnregisterRUCollector removes RUCollector from globalAggregator.
-// UnregisterRUCollector is thread-safe.
-func UnregisterRUCollector(collector RUCollector) {
-	globalAggregator.unregisterRUCollector(collector)
-}
-
 // Collector is used to collect StatementStatsMap.
 type Collector interface {
 	// CollectStmtStatsMap is used to collect StatementStatsMap.
 	CollectStmtStatsMap(StatementStatsMap)
 }
 
-// RUCollector is used to collect RU increment data.
-// This interface is parallel to Collector but handles TopRU data flow.
-//
-// Design Rationale:
-//   - Separate interface from Collector to maintain TopSQL/TopRU independence
-//   - Single method design matches Collector pattern
-//   - Reporter implements this interface to receive aggregated RU data
-//
-// Data Flow:
-//
-//	aggregator (1s tick) -> RUCollector.CollectRUIncrements()
-//	-> Reporter.collectRUIncrementsChan -> collectWorker -> ruCollecting
-//
-// Phase 2: Reporter applies Hybrid TopN filtering (200 users × 200 SQLs) in ruCollecting.
+// RUCollector collects RU increments for the TopRU pipeline.
+// It is separate from Collector to keep TopSQL and TopRU decoupled.
 type RUCollector interface {
 	// CollectRUIncrements is called by aggregator every 1s with merged RU deltas
 	// from all sessions, aggregated by (user, sql_digest, plan_digest).

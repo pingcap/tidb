@@ -21,6 +21,7 @@ import (
 )
 
 func TestTopRUEnableDisableAndResetInterval(t *testing.T) {
+	// Contract: TopRU enable is ref-counted; interval resets only when count reaches 0.
 	GlobalState.ruConsumerCount.Store(0)
 	ResetTopRUItemInterval()
 

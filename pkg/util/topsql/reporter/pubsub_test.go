@@ -185,6 +185,8 @@ func TestPubSubDataSinkEnableTopRU(t *testing.T) {
 }
 
 func TestPubSubMultiSubscriberIsolation(t *testing.T) {
+	// Contract: TopRU enable is reference-counted across subscribers, while
+	// item interval is last-write-wins until the last subscriber exits.
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
 	}
@@ -221,6 +223,7 @@ func TestPubSubMultiSubscriberIsolation(t *testing.T) {
 		},
 	}
 
+	// Eventually checks make this test robust to async subscribe goroutines.
 	go func() { _ = svc.Subscribe(req1, stream1) }()
 	require.Eventually(t, func() bool {
 		return topsqlstate.TopRUEnabled() && topsqlstate.GetTopRUItemInterval() == 30
@@ -249,6 +252,7 @@ func (r *errPubSubDataSinkRegisterer) Register(DataSink) error { return errors.N
 func (r *errPubSubDataSinkRegisterer) Deregister(DataSink) {}
 
 func TestSubscribeRegisterFailDoesNotEnableTopRU(t *testing.T) {
+	// Registration failure must not leak global TopRU state.
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
 	}

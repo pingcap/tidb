@@ -170,12 +170,7 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 }
 
 // CollectRUIncrements implements stmtstats.RUCollector.
-// Called by aggregator every 1s with merged RU increments from all sessions.
-//
-// Design Rationale:
-//   - Non-blocking push to channel (drops on full, logs metric)
-//   - Separate channel from TopSQL stmtstats for pipeline independence
-//   - collectRUWorker writes RU increments into online 15s buckets
+// It receives merged RU increments from aggregator every second, and collectRUWorker consumes them.
 //
 // WARN: It will drop the data if the processing is not in time.
 // This function is thread-safe and efficient.
@@ -241,9 +236,8 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	}
 }
 
-// collectRUWorker consumes RU increment data from the collectRUIncrementsChan independently.
-// It runs in a separate goroutine from collectWorker to decouple TopRU from TopSQL data flow.
-// ruWindowAggregator is protected by an internal mutex for concurrent access safety.
+// collectRUWorker consumes RU increments from collectRUIncrementsChan.
+// It runs in a separate goroutine from collectWorker.
 func (tsr *RemoteTopSQLReporter) collectRUWorker() {
 	defer util.Recover("top-sql", "collectRUWorker", nil, false)
 
@@ -346,8 +340,8 @@ func findKthNetworkBytes(data stmtstats.StatementStatsMap, k int, u64Slice []uin
 }
 
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.
-// TopRU extraction is triggered only on this TopSQL report-tick path (no independent RU report ticker).
-// Each call attempts to emit at most one aligned closed 60s RU window; missed older windows are dropped.
+// TopRU extraction runs on the same report tick path.
+// Each call emits at most one aligned closed 60s RU window.
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(timestamp uint64) {
 	ruRecords := tsr.ruAggregator.takeReportRecords(
 		timestamp,

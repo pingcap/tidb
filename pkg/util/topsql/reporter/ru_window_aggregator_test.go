@@ -54,6 +54,8 @@ func fillAggregatorForWindow(agg *ruWindowAggregator, windowEnd uint64, numUsers
 }
 
 func TestRUWindowAggregatorReportGranularity(t *testing.T) {
+	// Contract: the same four 15s buckets should be regrouped by item interval.
+	// This verifies 15/30/60 aggregation boundaries on a fixed 60s closed window.
 	run := func(interval uint64, expectedTS []uint64, expectedRU []float64) {
 		agg := newRUWindowAggregator()
 		key := stmtstats.RUKey{
@@ -91,6 +93,8 @@ func TestRUWindowAggregatorReportGranularity(t *testing.T) {
 }
 
 func TestRUWindowAggregatorCompactTo200(t *testing.T) {
+	// Build >200 users in one 15s bucket, then force rotation by writing to next bucket.
+	// Contract: rotated bucket is compacted and normal users are capped by maxTopUsers.
 	agg := newRUWindowAggregator()
 	batch := make(stmtstats.RUIncrementMap, 250)
 	for i := 0; i < 250; i++ {
@@ -124,6 +128,8 @@ func TestRUWindowAggregatorCompactTo200(t *testing.T) {
 }
 
 func TestRUWindowAggregatorTakeOncePerWindow(t *testing.T) {
+	// Contract: one aligned 60s window can be reported at most once.
+	// 59 is still open, 60 closes [0,60), and later calls should not re-emit it.
 	agg := newRUWindowAggregator()
 	agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
 		stmtstats.RUKey{
@@ -149,7 +155,7 @@ func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 	)
 	agg := newRUWindowAggregator()
 
-	// Concurrent writers: each goroutine sends batches for ts in [0..14] (first 15s bucket)
+	// Concurrent writers all hit the same 15s bucket to maximize lock contention.
 	done := make(chan int, numWriters)
 	for w := 0; w < numWriters; w++ {
 		go func(writerID int) {
@@ -175,7 +181,7 @@ func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 		totalDropped += <-done
 	}
 
-	// Also inject data for 15..59 so we have a full 60s window
+	// Add filler points for later buckets so [0,60) is a complete reportable window.
 	for ts := uint64(15); ts < 60; ts += 15 {
 		agg.addBatchToBucket(ts, stmtstats.RUIncrementMap{
 			stmtstats.RUKey{
@@ -189,7 +195,8 @@ func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 	records := agg.takeReportRecords(60, 60, []byte("ks"))
 	require.NotNil(t, records, "concurrent writes should produce non-nil report")
 
-	// Verify structural integrity: all records have valid items
+	// We only assert structural integrity here, not exact totals, to avoid
+	// coupling this stress test to internal compaction choices.
 	totalRU := 0.0
 	for _, rec := range records {
 		for _, item := range rec.Items {
@@ -211,9 +218,73 @@ func findRURecord(t *testing.T, records []tipb.TopRURecord, user, sqlDigest, pla
 	return tipb.TopRURecord{}
 }
 
-// Benchmarks for takeReportRecords. Each iteration does fill + takeReportRecords (take consumes buckets, so we must re-fill).
-// Use -bench=TakeReportRecords -benchmem to compare ns/op and B/op when judging whether to move this path into collectWorker.
-// For takeReportRecords-only cost, compare with BenchmarkFillAggregatorOnly_* and subtract fill time from (fill+take) time.
+type ruBenchCase struct {
+	name           string
+	numUsers       int
+	numSQLsPerUser int
+	itemInterval   uint64
+}
+
+func benchmarkRUFillOnly(b *testing.B, c ruBenchCase) {
+	b.Helper()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, c.numUsers, c.numSQLsPerUser)
+	}
+}
+
+func benchmarkRUFillAndTake(b *testing.B, c ruBenchCase) {
+	b.Helper()
+	keyspace := []byte("ks")
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, c.numUsers, c.numSQLsPerUser)
+		_ = agg.takeReportRecords(60, c.itemInterval, keyspace)
+	}
+}
+
+func benchmarkRUTakeOnly(b *testing.B, c ruBenchCase) {
+	b.Helper()
+	keyspace := []byte("ks")
+	b.StopTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, c.numUsers, c.numSQLsPerUser)
+		b.StartTimer()
+		_ = agg.takeReportRecords(60, c.itemInterval, keyspace)
+		b.StopTimer()
+	}
+}
+
+// BenchmarkRUWindowAggregatorMatrix provides a unified benchmark matrix for
+// comparing cost curves under different cardinalities and measurement modes.
+// - fill-only: pre-aggregation pressure
+// - take-only: report extraction pressure
+// - fill+take: end-to-end periodic cost
+func BenchmarkRUWindowAggregatorMatrix(b *testing.B) {
+	cases := []ruBenchCase{
+		{name: "200x200_60s", numUsers: 200, numSQLsPerUser: 200, itemInterval: 60},
+		{name: "1000x500_60s", numUsers: 1000, numSQLsPerUser: 500, itemInterval: 60},
+	}
+	for _, c := range cases {
+		c := c
+		b.Run(c.name, func(b *testing.B) {
+			b.Run("fill-only", func(b *testing.B) {
+				benchmarkRUFillOnly(b, c)
+			})
+			b.Run("take-only", func(b *testing.B) {
+				benchmarkRUTakeOnly(b, c)
+			})
+			b.Run("fill+take", func(b *testing.B) {
+				benchmarkRUFillAndTake(b, c)
+			})
+		})
+	}
+}
+
+// Benchmarks for takeReportRecords. Each iteration does fill + takeReportRecords
+// (take consumes buckets, so we must re-fill).
+// Use -bench=TakeReportRecords -benchmem to compare ns/op and B/op.
 
 func BenchmarkTakeReportRecords_Small_60s(b *testing.B) {
 	keyspace := []byte("ks")

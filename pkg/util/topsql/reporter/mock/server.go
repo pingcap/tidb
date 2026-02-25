@@ -38,7 +38,7 @@ type mockAgentServer struct {
 	planMetas  map[string]string
 	addr       string
 	records    [][]*tipb.TopSQLRecord
-	ruRecords  [][]*tipb.TopRURecord // Phase 2: RU records storage
+	ruRecords  [][]*tipb.TopRURecord // RU records storage for tests
 	sync.Mutex
 }
 
@@ -108,7 +108,7 @@ func (svr *mockAgentServer) ReportTopSQLRecords(stream tipb.TopSQLAgent_ReportTo
 }
 
 // ReportTopRURecords implements tipb.TopSQLAgentServer for TopRU records.
-// Phase 2: Stores RU records for test verification.
+// Stores RU records for test verification.
 func (svr *mockAgentServer) ReportTopRURecords(stream tipb.TopSQLAgent_ReportTopRURecordsServer) error {
 	ruRecords := make([]*tipb.TopRURecord, 0, 10)
 	for {
@@ -242,7 +242,7 @@ func (svr *mockAgentServer) GetLatestRecords() []*tipb.TopSQLRecord {
 }
 
 // GetLatestRURecords returns the latest batch of RU records and clears storage.
-// Phase 2: Used for test verification of TopRU data flow.
+// Used for test verification of TopRU data flow.
 func (svr *mockAgentServer) GetLatestRURecords() []*tipb.TopRURecord {
 	svr.Lock()
 	ruRecords := svr.ruRecords

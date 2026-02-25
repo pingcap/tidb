@@ -29,12 +29,11 @@ const (
 	ruReportTopNUsers       = 100
 	ruReportTopNSQLsPerUser = 100
 
-	// Merge stage may combine up to 4 compacted buckets, so keep enough pre-cap before final 100x100 filtering.
+	// Merge may combine up to 4 compacted buckets, so keep a larger pre-cap.
 	ruReportMergePreTopNUsers       = int(ruReportWindowSeconds/ruBaseBucketSeconds) * maxTopUsers
 	ruReportMergePreTopNSQLsPerUser = int(ruReportWindowSeconds/ruBaseBucketSeconds) * maxTopSQLsPerUser
 
-	// The final output can contain up to 4 report points (15s interval),
-	// each with 100x100 top entries.
+	// The final output can contain up to 4 report points (15s interval).
 	ruReportOutputMaxUsers       = int(ruReportWindowSeconds/ruBaseBucketSeconds) * ruReportTopNUsers
 	ruReportOutputMaxSQLsPerUser = int(ruReportWindowSeconds/ruBaseBucketSeconds) * ruReportTopNSQLsPerUser
 )
@@ -45,10 +44,7 @@ type ruPointBucket struct {
 	compactedCollecting *ruCollecting // read-only snapshot, valid only when collecting == nil
 }
 
-// ruWindowAggregator keeps online 15s buckets:
-//   - collecting bucket aggregates 1s batches with 400x400 pre-cap
-//   - compacted bucket keeps 200x200 compacted records
-//   - report stage (every 60s) merges compacted buckets and applies 100x100 filtering
+// ruWindowAggregator keeps online 15s buckets for TopRU reporting.
 type ruWindowAggregator struct {
 	mu                sync.Mutex
 	buckets           map[uint64]*ruPointBucket // 15s startTs -> bucket
@@ -101,30 +97,28 @@ func (a *ruWindowAggregator) addBatchToBucket(ts uint64, increments stmtstats.RU
 	bucket.collecting.addBatch(bucketStart, increments)
 }
 
-// takeReportRecords attempts to emit one aligned closed 60s window for nowTs.
-// It does not catch up multiple missed windows: if called late, only the latest
-// complete window is emitted and older windows are dropped.
-// itemInterval must be 15/30/60 from state.GetTopRUItemInterval (normalized at SetTopRUItemInterval).
+// takeReportRecords emits one aligned closed 60s window for nowTs.
+// If called late, older windows are dropped.
+// itemInterval must be 15, 30, or 60.
 func (a *ruWindowAggregator) takeReportRecords(nowTs, itemInterval uint64, keyspaceName []byte) []tipb.TopRURecord {
 	windowEnd := alignToInterval(nowTs, ruReportWindowSeconds)
 	if windowEnd < ruReportWindowSeconds {
 		return nil
 	}
 
-	// Phase 1: Take buckets under lock (fast path).
+	// Step 1: take buckets under lock.
 	takenBuckets := a.takeBucketsForWindow(windowEnd)
 	if takenBuckets == nil {
 		return nil
 	}
 
-	// Phase 2: Build report records outside lock (slow path: merge + TopN + proto).
+	// Step 2: build report records outside lock.
 	windowStart := windowEnd - ruReportWindowSeconds
 	return buildReportRecords(takenBuckets, windowStart, windowEnd, itemInterval, keyspaceName)
 }
 
 // takeBucketsForWindow extracts buckets for the given window under lock.
-// Returns nil if the window has already been reported or is not ready.
-// The returned map is owned by the caller; original buckets are removed from aggregator.
+// It returns nil if the window has already been reported or is not ready.
 func (a *ruWindowAggregator) takeBucketsForWindow(windowEnd uint64) map[uint64]*ruPointBucket {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -133,12 +127,12 @@ func (a *ruWindowAggregator) takeBucketsForWindow(windowEnd uint64) map[uint64]*
 		return nil
 	}
 
-	// Rotate all buckets that are no longer writable for this report boundary.
+	// Rotate buckets that are no longer writable for this report boundary.
 	a.rotateBucketsBefore(windowEnd)
 
 	windowStart := windowEnd - ruReportWindowSeconds
 
-	// Take buckets for this window (move ownership to caller).
+	// Take buckets for this window.
 	takenBuckets := make(map[uint64]*ruPointBucket, int(ruReportWindowSeconds/ruBaseBucketSeconds))
 	for ts := windowStart; ts < windowEnd; ts += ruBaseBucketSeconds {
 		if bucket, ok := a.buckets[ts]; ok {
@@ -148,7 +142,7 @@ func (a *ruWindowAggregator) takeBucketsForWindow(windowEnd uint64) map[uint64]*
 	}
 	a.lastReportedEndTs = windowEnd
 
-	// Defensive cleanup for stale buckets.
+	// Clean stale buckets.
 	for ts := range a.buckets {
 		if ts < windowStart {
 			delete(a.buckets, ts)
@@ -165,7 +159,7 @@ func (a *ruWindowAggregator) rotateBucketsBefore(boundaryStart uint64) {
 		}
 
 		if bucket.startTs+ruBaseBucketSeconds <= boundaryStart {
-			// Compact to internal snapshot (avoids proto conversion).
+			// Compact to an internal snapshot.
 			bucket.compactedCollecting = bucket.collecting.compactWithLimits(maxTopUsers, maxTopSQLsPerUser)
 			bucket.collecting = nil
 		}
@@ -173,7 +167,7 @@ func (a *ruWindowAggregator) rotateBucketsBefore(boundaryStart uint64) {
 }
 
 // buildReportRecords merges taken buckets and produces final proto records.
-// This function does NOT require any lock; it operates on owned bucket data.
+// It does not require a lock.
 func buildReportRecords(buckets map[uint64]*ruPointBucket, windowStart, windowEnd, itemInterval uint64, keyspaceName []byte) []tipb.TopRURecord {
 	mergedOutput := newRUCollectingWithCaps(ruReportMergePreTopNUsers, ruReportMergePreTopNSQLsPerUser)
 	for intervalStart := windowStart; intervalStart < windowEnd; intervalStart += itemInterval {
@@ -183,13 +177,13 @@ func buildReportRecords(buckets map[uint64]*ruPointBucket, windowStart, windowEn
 			if !ok || bucket.compactedCollecting == nil {
 				continue
 			}
-			// Merge internal structure directly (no proto conversion).
+			// Merge internal structure directly.
 			intervalCollecting.mergeFrom(bucket.compactedCollecting, intervalStart, true)
 		}
-		// Apply TopN and merge into output (still internal).
+		// Apply TopN and merge into output.
 		intervalCompacted := intervalCollecting.compactWithLimits(ruReportTopNUsers, ruReportTopNSQLsPerUser)
 		mergedOutput.mergeFrom(intervalCompacted, 0, false)
 	}
-	// Final proto conversion only at output.
+	// Convert to proto at output.
 	return mergedOutput.toTopRURecords(keyspaceName)
 }

@@ -41,21 +41,16 @@ type DataSinkRegisterer interface {
 	Deregister(dataSink DataSink)
 }
 
-// ReportData contains data that reporter sends to the agent.
-//
-// Design Rationale (D2 - Separate RU Storage):
-//   - DataRecords: TopSQL CPU time records (existing)
-//   - RURecords: TopRU records (new, separate from CPU)
-//   - Both share SQLMetas/PlanMetas for digest->text lookup
-//
-// Phase 2: RURecords populated from ruCollecting.getReportRecords() with Hybrid TopN.
+// ReportData contains the payload sent from reporter to agent.
+// DataRecords stores TopSQL CPU records, and RURecords stores TopRU records.
+// SQLMetas and PlanMetas are shared by both record types.
 type ReportData struct {
 	// DataRecords contains the topN records of each second and the `others`
 	// record which aggregation all []tipb.TopSQLRecord that is out of Top N.
 	DataRecords []tipb.TopSQLRecord
 	// RURecords contains TopRU records aggregated by (user, sql_digest, plan_digest).
 	// Stored separately to avoid mixing with CPU-based TopSQLRecord.
-	// Phase 2: Populated by reporter after two-level TopN filtering.
+	// Populated by reporter after two-level TopN filtering.
 	RURecords []tipb.TopRURecord
 	SQLMetas  []tipb.SQLMeta
 	PlanMetas []tipb.PlanMeta

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,6 +55,8 @@ func boolPtr(v bool) *bool {
 
 func runTopRUCase(t *testing.T, cs caseSpec) {
 	t.Helper()
+	// This runner intentionally builds one deterministic closed 60s window so each
+	// generated case validates semantic contracts without clock/ticker flakiness.
 
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	t.Cleanup(tsr.Close)
@@ -87,27 +90,92 @@ func runTopRUCase(t *testing.T, cs caseSpec) {
 		execCounts[0] = cs.ExecCountMin
 	}
 
-	batch := make(stmtstats.RUIncrementMap, recordCount)
-	for i := 0; i < recordCount; i++ {
-		sqlDigest := []byte(fmt.Sprintf("S_%s_%d", cs.GoalID, i))
-		planDigest := []byte(fmt.Sprintf("P_%s_%d", cs.GoalID, i))
-
-		tsr.RegisterSQL(sqlDigest, fmt.Sprintf("/* %s */ select %d", marker, i), false)
-		tsr.RegisterPlan(planDigest, fmt.Sprintf("plan_%s_%d", marker, i), false)
-
-		batch[stmtstats.RUKey{
+	const sampleTs = uint64(1700000000)
+	switch cs.GoalID {
+	case "G7_key_aggregation_by_user_sql_plan":
+		// Same SQL/plan under different users must remain isolated by RUKey.User.
+		sqlDigest := []byte("S_G7")
+		planDigest := []byte("P_G7")
+		tsr.RegisterSQL(sqlDigest, fmt.Sprintf("/* %s */ select 7", marker), false)
+		tsr.RegisterPlan(planDigest, fmt.Sprintf("plan_%s_7", marker), false)
+		tsr.ruAggregator.addBatchToBucket(sampleTs, stmtstats.RUIncrementMap{
+			{
+				User:       "u1",
+				SQLDigest:  stmtstats.BinaryDigest(sqlDigest),
+				PlanDigest: stmtstats.BinaryDigest(planDigest),
+			}: {TotalRU: 7, ExecCount: 1, ExecDuration: 1000},
+			{
+				User:       "u2",
+				SQLDigest:  stmtstats.BinaryDigest(sqlDigest),
+				PlanDigest: stmtstats.BinaryDigest(planDigest),
+			}: {TotalRU: 9, ExecCount: 1, ExecDuration: 1000},
+		})
+	case "G8_same_timestamp_multiple_finish_accumulate":
+		// Same key and same bucket timestamp should accumulate RU/ExecCount/Duration.
+		sqlDigest := []byte("S_G8")
+		planDigest := []byte("P_G8")
+		tsr.RegisterSQL(sqlDigest, fmt.Sprintf("/* %s */ select 8", marker), false)
+		tsr.RegisterPlan(planDigest, fmt.Sprintf("plan_%s_8", marker), false)
+		key := stmtstats.RUKey{
 			User:       "root",
 			SQLDigest:  stmtstats.BinaryDigest(sqlDigest),
 			PlanDigest: stmtstats.BinaryDigest(planDigest),
-		}] = &stmtstats.RUIncrement{
-			TotalRU:      totalRUBaseline + float64(i+1),
-			ExecCount:    execCounts[i],
-			ExecDuration: uint64(1000 + i*100),
 		}
+		tsr.ruAggregator.addBatchToBucket(sampleTs, stmtstats.RUIncrementMap{
+			key: {TotalRU: 3, ExecCount: 1, ExecDuration: 1000},
+		})
+		tsr.ruAggregator.addBatchToBucket(sampleTs, stmtstats.RUIncrementMap{
+			key: {TotalRU: 4, ExecCount: 2, ExecDuration: 2000},
+		})
+	case "G10_internal_sql_empty_user_handling":
+		// Empty user is valid and should not be rewritten to "<others>".
+		sqlDigest := []byte("S_G10")
+		planDigest := []byte("P_G10")
+		tsr.RegisterSQL(sqlDigest, fmt.Sprintf("/* %s */ select 10", marker), false)
+		tsr.RegisterPlan(planDigest, fmt.Sprintf("plan_%s_10", marker), false)
+		tsr.ruAggregator.addBatchToBucket(sampleTs, stmtstats.RUIncrementMap{
+			{
+				User:       "",
+				SQLDigest:  stmtstats.BinaryDigest(sqlDigest),
+				PlanDigest: stmtstats.BinaryDigest(planDigest),
+			}: {TotalRU: 10, ExecCount: 1, ExecDuration: 1000},
+		})
+	case "G11_short_exec_time_lt_1s_handling":
+		// Sub-second duration is kept in nanos and reported as-is.
+		sqlDigest := []byte("S_G11")
+		planDigest := []byte("P_G11")
+		tsr.RegisterSQL(sqlDigest, fmt.Sprintf("/* %s */ select 11", marker), false)
+		tsr.RegisterPlan(planDigest, fmt.Sprintf("plan_%s_11", marker), false)
+		tsr.ruAggregator.addBatchToBucket(sampleTs, stmtstats.RUIncrementMap{
+			{
+				User:       "root",
+				SQLDigest:  stmtstats.BinaryDigest(sqlDigest),
+				PlanDigest: stmtstats.BinaryDigest(planDigest),
+			}: {TotalRU: 11, ExecCount: 1, ExecDuration: uint64((500 * time.Millisecond).Nanoseconds())},
+		})
+	default:
+		batch := make(stmtstats.RUIncrementMap, recordCount)
+		for i := 0; i < recordCount; i++ {
+			sqlDigest := []byte(fmt.Sprintf("S_%s_%d", cs.GoalID, i))
+			planDigest := []byte(fmt.Sprintf("P_%s_%d", cs.GoalID, i))
+
+			tsr.RegisterSQL(sqlDigest, fmt.Sprintf("/* %s */ select %d", marker, i), false)
+			tsr.RegisterPlan(planDigest, fmt.Sprintf("plan_%s_%d", marker, i), false)
+
+			batch[stmtstats.RUKey{
+				User:       "root",
+				SQLDigest:  stmtstats.BinaryDigest(sqlDigest),
+				PlanDigest: stmtstats.BinaryDigest(planDigest),
+			}] = &stmtstats.RUIncrement{
+				TotalRU:      totalRUBaseline + float64(i+1),
+				ExecCount:    execCounts[i],
+				ExecDuration: uint64(1000 + i*100),
+			}
+		}
+		tsr.ruAggregator.addBatchToBucket(sampleTs, batch)
 	}
 
-	const sampleTs = uint64(1700000000)
-	tsr.ruAggregator.addBatchToBucket(sampleTs, batch)
+	// Emit exactly one aligned closed [start,start+60) window.
 	reportTs := alignToInterval(sampleTs, ruReportWindowSeconds) + ruReportWindowSeconds
 	tsr.doReport(&ReportData{
 		RURecords: tsr.ruAggregator.takeReportRecords(reportTs, 60, []byte("topru-gen-keyspace")),
@@ -162,9 +230,54 @@ func runTopRUCase(t *testing.T, cs caseSpec) {
 		if cs.PlanMetaRequired != nil && *cs.PlanMetaRequired {
 			require.NotEmpty(t, payload.PlanMetas)
 		}
+		assertTopRUCasePayload(t, cs.GoalID, payload)
 	case <-time.After(3 * time.Second):
 		if cs.RequireSend {
 			t.Fatalf("timeout waiting for payload for goal %s", cs.GoalID)
 		}
 	}
+}
+
+func assertTopRUCasePayload(t *testing.T, goalID string, payload *ReportData) {
+	t.Helper()
+	switch goalID {
+	case "G7_key_aggregation_by_user_sql_plan":
+		users := map[string]struct{}{}
+		for _, rec := range payload.RURecords {
+			if string(rec.SqlDigest) == "S_G7" && string(rec.PlanDigest) == "P_G7" {
+				users[rec.User] = struct{}{}
+			}
+		}
+		require.Len(t, users, 2)
+		_, ok := users["u1"]
+		require.True(t, ok)
+		_, ok = users["u2"]
+		require.True(t, ok)
+	case "G8_same_timestamp_multiple_finish_accumulate":
+		rec := findRURecordByDigest(payload.RURecords, "root", "S_G8", "P_G8")
+		require.NotNil(t, rec)
+		require.Len(t, rec.Items, 1)
+		require.InDelta(t, 7.0, rec.Items[0].TotalRu, 1e-9)
+		require.Equal(t, uint64(3), rec.Items[0].ExecCount)
+		require.Equal(t, uint64(3000), rec.Items[0].ExecDuration)
+	case "G10_internal_sql_empty_user_handling":
+		rec := findRURecordByDigest(payload.RURecords, "", "S_G10", "P_G10")
+		require.NotNil(t, rec)
+		require.NotEmpty(t, rec.Items)
+	case "G11_short_exec_time_lt_1s_handling":
+		rec := findRURecordByDigest(payload.RURecords, "root", "S_G11", "P_G11")
+		require.NotNil(t, rec)
+		require.NotEmpty(t, rec.Items)
+		require.Equal(t, uint64((500 * time.Millisecond).Nanoseconds()), rec.Items[0].ExecDuration)
+	}
+}
+
+func findRURecordByDigest(records []tipb.TopRURecord, user, sqlDigest, planDigest string) *tipb.TopRURecord {
+	for i := range records {
+		rec := &records[i]
+		if rec.User == user && string(rec.SqlDigest) == sqlDigest && string(rec.PlanDigest) == planDigest {
+			return rec
+		}
+	}
+	return nil
 }

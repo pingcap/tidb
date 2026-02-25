@@ -67,9 +67,8 @@ type StatementStats struct {
 	finished *atomic.Bool
 	mu       sync.Mutex
 
-	// RU tracking fields (Phase 1 TopRU support)
-	// These fields are separate from TopSQL stmtstats to maintain pipeline independence.
-	finishedRUBuffer RUIncrementMap // Completed SQL RU deltas (drained by 1s tick)
+	// RU tracking fields for TopRU (separate from TopSQL stmtstats).
+	finishedRUBuffer RUIncrementMap // Completed SQL RU deltas drained by aggregator ticks.
 	// execCtx tracks the currently active SQL execution in this session.
 	// TiDB session execution is serialized, so at most one active context is kept.
 	execCtx *ExecutionContext
@@ -108,23 +107,19 @@ func (s *StatementStats) addRUOnBeginLocked(user string, sqlDigest, planDigest [
 		SQLDigest:  BinaryDigest(sqlDigest),
 		PlanDigest: BinaryDigest(planDigest),
 	}
-	// Extract and cache RUDetails pointer at begin time to avoid per-tick
-	// context.Value() traversal. The pointer is stable for the execution
-	// lifetime; internal values (RRU/WRU) are updated atomically by tikv client-go.
+	// Cache RUDetails at begin time to avoid per-tick context.Value() lookups.
 	var ruDetails *util.RUDetails
 	if ctx != nil {
 		if raw := ctx.Value(util.RUDetailsCtxKey); raw != nil {
 			ruDetails, _ = raw.(*util.RUDetails)
 		}
 	}
-	// Replace any stale execution context defensively to avoid ghost sampling.
+	// Replace stale execution context defensively.
 	s.execCtx = &ExecutionContext{
 		RUDetails: ruDetails,
 		Key:       key,
 	}
-	// Count ExecCount at begin time, consistent with TopSQL behavior.
-	// ExecCount is begin-based by design (TopSQL-aligned); TotalRU==0 && ExecCount>0 can appear
-	// in RU=0 / mid-disable / key-switch paths.
+	// ExecCount is begin-based, aligned with TopSQL semantics.
 	incr := s.getOrCreateRUIncrementLocked(key)
 	incr.ExecCount++
 }
@@ -159,9 +154,7 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, info 
 
 func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest []byte, ru *util.RUDetails, execDuration time.Duration) {
 	if s.execCtx == nil {
-		// No matching begin was recorded (e.g. TopRU enabled mid-execution).
-		// Without a begin-time baseline (LastRUTotal), we cannot compute a correct
-		// delta. Skip to avoid reporting the entire cumulative RU as a spike.
+		// No matching begin was recorded, so delta cannot be computed correctly.
 		return
 	}
 	key := RUKey{
@@ -170,8 +163,7 @@ func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest 
 		PlanDigest: BinaryDigest(planDigest),
 	}
 	if s.execCtx.Key != key {
-		// A newer execution has already replaced the active context.
-		// Ignore stale finish signal to avoid cross-key contamination.
+		// A newer execution has replaced the active context.
 		return
 	}
 	defer s.clearRUExecCtxLocked()
@@ -188,7 +180,7 @@ func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest 
 	s.execCtx.LastRUTotal = currentTotalRU
 	deltaRU := currentTotalRU - lastTotalRU
 	if deltaRU <= 0 {
-		// Counter reset or already sampled by previous tick.
+		// Counter reset or the value was already sampled.
 		return
 	}
 	incr := s.getOrCreateRUIncrementLocked(key)
@@ -276,14 +268,8 @@ func (s *StatementStats) Finished() bool {
 	return s.finished.Load()
 }
 
-// MergeRUInto drains the finishedRUBuffer and returns all accumulated RU increments.
-// Called by aggregator every 1s tick to collect RU data from this session.
-//
-// Phase 1 Design:
-//   - Drains finishedRUBuffer (completed SQL RU deltas)
-//   - In-flight sampling cadence is driven by aggregator tick (nominal 1s), not a local ticker here.
-//   - Thread-safe (mutex protected)
-//   - Returns empty map if no RU data accumulated
+// MergeRUInto drains finishedRUBuffer and returns accumulated RU increments.
+// In-flight RU is sampled in the same call.
 func (s *StatementStats) MergeRUInto() RUIncrementMap {
 	s.mu.Lock()
 	defer s.mu.Unlock()
