@@ -463,7 +463,6 @@ func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask
 			executor:         e.Children(0),
 			batchSize:        batchSize,
 			maxBatchSize:     maxBatchSize,
-			applyMode:        e.ApplyMode,
 			parentMemTracker: e.memTracker,
 			lookup:           &e.IndexLookUpJoin,
 		},

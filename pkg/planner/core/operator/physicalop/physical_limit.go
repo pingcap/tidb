@@ -64,7 +64,7 @@ func ExhaustPhysicalPlans4LogicalLimit(p *logicalop.LogicalLimit, prop *property
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset),
 			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
 		if prop.IndexJoinProp != nil {
-			resultProp = admitIndexJoinProp(resultProp, prop, false)
+			resultProp = admitIndexJoinProp(resultProp, prop)
 			if resultProp == nil {
 				continue
 			}

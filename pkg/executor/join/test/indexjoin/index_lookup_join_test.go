@@ -254,36 +254,6 @@ func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {
 	}
 }
 
-func TestIndexLookupJoinBatchSizeOneNotApplyMode(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int primary key, b int)")
-	tk.MustExec("create table t2(a int, b int, key(a))")
-	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("insert into t2 values (1, 10), (2, 20), (4, 40)")
-
-	tk.MustExec("set @@tidb_index_join_batch_size=1")
-	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIndexJoinApplyMode", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testIndexJoinApplyMode"))
-	}()
-
-	inlJoinSQL := "select /*+ INL_JOIN(t2) */ t1.a from t1 join t2 on t1.a = t2.a order by t1.a"
-	plan := tk.MustQuery("explain " + inlJoinSQL).String()
-	require.Contains(t, plan, "IndexJoin")
-	tk.MustQuery(inlJoinSQL).Check(testkit.Rows("1", "2"))
-
-	inlHashJoinSQL := "select /*+ INL_HASH_JOIN(t2) */ t1.a from t1 join t2 on t1.a = t2.a order by t1.a"
-	plan = tk.MustQuery("explain " + inlHashJoinSQL).String()
-	require.Contains(t, plan, "IndexHashJoin")
-	tk.MustQuery(inlHashJoinSQL).Check(testkit.Rows("1", "2"))
-}
-
 func TestIndexLookupJoinRowModePendingOuter(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

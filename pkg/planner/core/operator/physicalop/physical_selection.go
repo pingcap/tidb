@@ -69,7 +69,7 @@ func ExhaustPhysicalPlans4LogicalSelection(p *logicalop.LogicalSelection, prop *
 	}
 
 	ret := make([]base.PhysicalPlan, 0, len(newProps))
-	newProps = admitIndexJoinProps(newProps, prop, true)
+	newProps = admitIndexJoinProps(newProps, prop)
 	for _, newProp := range newProps {
 		sel := PhysicalSelection{
 			Conditions: p.Conditions,

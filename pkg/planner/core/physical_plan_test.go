@@ -375,57 +375,6 @@ func TestHintAlias(t *testing.T) {
 	})
 }
 
-func TestIndexJoinBatchModeInSimpleApply(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		if cascades == "on" {
-			t.Skip("cascades planner does not support index join inner multi-pattern yet")
-		}
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(a int primary key, b int, c int, d int, key idx_c(c))")
-		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=0.1")
-		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=100")
-		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=100")
-
-		sql := "select * from t t1 where exists (select 1 from t t2 where t2.c = t1.c)"
-		stmt, err := parser.New().ParseOneStmt(sql, "", "")
-		require.NoError(t, err)
-
-		nodeW := resolve.NewNodeW(stmt)
-		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, domain.GetDomain(tk.Session()).InfoSchema())
-		require.NoError(t, err)
-
-		pp, ok := p.(base.PhysicalPlan)
-		require.True(t, ok)
-		found := false
-		var walk func(base.PhysicalPlan)
-		walk = func(plan base.PhysicalPlan) {
-			switch v := plan.(type) {
-			case *physicalop.PhysicalIndexHashJoin:
-				require.False(t, v.ForceRowMode)
-				require.NotContains(t, v.ExplainInfo(), "row-mode:true")
-				require.NotContains(t, v.ExplainInfo(), "batch-mode:true")
-				found = true
-			case *physicalop.PhysicalIndexMergeJoin:
-				require.False(t, v.ForceRowMode)
-				require.NotContains(t, v.ExplainInfo(), "row-mode:true")
-				require.NotContains(t, v.ExplainInfo(), "batch-mode:true")
-				found = true
-			case *physicalop.PhysicalIndexJoin:
-				require.False(t, v.ForceRowMode)
-				require.NotContains(t, v.ExplainInfo(), "row-mode:true")
-				require.NotContains(t, v.ExplainInfo(), "batch-mode:true")
-				found = true
-			}
-			for _, child := range plan.Children() {
-				walk(child)
-			}
-		}
-		walk(pp)
-		require.True(t, found, "expected index join from decorrelated apply")
-	})
-}
-
 func TestIndexJoinRowModeWithInnerTopN(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		if cascades == "on" {

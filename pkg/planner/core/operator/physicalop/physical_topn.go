@@ -426,7 +426,7 @@ func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *proper
 		NoCopPushDown:     prop.NoCopPushDown,
 	}
 	if prop.IndexJoinProp != nil {
-		partialOrderProp = admitIndexJoinProp(partialOrderProp, prop, false)
+		partialOrderProp = admitIndexJoinProp(partialOrderProp, prop)
 		if partialOrderProp == nil {
 			return nil
 		}

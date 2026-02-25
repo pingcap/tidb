@@ -3664,9 +3664,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 		LastColHelper: v.CompareFilters,
 		Finished:      &atomic.Value{},
 	}
-	if v.ForceRowMode {
-		e.ApplyMode = true
-	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
