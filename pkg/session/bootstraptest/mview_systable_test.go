@@ -42,6 +42,8 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_info' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mlog_id"))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_info' and column_name='LAST_PURGED_TSO' and lower(data_type)='bigint' and column_default is null").
+		Check(testkit.Rows("1"))
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("refresh_job_id"))
@@ -49,12 +51,16 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("refresh_job_id"))
 	tk.MustQuery("select lower(data_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_JOB_ID'").
 		Check(testkit.Rows("bigint"))
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('REFRESH_TIME', 'REFRESH_ENDTIME') order by column_name").
+		Check(testkit.Rows("6", "6"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("purge_job_id"))
 	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' order by ordinal_position limit 1").
 		Check(testkit.Rows("purge_job_id"))
 	tk.MustQuery("select count(*) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_FAILED_REASON' and lower(data_type)='text'").
 		Check(testkit.Rows("1"))
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name in ('PURGE_TIME', 'PURGE_ENDTIME') order by column_name").
+		Check(testkit.Rows("6", "6"))
 }
 
 func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
@@ -93,4 +99,10 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 	} {
 		tk.MustQuery("select count(*) from information_schema.tables where table_schema='mysql' and table_name='" + tbl + "'").Check(testkit.Rows("1"))
 	}
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_info' and column_name='LAST_PURGED_TSO' and lower(data_type)='bigint' and column_default is null").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('REFRESH_TIME', 'REFRESH_ENDTIME') order by column_name").
+		Check(testkit.Rows("6", "6"))
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name in ('PURGE_TIME', 'PURGE_ENDTIME') order by column_name").
+		Check(testkit.Rows("6", "6"))
 }
