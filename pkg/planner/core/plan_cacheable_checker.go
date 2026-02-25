@@ -102,8 +102,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		if node.With != nil {
 			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
 		}
-	case *ast.SubqueryExpr:
-		return in, checker.skipForSubqueryDisabled()
 	case *ast.InsertStmt:
 		if node.Select == nil {
 			nRows := len(node.Lists)
@@ -117,6 +115,13 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
+	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+			checker.cacheable = false
+			checker.reason = "query has sub-queries is un-cacheable"
+			return in, true
+		}
+		return in, false
 	case *ast.PatternInExpr:
 		checker.sumInListLen += len(node.List)
 		if checker.sumInListLen > checker.maxNumParam { // to save memory
@@ -184,15 +189,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	}
 	return in, false
-}
-
-func (checker *cacheableChecker) skipForSubqueryDisabled() bool {
-	if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
-		checker.cacheable = false
-		checker.reason = "query has sub-queries is un-cacheable"
-		return true
-	}
-	return false
 }
 
 // Leave implements Visitor interface.
