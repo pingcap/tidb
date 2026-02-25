@@ -66,7 +66,8 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		Plan: importer.Plan{
 			DBName: "test",
 			TableInfo: &model.TableInfo{
-				Name: ast.NewCIStr("t"),
+				Name:  ast.NewCIStr("t"),
+				State: model.StatePublic,
 			},
 			DisableTiKVImportMode: true,
 		},
