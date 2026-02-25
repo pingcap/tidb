@@ -204,6 +204,15 @@ func NewChunkDecoder(columns []ColInfo, handleColIDs []int64, defDatum func(i in
 
 // DecodeToChunk decodes a row to chunk.
 func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk *chunk.Chunk) error {
+	return decoder.decodeToChunk(rowData, 0, handle, chk, false)
+}
+
+// DecodeToChunkWithCommitTS decodes a row to chunk and fills _tidb_commit_ts when needed.
+func (decoder *ChunkDecoder) DecodeToChunkWithCommitTS(rowData []byte, commitTS uint64, handle kv.Handle, chk *chunk.Chunk) error {
+	return decoder.decodeToChunk(rowData, commitTS, handle, chk, true)
+}
+
+func (decoder *ChunkDecoder) decodeToChunk(rowData []byte, commitTS uint64, handle kv.Handle, chk *chunk.Chunk, withCommitTS bool) error {
 	err := decoder.fromBytes(rowData)
 	if err != nil {
 		return err
@@ -218,6 +227,14 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 		}
 		if col.ID == model.ExtraRowChecksumID {
 			chk.AppendNull(colIdx)
+			continue
+		}
+		if col.ID == model.ExtraCommitTSID {
+			if withCommitTS {
+				chk.AppendInt64(colIdx, int64(commitTS))
+			} else {
+				chk.AppendNull(colIdx)
+			}
 			continue
 		}
 

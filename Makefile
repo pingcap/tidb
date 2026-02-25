@@ -296,6 +296,14 @@ failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
 	@$(FAILPOINT_DISABLE)
 
+.PHONY: bazel-failpoint-enable
+bazel-failpoint-enable:
+	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
+
+.PHONY: bazel-failpoint-disable
+bazel-failpoint-disable:
+	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
+
 .PHONY: tools/bin/ut
 tools/bin/ut: tools/check/ut.go
 	cd tools/check; \
@@ -640,6 +648,12 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
+.PHONY: bazel_bin
+bazel_bin: ## Build importer/tidb binary files with Bazel build system
+	mkdir -p bin
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=false
+
 .PHONY: bazel_build
 bazel_build:
 	mkdir -p bin
@@ -803,6 +817,16 @@ bazel_ddltest: failpoint-enable bazel_ci_simple_prepare
 .PHONY: bazel_lint
 bazel_lint: bazel_prepare
 	bazel build //... --//build:with_nogo_flag=$(NOGO_FLAG)
+
+.PHONY: bazel_lint_changed
+bazel_lint_changed: bazel_prepare
+	@PKGS="$$(build/get_changed_bazel_pkgs.sh)"; \
+	echo "$$PKGS"; \
+	if [ -z "$$PKGS" ]; then \
+		echo "No changed bazel packages detected, skip bazel_lint_changed."; \
+		exit 0; \
+	fi; \
+	bazel build $(BAZEL_CMD_CONFIG) $$PKGS --//build:with_nogo_flag=$(NOGO_FLAG)
 
 .PHONY: docker
 docker:
