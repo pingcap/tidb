@@ -44,9 +44,9 @@ id	content
 SELECT * FROM t3 WHERE fts_match_word('hello', body);
 id	body
 1	hello world from non-empty table case
-SELECT body1 FROM t4 WHERE fts_match_word('first', body1);
-body1
-This is the first test x data, used to demonstrate the insert operation
-SELECT body2 FROM t4 WHERE fts_match_word('data', body2);
-body2
-backfilling data
+SELECT id,body1 FROM t4 WHERE fts_match_word('first', body1);
+id	body1
+1	This is the first test x data, used to demonstrate the insert operation
+SELECT id,body2 FROM t4 WHERE fts_match_word('data', body2);
+id	body2
+2	backfilling data

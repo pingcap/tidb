@@ -48,5 +48,5 @@ DO SLEEP(10);
 SELECT * FROM t1 WHERE fts_match_word('first', body);
 SELECT * FROM t2 WHERE fts_match_word('first', content);
 SELECT * FROM t3 WHERE fts_match_word('hello', body);
-SELECT body1 FROM t4 WHERE fts_match_word('first', body1);
-SELECT body2 FROM t4 WHERE fts_match_word('data', body2);
+SELECT id,body1 FROM t4 WHERE fts_match_word('first', body1);
+SELECT id,body2 FROM t4 WHERE fts_match_word('data', body2);
