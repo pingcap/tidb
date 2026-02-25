@@ -53,7 +53,17 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			nextTp := p.peekN(1).Tp
 			if nextTp != in && nextTp != like && nextTp != ilike &&
 				nextTp != between && nextTp != regexpKwd && nextTp != rlike {
-				return left
+				// yacc: when NOT follows an expression but isn't followed by
+				// IN/LIKE/BETWEEN/REGEXP, yacc consumes NOT and errors at the
+				// next token (e.g., NULL). Match that behavior.
+				notTok := p.next() // consume NOT
+				nextTok := p.peek()
+				if nextTok.Tp == EOF {
+					p.syntaxErrorAt(notTok)
+				} else {
+					p.syntaxErrorAt(nextTok)
+				}
+				return nil
 			}
 			left = p.parseNotInfixExpr(left)
 			if left == nil {

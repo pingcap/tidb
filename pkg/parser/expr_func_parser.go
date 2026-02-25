@@ -123,17 +123,8 @@ func (p *HandParser) parseWindowFuncExpr(name string, funcExpr ast.ExprNode) ast
 			p.error(p.peek().Offset, "%s requires 1 to 3 arguments", strings.ToUpper(name))
 			return nil
 		}
-		// Validate second argument: goyacc grammar restricts to NumLiteral (unsigned),
-		// not a general Expression. Reject unary minus (-1) etc. at parse time.
-		if len(wf.Args) >= 2 {
-			switch wf.Args[1].(type) {
-			case ast.ValueExpr, ast.ParamMarkerExpr:
-				// OK: numeric literal or parameter marker
-			default:
-				p.syntaxErrorAt(p.peek())
-				return nil
-			}
-		}
+		// Argument restriction (2nd arg = NumLiteral only) is enforced at parse
+		// time in parseLeadLagFuncCall, so no further validation needed here.
 	}
 
 	// Parse window specification: ( [PARTITION BY ...] [ORDER BY ...] [frame] )
@@ -445,6 +436,8 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 		return p.parseWeightStringFuncCall(node)
 	case "timestampadd":
 		return p.parseTimestampAddFuncCall(node)
+	case "lead", "lag":
+		return p.parseLeadLagFuncCall(node)
 	}
 
 	// Generic argument list.
@@ -456,6 +449,54 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 		node.Args = append(node.Args, arg)
 		if _, ok := p.accept(','); !ok {
 			break
+		}
+	}
+
+	p.expect(')')
+	return node
+}
+
+// parseLeadLagFuncCall parses LEAD/LAG function calls with restricted argument syntax.
+// yacc grammar restricts the 2nd argument to NumLiteral (unsigned int/float literal
+// or param marker), not a general Expression. This prevents accepting `-1`.
+func (p *HandParser) parseLeadLagFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
+	// First arg: general expression (required)
+	arg1 := p.parseExpression(precNone)
+	if arg1 == nil {
+		return nil
+	}
+	node.Args = append(node.Args, arg1)
+
+	// Optional 2nd and 3rd args
+	if _, ok := p.accept(','); ok {
+		// 2nd arg: NumLiteral only (yacc grammar: unsigned int/float literal or param marker)
+		tok := p.peek()
+		switch tok.Tp {
+		case intLit, floatLit, decLit:
+			arg2 := p.parseExpression(precNone)
+			if arg2 == nil {
+				return nil
+			}
+			node.Args = append(node.Args, arg2)
+		case paramMarker:
+			arg2 := p.parseExpression(precNone)
+			if arg2 == nil {
+				return nil
+			}
+			node.Args = append(node.Args, arg2)
+		default:
+			// Not a NumLiteral — error at the unexpected token (e.g., '-')
+			p.syntaxErrorAt(tok)
+			return nil
+		}
+
+		// Optional 3rd arg: general expression (default value)
+		if _, ok := p.accept(','); ok {
+			arg3 := p.parseExpression(precNone)
+			if arg3 == nil {
+				return nil
+			}
+			node.Args = append(node.Args, arg3)
 		}
 	}
 
