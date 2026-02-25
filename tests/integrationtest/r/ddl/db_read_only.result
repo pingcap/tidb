@@ -429,3 +429,35 @@ Error 3989 (HY000): Schema 'read_only' is in read only mode.
 explain analyze delete from t1 where a = 1;
 Error 3989 (HY000): Schema 'read_only' is in read only mode.
 alter schema read_only read only 0;
+drop database if exists ro_bypass;
+create database ro_bypass;
+use ro_bypass;
+create table t1(a int primary key, b int);
+create user 'repl_writer'@'localhost';
+grant all on ro_bypass.* to 'repl_writer'@'localhost';
+grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'repl_writer'@'localhost';
+create user 'normal_user'@'localhost';
+grant all on ro_bypass.* to 'normal_user'@'localhost';
+alter schema ro_bypass read only 1;
+insert into t1 values(1, 10);
+update t1 set b = 20 where a = 1;
+delete from t1 where a = 1;
+create table t2(a int primary key);
+alter table t2 add column b int;
+drop table t2;
+insert into t1 values(2, 20);
+Error 3989 (HY000): Schema 'ro_bypass' is in read only mode.
+update t1 set b = 30 where a = 1;
+Error 3989 (HY000): Schema 'ro_bypass' is in read only mode.
+delete from t1 where a = 1;
+Error 3989 (HY000): Schema 'ro_bypass' is in read only mode.
+create table t3(a int primary key);
+Error 3989 (HY000): Schema 'ro_bypass' is in read only mode.
+alter table t1 add column c int;
+Error 3989 (HY000): Schema 'ro_bypass' is in read only mode.
+drop table t1;
+Error 3989 (HY000): Schema 'ro_bypass' is in read only mode.
+alter schema ro_bypass read only 0;
+drop database ro_bypass;
+drop user 'repl_writer'@'localhost';
+drop user 'normal_user'@'localhost';
