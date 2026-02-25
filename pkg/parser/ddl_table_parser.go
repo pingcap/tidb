@@ -292,7 +292,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			// Reject bare identifiers (ColumnNameExpr).
 			// The yacc parser requires these to be function calls (with parens), not identifiers.
 			if cn, ok := option.Expr.(*ast.ColumnNameExpr); ok {
-				p.error(0, "Invalid default value: %s", cn.Name.Name.O)
+				p.error(p.peek().Offset, "Invalid default value: %s", cn.Name.Name.O)
 				return nil
 			}
 
@@ -368,7 +368,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			// Parser.y: | "ON" "UPDATE" NowSymOptionFraction
 			// NowSymOptionFraction allows: NowSym, NowSymFunc '(' ')', etc. but NOT parenthesized wrapper.
 			if _, ok := option.Expr.(*ast.ParenthesesExpr); ok {
-				p.error(0, "Invalid ON UPDATE clause: parenthesized expression not allowed")
+				p.error(p.peek().Offset, "Invalid ON UPDATE clause: parenthesized expression not allowed")
 				return nil
 			}
 
@@ -376,11 +376,11 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			if cn, ok := option.Expr.(*ast.ColumnNameExpr); ok {
 				switch strings.ToLower(cn.Name.Name.L) {
 				case ast.Now, ast.LocalTime, ast.LocalTimestamp, ast.CurrentTimestamp:
-					p.error(0, "%s as ON UPDATE requires parentheses", cn.Name.Name.O)
+					p.error(p.peek().Offset, "%s as ON UPDATE requires parentheses", cn.Name.Name.O)
 					return nil
 				}
 				// Other identifiers also invalid
-				p.error(0, "Invalid ON UPDATE clause: expected function")
+				p.error(p.peek().Offset, "Invalid ON UPDATE clause: expected function")
 				return nil
 			}
 
@@ -388,7 +388,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			fc, ok := option.Expr.(*ast.FuncCallExpr)
 			if !ok {
 				// Reject other types (ValueExpr, etc)
-				p.error(0, "Invalid ON UPDATE clause")
+				p.error(p.peek().Offset, "Invalid ON UPDATE clause")
 				return nil
 			}
 			normalizeDDLFuncName(fc)

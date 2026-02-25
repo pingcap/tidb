@@ -286,7 +286,7 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 		case "count":
 			return node
 		default:
-			p.error(0, "%s requires at least 1 argument", name)
+			p.error(p.peek().Offset, "%s requires at least 1 argument", name)
 			return nil
 		}
 	}
@@ -307,7 +307,7 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 
 	// Reject DISTINCT ALL for COUNT.
 	if hasDistinctAll && strings.ToLower(name) == "count" {
-		p.error(0, "COUNT does not support DISTINCT ALL")
+		p.error(p.peek().Offset, "COUNT does not support DISTINCT ALL")
 		return nil
 	}
 
@@ -316,7 +316,7 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 	if node.Distinct {
 		switch strings.ToLower(name) {
 		case "bit_and", "bit_or", "bit_xor", "json_arrayagg", "json_objectagg":
-			p.error(0, "%s does not support DISTINCT", name)
+			p.error(p.peek().Offset, "%s does not support DISTINCT", name)
 			return nil
 		}
 	}
@@ -345,20 +345,20 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 	case "json_objectagg":
 		// JSON_OBJECTAGG accepts exactly 2 arguments (key, value).
 		if len(node.Args) != 2 {
-			p.error(0, "JSON_OBJECTAGG requires exactly 2 arguments")
+			p.error(p.peek().Offset, "JSON_OBJECTAGG requires exactly 2 arguments")
 			return nil
 		}
 	case "count":
 		// COUNT(DISTINCT a, b) is valid but COUNT(a, b) is not.
 		if len(node.Args) > 1 && !node.Distinct {
-			p.error(0, "COUNT with multiple arguments requires DISTINCT")
+			p.error(p.peek().Offset, "COUNT with multiple arguments requires DISTINCT")
 			return nil
 		}
 	case "approx_count_distinct", "approx_percentile":
 		// These accept multiple arguments.
 	default:
 		if len(node.Args) > 1 {
-			p.error(0, "%s accepts at most 1 argument", name)
+			p.error(p.peek().Offset, "%s accepts at most 1 argument", name)
 			return nil
 		}
 	}

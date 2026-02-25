@@ -565,12 +565,12 @@ func (p *HandParser) parseJSONExtract(left ast.ExprNode, unquote bool) ast.ExprN
 		opName = "->>"
 	}
 	if _, ok := left.(*ast.ColumnNameExpr); !ok {
-		p.error(0, "%s requires a column reference on the left side", opName)
+		p.error(p.peek().Offset, "%s requires a column reference on the left side", opName)
 		return nil
 	}
 	p.next() // consume -> or ->>
 	if p.peek().Tp != stringLit {
-		p.error(0, "%s requires a string literal JSON path on the right side", opName)
+		p.error(p.peek().Offset, "%s requires a string literal JSON path on the right side", opName)
 		return nil
 	}
 	path := p.parsePrefixExpr(0)
