@@ -2423,6 +2423,12 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			}
 		}
 		return false
+	case ast.LLMComplete, ast.LLMEmbedText:
+		if err := er.checkLLMAccessInPlan(); err != nil {
+			er.err = err
+			return true
+		}
+		return false
 	// when column is not null, ifnull on such column can be optimized to a cast.
 	case ast.Ifnull:
 		if len(v.Args) != 2 {
@@ -2509,6 +2515,24 @@ func (er *expressionRewriter) checkModelPredictAccessInPlan() error {
 	activeRoles := er.planCtx.builder.ctx.GetSessionVars().ActiveRoles
 	if !checker.RequestDynamicVerification(activeRoles, "MODEL_EXECUTE", false) {
 		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("MODEL_EXECUTE")
+	}
+	return nil
+}
+
+func (er *expressionRewriter) checkLLMAccessInPlan() error {
+	if !vardef.EnableLLMInference.Load() {
+		return infoschema.ErrLLMInferenceDisabled
+	}
+	if er.planCtx == nil || er.planCtx.builder == nil {
+		return nil
+	}
+	checker := privilege.GetPrivilegeManager(er.planCtx.builder.ctx)
+	if checker == nil {
+		return nil
+	}
+	activeRoles := er.planCtx.builder.ctx.GetSessionVars().ActiveRoles
+	if !checker.RequestDynamicVerification(activeRoles, "LLM_EXECUTE", false) {
+		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("LLM_EXECUTE")
 	}
 	return nil
 }

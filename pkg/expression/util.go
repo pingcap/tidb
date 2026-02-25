@@ -1530,7 +1530,8 @@ func ContainsModelPredict(e Expression) bool {
 	case *Column, *CorrelatedColumn:
 		return false
 	case *ScalarFunction:
-		if x.FuncName.L == ast.ModelPredict || x.FuncName.L == ast.ModelPredictOutput {
+		if x.FuncName.L == ast.ModelPredict || x.FuncName.L == ast.ModelPredictOutput ||
+			x.FuncName.L == ast.LLMComplete || x.FuncName.L == ast.LLMEmbedText {
 			return true
 		}
 		for _, arg := range x.GetArgs() {

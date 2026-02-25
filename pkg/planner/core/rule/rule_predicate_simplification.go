@@ -233,7 +233,7 @@ func reorderModelPredicates(predicates []expression.Expression) []expression.Exp
 	modelPredicates := make([]bool, len(predicates))
 	hasModelPredicate := false
 	for i, pred := range predicates {
-		if expression.IsMutableEffectsExpr(pred) {
+		if expression.IsMutableEffectsExpr(pred) && !expression.ContainsModelPredict(pred) {
 			return predicates
 		}
 		if expression.ContainsModelPredict(pred) {
