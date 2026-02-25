@@ -316,7 +316,10 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 							near = near[:80]
 						}
 					}
-					p.errs = append(p.errs, fmt.Errorf("line %d column %d near \"%s\"%s ", line, col, near, "MAXVALUE cannot be used in LIST partition"))
+					msg := "MAXVALUE cannot be used in LIST partition"
+					p.errs = append(p.errs, fmt.Errorf(
+						"line %d column %d near \"%s\"%s ",
+						line, col, near, msg))
 					return true
 				}
 				return false
