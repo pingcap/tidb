@@ -394,11 +394,6 @@ func (*SchemaTracker) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMat
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG is not supported in schema tracker")
 }
 
-// RefreshMaterializedView implements the DDL interface.
-func (*SchemaTracker) RefreshMaterializedView(sessionctx.Context, *ast.RefreshMaterializedViewStmt) error {
-	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW is not supported in schema tracker")
-}
-
 // CreateTableWithInfo implements the DDL interface.
 func (d *SchemaTracker) CreateTableWithInfo(
 	_ sessionctx.Context,
