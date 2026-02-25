@@ -314,6 +314,15 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	)
 	logger.Info("on next subtasks batch")
 
+	// Check table emptyness again after the task is started.
+	if kerneltype.IsClassic() && task.Step == proto.StepInit {
+		if err = sch.checkImportTableEmpty(ctx, taskMeta); err != nil {
+			logger.Warn("meet error when checking import table empty",
+				zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+	}
+
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
 	switch nextStep {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
@@ -326,11 +335,6 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		}
 		if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
 			return nil, err
-		}
-		if kerneltype.IsClassic() {
-			if err = sch.checkImportTableEmpty(ctx, taskMeta); err != nil {
-				return nil, err
-			}
 		}
 		if importer.GetNumOfIndexGenKV(taskMeta.Plan.TableInfo) > warningIndexCount {
 			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventTooManyIdx).Inc()
