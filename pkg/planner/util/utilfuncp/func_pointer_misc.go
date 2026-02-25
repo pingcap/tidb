@@ -512,6 +512,10 @@ func CloneConstantsForPlanCache(constants, cloned []*expression.Constant) []*exp
 		cloned = cloned[:0]
 	}
 	for _, c := range constants {
+		if c == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
 		if c.SafeToShareAcrossSession() {
 			cloned = append(cloned, c)
 		} else {

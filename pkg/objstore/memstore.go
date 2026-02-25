@@ -19,10 +19,12 @@ import (
 	"context"
 	"io"
 	"path"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
@@ -263,6 +265,12 @@ func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	s.dataStore[newFileName] = theFile
 	delete(s.dataStore, oldFileName)
 	return nil
+}
+
+// PresignFile implements storeapi.Storage interface.
+// For in-memory storage, returns the file name only (basename).
+func (s *MemStorage) PresignFile(_ context.Context, fileName string, _ time.Duration) (string, error) {
+	return filepath.Base(fileName), nil
 }
 
 // Close implements Storage interface.

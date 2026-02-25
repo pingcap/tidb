@@ -44,7 +44,6 @@ func TestMain(m *testing.M) {
 		testDataMap.GenerateOutputIfNeeded()
 		return i
 	}
-
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 

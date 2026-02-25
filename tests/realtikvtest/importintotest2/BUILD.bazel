@@ -5,6 +5,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "from_select_test.go",
+        "import_into_test.go",
         "main_test.go",
         "write_after_import_test.go",
     ],
@@ -19,6 +20,7 @@ go_test(
         "//pkg/kv",
         "//pkg/lightning/common",
         "//pkg/parser/ast",
+        "//pkg/planner/core",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/util/dbterror/plannererrors",
