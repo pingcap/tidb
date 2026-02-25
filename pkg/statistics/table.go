@@ -28,8 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -373,11 +375,15 @@ func convertColumnHistToIndexHist(colHist *Histogram) *Histogram {
 		upper := colHist.GetUpper(i)
 		lowerBytes, err := codec.EncodeKey(time.UTC, nil, *lower)
 		if err != nil {
+			logutil.BgLogger().Warn("failed to encode lower bound in convertColumnHistToIndexHist",
+				zap.Int64("histID", colHist.ID), zap.Int("bucket", i), zap.Error(err))
 			return NewHistogram(colHist.ID, colHist.NDV, colHist.NullCount,
 				colHist.LastUpdateVersion, blobTp, 0, 0)
 		}
 		upperBytes, err := codec.EncodeKey(time.UTC, nil, *upper)
 		if err != nil {
+			logutil.BgLogger().Warn("failed to encode upper bound in convertColumnHistToIndexHist",
+				zap.Int64("histID", colHist.ID), zap.Int("bucket", i), zap.Error(err))
 			return NewHistogram(colHist.ID, colHist.NDV, colHist.NullCount,
 				colHist.LastUpdateVersion, blobTp, 0, 0)
 		}
