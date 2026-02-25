@@ -537,6 +537,74 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 1.0, countResult.Est)
 }
 
+// TestCanSkipIndexEstimation verifies that GetRowCountByIndexRanges uses the fast path
+// (canSkipIndexEstimation) when ranges include a full range with NULLs [NULL, +inf),
+// returning RealtimeCount directly without expensive histogram estimation.
+func TestCanSkipIndexEstimation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Use mock stats so Idx2ColUniqueIDs is populated (required by getIndexRowCountForStatsV2).
+	realtimeCount := int64(51) // 50 rows + 1 NULL
+	statsTbl := mockStatsTable(tblInfo, realtimeCount)
+	colValues, err := generateIntDatum(1, 51)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		statsTbl.SetCol(int64(i), &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	// Index histogram must store encoded key bytes (same as getIndexRowCountForStatsV2 uses for l/r).
+	idxValues := make([]types.Datum, 51)
+	for i := 0; i < 51; i++ {
+		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
+		require.NoError(t, err)
+		idxValues[i].SetBytes(enc)
+	}
+	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
+		Histogram: *mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob)),
+		Info:      tblInfo.Indices[0],
+		StatsVer:  2,
+	})
+	generateMapsForMockStatsTbl(statsTbl)
+
+	idxID := tblInfo.Indices[0].ID
+	sctx := mock.NewContext()
+
+	// Full range including NULLs [NULL, +inf) triggers canSkipIndexEstimation fast path.
+	// Result should equal RealtimeCount exactly (no histogram estimation).
+	fullRanges := ranger.FullRange()
+	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges, nil)
+	require.NoError(t, err)
+	require.Equal(t, float64(realtimeCount), countResult.Est,
+		"full range [NULL,+inf) should use fast path and return RealtimeCount")
+
+	// Full range excluding NULLs [MinNotNull, +inf) should NOT use fast path.
+	// It goes through histogram estimation.
+	fullNotNullRanges := ranger.FullNotNullRange()
+	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges, nil)
+	require.NoError(t, err)
+	require.LessOrEqual(t, countResult2.Est, float64(realtimeCount),
+		"full not-null range excludes NULLs, estimate should be <= RealtimeCount")
+
+	// Bounded range should NOT use fast path.
+	boundedRanges := getRange(1, 10)
+	countResult3, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, boundedRanges, nil)
+	require.NoError(t, err)
+	require.Less(t, countResult3.Est, float64(realtimeCount),
+		"bounded range should use histogram estimation, not fast path")
+}
+
 func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -1368,6 +1436,50 @@ func TestIssue39593(t *testing.T) {
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table, use range to reduce test flakiness
 	require.InDelta(t, float64(5400), countResult.Est, float64(1))
+}
+
+func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, b int, c int, index idx_ab(a, b))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock only column stats and keep index stats missing, so estimation goes through partial column stats path.
+	statsTbl := mockStatsTable(tblInfo, 1000)
+	statsTbl.PhysicalID = tblInfo.ID
+	statsTbl.Version = 2
+	statsTbl.ColAndIdxExistenceMap = statistics.NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices))
+	colValues, err := generateIntDatum(1, 100)
+	require.NoError(t, err)
+	for i := range 3 {
+		colInfo := tblInfo.Columns[i]
+		statsTbl.SetCol(colInfo.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(colInfo.ID, colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              colInfo,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	h.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
+
+	// `idx_ab` is non-unique, planner may append handle column to execution ranges.
+	// The estimation path should still use ranges aligned with index columns.
+	require.NotPanics(t, func() {
+		tk.MustQuery("explain format='brief' select * from t use index(idx_ab) where a = 1 and b = 2 and id = 3").
+			Check(testkit.Rows(
+				`IndexLookUp 1.00 root  `,
+				`├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1 2 3,1 2 3], keep order:false, stats:partial[idx_ab:missing]`,
+				`└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[idx_ab:missing]`))
+	})
 }
 
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {

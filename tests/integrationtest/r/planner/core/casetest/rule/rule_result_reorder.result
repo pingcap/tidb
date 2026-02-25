@@ -296,21 +296,21 @@ Sort	root		Column, Column, Column, Column
 explain format='plan_tree' select * from t1 where a > 10 intersect select * from t2 where b > 20;
 id	task	access object	operator info
 Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d
-└─HashJoin	root		semi join, left side:TableReader, equal:[nulleq(planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t2.a) nulleq(planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t2.b) nulleq(planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t2.c) nulleq(planner__core__casetest__rule__rule_result_reorder.t1.d, planner__core__casetest__rule__rule_result_reorder.t2.d)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_result_reorder.t2.b, 20)
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:TableRangeScan
-    └─TableRangeScan	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
+└─IndexJoin	root		semi join, inner:TableReader, left side:TableReader, outer key:planner__core__casetest__rule__rule_result_reorder.t1.a, inner key:planner__core__casetest__rule__rule_result_reorder.t2.a, equal cond:nulleq(planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t2.a), other cond:nulleq(planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t2.b), nulleq(planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t2.c), nulleq(planner__core__casetest__rule__rule_result_reorder.t1.d, planner__core__casetest__rule__rule_result_reorder.t2.d)
+  ├─TableReader(Build)	root		data:TableRangeScan
+  │ └─TableRangeScan	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_result_reorder.t2.b, 20)
+      └─TableRangeScan	cop[tikv]	table:t2	range: decided by [planner__core__casetest__rule__rule_result_reorder.t1.a], keep order:false, stats:pseudo
 explain format='plan_tree' select * from t1 where a > 10 except select * from t2 where b > 20;
 id	task	access object	operator info
 Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d
-└─HashJoin	root		anti semi join, left side:TableReader, equal:[nulleq(planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t2.a) nulleq(planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t2.b) nulleq(planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t2.c) nulleq(planner__core__casetest__rule__rule_result_reorder.t1.d, planner__core__casetest__rule__rule_result_reorder.t2.d)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_result_reorder.t2.b, 20)
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:TableRangeScan
-    └─TableRangeScan	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
+└─IndexJoin	root		anti semi join, inner:TableReader, left side:TableReader, outer key:planner__core__casetest__rule__rule_result_reorder.t1.a, inner key:planner__core__casetest__rule__rule_result_reorder.t2.a, equal cond:nulleq(planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t2.a), other cond:nulleq(planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t2.b), nulleq(planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t2.c), nulleq(planner__core__casetest__rule__rule_result_reorder.t1.d, planner__core__casetest__rule__rule_result_reorder.t2.d)
+  ├─TableReader(Build)	root		data:TableRangeScan
+  │ └─TableRangeScan	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		gt(planner__core__casetest__rule__rule_result_reorder.t2.b, 20)
+      └─TableRangeScan	cop[tikv]	table:t2	range: decided by [planner__core__casetest__rule__rule_result_reorder.t1.a], keep order:false, stats:pseudo
 explain format='plan_tree' select sum(b) over(partition by a) as sum_b from t1;
 id	task	access object	operator info
 Projection	root		Column
