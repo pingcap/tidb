@@ -256,6 +256,26 @@ func TestCacheable(t *testing.T) {
 	c, reason = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.False(t, c)
 	require.Equal(t, "query has sub-queries is un-cacheable", reason)
+	stmt = &ast.SelectStmt{
+		With: &ast.WithClause{
+			CTEs: []*ast.CommonTableExpression{
+				{
+					Name:  ast.NewCIStr("cte"),
+					Query: &ast.SubqueryExpr{Query: &ast.SelectStmt{}},
+				},
+			},
+		},
+		From: &ast.TableRefsClause{
+			TableRefs: &ast.Join{
+				Left: &ast.TableSource{
+					Source: &ast.TableName{Name: ast.NewCIStr("cte")},
+				},
+			},
+		},
+	}
+	c, reason = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.False(t, c)
+	require.Equal(t, "query has sub-queries is un-cacheable", reason)
 	mockCtx.GetSessionVars().EnablePlanCacheForSubquery = true
 
 	limitStmt = &ast.Limit{
