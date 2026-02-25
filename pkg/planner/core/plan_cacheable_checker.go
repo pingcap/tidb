@@ -194,16 +194,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 // Leave implements Visitor interface.
 func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch node := in.(type) {
-	case *ast.CommonTableExpression, *ast.SubqueryExpr:
-		l := len(checker.cteOffset)
-		if l > 0 {
-			offset := checker.cteOffset[l-1]
-			checker.cteOffset = checker.cteOffset[:l-1]
-			checker.cteCanUsed = checker.cteCanUsed[:offset]
-		}
-		if cteNode, ok := node.(*ast.CommonTableExpression); ok {
-			checker.cteCanUsed = append(checker.cteCanUsed, cteNode.Name.L)
-		}
 	case *ast.SelectStmt:
 		if node.With != nil {
 			checker.leaveWithScope()
