@@ -109,7 +109,7 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.BasePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
-		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer + size.SizeOfBool
+		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
 	if p.InnerPlan != nil {
 		sum += p.InnerPlan.MemoryUsage()
 	}

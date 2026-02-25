@@ -425,12 +425,6 @@ func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *proper
 		CTEProducerStatus: prop.CTEProducerStatus,
 		NoCopPushDown:     prop.NoCopPushDown,
 	}
-	if prop.IndexJoinProp != nil {
-		partialOrderProp = admitIndexJoinProp(partialOrderProp, prop)
-		if partialOrderProp == nil {
-			return nil
-		}
-	}
 
 	topN := PhysicalTopN{
 		ByItems:     lt.ByItems,
