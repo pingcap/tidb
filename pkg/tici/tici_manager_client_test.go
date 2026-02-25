@@ -362,7 +362,7 @@ func TestScanRangesTimeout(t *testing.T) {
 			require.True(t, ok)
 			<-reqCtx.Done()
 		}).
-		Return((*GetShardLocalCacheResponse)(nil), context.DeadlineExceeded).
+		Return(&GetShardLocalCacheResponse{}, context.DeadlineExceeded).
 		Once()
 
 	done := make(chan error, 1)
