@@ -3340,6 +3340,37 @@ var defaultSysVars = []*SysVar{
 			return vardef.ModelNullBehavior.Load(), nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableLLMInference, Value: BoolToOnOff(vardef.DefTiDBEnableLLMInference), Type: vardef.TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			vardef.EnableLLMInference.Store(TiDBOptOn(s))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableLLMInference.Load()), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBLLMDefaultModel, Value: vardef.DefTiDBLLMDefaultModel, Type: vardef.TypeStr,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			vardef.LLMDefaultModel.Store(s)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return vardef.LLMDefaultModel.Load(), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBLLMTimeout, Value: vardef.DefTiDBLLMTimeout.String(), Type: vardef.TypeDuration, MinValue: 0, MaxValue: uint64(time.Hour * 24 * 365),
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			vardef.LLMTimeout.Store(d)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return vardef.LLMTimeout.Load().String(), nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelCacheCapacity, Value: strconv.FormatUint(vardef.DefTiDBModelCacheCapacity, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			val, err := strconv.ParseUint(s, 10, 64)

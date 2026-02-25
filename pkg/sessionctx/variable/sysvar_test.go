@@ -1954,6 +1954,23 @@ func TestTiDBModelGovernanceSysvars(t *testing.T) {
 	require.Equal(t, "ON", got)
 }
 
+func TestTiDBLLMSysvars(t *testing.T) {
+	enableVar := GetSysVar(vardef.TiDBEnableLLMInference)
+	require.NotNil(t, enableVar)
+	require.Equal(t, vardef.ScopeGlobal, enableVar.Scope)
+	require.Equal(t, vardef.TypeBool, enableVar.Type)
+
+	modelVar := GetSysVar(vardef.TiDBLLMDefaultModel)
+	require.NotNil(t, modelVar)
+	require.Equal(t, vardef.ScopeGlobal, modelVar.Scope)
+	require.Equal(t, vardef.TypeStr, modelVar.Type)
+
+	timeoutVar := GetSysVar(vardef.TiDBLLMTimeout)
+	require.NotNil(t, timeoutVar)
+	require.Equal(t, vardef.ScopeGlobal, timeoutVar.Scope)
+	require.Equal(t, vardef.TypeDuration, timeoutVar.Type)
+}
+
 func readSessionCacheCapacity(t *testing.T, cache *modelruntime.SessionCache) uint {
 	t.Helper()
 	if cache == nil {
