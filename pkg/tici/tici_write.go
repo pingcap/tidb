@@ -32,12 +32,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// GetFulltextIndexes returns all IndexInfo in the table that are fulltext indexes.
-func GetFulltextIndexes(tbl *model.TableInfo) []*model.IndexInfo {
-	var result []*model.IndexInfo
+// GetTiCIIndexIDs returns all Index IDs in the table that are built on TiCI.
+func GetTiCIIndexIDs(tbl *model.TableInfo) []int64 {
+	var result []int64
 	for _, idx := range tbl.Indices {
 		if idx.IsTiCIIndex() {
-			result = append(result, idx)
+			result = append(result, idx.ID)
 		}
 	}
 	return result
@@ -108,23 +108,16 @@ func getEtcdClient() (cli *clientv3.Client, err error) {
 	})
 }
 
-// NewTiCIDataWriterGroup constructs a DataWriterGroup covering all full-text
-// indexes of the given table.
-func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string, tidbTaskID string, keyspaceID uint32) (*DataWriterGroup, error) {
-	fulltextIndexes := GetFulltextIndexes(tblInfo)
-	if len(fulltextIndexes) == 0 {
-		return nil, nil // No full-text indexes, no writers needed
-	}
-
-	fulltextIndexIDs := make([]int64, 0, len(fulltextIndexes))
-	for _, idx := range fulltextIndexes {
-		fulltextIndexIDs = append(fulltextIndexIDs, idx.ID)
+// NewTiCIDataWriterGroup constructs a DataWriterGroup covering the given indexIDs of the given table.
+func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string, tidbTaskID string, keyspaceID uint32, newIndexIDs []int64) (*DataWriterGroup, error) {
+	if len(newIndexIDs) == 0 {
+		return nil, nil // No new indexes on TiCI, no writers needed
 	}
 
 	logger := logutil.Logger(ctx).With(zap.String("tidbTaskID", tidbTaskID), zap.Int64("tableID", tblInfo.ID))
 	logger.Info("building TiCIDataWriterGroup",
 		zap.String("schema", schema),
-		zap.Int64s("fulltextIndexIDs", fulltextIndexIDs),
+		zap.Int64s("newIndexIDs", newIndexIDs),
 	)
 
 	etcdClient, err := getEtcdClient()
@@ -137,7 +130,7 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 	}
 	mgrCtx.SetKeyspaceID(keyspaceID)
 
-	indexMeta, err := NewTiCIIndexMeta(ctx, tblInfo, fulltextIndexIDs, schema, tidbTaskID, mgrCtx)
+	indexMeta, err := NewTiCIIndexMeta(ctx, tblInfo, newIndexIDs, schema, tidbTaskID, mgrCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -154,24 +147,19 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 }
 
 func newTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblInfo *model.TableInfo, schema string) *DataWriterGroup {
-	fulltextIndexes := GetFulltextIndexes(tblInfo)
-	if len(fulltextIndexes) == 0 {
+	newIndexIDs := GetTiCIIndexIDs(tblInfo)
+	if len(newIndexIDs) == 0 {
 		return nil
-	}
-
-	fulltextIndexIDs := make([]int64, 0, len(fulltextIndexes))
-	for _, idx := range fulltextIndexes {
-		fulltextIndexIDs = append(fulltextIndexIDs, idx.ID)
 	}
 
 	logger := logutil.Logger(ctx).With(zap.Int64("tableID", tblInfo.ID))
 	logger.Info("building TiCIDataWriterGroup",
 		zap.String("schema", schema),
-		zap.Int64s("fulltextIndexIDs", fulltextIndexIDs),
+		zap.Int64s("newIndexIDs", newIndexIDs),
 	)
 
 	// We ignore the error in the test setup,
-	indexMeta, err := NewTiCIIndexMeta(ctx, tblInfo, fulltextIndexIDs, schema, "fakeTaskID", mgrCtx)
+	indexMeta, err := NewTiCIIndexMeta(ctx, tblInfo, newIndexIDs, schema, "fakeTaskID", mgrCtx)
 	if err != nil {
 		return nil
 	}

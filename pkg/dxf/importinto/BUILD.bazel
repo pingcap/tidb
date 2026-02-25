@@ -69,6 +69,7 @@ go_library(
         "//pkg/statistics/handle/storage",
         "//pkg/store",
         "//pkg/table/tables",
+        "//pkg/tici",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/backoff",

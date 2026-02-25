@@ -61,6 +61,7 @@ go_library(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
+        "//pkg/tici",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/cdcutil",

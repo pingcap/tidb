@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -140,11 +141,14 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 				logger.Warn("failed to close table importer", zap.Error(closeErr))
 			}
 		}()
-		// Re-initialize TiCI writer group with the same taskID to get the same job ID
 		backend := tableImporter.Backend()
 		if backend != nil {
+			// Re-initialize TiCI writer group with the same taskID to get the same ticiJobID
 			taskIDStr := strconv.FormatInt(p.taskID, 10)
-			if err := backend.InitTiCIWriterGroup(ctx, plan.TableInfo, plan.DBName, taskIDStr); err != nil {
+			// The newIndexIDs is not critical here as we only need to get the ticiJobID by taskID.
+			// Now we collect all the tici indexIDs because `InitTiCIWriterGroup` require a non-empty indexIDs.
+			newIndexIDs := tici.GetTiCIIndexIDs(plan.TableInfo)
+			if err := backend.InitTiCIWriterGroup(ctx, plan.TableInfo, plan.DBName, taskIDStr, newIndexIDs); err != nil {
 				logger.Warn("failed to init TiCI writer group for post process", zap.Error(err))
 				// Continue with other post process steps even if we can't init TiCI writer group
 			} else {
