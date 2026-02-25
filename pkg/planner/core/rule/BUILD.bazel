@@ -68,7 +68,7 @@ go_test(
     ],
     embed = [":rule"],
     flaky = True,
-    shard_count = 14,
+    shard_count = 15,
     deps = [
         "//pkg/expression",
         "//pkg/infoschema",

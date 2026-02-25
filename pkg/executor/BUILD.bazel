@@ -374,6 +374,7 @@ go_test(
         "inspection_result_test.go",
         "inspection_summary_test.go",
         "join_pkg_test.go",
+        "llm_builtin_test.go",
         "main_test.go",
         "memtable_reader_test.go",
         "metrics_reader_test.go",
