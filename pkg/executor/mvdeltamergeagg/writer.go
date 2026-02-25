@@ -16,11 +16,11 @@ package mvdeltamergeagg
 
 import (
 	"context"
+	"math/bits"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 type noopWriter struct{}
@@ -39,6 +39,9 @@ type tableResultWriter struct {
 	oldRow  []types.Datum
 	newRow  []types.Datum
 	touched []bool
+	// prevTouched keeps touched writable indexes set by previous update row,
+	// so we only clear those indexes on next row.
+	prevTouched []int
 }
 
 func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
@@ -124,6 +127,7 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 		oldRow:         make([]types.Datum, len(writableCols)),
 		newRow:         make([]types.Datum, len(writableCols)),
 		touched:        make([]bool, len(writableCols)),
+		prevTouched:    make([]int, 0, len(aggWritableIDs)),
 	}, nil
 }
 
@@ -139,20 +143,22 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 	stmtCtx := w.exec.Ctx().GetSessionVars().StmtCtx
 
 	for _, op := range result.RowOps {
-		if err := w.buildRows(result, op.RowIdx); err != nil {
-			return err
-		}
-
 		switch op.Tp {
 		case RowOpNoOp:
 			continue
 		case RowOpInsert:
+			if err := w.buildRows(result, op.RowIdx); err != nil {
+				return err
+			}
 			_, err = w.exec.TargetTable.AddRecord(tableCtx, txn, w.newRow)
 			if err != nil {
 				return err
 			}
 		case RowOpUpdate:
-			if err := w.buildTouched(); err != nil {
+			if err := w.buildRows(result, op.RowIdx); err != nil {
+				return err
+			}
+			if err := w.buildTouchedFromBitmap(result, &op); err != nil {
 				return err
 			}
 			handle, err := w.exec.TargetHandleCols.BuildHandleByDatums(stmtCtx, w.oldRow)
@@ -163,6 +169,9 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 				return err
 			}
 		case RowOpDelete:
+			if err := w.buildRows(result, op.RowIdx); err != nil {
+				return err
+			}
 			handle, err := w.exec.TargetHandleCols.BuildHandleByDatums(stmtCtx, w.oldRow)
 			if err != nil {
 				return err
@@ -195,18 +204,46 @@ func (w *tableResultWriter) buildRows(result *ChunkResult, rowIdx int) error {
 	return nil
 }
 
-func (w *tableResultWriter) buildTouched() error {
-	for _, idx := range w.aggWritableIDs {
+func (w *tableResultWriter) buildTouchedFromBitmap(result *ChunkResult, op *RowOp) error {
+	if result.UpdateTouchedBitCnt != len(w.aggWritableIDs) {
+		return errors.Errorf(
+			"update touched bit count mismatch, result=%d writer=%d",
+			result.UpdateTouchedBitCnt,
+			len(w.aggWritableIDs),
+		)
+	}
+	for _, idx := range w.prevTouched {
 		w.touched[idx] = false
 	}
-	typeCtx := w.exec.Ctx().GetSessionVars().StmtCtx.TypeCtx()
-	for _, idx := range w.aggWritableIDs {
-		cmp, err := w.oldRow[idx].Compare(typeCtx, &w.newRow[idx], collate.GetBinaryCollator())
-		if err != nil {
-			return err
-		}
-		if cmp != 0 {
+	w.prevTouched = w.prevTouched[:0]
+
+	updateOrdinal := int(op.updateOrdinal)
+	if updateOrdinal < 0 {
+		return errors.New("update row op has negative touched ordinal")
+	}
+	stride := result.UpdateTouchedStride
+	if stride <= 0 {
+		return errors.Errorf("invalid update touched stride %d", stride)
+	}
+	offset := updateOrdinal * stride
+	if offset+stride > len(result.UpdateTouchedBitmap) {
+		return errors.Errorf(
+			"update touched bitmap out of range: ordinal=%d stride=%d bitmap_len=%d",
+			updateOrdinal, stride, len(result.UpdateTouchedBitmap),
+		)
+	}
+	rowBits := result.UpdateTouchedBitmap[offset : offset+stride]
+	for byteIdx, b := range rowBits {
+		for b != 0 {
+			bitInByte := bits.TrailingZeros8(b)
+			bitPos := (byteIdx << 3) + bitInByte
+			if bitPos >= result.UpdateTouchedBitCnt {
+				break
+			}
+			idx := w.aggWritableIDs[bitPos]
 			w.touched[idx] = true
+			w.prevTouched = append(w.prevTouched, idx)
+			b &= b - 1
 		}
 	}
 	return nil

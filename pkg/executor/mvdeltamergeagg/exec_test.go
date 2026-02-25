@@ -68,9 +68,12 @@ type collectWriter struct {
 
 func (w *collectWriter) WriteChunk(_ context.Context, result *ChunkResult) error {
 	clone := &ChunkResult{
-		Input:        result.Input.CopyConstruct(),
-		ComputedCols: make([]*chunk.Column, len(result.ComputedCols)),
-		RowOps:       append([]RowOp(nil), result.RowOps...),
+		Input:               result.Input.CopyConstruct(),
+		ComputedCols:        make([]*chunk.Column, len(result.ComputedCols)),
+		RowOps:              append([]RowOp(nil), result.RowOps...),
+		UpdateTouchedBitmap: append([]uint8(nil), result.UpdateTouchedBitmap...),
+		UpdateTouchedStride: result.UpdateTouchedStride,
+		UpdateTouchedBitCnt: result.UpdateTouchedBitCnt,
 	}
 	for i := range result.ComputedCols {
 		if result.ComputedCols[i] != nil {
@@ -227,6 +230,9 @@ func TestCountAndNonNullSumReal(t *testing.T) {
 	require.Equal(t, RowOpUpdate, res.RowOps[0].Tp)
 	require.Equal(t, RowOpInsert, res.RowOps[1].Tp)
 	require.Equal(t, RowOpDelete, res.RowOps[2].Tp)
+	require.Equal(t, 1, res.UpdateTouchedStride)
+	require.Equal(t, 2, res.UpdateTouchedBitCnt)
+	require.Equal(t, []uint8{0x3}, res.UpdateTouchedBitmap)
 
 	sumCol := res.ComputedCols[4]
 	require.NotNil(t, sumCol)
@@ -681,7 +687,11 @@ func TestNoOpWhenAggValueUnchanged(t *testing.T) {
 	require.NoError(t, mergeExec.Close())
 
 	require.Len(t, writer.results, 1)
-	require.Len(t, writer.results[0].RowOps, 0)
+	require.Len(t, writer.results[0].RowOps, 1)
+	require.Equal(t, RowOpNoOp, writer.results[0].RowOps[0].Tp)
+	require.Equal(t, 1, writer.results[0].UpdateTouchedStride)
+	require.Equal(t, 2, writer.results[0].UpdateTouchedBitCnt)
+	require.Equal(t, uint8(0), writer.results[0].UpdateTouchedBitmap[0])
 }
 
 func TestMarkChangedRowsByColumnFloat32(t *testing.T) {

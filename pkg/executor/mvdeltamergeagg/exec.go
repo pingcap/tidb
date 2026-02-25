@@ -73,6 +73,9 @@ const (
 type RowOp struct {
 	RowIdx int
 	Tp     RowOpType
+	// updateOrdinal is the ordinal index among update candidates in this chunk.
+	// It is valid for rows that were initially update candidates.
+	updateOrdinal int32
 }
 
 // ChunkResult contains worker result for one input chunk.
@@ -82,8 +85,15 @@ type ChunkResult struct {
 	// ComputedCols is indexed by input column position.
 	// A nil item means this column is not computed by merge mappings.
 	ComputedCols []*chunk.Column
-	// RowOps indicates insert/update/delete rows in Input.
+	// RowOps indicates insert/update/delete rows in Input. Update candidates
+	// that are later proven unchanged are converted to RowOpNoOp.
 	RowOps []RowOp
+	// UpdateTouchedBitmap stores touched bits for update candidates in row-op order.
+	// The bit width of one update row is UpdateTouchedBitCount, and one row occupies
+	// UpdateTouchedStride bytes in this bitmap.
+	UpdateTouchedBitmap []uint8
+	UpdateTouchedStride int
+	UpdateTouchedBitCnt int
 }
 
 // ResultWriter consumes merged chunk results and writes to MV table.
@@ -120,7 +130,9 @@ type Exec struct {
 }
 
 type mvMergeAggWorkerData struct {
-	changedMask []bool
+	updateRows      []int
+	updateOpIndexes []int
+	updateChanged   []bool
 }
 
 // Open implements the Executor interface.
@@ -453,112 +465,402 @@ func (e *Exec) mergeOneChunk(chk *chunk.Chunk, workerData *mvMergeAggWorkerData)
 		return nil, errors.Errorf("computed output count mismatch, expected=%d got=%d", e.compiledOutputColCnt, computedBuiltCnt)
 	}
 
-	rowOps, err := e.buildRowOps(chk, computedByColID, workerData)
+	rowOps, updateTouchedBitmap, updateTouchedStride, updateTouchedBitCnt, err := e.buildRowOps(chk, computedByColID, workerData)
 	if err != nil {
 		return nil, err
 	}
 	return &ChunkResult{
-		Input:        chk,
-		ComputedCols: computedByColID,
-		RowOps:       rowOps,
+		Input:               chk,
+		ComputedCols:        computedByColID,
+		RowOps:              rowOps,
+		UpdateTouchedBitmap: updateTouchedBitmap,
+		UpdateTouchedStride: updateTouchedStride,
+		UpdateTouchedBitCnt: updateTouchedBitCnt,
 	}, nil
 }
 
-func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mvMergeAggWorkerData) ([]RowOp, error) {
+func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mvMergeAggWorkerData) ([]RowOp, []uint8, int, int, error) {
 	if len(e.aggOutputColIDs) == 0 {
-		return nil, errors.New("no aggregate outputs in Exec")
+		return nil, nil, 0, 0, errors.New("no aggregate outputs in Exec")
 	}
 	countStarOutputColID := e.aggOutputColIDs[0]
 	if countStarOutputColID < 0 || countStarOutputColID >= input.NumCols() {
-		return nil, errors.Errorf("count(*) output col %d out of input chunk range", countStarOutputColID)
+		return nil, nil, 0, 0, errors.Errorf("count(*) output col %d out of input chunk range", countStarOutputColID)
 	}
 	if countStarOutputColID >= len(computedByColID) {
-		return nil, errors.Errorf("count(*) output col %d out of computed-by-col-id range [0,%d)", countStarOutputColID, len(computedByColID))
+		return nil, nil, 0, 0, errors.Errorf("count(*) output col %d out of computed-by-col-id range [0,%d)", countStarOutputColID, len(computedByColID))
 	}
 	newCountStarCol := computedByColID[countStarOutputColID]
 	if newCountStarCol == nil {
-		return nil, errors.Errorf("count(*) output col %d is missing in computed columns", countStarOutputColID)
+		return nil, nil, 0, 0, errors.Errorf("count(*) output col %d is missing in computed columns", countStarOutputColID)
 	}
 
 	oldCountStarCol := input.Column(countStarOutputColID)
 	newCountStarVals := newCountStarCol.Int64s()
-	changedMask, err := e.buildAggChangedMask(input, computedByColID, workerData)
-	if err != nil {
-		return nil, err
-	}
 	rowOps := make([]RowOp, 0, input.NumRows())
+
+	var updateRows []int
+	var updateOpIndexes []int
+	if workerData != nil {
+		updateRows = workerData.updateRows[:0]
+		updateOpIndexes = workerData.updateOpIndexes[:0]
+	}
 	for rowIdx := 0; rowIdx < input.NumRows(); rowIdx++ {
 		newCount := newCountStarVals[rowIdx]
 		if newCount < 0 {
-			return nil, errors.Errorf("count(*) becomes negative (%d) at row %d", newCount, rowIdx)
+			return nil, nil, 0, 0, errors.Errorf("count(*) becomes negative (%d) at row %d", newCount, rowIdx)
 		}
-		// Left outer join: old MV row is absent when this side is NULL.
 		oldExists := !oldCountStarCol.IsNull(rowIdx)
 
-		opTp := RowOpNoOp
 		switch {
 		case newCount == 0:
 			if oldExists {
-				opTp = RowOpDelete
+				rowOps = append(rowOps, RowOp{RowIdx: rowIdx, Tp: RowOpDelete})
 			}
 		case !oldExists:
-			opTp = RowOpInsert
+			rowOps = append(rowOps, RowOp{RowIdx: rowIdx, Tp: RowOpInsert})
 		default:
-			if changedMask[rowIdx] {
-				opTp = RowOpUpdate
-			}
-		}
-
-		if opTp != RowOpNoOp {
+			updateOrdinal := len(updateRows)
 			rowOps = append(rowOps, RowOp{
-				RowIdx: rowIdx,
-				Tp:     opTp,
+				RowIdx:        rowIdx,
+				Tp:            RowOpUpdate,
+				updateOrdinal: int32(updateOrdinal),
 			})
+			updateRows = append(updateRows, rowIdx)
+			updateOpIndexes = append(updateOpIndexes, len(rowOps)-1)
 		}
 	}
-	return rowOps, nil
-}
 
-func (e *Exec) buildAggChangedMask(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mvMergeAggWorkerData) ([]bool, error) {
-	rowCnt := input.NumRows()
-	var changedMask []bool
 	if workerData != nil {
-		changedMask = workerData.changedMask
+		workerData.updateRows = updateRows
+		workerData.updateOpIndexes = updateOpIndexes
 	}
-	if cap(changedMask) < rowCnt {
-		changedMask = make([]bool, rowCnt)
+
+	updateTouchedBitCnt := len(e.aggOutputColIDs)
+	updateTouchedStride := (updateTouchedBitCnt + 7) >> 3
+	updateCnt := len(updateRows)
+	if updateCnt == 0 {
+		return rowOps, nil, updateTouchedStride, updateTouchedBitCnt, nil
+	}
+	updateTouchedBitmap := make([]uint8, updateCnt*updateTouchedStride)
+
+	var updateChanged []bool
+	if workerData != nil {
+		updateChanged = workerData.updateChanged
+	}
+	if cap(updateChanged) < updateCnt {
+		updateChanged = make([]bool, updateCnt)
 	} else {
-		changedMask = changedMask[:rowCnt]
-		clear(changedMask)
+		updateChanged = updateChanged[:updateCnt]
+		clear(updateChanged)
 	}
 	if workerData != nil {
-		workerData.changedMask = changedMask
-	}
-	if rowCnt == 0 {
-		return changedMask, nil
+		workerData.updateChanged = updateChanged
 	}
 
 	fieldTypes := e.Children(0).RetFieldTypes()
-	for _, colID := range e.aggOutputColIDs {
+	for bitPos, colID := range e.aggOutputColIDs {
 		if colID < 0 || colID >= input.NumCols() {
-			return nil, errors.Errorf("agg output col %d out of input chunk range", colID)
+			return nil, nil, 0, 0, errors.Errorf("agg output col %d out of input chunk range", colID)
 		}
 		if colID >= len(computedByColID) {
-			return nil, errors.Errorf("agg output col %d out of computed-by-col-id range [0,%d)", colID, len(computedByColID))
+			return nil, nil, 0, 0, errors.Errorf("agg output col %d out of computed-by-col-id range [0,%d)", colID, len(computedByColID))
 		}
 		if colID >= len(fieldTypes) {
-			return nil, errors.Errorf("agg output col %d out of field type range [0,%d)", colID, len(fieldTypes))
+			return nil, nil, 0, 0, errors.Errorf("agg output col %d out of field type range [0,%d)", colID, len(fieldTypes))
 		}
 		oldCol := input.Column(colID)
 		newCol := computedByColID[colID]
 		if newCol == nil {
-			return nil, errors.Errorf("computed agg col %d is nil", colID)
+			return nil, nil, 0, 0, errors.Errorf("computed agg col %d is nil", colID)
 		}
-		if err := markChangedRowsByColumn(changedMask, oldCol, newCol, fieldTypes[colID]); err != nil {
-			return nil, err
+		if err := markUpdateTouchedRowsByColumn(
+			updateRows,
+			updateChanged,
+			updateTouchedBitmap,
+			updateTouchedStride,
+			bitPos,
+			oldCol,
+			newCol,
+			fieldTypes[colID],
+		); err != nil {
+			return nil, nil, 0, 0, err
 		}
 	}
-	return changedMask, nil
+
+	for updateOrdinal, opIdx := range updateOpIndexes {
+		if !updateChanged[updateOrdinal] {
+			rowOps[opIdx].Tp = RowOpNoOp
+		}
+	}
+	return rowOps, updateTouchedBitmap, updateTouchedStride, updateTouchedBitCnt, nil
+}
+
+func markUpdateTouchedRowsByColumn(
+	updateRows []int,
+	updateChanged []bool,
+	updateTouchedBitmap []uint8,
+	updateTouchedStride int,
+	updateBitPos int,
+	oldCol *chunk.Column,
+	newCol *chunk.Column,
+	ft *types.FieldType,
+) error {
+	if ft == nil {
+		return errors.New("field type is nil when comparing aggregate outputs")
+	}
+	if len(updateRows) == 0 {
+		return nil
+	}
+	bitMask := uint8(1 << (updateBitPos & 7))
+	bitByteOffset := updateBitPos >> 3
+	singleByteStride := updateTouchedStride == 1
+
+	switch ft.EvalType() {
+	case types.ETInt:
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+			oldVals := oldCol.Uint64s()
+			newVals := newCol.Uint64s()
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						updateChanged[updateOrdinal] = true
+						if singleByteStride {
+							updateTouchedBitmap[updateOrdinal] |= bitMask
+						} else {
+							updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+						}
+					}
+					continue
+				}
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					updateChanged[updateOrdinal] = true
+					if singleByteStride {
+						updateTouchedBitmap[updateOrdinal] |= bitMask
+					} else {
+						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+					}
+				}
+			}
+			return nil
+		}
+		oldVals := oldCol.Int64s()
+		newVals := newCol.Int64s()
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					updateChanged[updateOrdinal] = true
+					if singleByteStride {
+						updateTouchedBitmap[updateOrdinal] |= bitMask
+					} else {
+						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+					}
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				updateChanged[updateOrdinal] = true
+				if singleByteStride {
+					updateTouchedBitmap[updateOrdinal] |= bitMask
+				} else {
+					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+				}
+			}
+		}
+		return nil
+	case types.ETReal:
+		if ft.GetType() == mysql.TypeFloat {
+			oldVals := oldCol.Float32s()
+			newVals := newCol.Float32s()
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						updateChanged[updateOrdinal] = true
+						if singleByteStride {
+							updateTouchedBitmap[updateOrdinal] |= bitMask
+						} else {
+							updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+						}
+					}
+					continue
+				}
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					updateChanged[updateOrdinal] = true
+					if singleByteStride {
+						updateTouchedBitmap[updateOrdinal] |= bitMask
+					} else {
+						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+					}
+				}
+			}
+			return nil
+		}
+		oldVals := oldCol.Float64s()
+		newVals := newCol.Float64s()
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					updateChanged[updateOrdinal] = true
+					if singleByteStride {
+						updateTouchedBitmap[updateOrdinal] |= bitMask
+					} else {
+						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+					}
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				updateChanged[updateOrdinal] = true
+				if singleByteStride {
+					updateTouchedBitmap[updateOrdinal] |= bitMask
+				} else {
+					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+				}
+			}
+		}
+		return nil
+	case types.ETDecimal:
+		oldVals := oldCol.Decimals()
+		newVals := newCol.Decimals()
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					updateChanged[updateOrdinal] = true
+					if singleByteStride {
+						updateTouchedBitmap[updateOrdinal] |= bitMask
+					} else {
+						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+					}
+				}
+				continue
+			}
+			if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
+				updateChanged[updateOrdinal] = true
+				if singleByteStride {
+					updateTouchedBitmap[updateOrdinal] |= bitMask
+				} else {
+					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+				}
+			}
+		}
+		return nil
+	case types.ETString:
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					updateChanged[updateOrdinal] = true
+					if singleByteStride {
+						updateTouchedBitmap[updateOrdinal] |= bitMask
+					} else {
+						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+					}
+				}
+				continue
+			}
+			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
+				updateChanged[updateOrdinal] = true
+				if singleByteStride {
+					updateTouchedBitmap[updateOrdinal] |= bitMask
+				} else {
+					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+				}
+			}
+		}
+		return nil
+	case types.ETDatetime, types.ETTimestamp:
+		oldVals := oldCol.Times()
+		newVals := newCol.Times()
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					updateChanged[updateOrdinal] = true
+					if singleByteStride {
+						updateTouchedBitmap[updateOrdinal] |= bitMask
+					} else {
+						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+					}
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				updateChanged[updateOrdinal] = true
+				if singleByteStride {
+					updateTouchedBitmap[updateOrdinal] |= bitMask
+				} else {
+					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+				}
+			}
+		}
+		return nil
+	case types.ETDuration:
+		oldVals := oldCol.GoDurations()
+		newVals := newCol.GoDurations()
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					updateChanged[updateOrdinal] = true
+					if singleByteStride {
+						updateTouchedBitmap[updateOrdinal] |= bitMask
+					} else {
+						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+					}
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				updateChanged[updateOrdinal] = true
+				if singleByteStride {
+					updateTouchedBitmap[updateOrdinal] |= bitMask
+				} else {
+					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+				}
+			}
+		}
+		return nil
+	case types.ETJson, types.ETVectorFloat32:
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					updateChanged[updateOrdinal] = true
+					if singleByteStride {
+						updateTouchedBitmap[updateOrdinal] |= bitMask
+					} else {
+						updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+					}
+				}
+				continue
+			}
+			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
+				updateChanged[updateOrdinal] = true
+				if singleByteStride {
+					updateTouchedBitmap[updateOrdinal] |= bitMask
+				} else {
+					updateTouchedBitmap[updateOrdinal*updateTouchedStride+bitByteOffset] |= bitMask
+				}
+			}
+		}
+		return nil
+	default:
+		return errors.Errorf("unsupported eval type %d in aggregate change comparison", ft.EvalType())
+	}
 }
 
 func markChangedRowsByColumn(changedMask []bool, oldCol, newCol *chunk.Column, ft *types.FieldType) error {
