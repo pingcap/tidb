@@ -2487,7 +2487,7 @@ AlterTableSpec:
 			MaskingPolicyName: ast.NewCIStr($4),
 		}
 	}
-|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" Identifier EqOpt Expression
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" Identifier "=" Expression
 	{
 		if !strings.EqualFold($6, "expression") {
 			yylex.AppendError(yylex.Errorf("unsupported masking policy modify option: %s", $6))
@@ -16091,6 +16091,10 @@ MaskingPolicyRestrictOperation:
 CreateMaskingPolicyStmt:
 	"CREATE" OrReplace "MASKING" "POLICY" IfNotExists PolicyName "ON" TableName '(' Identifier ')' "AS" Expression MaskingPolicyRestrictOnOpt MaskingPolicyStateOpt
 	{
+		if $2.(bool) && $5.(bool) {
+			yylex.AppendError(yylex.Errorf("'OR REPLACE' and 'IF NOT EXISTS' are mutually exclusive"))
+			return 1
+		}
 		state := $15.(*ast.MaskingPolicyState)
 		$$ = &ast.CreateMaskingPolicyStmt{
 			OrReplace:           $2.(bool),
