@@ -311,6 +311,18 @@ request-timeout = "2s"
 # Maximum number of models cached in each sidecar worker.
 cache-entries = 64
 
+[llm]
+# LLM provider (v1 supports only vertex).
+provider = "vertex"
+# Vertex AI project id.
+vertex_project = ""
+# Vertex AI location (for example: us-central1).
+vertex_location = ""
+# Optional service account JSON file path. If empty, ADC is used.
+credential_file = ""
+# Request timeout for LLM calls.
+request_timeout = "30s"
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
