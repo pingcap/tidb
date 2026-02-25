@@ -95,6 +95,7 @@ go_test(
     race = "on",
     shard_count = 40,
     deps = [
+        "//pkg/config",
         "//pkg/kv",
         "//pkg/store/driver/backoff",
         "//pkg/testkit/testsetup",
