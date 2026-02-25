@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -141,6 +142,32 @@ var unRecoverableTable = map[string]map[string]struct{}{
 	"sys": {
 		// replace into view is not supported now
 		"schema_unused_indexes": {},
+	},
+}
+
+type checkPrivilegeTableRowsCollateCompatiblitySQLPair struct {
+	upstreamCollateSQL   string
+	downstreamCollateSQL string
+	columns              map[string]struct{}
+}
+
+var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatiblitySQLPair{
+	"mysql": {
+		"db": {
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.db",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User FROM __TiDB_BR_Temporary_mysql.db GROUP BY Host, DB COLLATE utf8mb4_general_ci, User) as a",
+			columns:              map[string]struct{}{"db": {}},
+		},
+		"tables_priv": {
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.tables_priv",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci FROM __TiDB_BR_Temporary_mysql.tables_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci) as a",
+			columns:              map[string]struct{}{"db": {}, "table_name": {}},
+		},
+		"columns_priv": {
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.columns_priv",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci FROM __TiDB_BR_Temporary_mysql.columns_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci) as a",
+			columns:              map[string]struct{}{"db": {}, "table_name": {}, "column_name": {}},
+		},
 	},
 }
 
@@ -585,6 +612,11 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
+		if rc.checkPrivilegeTableRowsCollateCompatiblity {
+			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
+				return err
+			}
+		}
 		// target column order may different with source cluster
 		columnNames := make([]string, 0, len(ti.Columns))
 		for _, col := range ti.Columns {
@@ -617,8 +649,9 @@ func (rc *SnapClient) cleanTemporaryDatabase(ctx context.Context, originDB strin
 	}
 }
 
-func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) error {
+func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, collationCheck bool) (canLoadSysTablePhysical bool, err error) {
 	log.Info("checking target cluster system table compatibility with backed up data")
+	canLoadSysTablePhysical = true
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
@@ -631,7 +664,7 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 		ti, err := restore.GetTableSchema(dom, sysDB, table.Info.Name)
 		if err != nil {
 			log.Error("missing table on target cluster", zap.Stringer("table", table.Info.Name))
-			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
+			return false, errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
 		}
 		backupTi := table.Info
 		// skip checking the number of columns in mysql.user table,
@@ -641,7 +674,7 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 				zap.Stringer("table", table.Info.Name),
 				zap.Int("col in cluster", len(ti.Columns)),
 				zap.Int("col in backup", len(backupTi.Columns)))
-			return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			return false, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
 				"column count mismatch, table: %s, col in cluster: %d, col in backup: %d",
 				table.Info.Name.O, len(ti.Columns), len(backupTi.Columns))
 		}
@@ -665,17 +698,23 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 				log.Error("missing column in backup data",
 					zap.Stringer("table", table.Info.Name),
 					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
-				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+				return false, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
 					"missing column in backup data, table: %s, col: %s %s",
 					table.Info.Name.O,
 					col.Name, col.FieldType.String())
 			}
-			if !utils.IsTypeCompatible(backupCol.FieldType, col.FieldType) {
+			typeEq, collateEq := utils.IsTypeCompatible(backupCol.FieldType, col.FieldType)
+			canLoadSysTablePhysical = canLoadSysTablePhysical && collateEq && typeEq
+			collateCompatible := collateEq
+			if typeEq && (!collateEq && collationCheck) {
+				collateCompatible = checkSysTableColumnCollateCompatibility(mysql.SystemDB, table.Info.Name.L, col.Name.L, backupCol.GetCollate(), col.GetCollate())
+			}
+			if !(typeEq && collateCompatible) {
 				log.Error("incompatible column",
 					zap.Stringer("table", table.Info.Name),
 					zap.String("col in cluster", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())),
 					zap.String("col in backup", fmt.Sprintf("%s %s", backupCol.Name, backupCol.FieldType.String())))
-				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+				return false, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
 					"incompatible column, table: %s, col in cluster: %s %s, col in backup: %s %s",
 					table.Info.Name.O,
 					col.Name, col.FieldType.String(),
@@ -698,13 +737,106 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 					log.Error("missing column in cluster data",
 						zap.Stringer("table", table.Info.Name),
 						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
-					return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					return false, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
 						"missing column in cluster data, table: %s, col: %s %s",
 						table.Info.Name.O,
 						col.Name, col.FieldType.String())
 				}
 			}
 		}
+	}
+	return canLoadSysTablePhysical, nil
+}
+
+func checkSysTableColumnCollateCompatibility(dbNameL, tableNameL, columnNameL, upstreamCollate, downstreamCollate string) bool {
+	if upstreamCollate != "utf8mb4_bin" || downstreamCollate != "utf8mb4_general_ci" {
+		return false
+	}
+	collateCompatibilityTableMap, exists := collateCompatibilityTables[dbNameL]
+	if !exists {
+		return false
+	}
+	collateCompatibilityColumnMap, exists := collateCompatibilityTableMap[tableNameL]
+	if !exists {
+		return false
+	}
+	_, exists = collateCompatibilityColumnMap.columns[columnNameL]
+	return exists
+}
+
+func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
+	ctx context.Context,
+	dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	collateCompatiblityTableMap, exists := collateCompatibilityTables[dbNameL]
+	if !exists {
+		return nil
+	}
+	collateCompatibilityColumnMap, exists := collateCompatiblityTableMap[tableNameL]
+	if !exists {
+		return nil
+	}
+	colCount := 0
+	for _, col := range upstreamTable.Columns {
+		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
+			if col.GetCollate() != "utf8mb4_bin" && col.GetCollate() != "utf8mb4_general_ci" {
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column collate, upstream table %s.%s column %s collate is %s but should be utf8mb4_bin",
+					dbNameL, tableNameL, col.Name.L, col.GetCollate())
+			}
+			colCount += 1
+		}
+	}
+	if colCount != len(collateCompatibilityColumnMap.columns) {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"incompatible column collate, upstream table %s.%s has only %d columns with collate utf8mb4_bin",
+			dbNameL, tableNameL, colCount)
+	}
+	colCount = 0
+	for _, col := range downstreamTable.Columns {
+		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
+			if col.GetCollate() != "utf8mb4_general_ci" {
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column collate, downstream table %s.%s column %s collate should be %s",
+					dbNameL, tableNameL, col.Name.L, col.GetCollate())
+			}
+			colCount += 1
+		}
+	}
+	if colCount != len(collateCompatibilityColumnMap.columns) {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"incompatible column collate, downstream table %s.%s has only %d columns with collate utf8mb4_bin",
+			dbNameL, tableNameL, colCount)
+	}
+	ectx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, err := ectx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		collateCompatibilityColumnMap.upstreamCollateSQL,
+	)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get the count of privilege rows")
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("failed to get the count of privilege rows")
+	}
+	upstreamCount := rows[0].GetInt64(0)
+	rows, _, err = ectx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		collateCompatibilityColumnMap.downstreamCollateSQL,
+	)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get the count of privilege rows")
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("failed to get the count of privilege rows")
+	}
+	downstreamCount := rows[0].GetInt64(0)
+	if upstreamCount != downstreamCount {
+		return errors.Errorf("there are duplicated rows with collate utf8mb4_general_ci [upstream count %d != downstream count %d]",
+			upstreamCount, downstreamCount)
 	}
 	return nil
 }
