@@ -162,7 +162,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 	mvTableInfo.Comment = s.Comment
 
-	refreshMethod, refreshStartWith, refreshNext, err := buildMViewRefreshMeta(s.Refresh)
+	refreshMethod, refreshStartWith, refreshNext, err := buildMViewRefreshMeta(ctx, s.Refresh)
 	if err != nil {
 		return err
 	}
@@ -339,27 +339,24 @@ func (*executor) RefreshMaterializedView(sessionctx.Context, *ast.RefreshMateria
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW is not supported")
 }
 
-func buildMViewRefreshMeta(refresh *ast.MViewRefreshClause) (method, startWith, next string, _ error) {
-	const defaultNextSeconds = 300
+func buildMViewRefreshMeta(sctx sessionctx.Context, refresh *ast.MViewRefreshClause) (method, startWith, next string, _ error) {
 	if refresh == nil {
-		return "FAST", "NOW()", fmt.Sprintf("%d", defaultNextSeconds), nil
+		return "FAST", "", "", nil
 	}
 	switch refresh.Method {
 	case ast.MViewRefreshMethodNever:
 		return "NEVER", "", "", nil
 	case ast.MViewRefreshMethodFast:
 		method = "FAST"
-		startWith = "NOW()"
 		if refresh.StartWith != nil {
-			s, err := restoreExprToCanonicalSQL(refresh.StartWith)
+			s, err := buildAndValidateMViewScheduleExpr(sctx, refresh.StartWith, "REFRESH START WITH")
 			if err != nil {
 				return "", "", "", err
 			}
 			startWith = s
 		}
-		next = fmt.Sprintf("%d", defaultNextSeconds)
 		if refresh.Next != nil {
-			s, err := restoreExprToCanonicalSQL(refresh.Next)
+			s, err := buildAndValidateMViewScheduleExpr(sctx, refresh.Next, "REFRESH NEXT")
 			if err != nil {
 				return "", "", "", err
 			}

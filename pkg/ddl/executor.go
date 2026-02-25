@@ -1146,7 +1146,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		} else {
 			purgeMethod = "DEFERRED"
 			if s.Purge.StartWith != nil {
-				purgeStartWith, err = restoreExprToCanonicalSQL(s.Purge.StartWith)
+				purgeStartWith, err = buildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
 				if err != nil {
 					return err
 				}
@@ -1154,7 +1154,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 			if s.Purge.Next == nil {
 				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
 			}
-			purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
+			purgeNext, err = buildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
 			if err != nil {
 				return err
 			}
