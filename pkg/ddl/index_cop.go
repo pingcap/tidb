@@ -153,6 +153,8 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 	if pkIdx == nil {
 		return nil
 	}
+	// If an index is a hybrid index or fulltext index, we should not convert the datum to tail space count.
+	// Instead, we encoded the raw value to restored data to satisfy TiCI's data ingestion.
 	forceAllColumns := targetIdx != nil && (targetIdx.FullTextInfo != nil || len(targetIdx.HybridShardingColumns()) > 0)
 	for i, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
