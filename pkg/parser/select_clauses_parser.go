@@ -14,6 +14,8 @@
 package parser
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -305,15 +307,27 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 	return true
 }
 
-// toUint64Value converts a ValueExpr containing an int64 to uint64 if possible.
-// This is required to match the LengthNum behavior for LIMIT/OFFSET.
+// toUint64Value converts a ValueExpr to uint64 to match the yacc LengthNum behavior.
+// - int64 values >= 0 are converted to uint64
+// - uint64 values are kept as-is
+// - decimal values (overflow from lexer for numbers > MaxUint64) are clamped to MaxUint64
 func (p *HandParser) toUint64Value(expr ast.ExprNode) ast.ExprNode {
 	if expr == nil {
 		return nil
 	}
 	if ve, ok := expr.(ast.ValueExpr); ok {
-		if val, ok := ve.GetValue().(int64); ok && val >= 0 {
-			return ast.NewValueExpr(uint64(val), p.charset, p.collation)
+		switch val := ve.GetValue().(type) {
+		case int64:
+			if val >= 0 {
+				return ast.NewValueExpr(uint64(val), p.charset, p.collation)
+			}
+		case uint64:
+			return ast.NewValueExpr(val, p.charset, p.collation)
+		default:
+			// Decimal overflow (number > MaxUint64): clamp to MaxUint64
+			// to match yacc LengthNum behavior.
+			_ = val
+			return ast.NewValueExpr(uint64(math.MaxUint64), p.charset, p.collation)
 		}
 	}
 	return expr

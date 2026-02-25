@@ -501,11 +501,14 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		p.expect('(')
 		var names []ast.CIStr
 		for {
-			ident, ok := p.expect(identifier)
-			if !ok {
+			tok := p.peek()
+			if isIdentLike(tok.Tp) || tok.Tp == stringLit {
+				p.next()
+				names = append(names, ast.NewCIStr(tok.Lit))
+			} else {
+				p.syntaxErrorAt(tok)
 				return nil
 			}
-			names = append(names, ast.NewCIStr(ident.Lit))
 			if _, ok := p.accept(','); !ok {
 				break
 			}

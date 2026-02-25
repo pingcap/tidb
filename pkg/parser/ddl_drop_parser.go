@@ -123,8 +123,14 @@ func (p *HandParser) parseDropStatsStmt() ast.StmtNode {
 		stmt.IsGlobalStats = true
 	} else if _, ok := p.accept(partition); ok {
 		for {
-			nameTok := p.next()
-			stmt.PartitionNames = append(stmt.PartitionNames, ast.NewCIStr(nameTok.Lit))
+			nameTok := p.peek()
+			if isIdentLike(nameTok.Tp) || nameTok.Tp == stringLit {
+				p.next()
+				stmt.PartitionNames = append(stmt.PartitionNames, ast.NewCIStr(nameTok.Lit))
+			} else {
+				p.syntaxErrorAt(nameTok)
+				return nil
+			}
 			if _, ok := p.accept(','); !ok {
 				break
 			}

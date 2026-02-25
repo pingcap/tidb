@@ -467,10 +467,11 @@ func (p *HandParser) parseSplitRegionSpec(spec *ast.AlterTableSpec) *ast.AlterTa
 		// Code in ddl_api.go likely handles it.
 		// Let's implement parsing logic.
 		for {
-			tok, ok := p.expect(identifier)
-			if !ok {
+			tok := p.peek()
+			if !isIdentLike(tok.Tp) && tok.Tp != stringLit {
 				break
 			}
+			p.next()
 			spec.PartitionNames = append(spec.PartitionNames, ast.NewCIStr(tok.Lit))
 			if _, ok := p.accept(','); !ok {
 				break

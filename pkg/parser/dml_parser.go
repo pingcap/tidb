@@ -89,8 +89,14 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		p.expect('(')
 		var names []ast.CIStr
 		for {
-			tok := p.next()
-			names = append(names, ast.NewCIStr(tok.Lit))
+			tok := p.peek()
+			if isIdentLike(tok.Tp) || tok.Tp == stringLit {
+				p.next()
+				names = append(names, ast.NewCIStr(tok.Lit))
+			} else {
+				p.syntaxErrorAt(tok)
+				return nil
+			}
 			if _, ok := p.accept(','); !ok {
 				break
 			}
