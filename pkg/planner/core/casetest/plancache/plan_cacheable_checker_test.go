@@ -448,6 +448,37 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
 }
 
+func TestIssue66351PreparedPlanCacheWithCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("drop table if exists v2")
+	tk.MustExec(`create table v2 (
+		id int primary key auto_increment,
+		group_name varchar(50),
+		sum1 int not null,
+		cnt int not null,
+		created_at timestamp default current_timestamp
+	)`)
+	tk.MustExec("create index idx_sum1 on v2(sum1)")
+	tk.MustExec("create index idx_cnt on v2(cnt)")
+	tk.MustExec("insert into v2(group_name, sum1, cnt) values ('g1', 100, 5), ('g2', 100, 6)")
+
+	tk.MustExec(`prepare stmt from 'with cte as (
+		select sum1 as c0, cnt as c1
+		from v2
+		where sum1 = 100
+	) select c1 from cte where c1 = 5'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("execute stmt").Check(testkit.Rows("5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt").Check(testkit.Rows("5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 
@@ -69,6 +70,8 @@ func IsASTCacheable(ctx context.Context, sctx base.PlanContext, node ast.Node, i
 		schema:       is,
 		sumInListLen: 0,
 		maxNumParam:  getMaxParamLimit(sctx),
+		cteCanUsed:   make([]string, 0),
+		cteOffset:    make([]int, 0),
 	}
 	node.Accept(&checker)
 	return checker.cacheable, checker.reason
@@ -84,6 +87,11 @@ type cacheableChecker struct {
 
 	sumInListLen int // the accumulated number of elements in all in-lists
 	maxNumParam  int
+
+	// cteCanUsed tracks CTE names visible at current traversal point.
+	cteCanUsed []string
+	// cteOffset stores stack offsets for restoring cteCanUsed in Leave.
+	cteOffset []int
 }
 
 // Enter implements Visitor interface.
@@ -113,7 +121,21 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.cacheable = false
 		checker.reason = "query has user-defined variables is un-cacheable"
 		return in, true
-	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+	case *ast.ExistsSubqueryExpr:
+		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+			checker.cacheable = false
+			checker.reason = "query has sub-queries is un-cacheable"
+			return in, true
+		}
+		return in, false
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		checker.cteOffset = append(checker.cteOffset, len(checker.cteCanUsed))
+		if cteNode, ok := node.(*ast.CommonTableExpression); ok && cteNode.IsRecursive {
+			checker.cteCanUsed = append(checker.cteCanUsed, cteNode.Name.L)
+		}
+		if _, ok := node.(*ast.SubqueryExpr); !ok {
+			return in, false
+		}
 		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
 			checker.cacheable = false
 			checker.reason = "query has sub-queries is un-cacheable"
@@ -165,6 +187,10 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
+			if node.Schema.L == "" && slices.Contains(checker.cteCanUsed, node.Name.L) {
+				// CTE names are not physical tables in InfoSchema, skip table lookup.
+				return in, false
+			}
 			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
 			if !checker.cacheable {
 				return in, true
@@ -176,6 +202,18 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 
 // Leave implements Visitor interface.
 func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	switch node := in.(type) {
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		l := len(checker.cteOffset)
+		if l > 0 {
+			offset := checker.cteOffset[l-1]
+			checker.cteOffset = checker.cteOffset[:l-1]
+			checker.cteCanUsed = checker.cteCanUsed[:offset]
+		}
+		if cteNode, ok := node.(*ast.CommonTableExpression); ok {
+			checker.cteCanUsed = append(checker.cteCanUsed, cteNode.Name.L)
+		}
+	}
 	return in, checker.cacheable
 }
 
