@@ -172,66 +172,100 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 	return lhs
 }
 
-// parseJoinRHS parses the right-hand side of a JOIN — recursively parsing
-// subsequent JOINs (and their ON/USING clauses) to build a right-leaning
-// subtree for stacked ON clauses. Stops when no more join keywords follow
-// or when the calling level should consume its ON clause.
+// parseJoinRHS parses the right-hand side of a JOIN clause.
+//
+// In MySQL grammar, the RHS of a LEFT/RIGHT JOIN is a full table_reference,
+// which can itself contain further joins and ON clauses. The ON clauses
+// bind inside-out (innermost first). This produces right-leaning join trees:
+//
+//	t1 LEFT JOIN t2 LEFT JOIN t3 ON c1 ON c2
+//	→ t1 LEFT JOIN (t2 LEFT JOIN t3 ON c1) ON c2
+//
+// Implementation: essentially the same as parseJoin (loops for chained joins)
+// but returns early when an ON clause is found, allowing the caller to
+// consume it. Each recursion level handles one join and its ON clause.
 func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
-	left := p.parseTableSource()
-	if left == nil {
+	lhs := p.parseTableSource()
+	if lhs == nil {
 		return nil
 	}
 
-	// If no join follows, return just the table source.
-	joinType, natural, straight, commaJoin := p.peekJoinType()
-	if commaJoin || (joinType == 0 && !natural && !straight) {
-		return left
-	}
+	for {
+		// Check if next token is a join keyword. If not, done.
+		joinType, natural, straight, commaJoin := p.peekJoinType()
+		if commaJoin || (joinType == 0 && !natural && !straight) {
+			break
+		}
 
-	// Consume the join keyword.
-	joinType, natural, straight, _ = p.parseJoinType()
+		// Consume the join keyword(s).
+		joinType, natural, straight, _ = p.parseJoinType()
 
-	// Recurse for the right side.
-	rhs := p.parseJoinRHS()
-	if rhs == nil {
-		return nil
-	}
-
-	join := p.arena.AllocJoin()
-	join.Left = left
-	join.Right = rhs
-	join.Tp = joinType
-	join.NaturalJoin = natural
-	join.StraightJoin = straight
-
-	// Consume ON/USING for THIS level.
-	if _, ok := p.accept(on); ok {
-		if natural {
-			p.error(p.peek().Offset, "natural join cannot have ON clause")
+		// Parse the right side.
+		// For NATURAL/STRAIGHT: use parseTableSource (left-associative, no ON).
+		// For all other joins: recurse into parseJoinRHS which will handle
+		// any further nested joins and consume their ON clauses.
+		var rhs ast.ResultSetNode
+		if natural || straight {
+			rhs = p.parseTableSource()
+		} else {
+			rhs = p.parseJoinRHS()
+		}
+		if rhs == nil {
 			return nil
 		}
-		on := Alloc[ast.OnCondition](p.arena)
-		on.Expr = p.parseExpression(precNone)
-		join.On = on
-	} else if _, ok := p.accept(using); ok {
-		if natural {
-			p.error(p.peek().Offset, "natural join cannot have USING clause")
-			return nil
+
+		// Check for ON/USING clause for THIS join level.
+		if _, ok := p.accept(on); ok {
+			if natural {
+				p.error(p.peek().Offset, "natural join cannot have ON clause")
+				return nil
+			}
+			join := p.arena.AllocJoin()
+			join.Left = lhs
+			join.Right = rhs
+			join.Tp = joinType
+			join.NaturalJoin = natural
+			join.StraightJoin = straight
+			cond := Alloc[ast.OnCondition](p.arena)
+			cond.Expr = p.parseExpression(precNone)
+			join.On = cond
+			lhs = join
+		} else if _, ok := p.accept(using); ok {
+			if natural {
+				p.error(p.peek().Offset, "natural join cannot have USING clause")
+				return nil
+			}
+			join := p.arena.AllocJoin()
+			join.Left = lhs
+			join.Right = rhs
+			join.Tp = joinType
+			join.NaturalJoin = natural
+			join.StraightJoin = straight
+			p.expect('(')
+			join.Using = p.parseColumnNameList()
+			p.expect(')')
+			lhs = join
+		} else if natural || straight {
+			// NATURAL JOIN and STRAIGHT_JOIN don't take ON/USING.
+			join := p.arena.AllocJoin()
+			join.Left = lhs
+			join.Right = rhs
+			join.Tp = joinType
+			join.NaturalJoin = natural
+			join.StraightJoin = straight
+			lhs = join
+		} else {
+			// No ON/USING. LEFT/RIGHT JOIN require ON or USING.
+			if joinType == ast.LeftJoin || joinType == ast.RightJoin {
+				p.error(p.peek().Offset, "Outer join requires ON/USING clause")
+				return nil
+			}
+			// Pure cross join — apply tree rotation.
+			lhs = p.makeCrossJoin(lhs, rhs)
 		}
-		p.expect('(')
-		join.Using = p.parseColumnNameList()
-		p.expect(')')
-	} else if !natural && !straight {
-		// No ON/USING. LEFT/RIGHT JOIN require ON or USING.
-		if joinType == ast.LeftJoin || joinType == ast.RightJoin {
-			p.error(p.peek().Offset, "Outer join requires ON/USING clause")
-			return nil
-		}
-		// Pure cross join — apply rotation.
-		return p.makeCrossJoin(left, rhs)
 	}
 
-	return join
+	return lhs
 }
 
 // peekJoinType checks if the next tokens form a join keyword without consuming them.
