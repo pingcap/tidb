@@ -71,7 +71,6 @@ func IsASTCacheable(ctx context.Context, sctx base.PlanContext, node ast.Node, i
 		sumInListLen: 0,
 		maxNumParam:  getMaxParamLimit(sctx),
 		cteCanUsed:   make([]string, 0),
-		cteOffset:    make([]int, 0),
 	}
 	node.Accept(&checker)
 	return checker.cacheable, checker.reason
@@ -89,8 +88,6 @@ type cacheableChecker struct {
 	maxNumParam  int
 	// cteCanUsed tracks CTE names visible at current traversal point.
 	cteCanUsed []string
-	// cteOffset stores stack offsets for restoring cteCanUsed in Leave for CTE/subquery scopes.
-	cteOffset []int
 	// withScopeOffset stores offsets for query block scopes that have WITH clause.
 	withScopeOffset []int
 }
