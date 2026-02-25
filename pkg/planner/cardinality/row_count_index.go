@@ -44,7 +44,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	idx := coll.GetIdx(idxID)
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
-		if hasColumnStats(sctx, coll, idxCols) {
+		if hasColumnStats(sctx, coll, idxCols) && !ranger.HasFullRange(indexRanges, false) {
 			count, maxCount, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
 			result = statistics.RowEstimate{Est: count, MinEst: count, MaxEst: maxCount}
 		} else {
@@ -58,6 +58,9 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		return result, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
+	if canSkipIndexEstimation(idx, indexRanges) {
+		return statistics.DefaultRowEst(float64(realtimeCnt)), nil
+	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		count, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 		result = statistics.DefaultRowEst(count)
@@ -589,6 +592,37 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+// canSkipIndexEstimation checks whether expensive index row count estimation
+// (V1/V2) can be skipped because the ranges cover all rows. Returns true only when:
+//  1. The ranges include a truly full range including NULLs ([NULL, +inf)),
+//     not just [MinNotNull, +inf) which excludes NULLs and would overestimate.
+//  2. The index is not a partial index (which only covers rows matching its predicate).
+//  3. The index is not an MV index (which can have multiple entries per row).
+func canSkipIndexEstimation(idx *statistics.Index, indexRanges []*ranger.Range) bool {
+	if idx.Info.ConditionExprString != "" || idx.Info.MVIndex {
+		return false
+	}
+	return slices.ContainsFunc(indexRanges, isFullRangeIncludingNulls)
+}
+
+// isFullRangeIncludingNulls checks if a single range covers all values including NULLs.
+// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull),
+// not KindMinNotNull, ensuring NULL rows are included in the count.
+func isFullRangeIncludingNulls(ran *ranger.Range) bool {
+	if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) == 0 {
+		return false
+	}
+	for i := range ran.LowVal {
+		if ran.LowVal[i].Kind() != types.KindNull {
+			return false
+		}
+		if ran.HighVal[i].Kind() != types.KindMaxValue {
+			return false
+		}
+	}
+	return true
 }
 
 // hasColumnStats checks if we have collected stats on any of the given columns.
