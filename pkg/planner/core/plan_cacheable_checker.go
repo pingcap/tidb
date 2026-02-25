@@ -193,8 +193,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 
 // Leave implements Visitor interface.
 func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	switch node := in.(type) {
-	case *ast.SelectStmt:
+	if node, ok := in.(*ast.SelectStmt); ok {
 		if node.With != nil {
 			checker.leaveWithScope()
 		}
