@@ -280,6 +280,15 @@ func TestCacheable(t *testing.T) {
 	c, reason = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 	require.Empty(t, reason)
+	p := parser.New()
+	derivedWithCTE, err := p.ParseOneStmt(
+		"select * from (with t1 as (select 1 as a) select * from t1) dt, t1",
+		mysql.DefaultCharset, mysql.DefaultCollationName,
+	)
+	require.NoError(t, err)
+	c, reason = core.CacheableWithCtx(mockCtx, derivedWithCTE, is)
+	require.False(t, c)
+	require.Equal(t, "query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'", reason)
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},

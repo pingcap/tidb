@@ -89,13 +89,27 @@ type cacheableChecker struct {
 	maxNumParam  int
 	// cteCanUsed tracks CTE names visible at current traversal point.
 	cteCanUsed []string
-	// cteOffset stores stack offsets for restoring cteCanUsed in Leave.
+	// cteOffset stores stack offsets for restoring cteCanUsed in Leave for CTE/subquery scopes.
 	cteOffset []int
+	// withScopeOffset stores offsets for query block scopes that have WITH clause.
+	withScopeOffset []int
 }
 
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.SelectStmt:
+		if node.With != nil {
+			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
+		}
+	case *ast.SetOprStmt:
+		if node.With != nil {
+			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
+		}
+	case *ast.SetOprSelectList:
+		if node.With != nil {
+			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
+		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
 			nRows := len(node.Lists)
@@ -211,8 +225,30 @@ func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if cteNode, ok := node.(*ast.CommonTableExpression); ok {
 			checker.cteCanUsed = append(checker.cteCanUsed, cteNode.Name.L)
 		}
+	case *ast.SelectStmt:
+		if node.With != nil {
+			checker.leaveWithScope()
+		}
+	case *ast.SetOprStmt:
+		if node.With != nil {
+			checker.leaveWithScope()
+		}
+	case *ast.SetOprSelectList:
+		if node.With != nil {
+			checker.leaveWithScope()
+		}
 	}
 	return in, checker.cacheable
+}
+
+func (checker *cacheableChecker) leaveWithScope() {
+	l := len(checker.withScopeOffset)
+	if l == 0 {
+		return
+	}
+	offset := checker.withScopeOffset[l-1]
+	checker.withScopeOffset = checker.withScopeOffset[:l-1]
+	checker.cteCanUsed = checker.cteCanUsed[:offset]
 }
 
 var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}
