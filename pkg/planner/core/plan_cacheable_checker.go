@@ -122,23 +122,19 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.reason = "query has user-defined variables is un-cacheable"
 		return in, true
 	case *ast.ExistsSubqueryExpr:
-		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
-			checker.cacheable = false
-			checker.reason = "query has sub-queries is un-cacheable"
+		if checker.skipForSubqueryDisabled() {
 			return in, true
 		}
 		return in, false
-	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+	case *ast.CommonTableExpression:
 		checker.cteOffset = append(checker.cteOffset, len(checker.cteCanUsed))
-		if cteNode, ok := node.(*ast.CommonTableExpression); ok && cteNode.IsRecursive {
-			checker.cteCanUsed = append(checker.cteCanUsed, cteNode.Name.L)
+		if node.IsRecursive {
+			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
 		}
-		if _, ok := node.(*ast.SubqueryExpr); !ok {
-			return in, false
-		}
-		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
-			checker.cacheable = false
-			checker.reason = "query has sub-queries is un-cacheable"
+		return in, false
+	case *ast.SubqueryExpr:
+		checker.cteOffset = append(checker.cteOffset, len(checker.cteCanUsed))
+		if checker.skipForSubqueryDisabled() {
 			return in, true
 		}
 		return in, false
@@ -198,6 +194,15 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	}
 	return in, false
+}
+
+func (checker *cacheableChecker) skipForSubqueryDisabled() bool {
+	if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+		checker.cacheable = false
+		checker.reason = "query has sub-queries is un-cacheable"
+		return true
+	}
+	return false
 }
 
 // Leave implements Visitor interface.
