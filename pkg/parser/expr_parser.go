@@ -376,7 +376,12 @@ func (p *HandParser) parseLiteral() ast.ExprNode {
 	case intLit, floatLit, decLit:
 		return p.newValueExpr(tok.Item)
 	case stringLit:
-		return p.newValueExpr(tok.Lit)
+		// MySQL concatenates adjacent string literals: 'a' 'b' → 'ab'
+		val := tok.Lit
+		for p.peek().Tp == stringLit {
+			val += p.next().Lit
+		}
+		return p.newValueExpr(val)
 	case hexLit, bitLit:
 		var ctor func(string) (interface{}, error)
 		if tok.Tp == hexLit {
