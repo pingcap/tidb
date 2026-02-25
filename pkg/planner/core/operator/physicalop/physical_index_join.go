@@ -201,8 +201,6 @@ func (p *PhysicalIndexJoin) ExplainInfoInternal(normalized bool, isIndexMergeJoi
 	}
 	if p.ForceRowMode {
 		buffer.WriteString(", row-mode:true")
-	} else {
-		buffer.WriteString(", batch-mode:true")
 	}
 	return buffer.String()
 }

@@ -403,15 +403,18 @@ func TestIndexJoinBatchModeInSimpleApply(t *testing.T) {
 			switch v := plan.(type) {
 			case *physicalop.PhysicalIndexHashJoin:
 				require.False(t, v.ForceRowMode)
-				require.Contains(t, v.ExplainInfo(), "batch-mode:true")
+				require.NotContains(t, v.ExplainInfo(), "row-mode:true")
+				require.NotContains(t, v.ExplainInfo(), "batch-mode:true")
 				found = true
 			case *physicalop.PhysicalIndexMergeJoin:
 				require.False(t, v.ForceRowMode)
-				require.Contains(t, v.ExplainInfo(), "batch-mode:true")
+				require.NotContains(t, v.ExplainInfo(), "row-mode:true")
+				require.NotContains(t, v.ExplainInfo(), "batch-mode:true")
 				found = true
 			case *physicalop.PhysicalIndexJoin:
 				require.False(t, v.ForceRowMode)
-				require.Contains(t, v.ExplainInfo(), "batch-mode:true")
+				require.NotContains(t, v.ExplainInfo(), "row-mode:true")
+				require.NotContains(t, v.ExplainInfo(), "batch-mode:true")
 				found = true
 			}
 			for _, child := range plan.Children() {
