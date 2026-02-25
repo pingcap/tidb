@@ -63,6 +63,8 @@ var (
 	errModelNotExists                = dbterror.ClassSchema.NewStd(mysql.ErrModelNotExists)
 	errDatabaseNotExists             = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
 	errModelInferenceDisabled        = dbterror.ClassSchema.NewStd(mysql.ErrModelInferenceDisabled)
+	errLLMInferenceDisabled          = dbterror.ClassSchema.NewStd(mysql.ErrLLMInferenceDisabled)
+	errLLMDefaultModelUnset          = dbterror.ClassSchema.NewStd(mysql.ErrLLMDefaultModelUnset)
 
 	// Sequence usage privilege check.
 	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)

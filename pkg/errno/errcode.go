@@ -1154,6 +1154,8 @@ const (
 	ErrModelNotExists                     = 8275
 	ErrModelDDLDisabled                   = 8276
 	ErrModelInferenceDisabled             = 8277
+	ErrLLMInferenceDisabled               = 8278
+	ErrLLMDefaultModelUnset               = 8279
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
