@@ -173,6 +173,14 @@ TASKLOOP:
 
 	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
+		// When the result handler exits early (e.g., due to a kill signal), some
+		// results may remain unprocessed in the channel. Drain them and finalize the
+		// corresponding jobs so they don't stay stuck in "running" status.
+		for results := range resultsCh {
+			if results.Job != nil {
+				finishJobWithLog(statsHandle, results.Job, results.Err)
+			}
+		}
 		return err
 	}
 
@@ -532,16 +540,20 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
+			result := analyzeColumnsPushDownEntry(e.gp, task.colExec)
 			select {
 			case <-e.errExitCh:
+				finishJobWithLog(statsHandle, task.job, result.Err)
 				return
-			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
+			case resultsCh <- result:
 			}
 		case idxTask:
+			result := analyzeIndexPushdown(task.idxExec)
 			select {
 			case <-e.errExitCh:
+				finishJobWithLog(statsHandle, task.job, result.Err)
 				return
-			case resultsCh <- analyzeIndexPushdown(task.idxExec):
+			case resultsCh <- result:
 			}
 		}
 	}
