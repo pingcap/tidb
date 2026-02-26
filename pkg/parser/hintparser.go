@@ -418,13 +418,12 @@ func (hp *hintParser) parseIndexLevelHint(name string) []*ast.TableOptimizerHint
 
 	qb := hp.parseQBName()
 
-	// USE_INDEX_MERGE allows empty arguments: USE_INDEX_MERGE()
-	if strings.EqualFold(name, "use_index_merge") && hp.peek().tp == ')' {
-		hp.next() // consume ')'
-		return []*ast.TableOptimizerHint{{
-			HintName: ast.NewCIStr(name),
-			QBName:   ast.NewCIStr(qb),
-		}}
+	// Index-level hints require at least a table name: e.g., USE_INDEX(t idx).
+	// Empty arguments like USE_INDEX() or USE_INDEX_MERGE() are syntax errors.
+	if hp.peek().tp == ')' {
+		hp.parseError()
+		hp.skipToCloseParen()
+		return nil
 	}
 
 	tbl := hp.parseHintTable()
@@ -697,27 +696,35 @@ func (hp *hintParser) parseQBNameHint(name string) []*ast.TableOptimizerHint {
 		HintName: ast.NewCIStr(name),
 		QBName:   ast.NewCIStr(tok.ident),
 	}
-	// Optional second argument: qb_name(name, viewName[.subViewName[...]])
+	// Optional second argument: qb_name(name, ViewNameList)
+	// ViewNameList = ViewName ('.' ViewName)*
+	// ViewName     = Identifier [@sel_N] | @sel_N
 	// The planner peels off Tables entries one-by-one during nested view
-	// resolution, so v1.v produces [{TableName: v1}, {TableName: v}].
+	// resolution. For example, v@sel_1 .@sel_2 produces:
+	//   [{TableName: "v", QBName: "sel_1"}, {QBName: "sel_2"}]
 	if hp.match(',') {
 		for {
 			viewTok := hp.next()
 			if viewTok.tp == hintSingleAtIdentifier {
-				// @sel_N — query block reference, stored as QBName
+				// @sel_N without a preceding table name
 				h.Tables = append(h.Tables, ast.HintTable{
 					QBName: ast.NewCIStr(viewTok.ident),
 				})
-				break // @sel_N is always the last segment
-			}
-			if viewTok.tp != hintIdentifier && !hp.isHintKeyword(viewTok.tp) {
+			} else if viewTok.tp == hintIdentifier || hp.isHintKeyword(viewTok.tp) {
+				ht := ast.HintTable{
+					TableName: ast.NewCIStr(viewTok.ident),
+				}
+				// Optional @sel_N attached to this table name
+				if hp.peek().tp == hintSingleAtIdentifier {
+					qbTok := hp.next()
+					ht.QBName = ast.NewCIStr(qbTok.ident)
+				}
+				h.Tables = append(h.Tables, ht)
+			} else {
 				hp.skipToCloseParen()
 				hp.parseError()
 				return nil
 			}
-			h.Tables = append(h.Tables, ast.HintTable{
-				TableName: ast.NewCIStr(viewTok.ident),
-			})
 			if !hp.match('.') {
 				break
 			}

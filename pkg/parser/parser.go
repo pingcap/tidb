@@ -94,7 +94,7 @@ func (p *HandParser) parseOptHints() []*ast.TableOptimizerHint {
 		if p.hintParser == nil {
 			p.hintParser = newHintParser()
 		}
-		hints, warns := p.hintParser.parse(tok.Lit, p.sqlMode, Pos{})
+		hints, warns := p.hintParser.parse(tok.Lit, p.sqlMode, p.offsetToPos(tok.Offset))
 		p.warns = append(p.warns, warns...)
 		return hints
 	}
@@ -146,6 +146,13 @@ func (p *HandParser) calcLineCol(limit int) (line int, col int) {
 		col++
 	}
 	return line, col
+}
+
+// offsetToPos converts a byte offset in the source to a Pos{Line, Col, Offset}.
+// Used to supply the hint parser with the correct initial position.
+func (p *HandParser) offsetToPos(offset int) Pos {
+	line, col := p.calcLineCol(offset)
+	return Pos{Line: line, Col: col, Offset: offset}
 }
 
 // error records a TiDB-specific validation error with diagnostic text.
