@@ -60,7 +60,7 @@ func TestTiCISearchExplain(t *testing.T) {
 		index idx_field1 (field1)
 	)`)
 	tk.MustExec(`create table t6(
-		id INT PRIMARY KEY, title TEXT,
+		id INT UNSIGNED PRIMARY KEY, title TEXT,
 		FULLTEXT INDEX idx_title (title) WITH PARSER ngram
 	)`)
 	dom := domain.GetDomain(tk.Session())
