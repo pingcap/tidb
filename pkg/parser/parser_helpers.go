@@ -525,8 +525,13 @@ func (p *HandParser) acceptNoWriteToBinlog() bool {
 // and sets spec.Partition to a new PartitionOptions with the parsed expression.
 // Also captures the OriginalText on the embedded PartitionMethod so that the
 // DDL executor can locate and replace the syntactic sugar in the query string.
+// preStartOff, if >= 0, overrides the default start offset for OriginalText
+// (used to include preceding keywords like FIRST/LAST/MERGE in the captured text).
 func (p *HandParser) parsePartitionLessThanExpr(spec *ast.AlterTableSpec) {
-	startOff := p.peek().Offset
+	p.parsePartitionLessThanExprFrom(spec, p.peek().Offset)
+}
+
+func (p *HandParser) parsePartitionLessThanExprFrom(spec *ast.AlterTableSpec, startOff int) {
 	p.expect(partition)
 	p.expect(less)
 	p.expect(than)

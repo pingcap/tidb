@@ -171,12 +171,16 @@ func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 		if tok, ok := p.expectIdentLike(); ok {
 			spec.Statistics = &ast.StatisticsSpec{StatsName: tok.Lit}
 		}
-	} else if _, ok := p.acceptKeyword(first, "FIRST"); ok {
+	} else if p.peek().Tp == first || (p.peek().Tp == identifier && strings.EqualFold(p.peek().Lit, "FIRST")) {
+		firstOff := p.peek().Offset
+		p.next() // consume FIRST
 		spec.Tp = ast.AlterTableDropFirstPartition
-		p.parsePartitionLessThanExpr(spec)
-		if _, ok := p.acceptKeyword(first, "FIRST"); ok {
+		p.parsePartitionLessThanExprFrom(spec, firstOff)
+		if p.peek().Tp == first || (p.peek().Tp == identifier && strings.EqualFold(p.peek().Lit, "FIRST")) {
+			mergeOff := p.peek().Offset
+			p.next() // consume second FIRST
 			spec.Tp = ast.AlterTableReorganizeFirstPartition
-			p.parsePartitionLessThanExpr(spec)
+			p.parsePartitionLessThanExprFrom(spec, mergeOff)
 		}
 	} else if _, ok := p.accept(partition); ok {
 		spec.Tp = ast.AlterTableDropPartition
@@ -487,17 +491,19 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 		return true
 
 	case first, last:
+		startOff := p.peek().Offset
 		if p.next().Tp == first {
 			spec.Tp = ast.AlterTableDropFirstPartition
 		} else {
 			spec.Tp = ast.AlterTableAddLastPartition
 		}
-		p.parsePartitionLessThanExpr(spec)
+		p.parsePartitionLessThanExprFrom(spec, startOff)
 		return true
 
 	case merge:
+		startOff := p.peek().Offset
 		p.next() // Consume MERGE
-		p.parseMergeFirstPartition(spec)
+		p.parseMergeFirstPartitionFrom(spec, startOff)
 		return true
 
 	case reorganize:
@@ -518,8 +524,9 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 	case identifier:
 		// Check for MERGE/SPLIT keywords if identifier
 		if p.peek().IsKeyword("MERGE") {
+			startOff := p.peek().Offset
 			p.next() // Consume MERGE
-			p.parseMergeFirstPartition(spec)
+			p.parseMergeFirstPartitionFrom(spec, startOff)
 			return true
 		}
 		return false
@@ -530,9 +537,13 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 // parseMergeFirstPartition handles: MERGE FIRST PARTITION LESS THAN (expr)
 // Shared between the merge case and the identifier "MERGE" fallback.
 func (p *HandParser) parseMergeFirstPartition(spec *ast.AlterTableSpec) {
+	p.parseMergeFirstPartitionFrom(spec, p.peek().Offset)
+}
+
+func (p *HandParser) parseMergeFirstPartitionFrom(spec *ast.AlterTableSpec, startOff int) {
 	if _, ok := p.accept(first); ok {
 		spec.Tp = ast.AlterTableReorganizeFirstPartition
-		p.parsePartitionLessThanExpr(spec)
+		p.parsePartitionLessThanExprFrom(spec, startOff)
 	}
 }
 
