@@ -114,14 +114,9 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 		case is:
 			// IS is at the same precedence as comparison operators (=, >=, etc.)
 			// in MySQL grammar — both are at the bool_primary level.
-			// IS [NOT] TRUE/FALSE/NULL does NOT chain: "A IS TRUE IS TRUE" is a syntax error.
-			// We detect chaining by checking if left is already an IS expression.
+			// IS [NOT] TRUE/FALSE/NULL chains left-to-right:
+			// "A IS NULL IS NULL IS NULL" parses as ((A IS NULL) IS NULL) IS NULL.
 			if minPrec > precComparison {
-				return left
-			}
-			switch left.(type) {
-			case *ast.IsNullExpr, *ast.IsTruthExpr:
-				// Already an IS expression — don't chain.
 				return left
 			}
 			left = p.parseIsExpr(left)
