@@ -2875,7 +2875,9 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 		return err
 	}
 
-	loc := sctx.GetSessionVars().Location()
+	// Use the internal session's timezone for Unix timestamp conversion, since
+	// the TIMESTAMP data is loaded via the internal session.
+	var loc *time.Location
 	appendJob := func(info *importer.JobInfo) error {
 		runInfo, err2 := getRuntimeInfoForShowImportJob(ctx, loc, info)
 		if err2 != nil {
@@ -2907,6 +2909,7 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+			loc = se.GetSessionVars().Location()
 			exec := se.GetSQLExecutor()
 			var err2 error
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, sctx.GetSessionVars().User.String(), hasSuperPriv)
@@ -2919,6 +2922,7 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+		loc = se.GetSessionVars().Location()
 		exec := se.GetSQLExecutor()
 		var err2 error
 		infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)

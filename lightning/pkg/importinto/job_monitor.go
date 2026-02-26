@@ -250,7 +250,7 @@ func (m *DefaultJobMonitor) logJobCompletion(job *ImportJob, status *importsdk.J
 		}
 		logger.Info("job completed successfully", zap.Int64("importedRows", importedRows))
 	} else if status.IsFailed() {
-		logger.Error("job failed", zap.String("error", status.ErrorMessage))
+		logger.Warn("job failed", zap.String("error", status.ErrorMessage))
 	} else if status.IsCancelled() {
 		logger.Warn("job was cancelled")
 	}

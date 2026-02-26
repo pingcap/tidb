@@ -145,17 +145,20 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 
 func scanJobStatus(rows *sql.Rows) (*JobStatus, error) {
 	var (
-		jobID     int64
-		groupKey  sql.NullString
-		rawStatsB []byte
+		jobID    int64
+		groupKey sql.NullString
+		rawStats []byte
 	)
 
-	if err := rows.Scan(&jobID, &groupKey, &rawStatsB); err != nil {
+	if err := rows.Scan(&jobID, &groupKey, &rawStats); err != nil {
 		return nil, errors.Trace(err)
+	}
+	if len(rawStats) == 0 {
+		return nil, errors.New("Raw_Stats is empty")
 	}
 
 	status := &JobStatus{}
-	if err := json.Unmarshal(rawStatsB, status); err != nil {
+	if err := json.Unmarshal(rawStats, status); err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Ensure the top-level columns and JSON are consistent.

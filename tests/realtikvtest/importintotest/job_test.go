@@ -137,15 +137,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	// SHOW RAW IMPORT JOB should return machine-friendly JSON stats for SDK/Lightning.
 	rawRows := s.tk.MustQuery(fmt.Sprintf("show raw import job %d", importer.TestLastImportJobID.Load())).Rows()
 	s.Len(rawRows, 1)
-	var rawStatsBytes []byte
-	switch v := rawRows[0][2].(type) {
-	case string:
-		rawStatsBytes = []byte(v)
-	case []byte:
-		rawStatsBytes = v
-	default:
-		s.FailNow(fmt.Sprintf("unexpected Raw_Stats type %T", v))
-	}
+	rawStatsBytes := []byte(fmt.Sprintf("%s", rawRows[0][2]))
 	var rawStats importer.RawImportJobStats
 	s.NoError(json.Unmarshal(rawStatsBytes, &rawStats))
 	s.Equal(jobInfo.ID, rawStats.JobID)
@@ -275,8 +267,10 @@ func (s *mockGCSSuite) TestShowJob() {
 
 	// SHOW RAW IMPORT JOBS should be filterable by GROUP_KEY for polling.
 	const groupKey = "test_show_raw_group"
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.tk.MustExec("CREATE TABLE t4 (i INT PRIMARY KEY);")
 	s.tk.MustExec("CREATE TABLE t5 (i INT PRIMARY KEY);")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
 	s.tk.MustQuery(fmt.Sprintf(`import into t4 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
 	jobID4 := importer.TestLastImportJobID.Load()
 	s.tk.MustQuery(fmt.Sprintf(`import into t5 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
@@ -286,15 +280,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.Len(rawList, 2)
 	wantJobIDs := map[int64]struct{}{jobID4: {}, jobID5: {}}
 	for _, r := range rawList {
-		var b []byte
-		switch v := r[2].(type) {
-		case string:
-			b = []byte(v)
-		case []byte:
-			b = v
-		default:
-			s.FailNow(fmt.Sprintf("unexpected Raw_Stats type %T", v))
-		}
+		b := []byte(fmt.Sprintf("%s", r[2]))
 		var st importer.RawImportJobStats
 		s.NoError(json.Unmarshal(b, &st))
 		s.Equal(groupKey, st.GroupKey)
