@@ -44,7 +44,7 @@ func TestKeywordsLength(t *testing.T) {
 			reservedNr += 1
 		}
 	}
-	require.Equal(t, 233, reservedNr)
+	require.Equal(t, 232, reservedNr)
 }
 
 func TestKeywordsSorting(t *testing.T) {

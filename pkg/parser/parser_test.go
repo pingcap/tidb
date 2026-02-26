@@ -60,7 +60,7 @@ func TestSimple(t *testing.T) {
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
-		"masking", "match", "until", "placement", "tablesample", "failedLoginAttempts", "passwordLockTime",
+		"match", "until", "placement", "tablesample", "failedLoginAttempts", "passwordLockTime",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -99,7 +99,7 @@ func TestSimple(t *testing.T) {
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
 		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute", "resource",
-		"burstable", "calibrate", "rollup",
+		"burstable", "calibrate", "masking", "rollup",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -3964,6 +3964,11 @@ func TestDDL(t *testing.T) {
 		{"create placement policy x placement policy y", false, ""},
 
 		// for masking policy
+		{"create table masking (id int)", true, "CREATE TABLE `masking` (`id` INT)"},
+		{"select masking from t", true, "SELECT `masking` FROM `t`"},
+		{"alter table t add masking int", true, "ALTER TABLE `t` ADD COLUMN `masking` INT"},
+		{"alter table t drop masking", true, "ALTER TABLE `t` DROP COLUMN `masking`"},
+		{"alter table t modify masking int", true, "ALTER TABLE `t` MODIFY COLUMN `masking` INT"},
 		{"create masking policy p on t(c) as c", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS `c`"},
 		{"create masking policy p on t(c) as c enable", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS `c` ENABLE"},
 		{"create masking policy if not exists p on t(c) as c disable", true, "CREATE MASKING POLICY IF NOT EXISTS `p` ON `t` (`c`) AS `c` DISABLE"},
