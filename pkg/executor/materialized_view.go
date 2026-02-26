@@ -20,18 +20,23 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // RefreshMaterializedViewExec executes "REFRESH MATERIALIZED VIEW" as a utility-style statement.
@@ -58,6 +63,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return err
 	}
+	finalizeCtx := context.WithoutCancel(kctx)
 
 	schemaName, tblInfo, err := e.resolveRefreshMaterializedViewTarget(s)
 	if err != nil {
@@ -71,6 +77,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	defer e.ReleaseSysSession(kctx, refreshSctx)
 	sqlExec := refreshSctx.GetSQLExecutor()
 	sessVars := refreshSctx.GetSessionVars()
+	restoreSessVars, err := initRefreshMaterializedViewSession(sessVars, tblInfo.MaterializedView)
+	if err != nil {
+		return err
+	}
+	defer restoreSessVars()
+	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", sessVars.SQLMode, sessVars.Location().String())
 
 	txnStarted := false
 	txnFinished := false
@@ -78,7 +90,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		if !txnStarted || txnFinished {
 			return
 		}
-		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
+		_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
 	}()
 
 	// Use a pessimistic txn to ensure `FOR UPDATE NOWAIT` works as a mutex.
@@ -120,14 +132,14 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		refreshErrMsg := refreshErr.Error()
 		var rollbackErr error
 		if !txnFinished {
-			if _, err := sqlExec.ExecuteInternal(kctx, "ROLLBACK"); err != nil {
+			if _, err := sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK"); err != nil {
 				rollbackErr = errors.Trace(err)
 				refreshErrMsg = refreshErrMsg + "; rollback error: " + err.Error()
 			}
 			txnFinished = true
 		}
-		if histErr := finalizeRefreshHist(
-			kctx,
+		if histErr := finalizeRefreshHistWithRetry(
+			finalizeCtx,
 			histSQLExec,
 			refreshJobID,
 			mviewID,
@@ -185,8 +197,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 	txnFinished = true
-	if err := finalizeRefreshHist(
-		kctx,
+	if err := finalizeRefreshHistWithRetry(
+		finalizeCtx,
 		histSQLExec,
 		refreshJobID,
 		mviewID,
@@ -194,9 +206,66 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		&refreshReadTSO,
 		nil,
 	); err != nil {
-		return errors.Trace(err)
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+			errors.Annotate(err, "refresh materialized view: refresh committed but failed to finalize refresh history"),
+		)
 	}
 	return nil
+}
+
+func initRefreshMaterializedViewSession(
+	sessVars *variable.SessionVars,
+	mviewInfo *model.MaterializedViewInfo,
+) (func(), error) {
+	if mviewInfo == nil {
+		return nil, errors.New("refresh materialized view: invalid materialized view metadata")
+	}
+	loc, err := mviewInfo.DefinitionTimeZone.GetLocation()
+	if err != nil {
+		return nil, errors.Annotate(err, "refresh materialized view: invalid definition timezone")
+	}
+
+	origSQLMode := sessVars.SQLMode
+	origTimeZone := sessVars.TimeZone
+	origStmtCtxTimeZone := sessVars.StmtCtx.TimeZone()
+	origTypeFlags := sessVars.StmtCtx.TypeFlags()
+	origErrLevels := sessVars.StmtCtx.ErrLevels()
+
+	sessVars.SQLMode = mviewInfo.DefinitionSQLMode
+	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
+	sessVars.TimeZone = loc
+	sessVars.StmtCtx.SetTimeZone(loc)
+	sessVars.StmtCtx.SetTypeFlags(refreshTypeFlagsWithSQLMode(sessVars.SQLMode))
+	sessVars.StmtCtx.SetErrLevels(refreshErrLevelsWithSQLMode(sessVars.SQLMode))
+
+	return func() {
+		sessVars.SQLMode = origSQLMode
+		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
+		sessVars.TimeZone = origTimeZone
+		sessVars.StmtCtx.SetTimeZone(origStmtCtxTimeZone)
+		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
+		sessVars.StmtCtx.SetErrLevels(origErrLevels)
+	}, nil
+}
+
+func refreshTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
+	return types.StrictFlags.
+		WithTruncateAsWarning(!mode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(mode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!mode.HasStrictMode() || mode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
+}
+
+func refreshErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
+	return errctx.LevelMap{
+		errctx.ErrGroupTruncate:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupBadNull:   errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupNoDefault: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
+			!mode.HasErrorForDivisionByZeroMode(),
+			!mode.HasStrictMode(),
+		),
+	}
 }
 
 func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt) (string, error) {
@@ -501,6 +570,49 @@ func insertRefreshHistRunning(
 	return nil
 }
 
+func finalizeRefreshHistWithRetry(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	refreshJobID uint64,
+	mviewID int64,
+	refreshStatus string,
+	refreshReadTSO *uint64,
+	refreshFailedReason *string,
+) error {
+	firstErr := finalizeRefreshHist(
+		kctx,
+		sqlExec,
+		refreshJobID,
+		mviewID,
+		refreshStatus,
+		refreshReadTSO,
+		refreshFailedReason,
+	)
+	if firstErr == nil {
+		return nil
+	}
+	retryErr := finalizeRefreshHist(
+		kctx,
+		sqlExec,
+		refreshJobID,
+		mviewID,
+		refreshStatus,
+		refreshReadTSO,
+		refreshFailedReason,
+	)
+	if retryErr == nil {
+		return nil
+	}
+	logutil.BgLogger().Warn("refresh materialized view: failed to finalize refresh history after retry",
+		zap.Uint64("refreshJobID", refreshJobID),
+		zap.Int64("mviewID", mviewID),
+		zap.String("refreshStatus", refreshStatus),
+		zap.NamedError("firstAttemptErr", firstErr),
+		zap.NamedError("retryErr", retryErr),
+	)
+	return errors.Annotatef(retryErr, "first finalize attempt failed: %v", firstErr)
+}
+
 func finalizeRefreshHist(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
@@ -510,6 +622,12 @@ func finalizeRefreshHist(
 	refreshReadTSO *uint64,
 	refreshFailedReason *string,
 ) error {
+	failpoint.Inject("mockFinalizeRefreshHistError", func(val failpoint.Value) {
+		if shouldFail, ok := val.(bool); ok && shouldFail {
+			failpoint.Return(errors.New("mock finalize refresh history error"))
+		}
+	})
+
 	var refreshReadTSOArg any
 	if refreshReadTSO != nil {
 		refreshReadTSOArg = *refreshReadTSO

@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,6 +72,70 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("success complete 1 1 1"))
+}
+
+func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.sql_mode = 'NO_UNSIGNED_SUBTRACTION'")
+	tk.MustExec("set @@session.time_zone = '+00:00'")
+	tk.MustExec("create table t (a int not null, b int not null, ts timestamp not null)")
+	tk.MustExec("insert into t values (1, 10, '2020-01-01 00:30:00'), (2, 20, '2019-12-31 23:30:00')")
+	tk.MustExec("create materialized view log on t (a, b, ts) purge immediate")
+	tk.MustExec(`create materialized view mv (a, s, cnt) refresh fast next 300 as
+select a, sum(b), count(1) from t
+where ts >= '2020-01-01 00:00:00'
+group by a`)
+	tk.MustQuery("select a, s, cnt from mv").Check(testkit.Rows("1 10 1"))
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	expectedSQLMode := mvTable.Meta().MaterializedView.DefinitionSQLMode
+	expectedLoc, err := mvTable.Meta().MaterializedView.DefinitionTimeZone.GetLocation()
+	require.NoError(t, err)
+	expectedTimeZone := expectedLoc.String()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInitSession", func(mode mysql.SQLMode, tz string) {
+		require.Equal(t, expectedSQLMode, mode)
+		require.Equal(t, expectedTimeZone, tz)
+	})
+
+	// Keep creator/session semantics and refresh caller semantics different.
+	tk.MustExec("set @@session.sql_mode = ''")
+	tk.MustExec("set @@session.time_zone = '-01:00'")
+	tk.MustExec("refresh materialized view mv complete")
+	tk.MustQuery("select a, s, cnt from mv").Check(testkit.Rows("1 10 1"))
+}
+
+func TestMaterializedViewRefreshCompleteFinalizeHistoryRetry(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+
+	const finalizeFailpoint = "github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError"
+	require.NoError(t, failpoint.Enable(finalizeFailpoint, "1*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(finalizeFailpoint))
+	}()
+
+	tk.MustExec("refresh materialized view mv complete")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
+	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
+		Check(testkit.Rows("success complete 1 1 1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'", mviewID)).
+		Check(testkit.Rows("0"))
 }
 
 func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
@@ -407,6 +473,12 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 	// Make the refreshed MV contain duplicate `s` values: sum(b) for a=2 becomes 15.
 	tk.MustExec("insert into t values (2, 8)")
 
+	const finalizeFailpoint = "github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError"
+	require.NoError(t, failpoint.Enable(finalizeFailpoint, "1*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(finalizeFailpoint))
+	}()
+
 	err = tk.ExecToErr("refresh materialized view mv complete")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "Duplicate")
@@ -418,6 +490,8 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 		Check(testkit.Rows("1 1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
 		Check(testkit.Rows("failed complete 1 1 1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'", mviewID)).
+		Check(testkit.Rows("0"))
 	reasonRow := tk.MustQuery(fmt.Sprintf("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).Rows()
 	require.Len(t, reasonRow, 1)
 	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "Duplicate")

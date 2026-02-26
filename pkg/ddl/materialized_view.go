@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -167,12 +168,18 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err != nil {
 		return err
 	}
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	mvTableInfo.MaterializedView = &model.MaterializedViewInfo{
-		BaseTableIDs:     []int64{baseTableID},
-		SQLContent:       selectSQL,
-		RefreshMethod:    refreshMethod,
-		RefreshStartWith: refreshStartWith,
-		RefreshNext:      refreshNext,
+		BaseTableIDs:      []int64{baseTableID},
+		SQLContent:        selectSQL,
+		RefreshMethod:     refreshMethod,
+		RefreshStartWith:  refreshStartWith,
+		RefreshNext:       refreshNext,
+		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
+		DefinitionTimeZone: model.TimeZoneLocation{
+			Name:   tzName,
+			Offset: tzOffset,
+		},
 	}
 
 	// CREATE MATERIALIZED VIEW is submitted as reorg DDL: create table first, then initial build in reorg phase.
