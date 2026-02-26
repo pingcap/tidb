@@ -437,6 +437,15 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			}
 			if inner != nil && p.peek().Tp == ')' {
 				// Next is ')' — this is a nested subquery: ((select ...))
+				// Clear IsInBraces: TableSource.Restore() already wraps
+				// subquery sources in (...), so keeping IsInBraces=true
+				// would produce double parens. The yacc parser collapses
+				// redundant parens around derived tables.
+				if s, ok := inner.(*ast.SelectStmt); ok {
+					s.IsInBraces = false
+				} else if s, ok := inner.(*ast.SetOprStmt); ok {
+					s.IsInBraces = false
+				}
 				res = inner
 				p.expect(')')
 			} else if inner != nil {
@@ -445,6 +454,8 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 				// Clear IsInBraces since the parens are structural for the
 				// FROM clause, not semantic braces around a subquery.
 				if s, ok := inner.(*ast.SelectStmt); ok {
+					s.IsInBraces = false
+				} else if s, ok := inner.(*ast.SetOprStmt); ok {
 					s.IsInBraces = false
 				}
 				// Wrap inner as a TableSource with alias, then

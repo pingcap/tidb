@@ -624,7 +624,6 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 
 	// EXPLAIN SELECT|INSERT|UPDATE|DELETE|... → parse sub-statement
 	var sub ast.StmtNode
-	subStartOff := p.peek().Offset
 	switch p.peek().Tp {
 	case selectKwd, insert, replace, update, deleteKwd,
 		alter, create, drop, set, show, with, truncate,
@@ -654,12 +653,11 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	if sub == nil {
 		return nil
 	}
-	// Set the source text on the sub-statement so that ExecStmt.Text() returns
-	// the correct SQL body (used by EXPLAIN EXPLORE, plan binding, etc.).
-	subEndOff := p.peek().Offset
-	if subEndOff > subStartOff {
-		sub.SetText(nil, strings.TrimSpace(p.src[subStartOff:subEndOff]))
-	}
+	// Do NOT set Text() on the inner sub-statement. The yacc parser leaves the
+	// inner statement's Text() empty, and the binding system relies on that:
+	// NormalizeStmtForBinding returns ("","") for statements with empty Text(),
+	// which prevents double binding-match (once for the ExplainStmt wrapper and
+	// again when buildExplain re-optimizes the inner statement).
 	stmt.Stmt = sub
 	return stmt
 }
