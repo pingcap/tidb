@@ -90,16 +90,16 @@ type Tracker struct {
 		children map[int][]*Tracker
 		sync.Mutex
 	}
-	label int // Label of this "Tracker".
+	debugLogTag         string            // debugLogTag identifies this tracker in log lines.
 	// following fields are used with atomic operations, so make them 64-byte aligned.
 	bytesReleased       int64             // Released bytes.
 	maxConsumed         atomicutil.Int64  // max number of bytes consumed during execution.
 	SessionID           atomicutil.Uint64 // SessionID indicates the sessionID the tracker is bound.
 	bytesConsumed       int64             // Consumed bytes.
+	label               int               // Label of this "Tracker".
 	IsRootTrackerOfSess bool              // IsRootTrackerOfSess indicates whether this tracker is bound for session
 	isGlobal            bool              // isGlobal indicates whether this tracker is global tracker
 	DebugLog            bool              // DebugLog enables DEBUGMEM logging for this tracker (temporary debug aid).
-	debugLogTag         string            // debugLogTag identifies this tracker in log lines.
 }
 
 type actionMu struct {
@@ -448,15 +448,15 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	t.Consume(newConsumed)
 }
 
-// Consume is used to consume a memory usage. "bytes" can be a negative value,
-// which means this is a memory release operation. When memory usage of a tracker
-// exceeds its bytesSoftLimit/bytesHardLimit, the tracker calls its action, so does each of its ancestors.
 // EnableDebugLog enables DEBUGMEM logging on this tracker with the given tag.
 func (t *Tracker) EnableDebugLog(tag string) {
 	t.DebugLog = true
 	t.debugLogTag = tag
 }
 
+// Consume is used to consume a memory usage. "bytes" can be a negative value,
+// which means this is a memory release operation. When memory usage of a tracker
+// exceeds its bytesSoftLimit/bytesHardLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bs int64) {
 	if bs == 0 {
 		return
