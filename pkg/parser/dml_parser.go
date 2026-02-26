@@ -607,6 +607,14 @@ func (p *HandParser) parseTableStmt() ast.StmtNode {
 func (p *HandParser) parseValuesStmt() ast.StmtNode {
 	stmt := p.arena.AllocSelectStmt()
 	stmt.Kind = ast.SelectStmtKindValues
+	// VALUES statement requires a wildcard FieldList to avoid nil-pointer
+	// dereferences in the planner (mirrors the yacc parser behavior).
+	wc := Alloc[ast.WildCardField](p.arena)
+	sf := Alloc[ast.SelectField](p.arena)
+	sf.WildCard = wc
+	fl := Alloc[ast.FieldList](p.arena)
+	fl.Fields = []*ast.SelectField{sf}
+	stmt.Fields = fl
 
 	rawLists := p.parseValueList(false, true)
 	// Convert [][]ExprNode to []*RowExpr
