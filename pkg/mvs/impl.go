@@ -119,7 +119,7 @@ func (*serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverInf
 // RefreshMV executes one incremental refresh round for a materialized view.
 //
 // It:
-// 1. Gets a system session from the pool and temporarily clears SQL mode.
+// 1. Gets a system session from the pool.
 // 2. Resolves schema/table names from MVIEW_ID.
 // 3. Executes `REFRESH MATERIALIZED VIEW ... WITH SYNC MODE FAST`.
 // 4. Reads NEXT_TIME from mysql.tidb_mview_refresh_info.
@@ -129,7 +129,7 @@ func (*serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverInf
 func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
 	const (
 		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
-		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
 	startAt := mvsNow()
 	var schemaName, mviewName string
@@ -155,11 +155,6 @@ func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Session
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 
 	sctx := se.(sessionctx.Context)
-	originalSQLMode := sctx.GetSessionVars().SQLMode
-	sctx.GetSessionVars().SQLMode = 0
-	defer func() {
-		sctx.GetSessionVars().SQLMode = originalSQLMode
-	}()
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	mvTable, ok := infoSchema.TableByID(ctx, mvID)
 	if !ok {
@@ -197,14 +192,14 @@ func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Session
 // PurgeMVLog runs one auto-purge round for the specified MV log ID.
 //
 // Behavior overview:
-// 1. Gets a system session from the pool and temporarily clears SQL mode.
+// 1. Gets a system session from the pool.
 // 2. Resolves schema/table names from mvLogID.
 // 3. Executes `purge materialized view log on <schema>.<table>`.
 // 4. Reads NEXT_TIME from mysql.tidb_mlog_purge_info.
 func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error) {
 	const (
 		purgeMVLogSQL   = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
-		findNextTimeSQL = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
+		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
 	var (
 		baseSchemaName string
@@ -233,11 +228,6 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 	sctx := se.(sessionctx.Context)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 
-	originalSQLMode := sctx.GetSessionVars().SQLMode
-	sctx.GetSessionVars().SQLMode = 0
-	defer func() {
-		sctx.GetSessionVars().SQLMode = originalSQLMode
-	}()
 	if mvLogID <= 0 {
 		return time.Time{}, errors.New("materialized view log id is invalid")
 	}
@@ -291,7 +281,7 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 
 // fetchAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
 func (*serverHelper) fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
-	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
 		logutil.BgLogger().Warn("fetch mysql.tidb_mlog_purge_info failed", zap.Error(err))
@@ -319,7 +309,7 @@ func (*serverHelper) fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool 
 
 // fetchAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
 func (*serverHelper) fetchAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
-	const sql = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
 		logutil.BgLogger().Warn("fetch mysql.tidb_mview_refresh_info failed", zap.Error(err))

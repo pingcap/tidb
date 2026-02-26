@@ -29,7 +29,6 @@ import (
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	mysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/types"
 	basic "github.com/pingcap/tidb/pkg/util"
@@ -40,12 +39,12 @@ import (
 )
 
 const (
-	testSQLFetchMVLogPurge   = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
-	testSQLFetchMVRefresh    = `SELECT UNIX_TIMESTAMP(NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVLogPurge   = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVRefresh    = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
 	testSQLRefreshMV         = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
-	testSQLFindMVNextTime    = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLFindMVNextTime    = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	testSQLPurgeMVLog        = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
-	testSQLFindPurgeNextTime = `SELECT UNIX_TIMESTAMP(NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLFindPurgeNextTime = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
 )
 
 var (
@@ -75,7 +74,6 @@ type recordingSessionContext struct {
 	execErrs              map[string]error
 	executedRestrictedSQL []string
 	executedRestrictedArg [][]any
-	restrictedSQLModes    []mysql.SQLMode
 	restrictedRows        map[string][]chunk.Row
 	restrictedErrs        map[string]error
 }
@@ -107,7 +105,6 @@ func (s *recordingSessionContext) ExecuteInternal(_ context.Context, sql string,
 
 func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlexec.OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*resolve.ResultField, error) {
 	s.executedRestrictedSQL = append(s.executedRestrictedSQL, sql)
-	s.restrictedSQLModes = append(s.restrictedSQLModes, s.GetSessionVars().SQLMode)
 	argsCopy := make([]any, len(args))
 	copy(argsCopy, args)
 	s.executedRestrictedArg = append(s.executedRestrictedArg, argsCopy)
@@ -831,8 +828,6 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 	installMockTimeForTest(t)
 
 	se := newRecordingSessionContext()
-	originalSQLMode := mysql.ModeStrictTransTables | mysql.ModeOnlyFullGroupBy
-	se.GetSessionVars().SQLMode = originalSQLMode
 	expectedNextRefresh := mvsNow().Add(time.Minute).Round(0)
 	se.restrictedRows[testSQLFindMVNextTime] = []chunk.Row{
 		chunk.MutRowFromDatums([]types.Datum{
@@ -855,8 +850,6 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 		testSQLRefreshMV,
 		testSQLFindMVNextTime,
 	}, se.executedRestrictedSQL)
-	require.Equal(t, []mysql.SQLMode{0, 0}, se.restrictedSQLModes)
-	require.Equal(t, originalSQLMode, se.GetSessionVars().SQLMode)
 }
 
 func TestServerHelperRefreshMVDeletedWhenNextTimeNotFound(t *testing.T) {

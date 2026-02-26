@@ -58,7 +58,6 @@ go_test(
         "//pkg/infoschema/context",
         "//pkg/meta/model",
         "//pkg/parser/model",
-        "//pkg/parser/mysql",
         "//pkg/planner/core/resolve",
         "//pkg/types",
         "//pkg/util",
