@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "bedrock",
+    srcs = ["client.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/llm/bedrock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/llm",
+        "@com_github_aws_aws_sdk_go//aws",
+        "@com_github_aws_aws_sdk_go//aws/credentials",
+        "@com_github_aws_aws_sdk_go//aws/session",
+        "@com_github_aws_aws_sdk_go//service/bedrockruntime",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "bedrock_test",
+    timeout = "short",
+    srcs = ["client_test.go"],
+    embed = [":bedrock"],
+    flaky = True,
+    deps = [
+        "//pkg/util/llm",
+        "@com_github_aws_aws_sdk_go//aws/credentials",
+        "@com_github_stretchr_testify//require",
+    ],
+)

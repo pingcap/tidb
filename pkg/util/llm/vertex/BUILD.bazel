@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/backoff",
+        "//pkg/util/llm",
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_oauth2//:oauth2",
         "@org_golang_x_oauth2//google",
@@ -23,6 +24,7 @@ go_test(
     embed = [":vertex"],
     flaky = True,
     deps = [
+        "//pkg/util/llm",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_oauth2//:oauth2",
