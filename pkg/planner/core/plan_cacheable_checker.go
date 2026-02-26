@@ -180,7 +180,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 	case *ast.TableName:
 		if checker.schema != nil {
 			if node.Schema.L == "" && slices.Contains(checker.cteCanUsed, node.Name.L) {
-				// CTE names are not physical tables in InfoSchema, skip table lookup.
+				// Unqualified names can refer to CTEs in current scope; do not resolve them as physical tables.
 				return in, false
 			}
 			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
@@ -211,6 +211,7 @@ func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.SelectStmt:
 		if node.With != nil {
+			// Leave query-block WITH scope and restore CTE visibility from outer context.
 			checker.leaveWithScope()
 		}
 	}
@@ -223,6 +224,7 @@ func (checker *cacheableChecker) leaveWithScope() {
 		return
 	}
 	offset := checker.withScopeOffset[l-1]
+	// Pop one WITH scope and roll back CTE names introduced in this query block.
 	checker.withScopeOffset = checker.withScopeOffset[:l-1]
 	checker.cteCanUsed = checker.cteCanUsed[:offset]
 }
