@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvs
+package mvservice
 
 import (
 	"context"
@@ -24,8 +24,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// MVServiceConfig is the config for constructing MVService.
-type MVServiceConfig struct {
+// Config is the config for constructing MVService.
+type Config struct {
 	TaskMaxConcurrency int
 	TaskTimeout        time.Duration
 
@@ -42,8 +42,8 @@ type MVServiceConfig struct {
 }
 
 // DefaultMVServiceConfig returns the default MV service config.
-func DefaultMVServiceConfig() MVServiceConfig {
-	return MVServiceConfig{
+func DefaultMVServiceConfig() Config {
+	return Config{
 		TaskMaxConcurrency:           defaultMVTaskMaxConcurrency,
 		TaskTimeout:                  defaultMVTaskTimeout,
 		FetchInterval:                defaultMVFetchInterval,
@@ -56,7 +56,7 @@ func DefaultMVServiceConfig() MVServiceConfig {
 }
 
 // normalizeMVServiceConfig clamps invalid values to safe defaults.
-func normalizeMVServiceConfig(cfg MVServiceConfig) MVServiceConfig {
+func normalizeMVServiceConfig(cfg Config) Config {
 	def := DefaultMVServiceConfig()
 	if cfg.TaskMaxConcurrency <= 0 {
 		cfg.TaskMaxConcurrency = def.TaskMaxConcurrency
@@ -86,7 +86,7 @@ func normalizeMVServiceConfig(cfg MVServiceConfig) MVServiceConfig {
 }
 
 // NewMVService creates a new MVService with the given helper and config.
-func NewMVService(ctx context.Context, se basic.SessionPool, helper MVServiceHelper, cfg MVServiceConfig) *MVService {
+func NewMVService(ctx context.Context, se basic.SessionPool, helper Helper, cfg Config) *MVService {
 	if helper == nil || se == nil {
 		panic("invalid arguments")
 	}

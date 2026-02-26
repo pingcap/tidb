@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvs
+package mvservice
 
 import (
 	"time"
@@ -30,7 +30,7 @@ func reportCounterDelta(counter interface{ Add(float64) }, last *int64, current 
 }
 
 // reportMetrics flushes MVService runtime metrics into the metrics module.
-func (h *serverHelper) reportMetrics(s *MVService) {
+func (h *serviceHelper) reportMetrics(s *MVService) {
 	// Executor metrics
 	reportCounterDelta(tidbmetrics.MVTaskExecutorSubmittedCounter, &h.reportCache.submittedCount, s.executor.metrics.counters.submittedCount.Load())
 	reportCounterDelta(tidbmetrics.MVTaskExecutorCompletedCounter, &h.reportCache.completedCount, s.executor.metrics.counters.completedCount.Load())
@@ -49,7 +49,7 @@ func (h *serverHelper) reportMetrics(s *MVService) {
 }
 
 // observeTaskDuration reports one task execution duration sample.
-func (h *serverHelper) observeTaskDuration(taskType, result string, duration time.Duration) {
+func (h *serviceHelper) observeTaskDuration(taskType, result string, duration time.Duration) {
 	if duration < 0 {
 		return
 	}
@@ -57,7 +57,7 @@ func (h *serverHelper) observeTaskDuration(taskType, result string, duration tim
 }
 
 // observeFetchDuration reports one metadata fetch duration sample.
-func (h *serverHelper) observeFetchDuration(fetchType, result string, duration time.Duration) {
+func (h *serviceHelper) observeFetchDuration(fetchType, result string, duration time.Duration) {
 	if duration < 0 {
 		return
 	}
@@ -65,7 +65,7 @@ func (h *serverHelper) observeFetchDuration(fetchType, result string, duration t
 }
 
 // observeRunEvent increments one run-loop event counter.
-func (h *serverHelper) observeRunEvent(eventType string) {
+func (h *serviceHelper) observeRunEvent(eventType string) {
 	if eventType == "" {
 		return
 	}
@@ -73,7 +73,7 @@ func (h *serverHelper) observeRunEvent(eventType string) {
 }
 
 // getDurationObserver returns a cached observer for (type, result) labels.
-func (h *serverHelper) getDurationObserver(metricType, result string) prometheus.Observer {
+func (h *serviceHelper) getDurationObserver(metricType, result string) prometheus.Observer {
 	if h == nil {
 		return tidbmetrics.MVServiceMetaFetchDurationHistogramVec.WithLabelValues(metricType, result)
 	}
@@ -96,7 +96,7 @@ func (h *serverHelper) getDurationObserver(metricType, result string) prometheus
 }
 
 // getRunEventCounter returns a cached counter for eventType label.
-func (h *serverHelper) getRunEventCounter(eventType string) prometheus.Counter {
+func (h *serviceHelper) getRunEventCounter(eventType string) prometheus.Counter {
 	if h == nil {
 		return tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(eventType)
 	}

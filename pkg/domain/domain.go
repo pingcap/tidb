@@ -59,7 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/mvs"
+	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -152,7 +152,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	ddlExecutor     ddl.Executor
 	ddlNotifier     *notifier.DDLNotifier
-	mvService       *mvs.MVService
+	mvService       *mvservice.MVService
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
@@ -1391,7 +1391,7 @@ func (do *Domain) Init(
 	// TODO(lance6716): find a more representative place for subscriber
 	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
 	// Register MVS DDL handler before DDLNotifier may start.
-	do.mvService = mvs.RegisterMVS(do.ctx, do.ddlNotifier.RegisterHandler, do.sysSessionPool, do.notifyMVSMetadataChange)
+	do.mvService = mvservice.RegisterMVService(do.ctx, do.ddlNotifier.RegisterHandler, do.sysSessionPool, do.notifyMVSMetadataChange)
 	d := do.ddl
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(
@@ -1781,7 +1781,7 @@ func (do *Domain) StartMVService() error {
 }
 
 // GetMVService returns the MV service instance.
-func (do *Domain) GetMVService() *mvs.MVService {
+func (do *Domain) GetMVService() *mvservice.MVService {
 	return do.mvService
 }
 
@@ -2933,7 +2933,7 @@ const (
 	privilegeKey          = "/tidb/privilege"
 	sysVarCacheKey        = "/tidb/sysvars"
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
-	mvsDDLNotifyKey       = "/tidb/mvs/ddl"
+	mvsDDLNotifyKey       = "/tidb/mvservice/ddl"
 )
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
@@ -2986,7 +2986,7 @@ func (do *Domain) notifyMVSMetadataChange() {
 	row := do.etcdClient.KV
 	_, err := row.Put(context.Background(), mvsDDLNotifyKey, "")
 	if err != nil {
-		logutil.BgLogger().Warn("notify mvs metadata change failed", zap.Error(err))
+		logutil.BgLogger().Warn("notify mvservice metadata change failed", zap.Error(err))
 	}
 }
 

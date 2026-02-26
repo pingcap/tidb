@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvs
+package mvservice
 
 import (
 	"context"
@@ -34,8 +34,8 @@ func int64KeyToBinaryBytes(key int64) []byte {
 	return buf[:]
 }
 
-// ServerHelper provides server discovery for building the consistent-hash view.
-type ServerHelper interface {
+// ServerDiscovery provides server discovery for building the consistent-hash view.
+type ServerDiscovery interface {
 	serverFilter(serverInfo) bool
 	getServerInfo() (serverInfo, error)
 	getAllServerInfo(ctx context.Context) (map[string]serverInfo, error)
@@ -48,11 +48,11 @@ type ServerConsistentHash struct {
 	chash   ConsistentHash // use consistent hash to reduce task movements after nodes changed
 	mu      sync.RWMutex
 	ID      string // current server ID
-	helper  ServerHelper
+	helper  ServerDiscovery
 }
 
 // NewServerConsistentHash creates a server ownership helper backed by consistent hash.
-func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerHelper) *ServerConsistentHash {
+func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerDiscovery) *ServerConsistentHash {
 	if ctx == nil || helper == nil {
 		panic("context and helper cannot be nil")
 	}

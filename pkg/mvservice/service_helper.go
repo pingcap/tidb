@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvs
+package mvservice
 
 import (
 	"context"
@@ -34,7 +34,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type serverHelper struct {
+type serviceHelper struct {
 	durationObserverCache durationObserverCache
 	runEventCounterCache  runEventCounterCache
 
@@ -80,19 +80,19 @@ func newRunEventCounterCache(capacity int) runEventCounterCache {
 	}
 }
 
-// newServerHelper builds a default helper used by MVService.
-func newServerHelper() *serverHelper {
-	return &serverHelper{
+// newServiceHelper builds a default helper used by MVService.
+func newServiceHelper() *serviceHelper {
+	return &serviceHelper{
 		durationObserverCache: newDurationObserverCache(8),
 		runEventCounterCache:  newRunEventCounterCache(16),
 	}
 }
 
-func (*serverHelper) serverFilter(s serverInfo) bool {
+func (*serviceHelper) serverFilter(s serverInfo) bool {
 	return true
 }
 
-func (*serverHelper) getServerInfo() (serverInfo, error) {
+func (*serviceHelper) getServerInfo() (serverInfo, error) {
 	localSrv, err := infosync.GetServerInfo()
 	if err != nil {
 		return serverInfo{}, err
@@ -102,7 +102,7 @@ func (*serverHelper) getServerInfo() (serverInfo, error) {
 	}, nil
 }
 
-func (*serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverInfo, error) {
+func (*serviceHelper) getAllServerInfo(ctx context.Context) (map[string]serverInfo, error) {
 	servers := make(map[string]serverInfo)
 	allServers, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
@@ -126,7 +126,7 @@ func (*serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverInf
 //
 // The returned error only represents execution failures. A zero nextRefresh means
 // no further scheduling is needed (for example, the MV metadata was removed).
-func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
+func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
 	const (
 		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
 		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
@@ -196,7 +196,7 @@ func (*serverHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Session
 // 2. Resolves schema/table names from mvLogID.
 // 3. Executes `purge materialized view log on <schema>.<table>`.
 // 4. Reads NEXT_TIME from mysql.tidb_mlog_purge_info.
-func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error) {
+func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error) {
 	const (
 		purgeMVLogSQL   = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
 		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
@@ -280,7 +280,7 @@ func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessio
 }
 
 // fetchAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
-func (*serverHelper) fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
+func (*serviceHelper) fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
 	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
@@ -308,7 +308,7 @@ func (*serverHelper) fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool 
 }
 
 // fetchAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
-func (*serverHelper) fetchAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
+func (*serviceHelper) fetchAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
 	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
@@ -376,10 +376,10 @@ func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context
 	return r, err
 }
 
-// RegisterMVS registers a DDL event handler for MV-related events.
+// RegisterMVService registers a DDL event handler for MV-related events.
 // onDDLHandled is invoked after the local MV service is notified, and can be
 // used by callers to fan out this event to other nodes.
-func RegisterMVS(
+func RegisterMVService(
 	ctx context.Context,
 	registerHandler func(notifier.HandlerID, notifier.SchemaChangeHandler),
 	se basic.SessionPool,
@@ -395,8 +395,8 @@ func RegisterMVS(
 		MemThreshold: defaultMVTaskBackpressureMemThreshold,
 		Delay:        defaultTaskBackpressureDelay,
 	}
-	mvs := NewMVService(ctx, se, newServerHelper(), cfg)
-	mvs.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
+	mvService := NewMVService(ctx, se, newServiceHelper(), cfg)
+	mvService.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
 
 	// callback for DDL events only will be triggered on the DDL owner
 	// other nodes will get notified through the NotifyDDLChange method from the domain service registry
@@ -413,5 +413,5 @@ func RegisterMVS(
 		return nil
 	})
 
-	return mvs
+	return mvService
 }

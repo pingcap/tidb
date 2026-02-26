@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/mvs"
+	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
 )
@@ -52,8 +52,8 @@ type mvServiceRuntimeSettingsAccessor interface {
 	GetTaskExecConfig() (maxConcurrency int, timeout time.Duration)
 	SetTaskExecConfig(maxConcurrency int, timeout time.Duration)
 
-	GetTaskBackpressureConfig() mvs.TaskBackpressureConfig
-	SetTaskBackpressureConfig(cfg mvs.TaskBackpressureConfig) error
+	GetTaskBackpressureConfig() mvservice.TaskBackpressureConfig
+	SetTaskBackpressureConfig(cfg mvservice.TaskBackpressureConfig) error
 
 	GetRetryDelayConfig() (baseDelay, maxDelay time.Duration)
 	SetRetryDelayConfig(baseDelay, maxDelay time.Duration) error
@@ -63,7 +63,7 @@ type mvServiceRuntimeSettings struct {
 	maxConcurrency int
 	timeout        time.Duration
 
-	backpressureCfg mvs.TaskBackpressureConfig
+	backpressureCfg mvservice.TaskBackpressureConfig
 
 	retryBase time.Duration
 	retryMax  time.Duration

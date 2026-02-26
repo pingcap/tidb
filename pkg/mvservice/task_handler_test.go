@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvs
+package mvservice
 
 import (
 	"context"
@@ -678,14 +678,14 @@ func TestMVServiceTaskExecutionReportsDurationFailed(t *testing.T) {
 	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
 }
 
-func TestRegisterMVSBootstrapAndDDLHandler(t *testing.T) {
+func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	installMockTimeForTest(t)
 	called := atomic.Int32{}
 	var (
 		gotHandlerID notifier.HandlerID
 		gotHandler   notifier.SchemaChangeHandler
 	)
-	svc := RegisterMVS(context.Background(), func(id notifier.HandlerID, handler notifier.SchemaChangeHandler) {
+	svc := RegisterMVService(context.Background(), func(id notifier.HandlerID, handler notifier.SchemaChangeHandler) {
 		gotHandlerID = id
 		gotHandler = handler
 	}, mockSessionPool{}, func() {
@@ -742,7 +742,7 @@ func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
 	}
 	pool := recordingSessionPool{se: se}
 
-	got, err := (&serverHelper{}).fetchAllTiDBMVLogPurge(context.Background(), pool)
+	got, err := (&serviceHelper{}).fetchAllTiDBMVLogPurge(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, []string{testSQLFetchMVLogPurge}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
@@ -792,7 +792,7 @@ func TestServerHelperFetchAllTiDBMVRefresh(t *testing.T) {
 	}
 	pool := recordingSessionPool{se: se}
 
-	got, err := (&serverHelper{}).fetchAllTiDBMVRefresh(context.Background(), pool)
+	got, err := (&serviceHelper{}).fetchAllTiDBMVRefresh(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, []string{testSQLFetchMVRefresh}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
@@ -817,7 +817,7 @@ func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {
 	se := newRecordingSessionContext()
 	pool := recordingSessionPool{se: se}
 
-	nextRefresh, err := (&serverHelper{}).RefreshMV(context.Background(), pool, 100)
+	nextRefresh, err := (&serviceHelper{}).RefreshMV(context.Background(), pool, 100)
 	require.NoError(t, err)
 	require.True(t, nextRefresh.IsZero())
 	require.Empty(t, se.executedSQL)
@@ -842,7 +842,7 @@ func TestServerHelperRefreshMVSuccess(t *testing.T) {
 	withMockInfoSchema(t, mvTable)
 	pool := recordingSessionPool{se: se}
 
-	nextRefresh, err := (&serverHelper{}).RefreshMV(context.Background(), pool, 101)
+	nextRefresh, err := (&serviceHelper{}).RefreshMV(context.Background(), pool, 101)
 	require.NoError(t, err)
 	require.Equal(t, expectedNextRefresh.Unix(), nextRefresh.Unix())
 	require.Empty(t, se.executedSQL)
@@ -865,7 +865,7 @@ func TestServerHelperRefreshMVDeletedWhenNextTimeNotFound(t *testing.T) {
 	se.restrictedRows[testSQLFindMVNextTime] = nil
 	pool := recordingSessionPool{se: se}
 
-	nextRefresh, err := (&serverHelper{}).RefreshMV(context.Background(), pool, 101)
+	nextRefresh, err := (&serviceHelper{}).RefreshMV(context.Background(), pool, 101)
 	require.NoError(t, err)
 	require.True(t, nextRefresh.IsZero())
 	require.Empty(t, se.executedSQL)
@@ -880,7 +880,7 @@ func TestServerHelperPurgeMVLogDeletedWhenMetaNotFound(t *testing.T) {
 	se := newRecordingSessionContext()
 	pool := recordingSessionPool{se: se}
 
-	nextPurge, err := (&serverHelper{}).PurgeMVLog(context.Background(), pool, 200)
+	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 200)
 	require.NoError(t, err)
 	require.True(t, nextPurge.IsZero())
 	require.Empty(t, se.executedSQL)
@@ -899,7 +899,7 @@ func TestServerHelperPurgeMVLogSuccess(t *testing.T) {
 
 	pool := recordingSessionPool{se: se}
 
-	nextPurge, err := (&serverHelper{}).PurgeMVLog(context.Background(), pool, 201)
+	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
 	require.NoError(t, err)
 	require.False(t, nextPurge.IsZero())
 	require.True(t, nextPurge.After(mvsNow().Add(-2*time.Second)))
@@ -952,7 +952,7 @@ func TestPurgeMVLogSkipWhenAutoPurge(t *testing.T) {
 			setupPurgeMVLogMetaForTest(t, se, tc.nextRows(now))
 			pool := recordingSessionPool{se: se}
 
-			nextPurge, err := (&serverHelper{}).PurgeMVLog(context.Background(), pool, 201)
+			nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
 			require.NoError(t, err)
 			require.Equal(t, tc.expected(now), nextPurge)
 			require.Empty(t, se.executedSQL)

@@ -14,7 +14,7 @@
 
 //go:build intest
 
-package mvs
+package mvservice
 
 import (
 	"runtime"

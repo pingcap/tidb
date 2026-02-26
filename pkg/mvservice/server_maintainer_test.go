@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvs
+package mvservice
 
 import (
 	"context"
@@ -68,7 +68,7 @@ func (m *mockServerHelper) getAllServerInfo(_ context.Context) (map[string]serve
 	return res, nil
 }
 
-func newServerConsistentHashForTest(mapping map[string]uint32, helper ServerHelper, selfID string, serverIDs ...string) *ServerConsistentHash {
+func newServerConsistentHashForTest(mapping map[string]uint32, helper ServerDiscovery, selfID string, serverIDs ...string) *ServerConsistentHash {
 	sch := NewServerConsistentHash(context.Background(), 1, helper)
 	sch.chash.hashFunc = mustHash(mapping)
 	sch.ID = selfID

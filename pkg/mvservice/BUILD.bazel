@@ -1,23 +1,22 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "mvs",
+    name = "mvservice",
     srcs = [
+        "backpressure.go",
         "consistenthash.go",
-        "impl.go",
+        "executor.go",
         "metrics_reporter.go",
         "server_maintainer.go",
         "service.go",
-        "service_config.go",
-        "service_runtime.go",
-        "task_backpressure.go",
-        "task_executor.go",
+        "service_helper.go",
+        "service_settings.go",
         "task_handler.go",
         "time_proxy.go",
         "time_proxy_intest.go",  #keep
         "utils.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/mvs",
+    importpath = "github.com/pingcap/tidb/pkg/mvservice",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl/notifier",
@@ -39,16 +38,16 @@ go_library(
 )
 
 go_test(
-    name = "mvs_test",
+    name = "mvservice_test",
     timeout = "short",
     srcs = [
-        "mvs_test.go",
+        "mvservice_test.go",
         "server_maintainer_test.go",
         "task_handler_test.go",
         "time_proxy_test.go",  #keep
         "utils_test.go",
     ],
-    embed = [":mvs"],
+    embed = [":mvservice"],
     flaky = True,
     gotags = ["intest"],
     shard_count = 50,

@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvs
+package mvservice
 
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -38,9 +39,9 @@ type MVMetricsReporter interface {
 	observeRunEvent(eventType string)
 }
 
-// MVServiceHelper provides all external dependencies required by MVService.
-type MVServiceHelper interface {
-	ServerHelper
+// Helper provides all external dependencies required by MVService.
+type Helper interface {
+	ServerDiscovery
 	MVTaskHandler
 	MVMetricsReporter
 }
@@ -56,7 +57,7 @@ type MVService struct {
 	notifier Notifier
 	ddlDirty atomic.Bool
 
-	mh MVServiceHelper
+	mh Helper
 
 	fetchInterval         time.Duration
 	basicInterval         time.Duration
@@ -553,4 +554,188 @@ func (t *MVService) fetchAllMVMeta() error {
 
 	t.lastRefresh.Store(mvsNow().UnixMilli())
 	return nil
+}
+
+// resetTimer safely resets timer to delay, draining the channel when needed.
+func resetTimer(timer *mvsTimer, delay time.Duration) {
+	if delay < 0 {
+		delay = 0
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(delay)
+}
+
+// NotifyDDLChange marks MV metadata as dirty and wakes the service loop.
+func (t *MVService) NotifyDDLChange() {
+	t.ddlDirty.Store(true)
+	t.notifier.Wake()
+}
+
+// Run is the main scheduler loop for MVService.
+// It refreshes server topology, fetches metadata, dispatches due tasks, and reports metrics.
+func (t *MVService) Run() {
+	defer func() {
+		if r := recover(); r != nil {
+			t.mh.observeRunEvent(mvRunEventRecoveredPanic)
+			fields := append(t.runtimeLogFields(), zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
+			logutil.BgLogger().Error("MVService panicked", fields...)
+		}
+	}()
+	if !t.sch.init() {
+		t.mh.observeRunEvent(mvRunEventInitFailed)
+		return
+	}
+	t.executor.Run()
+	timer := mvsNewTimer(0)
+	metricTimer := mvsNewTimer(t.basicInterval)
+
+	defer func() {
+		timer.Stop()
+		metricTimer.Stop()
+		t.executor.Close()
+		t.mh.reportMetrics(t)
+	}()
+
+	lastServerRefresh := time.Time{}
+	for {
+		ddlDirty := false
+		select {
+		case <-timer.C:
+		case <-metricTimer.C:
+			t.mh.reportMetrics(t)
+			resetTimer(metricTimer, t.basicInterval)
+		case <-t.notifier.C:
+			t.notifier.clear()
+			ddlDirty = t.ddlDirty.Swap(false)
+		case <-t.ctx.Done():
+			return
+		}
+
+		now := mvsNow()
+
+		if now.Sub(lastServerRefresh) >= t.serverRefreshInterval {
+			if err := t.sch.refresh(); err != nil {
+				t.mh.observeRunEvent(mvRunEventServerRefreshError)
+				fields := append(t.runtimeLogFields(), zap.Error(err))
+				logutil.BgLogger().Warn("refresh all TiDB server info failed", fields...)
+			} else {
+				t.mh.observeRunEvent(mvRunEventServerRefreshOK)
+			}
+			lastServerRefresh = now
+		}
+
+		shouldFetch := t.shouldFetchMVMeta(now)
+		if ddlDirty || shouldFetch {
+			if ddlDirty {
+				t.mh.observeRunEvent(mvRunEventFetchByDDL)
+			}
+			if shouldFetch {
+				t.mh.observeRunEvent(mvRunEventFetchByInterval)
+			}
+			// Fetch metadata on demand; errors are throttled via lastRefresh update below.
+			if err := t.fetchAllMVMeta(); err != nil {
+				fields := append(t.runtimeLogFields(),
+					zap.Bool("ddl_dirty", ddlDirty),
+					zap.Bool("periodic_fetch", shouldFetch),
+					zap.Error(err),
+				)
+				logutil.BgLogger().Warn("fetch materialized view metadata failed", fields...)
+				// Keep retries bounded:
+				// - periodic fetch failure keeps existing fetchInterval throttling.
+				// - DDL-triggered failure retries sooner to reduce stale-window.
+				t.markFetchFailure(now, ddlDirty)
+			}
+		}
+
+		mvLogToPurge, mvToRefresh := t.fetchExecTasks(now)
+		t.purgeMVLog(mvLogToPurge)
+		t.refreshMV(mvToRefresh)
+
+		next := t.nextScheduleTime(now)
+		resetTimer(timer, mvsUntil(next))
+	}
+}
+
+// markFetchFailure records a synthetic lastRefresh to control next fetch time.
+func (t *MVService) markFetchFailure(now time.Time, ddlTriggered bool) {
+	if !ddlTriggered {
+		t.lastRefresh.Store(now.UnixMilli())
+		return
+	}
+
+	retryDelay := t.basicInterval
+	if retryDelay <= 0 {
+		retryDelay = defaultMVBasicInterval
+	}
+	if retryDelay > t.fetchInterval {
+		retryDelay = t.fetchInterval
+	}
+	// next fetch time = lastRefresh + fetchInterval = now + retryDelay
+	t.lastRefresh.Store(now.Add(retryDelay - t.fetchInterval).UnixMilli())
+}
+
+// shouldFetchMVMeta reports whether a periodic metadata refresh is due.
+func (t *MVService) shouldFetchMVMeta(now time.Time) bool {
+	last := t.lastRefresh.Load()
+	if last == 0 {
+		return true
+	}
+	return now.Sub(mvsUnixMilli(last)) >= t.fetchInterval
+}
+
+// nextFetchTime returns the next periodic metadata refresh time.
+func (t *MVService) nextFetchTime(now time.Time) time.Time {
+	last := t.lastRefresh.Load()
+	if last == 0 {
+		return now
+	}
+	next := mvsUnixMilli(last).Add(t.fetchInterval)
+	if next.Before(now) {
+		return now
+	}
+	return next
+}
+
+// nextDueTime returns the earliest due time among refresh and purge task queues.
+func (t *MVService) nextDueTime() (time.Time, bool) {
+	next := time.Time{}
+	has := false
+	{
+		t.mvRefreshMu.Lock()
+		if item := t.mvRefreshMu.prio.Front(); item != nil {
+			next = mvsUnixMilli(item.Value.orderTs)
+			has = true
+		}
+		t.mvRefreshMu.Unlock()
+	}
+
+	{
+		t.mvLogPurgeMu.Lock()
+		if item := t.mvLogPurgeMu.prio.Front(); item != nil {
+			due := mvsUnixMilli(item.Value.orderTs)
+			if !has || due.Before(next) {
+				next = due
+				has = true
+			}
+		}
+		t.mvLogPurgeMu.Unlock()
+	}
+	return next, has
+}
+
+// nextScheduleTime returns the next wake-up time for the scheduler loop.
+func (t *MVService) nextScheduleTime(now time.Time) time.Time {
+	next := t.nextFetchTime(now)
+	if due, ok := t.nextDueTime(); ok && due.Before(next) {
+		next = due
+	}
+	if next.Before(now) {
+		return now
+	}
+	return next
 }

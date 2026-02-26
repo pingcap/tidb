@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/server/handler/mvhandler",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/mvs",
+        "//pkg/mvservice",
         "//pkg/server/handler",
         "//pkg/session",
         "@com_github_pingcap_errors//:errors",
