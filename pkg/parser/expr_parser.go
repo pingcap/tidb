@@ -14,7 +14,6 @@
 package parser
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -537,7 +536,7 @@ func (p *HandParser) parseLikeExpr(left ast.ExprNode, isNot bool, isLike bool) a
 		case 1:
 			node.Escape = escTok.Lit[0]
 		default:
-			p.errs = append(p.errs, fmt.Errorf("[parser:1210]Incorrect arguments to ESCAPE"))
+			p.errs = append(p.errs, ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return nil
 		}
 	} else {

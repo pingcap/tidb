@@ -100,17 +100,17 @@ func (p *HandParser) parseConvertFunc() ast.ExprNode {
 	// CONVERT(expr USING charset_name)
 	if _, ok := p.accept(using); ok {
 		charsetTok := p.next()
-		charsetName := strings.ToLower(charsetTok.Lit)
-		if !charset.ValidCharsetAndCollation(charsetName, "") {
+		cs, err := charset.GetCharsetInfo(charsetTok.Lit)
+		if err != nil {
 			p.errs = append(p.errs, ErrUnknownCharacterSet.
-				GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
+				GenWithStackByArgs(charsetTok.Lit))
 			return nil
 		}
 		p.expect(')')
 		// Produce FuncCallExpr : FnName="convert", Args=[expr, charsetValueExpr]
 		return &ast.FuncCallExpr{
 			FnName: ast.NewCIStr("convert"),
-			Args:   []ast.ExprNode{expr, ast.NewValueExpr(charsetName, "", "")},
+			Args:   []ast.ExprNode{expr, ast.NewValueExpr(cs.Name, "", "")},
 		}
 	}
 
@@ -248,7 +248,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 			csInfo, err := charset.GetCharsetInfo(csTok.Lit)
 			if err != nil {
 				p.errs = append(p.errs, ErrUnknownCharacterSet.
-					GenWithStack("Unknown character set: '%s'", csTok.Lit))
+					GenWithStackByArgs(csTok.Lit))
 				return nil, false
 			}
 			csName := csInfo.Name

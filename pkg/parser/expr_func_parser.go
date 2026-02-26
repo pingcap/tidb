@@ -613,13 +613,13 @@ func (p *HandParser) parseCharFuncCall(node *ast.FuncCallExpr, lowerName string)
 	}
 	if _, ok := p.accept(using); ok {
 		charsetTok := p.next()
-		charsetName := strings.ToLower(charsetTok.Lit)
-		if !charset.ValidCharsetAndCollation(charsetName, "") {
+		cs, err := charset.GetCharsetInfo(charsetTok.Lit)
+		if err != nil {
 			p.errs = append(p.errs, ErrUnknownCharacterSet.
-				GenWithStack("Unknown character set: '%s'", charsetTok.Lit))
+				GenWithStackByArgs(charsetTok.Lit))
 			return nil
 		}
-		args = append(args, ast.NewValueExpr(charsetName, "", ""))
+		args = append(args, ast.NewValueExpr(cs.Name, "", ""))
 	} else if lowerName == "char" {
 		// Only add nil sentinel for the original CHAR() form, not CHAR_FUNC()
 		args = append(args, ast.NewValueExpr(nil, "", ""))

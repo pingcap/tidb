@@ -62,21 +62,19 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.accept(eq)
 		if tok, ok := p.acceptStringName(); ok {
 			opt.Tp = ast.TableOptionCharset
-			csName := strings.ToLower(tok.Lit)
-			cs, err := charset.GetCharsetInfo(csName)
+			cs, err := charset.GetCharsetInfo(tok.Lit)
 			if err != nil {
 				p.errs = append(p.errs,
-					ErrUnknownCharacterSet.GenWithStackByArgs(csName))
+					ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
 				return nil
 			}
 			opt.StrValue = cs.Name
 		} else if tok, ok := p.accept(binaryType); ok {
 			opt.Tp = ast.TableOptionCharset
-			csName := strings.ToLower(tok.Lit)
-			cs, err := charset.GetCharsetInfo(csName)
+			cs, err := charset.GetCharsetInfo(tok.Lit)
 			if err != nil {
 				p.errs = append(p.errs,
-					ErrUnknownCharacterSet.GenWithStackByArgs(csName))
+					ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
 				return nil
 			}
 			opt.StrValue = cs.Name
@@ -86,8 +84,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.accept(eq)
 		if tok, ok := p.acceptStringName(); ok {
 			opt.Tp = ast.TableOptionCollate
-			collName := strings.ToLower(tok.Lit)
-			coll, err := charset.GetCollationByName(collName)
+			coll, err := charset.GetCollationByName(tok.Lit)
 			if err != nil {
 				p.errs = append(p.errs, err)
 				return nil
@@ -95,8 +92,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			opt.StrValue = coll.Name
 		} else if tok, ok := p.accept(binaryType); ok {
 			opt.Tp = ast.TableOptionCollate
-			collName := strings.ToLower(tok.Lit)
-			coll, err := charset.GetCollationByName(collName)
+			coll, err := charset.GetCollationByName(tok.Lit)
 			if err != nil {
 				p.errs = append(p.errs, err)
 				return nil
@@ -198,7 +194,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 				return nil
 			}
 		}
-		p.warnNear(p.peek().Offset, warnMsg)
+		p.warnNear(p.peek().Offset, "%s", warnMsg)
 	case delayKeyWrite:
 		p.parseTableOptionUint(opt, ast.TableOptionDelayKeyWrite)
 	case shardRowIDBits:

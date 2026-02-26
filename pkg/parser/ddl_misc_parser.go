@@ -14,7 +14,6 @@
 package parser
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -265,8 +264,7 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			p.accept(eq)
 			opt.Tp = ast.DatabaseOptionCharset
 			rawCharset := p.next().Lit
-			csName := strings.ToLower(rawCharset)
-			cs, err := charset.GetCharsetInfo(csName)
+			cs, err := charset.GetCharsetInfo(rawCharset)
 			if err != nil || cs.Name == "" {
 				p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStackByArgs(rawCharset))
 				return nil
@@ -277,10 +275,9 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			p.accept(eq)
 			opt.Tp = ast.DatabaseOptionCollate
 			rawCollation := p.next().Lit
-			collName := strings.ToLower(rawCollation)
-			coll, err := charset.GetCollationByName(collName)
+			coll, err := charset.GetCollationByName(rawCollation)
 			if err != nil {
-				p.errs = append(p.errs, fmt.Errorf("[ddl:1273]Unknown collation: '%s'", rawCollation))
+				p.errs = append(p.errs, err)
 				return nil
 			}
 			opt.Value = coll.Name
@@ -310,7 +307,7 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			opt.Value = p.next().Lit
 			// Validate ENCRYPTION value — must be 'Y' or 'N'
 			if !strings.EqualFold(opt.Value, "Y") && !strings.EqualFold(opt.Value, "N") {
-				p.errs = append(p.errs, fmt.Errorf("[parser:1525]Incorrect argument (should be Y or N) value: '%s'", opt.Value))
+				p.errs = append(p.errs, ErrWrongValue.GenWithStackByArgs("argument (should be Y or N)", opt.Value))
 				return nil
 			}
 		case set:

@@ -14,7 +14,6 @@
 package parser
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -792,7 +791,7 @@ func (p *HandParser) parseTableName() *ast.TableName {
 
 		// Validate: empty or whitespace-only database name is invalid (MySQL error 1102)
 		if strings.TrimSpace(tok.Lit) == "" {
-			p.errs = append(p.errs, fmt.Errorf("[parser:1102]Incorrect database name '%s'", tok.Lit))
+			p.errs = append(p.errs, ErrWrongDBName.GenWithStackByArgs(tok.Lit))
 			return nil
 		}
 	} else {

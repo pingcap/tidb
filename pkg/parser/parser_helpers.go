@@ -17,7 +17,6 @@ package parser
 // parsing helpers used across the hand-written parser files.
 
 import (
-	"fmt"
 	"math"
 	"strings"
 
@@ -342,7 +341,7 @@ func (p *HandParser) parseFieldsClause(loadDataMode bool) *ast.FieldsClause {
 // Returns true if valid (single-char or "\\"), false and records [parser:1083] error otherwise.
 func (p *HandParser) isValidFieldSep(val string) bool {
 	if val != "\\" && len(val) > 1 {
-		p.errs = append(p.errs, fmt.Errorf("[parser:1083]Field separator argument is not what is expected; check the manual"))
+		p.errs = append(p.errs, ErrWrongFieldTerminators.GenWithStackByArgs())
 		return false
 	}
 	return true

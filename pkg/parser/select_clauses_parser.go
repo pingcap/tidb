@@ -287,21 +287,21 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 	if tok.Lit == "" {
 		return false
 	}
-	// Exclude reserved SQL keywords that cannot be aliases.
+	// Exclude reserved SQL keywords and structural tokens that cannot be aliases.
 	switch tok.Tp {
 	case selectKwd, from, where, group, order, limit,
 		having, set, update, deleteKwd, insert, into,
 		values, on, using, as, ifKwd, exists,
 		join, inner, cross, left, right, natural, straightJoin,
 		union, except, intersect,
-		use, ignore, force, fetch, offset,
+		use, ignore, force, fetch,
 		forKwd, lock, in, not, and, or, is, null,
 		trueKwd, falseKwd, like, between, caseKwd, when, then, elseKwd,
 		create, alter, drop, tableKwd, index, column,
 		primary, key, unique, foreign, check, constraint,
 		defaultKwd, all, distinct,
 		partition, with, window, over, groups,
-		row, function, of, tableSample,
+		row, of, tableSample,
 		// Window function names are reserved and cannot be aliases.
 		cumeDist, denseRank, firstValue, lag, lastValue,
 		lead, nthValue, ntile, percentRank, rank, rowNumber,
