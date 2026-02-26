@@ -97,6 +97,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 	switch node := in.(type) {
 	case *ast.SelectStmt:
 		if node.With != nil {
+			// Record the CTE visibility boundary for this query block.
 			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
 		}
 	case *ast.InsertStmt:
@@ -127,6 +128,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		return in, checker.skipForSubqueryDisabled()
 	case *ast.CommonTableExpression:
 		if node.IsRecursive {
+			// Recursive CTE can reference itself, so expose the name before traversing Query.
 			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
 		}
 		return in, false
@@ -204,6 +206,7 @@ func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch node := in.(type) {
 	case *ast.CommonTableExpression:
 		if !node.IsRecursive {
+			// Non-recursive CTE becomes visible only after its definition has been fully traversed.
 			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
 		}
 	case *ast.SelectStmt:
