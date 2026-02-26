@@ -16,7 +16,9 @@ package vertex
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -24,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/llm"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
@@ -53,7 +56,7 @@ func TestVertexClientCompleteRetriesOn429(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := newTestVertexClient(srv.URL)
-	text, err := client.Complete(context.Background(), "model", "hi")
+	text, err := client.Complete(context.Background(), "model", "hi", llm.CompleteOptions{})
 	require.NoError(t, err)
 	require.Equal(t, "ok", text)
 
@@ -62,6 +65,46 @@ func TestVertexClientCompleteRetriesOn429(t *testing.T) {
 	require.Equal(t, 3, attempts)
 	require.Equal(t, "/v1/projects/p1/locations/loc/publishers/google/models/model:generateContent", gotPath)
 	require.Equal(t, "Bearer test-token", gotAuth)
+}
+
+func TestVertexClientCompleteIncludesOptions(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		gotBody []byte
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		mu.Lock()
+		gotBody = body
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := newTestVertexClient(srv.URL)
+	temp := 0.2
+	topP := 0.9
+	opts := llm.CompleteOptions{
+		MaxTokens:   256,
+		Temperature: &temp,
+		TopP:        &topP,
+	}
+	_, err := client.Complete(context.Background(), "model", "hi", opts)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(gotBody, &payload))
+	gen, ok := payload["generationConfig"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(256), gen["maxOutputTokens"])
+	require.Equal(t, 0.2, gen["temperature"])
+	require.Equal(t, 0.9, gen["topP"])
 }
 
 func TestVertexClientEmbedReturnsVector(t *testing.T) {
