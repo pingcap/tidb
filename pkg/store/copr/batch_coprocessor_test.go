@@ -139,16 +139,115 @@ func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	}
 }
 
-func TestRetryBatchCopTaskForFullTextReturnsError(t *testing.T) {
-	it := &batchCopIterator{}
-	bo := backoff.NewBackofferWithVars(context.Background(), 1, nil)
-	task := &batchCopTask{
-		TableShardInfos: []*coprocessor.TableShardInfos{{}},
+type retryFullTextMockShardClient struct {
+	scanCalled int
+	lastRanges []kv.KeyRange
+	result     []*ShardWithAddr
+}
+
+func (m *retryFullTextMockShardClient) ScanRanges(_ context.Context, _ int64, _ int64, keyRanges []kv.KeyRange, _ int) ([]*ShardWithAddr, error) {
+	m.scanCalled++
+	m.lastRanges = append([]kv.KeyRange(nil), keyRanges...)
+	return m.result, nil
+}
+
+func (m *retryFullTextMockShardClient) Close() {}
+
+func TestRetryBatchCopTaskForFullTextInvalidatesShardsAndRebuildsTasks(t *testing.T) {
+	indexID := int64(99)
+	client := &retryFullTextMockShardClient{
+		result: []*ShardWithAddr{
+			{
+				Shard: Shard{
+					ShardID:  11,
+					Epoch:    2,
+					StartKey: []byte("a"),
+					EndKey:   []byte("c"),
+				},
+				localCacheAddrs: []string{"addr-new-1"},
+			},
+			{
+				Shard: Shard{
+					ShardID:  12,
+					Epoch:    2,
+					StartKey: []byte("c"),
+					EndKey:   []byte("e"),
+				},
+				localCacheAddrs: []string{"addr-new-2"},
+			},
+		},
 	}
+	cache := NewTiCIShardCache(client)
+
+	staleShard1 := &ShardWithAddr{
+		Shard: Shard{
+			ShardID:  1,
+			Epoch:    1,
+			StartKey: []byte("a"),
+			EndKey:   []byte("c"),
+		},
+		localCacheAddrs: []string{"addr-old"},
+	}
+	staleShard2 := &ShardWithAddr{
+		Shard: Shard{
+			ShardID:  2,
+			Epoch:    1,
+			StartKey: []byte("c"),
+			EndKey:   []byte("e"),
+		},
+		localCacheAddrs: []string{"addr-old"},
+	}
+	staleShard1.ttl.Store(time.Now().Unix() + shardCacheTTL)
+	staleShard2.ttl.Store(time.Now().Unix() + shardCacheTTL)
+	cache.insertShardToCache(indexID, staleShard1, true)
+	cache.insertShardToCache(indexID, staleShard2, true)
+
+	req := &kv.Request{
+		FullText: true,
+	}
+	req.FullTextInfo.TableID = 1
+	req.FullTextInfo.IndexID = indexID
+	req.FullTextInfo.ExecutorID = "executor-1"
+
+	it := &batchCopIterator{
+		store: &kvStore{
+			TiCIShardCache: cache,
+		},
+		req: req,
+	}
+	task := &batchCopTask{
+		TableShardInfos: []*coprocessor.TableShardInfos{
+			{
+				ExecutorId: "executor-1",
+				ShardInfos: []*coprocessor.ShardInfo{
+					{
+						ShardId: 1,
+						Ranges:  []*coprocessor.KeyRange{{Start: []byte("a"), End: []byte("c")}},
+					},
+					{
+						ShardId: 2,
+						Ranges:  []*coprocessor.KeyRange{{Start: []byte("c"), End: []byte("e")}},
+					},
+				},
+			},
+		},
+	}
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 1, nil)
 	ret, err := it.retryBatchCopTask(context.Background(), bo, task)
-	require.Nil(t, ret)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "tiflash_fts node is unavailable")
+	require.NoError(t, err)
+	require.Len(t, ret, 2)
+	require.Equal(t, 1, client.scanCalled)
+	require.Equal(t, []kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("c")},
+		{StartKey: []byte("c"), EndKey: []byte("e")},
+	}, client.lastRanges)
+	addrs := []string{ret[0].storeAddr, ret[1].storeAddr}
+	require.ElementsMatch(t, []string{"addr-new-1", "addr-new-2"}, addrs)
+	require.Nil(t, cache.GetCachedShardWithRLock(1))
+	require.Nil(t, cache.GetCachedShardWithRLock(2))
+	require.False(t, staleShard1.CheckShardCacheTTL(time.Now().Unix()))
+	require.False(t, staleShard2.CheckShardCacheTTL(time.Now().Unix()))
 }
 
 func TestDeepCopyStoreTaskMap(t *testing.T) {

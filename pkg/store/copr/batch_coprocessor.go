@@ -1407,10 +1407,21 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	// FullText batch cop tasks contain TableShardInfos only. They don't have regionInfos/PartitionTableRegions, so we
-	// cannot retry by rebuilding tasks with regions; return an error instead of silently producing an empty task set.
 	if batchTask.TableShardInfos != nil {
-		return nil, errors.New("tiflash_fts node is unavailable")
+		retryRanges, retryShardIDs := collectFullTextRetryRanges(batchTask.TableShardInfos)
+		if len(retryRanges) == 0 {
+			return nil, errors.New("tiflash_fts node is unavailable")
+		}
+		for _, shardID := range retryShardIDs {
+			b.store.GetTiCIShardCache().InvalidateCachedShard(shardID)
+		}
+		return buildBatchCopTasksForFullText(
+			b.store,
+			b.req.FullTextInfo.TableID,
+			b.req.FullTextInfo.IndexID,
+			b.req.FullTextInfo.ExecutorID,
+			NewKeyRanges(retryRanges),
+		)
 	}
 	if batchTask.regionInfos != nil {
 		var ranges []kv.KeyRange
@@ -1448,6 +1459,30 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 	}
 	ret, err := buildBatchCopTasksForPartitionedTable(ctx, bo, b.store, keyRanges, b.req.StoreType, false, 0, false, 0, pid, tiflashcompute.DispatchPolicyInvalid, b.tiflashReplicaReadPolicy, b.appendWarning)
 	return ret, err
+}
+
+func collectFullTextRetryRanges(tableShardInfos []*coprocessor.TableShardInfos) ([]kv.KeyRange, []uint64) {
+	retryRanges := make([]kv.KeyRange, 0, len(tableShardInfos))
+	retryShardIDs := make([]uint64, 0, len(tableShardInfos))
+	seenShardIDs := make(map[uint64]struct{}, len(tableShardInfos))
+	for _, tableShardInfo := range tableShardInfos {
+		for _, shardInfo := range tableShardInfo.ShardInfos {
+			if _, ok := seenShardIDs[shardInfo.ShardId]; !ok {
+				seenShardIDs[shardInfo.ShardId] = struct{}{}
+				retryShardIDs = append(retryShardIDs, shardInfo.ShardId)
+			}
+			for _, ran := range shardInfo.Ranges {
+				retryRanges = append(retryRanges, kv.KeyRange{
+					StartKey: ran.Start,
+					EndKey:   ran.End,
+				})
+			}
+		}
+	}
+	slices.SortFunc(retryRanges, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
+	})
+	return retryRanges, retryShardIDs
 }
 
 // TiFlashReadTimeoutUltraLong represents the max time that tiflash request may take, since it may scan many regions for tiflash.
