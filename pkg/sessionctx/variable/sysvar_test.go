@@ -1969,6 +1969,21 @@ func TestTiDBLLMSysvars(t *testing.T) {
 	require.NotNil(t, timeoutVar)
 	require.Equal(t, vardef.ScopeGlobal, timeoutVar.Scope)
 	require.Equal(t, vardef.TypeDuration, timeoutVar.Type)
+
+	maxTokensVar := GetSysVar(vardef.TiDBLLMMaxTokens)
+	require.NotNil(t, maxTokensVar)
+	require.Equal(t, vardef.ScopeGlobal, maxTokensVar.Scope)
+	require.Equal(t, vardef.TypeInt, maxTokensVar.Type)
+
+	temperatureVar := GetSysVar(vardef.TiDBLLMTemperature)
+	require.NotNil(t, temperatureVar)
+	require.Equal(t, vardef.ScopeGlobal, temperatureVar.Scope)
+	require.Equal(t, vardef.TypeFloat, temperatureVar.Type)
+
+	topPVar := GetSysVar(vardef.TiDBLLMTopP)
+	require.NotNil(t, topPVar)
+	require.Equal(t, vardef.ScopeGlobal, topPVar.Scope)
+	require.Equal(t, vardef.TypeFloat, topPVar.Type)
 }
 
 func readSessionCacheCapacity(t *testing.T, cache *modelruntime.SessionCache) uint {
