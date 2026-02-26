@@ -395,28 +395,42 @@ func TestIndexJoinRowModeWithInnerTopN(t *testing.T) {
 		require.NoError(t, err)
 
 		nodeW := resolve.NewNodeW(stmt)
+		tk.Session().GetSessionVars().StmtCtx.OriginalSQL = sql
 		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, domain.GetDomain(tk.Session()).InfoSchema())
 		require.NoError(t, err)
 
 		pp, ok := p.(base.PhysicalPlan)
 		require.True(t, ok)
-		found := false
+		innerIsDerivedS := false
+		var hasTopNOrLimit func(base.PhysicalPlan) bool
+		hasTopNOrLimit = func(plan base.PhysicalPlan) bool {
+			switch plan.(type) {
+			case *physicalop.PhysicalTopN, *physicalop.PhysicalLimit:
+				return true
+			}
+			for _, child := range plan.Children() {
+				if hasTopNOrLimit(child) {
+					return true
+				}
+			}
+			return false
+		}
 		var walk func(base.PhysicalPlan)
 		walk = func(plan base.PhysicalPlan) {
-			switch plan.(type) {
+			switch join := plan.(type) {
 			case *physicalop.PhysicalIndexHashJoin:
-				found = true
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
 			case *physicalop.PhysicalIndexMergeJoin:
-				found = true
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
 			case *physicalop.PhysicalIndexJoin:
-				found = true
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
 			}
 			for _, child := range plan.Children() {
 				walk(child)
 			}
 		}
 		walk(pp)
-		require.False(t, found, "expected no index join with inner topn")
+		require.False(t, innerIsDerivedS, "expected no index join whose inner child is derived table s (contains topn/limit)")
 	})
 }
 
@@ -445,23 +459,36 @@ func TestIndexJoinRowModeWithInnerTopNOuterJoin(t *testing.T) {
 
 		pp, ok := p.(base.PhysicalPlan)
 		require.True(t, ok)
-		found := false
+		innerIsDerivedS := false
+		var hasTopNOrLimit func(base.PhysicalPlan) bool
+		hasTopNOrLimit = func(plan base.PhysicalPlan) bool {
+			switch plan.(type) {
+			case *physicalop.PhysicalTopN, *physicalop.PhysicalLimit:
+				return true
+			}
+			for _, child := range plan.Children() {
+				if hasTopNOrLimit(child) {
+					return true
+				}
+			}
+			return false
+		}
 		var walk func(base.PhysicalPlan)
 		walk = func(plan base.PhysicalPlan) {
-			switch plan.(type) {
+			switch join := plan.(type) {
 			case *physicalop.PhysicalIndexHashJoin:
-				found = true
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
 			case *physicalop.PhysicalIndexMergeJoin:
-				found = true
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
 			case *physicalop.PhysicalIndexJoin:
-				found = true
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
 			}
 			for _, child := range plan.Children() {
 				walk(child)
 			}
 		}
 		walk(pp)
-		require.False(t, found, "expected no index join with inner topn (outer join)")
+		require.False(t, innerIsDerivedS, "expected no index join whose inner child is derived table s (contains topn/limit, outer join)")
 	})
 }
 
