@@ -636,6 +636,7 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	}
 
 	// EXPLAIN SELECT|INSERT|UPDATE|DELETE|... → parse sub-statement
+	subStartOff := p.peek().Offset
 	var sub ast.StmtNode
 	switch p.peek().Tp {
 	case selectKwd, insert, replace, update, deleteKwd,
@@ -666,11 +667,15 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	if sub == nil {
 		return nil
 	}
-	// Do NOT set Text() on the inner sub-statement. The yacc parser leaves the
-	// inner statement's Text() empty, and the binding system relies on that:
-	// NormalizeStmtForBinding returns ("","") for statements with empty Text(),
-	// which prevents double binding-match (once for the ExplainStmt wrapper and
-	// again when buildExplain re-optimizes the inner statement).
+	// For EXPLAIN EXPLORE, set Text on the inner statement (the yacc parser does this).
+	// For regular EXPLAIN, do NOT set Text — the binding system relies on empty Text().
+	if stmt.Explore {
+		endOff := p.peek().Offset
+		if p.peek().Tp == EOF {
+			endOff = len(p.src)
+		}
+		sub.SetText(p.connectionEncoding, strings.TrimSpace(p.src[subStartOff:endOff]))
+	}
 	stmt.Stmt = sub
 	return stmt
 }
