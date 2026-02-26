@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
@@ -76,6 +77,10 @@ type importStepExecutor struct {
 	perIndexKVMemSizePerCon uint64
 	indexBlockSize          int
 	dataBlockSize           int
+	// concurrency is the number of workers to use for encode and sort.
+	// For parquet format, this is capped by memory to avoid OOM.
+	concurrency          int
+	estimateConcOnce     sync.Once
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -170,12 +175,57 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
 	s.dataBlockSize = external.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
 	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, external.DefaultBlockSize)
+	s.concurrency = int(s.GetResource().CPU.Capacity())
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
 		zap.String("data-buf-block-size", units.BytesSize(float64(s.dataBlockSize))),
 		zap.String("index-buf-block-size", units.BytesSize(float64(s.indexBlockSize))))
 	return nil
+}
+
+// estimateAndSetConcurrency estimates the memory usage for the data reader
+// and adjusts concurrency if needed. For parquet format, it reads the first
+// row group with a tracking allocator to measure peak memory. This should only
+// be called once.
+func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, store storeapi.Storage, chunks []importer.Chunk) {
+	if len(chunks) == 0 || store == nil {
+		return
+	}
+	// We assume all files in the same task have the same format.
+	if chunks[0].Type != mydump.SourceTypeParquet {
+		return
+	}
+
+	peakMem, err := mydump.EstimateParquetReaderMemory(ctx, store, chunks[0].Path)
+	if err != nil {
+		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
+			zap.Error(err))
+		return
+	}
+	if peakMem <= 0 {
+		return
+	}
+
+	// 50% of total memory is used by writer, the rest is for reader and other things.
+	// Reader can use up to 60% of the rest memory.
+	totalMem := s.GetResource().Mem.Capacity()
+	readerMemBudget := int64(float64(totalMem) * 0.5 * 0.6)
+	memBasedConcurrency := int(readerMemBudget / peakMem)
+	if memBasedConcurrency < 1 {
+		memBasedConcurrency = 1
+	}
+
+	if memBasedConcurrency < s.concurrency {
+		s.logger.Info("adjusting concurrency based on parquet memory estimation",
+			zap.Int("cpu-concurrency", s.concurrency),
+			zap.Int("mem-concurrency", memBasedConcurrency),
+			zap.String("total-mem", units.BytesSize(float64(totalMem))),
+			zap.String("reader-mem-budget", units.BytesSize(float64(readerMemBudget))),
+			zap.String("peak-mem-per-reader", units.BytesSize(float64(peakMem))),
+		)
+		s.concurrency = memBasedConcurrency
+	}
 }
 
 // Accepted implements Collector.Accepted interface.
@@ -268,6 +318,11 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		}
 	}()
 
+	// Estimate memory usage and adjust concurrency if needed (e.g. for parquet).
+	s.estimateConcOnce.Do(func() {
+		s.estimateAndSetConcurrency(ctx, objStore, subtaskMeta.Chunks)
+	})
+
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
 	for _, chunk := range subtaskMeta.Chunks {
@@ -280,7 +335,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	sourceOp := operator.NewSimpleDataSource(wctx, tasks)
-	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, s.concurrency)
 	operator.Compose(sourceOp, op)
 
 	pipe := operator.NewAsyncPipeline(sourceOp, op)
