@@ -7,10 +7,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/llm",
-        "@com_github_aws_aws_sdk_go//aws",
-        "@com_github_aws_aws_sdk_go//aws/credentials",
-        "@com_github_aws_aws_sdk_go//aws/session",
-        "@com_github_aws_aws_sdk_go//service/bedrockruntime",
+        "@com_github_aws_aws_sdk_go_v2//aws",
+        "@com_github_aws_aws_sdk_go_v2_config//:config",
+        "@com_github_aws_aws_sdk_go_v2_service_bedrockruntime//:bedrockruntime",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -23,7 +22,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/util/llm",
-        "@com_github_aws_aws_sdk_go//aws/credentials",
+        "@com_github_aws_aws_sdk_go_v2_credentials//:credentials",
         "@com_github_stretchr_testify//require",
     ],
 )

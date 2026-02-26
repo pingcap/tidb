@@ -21,10 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/bedrockruntime"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/llm"
 )
@@ -39,13 +38,13 @@ type Config struct {
 	Region              string
 	Endpoint            string
 	Timeout             time.Duration
-	Credentials         *credentials.Credentials
+	CredentialsProvider aws.CredentialsProvider
 	HTTPClient          *http.Client
 }
 
 // Client talks to AWS Bedrock Runtime endpoints.
 type Client struct {
-	runtime *bedrockruntime.BedrockRuntime
+	runtime *bedrockruntime.Client
 }
 
 // NewClient creates a Bedrock client with default AWS credential chain.
@@ -53,24 +52,36 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.Region == "" {
 		return nil, errors.New("bedrock region is required")
 	}
-	_ = ctx
-	awsCfg := aws.NewConfig().WithRegion(cfg.Region)
-	if cfg.Endpoint != "" {
-		awsCfg.WithEndpoint(cfg.Endpoint)
+	loadOpts := []func(*config.LoadOptions) error{
+		config.WithRegion(cfg.Region),
 	}
-	if cfg.Credentials != nil {
-		awsCfg.WithCredentials(cfg.Credentials)
+	if cfg.CredentialsProvider != nil {
+		loadOpts = append(loadOpts, config.WithCredentialsProvider(cfg.CredentialsProvider))
 	}
-	if cfg.HTTPClient != nil {
-		awsCfg.WithHTTPClient(cfg.HTTPClient)
-	} else if cfg.Timeout > 0 {
-		awsCfg.WithHTTPClient(&http.Client{Timeout: cfg.Timeout})
-	}
-	sess, err := session.NewSession(awsCfg)
+	awsCfg, err := config.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Client{runtime: bedrockruntime.New(sess)}, nil
+	if cfg.Endpoint != "" {
+		awsCfg.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, _ ...interface{}) (aws.Endpoint, error) {
+				if service == bedrockruntime.ServiceID {
+					return aws.Endpoint{
+						URL:               cfg.Endpoint,
+						SigningRegion:     cfg.Region,
+						HostnameImmutable: true,
+					}, nil
+				}
+				return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+			},
+		)
+	}
+	if cfg.HTTPClient != nil {
+		awsCfg.HTTPClient = cfg.HTTPClient
+	} else if cfg.Timeout > 0 {
+		awsCfg.HTTPClient = &http.Client{Timeout: cfg.Timeout}
+	}
+	return &Client{runtime: bedrockruntime.NewFromConfig(awsCfg)}, nil
 }
 
 // Complete calls InvokeModel and returns the first result text.
@@ -89,7 +100,7 @@ func (c *Client) Complete(ctx context.Context, model, prompt string, opts llm.Co
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	resp, err := c.runtime.InvokeModelWithContext(ctx, &bedrockruntime.InvokeModelInput{
+	resp, err := c.runtime.InvokeModel(ctx, &bedrockruntime.InvokeModelInput{
 		ModelId:     aws.String(model),
 		ContentType: aws.String("application/json"),
 		Accept:      aws.String("application/json"),
@@ -120,7 +131,7 @@ func (c *Client) EmbedText(ctx context.Context, model, text string) ([]float32, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp, err := c.runtime.InvokeModelWithContext(ctx, &bedrockruntime.InvokeModelInput{
+	resp, err := c.runtime.InvokeModel(ctx, &bedrockruntime.InvokeModelInput{
 		ModelId:     aws.String(model),
 		ContentType: aws.String("application/json"),
 		Accept:      aws.String("application/json"),

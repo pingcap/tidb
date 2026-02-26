@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "integration_test.go",
+        "llm_bedrock_test.go",
         "main_test.go",
     ],
     flaky = True,

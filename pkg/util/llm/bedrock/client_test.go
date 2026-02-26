@@ -20,10 +20,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/pingcap/tidb/pkg/util/llm"
 	"github.com/stretchr/testify/require"
 )
@@ -94,13 +96,23 @@ func TestBedrockClientValidatesModelPrefix(t *testing.T) {
 	require.Contains(t, err.Error(), "amazon.titan-embed-text")
 }
 
+func TestBedrockClientUsesSDKv2(t *testing.T) {
+	client := newTestClient(t, "http://localhost")
+	rtType := reflect.TypeOf(client.runtime)
+	require.NotNil(t, rtType)
+	for rtType.Kind() == reflect.Ptr {
+		rtType = rtType.Elem()
+	}
+	require.True(t, strings.Contains(rtType.PkgPath(), "aws-sdk-go-v2"), "runtime client should be aws-sdk-go-v2")
+}
+
 func newTestClient(t *testing.T, endpoint string) *Client {
 	t.Helper()
 	client, err := NewClient(context.Background(), Config{
 		Region:              "us-east-1",
 		Endpoint:            endpoint,
 		Timeout:             2 * time.Second,
-		Credentials:         credentials.NewStaticCredentials("akid", "secret", ""),
+		CredentialsProvider: credentials.NewStaticCredentialsProvider("akid", "secret", ""),
 	})
 	require.NoError(t, err)
 	return client

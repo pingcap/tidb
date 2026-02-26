@@ -28,6 +28,8 @@ record_case=""
 stats="s"
 collation_opt=2
 runs_on_port=0
+llm_bedrock_enabled=0
+llm_bedrock_endpoint=""
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
@@ -101,6 +103,82 @@ function find_multiple_available_ports() {
     done
 
     echo "${ports[@]}"
+}
+
+function should_enable_llm_bedrock() {
+    if [ $record -eq 1 ]; then
+        if [ "$record_case" = "all" ]; then
+            return 0
+        fi
+        if [[ "$record_case" == *"llm_bedrock"* ]]; then
+            return 0
+        fi
+        return 1
+    fi
+    if [ -z "$tests" ]; then
+        return 0
+    fi
+    if [[ "$tests" == *"llm_bedrock"* ]]; then
+        return 0
+    fi
+    return 1
+}
+
+function start_llm_bedrock_stub() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "python3 is required for llm_bedrock integration tests" >&2
+        exit 1
+    fi
+    local port
+    port=$(find_available_port 19000)
+    llm_bedrock_endpoint="http://127.0.0.1:${port}"
+    export AWS_ACCESS_KEY_ID="test"
+    export AWS_SECRET_ACCESS_KEY="test"
+    export AWS_EC2_METADATA_DISABLED="true"
+    LLM_BEDROCK_PORT="$port" python3 - <<'PY' &
+import json
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+port = int(os.environ["LLM_BEDROCK_PORT"])
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length:
+            _ = self.rfile.read(length)
+        if "amazon.titan-embed-text-" in self.path:
+            payload = {"embedding": [0.1, 0.2, 0.3]}
+        else:
+            payload = {"results": [{"outputText": "ok"}]}
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format, *_args):
+        return
+
+
+HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+PY
+}
+
+function prepare_llm_bedrock_config() {
+    local base_config="$1"
+    local tmp_config
+    tmp_config=$(mktemp /tmp/tidb_llm_bedrock.XXXXXX)
+    cp "$base_config" "$tmp_config"
+    cat >> "$tmp_config" <<EOF
+[llm]
+provider = "bedrock"
+bedrock_region = "us-east-1"
+bedrock_endpoint = "${llm_bedrock_endpoint}"
+EOF
+    echo "$tmp_config"
 }
 
 function build_tidb_server()
@@ -249,11 +327,21 @@ then
     status=${ports[1]}
 fi
 
+if should_enable_llm_bedrock; then
+    llm_bedrock_enabled=1
+    if [ "$runs_on_port" -eq 0 ]; then
+        start_llm_bedrock_stub
+    fi
+fi
+
 function start_tidb_server()
 {
-    config_file="config.toml"
+    config_file="${ROOT_DIR}/tests/integrationtest/config.toml"
     if [[ $enabled_new_collation = 0 ]]; then
-        config_file="disable_new_collation.toml"
+        config_file="${ROOT_DIR}/tests/integrationtest/disable_new_collation.toml"
+    fi
+    if [ "$llm_bedrock_enabled" -eq 1 ]; then
+        config_file=$(prepare_llm_bedrock_config "$config_file")
     fi
 
     start_options="-P $port -status $status -config $config_file"

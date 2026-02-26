@@ -1,0 +1,17 @@
+use test;
+set global tidb_enable_llm_inference = on;
+set global tidb_llm_default_model = 'amazon.titan-text-v1';
+set global tidb_llm_max_tokens = 16;
+set global tidb_llm_temperature = 0.2;
+set global tidb_llm_top_p = 0.9;
+create user if not exists llm_user;
+grant select on test.* to 'llm_user'@'%';
+grant LLM_EXECUTE on *.* to 'llm_user'@'%';
+select llm_complete('hi');
+llm_complete('hi')
+ok
+set global tidb_llm_default_model = 'amazon.titan-embed-text-v1';
+select vec_dims(llm_embed_text('hi'));
+vec_dims(llm_embed_text('hi'))
+3
+drop user if exists llm_user;
