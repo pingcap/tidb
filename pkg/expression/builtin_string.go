@@ -529,13 +529,16 @@ func (b *builtinLeftUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	if isNull || err != nil {
 		return "", true, err
 	}
-	runes, leftLength := []rune(str), int(left)
-	if runeLength := len(runes); leftLength > runeLength {
-		leftLength = runeLength
-	} else if leftLength < 0 {
+	leftLength := int(left)
+	if leftLength < 0 {
 		leftLength = 0
 	}
-	return string(runes[:leftLength]), false, nil
+	byteIdx := 0
+	for j := 0; j < leftLength && byteIdx < len(str); j++ {
+		_, size := utf8.DecodeRuneInString(str[byteIdx:])
+		byteIdx += size
+	}
+	return str[:byteIdx], false, nil
 }
 
 type rightFunctionClass struct {
@@ -622,14 +625,14 @@ func (b *builtinRightUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string
 	if isNull || err != nil {
 		return "", true, err
 	}
-	runes := []rune(str)
-	strLength, rightLength := len(runes), int(right)
+	strLength := utf8.RuneCountInString(str)
+	rightLength := int(right)
 	if rightLength > strLength {
 		rightLength = strLength
 	} else if rightLength < 0 {
 		rightLength = 0
 	}
-	return string(runes[strLength-rightLength:]), false, nil
+	return str[runeByteIndex(str, strLength-rightLength):], false, nil
 }
 
 type repeatFunctionClass struct {
@@ -1588,7 +1591,7 @@ func (b *builtinLocate2ArgsUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if int64(len([]rune(subStr))) == 0 {
+	if int64(utf8.RuneCountInString(subStr)) == 0 {
 		return 1, false, nil
 	}
 
@@ -1675,13 +1678,13 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	subStrLen := len([]rune(subStr))
-	if pos < 0 || pos > int64(len([]rune(str))-subStrLen) {
+	subStrLen := utf8.RuneCountInString(subStr)
+	if pos < 0 || pos > int64(utf8.RuneCountInString(str)-subStrLen) {
 		return 0, false, nil
 	} else if subStrLen == 0 {
 		return pos + 1, false, nil
 	}
-	slice := string([]rune(str)[pos:])
+	slice := str[runeByteIndex(str, int(pos)):]
 
 	idx := locateStringWithCollation(slice, subStr, b.collation)
 	if idx != 0 {
@@ -2238,7 +2241,7 @@ func (b *builtinLpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	if isNull || err != nil {
 		return "", true, err
 	}
-	runeLength := len([]rune(str))
+	runeLength := utf8.RuneCountInString(str)
 
 	length, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
@@ -2254,7 +2257,7 @@ func (b *builtinLpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	if isNull || err != nil {
 		return "", true, err
 	}
-	padLength := len([]rune(padStr))
+	padLength := utf8.RuneCountInString(padStr)
 
 	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
 		return "", true, nil
@@ -2265,9 +2268,10 @@ func (b *builtinLpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 
 	if tailLen := targetLength - runeLength; tailLen > 0 {
 		repeatCount := tailLen/padLength + 1
-		str = string([]rune(strings.Repeat(padStr, repeatCount))[:tailLen]) + str
+		repeated := strings.Repeat(padStr, repeatCount)
+		str = repeated[:runeByteIndex(repeated, tailLen)] + str
 	}
-	return string([]rune(str)[:targetLength]), false, nil
+	return str[:runeByteIndex(str, targetLength)], false, nil
 }
 
 type rpadFunctionClass struct {
@@ -2368,7 +2372,7 @@ func (b *builtinRpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	if isNull || err != nil {
 		return "", true, err
 	}
-	runeLength := len([]rune(str))
+	runeLength := utf8.RuneCountInString(str)
 
 	length, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
@@ -2384,7 +2388,7 @@ func (b *builtinRpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	if isNull || err != nil {
 		return "", true, err
 	}
-	padLength := len([]rune(padStr))
+	padLength := utf8.RuneCountInString(padStr)
 
 	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
 		return "", true, nil
@@ -2397,7 +2401,7 @@ func (b *builtinRpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 		repeatCount := tailLen/padLength + 1
 		str = str + strings.Repeat(padStr, repeatCount)
 	}
-	return string([]rune(str)[:targetLength]), false, nil
+	return str[:runeByteIndex(str, targetLength)], false, nil
 }
 
 type bitLengthFunctionClass struct {
@@ -2612,7 +2616,7 @@ func (b *builtinCharLengthUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int6
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return int64(len([]rune(val))), false, nil
+	return int64(utf8.RuneCountInString(val)), false, nil
 }
 
 type findInSetFunctionClass struct {
