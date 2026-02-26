@@ -39,8 +39,7 @@ type tableResultWriter struct {
 	oldRow  []types.Datum
 	newRow  []types.Datum
 	touched []bool
-	// prevTouched keeps touched writable indexes set by previous update row,
-	// so we only clear those indexes on next row.
+	// prevTouched caches touched indexes from previous update row.
 	prevTouched []int
 }
 

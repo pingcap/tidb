@@ -88,8 +88,8 @@ func TestCountAndNullableSum(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().ExecutorConcurrency = 2
 
-	// [0]=delta_count(*), [1]=delta_sum(b), [2]=delta_count(b), [3]=group_key,
-	// [4]=mv_count(*), [5]=mv_sum(b), [6]=mv_count(b)
+	// Schema: [0] delta_count(*), [1] delta_sum(b), [2] delta_count(b), [3] group_key,
+	// [4] mv_count(*), [5] mv_sum(b), [6] mv_count(b).
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftDec := types.NewFieldType(mysql.TypeNewDecimal)
 	fts := []*types.FieldType{ftInt, ftDec, ftInt, ftInt, ftInt, ftDec, ftInt}
@@ -173,7 +173,7 @@ func TestCountAndNonNullSumReal(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().ExecutorConcurrency = 2
 
-	// [0]=delta_count(*), [1]=delta_sum(x), [2]=group_key, [3]=mv_count(*), [4]=mv_sum(x)
+	// Schema: [0] delta_count(*), [1] delta_sum(x), [2] group_key, [3] mv_count(*), [4] mv_sum(x).
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftReal := types.NewFieldType(mysql.TypeDouble)
 	fts := []*types.FieldType{ftInt, ftReal, ftInt, ftInt, ftReal}
@@ -245,7 +245,7 @@ func TestCountAndNonNullSumUnsignedInt(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().ExecutorConcurrency = 2
 
-	// [0]=delta_count(*), [1]=delta_sum(x), [2]=mv_count(*), [3]=mv_sum(x unsigned)
+	// Schema: [0] delta_count(*), [1] delta_sum(x), [2] mv_count(*), [3] mv_sum(x unsigned).
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftUInt := types.NewFieldType(mysql.TypeLonglong)
 	ftUInt.AddFlag(mysql.UnsignedFlag)
@@ -312,8 +312,8 @@ func TestCountAndNullableSumUnsignedInt(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().ExecutorConcurrency = 2
 
-	// [0]=delta_count(*), [1]=delta_sum(b), [2]=delta_count(b), [3]=group_key,
-	// [4]=mv_count(*), [5]=mv_sum(b unsigned), [6]=mv_count(b)
+	// Schema: [0] delta_count(*), [1] delta_sum(b), [2] delta_count(b), [3] group_key,
+	// [4] mv_count(*), [5] mv_sum(b unsigned), [6] mv_count(b).
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftUInt := types.NewFieldType(mysql.TypeLonglong)
 	ftUInt.AddFlag(mysql.UnsignedFlag)
@@ -391,7 +391,7 @@ func TestRejectSumUnsignedDelta(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().ExecutorConcurrency = 2
 
-	// [0]=delta_count(*), [1]=delta_sum(x unsigned), [2]=mv_count(*), [3]=mv_sum(x signed)
+	// Schema: [0] delta_count(*), [1] delta_sum(x unsigned), [2] mv_count(*), [3] mv_sum(x signed).
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftUInt := types.NewFieldType(mysql.TypeLonglong)
 	ftUInt.AddFlag(mysql.UnsignedFlag)
@@ -436,7 +436,7 @@ func TestRejectNullableSumCountDependencyFromDelta(t *testing.T) {
 	fts := []*types.FieldType{
 		ftInt, // [0] delta_count(*)
 		ftInt, // [1] delta_sum(x)
-		ftInt, // [2] delta_count(x) -- invalid for nullable sum dependency (must be final merged count)
+		ftInt, // [2] delta_count(x), invalid for nullable SUM dependency.
 		ftInt, // [3] mv_count(*)
 		ftInt, // [4] mv_sum(x)
 		ftInt, // [5] mv_count(x)
@@ -465,7 +465,7 @@ func TestRejectSumTypeMismatch(t *testing.T) {
 	sctx := mock.NewContext()
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftReal := types.NewFieldType(mysql.TypeDouble)
-	// [0]=delta_count(*), [1]=delta_sum(x int), [2]=mv_count(*), [3]=mv_sum(x real)
+	// Schema: [0] delta_count(*), [1] delta_sum(x int), [2] mv_count(*), [3] mv_sum(x real).
 	fts := []*types.FieldType{ftInt, ftInt, ftInt, ftReal}
 	src := newMockSource(sctx, fts, nil)
 
@@ -491,7 +491,7 @@ func TestRejectCountTypeMismatch(t *testing.T) {
 	sctx := mock.NewContext()
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftReal := types.NewFieldType(mysql.TypeDouble)
-	// [0]=delta_count(*) real (invalid), [1]=mv_count(*)
+	// Schema: [0] delta_count(*) real (invalid), [1] mv_count(*).
 	fts := []*types.FieldType{ftReal, ftInt}
 	src := newMockSource(sctx, fts, nil)
 
@@ -514,7 +514,7 @@ func TestRejectCountUnsignedType(t *testing.T) {
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftUInt := types.NewFieldType(mysql.TypeLonglong)
 	ftUInt.AddFlag(mysql.UnsignedFlag)
-	// [0]=delta_count(*) unsigned (invalid), [1]=mv_count(*)
+	// Schema: [0] delta_count(*) unsigned (invalid), [1] mv_count(*).
 	fts := []*types.FieldType{ftUInt, ftInt}
 	src := newMockSource(sctx, fts, nil)
 
@@ -638,7 +638,7 @@ func TestRejectDependencyFromMVSide(t *testing.T) {
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
 		AggMappings: []Mapping{
 			{AggFunc: countStarDesc, ColID: []int{1}, DependencyColID: []int{0}},
-			// dependency col 2 is on MV side because DeltaAggColCount is 1.
+			// Dependency col 2 is on MV side (DeltaAggColCount = 1).
 			{AggFunc: sumDesc, ColID: []int{2}, DependencyColID: []int{2}},
 		},
 		DeltaAggColCount: 1,
@@ -651,7 +651,7 @@ func TestNoOpWhenAggValueUnchanged(t *testing.T) {
 	sctx := mock.NewContext()
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	ftReal := types.NewFieldType(mysql.TypeDouble)
-	// [0]=delta_count(*), [1]=delta_sum(x), [2]=mv_count(*), [3]=mv_sum(x)
+	// Schema: [0] delta_count(*), [1] delta_sum(x), [2] mv_count(*), [3] mv_sum(x).
 	fts := []*types.FieldType{ftInt, ftReal, ftInt, ftReal}
 	chk := chunk.NewChunkWithCapacity(fts, 1)
 
