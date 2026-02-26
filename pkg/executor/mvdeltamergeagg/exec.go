@@ -68,8 +68,8 @@ type MinMaxBatchBuildRequest struct {
 	LookupKeys []*MinMaxBatchLookupContent
 }
 
-// BatchExecBuilder builds one opened recompute executor for one batch request.
-type BatchExecBuilder interface {
+// MinMaxBatchExecBuilder builds one opened recompute executor for one batch request.
+type MinMaxBatchExecBuilder interface {
 	Build(context.Context, *MinMaxBatchBuildRequest) (exec.Executor, error)
 }
 
@@ -87,16 +87,11 @@ type MinMaxRecomputeSingleRowExec struct {
 	Workers []MinMaxRecomputeSingleRowWorker
 }
 
-// MinMaxRecomputeBatchWorker is one worker-local batch slot.
-type MinMaxRecomputeBatchWorker struct {
-	// Builder creates a new executor for each batch.
-	Builder BatchExecBuilder
-}
-
-// MinMaxRecomputeBatchExec stores batch recompute worker slots.
+// MinMaxRecomputeBatchExec stores batch recompute runtime metadata.
 type MinMaxRecomputeBatchExec struct {
-	// Workers has one slot per MV merge worker.
-	Workers []MinMaxRecomputeBatchWorker
+	// Builder creates a new executor for each batch.
+	// Build must be safe for concurrent calls across MV merge workers.
+	Builder MinMaxBatchExecBuilder
 }
 
 // MinMaxRecomputeExec is recompute metadata for one MIN/MAX mapping.

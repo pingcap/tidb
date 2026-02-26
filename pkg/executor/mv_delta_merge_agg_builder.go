@@ -37,9 +37,6 @@ type MinMaxRecomputeSingleRowWorker = mvdeltamergeagg.MinMaxRecomputeSingleRowWo
 // MinMaxRecomputeBatchExec is the alias for batch recompute runtime wiring.
 type MinMaxRecomputeBatchExec = mvdeltamergeagg.MinMaxRecomputeBatchExec
 
-// MinMaxRecomputeBatchWorker is the alias for batch worker slot.
-type MinMaxRecomputeBatchWorker = mvdeltamergeagg.MinMaxRecomputeBatchWorker
-
 // MinMaxBatchLookupContent is the alias for batch lookup key content.
 type MinMaxBatchLookupContent = mvdeltamergeagg.MinMaxBatchLookupContent
 
@@ -47,7 +44,7 @@ type MinMaxBatchLookupContent = mvdeltamergeagg.MinMaxBatchLookupContent
 type MinMaxBatchBuildRequest = mvdeltamergeagg.MinMaxBatchBuildRequest
 
 // MinMaxBatchExecBuilder is the alias for batch recompute executor builder.
-type MinMaxBatchExecBuilder = mvdeltamergeagg.BatchExecBuilder
+type MinMaxBatchExecBuilder = mvdeltamergeagg.MinMaxBatchExecBuilder
 
 // MVDeltaMergeAggRowOpType is the alias of row operation type for MV merge.
 type MVDeltaMergeAggRowOpType = mvdeltamergeagg.RowOpType
