@@ -233,10 +233,9 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetFlen(p.parseOptFieldLen())
 		// Check for BINARY suffix: CHAR(N) BINARY
+		// Unlike bare BINARY(N), CHAR(N) BINARY stays as TypeVarString
+		// (yacc Char OptFieldLen OptBinary does not set TypeString).
 		if _, ok := p.accept(binaryType); ok {
-			if tp.GetFlen() != types.UnspecifiedLength {
-				tp.SetType(mysql.TypeString)
-			}
 			setBinaryCastType(tp)
 			return tp, false
 		}

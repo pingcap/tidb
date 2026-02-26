@@ -121,6 +121,7 @@ func (p *HandParser) parseDropStatsStmt() ast.StmtNode {
 	if p.peek().IsKeyword("GLOBAL") {
 		p.next()
 		stmt.IsGlobalStats = true
+		p.warns = append(p.warns, ErrWarnDeprecatedSyntax.FastGenByArgs("DROP STATS ... GLOBAL", "DROP STATS ..."))
 	} else if _, ok := p.accept(partition); ok {
 		for {
 			nameTok := p.peek()
@@ -134,6 +135,7 @@ func (p *HandParser) parseDropStatsStmt() ast.StmtNode {
 				break
 			}
 		}
+		p.warns = append(p.warns, ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("'DROP STATS ... PARTITION ...'", ""))
 	}
 
 	return stmt

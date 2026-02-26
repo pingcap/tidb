@@ -531,7 +531,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				p.syntaxErrorAt(p.peek())
 				return nil
 			}
-			p.warn("The STORAGE clause is parsed but ignored by all storage engines.")
+			p.warnNear(p.peek().Offset, "The STORAGE clause is parsed but ignored by all storage engines.")
 		case autoRandom:
 			p.next()
 			option.Tp = ast.ColumnOptionAutoRandom

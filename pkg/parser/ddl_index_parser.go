@@ -204,16 +204,16 @@ func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 			p.next()
 			ref.Match = ast.MatchSimple
 		}
+		p.warnNear(p.peek().Offset, "The MATCH clause is parsed but ignored by all storage engines.")
 	}
 
 	// Parse optional ON DELETE / ON UPDATE
 	hasOnDelete, hasOnUpdate := false, false
 	for p.peek().Tp == on {
-		startOffset := p.peek().Offset
 		switch p.peekN(1).Tp {
 		case deleteKwd:
 			if hasOnDelete {
-				p.errorNear(p.peekN(1).Offset+6, startOffset)
+				p.errorNear(p.peekN(1).Offset+6, p.peekN(1).Offset)
 				return nil
 			}
 			hasOnDelete = true
@@ -222,7 +222,7 @@ func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 			ref.OnDelete = &ast.OnDeleteOpt{ReferOpt: p.parseReferAction()}
 		case update:
 			if hasOnUpdate {
-				p.errorNear(p.peekN(1).Offset+6, startOffset)
+				p.errorNear(p.peekN(1).Offset+6, p.peekN(1).Offset)
 				return nil
 			}
 			hasOnUpdate = true
@@ -252,6 +252,7 @@ func (p *HandParser) parseReferAction() ast.ReferOptionType {
 			return ast.ReferOptionSetNull
 		}
 		if _, ok := p.accept(defaultKwd); ok {
+			p.warnNear(p.peek().Offset, "The SET DEFAULT clause is parsed but ignored by all storage engines.")
 			return ast.ReferOptionSetDefault
 		}
 		return ast.ReferOptionNoOption
@@ -351,6 +352,7 @@ func (p *HandParser) parseIndexOptions() *ast.IndexOption {
 			if tok, ok := p.expect(identifier); ok {
 				opt.ParserName = ast.NewCIStr(tok.Lit)
 			}
+			p.warnNear(p.peek().Offset, "The WITH PARASER clause is parsed but ignored by all storage engines.")
 		case visible, invisible:
 			if p.next().Tp == visible {
 				opt.Visibility = ast.IndexVisibilityVisible

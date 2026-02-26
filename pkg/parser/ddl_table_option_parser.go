@@ -114,6 +114,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 	case autoRandomBase:
 		p.parseTableOptionUint(opt, ast.TableOptionAutoRandomBase)
 	case comment, connection, password, encryption, engine_attribute, secondaryEngineAttribute:
+		isEncryption := p.peek().Tp == encryption
 		var optTp ast.TableOptionType
 		switch p.peek().Tp {
 		case comment:
@@ -130,6 +131,17 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			optTp = ast.TableOptionSecondaryEngineAttribute
 		}
 		p.parseTableOptionStringLit(opt, optTp)
+		if isEncryption {
+			switch opt.StrValue {
+			case "Y", "y":
+				p.warnNear(p.peek().Offset, "The ENCRYPTION clause is parsed but ignored by all storage engines.")
+			case "N", "n":
+				// valid, no warning
+			default:
+				p.errs = append(p.errs, ErrWrongValue.GenWithStackByArgs("argument (should be Y or N)", opt.StrValue))
+				return nil
+			}
+		}
 	case maxRows:
 		p.parseTableOptionUint(opt, ast.TableOptionMaxRows)
 	case minRows:
@@ -166,10 +178,13 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.parseTableOptionDefaultOrDiscard(opt, ast.TableOptionStatsPersistent)
 	case statsAutoRecalc, statsSamplePages:
 		var optTp ast.TableOptionType
+		var warnMsg string
 		if p.peek().Tp == statsAutoRecalc {
 			optTp = ast.TableOptionStatsAutoRecalc
+			warnMsg = "The STATS_AUTO_RECALC is parsed but ignored by all storage engines."
 		} else {
 			optTp = ast.TableOptionStatsSamplePages
+			warnMsg = "The STATS_SAMPLE_PAGES is parsed but ignored by all storage engines."
 		}
 		p.next()
 		p.accept(eq)
@@ -183,6 +198,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 				return nil
 			}
 		}
+		p.warnNear(p.peek().Offset, warnMsg)
 	case delayKeyWrite:
 		p.parseTableOptionUint(opt, ast.TableOptionDelayKeyWrite)
 	case shardRowIDBits:
@@ -244,6 +260,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			opt.Tp = ast.TableOptionSecondaryEngine
 			opt.StrValue = tok.Lit
 		}
+		p.warnNear(p.peek().Offset, "The SECONDARY_ENGINE clause is parsed but ignored by all storage engines.")
 	case storage:
 		p.next()
 		if _, ok := p.accept(engine); ok {
@@ -256,6 +273,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		} else if tok, ok := p.expectAny(disk, memory); ok {
 			opt.Tp = ast.TableOptionStorageMedia
 			opt.StrValue = strings.ToUpper(tok.Lit)
+			p.warnNear(p.peek().Offset, "The STORAGE clause is parsed but ignored by all storage engines.")
 		}
 	case tablespace:
 		p.parseTableOptionString(opt, ast.TableOptionTablespace)
@@ -306,7 +324,8 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		if tok, ok := p.expect(intLit); ok {
 			opt.UintValue = tokenItemToUint64(tok.Item)
 		}
-		p.warnNear(p.peek().Offset, "The SEQUENCE option is parsed but ignored by all storage engines. Use CREATE SEQUENCE instead.")
+		p.warnNear(p.peek().Offset,
+			"The SEQUENCE option is parsed but ignored by all storage engines. Use CREATE SEQUENCE instead.")
 	case autoextendSize:
 		p.next()
 		p.accept(eq)
@@ -337,6 +356,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			}
 		}
 		p.expect(')')
+		p.warnNear(p.peek().Offset, "The UNION option is parsed but ignored by all storage engines.")
 	case statsBuckets:
 		p.next()
 		p.accept(eq)

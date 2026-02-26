@@ -296,7 +296,7 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 		union, except, intersect,
 		use, ignore, force, fetch, offset,
 		forKwd, lock, in, not, and, or, is, null,
-		trueKwd, falseKwd, like, between, caseKwd, when, then, elseKwd, end,
+		trueKwd, falseKwd, like, between, caseKwd, when, then, elseKwd,
 		create, alter, drop, tableKwd, index, column,
 		primary, key, unique, foreign, check, constraint,
 		defaultKwd, all, distinct,

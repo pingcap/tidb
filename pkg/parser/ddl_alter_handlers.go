@@ -57,6 +57,9 @@ func (p *HandParser) parseAlterAdd(spec *ast.AlterTableSpec) {
 	} else if _, ok := p.accept(partition); ok {
 		spec.Tp = ast.AlterTableAddPartitions
 		spec.NoWriteToBinlog = p.acceptNoWriteToBinlog()
+		if spec.NoWriteToBinlog {
+			p.warnNear(p.peek().Offset, "The NO_WRITE_TO_BINLOG option is parsed but ignored for now.")
+		}
 		// ADD PARTITION [IF NOT EXISTS] [( PARTITION defs )]
 		spec.IfNotExists = p.acceptIfNotExists()
 		if _, ok := p.accept(partitions); ok {
@@ -411,6 +414,9 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 		p.next()
 		p.expect(partition)
 		spec.NoWriteToBinlog = p.acceptNoWriteToBinlog()
+		if spec.NoWriteToBinlog {
+			p.warnNear(p.peek().Offset, "The NO_WRITE_TO_BINLOG option is parsed but ignored for now.")
+		}
 		spec.Tp = ast.AlterTableCoalescePartitions
 		spec.Num = p.parseUint64()
 		return true
@@ -456,6 +462,7 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 		return true
 
 	case rebuild, optimize, repair, check:
+		isCheck := tok.Tp == check
 		p.next()
 		switch tok.Tp {
 		case rebuild:
@@ -468,6 +475,9 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 			spec.Tp = ast.AlterTableCheckPartitions
 		}
 		p.parseAlterTablePartitionOptions(spec)
+		if isCheck {
+			p.warnNear(p.peek().Offset, "The CHECK PARTITIONING clause is parsed but not implement yet.")
+		}
 		return true
 
 	case importKwd, discard:
@@ -476,8 +486,10 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 			p.next()
 			if isImport {
 				spec.Tp = ast.AlterTableImportTablespace
+				p.warnNear(p.peek().Offset, "The IMPORT TABLESPACE clause is parsed but ignored by all storage engines.")
 			} else {
 				spec.Tp = ast.AlterTableDiscardTablespace
+				p.warnNear(p.peek().Offset, "The DISCARD TABLESPACE clause is parsed but ignored by all storage engines.")
 			}
 			return true
 		}
@@ -488,16 +500,28 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 		}
 		p.parseAlterTablePartitionOptions(spec)
 		p.expect(tablespace)
+		if isImport {
+			p.warnNear(p.peek().Offset, "The IMPORT PARTITION TABLESPACE clause is parsed but ignored by all storage engines.")
+		} else {
+			p.warnNear(p.peek().Offset, "The DISCARD PARTITION TABLESPACE clause is parsed but ignored by all storage engines.")
+		}
 		return true
 
 	case first, last:
 		startOff := p.peek().Offset
-		if p.next().Tp == first {
+		isLast := p.next().Tp == last
+		if !isLast {
 			spec.Tp = ast.AlterTableDropFirstPartition
 		} else {
 			spec.Tp = ast.AlterTableAddLastPartition
 		}
 		p.parsePartitionLessThanExprFrom(spec, startOff)
+		if isLast {
+			spec.NoWriteToBinlog = p.acceptNoWriteToBinlog()
+			if spec.NoWriteToBinlog {
+				p.warnNear(p.peek().Offset, "The NO_WRITE_TO_BINLOG option is parsed but ignored for now.")
+			}
+		}
 		return true
 
 	case merge:
@@ -697,8 +721,10 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 			spec.Tp = ast.AlterTableNoCache
 		case secondaryLoad:
 			spec.Tp = ast.AlterTableSecondaryLoad
+			p.warnNear(p.peek().Offset, "The SECONDARY_LOAD clause is parsed but not implement yet.")
 		case secondaryUnload:
 			spec.Tp = ast.AlterTableSecondaryUnload
+			p.warnNear(p.peek().Offset, "The SECONDARY_UNLOAD VALIDATION clause is parsed but not implement yet.")
 		}
 		return true
 

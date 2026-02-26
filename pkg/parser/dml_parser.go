@@ -373,6 +373,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	p.expect(from)
 
 	// Table refs
+	tableRefStartOff := p.peek().Offset
 	stmt.TableRefs = p.parseTableRefs()
 
 	// [USING]
@@ -385,7 +386,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	// the USING belongs to an outer CREATE BINDING statement.
 	if !stmt.BeforeFrom {
 		if p.peek().Tp == using && !p.isUsingForBinding() {
-			p.next() // consume USING
+			usingTok := p.next() // consume USING
 			// DELETE FROM t1, t2 USING t1, t2, t3 ...
 			if stmt.IsMultiTable { //revive:disable-line
 				// Already is multi-table. e.g. DELETE t1 FROM t2 USING t3
@@ -394,7 +395,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 				// Convert single-table DELETE FROM t1 to Multi-table.
 				stmt.IsMultiTable = true
 				stmt.BeforeFrom = false
-				stmt.Tables = p.convertToTableList(stmt.TableRefs)
+				stmt.Tables = p.convertToTableList(stmt.TableRefs, usingTok.EndOffset)
 				if stmt.Tables == nil { //revive:disable-line
 					// Failed to convert
 				}
@@ -472,8 +473,8 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 				}
 			}
 			if !isTableName {
-				// It's a subquery or join
-				p.syntaxErrorAt(p.peek())
+				// It's a subquery or join — report error at the start of table refs
+				p.errorNear(tableRefStartOff+1, tableRefStartOff)
 				return nil
 			}
 		}
@@ -520,7 +521,8 @@ func (p *HandParser) isUsingForBinding() bool {
 
 // convertToTableList converts TableRefsClause (from parsing FROM ...) into DeleteTableList.
 // Used when we encounter USING and need to treat FROM clause as Targets.
-func (p *HandParser) convertToTableList(refs *ast.TableRefsClause) *ast.DeleteTableList {
+// errOff is the error column offset to use when reporting alias violations.
+func (p *HandParser) convertToTableList(refs *ast.TableRefsClause, errOff int) *ast.DeleteTableList {
 	if refs == nil || refs.TableRefs == nil {
 		return nil
 	}
@@ -544,7 +546,7 @@ func (p *HandParser) convertToTableList(refs *ast.TableRefsClause) *ast.DeleteTa
 			// In DELETE FROM ... USING, target tables cannot have aliases.
 			// MySQL grammar uses table_ident_opt_wild (no alias) here.
 			if ts.AsName.L != "" {
-				p.syntaxErrorAt(p.peek())
+				p.errorNear(errOff, errOff)
 				return false
 			}
 			if tn, ok := ts.Source.(*ast.TableName); ok {

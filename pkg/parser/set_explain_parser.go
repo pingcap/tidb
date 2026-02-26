@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 )
 
 // ---------------------------------------------------------------------------
@@ -278,7 +279,13 @@ func (p *HandParser) parseSetNamesAssignment() []*ast.VariableAssignment {
 		va.Value = p.arena.AllocDefaultExpr()
 	} else {
 		tok := p.next()
-		va.Value = ast.NewValueExpr(tok.Lit, "", "")
+		// Validate charset name at parse time (yacc CharsetName rule).
+		cs, err := charset.GetCharsetInfo(tok.Lit)
+		if err != nil {
+			p.errs = append(p.errs, ast.ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
+			return nil
+		}
+		va.Value = ast.NewValueExpr(cs.Name, "", "")
 		if _, ok := p.accept(collate); ok {
 			if _, ok := p.accept(defaultKwd); !ok {
 				colTok := p.next()
@@ -299,7 +306,13 @@ func (p *HandParser) parseSetCharsetAssignment() []*ast.VariableAssignment {
 		va.Value = p.arena.AllocDefaultExpr()
 	} else {
 		tok := p.next()
-		va.Value = ast.NewValueExpr(tok.Lit, "", "")
+		// Validate charset name at parse time (yacc CharsetName rule).
+		cs, err := charset.GetCharsetInfo(tok.Lit)
+		if err != nil {
+			p.errs = append(p.errs, ast.ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
+			return nil
+		}
+		va.Value = ast.NewValueExpr(cs.Name, "", "")
 	}
 	return []*ast.VariableAssignment{va}
 }

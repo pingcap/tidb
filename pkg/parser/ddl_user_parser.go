@@ -52,6 +52,9 @@ func (p *HandParser) parseCreateUserStmt() ast.StmtNode {
 	// [WITH resource_option ...]
 	if _, ok := p.accept(with); ok {
 		stmt.ResourceOptions = p.parseResourceOptions()
+		if len(stmt.ResourceOptions) > 0 {
+			p.warnNear(p.peek().Offset, "TiDB does not support WITH ConnectionOptions now, they would be parsed but ignored.")
+		}
 	}
 
 	// [password_option | lock_option] ...
@@ -378,6 +381,9 @@ func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 	}
 	if _, ok := p.accept(with); ok {
 		stmt.ResourceOptions = p.parseResourceOptions()
+		if len(stmt.ResourceOptions) > 0 {
+			p.warnNear(p.peek().Offset, "TiDB does not support WITH ConnectionOptions now, they would be parsed but ignored.")
+		}
 	}
 	stmt.PasswordOrLockOptions = p.parsePasswordAndLockOptions()
 	if c := p.parseCommentOrAttributeOption(); c != nil {
