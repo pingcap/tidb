@@ -15,6 +15,7 @@
 package stringutil
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -288,250 +289,106 @@ func BenchmarkBuildStringFromLabels(b *testing.B) {
 	}
 }
 
-func TestGetCharsByteCount(t *testing.T) {
+func TestGetUtf8SubStringBytes(t *testing.T) {
 	tests := []struct {
-		name      string
-		str       string
-		charCount int
-		expected  int
+		name     string
+		input    string
+		n        int
+		expected []byte
 	}{
-		// Empty string cases
 		{
-			name:      "empty string, charCount 0",
-			str:       "",
-			charCount: 0,
-			expected:  0,
+			name:     "ASCII取前5个字符",
+			input:    "Hello, World!",
+			n:        5,
+			expected: []byte("Hello"),
 		},
 		{
-			name:      "empty string, charCount > 0",
-			str:       "",
-			charCount: 5,
-			expected:  0,
-		},
-		// ASCII-only strings (1 byte per character)
-		{
-			name:      "ASCII string, charCount 0",
-			str:       "hello",
-			charCount: 0,
-			expected:  0,
+			name:     "ASCII取全部字符",
+			input:    "Hello",
+			n:        5,
+			expected: []byte("Hello"),
 		},
 		{
-			name:      "ASCII string, charCount 1",
-			str:       "hello",
-			charCount: 1,
-			expected:  1,
+			name:     "ASCII超过长度",
+			input:    "Hi",
+			n:        10,
+			expected: []byte("Hi"),
 		},
 		{
-			name:      "ASCII string, charCount equals length",
-			str:       "hello",
-			charCount: 5,
-			expected:  5,
+			name:     "中文取前2个字符",
+			input:    "你好世界",
+			n:        2,
+			expected: []byte("你好"),
 		},
 		{
-			name:      "ASCII string, charCount exceeds length",
-			str:       "hello",
-			charCount: 10,
-			expected:  5,
+			name:     "中文取部分",
+			input:    "Hello世界",
+			n:        7,
+			expected: []byte("Hello世界"),
 		},
 		{
-			name:      "ASCII string, partial count",
-			str:       "abcdef",
-			charCount: 3,
-			expected:  3,
-		},
-		// UTF-8 strings with 2-byte characters (e.g., Latin-1 Supplement)
-		{
-			name:      "UTF-8 2-byte chars, charCount 1",
-			str:       "café",
-			charCount: 1,
-			expected:  1, // 'c' is 1 byte
+			name:     "包含Emoji",
+			input:    "Hi🌍Go",
+			n:        3,
+			expected: []byte("Hi🌍"),
 		},
 		{
-			name:      "UTF-8 2-byte chars, charCount 4",
-			str:       "café",
-			charCount: 4,
-			expected:  5, // 'c'=1, 'a'=1, 'f'=1, 'é'=2
+			name:     "只取Emoji",
+			input:    "🌍🌎🌏",
+			n:        2,
+			expected: []byte("🌍🌎"),
 		},
 		{
-			name:      "UTF-8 2-byte chars, charCount 3",
-			str:       "café",
-			charCount: 3,
-			expected:  3, // 'c'=1, 'a'=1, 'f'=1
-		},
-		// UTF-8 strings with 3-byte characters (e.g., Chinese, Japanese, Korean)
-		{
-			name:      "UTF-8 3-byte chars, single char",
-			str:       "你",
-			charCount: 1,
-			expected:  3,
+			name:     "中英文混合",
+			input:    "Hello, 世界! 🌍",
+			n:        8,
+			expected: []byte("Hello, 世"),
 		},
 		{
-			name:      "UTF-8 3-byte chars, multiple chars",
-			str:       "你好",
-			charCount: 1,
-			expected:  3,
+			name:     "n为0",
+			input:    "Hello",
+			n:        0,
+			expected: []byte{},
 		},
 		{
-			name:      "UTF-8 3-byte chars, full string",
-			str:       "你好",
-			charCount: 2,
-			expected:  6,
+			name:     "n为负数",
+			input:    "Hello",
+			n:        -3,
+			expected: []byte{},
 		},
 		{
-			name:      "UTF-8 3-byte chars, partial",
-			str:       "你好世界",
-			charCount: 2,
-			expected:  6,
+			name:     "空字符串",
+			input:    "",
+			n:        5,
+			expected: []byte{},
 		},
 		{
-			name:      "UTF-8 3-byte chars, charCount exceeds length",
-			str:       "你好世界",
-			charCount: 10,
-			expected:  12,
-		},
-		// UTF-8 strings with 4-byte characters (e.g., emojis, some rare CJK)
-		{
-			name:      "UTF-8 4-byte chars, single emoji",
-			str:       "😀",
-			charCount: 1,
-			expected:  4,
+			name:     "取1个字符",
+			input:    "你好",
+			n:        1,
+			expected: []byte("你"),
 		},
 		{
-			name:      "UTF-8 4-byte chars, multiple emojis",
-			str:       "😀😃😄",
-			charCount: 2,
-			expected:  8,
+			name:     "包含换行符",
+			input:    "Line1\nLine2",
+			n:        6,
+			expected: []byte("Line1\n"),
 		},
 		{
-			name:      "UTF-8 4-byte chars, full string",
-			str:       "😀😃",
-			charCount: 2,
-			expected:  8,
-		},
-		{
-			name:      "UTF-8 4-byte chars, charCount exceeds length",
-			str:       "😀😃",
-			charCount: 10,
-			expected:  8,
-		},
-		// Mixed ASCII and UTF-8
-		{
-			name:      "Mixed ASCII and UTF-8",
-			str:       "Hello世界",
-			charCount: 1,
-			expected:  1, // 'H' is 1 byte
-		},
-		{
-			name:      "Mixed ASCII and UTF-8, full ASCII part",
-			str:       "Hello世界",
-			charCount: 5,
-			expected:  5, // "Hello" = 5 bytes
-		},
-		{
-			name:      "Mixed ASCII and UTF-8, include UTF-8",
-			str:       "Hello世界",
-			charCount: 6,
-			expected:  8, // "Hello"=5 + "世"=3
-		},
-		{
-			name:      "Mixed ASCII and UTF-8, full string",
-			str:       "Hello世界",
-			charCount: 7,
-			expected:  11, // "Hello"=5 + "世界"=6
-		},
-		{
-			name:      "Mixed ASCII, 2-byte, 3-byte, 4-byte",
-			str:       "Aé你😀",
-			charCount: 1,
-			expected:  1, // 'A' is 1 byte
-		},
-		{
-			name:      "Mixed ASCII, 2-byte, 3-byte, 4-byte, count 2",
-			str:       "Aé你😀",
-			charCount: 2,
-			expected:  3, // 'A'=1 + 'é'=2
-		},
-		{
-			name:      "Mixed ASCII, 2-byte, 3-byte, 4-byte, count 3",
-			str:       "Aé你😀",
-			charCount: 3,
-			expected:  6, // 'A'=1 + 'é'=2 + '你'=3
-		},
-		{
-			name:      "Mixed ASCII, 2-byte, 3-byte, 4-byte, count 4",
-			str:       "Aé你😀",
-			charCount: 4,
-			expected:  10, // 'A'=1 + 'é'=2 + '你'=3 + '😀'=4
-		},
-		{
-			name:      "Mixed ASCII, 2-byte, 3-byte, 4-byte, exceeds length",
-			str:       "Aé你😀",
-			charCount: 10,
-			expected:  10, // 'A'=1 + 'é'=2 + '你'=3 + '😀'=4
-		},
-		// Edge cases
-		{
-			name:      "Single ASCII character",
-			str:       "a",
-			charCount: 1,
-			expected:  1,
-		},
-		{
-			name:      "Single UTF-8 3-byte character",
-			str:       "中",
-			charCount: 1,
-			expected:  3,
-		},
-		{
-			name:      "String with spaces",
-			str:       "hello world",
-			charCount: 5,
-			expected:  5,
-		},
-		{
-			name:      "String with spaces, include space",
-			str:       "hello world",
-			charCount: 6,
-			expected:  6, // "hello " = 6 bytes
-		},
-		{
-			name:      "Complex mixed string",
-			str:       "Test123测试😊",
-			charCount: 4,
-			expected:  4, // "Test" = 4 bytes
-		},
-		{
-			name:      "Complex mixed string, include UTF-8",
-			str:       "Test123测试😊",
-			charCount: 7,
-			expected:  7, // "Test123" = 7 bytes
-		},
-		{
-			name:      "Complex mixed string, include Chinese",
-			str:       "Test123测试😊",
-			charCount: 8,
-			expected:  10, // "Test123"=7 + "测"=3
-		},
-		{
-			name:      "Complex mixed string, include emoji",
-			str:       "Test123测试😊",
-			charCount: 9,
-			expected:  13, // "Test123"=7 + "测试"=6
-		},
-		{
-			name:      "Complex mixed string, full",
-			str:       "Test123测试😊",
-			charCount: 10,
-			expected:  17, // "Test123"=7 + "测试"=6 + "😊"=4
+			name:     "包含空格",
+			input:    "   ",
+			n:        2,
+			expected: []byte("  "),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetCharsByteCount(tt.str, tt.charCount)
-			require.Equalf(t, tt.expected, result,
-				"GetCharsByteCount(%q, %d) = %d, want %d",
-				tt.str, tt.charCount, result, tt.expected)
+			got := GetUtf8SubStringBytes(tt.input, tt.n)
+			if !bytes.Equal(got, tt.expected) {
+				t.Errorf("GetUtf8SubStringBytes(%q, %d) = %q, want %q",
+					tt.input, tt.n, got, tt.expected)
+			}
 		})
 	}
 }

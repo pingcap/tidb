@@ -447,18 +447,19 @@ func Utf8Len(b byte) int {
 	return length
 }
 
-// GetCharsByteCount returns byte count of the specified number of chars in a string
-func GetCharsByteCount(str string, charCount int) int {
-	bytes := hack.Slice(str)
-	bytesLen := len(bytes)
-	totalByteCount := 0
-	for idx := 0; idx < bytesLen && charCount > 0; {
-		utf8Len := Utf8Len(bytes[idx])
-		totalByteCount += utf8Len
-		idx += utf8Len
-		charCount--
+func GetUtf8SubStringBytes(s string, n int) []byte {
+	if n <= 0 {
+		return []byte{}
 	}
-	return totalByteCount
+
+	count := 0
+	for i := range s {
+		if count == n {
+			return hack.Slice(s[:i])
+		}
+		count++
+	}
+	return hack.Slice(s)
 }
 
 // TrimUtf8String needs the string input should always be valid which means

@@ -17,6 +17,7 @@ package collate
 import (
 	"unicode/utf8"
 
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -77,8 +78,7 @@ func (*generalCICollator) Clone() Collator {
 
 // ImmutablePrefixKey implements Collator interface
 func (gc *generalCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	truncatedStr := truncateTailingSpace(str)
-	return gc.ImmutableKey(truncatedStr[:min(stringutil.GetCharsByteCount(truncatedStr, prefixCharCount), len(truncatedStr))])
+	return gc.ImmutableKey(string(hack.String(stringutil.GetUtf8SubStringBytes(truncateTailingSpace(str), prefixCharCount))))
 }
 
 type ciPattern struct {
