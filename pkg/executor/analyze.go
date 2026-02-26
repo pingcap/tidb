@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
@@ -654,6 +655,11 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 	rcMemSize := rc.Base().MemSize
 	tableID := results.TableID.TableID
 	partitionID := results.TableID.PartitionID
+	logutil.BgLogger().Info("DEBUGMEM mergePartitionSamples enter",
+		zap.Int64("partitionID", partitionID),
+		zap.Int64("rcMemSize", rcMemSize),
+		zap.Int("rcSamples", rc.Base().Samples.Len()),
+		zap.Int64("stmtTrackerBytes", e.Ctx().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()))
 
 	// Track the analyzed partition.
 	if e.analyzedPartitions[tableID] == nil {
@@ -696,12 +702,17 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 		}
 		global.MergeCollector(rc)
 		e.globalSampleCollectors[tableID] = global
+		logutil.BgLogger().Info("DEBUGMEM mergePartitionSamples release (first partition)",
+			zap.Int64("partitionID", partitionID), zap.Int64("releasing", rcMemSize))
 		e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
 		rc.DestroyAndPutToPool()
 		results.RowCollector = nil
 		return
 	}
 	globalCollector.MergeCollector(rc)
+	logutil.BgLogger().Info("DEBUGMEM mergePartitionSamples release",
+		zap.Int64("partitionID", partitionID), zap.Int64("releasing", rcMemSize),
+		zap.Int("globalSamples", globalCollector.Base().Samples.Len()))
 	e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
 	rc.DestroyAndPutToPool()
 	results.RowCollector = nil
