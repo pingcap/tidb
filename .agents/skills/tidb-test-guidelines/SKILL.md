@@ -22,6 +22,10 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 - Reuse existing helper setups and test fixtures; avoid re-creating schemas unless required.
 - Prefer one `store` + one `testkit` per test; when a single test covers multiple scenarios, use distinct table names and restore any session/system variables to their original values.
 - If a test must use multiple sessions or domains (for example, cross-session cache behavior), keep the extra stores/testkits but document why in the test.
+- For follow-up bug fixes, prefer appending cases to existing tests/suites instead of creating new test files or new top-level tests, unless no semantically close suite exists.
+- In existing regression suites that are already sequential, keep sequential scenario blocks; do not introduce `t.Run` unless subtest isolation/parallel behavior is required by semantics.
+- Prefer exact assertions with `.Check(testkit.Rows(...))`; use `MultiCheckContain` only when output is inherently unstable, and add a short comment for why exact match is not practical.
+- Reuse table definitions only across semantically similar scenarios; if partition/index/DDL shape is the behavior under test, keep separate table schemas to avoid false positives.
 - Keep per-test runtime short; consolidate similar checks only if runtime stays reasonable.
 - Use behavior-based test names; never use issue-id-only names.
 - In test code, use the variable name `tk` for `*testkit.TestKit` (avoid `testKit`).

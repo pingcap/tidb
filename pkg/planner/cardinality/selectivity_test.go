@@ -1438,6 +1438,50 @@ func TestIssue39593(t *testing.T) {
 	require.InDelta(t, float64(5400), countResult.Est, float64(1))
 }
 
+func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, b int, c int, index idx_ab(a, b))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock only column stats and keep index stats missing, so estimation goes through partial column stats path.
+	statsTbl := mockStatsTable(tblInfo, 1000)
+	statsTbl.PhysicalID = tblInfo.ID
+	statsTbl.Version = 2
+	statsTbl.ColAndIdxExistenceMap = statistics.NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices))
+	colValues, err := generateIntDatum(1, 100)
+	require.NoError(t, err)
+	for i := range 3 {
+		colInfo := tblInfo.Columns[i]
+		statsTbl.SetCol(colInfo.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(colInfo.ID, colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              colInfo,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	h.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
+
+	// `idx_ab` is non-unique, planner may append handle column to execution ranges.
+	// The estimation path should still use ranges aligned with index columns.
+	require.NotPanics(t, func() {
+		tk.MustQuery("explain format='brief' select * from t use index(idx_ab) where a = 1 and b = 2 and id = 3").
+			Check(testkit.Rows(
+				`IndexLookUp 1.00 root  `,
+				`├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1 2 3,1 2 3], keep order:false, stats:partial[idx_ab:missing]`,
+				`└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[idx_ab:missing]`))
+	})
+}
+
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
