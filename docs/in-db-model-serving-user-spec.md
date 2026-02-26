@@ -2,7 +2,7 @@
 
 ## Developer Spec
 
-This feature lets application developers run ONNX (FP32) and MLflow PyFunc inference directly in SQL. You register a model once, then call it via `MODEL_PREDICT` in `SELECT`, `WHERE`, `HAVING`, or `JOIN` clauses. Model versions are MVCC-consistent with data snapshots; if you use `AS OF TIMESTAMP`, both data and model version resolve to that time. TiDB also provides built-in LLM SQL functions backed by external Vertex AI inference.
+This feature lets application developers run ONNX (FP32) and MLflow PyFunc inference directly in SQL. You register a model once, then call it via `MODEL_PREDICT` in `SELECT`, `WHERE`, `HAVING`, or `JOIN` clauses. Model versions are MVCC-consistent with data snapshots; if you use `AS OF TIMESTAMP`, both data and model version resolve to that time. TiDB also provides built-in LLM SQL functions backed by external Vertex AI or AWS Bedrock inference.
 
 Key behaviors:
 
@@ -10,7 +10,7 @@ Key behaviors:
 - NULL inputs are errors by default (can be configured to return NULL).
 - If a model/version is not visible at the snapshot, the statement errors.
 - MLflow PyFunc models must include `python_function` flavor and a signature with input/output names.
-- LLM functions use a global default model and call Vertex AI over HTTPS.
+- LLM functions use a global default model and call Vertex AI or AWS Bedrock over HTTPS.
 
 ### Samples
 
@@ -71,7 +71,7 @@ SET LOCATION 's3://ml-models/fraud_scoring/v2/model.onnx'
 CHECKSUM 'sha256:...';
 ```
 
-Use built-in LLM functions (Vertex AI):
+Use built-in LLM functions (Vertex AI or Bedrock):
 
 ```sql
 SET GLOBAL tidb_llm_default_model = 'gemini-1.5-pro';
@@ -127,7 +127,7 @@ Operational controls:
 - Safety: `tidb_model_allow_nondeterministic` (default OFF), `tidb_enable_model_custom_ops` (default OFF)
 - Performance: `tidb_model_max_batch_size`, `tidb_model_timeout`
 - Caching: `tidb_model_cache_capacity`, `tidb_model_cache_ttl`
-- LLM: `tidb_enable_llm_inference`, `tidb_llm_default_model`, `tidb_llm_timeout`
+- LLM: `tidb_enable_llm_inference`, `tidb_llm_default_model`, `tidb_llm_timeout`, `tidb_llm_max_tokens`, `tidb_llm_temperature`, `tidb_llm_top_p`
 
 MLflow sidecar settings (config file):
 
@@ -138,13 +138,20 @@ MLflow sidecar settings (config file):
 
 LLM settings (config file):
 
-- `llm.provider` (fixed to `vertex` in v1)
-- `llm.vertex_project`
-- `llm.vertex_location`
-- `llm.credential_file` (optional service account JSON path)
+- `llm.provider` (`vertex` or `bedrock`)
+- `llm.vertex_project` (required for `vertex`)
+- `llm.vertex_location` (required for `vertex`)
+- `llm.credential_file` (optional service account JSON path for `vertex`)
+- `llm.bedrock_region` (required for `bedrock`)
+- `llm.bedrock_endpoint` (optional endpoint override for `bedrock`)
 - `llm.request_timeout`
 
-LLM requests retry on 429/503 with exponential backoff, bounded by `tidb_llm_timeout`.
+Bedrock v1 supports Titan-only model IDs:
+
+- Completion: `amazon.titan-text-*`
+- Embedding: `amazon.titan-embed-text-*`
+
+LLM requests retry on 429/503 with exponential backoff for Vertex AI; AWS Bedrock uses the AWS SDK default retry behavior. Both are bounded by `tidb_llm_timeout`.
 
 Security:
 

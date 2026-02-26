@@ -7,7 +7,7 @@ This manual covers setup, operations, and troubleshooting for ONNX and MLflow mo
 - ONNX models run inside TiDB using the embedded ONNX Runtime (FP32 only).
 - MLflow PyFunc models run via a per-node Python sidecar (FP32 only).
 - Both engines use the same SQL surface: `CREATE MODEL` + `MODEL_PREDICT`.
-- Built-in LLM SQL functions call external Vertex AI endpoints over HTTPS.
+- Built-in LLM SQL functions call external Vertex AI or AWS Bedrock endpoints over HTTPS.
 - Model versions are MVCC-consistent with data snapshots.
 
 ## Prerequisites
@@ -86,7 +86,7 @@ print(h.hexdigest())
 - Safety: `tidb_model_allow_nondeterministic`, `tidb_enable_model_custom_ops`
 - Performance: `tidb_model_max_batch_size`, `tidb_model_timeout`
 - Caching: `tidb_model_cache_capacity`, `tidb_model_cache_ttl`
-- LLM: `tidb_enable_llm_inference`, `tidb_llm_default_model`, `tidb_llm_timeout`
+- LLM: `tidb_enable_llm_inference`, `tidb_llm_default_model`, `tidb_llm_timeout`, `tidb_llm_max_tokens`, `tidb_llm_temperature`, `tidb_llm_top_p`
 
 ### Privileges
 
@@ -116,7 +116,7 @@ LOCATION 's3://ml-models/churn_pyfunc/v1'
 CHECKSUM 'sha256:...';
 ```
 
-### Use built-in LLM functions (Vertex AI)
+### Use built-in LLM functions (Vertex AI or Bedrock)
 
 ```sql
 SET GLOBAL tidb_llm_default_model = 'gemini-1.5-pro';
@@ -174,9 +174,12 @@ SELECT * FROM INFORMATION_SCHEMA.TIDB_MODEL_VERSIONS;
 SELECT * FROM INFORMATION_SCHEMA.TIDB_MODEL_CACHE;
 ```
 
-## LLM Configuration (Vertex AI)
+## LLM Configuration (Vertex AI or Bedrock)
 
 Add the `llm` section to `config.toml`:
+
+```toml
+### Vertex AI
 
 ```toml
 [llm]
@@ -189,7 +192,22 @@ request_timeout = "5s"
 
 If `credential_file` is not set, TiDB uses Application Default Credentials (ADC).
 
-LLM requests retry on 429/503 with exponential backoff, bounded by `tidb_llm_timeout`.
+### AWS Bedrock
+
+```toml
+[llm]
+provider = "bedrock"
+bedrock_region = "us-east-1"
+bedrock_endpoint = "http://localhost:12345"
+request_timeout = "5s"
+```
+
+Bedrock v1 supports Titan-only model IDs:
+
+- Completion: `amazon.titan-text-*`
+- Embedding: `amazon.titan-embed-text-*`
+
+LLM requests retry on 429/503 with exponential backoff for Vertex AI; AWS Bedrock uses the AWS SDK default retry behavior. Both are bounded by `tidb_llm_timeout`.
 
 ## Troubleshooting
 
@@ -214,6 +232,7 @@ LLM requests retry on 429/503 with exponential backoff, bounded by `tidb_llm_tim
 - Ensure `tidb_enable_llm_inference = ON` and `tidb_llm_default_model` is set.
 - Ensure the user has `LLM_EXECUTE` privilege.
 - Verify Vertex credentials are available (service account file or ADC).
+- Verify AWS credentials are available via environment variables, shared config, or instance metadata, and `llm.bedrock_region` is set.
 - Increase `tidb_llm_timeout` or `llm.request_timeout` if requests time out.
 
 ### Inference disabled
@@ -226,4 +245,4 @@ LLM requests retry on 429/503 with exponential backoff, bounded by `tidb_llm_tim
 - FP32 only in v1.
 - MLflow PyFunc supports a single output in v1.
 - Model predicate pushdown to TiFlash is not supported in v1 (non-model pushdown still applies).
-- LLM functions depend on external Vertex AI availability and quotas.
+- LLM functions depend on external Vertex AI or AWS Bedrock availability and quotas.
