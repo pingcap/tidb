@@ -355,19 +355,18 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 					"test t p1 idx 1 0 4 1 7 10 0",
 					"test t p1 idx 1 1 6 1 11 12 0"))
 
+			// The single-column non-prefix index idx(c) is consolidated with column c,
+			// so no is_index=1 rows exist in stats_histograms.
 			tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
-				testkit.Rows(fmt.Sprintf("%d 0 1 12 1 19 2 0", tblID), // global, aA
+				testkit.Rows(fmt.Sprintf("%d 0 1 12 1 19 2 0", tblID), // global, a
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", tblID),   // global, b, not analyzed
 					fmt.Sprintf("%d 0 3 14 0 20 2 0", tblID), // global, c
-					fmt.Sprintf("%d 1 1 14 0 0 2 0", tblID),  // global, idx
 					fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID),    // p0, a
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", p0ID),    // p0, b, not analyzed
 					fmt.Sprintf("%d 0 3 6 0 9 2 1", p0ID),    // p0, c
-					fmt.Sprintf("%d 1 1 6 0 9 2 0", p0ID),    // p0, idx
 					fmt.Sprintf("%d 0 1 7 0 11 2 1", p1ID),   // p1, a
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", p1ID),    // p1, b, not analyzed
 					fmt.Sprintf("%d 0 3 8 0 11 2 1", p1ID),   // p1, c
-					fmt.Sprintf("%d 1 1 8 0 11 2 0", p1ID),   // p1, idx
 				))
 		}(val)
 	}
