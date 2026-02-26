@@ -621,9 +621,9 @@ func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
 		"test t1  a 0 0 1 1 1111 1111 0"))
 }
 
-// analyzeCollationCaseInsensitive verifies that synthesized index stats
+// TestAnalyzeCollationCaseInsensitive verifies that synthesized index stats
 // match the underlying column stats across different collations and types.
-func analyzeCollationCaseInsensitive(t *testing.T) {
+func TestAnalyzeCollationCaseInsensitive(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2488,6 +2488,4 @@ func TestConsolidateSingleColIndexStats(t *testing.T) {
 		tblInfo.ID, idxA.ID,
 	)).Check(testkit.Rows("0"))
 
-	// 6. Verify collation case-insensitive behavior for synthesized index stats.
-	analyzeCollationCaseInsensitive(t)
 }
