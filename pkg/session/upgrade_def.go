@@ -480,7 +480,7 @@ const (
 	version254 = 254
 
 	// version255
-	// Add mysql.stats_global_merge_data table for unified global stats merging data.
+	// Add mysql.stats_table_data table for per-table statistics data.
 	version255 = 255
 )
 
@@ -2056,5 +2056,5 @@ func upgradeToVer254(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer255(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, metadef.CreateStatsGlobalMergeDataTable)
+	doReentrantDDL(s, metadef.CreateStatsTableDataTable)
 }

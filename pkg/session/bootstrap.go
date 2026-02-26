@@ -329,7 +329,7 @@ var (
 		{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
 		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
-		{ID: metadef.StatsGlobalMergeDataTableID, Name: "stats_global_merge_data", SQL: metadef.CreateStatsGlobalMergeDataTable},
+		{ID: metadef.StatsTableDataTableID, Name: "stats_table_data", SQL: metadef.CreateStatsTableDataTable},
 	}
 )
 

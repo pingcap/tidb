@@ -43,7 +43,7 @@ var statsTables = map[string]map[string]struct{}{
 		"stats_extended":          {},
 		"stats_feedback":          {},
 		"stats_fm_sketch":         {},
-		"stats_global_merge_data": {},
+		"stats_table_data": {},
 		"stats_histograms":        {},
 		"stats_history":           {},
 		"stats_meta":              {},
