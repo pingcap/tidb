@@ -59,18 +59,27 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
+	// Collect the new TiCI indexIDs and initialize the TiCI writer group if needed.
+	var newTiciIndexIDs []int64
+	for _, indexID := range indexIDs {
+		indexInfo := tbl.Meta().FindIndexByID(indexID)
+		if indexInfo != nil && indexInfo.IsTiCIIndex() {
+			newTiciIndexIDs = append(newTiciIndexIDs, indexID)
+		}
+	}
+	if len(newTiciIndexIDs) > 0 && !bc.ticiWriterGroupInitialized {
+		taskID := strconv.FormatInt(bc.jobID, 10)
+		if err := bc.backend.InitTiCIWriterGroup(bc.ctx, tbl.Meta(), bc.schemaName, taskID, newTiciIndexIDs); err != nil {
+			return nil, err
+		}
+		bc.ticiWriterGroupInitialized = true
+	}
+
 	for i, indexID := range indexIDs {
 		cfg := *baseCfg
 		indexInfo := tbl.Meta().FindIndexByID(indexID)
 		if indexInfo != nil && indexInfo.IsTiCIIndex() {
 			cfg.TiCIWriteEnabled = true
-			if !bc.ticiWriterGroupInitialized {
-				taskID := strconv.FormatInt(bc.jobID, 10)
-				if err := bc.backend.InitTiCIWriterGroup(bc.ctx, tbl.Meta(), bc.schemaName, taskID); err != nil {
-					return nil, err
-				}
-				bc.ticiWriterGroupInitialized = true
-			}
 		}
 		openedEngine, err := mgr.OpenEngine(bc.ctx, &cfg, tbl.Meta().Name.L, int32(indexID))
 		if err != nil {

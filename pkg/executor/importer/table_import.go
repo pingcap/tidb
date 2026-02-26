@@ -54,6 +54,7 @@ import (
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tici"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -204,7 +205,9 @@ func NewTableImporter(
 		return nil, err
 	}
 
-	if err := localBackend.InitTiCIWriterGroup(ctx, e.Table.Meta(), e.DBName, id); err != nil {
+	// Collect all the indexIDs for TiCI writer group initialization.
+	newIndexIDs := tici.GetTiCIIndexIDs(e.Table.Meta())
+	if err := localBackend.InitTiCIWriterGroup(ctx, e.Table.Meta(), e.DBName, id, newIndexIDs); err != nil {
 		return nil, err
 	}
 

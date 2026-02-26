@@ -91,13 +91,17 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	}
 	e.backend = bd
 	e.backendCtx = bCtx
+	// Collect the new TiCI indexIDs and initialize the TiCI writer group if needed.
+	var newTiciIndexIDs []int64
 	for _, idx := range e.indexes {
 		if idx.IsTiCIIndex() {
-			taskID := strconv.FormatInt(e.job.ID, 10)
-			if err := bd.InitTiCIWriterGroup(ctx, e.ptbl.Meta(), e.job.SchemaName, taskID); err != nil {
-				return err
-			}
-			break
+			newTiciIndexIDs = append(newTiciIndexIDs, idx.ID)
+		}
+	}
+	if len(newTiciIndexIDs) > 0 {
+		taskID := strconv.FormatInt(e.job.ID, 10)
+		if err := bd.InitTiCIWriterGroup(ctx, e.ptbl.Meta(), e.job.SchemaName, taskID, newTiciIndexIDs); err != nil {
+			return err
 		}
 	}
 	return nil
