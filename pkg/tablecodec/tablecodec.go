@@ -923,7 +923,7 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 		if collate.IsBinCollation(col.Ft.GetCollate()) {
 			// Change the fieldType from string to uint since we store the number of the truncated spaces.
 			// NOTE: the corresponding datum is generated as `types.NewUintDatum(paddingSize)`, and the raw data is
-			// encoded via `encodeUint`. Thus we should mark the field type as unsigened here so that the BytesDecoder
+			// encoded via `encodeUint`. Thus we should mark the field type as unsigned here so that the BytesDecoder
 			// can decode it correctly later. Otherwise there might be issues like #47115.
 			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
 			copyColInfo.Ft.AddFlag(mysql.UnsignedFlag)
@@ -1048,7 +1048,7 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-// DecodeHandleInIndexValue decodes handle in unqiue index value.
+// DecodeHandleInIndexValue decodes handle in unique index value.
 func DecodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		return DecodeIntHandleInIndexValue(value), nil
@@ -1198,13 +1198,6 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
-func hybridShardingIndexColumns(idxInfo *model.IndexInfo) []*model.IndexColumn {
-	if idxInfo == nil || idxInfo.HybridInfo == nil || idxInfo.HybridInfo.Sharding == nil {
-		return nil
-	}
-	return idxInfo.HybridInfo.Sharding.Columns
-}
-
 func hybridShardingIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, shardingCols []*model.IndexColumn, indexedValues []types.Datum) ([]types.Datum, error) {
 	if len(shardingCols) == 0 {
 		return indexedValues, nil
@@ -1294,7 +1287,7 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 			return nil, false, err
 		}
 	}
-	if shardingCols := hybridShardingIndexColumns(idxInfo); len(shardingCols) > 0 {
+	if shardingCols := idxInfo.HybridShardingColumns(); len(shardingCols) > 0 {
 		keyValues, err = hybridShardingIndexValues(tblInfo, idxInfo, shardingCols, indexedValues)
 		if err != nil {
 			return nil, false, err
@@ -1640,7 +1633,7 @@ func TempIndexValueIsUntouched(b []byte) bool {
 func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
-	if idxInfo.FullTextInfo != nil || len(hybridShardingIndexColumns(idxInfo)) > 0 {
+	if idxInfo.FullTextInfo != nil || len(idxInfo.HybridShardingColumns()) > 0 {
 		// TODO: For hybrid and fulltext indexes, we always store all index columns for now. This can be optimized later:
 		// - Sharding key columns can follow the original restored data rules.
 		// - Non-sharding columns can be forced into restored data.
@@ -1700,7 +1693,7 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 	// we must encode restored data for *all index columns* into the index value.
 	// The sharding columns are only used to identify the hybrid-index case and to build the key;
 	// the value side intentionally carries all index columns to satisfy TiCi’s data ingest.
-	forceAllColumns := idxInfo.FullTextInfo != nil || len(hybridShardingIndexColumns(idxInfo)) > 0
+	forceAllColumns := idxInfo.FullTextInfo != nil || len(idxInfo.HybridShardingColumns()) > 0
 	if idxValNeedRestoredData || len(handleRestoredData) > 0 || forceAllColumns {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
 		colIDSet := make(map[int64]struct{}, len(idxInfo.Columns)+len(handleRestoredData))
@@ -2097,13 +2090,13 @@ func VerifyTableIDForRanges(keyRanges *kv.KeyRanges) ([]int64, error) {
 		}
 		tid := DecodeTableID(ranges[0].StartKey)
 		if tid <= 0 {
-			return errors.New("Incorrect keyRange is constrcuted")
+			return errors.New("Incorrect keyRange is constructed")
 		}
 		tids = append(tids, tid)
 		for i := 1; i < len(ranges); i++ {
 			tmpTID := DecodeTableID(ranges[i].StartKey)
 			if tmpTID <= 0 {
-				return errors.New("Incorrect keyRange is constrcuted")
+				return errors.New("Incorrect keyRange is constructed")
 			}
 			if tid != tmpTID {
 				return errors.Errorf("Using multi partition's ranges as single table's")
