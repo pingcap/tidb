@@ -131,27 +131,20 @@ func (p *HandParser) parseAlterRangeStmt() ast.StmtNode {
 
 	stmt := &ast.AlterRangeStmt{}
 
-	// Parse range name (global/meta)
-	// global=float4Type (global). meta=statsMeta (if defined) or identifier.
-	// We handle identifiers and specific keywords.
+	// Parse range name (global/meta or any unreserved keyword)
 	tok := p.next()
-	if tok.Tp == identifier {
-		stmt.RangeName = ast.NewCIStr(tok.Lit)
-	} else if tok.Tp == global {
-		stmt.RangeName = ast.NewCIStr("global")
-	} else if tok.Tp == statsMeta { // statsMeta
-		stmt.RangeName = ast.NewCIStr("meta")
-	} else {
-		// Fallback for other keywords like 'meta' if not statsMeta
-		stmt.RangeName = ast.NewCIStr(tok.Lit)
+	if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+		p.syntaxErrorAt(tok)
+		return nil
 	}
+	stmt.RangeName = ast.NewCIStr(tok.Lit)
 
 	if _, ok := p.accept(placement); ok {
 		p.expect(policy)
 		p.accept(eq)
 		// Policy name
 		tok := p.next()
-		if tok.Tp == identifier {
+		if isIdentLike(tok.Tp) && tok.Tp != stringLit {
 			stmt.PlacementOption = &ast.PlacementOption{
 				Tp:       ast.PlacementOptionPolicy,
 				StrValue: tok.Lit,

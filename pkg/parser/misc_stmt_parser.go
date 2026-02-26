@@ -152,7 +152,7 @@ func (p *HandParser) parseFlushStmt() ast.StmtNode {
 		p.next()
 		stmt.Tp = ast.FlushTables
 		// Optional table names
-		if p.peek().IsIdent() && p.peek().Tp != with {
+		if isIdentLike(p.peek().Tp) && p.peek().Tp != with {
 			for {
 				tbl := p.parseTableName()
 				if tbl == nil {
@@ -213,7 +213,7 @@ func (p *HandParser) parseFlushStmt() ast.StmtNode {
 				p.next()
 				stmt.Tp = ast.FlushTiDBPlugin
 				for {
-					if p.peek().IsIdent() {
+					if isIdentLike(p.peek().Tp) {
 						stmt.Plugins = append(stmt.Plugins, p.next().Lit)
 					}
 					if _, ok := p.accept(','); !ok {

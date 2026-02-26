@@ -56,7 +56,7 @@ func (p *HandParser) parseCreateIndexStmt() ast.StmtNode {
 	stmt.IfNotExists = p.acceptIfNotExists()
 
 	// index_name
-	if tok := p.peek(); tok.IsIdent() {
+	if tok := p.peek(); isIdentLike(tok.Tp) {
 		stmt.IndexName = p.next().Lit
 	}
 
