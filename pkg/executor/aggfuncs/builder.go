@@ -50,6 +50,10 @@ func Build(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordina
 		return buildMaxMin(aggFuncDesc, ordinal, true)
 	case ast.AggFuncMin:
 		return buildMaxMin(aggFuncDesc, ordinal, false)
+	case ast.AggFuncMaxCount:
+		return buildMaxMinCount(ctx.GetEvalCtx(), aggFuncDesc, ordinal, true)
+	case ast.AggFuncMinCount:
+		return buildMaxMinCount(ctx.GetEvalCtx(), aggFuncDesc, ordinal, false)
 	case ast.AggFuncGroupConcat:
 		return buildGroupConcat(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncBitOr:
@@ -108,6 +112,10 @@ func BuildWindowFunctions(ctx AggFuncBuildContext, windowFuncDesc *aggregation.A
 		return buildMaxMinInWindowFunction(ctx, windowFuncDesc, ordinal, true)
 	case ast.AggFuncMin:
 		return buildMaxMinInWindowFunction(ctx, windowFuncDesc, ordinal, false)
+	case ast.AggFuncMaxCount:
+		return buildMaxMinCountInWindowFunction(ctx, windowFuncDesc, ordinal, true)
+	case ast.AggFuncMinCount:
+		return buildMaxMinCountInWindowFunction(ctx, windowFuncDesc, ordinal, false)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -470,6 +478,64 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	return nil
 }
 
+// buildMaxMinCount builds the AggFunc implementation for function "MAX_COUNT" and "MIN_COUNT".
+func buildMaxMinCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	if aggFuncDesc.Mode == aggregation.DedupMode {
+		return nil
+	}
+
+	argTp := aggFuncDesc.Args[0].GetType(ctx)
+	base := baseMaxMinCountAggFunc{
+		baseMaxMinAggFunc: baseMaxMinAggFunc{
+			baseAggFunc: baseAggFunc{
+				args:    aggFuncDesc.Args,
+				ordinal: ordinal,
+				retTp:   aggFuncDesc.RetTp,
+			},
+			isMax:    isMax,
+			collator: collate.GetCollator(argTp.GetCollate()),
+		},
+	}
+	evalType, fieldType := argTp.EvalType(), argTp
+	if fieldType.GetType() == mysql.TypeBit {
+		evalType = types.ETString
+	}
+	switch fieldType.GetType() {
+	case mysql.TypeEnum:
+		return &maxMinCount4Enum{base}
+	case mysql.TypeSet:
+		return &maxMinCount4Set{base}
+	}
+
+	switch evalType {
+	case types.ETInt:
+		if mysql.HasUnsignedFlag(fieldType.GetFlag()) {
+			return &maxMinCount4Uint{base}
+		}
+		return &maxMinCount4Int{base}
+	case types.ETReal:
+		switch fieldType.GetType() {
+		case mysql.TypeFloat:
+			return &maxMinCount4Float32{base}
+		case mysql.TypeDouble:
+			return &maxMinCount4Float64{base}
+		}
+	case types.ETDecimal:
+		return &maxMinCount4Decimal{base}
+	case types.ETString:
+		return &maxMinCount4String{baseMaxMinCountAggFunc: base}
+	case types.ETDatetime, types.ETTimestamp:
+		return &maxMinCount4Time{base}
+	case types.ETDuration:
+		return &maxMinCount4Duration{base}
+	case types.ETJson:
+		return &maxMinCount4JSON{base}
+	case types.ETVectorFloat32:
+		return &maxMinCount4VectorFloat32{base}
+	}
+	return nil
+}
+
 // buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN" using by window function.
 func buildMaxMinInWindowFunction(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
 	base := buildMaxMin(aggFuncDesc, ordinal, isMax)
@@ -491,6 +557,31 @@ func buildMaxMinInWindowFunction(ctx AggFuncBuildContext, aggFuncDesc *aggregati
 		return &maxMin4TimeSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Duration:
 		return &maxMin4DurationSliding{*baseAggFunc, windowInfo{}}
+	}
+	return base
+}
+
+// buildMaxMinCountInWindowFunction builds the AggFunc implementation for function "MAX_COUNT" and "MIN_COUNT" used by window function.
+func buildMaxMinCountInWindowFunction(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	base := buildMaxMinCount(ctx.GetEvalCtx(), aggFuncDesc, ordinal, isMax)
+	// build max_count/min_count aggFunc for window function using sliding window
+	switch baseAggFunc := base.(type) {
+	case *maxMinCount4Int:
+		return &maxMinCount4IntSliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Uint:
+		return &maxMinCount4UintSliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Float32:
+		return &maxMinCount4Float32Sliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Float64:
+		return &maxMinCount4Float64Sliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Decimal:
+		return &maxMinCount4DecimalSliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4String:
+		return &maxMinCount4StringSliding{*baseAggFunc, windowInfo{}, baseAggFunc.args[0].GetType(ctx.GetEvalCtx()).GetCollate()}
+	case *maxMinCount4Time:
+		return &maxMinCount4TimeSliding{*baseAggFunc, windowInfo{}}
+	case *maxMinCount4Duration:
+		return &maxMinCount4DurationSliding{*baseAggFunc, windowInfo{}}
 	}
 	return base
 }
