@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/llm"
 	"golang.org/x/oauth2"
 )
 
@@ -98,7 +99,7 @@ func NewClient(cfg Config) (*Client, error) {
 }
 
 // Complete calls generateContent and returns the first candidate text.
-func (c *Client) Complete(ctx context.Context, model, prompt string) (string, error) {
+func (c *Client) Complete(ctx context.Context, model, prompt string, opts llm.CompleteOptions) (string, error) {
 	if model == "" {
 		return "", errors.New("model is required")
 	}
@@ -109,6 +110,9 @@ func (c *Client) Complete(ctx context.Context, model, prompt string) (string, er
 				Parts: []part{{Text: prompt}},
 			},
 		},
+	}
+	if cfg := generationConfigFromOptions(opts); cfg != nil {
+		req.GenerationConfig = cfg
 	}
 	var resp generateResponse
 	if err := c.doRequest(ctx, c.endpoint(model, "generateContent"), req, &resp); err != nil {
@@ -219,7 +223,8 @@ func isRetryableError(err error) bool {
 }
 
 type generateRequest struct {
-	Contents []content `json:"contents"`
+	Contents         []content         `json:"contents"`
+	GenerationConfig *generationConfig `json:"generationConfig,omitempty"`
 }
 
 type content struct {
@@ -237,6 +242,12 @@ type generateResponse struct {
 
 type candidate struct {
 	Content content `json:"content"`
+}
+
+type generationConfig struct {
+	MaxOutputTokens *int     `json:"maxOutputTokens,omitempty"`
+	Temperature     *float64 `json:"temperature,omitempty"`
+	TopP            *float64 `json:"topP,omitempty"`
 }
 
 type embedRequest struct {
@@ -257,4 +268,22 @@ type embedPrediction struct {
 
 type embedValues struct {
 	Values []float32 `json:"values"`
+}
+
+func generationConfigFromOptions(opts llm.CompleteOptions) *generationConfig {
+	var cfg generationConfig
+	if opts.MaxTokens > 0 {
+		val := opts.MaxTokens
+		cfg.MaxOutputTokens = &val
+	}
+	if opts.Temperature != nil {
+		cfg.Temperature = opts.Temperature
+	}
+	if opts.TopP != nil {
+		cfg.TopP = opts.TopP
+	}
+	if cfg.MaxOutputTokens == nil && cfg.Temperature == nil && cfg.TopP == nil {
+		return nil
+	}
+	return &cfg
 }
