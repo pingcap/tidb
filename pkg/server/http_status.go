@@ -528,6 +528,8 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/test/{mod}/{op}", tikvhandler.NewTestHandler(tikvHandlerTool, 0))
 	})
 
+	router.Handle("/test/delete/rowkey", tikvhandler.NewDeleteRowKeyHandler(tikvHandlerTool)).Name("DeleteRowKey")
+
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
 	router.Handle("/test/ddl/hook", tikvhandler.DDLHookHandler{})
 

@@ -2008,6 +2008,79 @@ func (h *TestHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+
+type rowKeyDeleteResponse struct {
+	Key string `json:"key"`
+}
+
+// DeleteRowKeyHandler is the handler for deleting a row key. It's used for testing GC and lock resolving.
+type DeleteRowKeyHandler struct {
+	*handler.TikvHandlerTool
+}
+
+// NewDeleteRowKeyHandler creates a new DeleteRowKeyHandler.
+func NewDeleteRowKeyHandler(tool *handler.TikvHandlerTool) *DeleteRowKeyHandler {
+	return &DeleteRowKeyHandler{
+		TikvHandlerTool: tool,
+	}
+}
+
+// Supported operations:
+//   - delete?db={db}&table={table}&handle={intHandle}
+//   - delete?db={db}&table={table}&{pkCol}={pkVal}[&{pkCol2}={pkVal2}...]
+//     (for clustered common handle tables)
+func (h *DeleteRowKeyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+	values := req.URL.Query()
+	dbName := values.Get(handler.DBName)
+	if dbName == "" {
+		handler.WriteError(w, errors.BadRequestf("db is required"))
+		return
+	}
+	tableName := values.Get(handler.TableName)
+	if tableName == "" {
+		handler.WriteError(w, errors.BadRequestf("table is required"))
+		return
+	}
+
+	tb, err := h.GetTable(dbName, tableName)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	params := make(map[string]string, 1)
+	if handleStr := values.Get(handler.Handle); handleStr != "" {
+		params[handler.Handle] = handleStr
+	}
+	handle, err := h.GetHandle(tb, params, values)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	encodedKey := tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
+	store, ok := h.Store.(kv.Storage)
+	if !ok {
+		handler.WriteError(w, errors.New("store does not support kv operations"))
+		return
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTools)
+	err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		return txn.Delete(encodedKey)
+	})
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	handler.WriteData(w, rowKeyDeleteResponse{Key: strings.ToUpper(hex.EncodeToString(encodedKey))})
+}
+
 // Supported operations:
 //   - resolvelock?safepoint={uint64}&physical={bool}:
 //   - safepoint: resolve all locks whose timestamp is less than the safepoint.
