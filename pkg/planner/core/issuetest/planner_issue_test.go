@@ -341,8 +341,7 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 
 	// instance-plan-cache-with-prepare
 	{
-		tk1 := testkit.NewTestKit(t, store)
-		resetTestDB(t, tk1)
+		tk1 := prepareSharedTestKit(t)
 		tk1.MustExec("set global tidb_enable_instance_plan_cache = 1;")
 		tk1.MustExec("create table t(a timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), b int, c int, primary key(a), unique key(b,c));")
 		tk1.MustExec("insert into t(b,c) value (1,1);")
@@ -384,12 +383,29 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 		tk.MustExec("create table t1(vkey integer, c10 integer);")
 		tk.MustExec("create table t2(c12 integer, c13 integer, c14 varchar(0), c15 double);")
 		tk.MustExec("create table t3(vkey varchar(0), c20 integer);")
-		tk.MustQuery("explain select 0 from t2 join(t3 join t0 a on 0) left join(t1 b left join t1 c on 0) on(c20 = b.vkey) on(c13 = a.vkey) join(select c14 d from(t2 join t3 on c12 = vkey)) e on(c3 = d) where nullif(c15, case when(c.c10) then 0 end);").MultiCheckContain([]string{
-			"HashJoin",
-			"left outer join",
-			"if(eq(test.t2.c15, cast(case(test.t1.c10, 0), double BINARY)), NULL, test.t2.c15)",
-			"not(isnull(test.t2.c14))",
-		})
+		tk.MustQuery("explain select 0 from t2 join(t3 join t0 a on 0) left join(t1 b left join t1 c on 0) on(c20 = b.vkey) on(c13 = a.vkey) join(select c14 d from(t2 join t3 on c12 = vkey)) e on(c3 = d) where nullif(c15, case when(c.c10) then 0 end);").Check(testkit.Rows(
+			"Projection_34 0.00 root  0->Column#33",
+			"└─HashJoin_50 0.00 root  inner join, equal:[eq(Column#34, Column#35)]",
+			"  ├─HashJoin_71(Build) 0.00 root  inner join, equal:[eq(test.t0.c3, test.t2.c14)]",
+			"  │ ├─Selection_72(Build) 0.00 root  if(eq(test.t2.c15, cast(case(test.t1.c10, 0), double BINARY)), NULL, test.t2.c15)",
+			"  │ │ └─HashJoin_82 0.00 root  left outer join, left side:HashJoin_97, equal:[eq(test.t3.c20, test.t1.vkey)]",
+			"  │ │   ├─HashJoin_97(Build) 0.00 root  inner join, equal:[eq(test.t0.vkey, test.t2.c13)]",
+			"  │ │   │ ├─TableDual_107(Build) 0.00 root  rows:0",
+			"  │ │   │ └─TableReader_106(Probe) 9990.00 root  data:Selection_105",
+			"  │ │   │   └─Selection_105 9990.00 cop[tikv]  not(isnull(test.t2.c13))",
+			"  │ │   │     └─TableFullScan_104 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"  │ │   └─HashJoin_115(Probe) 9990.00 root  CARTESIAN left outer join, left side:TableReader_119",
+			"  │ │     ├─TableDual_120(Build) 0.00 root  rows:0",
+			"  │ │     └─TableReader_119(Probe) 9990.00 root  data:Selection_118",
+			"  │ │       └─Selection_118 9990.00 cop[tikv]  not(isnull(test.t1.vkey))",
+			"  │ │         └─TableFullScan_117 10000.00 cop[tikv] table:b keep order:false, stats:pseudo",
+			"  │ └─Projection_122(Probe) 9990.00 root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column#34",
+			"  │   └─TableReader_126 9990.00 root  data:Selection_125",
+			"  │     └─Selection_125 9990.00 cop[tikv]  not(isnull(test.t2.c14))",
+			"  │       └─TableFullScan_124 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"  └─Projection_127(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#35",
+			"    └─TableReader_130 10000.00 root  data:TableFullScan_129",
+			"      └─TableFullScan_129 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
 	}
 
 	// Regression test for https://github.com/pingcap/tidb/issues/66339
