@@ -190,7 +190,10 @@ func (p *HandParser) parseLoadStatsStmt() ast.StmtNode {
 	// Skip STATS keyword (identifier)
 	p.next()
 	stmt := Alloc[ast.LoadStatsStmt](p.arena)
-	tok := p.next()
+	tok, ok := p.expectAny(stringLit)
+	if !ok {
+		return nil
+	}
 	stmt.Path = tok.Lit
 	return stmt
 }

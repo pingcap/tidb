@@ -101,7 +101,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			}
 		}
 		p.expect(')')
-		tn.PartitionNames = names
+		stmt.PartitionNames = names
 	}
 
 	// Wrap TableName in standard TableSource -> Join -> TableRefsClause.

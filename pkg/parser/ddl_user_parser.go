@@ -342,9 +342,16 @@ func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 		p.expect(')')
 
 		// Parse auth option for CurrentAuth
+		// The ALTER USER USER() form only accepts IDENTIFIED BY 'string',
+		// NOT IDENTIFIED BY PASSWORD 'hash' (which is only valid in UserSpec).
 		if _, ok := p.accept(identified); ok {
 			stmt.CurrentAuth = Alloc[ast.AuthOption](p.arena)
 			if _, ok := p.accept(by); ok {
+				// Reject IDENTIFIED BY PASSWORD '...' — not valid for USER() form
+				if tok := p.peek(); tok.Tp == password {
+					p.errorNear(tok.EndOffset, tok.Offset)
+					return nil
+				}
 				if tok, ok := p.expect(stringLit); ok {
 					stmt.CurrentAuth.ByAuthString = true
 					stmt.CurrentAuth.AuthString = tok.Lit

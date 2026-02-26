@@ -100,7 +100,8 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 
 	// Handle OFFSET first if present (Standard SQL)
 	if _, ok := p.accept(offset); ok {
-		limitNode.Offset = p.toUint64Value(p.parseExpression(precNone))
+		exprTok := p.peek()
+		limitNode.Offset = p.toUint64Value(p.parseExpression(precNone), exprTok)
 		// Optional ROW/ROWS
 		if p.peek().Tp == row || p.peek().Tp == rows {
 			p.next()
@@ -110,18 +111,21 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 	// Handle LIMIT or FETCH
 	if _, ok := p.accept(limit); ok {
 		// LIMIT count [OFFSET offset] or LIMIT offset, count
+		firstTok := p.peek()
 		first := p.parseExpression(precNone)
 		if _, ok := p.accept(','); ok {
 			// LIMIT offset, count
-			limitNode.Offset = p.toUint64Value(first)
-			limitNode.Count = p.toUint64Value(p.parseExpression(precNone))
+			limitNode.Offset = p.toUint64Value(first, firstTok)
+			exprTok := p.peek()
+			limitNode.Count = p.toUint64Value(p.parseExpression(precNone), exprTok)
 		} else if _, ok := p.accept(offset); ok {
 			// LIMIT count OFFSET offset
-			limitNode.Count = p.toUint64Value(first)
-			limitNode.Offset = p.toUint64Value(p.parseExpression(precNone))
+			limitNode.Count = p.toUint64Value(first, firstTok)
+			exprTok := p.peek()
+			limitNode.Offset = p.toUint64Value(p.parseExpression(precNone), exprTok)
 		} else {
 			// LIMIT count
-			limitNode.Count = p.toUint64Value(first)
+			limitNode.Count = p.toUint64Value(first, firstTok)
 		}
 	} else if _, ok := p.acceptKeyword(fetch, "FETCH"); ok {
 		// FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}
@@ -137,7 +141,8 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 		isRowOrRows := p.peekKeyword(row, "ROW") || p.peekKeyword(rows, "ROWS")
 
 		if !isRowOrRows {
-			limitNode.Count = p.toUint64Value(p.parseExpression(precNone))
+			exprTok := p.peek()
+			limitNode.Count = p.toUint64Value(p.parseExpression(precNone), exprTok)
 		} else {
 			// Implicit count 1.
 			val := ast.NewValueExpr(uint64(1), "", "")
@@ -310,8 +315,11 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 // toUint64Value converts a ValueExpr to uint64 to match the yacc LengthNum behavior.
 // - int64 values >= 0 are converted to uint64
 // - uint64 values are kept as-is
-// - decimal values (overflow from lexer for numbers > MaxUint64) are clamped to MaxUint64
-func (p *HandParser) toUint64Value(expr ast.ExprNode) ast.ExprNode {
+// - decimal values (overflow from lexer for numbers > MaxUint64) produce a syntax error
+//
+// errTok is the token at the start of the expression, used for error positioning
+// when the literal overflows uint64.
+func (p *HandParser) toUint64Value(expr ast.ExprNode, errTok Token) ast.ExprNode {
 	if expr == nil {
 		return nil
 	}
@@ -329,9 +337,12 @@ func (p *HandParser) toUint64Value(expr ast.ExprNode) ast.ExprNode {
 		case uint64:
 			return ast.NewValueExpr(val, p.charset, p.collation)
 		default:
-			// Decimal overflow (number > MaxUint64): clamp to MaxUint64
-			// to match yacc LengthNum behavior.
+			// Decimal overflow (number > MaxUint64): report a syntax error.
+			// The yacc parser's LengthNum rule only accepted intLit tokens,
+			// so numbers that overflow uint64 (tokenized as decLit) caused
+			// a parse error. We replicate that behavior here.
 			_ = val
+			p.errorNear(errTok.EndOffset, errTok.Offset)
 			return ast.NewValueExpr(uint64(math.MaxUint64), p.charset, p.collation)
 		}
 	}

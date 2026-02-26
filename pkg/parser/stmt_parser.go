@@ -452,9 +452,9 @@ func (p *HandParser) parseCreateStmt() ast.StmtNode {
 				return p.parseCreateBindingStmt(false)
 			}
 		}
-		// For unrecognized CREATE statements, fall back.
-		_ = indexType
-		p.lexer.Restore(mark)
+		// Report syntax error at the unrecognized token (not at CREATE).
+		tok := p.peek()
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 }

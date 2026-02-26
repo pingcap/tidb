@@ -656,6 +656,18 @@ func TestDMLStmt(t *testing.T) {
 		{"TABLE t ORDER BY b LIMIT 3", true, "TABLE `t` ORDER BY `b` LIMIT 3"},
 		{"TABLE t ORDER BY b LIMIT 3 OFFSET 2", true, "TABLE `t` ORDER BY `b` LIMIT 2,3"},
 		{"TABLE t ORDER BY b LIMIT 2,3", true, "TABLE `t` ORDER BY `b` LIMIT 2,3"},
+
+		// LIMIT with uint64 max value should succeed
+		{"SELECT * FROM t LIMIT 18446744073709551615", true, "SELECT * FROM `t` LIMIT 18446744073709551615"},
+		// LIMIT with uint64 overflow should fail (value exceeds max uint64)
+		{"SELECT * FROM t LIMIT 18446744073709551616 OFFSET 3", false, ""},
+		// OFFSET with uint64 overflow should also fail
+		{"SELECT * FROM t LIMIT 10 OFFSET 18446744073709551616", false, ""},
+		// LIMIT offset,count with overflow in offset position
+		{"SELECT * FROM t LIMIT 18446744073709551616, 10", false, ""},
+		// LIMIT offset,count with overflow in count position
+		{"SELECT * FROM t LIMIT 10, 18446744073709551616", false, ""},
+
 		{"INSERT INTO ta TABLE tb", true, "INSERT INTO `ta` TABLE `tb`"},
 		{"INSERT INTO t.a TABLE t.b", true, "INSERT INTO `t`.`a` TABLE `t`.`b`"},
 		{"REPLACE INTO ta TABLE tb", true, "REPLACE INTO `ta` TABLE `tb`"},
@@ -5204,6 +5216,7 @@ func TestPrivilege(t *testing.T) {
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true, "ALTER USER `root`@`localhost` IDENTIFIED BY 'new-password', `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`ALTER USER USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER USER() IDENTIFIED BY 'new-password'"},
 		{`ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'"},
+		{`ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'`, false, ""},
 		{"alter user 'test@localhost' password expire;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE"},
 		{"alter user 'test@localhost' password expire never;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE NEVER"},
 		{"alter user 'test@localhost' password expire default;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE DEFAULT"},
