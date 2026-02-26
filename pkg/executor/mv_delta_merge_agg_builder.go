@@ -25,6 +25,30 @@ type MVDeltaMergeAggMapping = mvdeltamergeagg.Mapping
 // MinMaxRecomputeExec is the alias for min/max recompute execution descriptor.
 type MinMaxRecomputeExec = mvdeltamergeagg.MinMaxRecomputeExec
 
+// MinMaxRecomputeStrategy is the alias for min/max recompute strategy enum.
+type MinMaxRecomputeStrategy = mvdeltamergeagg.MinMaxRecomputeStrategy
+
+// MinMaxRecomputeSingleRowExec is the alias for single-row recompute runtime wiring.
+type MinMaxRecomputeSingleRowExec = mvdeltamergeagg.MinMaxRecomputeSingleRowExec
+
+// MinMaxRecomputeSingleRowWorker is the alias for single-row worker slot.
+type MinMaxRecomputeSingleRowWorker = mvdeltamergeagg.MinMaxRecomputeSingleRowWorker
+
+// MinMaxRecomputeBatchExec is the alias for batch recompute runtime wiring.
+type MinMaxRecomputeBatchExec = mvdeltamergeagg.MinMaxRecomputeBatchExec
+
+// MinMaxRecomputeBatchWorker is the alias for batch worker slot.
+type MinMaxRecomputeBatchWorker = mvdeltamergeagg.MinMaxRecomputeBatchWorker
+
+// MinMaxBatchLookupContent is the alias for batch lookup key content.
+type MinMaxBatchLookupContent = mvdeltamergeagg.MinMaxBatchLookupContent
+
+// MinMaxBatchBuildRequest is the alias for batch build request.
+type MinMaxBatchBuildRequest = mvdeltamergeagg.MinMaxBatchBuildRequest
+
+// MinMaxBatchExecBuilder is the alias for batch recompute executor builder.
+type MinMaxBatchExecBuilder = mvdeltamergeagg.BatchExecBuilder
+
 // MVDeltaMergeAggRowOpType is the alias of row operation type for MV merge.
 type MVDeltaMergeAggRowOpType = mvdeltamergeagg.RowOpType
 
@@ -39,6 +63,10 @@ type MVDeltaMergeAggResultWriter = mvdeltamergeagg.ResultWriter
 
 // MVDeltaMergeAgg row operation constants.
 const (
+	// Min/max recompute strategy constants.
+	MinMaxRecomputeSingleRow = mvdeltamergeagg.MinMaxRecomputeSingleRow
+	MinMaxRecomputeBatch     = mvdeltamergeagg.MinMaxRecomputeBatch
+
 	MVDeltaMergeAggRowOpNoOp   = mvdeltamergeagg.RowOpNoOp
 	MVDeltaMergeAggRowOpInsert = mvdeltamergeagg.RowOpInsert
 	MVDeltaMergeAggRowOpUpdate = mvdeltamergeagg.RowOpUpdate

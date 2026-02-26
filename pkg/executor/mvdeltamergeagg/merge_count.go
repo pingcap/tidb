@@ -119,7 +119,7 @@ func validateCountValueTypes(outputTp, deltaTp *types.FieldType) error {
 	if deltaTp.EvalType() != types.ETInt {
 		return errors.Errorf("COUNT mapping dependency eval type must be int, got %s", deltaTp.EvalType())
 	}
-	// Both of COUNT delta and COUNT output can be negative
+	// COUNT merge requires signed integers.
 	if mysql.HasUnsignedFlag(outputTp.GetFlag()) {
 		return errors.New("COUNT mapping output type must be signed integer")
 	}

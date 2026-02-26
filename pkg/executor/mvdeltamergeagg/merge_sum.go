@@ -168,9 +168,7 @@ func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.C
 	oldVals := oldCol.Int64s()
 	deltaVals := deltaCol.Int64s()
 	if !m.hasCountRef {
-		// Fast path for SUM(non-null expr):
-		// delta SUM is expected to be non-null by plan contract, so we only need
-		// to handle old NULL (newly inserted group where MV side is absent).
+		// Fast path for SUM(non-null expr).
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			if oldCol.IsNull(rowIdx) {
 				resultVals[rowIdx] = deltaVals[rowIdx]

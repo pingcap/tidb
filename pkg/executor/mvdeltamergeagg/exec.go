@@ -34,28 +34,84 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Mapping describes one aggregate merge rule.
-//
-// ColID contains the target aggregate column positions in child output schema.
-// DependencyColID can reference:
-// 1. child chunk delta-agg columns (col id < DeltaAggColCount), or
-// 2. columns already produced by previous mappings.
+// Mapping is one aggregate merge rule.
 type Mapping struct {
-	// AggFunc must be set; aggregate function name is read from AggFunc.Name.
-	AggFunc         *aggregation.AggFuncDesc
-	ColID           []int
+	// AggFunc must be non-nil.
+	AggFunc *aggregation.AggFuncDesc
+	// ColID are output column IDs in child schema.
+	ColID []int
+	// DependencyColID are dependency column IDs.
+	// A dependency is either a delta-agg column (< DeltaAggColCount) or a
+	// previously computed output column.
 	DependencyColID []int
 }
 
-// MinMaxRecomputeExec keeps the recompute plan for min/max fallback.
-// Stage 1 does not execute this path yet.
-type MinMaxRecomputeExec struct {
-	keyColIDs []int
-	KeyCols   [][]*expression.CorrelatedColumn
-	exec      []exec.Executor
+// MinMaxRecomputeStrategy is the recompute mode for MIN/MAX fallback.
+type MinMaxRecomputeStrategy uint8
+
+const (
+	// MinMaxRecomputeSingleRow recomputes one group key per execution.
+	MinMaxRecomputeSingleRow MinMaxRecomputeStrategy = iota + 1
+	// MinMaxRecomputeBatch recomputes multiple group keys in one execution.
+	MinMaxRecomputeBatch
+)
+
+// MinMaxBatchLookupContent is one batch lookup key.
+type MinMaxBatchLookupContent struct {
+	// Keys are group-key datums in planner-defined key order.
+	Keys []types.Datum
 }
 
-// RowOpType is the row operation for MV table write.
+// MinMaxBatchBuildRequest is the input to build one batch recompute executor.
+type MinMaxBatchBuildRequest struct {
+	// LookupKeys are deduplicated keys for this batch.
+	LookupKeys []*MinMaxBatchLookupContent
+}
+
+// BatchExecBuilder builds one opened recompute executor for one batch request.
+type BatchExecBuilder interface {
+	Build(context.Context, *MinMaxBatchBuildRequest) (exec.Executor, error)
+}
+
+// MinMaxRecomputeSingleRowWorker is one worker-local single-row slot.
+type MinMaxRecomputeSingleRowWorker struct {
+	// KeyCols are correlated key columns bound to this worker slot.
+	KeyCols []*expression.CorrelatedColumn
+	// Exec is the worker-local reusable executor.
+	Exec exec.Executor
+}
+
+// MinMaxRecomputeSingleRowExec stores single-row recompute worker slots.
+type MinMaxRecomputeSingleRowExec struct {
+	// Workers has one slot per MV merge worker.
+	Workers []MinMaxRecomputeSingleRowWorker
+}
+
+// MinMaxRecomputeBatchWorker is one worker-local batch slot.
+type MinMaxRecomputeBatchWorker struct {
+	// Builder creates a new executor for each batch.
+	Builder BatchExecBuilder
+}
+
+// MinMaxRecomputeBatchExec stores batch recompute worker slots.
+type MinMaxRecomputeBatchExec struct {
+	// Workers has one slot per MV merge worker.
+	Workers []MinMaxRecomputeBatchWorker
+}
+
+// MinMaxRecomputeExec is recompute metadata for one MIN/MAX mapping.
+type MinMaxRecomputeExec struct {
+	// KeyInputColIDs are group-key column IDs in child schema.
+	KeyInputColIDs []int
+	// Strategy is the recompute mode.
+	Strategy MinMaxRecomputeStrategy
+	// SingleRow is set when Strategy is MinMaxRecomputeSingleRow.
+	SingleRow *MinMaxRecomputeSingleRowExec
+	// Batch is set when Strategy is MinMaxRecomputeBatch.
+	Batch *MinMaxRecomputeBatchExec
+}
+
+// RowOpType is the row write operation on MV table.
 type RowOpType uint8
 
 const (
@@ -69,57 +125,53 @@ const (
 	RowOpDelete
 )
 
-// RowOp describes one row-level write action.
+// RowOp is one row-level write action.
 type RowOp struct {
 	RowIdx int
 	Tp     RowOpType
-	// updateOrdinal is the ordinal index among update candidates in this chunk.
+	// updateOrdinal is the index in update candidates for this chunk.
 	// It is valid for rows that were initially update candidates.
 	updateOrdinal int32
 }
 
-// ChunkResult contains worker result for one input chunk.
+// ChunkResult is one worker result for one input chunk.
 type ChunkResult struct {
-	// Input is the original joined chunk (delta agg + MV columns).
+	// Input is the original joined chunk.
 	Input *chunk.Chunk
-	// ComputedCols is indexed by input column position.
-	// A nil item means this column is not computed by merge mappings.
+	// ComputedCols is indexed by input column ID. Nil means not computed.
 	ComputedCols []*chunk.Column
-	// RowOps indicates insert/update/delete rows in Input. Update candidates
-	// that are later proven unchanged are converted to RowOpNoOp.
+	// RowOps are row write operations.
 	RowOps []RowOp
-	// UpdateTouchedBitmap stores touched bits for update candidates in row-op order.
-	// The bit width of one update row is UpdateTouchedBitCount, and one row occupies
-	// UpdateTouchedStride bytes in this bitmap.
+	// UpdateTouchedBitmap stores touched-column bitmaps for update candidates.
 	UpdateTouchedBitmap []uint8
+	// UpdateTouchedStride is bytes per update row in UpdateTouchedBitmap.
 	UpdateTouchedStride int
+	// UpdateTouchedBitCnt is touched-bit count per update row.
 	UpdateTouchedBitCnt int
 }
 
-// ResultWriter consumes merged chunk results and writes to MV table.
+// ResultWriter consumes merged chunk results.
 type ResultWriter interface {
 	WriteChunk(ctx context.Context, result *ChunkResult) error
 }
 
 // Exec is the sink executor for incremental MV merge.
-// It currently supports COUNT / SUM merge.
 type Exec struct {
 	exec.BaseExecutor
 
 	AggMappings      []Mapping
 	DeltaAggColCount int
-	MinMaxRecompute  map[int]MinMaxRecomputeExec
+	// MinMaxRecompute maps mapping index to recompute metadata.
+	MinMaxRecompute map[int]*MinMaxRecomputeExec
 
 	WorkerCnt int
 	Writer    ResultWriter
 
 	TargetTable table.Table
 	TargetInfo  *model.TableInfo
-	// TargetHandleCols is used to build row handle for update/delete.
+	// TargetHandleCols builds row handles for update/delete.
 	TargetHandleCols plannerutil.HandleCols
-	// TargetWritableColIDs maps target writable col index -> input chunk col index.
-	// The mapped input column provides old/new base values for this writable column.
-	// For aggregate writable columns, new values are taken from computed result when available.
+	// TargetWritableColIDs maps writable target column index to input column index.
 	TargetWritableColIDs []int
 
 	compiledMergers      []aggMerger
@@ -335,8 +387,7 @@ func isFirstAggCountAllRows(aggFunc *aggregation.AggFuncDesc) bool {
 	if !ok {
 		return false
 	}
-	// Require a strict, compile-time non-NULL constant.
-	// ParamMarker/DeferredExpr are context-dependent and may be NULL at runtime.
+	// Require a strict non-NULL compile-time constant.
 	if con.ConstLevel() != expression.ConstStrict || con.Value.IsNull() {
 		return false
 	}
