@@ -99,14 +99,15 @@ func EnableTopRU() {
 // When the count reaches 0, ResetTopRUItemInterval is called.
 func DisableTopRU() {
 	for {
-		current := GlobalState.ruConsumerCount.Load()
-		if current <= 0 {
+		prevCount := GlobalState.ruConsumerCount.Load()
+		if prevCount <= 0 {
 			// Already at 0, nothing to decrement (defensive guard)
 			return
 		}
-		if GlobalState.ruConsumerCount.CAS(current, current-1) {
+
+		if GlobalState.ruConsumerCount.CAS(prevCount, prevCount-1) {
 			// If this was the last subscriber, reset report interval to default
-			if current == 1 {
+			if prevCount == 1 {
 				ResetTopRUItemInterval()
 			}
 			return

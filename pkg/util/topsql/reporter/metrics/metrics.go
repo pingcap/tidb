@@ -24,7 +24,7 @@ var (
 	IgnoreExceedSQLCounter              prometheus.Counter
 	IgnoreExceedPlanCounter             prometheus.Counter
 	IgnoreExceedRUKeysCounter           prometheus.Counter
-	IgnoreExceedRUAmountCounter         prometheus.Counter
+	IgnoreExceedRUTotalCounter         prometheus.Counter
 	IgnoreCollectChannelFullCounter     prometheus.Counter
 	IgnoreCollectStmtChannelFullCounter prometheus.Counter
 	IgnoreCollectRUChannelFullCounter   prometheus.Counter
@@ -38,8 +38,11 @@ var (
 	ReportPlanDurationSuccHistogram     prometheus.Observer
 	ReportPlanDurationFailedHistogram   prometheus.Observer
 	TopSQLReportRecordCounterHistogram  prometheus.Observer
+	TopSQLReportRURecordCounterHistogram prometheus.Observer
 	TopSQLReportSQLCountHistogram       prometheus.Observer
 	TopSQLReportPlanCountHistogram      prometheus.Observer
+	ReportRURecordDurationSuccHistogram  prometheus.Observer
+	ReportRURecordDurationFailedHistogram prometheus.Observer
 )
 
 func init() {
@@ -51,7 +54,7 @@ func InitMetricsVars() {
 	IgnoreExceedSQLCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_sql")
 	IgnoreExceedPlanCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_plan")
 	IgnoreExceedRUKeysCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_ru_keys")
-	IgnoreExceedRUAmountCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_ru_amount")
+	IgnoreExceedRUTotalCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_ru_total")
 	IgnoreCollectChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_channel_full")
 	IgnoreCollectStmtChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_stmt_channel_full")
 	IgnoreCollectRUChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_ru_channel_full")
@@ -65,6 +68,9 @@ func InitMetricsVars() {
 	ReportPlanDurationSuccHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("plan", metrics.LblOK)
 	ReportPlanDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("plan", metrics.LblError)
 	TopSQLReportRecordCounterHistogram = metrics.TopSQLReportDataHistogram.WithLabelValues("record")
+	TopSQLReportRURecordCounterHistogram = metrics.TopSQLReportDataHistogram.WithLabelValues("ru_record")
 	TopSQLReportSQLCountHistogram = metrics.TopSQLReportDataHistogram.WithLabelValues("sql")
 	TopSQLReportPlanCountHistogram = metrics.TopSQLReportDataHistogram.WithLabelValues("plan")
+	ReportRURecordDurationSuccHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("ru_record", metrics.LblOK)
+	ReportRURecordDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("ru_record", metrics.LblError)
 }

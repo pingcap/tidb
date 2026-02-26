@@ -20,8 +20,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/topsql/reporter/mock"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockSingleTargetDataSinkRegisterer struct{}
@@ -34,6 +36,16 @@ func TestSingleTargetDataSink(t *testing.T) {
 	server, err := mock.StartMockAgentServer()
 	assert.NoError(t, err)
 	defer server.Stop()
+
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	topsqlstate.EnableTopRU()
+	t.Cleanup(func() {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+	})
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = server.Address()
@@ -101,4 +113,62 @@ func TestSingleTargetDataSink(t *testing.T) {
 	normalizedPlan, exist := server.GetPlanMetaByDigestBlocking([]byte("P1"), 5*time.Second)
 	assert.True(t, exist)
 	assert.Equal(t, normalizedPlan, "PLAN-1")
+}
+
+func TestSingleTargetDataSinkSendBatchTopRURecordRespectsTopRUState(t *testing.T) {
+	server, err := mock.StartMockAgentServer()
+	require.NoError(t, err)
+	defer server.Stop()
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = server.Address()
+	})
+
+	ds := NewSingleTargetDataSink(&mockSingleTargetDataSinkRegisterer{})
+	ds.Start()
+	defer ds.Close()
+
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	t.Cleanup(func() {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+	})
+
+	records := []tipb.TopRURecord{{
+		User:       "user1",
+		SqlDigest:  []byte("S1"),
+		PlanDigest: []byte("P1"),
+		Items: []*tipb.TopRURecordItem{{
+			TimestampSec: 1,
+			TotalRu:      1.5,
+			ExecCount:    1,
+			ExecDuration: 1,
+		}},
+	}}
+
+	baseCnt := server.RURecordsCnt()
+
+	// TopRU disabled: sendBatchTopRURecord should no-op and not send any batch.
+	err = ds.TrySend(&ReportData{RURecords: records}, time.Now().Add(10*time.Second))
+	require.NoError(t, err)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		require.Equal(t, baseCnt, server.RURecordsCnt())
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	topsqlstate.EnableTopRU()
+	err = ds.TrySend(&ReportData{RURecords: records}, time.Now().Add(10*time.Second))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return server.RURecordsCnt() == baseCnt+1
+	}, 5*time.Second, 10*time.Millisecond)
+
+	latest := server.GetLatestRURecords()
+	require.Len(t, latest, 1)
+	assert.Equal(t, "user1", latest[0].User)
+	assert.Equal(t, []byte("S1"), latest[0].SqlDigest)
 }

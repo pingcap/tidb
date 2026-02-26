@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -275,15 +276,18 @@ func (ds *SingleTargetDataSink) sendBatchTopRURecord(ctx context.Context, record
 	if len(records) == 0 {
 		return nil
 	}
+	if !topsqlstate.TopRUEnabled() {
+		return nil
+	}
 
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		// TODO: add RU-specific metrics later
+		reporter_metrics.TopSQLReportRURecordCounterHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportRURecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportRURecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 

@@ -63,6 +63,22 @@ func (i *StatementStatsItem) String() string {
 	return string(b)
 }
 
+// Merge merges other into RUIncrementMap.
+// This helper is test-only to keep production API surface minimal.
+func (m RUIncrementMap) Merge(other RUIncrementMap) {
+	if m == nil || other == nil {
+		return
+	}
+	for key, otherIncr := range other {
+		incr, ok := m[key]
+		if !ok {
+			m[key] = otherIncr
+			continue
+		}
+		incr.Merge(otherIncr)
+	}
+}
+
 func TestKvStatementStatsItem_Merge(t *testing.T) {
 	item1 := KvStatementStatsItem{
 		KvExecCount: map[string]uint64{

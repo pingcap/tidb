@@ -134,7 +134,7 @@ func (m *aggregator) drainAndPushRU() {
 
 	if droppedKeys > 0 {
 		reporter_metrics.IgnoreExceedRUKeysCounter.Add(float64(droppedKeys))
-		reporter_metrics.IgnoreExceedRUAmountCounter.Add(droppedRU)
+		reporter_metrics.IgnoreExceedRUTotalCounter.Add(droppedRU)
 	}
 
 	if state.TopRUEnabled() && len(total) > 0 {

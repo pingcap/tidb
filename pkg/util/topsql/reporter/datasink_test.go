@@ -19,7 +19,10 @@ import (
 	"testing"
 	"time"
 
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultDataSinkRegisterer(t *testing.T) {
@@ -35,6 +38,70 @@ func TestDefaultDataSinkRegisterer(t *testing.T) {
 	r.Deregister(m1)
 	r.Deregister(m2)
 	assert.Empty(t, r.dataSinks)
+}
+
+func TestDefaultDataSinkRegistererTopRUTwoSinksRefCountAndReset(t *testing.T) {
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	topsqlstate.ResetTopRUItemInterval()
+	t.Cleanup(func() {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		topsqlstate.ResetTopRUItemInterval()
+	})
+
+	r := NewDefaultDataSinkRegisterer(context.Background())
+	ds1 := &pubSubDataSink{
+		enableTopRU:  true,
+		itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S,
+	}
+	ds2 := &pubSubDataSink{
+		enableTopRU:  true,
+		itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S,
+	}
+
+	require.NoError(t, r.Register(ds1))
+	require.NoError(t, r.Register(ds2))
+	require.True(t, topsqlstate.TopRUEnabled())
+	require.Equal(t, int64(15), topsqlstate.GetTopRUItemInterval())
+
+	r.Deregister(ds2)
+	require.True(t, topsqlstate.TopRUEnabled())
+	require.Equal(t, int64(15), topsqlstate.GetTopRUItemInterval())
+
+	r.Deregister(ds1)
+	require.False(t, topsqlstate.TopRUEnabled())
+	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
+}
+
+func TestDefaultDataSinkRegistererTopRUDuplicateRegisterIsIdempotent(t *testing.T) {
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	topsqlstate.ResetTopRUItemInterval()
+	t.Cleanup(func() {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		topsqlstate.ResetTopRUItemInterval()
+	})
+
+	r := NewDefaultDataSinkRegisterer(context.Background())
+	ds := &pubSubDataSink{
+		enableTopRU:  true,
+		itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S,
+	}
+
+	require.NoError(t, r.Register(ds))
+	require.NoError(t, r.Register(ds))
+	require.Len(t, r.dataSinks, 1)
+	require.True(t, topsqlstate.TopRUEnabled())
+
+	r.Deregister(ds)
+	require.False(t, topsqlstate.TopRUEnabled())
+	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
 }
 
 type mockDataSink2 struct {

@@ -86,12 +86,20 @@ func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
 	case <-r.ctx.Done():
 		return errors.New("DefaultDataSinkRegisterer closed")
 	default:
+		if _, ok := r.dataSinks[dataSink]; ok {
+			return nil
+		}
 		if len(r.dataSinks) >= 10 {
 			return errors.New("too many datasinks")
 		}
 		r.dataSinks[dataSink] = struct{}{}
 		if len(r.dataSinks) > 0 {
 			topsqlstate.EnableTopSQL()
+		}
+
+		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopRU {
+			topsqlstate.EnableTopRU()
+			topsqlstate.SetTopRUItemInterval(ds.itemInterval)
 		}
 		return nil
 	}
@@ -105,9 +113,17 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 	select {
 	case <-r.ctx.Done():
 	default:
+		if _, ok := r.dataSinks[dataSink]; !ok {
+			return
+		}
+
 		delete(r.dataSinks, dataSink)
 		if len(r.dataSinks) == 0 {
 			topsqlstate.DisableTopSQL()
+		}
+
+		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopRU {
+			topsqlstate.DisableTopRU()
 		}
 	}
 }

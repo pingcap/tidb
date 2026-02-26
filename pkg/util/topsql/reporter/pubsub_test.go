@@ -41,12 +41,24 @@ type mockPubSubDataSinkStream struct {
 	ruRecords []*tipb.TopRURecord
 	sqlMetas  []*tipb.SQLMeta
 	planMetas []*tipb.PlanMeta
+	sendErr   error
+	sendErrAt int
+	sendCount int
+	onSend    func(*tipb.TopSQLSubResponse, int)
 	sync.Mutex
 }
 
 func (s *mockPubSubDataSinkStream) Send(resp *tipb.TopSQLSubResponse) error {
 	s.Lock()
 	defer s.Unlock()
+	s.sendCount++
+
+	if s.onSend != nil {
+		s.onSend(resp, s.sendCount)
+	}
+	if s.sendErr != nil && s.sendErrAt > 0 && s.sendCount == s.sendErrAt {
+		return s.sendErr
+	}
 
 	if resp.GetRecord() != nil {
 		s.records = append(s.records, resp.GetRecord())
@@ -192,7 +204,10 @@ func TestPubSubMultiSubscriberIsolation(t *testing.T) {
 	}
 	topsqlstate.ResetTopRUItemInterval()
 
-	svc := NewTopSQLPubSubService(&mockPubSubDataSinkRegisterer{})
+	registererCtx, registererCancel := context.WithCancel(context.Background())
+	t.Cleanup(registererCancel)
+	registerer := NewDefaultDataSinkRegisterer(registererCtx)
+	svc := NewTopSQLPubSubService(&registerer)
 
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	ctx2, cancel2 := context.WithCancel(context.Background())
@@ -285,4 +300,186 @@ func TestNormalizeTopRUItemIntervalInvalid(t *testing.T) {
 	ds := newPubSubDataSink(req, &mockPubSubDataSinkStream{}, &mockPubSubDataSinkRegisterer{})
 	// pubsub stores the raw interval; normalization happens in state.SetTopRUItemInterval.
 	require.Equal(t, tipb.ItemInterval(99), ds.itemInterval)
+}
+
+func TestParseTopRUSubscription(t *testing.T) {
+	cases := []struct {
+		name         string
+		req          *tipb.TopSQLSubRequest
+		enableTopRU  bool
+		itemInterval tipb.ItemInterval
+	}{
+		{
+			name:         "nil request",
+			req:          nil,
+			enableTopRU:  false,
+			itemInterval: tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED,
+		},
+		{
+			name: "missing topru config",
+			req: &tipb.TopSQLSubRequest{
+				Collectors: []tipb.CollectorType{tipb.CollectorType_COLLECTOR_TYPE_TOPRU},
+			},
+			enableTopRU:  false,
+			itemInterval: tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED,
+		},
+		{
+			name: "missing topru collector",
+			req: &tipb.TopSQLSubRequest{
+				Collectors: []tipb.CollectorType{tipb.CollectorType_COLLECTOR_TYPE_TOPSQL},
+				Topru: &tipb.TopRUConfig{
+					ItemIntervalSeconds: tipb.ItemInterval_ITEM_INTERVAL_30S,
+				},
+			},
+			enableTopRU:  false,
+			itemInterval: tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED,
+		},
+		{
+			name: "enabled with valid collector",
+			req: &tipb.TopSQLSubRequest{
+				Collectors: []tipb.CollectorType{
+					tipb.CollectorType_COLLECTOR_TYPE_TOPSQL,
+					tipb.CollectorType_COLLECTOR_TYPE_TOPRU,
+				},
+				Topru: &tipb.TopRUConfig{
+					ItemIntervalSeconds: tipb.ItemInterval_ITEM_INTERVAL_30S,
+				},
+			},
+			enableTopRU:  true,
+			itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S,
+		},
+		{
+			name: "enabled with unknown interval passthrough",
+			req: &tipb.TopSQLSubRequest{
+				Collectors: []tipb.CollectorType{tipb.CollectorType_COLLECTOR_TYPE_TOPRU},
+				Topru: &tipb.TopRUConfig{
+					ItemIntervalSeconds: tipb.ItemInterval(99),
+				},
+			},
+			enableTopRU:  true,
+			itemInterval: tipb.ItemInterval(99),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			enableTopRU, itemInterval := parseTopRUSubscription(tc.req)
+			require.Equal(t, tc.enableTopRU, enableTopRU)
+			require.Equal(t, tc.itemInterval, itemInterval)
+		})
+	}
+}
+
+func TestSendTopRURecordsGatingAndErrors(t *testing.T) {
+	setGlobalTopRUEnabled := func(enabled bool) {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		if enabled {
+			topsqlstate.EnableTopRU()
+		}
+	}
+	t.Cleanup(func() {
+		setGlobalTopRUEnabled(false)
+	})
+
+	records := []tipb.TopRURecord{
+		{
+			User:      "user1",
+			SqlDigest: []byte("S1"),
+			Items: []*tipb.TopRURecordItem{{
+				TimestampSec: 1,
+				TotalRu:      1.0,
+				ExecCount:    1,
+				ExecDuration: 1,
+			}},
+		},
+		{
+			User:      "user2",
+			SqlDigest: []byte("S2"),
+			Items: []*tipb.TopRURecordItem{{
+				TimestampSec: 2,
+				TotalRu:      2.0,
+				ExecCount:    1,
+				ExecDuration: 1,
+			}},
+		},
+	}
+
+	t.Run("skip when records empty", func(t *testing.T) {
+		setGlobalTopRUEnabled(true)
+		stream := &mockPubSubDataSinkStream{}
+		ds := &pubSubDataSink{
+			stream:      stream,
+			enableTopRU: true,
+		}
+
+		err := ds.sendTopRURecords(context.Background(), nil)
+		require.NoError(t, err)
+		require.Len(t, stream.ruRecords, 0)
+	})
+
+	t.Run("skip when sink top ru disabled", func(t *testing.T) {
+		setGlobalTopRUEnabled(true)
+		stream := &mockPubSubDataSinkStream{}
+		ds := &pubSubDataSink{
+			stream:      stream,
+			enableTopRU: false,
+		}
+
+		err := ds.sendTopRURecords(context.Background(), records)
+		require.NoError(t, err)
+		require.Len(t, stream.ruRecords, 0)
+	})
+
+	t.Run("skip when global top ru disabled", func(t *testing.T) {
+		setGlobalTopRUEnabled(false)
+		stream := &mockPubSubDataSinkStream{}
+		ds := &pubSubDataSink{
+			stream:      stream,
+			enableTopRU: true,
+		}
+
+		err := ds.sendTopRURecords(context.Background(), records)
+		require.NoError(t, err)
+		require.Len(t, stream.ruRecords, 0)
+	})
+
+	t.Run("return stream send error", func(t *testing.T) {
+		setGlobalTopRUEnabled(true)
+		sendErr := errors.New("stream send failed")
+		stream := &mockPubSubDataSinkStream{
+			sendErr:   sendErr,
+			sendErrAt: 1,
+		}
+		ds := &pubSubDataSink{
+			stream:      stream,
+			enableTopRU: true,
+		}
+
+		err := ds.sendTopRURecords(context.Background(), records)
+		require.ErrorIs(t, err, sendErr)
+		require.Len(t, stream.ruRecords, 0)
+	})
+
+	t.Run("stop on context cancel after first send", func(t *testing.T) {
+		setGlobalTopRUEnabled(true)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		stream := &mockPubSubDataSinkStream{}
+		stream.onSend = func(_ *tipb.TopSQLSubResponse, count int) {
+			if count == 1 {
+				cancel()
+			}
+		}
+		ds := &pubSubDataSink{
+			stream:      stream,
+			enableTopRU: true,
+		}
+
+		err := ds.sendTopRURecords(ctx, records)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Len(t, stream.ruRecords, 1)
+	})
 }

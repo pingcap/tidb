@@ -32,10 +32,6 @@ const (
 	// Merge may combine up to 4 compacted buckets, so keep a larger pre-cap.
 	ruReportMergePreTopNUsers       = int(ruReportWindowSeconds/ruBaseBucketSeconds) * maxTopUsers
 	ruReportMergePreTopNSQLsPerUser = int(ruReportWindowSeconds/ruBaseBucketSeconds) * maxTopSQLsPerUser
-
-	// The final output can contain up to 4 report points (15s interval).
-	ruReportOutputMaxUsers       = int(ruReportWindowSeconds/ruBaseBucketSeconds) * ruReportTopNUsers
-	ruReportOutputMaxSQLsPerUser = int(ruReportWindowSeconds/ruBaseBucketSeconds) * ruReportTopNSQLsPerUser
 )
 
 type ruPointBucket struct {

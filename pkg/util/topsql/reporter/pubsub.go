@@ -51,10 +51,6 @@ func (ps *TopSQLPubSubService) Subscribe(req *tipb.TopSQLSubRequest, stream tipb
 	if err := ps.dataSinkRegisterer.Register(ds); err != nil {
 		return err
 	}
-	if ds.enableTopRU {
-		topsqlstate.EnableTopRU()
-		topsqlstate.SetTopRUItemInterval(ds.itemInterval)
-	}
 	return ds.run()
 }
 
@@ -100,7 +96,7 @@ func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval
 // newPubSubDataSink creates a DataSink for PubSub subscription.
 //
 // It parses TopRU options from the request and stores them in the sink.
-// Subscribe enables TopRU, and run() disables it when the subscription ends.
+// Register enables TopRU when the sink has enableTopRU; Deregister disables it when the last such sink is removed.
 // item_interval_seconds controls TopRURecordItem.timestamp_sec (15s/30s/60s).
 // Requests without the TOPRU collector entry keep TopRU disabled for backward compatibility.
 func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer, registerer DataSinkRegisterer) *pubSubDataSink {
@@ -148,10 +144,6 @@ func (ds *pubSubDataSink) run() error {
 			logutil.BgLogger().Error("[top-sql] got panic in pub sub data sink, just ignore", zap.Error(util.GetRecoverError(r)))
 		}
 		ds.registerer.Deregister(ds)
-		// Disable TopRU if this sink enabled it
-		if ds.enableTopRU {
-			topsqlstate.DisableTopRU()
-		}
 		ds.cancel()
 	}()
 
@@ -265,21 +257,18 @@ func (ds *pubSubDataSink) sendTopRURecords(ctx context.Context, records []tipb.T
 	}
 
 	// Defense in depth: only send RU records when TopRU is enabled.
-	if !ds.enableTopRU {
-		return
-	}
-	if !topsqlstate.TopRUEnabled() {
+	if !ds.enableTopRU || !topsqlstate.TopRUEnabled() {
 		return
 	}
 
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		// TODO: add RU-specific metrics later
+		reporter_metrics.TopSQLReportRURecordCounterHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportRURecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportRURecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
