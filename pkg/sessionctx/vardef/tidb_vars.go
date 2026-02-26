@@ -1269,6 +1269,12 @@ const (
 	TiDBLLMDefaultModel = "tidb_llm_default_model"
 	// TiDBLLMTimeout indicates the timeout for LLM requests.
 	TiDBLLMTimeout = "tidb_llm_timeout"
+	// TiDBLLMMaxTokens indicates the max output tokens for LLM completion.
+	TiDBLLMMaxTokens = "tidb_llm_max_tokens"
+	// TiDBLLMTemperature indicates the temperature for LLM completion.
+	TiDBLLMTemperature = "tidb_llm_temperature"
+	// TiDBLLMTopP indicates the top-p for LLM completion.
+	TiDBLLMTopP = "tidb_llm_top_p"
 	// TiDBResourceControlStrictMode indicates whether resource control strict mode is enabled.
 	// When strict mode is enabled, user need certain privilege to change session or statement resource group.
 	TiDBResourceControlStrictMode = "tidb_resource_control_strict_mode"
@@ -1751,6 +1757,9 @@ const (
 	DefTiDBEnableLLMInference                         = false
 	DefTiDBLLMDefaultModel                            = ""
 	DefTiDBLLMTimeout                                 = 30 * time.Second
+	DefTiDBLLMMaxTokens                               = int64(0)
+	DefTiDBLLMTemperature                             = -1.0
+	DefTiDBLLMTopP                                    = -1.0
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
@@ -1942,6 +1951,9 @@ var (
 	EnableLLMInference              = atomic.NewBool(DefTiDBEnableLLMInference)
 	LLMDefaultModel                 = atomic.NewString(DefTiDBLLMDefaultModel)
 	LLMTimeout                      = atomic.NewDuration(DefTiDBLLMTimeout)
+	LLMMaxTokens                    = atomic.NewInt64(DefTiDBLLMMaxTokens)
+	LLMTemperature                  = atomic.NewFloat64(DefTiDBLLMTemperature)
+	LLMTopP                         = atomic.NewFloat64(DefTiDBLLMTopP)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)

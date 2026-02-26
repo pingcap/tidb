@@ -3371,6 +3371,68 @@ var defaultSysVars = []*SysVar{
 			return vardef.LLMTimeout.Load().String(), nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBLLMMaxTokens, Value: strconv.FormatInt(vardef.DefTiDBLLMMaxTokens, 10), Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			if val < 0 {
+				return ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBLLMMaxTokens, s)
+			}
+			vardef.LLMMaxTokens.Store(val)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.FormatInt(vardef.LLMMaxTokens.Load(), 10), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBLLMTemperature, Value: strconv.FormatFloat(vardef.DefTiDBLLMTemperature, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: -1, MaxValue: 1,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+			val, err := strconv.ParseFloat(normalizedValue, 64)
+			if err != nil {
+				return normalizedValue, err
+			}
+			if val != -1 && (val < 0 || val > 1) {
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBLLMTemperature, originalValue)
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				return err
+			}
+			vardef.LLMTemperature.Store(val)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.FormatFloat(vardef.LLMTemperature.Load(), 'f', -1, 64), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBLLMTopP, Value: strconv.FormatFloat(vardef.DefTiDBLLMTopP, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: -1, MaxValue: 1,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+			val, err := strconv.ParseFloat(normalizedValue, 64)
+			if err != nil {
+				return normalizedValue, err
+			}
+			if val != -1 && (val < 0 || val > 1) {
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBLLMTopP, originalValue)
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				return err
+			}
+			vardef.LLMTopP.Store(val)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.FormatFloat(vardef.LLMTopP.Load(), 'f', -1, 64), nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBModelCacheCapacity, Value: strconv.FormatUint(vardef.DefTiDBModelCacheCapacity, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			val, err := strconv.ParseUint(s, 10, 64)
