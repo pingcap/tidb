@@ -3833,7 +3833,7 @@ func (*PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stm
 	if stmt.RefreshStmt.Type != ast.RefreshMaterializedViewTypeFast {
 		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: only FAST refresh is supported, got %s", stmt.RefreshStmt.Type.String())
 	}
-	return nil, plannererrors.ErrUnsupportedType.GenWithStack("RefreshMaterializedViewImplementStmt is not supported")
+	return nil, plannererrors.ErrUnsupportedType.GenWithStack("FAST refresh is not yet supported, please use COMPLETE refresh")
 }
 
 func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {

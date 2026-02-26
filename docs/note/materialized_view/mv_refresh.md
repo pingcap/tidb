@@ -42,7 +42,7 @@ At the moment:
 - Refresh metadata table:
   - `mysql.tidb_mview_refresh_info` (PK `MVIEW_ID`, fields include success metadata used by next refresh, for example `LAST_SUCCESS_READ_TSO`).
 - Refresh history table:
-  - `mysql.tidb_mview_refresh_hist` (per-job lifecycle/status, keyed by `MVIEW_ID + REFRESH_JOB_ID`).
+  - `mysql.tidb_mview_refresh_hist` (per-job lifecycle/status, primary key is `REFRESH_JOB_ID`; each row also stores `MVIEW_ID`).
 
 `MVIEW_ID` directly uses MV physical table `TableInfo.ID`.
 
