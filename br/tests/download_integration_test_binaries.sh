@@ -15,12 +15,13 @@ set -o pipefail
 branch=${1:-master}
 file_server_url=${2:-http://fileserver.pingcap.net}
 pd_branch=${3:-master} # use master branch for pd by default
+ticdc_branch=${4:-master} # use master branch for ticdc by default
 
 tikv_importer_branch="release-5.0"
 tikv_sha1_url="${file_server_url}/download/refs/pingcap/tikv/${branch}/sha1"
 pd_sha1_url="${file_server_url}/download/refs/pingcap/pd/${pd_branch}/sha1"
 tiflash_sha1_url="${file_server_url}/download/refs/pingcap/tiflash/${branch}/sha1"
-ticdc_sha1_url="${file_server_url}/download/refs/pingcap/ticdc/${branch}/sha1"
+ticdc_sha1_url="${file_server_url}/download/refs/pingcap/ticdc/${ticdc_branch}/sha1"
 tikv_importer_sha1_url="${file_server_url}/download/refs/pingcap/importer/${tikv_importer_branch}/sha1"
 
 pd_sha1=$(curl "$pd_sha1_url")
