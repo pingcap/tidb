@@ -90,7 +90,7 @@ type Tracker struct {
 		children map[int][]*Tracker
 		sync.Mutex
 	}
-	debugLogTag         string            // debugLogTag identifies this tracker in log lines.
+	debugLogTag string // debugLogTag identifies this tracker in log lines.
 	// following fields are used with atomic operations, so make them 64-byte aligned.
 	bytesReleased       int64             // Released bytes.
 	maxConsumed         atomicutil.Int64  // max number of bytes consumed during execution.
