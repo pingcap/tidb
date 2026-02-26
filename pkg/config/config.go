@@ -815,6 +815,8 @@ type LLMConfig struct {
 	VertexProject  string        `toml:"vertex_project" json:"vertex_project"`
 	VertexLocation string        `toml:"vertex_location" json:"vertex_location"`
 	CredentialFile string        `toml:"credential_file" json:"credential_file"`
+	BedrockRegion  string        `toml:"bedrock_region" json:"bedrock_region"`
+	BedrockEndpoint string       `toml:"bedrock_endpoint" json:"bedrock_endpoint"`
 	RequestTimeout time.Duration `toml:"request_timeout" json:"request_timeout"`
 }
 
