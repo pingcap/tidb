@@ -105,7 +105,7 @@ func TestRefreshMaterializedViewDoesNotMarkDDLExecution(t *testing.T) {
 	tk.MustExec("create table t_mv_flag (a int not null, b int not null)")
 	tk.MustExec("insert into t_mv_flag values (1, 10)")
 	tk.MustExec("create materialized view log on t_mv_flag (a, b) purge immediate")
-	tk.MustExec("create materialized view mv_flag (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t_mv_flag group by a")
+	tk.MustExec("create materialized view mv_flag (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_flag group by a")
 	require.NotNil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
 
 	tk.MustExec("insert into t_mv_flag values (1, 5)")
@@ -121,10 +121,16 @@ func TestRefreshMaterializedViewDisallowExplicitTransaction(t *testing.T) {
 	tk.MustExec("create table t_mv_txn (a int not null, b int not null)")
 	tk.MustExec("insert into t_mv_txn values (1, 10)")
 	tk.MustExec("create materialized view log on t_mv_txn (a, b) purge immediate")
-	tk.MustExec("create materialized view mv_txn (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t_mv_txn group by a")
+	tk.MustExec("create materialized view mv_txn (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_txn group by a")
 
 	tk.MustExec("begin")
 	tk.MustGetErrMsg("refresh materialized view mv_txn complete", "cannot run REFRESH MATERIALIZED VIEW in explicit transaction")
+	tk.MustExec("rollback")
+
+	tk.MustExec(`prepare stmt from "refresh materialized view mv_txn complete"`)
+	defer tk.MustExec("deallocate prepare stmt")
+	tk.MustExec("begin")
+	tk.MustGetErrMsg("execute stmt", "cannot run REFRESH MATERIALIZED VIEW in explicit transaction")
 	tk.MustExec("rollback")
 }
 
