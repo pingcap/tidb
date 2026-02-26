@@ -75,10 +75,10 @@ func (p *HandParser) parseDeallocateStmt() ast.StmtNode {
 	return stmt
 }
 
-// parseName parses a simple identifier name.
+// parseName parses a simple identifier name (identifiers and unreserved keywords).
 func (p *HandParser) parseName() string {
 	tok := p.next()
-	if tok.Tp < identifier && tok.Tp != underscoreCS {
+	if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
 		p.syntaxErrorAt(tok)
 		return ""
 	}
