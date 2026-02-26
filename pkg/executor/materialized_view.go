@@ -220,7 +220,8 @@ func initRefreshMaterializedViewSession(
 	if mviewInfo == nil {
 		return nil, errors.New("refresh materialized view: invalid materialized view metadata")
 	}
-	loc, err := mviewInfo.DefinitionTimeZone.GetLocation()
+	timezone := mviewInfo.DefinitionTimeZone
+	loc, err := timezone.GetLocation()
 	if err != nil {
 		return nil, errors.Annotate(err, "refresh materialized view: invalid definition timezone")
 	}
