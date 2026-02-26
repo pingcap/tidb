@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
