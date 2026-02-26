@@ -47,7 +47,8 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 				}
 				node := &ast.ColumnNameOrUserVar{UserVar: &ast.VariableExpr{Name: varName}}
 				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
-			} else if tok, ok := p.accept(identifier); ok {
+			} else if tok := p.peek(); isIdentLike(tok.Tp) && tok.Tp != stringLit {
+				p.next()
 				node := &ast.ColumnNameOrUserVar{ColumnName: &ast.ColumnName{Name: ast.NewCIStr(tok.Lit)}}
 				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
 			} else {

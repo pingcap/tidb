@@ -94,9 +94,12 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 	// Optional column list: (col1, col2, ...)
 	if _, ok := p.accept('('); ok {
 		for {
-			if tok, ok := p.expectAny(identifier); ok {
-				stmt.Cols = append(stmt.Cols, ast.NewCIStr(tok.Lit))
+			tok := p.next()
+			if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+				p.syntaxErrorAt(tok)
+				break
 			}
+			stmt.Cols = append(stmt.Cols, ast.NewCIStr(tok.Lit))
 			if _, ok := p.accept(','); !ok {
 				break
 			}

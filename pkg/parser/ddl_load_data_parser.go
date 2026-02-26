@@ -107,7 +107,9 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	if _, ok := p.accept('('); ok {
 		stmt.ColumnsAndUserVars = make([]*ast.ColumnNameOrUserVar, 0)
 		for {
-			if tok, ok := p.accept(identifier); ok {
+			tok := p.peek()
+			if isIdentLike(tok.Tp) && tok.Tp != stringLit {
+				p.next()
 				node := &ast.ColumnNameOrUserVar{ColumnName: &ast.ColumnName{Name: ast.NewCIStr(tok.Lit)}}
 				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
 			} else if tok.Tp == singleAtIdentifier {

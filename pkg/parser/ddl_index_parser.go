@@ -349,8 +349,11 @@ func (p *HandParser) parseIndexOptions() *ast.IndexOption {
 		case with:
 			p.next()
 			p.expect(parser)
-			if tok, ok := p.expect(identifier); ok {
+			tok := p.next()
+			if isIdentLike(tok.Tp) && tok.Tp != stringLit {
 				opt.ParserName = ast.NewCIStr(tok.Lit)
+			} else {
+				p.syntaxErrorAt(tok)
 			}
 			p.warnNear(p.peek().Offset, "The WITH PARASER clause is parsed but ignored by all storage engines.")
 		case visible, invisible:

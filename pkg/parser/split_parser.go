@@ -51,12 +51,12 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 
 	// Optional INDEX idx
 	if _, ok := p.accept(index); ok {
-		// Expect identifier for index name
-		tok, ok := p.accept(identifier)
-		if !ok {
-			p.syntaxErrorAt(p.peek())
+		tok := p.peek()
+		if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+			p.syntaxErrorAt(tok)
 			return nil
 		}
+		p.next()
 		stmt.IndexName = ast.NewCIStr(tok.Lit)
 	}
 
@@ -216,11 +216,12 @@ func (p *HandParser) parseParenPartitionNames() []ast.CIStr {
 	p.expect('(')
 	var names []ast.CIStr
 	for {
-		tok, ok := p.accept(identifier)
-		if !ok {
-			p.syntaxErrorAt(p.peek())
+		tok := p.peek()
+		if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+			p.syntaxErrorAt(tok)
 			return nil
 		}
+		p.next()
 		names = append(names, ast.NewCIStr(tok.Lit))
 		if _, ok := p.accept(','); !ok {
 			break

@@ -318,11 +318,12 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 	if _, ok := p.accept(partition); ok {
 		p.expect('(')
 		for {
-			tok, ok := p.accept(identifier)
-			if !ok {
-				p.syntaxErrorAt(p.peek())
+			tok := p.peek()
+			if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+				p.syntaxErrorAt(tok)
 				return nil
 			}
+			p.next()
 			table.PartitionNames = append(table.PartitionNames, ast.NewCIStr(tok.Lit))
 
 			if _, ok := p.accept(','); !ok {
@@ -334,11 +335,12 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 
 	// Optional INDEX idx
 	if _, ok := p.accept(index); ok {
-		tok, ok := p.accept(identifier)
-		if !ok {
-			p.syntaxErrorAt(p.peek())
+		tok := p.peek()
+		if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+			p.syntaxErrorAt(tok)
 			return nil
 		}
+		p.next()
 		stmt.IndexName = ast.NewCIStr(tok.Lit)
 	}
 
