@@ -508,6 +508,7 @@ var tokenMap = map[string]int{
 	"LAST_BACKUP":                    lastBackup,
 	"LAST":                           last,
 	"LASTVAL":                        lastval,
+	"LATERAL":                        lateral,
 	"LEADER":                         leader,
 	"LEADER_CONSTRAINTS":             leaderConstraints,
 	"LEADING":                        leading,

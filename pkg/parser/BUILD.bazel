@@ -43,6 +43,7 @@ go_test(
         "digester_test.go",
         "hintparser_test.go",
         "keywords_test.go",
+        "lateral_test.go",
         "lexer_test.go",
         "main_test.go",
         "parser_test.go",
