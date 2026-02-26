@@ -1495,6 +1495,91 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
+// buildPrunedRangeAccessPath creates a new AccessPath that uses only the first `cutoff` index columns
+// for range construction. This reduces the number of ranges when IN-list columns are dropped.
+func buildPrunedRangeAccessPath(ds *logicalop.DataSource, originalPath *util.AccessPath, cutoff int) (*util.AccessPath, error) {
+	if cutoff >= len(originalPath.IdxCols) || cutoff < 1 {
+		return nil, nil
+	}
+	sctx := ds.SCtx()
+	res, err := ranger.DetachCondAndBuildRangeForIndex(
+		sctx.GetRangerCtx(),
+		ds.PushedDownConds,
+		originalPath.IdxCols[:cutoff],
+		originalPath.IdxColLens[:cutoff],
+		sctx.GetSessionVars().RangeMaxSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(res.Ranges) == 0 {
+		return nil, nil
+	}
+
+	prunedPath := &util.AccessPath{
+		Index:           originalPath.Index,
+		IdxCols:         originalPath.IdxCols,
+		IdxColLens:      originalPath.IdxColLens,
+		FullIdxCols:     originalPath.FullIdxCols,
+		FullIdxColLens:  originalPath.FullIdxColLens,
+		IsSingleScan:    originalPath.IsSingleScan,
+		StoreType:       originalPath.StoreType,
+		Ranges:          res.Ranges,
+		AccessConds:     res.AccessConds,
+		TableFilters:    res.RemainedConds,
+		EqCondCount:     res.EqCondCount,
+		EqOrInCondCount: res.EqOrInCount,
+		IsDNFCond:       res.IsDNFCond,
+	}
+	prunedPath.ConstCols = make([]bool, len(originalPath.IdxCols))
+	if res.ColumnValues != nil {
+		for i := range min(len(prunedPath.ConstCols), len(res.ColumnValues)) {
+			prunedPath.ConstCols[i] = res.ColumnValues[i] != nil
+		}
+	}
+
+	// Split remaining conditions into index filters and table filters.
+	indexFilters, tableFilters := splitIndexFilterConditions(ds, prunedPath.TableFilters, prunedPath.FullIdxCols, prunedPath.FullIdxColLens)
+	prunedPath.IndexFilters = indexFilters
+	prunedPath.TableFilters = tableFilters
+
+	// Estimate row count.
+	indexCols := prunedPath.IdxCols
+	if len(indexCols) > len(prunedPath.Index.Columns) {
+		indexCols = indexCols[:len(prunedPath.Index.Columns)]
+	}
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, ds.TableStats.HistColl, prunedPath.Index.ID, prunedPath.Ranges, indexCols)
+	if err != nil {
+		return nil, err
+	}
+	prunedPath.CountAfterAccess = count.Est
+	prunedPath.MinCountAfterAccess = count.MinEst
+	prunedPath.MaxCountAfterAccess = count.MaxEst
+	if prunedPath.IndexFilters != nil {
+		selectivity, sErr := cardinality.Selectivity(sctx, ds.TableStats.HistColl, prunedPath.IndexFilters, nil)
+		if sErr != nil {
+			selectivity = cost.SelectionFactor
+		}
+		prunedPath.CountAfterIndex = max(prunedPath.CountAfterAccess*selectivity, ds.StatsInfo().RowCount)
+	} else {
+		prunedPath.CountAfterIndex = prunedPath.CountAfterAccess
+	}
+
+	return prunedPath, nil
+}
+
+// buildCandidateForPrunedPath creates a candidatePath from a pruned AccessPath, following
+// the same pattern as getIndexCandidate.
+func buildCandidateForPrunedPath(ds *logicalop.DataSource, prunedPath *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+	candidate := &candidatePath{path: prunedPath}
+	candidate.matchPropResult = matchProperty(ds, prunedPath, prop)
+	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), prunedPath.AccessConds, prunedPath.IdxCols, prunedPath.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(prunedPath.AccessConds, prunedPath.IndexFilters...), prunedPath.FullIdxCols, prunedPath.FullIdxColLens)
+	candidate.isFullRange = prunedPath.IsFullScanRange(ds.TableInfo)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
+	return candidate
+}
+
 func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
 	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
 	candidate.matchPropResult = property.PropNotMatched
@@ -2089,6 +2174,62 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		if curIsBetter {
 			t = idxTask
+		}
+
+		// When fix control 65465 is enabled, try pruned-range alternatives that use fewer
+		// index columns for range construction. This reduces the number of ranges (seeks) at
+		// the cost of scanning more rows, which can be beneficial when IN-lists produce many ranges.
+		// Eligibility: need a strong equality prefix (EqCondCount > 1) or at least 2 IN-list columns.
+		// Count actual IN-list columns using ConstCols: a column in the EqOrIn prefix that is not
+		// constant (i.e. ConstCols[i] == false) is an IN-list column. This correctly handles cases
+		// like a IN(1,2) AND b = 1 AND c IN(1,2) where EqCondCount = 0 but b is an equality.
+		inListCount := 0
+		for i := range path.EqOrInCondCount {
+			if i < len(path.ConstCols) && !path.ConstCols[i] {
+				inListCount++
+			}
+		}
+		if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix65465, false) &&
+			!path.IsDNFCond &&
+			path.Index != nil && !path.Index.MVIndex &&
+			path.EqOrInCondCount > path.EqCondCount &&
+			(path.EqCondCount > 1 || inListCount >= 2) &&
+			len(path.Ranges) > 1 {
+			for cutoff := max(1, path.EqCondCount); cutoff < path.EqOrInCondCount; cutoff++ {
+				// Safeguard: only prune an IN-list column if its NDV is lower than at least
+				// one preceding column's NDV. This avoids pruning the most selective column.
+				prunedColNDV := cardinality.EstimateColumnNDV(ds.StatisticTable, path.IdxCols[cutoff].ID)
+				hasHigherNDVBefore := false
+				for i := range cutoff {
+					if cardinality.EstimateColumnNDV(ds.StatisticTable, path.IdxCols[i].ID) > prunedColNDV {
+						hasHigherNDVBefore = true
+						break
+					}
+				}
+				if !hasHigherNDVBefore {
+					continue
+				}
+
+				prunedPath, pErr := buildPrunedRangeAccessPath(ds, path, cutoff)
+				if pErr != nil {
+					return nil, pErr
+				}
+				if prunedPath == nil || len(prunedPath.Ranges) >= len(path.Ranges) {
+					continue
+				}
+				prunedCandidate := buildCandidateForPrunedPath(ds, prunedPath, prop)
+				prunedTask, pErr := convertToIndexScan(ds, prop, prunedCandidate)
+				if pErr != nil {
+					return nil, pErr
+				}
+				curIsBetter, pErr := compareTaskCost(prunedTask, t)
+				if pErr != nil {
+					return nil, pErr
+				}
+				if curIsBetter {
+					t = prunedTask
+				}
+			}
 		}
 	}
 
