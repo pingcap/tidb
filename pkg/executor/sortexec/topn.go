@@ -425,23 +425,24 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
 	prefixKeys := make([]truncateKey, 0, e.truncateKeyCount)
 	for i := range e.truncateFieldCollators {
+		if row.IsNull(e.truncateKeyColIdxs[i]) {
+			prefixKeys = append(prefixKeys, truncateKey{isNull: true})
+			continue
+		}
 		if e.TruncateKeyPrefixCharCounts[i] == -1 {
-			if row.IsNull(e.truncateKeyColIdxs[i]) {
-				prefixKeys = append(prefixKeys, truncateKey{isNull: true})
-			} else {
-				bytes, err := row.SerializeToBytesForOneColumn(
-					e.typeCtx,
-					e.truncateFieldTypes[i],
-					e.truncateKeyColIdxs[i],
-					e.truncateFieldCollators[i])
-				if err != nil {
-					return nil, err
-				}
-				prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(bytes))})
+			bytes, err := row.SerializeToBytesForOneColumn(
+				e.typeCtx,
+				e.truncateFieldTypes[i],
+				e.truncateKeyColIdxs[i],
+				e.truncateFieldCollators[i])
+			if err != nil {
+				return nil, err
 			}
+			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(bytes))})
 		} else {
 			key := row.GetString(e.truncateKeyColIdxs[i])
 			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.TruncateKeyPrefixCharCounts[i])))})
+
 		}
 	}
 	return prefixKeys, nil
@@ -496,7 +497,6 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 		if !slices.Equal(currentPrefixKeys, e.prevTruncateKeys) {
 			return idx, nil
 		}
-		idx++
 	}
 	return idx, nil
 }
