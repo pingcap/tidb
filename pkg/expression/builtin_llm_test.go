@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/llm"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,20 +53,34 @@ func TestLLMCompleteHookReturnsText(t *testing.T) {
 	ctx := createContext(t)
 	restoreEnable := vardef.EnableLLMInference.Load()
 	restoreModel := vardef.LLMDefaultModel.Load()
-	restoreHook := SetLLMCompleteHookForTest(func(model, prompt string) (string, error) {
+	restoreMaxTokens := vardef.LLMMaxTokens.Load()
+	restoreTemperature := vardef.LLMTemperature.Load()
+	restoreTopP := vardef.LLMTopP.Load()
+	restoreHook := SetLLMCompleteHookForTest(func(model, prompt string, opts llm.CompleteOptions) (string, error) {
 		if model != "m1" || prompt != "hi" {
 			return "", errors.New("unexpected prompt")
 		}
+		require.Equal(t, 256, opts.MaxTokens)
+		require.NotNil(t, opts.Temperature)
+		require.NotNil(t, opts.TopP)
+		require.Equal(t, 0.2, *opts.Temperature)
+		require.Equal(t, 0.9, *opts.TopP)
 		return "ok", nil
 	})
 	t.Cleanup(func() {
 		vardef.EnableLLMInference.Store(restoreEnable)
 		vardef.LLMDefaultModel.Store(restoreModel)
+		vardef.LLMMaxTokens.Store(restoreMaxTokens)
+		vardef.LLMTemperature.Store(restoreTemperature)
+		vardef.LLMTopP.Store(restoreTopP)
 		restoreHook()
 	})
 
 	vardef.EnableLLMInference.Store(true)
 	vardef.LLMDefaultModel.Store("m1")
+	vardef.LLMMaxTokens.Store(256)
+	vardef.LLMTemperature.Store(0.2)
+	vardef.LLMTopP.Store(0.9)
 
 	arg := &Constant{Value: types.NewDatum("hi"), RetType: types.NewFieldType(mysql.TypeString)}
 	fn, err := NewFunction(ctx, ast.LLMComplete, types.NewFieldType(mysql.TypeString), arg)

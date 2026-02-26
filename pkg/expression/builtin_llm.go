@@ -17,6 +17,7 @@ package expression
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
@@ -24,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/llm"
+	"github.com/pingcap/tidb/pkg/util/llm/bedrock"
 	"github.com/pingcap/tidb/pkg/util/llm/vertex"
 )
 
@@ -36,9 +39,14 @@ var (
 )
 
 var (
-	llmCompleteHook func(model, prompt string) (string, error)
+	llmCompleteHook func(model, prompt string, opts llm.CompleteOptions) (string, error)
 	llmEmbedHook    func(model, text string) ([]float32, error)
 )
+
+type llmClient interface {
+	Complete(ctx context.Context, model, prompt string, opts llm.CompleteOptions) (string, error)
+	EmbedText(ctx context.Context, model, text string) ([]float32, error)
+}
 
 type llmCompleteFunctionClass struct {
 	baseFunctionClass
@@ -164,24 +172,25 @@ func checkLLMEnabled(ctx EvalContext, privReader expropt.PrivilegeCheckerPropRea
 }
 
 func runLLMComplete(model, prompt string) (string, error) {
+	opts := llmCompleteOptions()
 	if llmCompleteHook != nil {
-		return llmCompleteHook(model, prompt)
+		return llmCompleteHook(model, prompt, opts)
 	}
-	client, ctx, cancel, err := newVertexClient()
+	client, ctx, cancel, err := newLLMClient()
 	if err != nil {
 		return "", err
 	}
 	if cancel != nil {
 		defer cancel()
 	}
-	return client.Complete(ctx, model, prompt)
+	return client.Complete(ctx, model, prompt, opts)
 }
 
 func runLLMEmbed(model, text string) ([]float32, error) {
 	if llmEmbedHook != nil {
 		return llmEmbedHook(model, text)
 	}
-	client, ctx, cancel, err := newVertexClient()
+	client, ctx, cancel, err := newLLMClient()
 	if err != nil {
 		return nil, err
 	}
@@ -191,17 +200,14 @@ func runLLMEmbed(model, text string) ([]float32, error) {
 	return client.EmbedText(ctx, model, text)
 }
 
-func newVertexClient() (*vertex.Client, context.Context, context.CancelFunc, error) {
+func newLLMClient() (llmClient, context.Context, context.CancelFunc, error) {
 	cfg := config.GetGlobalConfig().LLM
 	provider := strings.ToLower(cfg.Provider)
 	if provider == "" {
 		provider = "vertex"
 	}
-	if provider != "vertex" {
+	if provider != "vertex" && provider != "bedrock" {
 		return nil, nil, nil, errors.Errorf("unsupported llm provider: %s", cfg.Provider)
-	}
-	if cfg.VertexProject == "" || cfg.VertexLocation == "" {
-		return nil, nil, nil, errors.New("llm config requires vertex_project and vertex_location")
 	}
 
 	timeout := vardef.LLMTimeout.Load()
@@ -213,19 +219,17 @@ func newVertexClient() (*vertex.Client, context.Context, context.CancelFunc, err
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 	}
-	tokenSource, err := vertex.NewTokenSource(ctx, cfg.CredentialFile)
-	if err != nil {
-		if cancel != nil {
-			cancel()
-		}
-		return nil, nil, nil, err
+
+	var (
+		client llmClient
+		err    error
+	)
+	switch provider {
+	case "vertex":
+		client, err = newVertexClient(ctx, cfg, timeout)
+	case "bedrock":
+		client, err = newBedrockClient(ctx, cfg, timeout)
 	}
-	client, err := vertex.NewClient(vertex.Config{
-		Project:     cfg.VertexProject,
-		Location:    cfg.VertexLocation,
-		TokenSource: tokenSource,
-		Timeout:     timeout,
-	})
 	if err != nil {
 		if cancel != nil {
 			cancel()
@@ -233,4 +237,47 @@ func newVertexClient() (*vertex.Client, context.Context, context.CancelFunc, err
 		return nil, nil, nil, err
 	}
 	return client, ctx, cancel, nil
+}
+
+func newVertexClient(ctx context.Context, cfg config.LLMConfig, timeout time.Duration) (llmClient, error) {
+	if cfg.VertexProject == "" || cfg.VertexLocation == "" {
+		return nil, errors.New("llm config requires vertex_project and vertex_location")
+	}
+	tokenSource, err := vertex.NewTokenSource(ctx, cfg.CredentialFile)
+	if err != nil {
+		return nil, err
+	}
+	return vertex.NewClient(vertex.Config{
+		Project:     cfg.VertexProject,
+		Location:    cfg.VertexLocation,
+		TokenSource: tokenSource,
+		Timeout:     timeout,
+	})
+}
+
+func newBedrockClient(ctx context.Context, cfg config.LLMConfig, timeout time.Duration) (llmClient, error) {
+	if cfg.BedrockRegion == "" {
+		return nil, errors.New("llm config requires bedrock_region")
+	}
+	return bedrock.NewClient(ctx, bedrock.Config{
+		Region:   cfg.BedrockRegion,
+		Endpoint: cfg.BedrockEndpoint,
+		Timeout:  timeout,
+	})
+}
+
+func llmCompleteOptions() llm.CompleteOptions {
+	opts := llm.CompleteOptions{}
+	if maxTokens := vardef.LLMMaxTokens.Load(); maxTokens > 0 {
+		opts.MaxTokens = int(maxTokens)
+	}
+	if temp := vardef.LLMTemperature.Load(); temp >= 0 {
+		val := temp
+		opts.Temperature = &val
+	}
+	if topP := vardef.LLMTopP.Load(); topP >= 0 {
+		val := topP
+		opts.TopP = &val
+	}
+	return opts
 }
