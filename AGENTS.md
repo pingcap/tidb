@@ -87,7 +87,7 @@ make bazel_bin
 make gogenerate   # optional: regenerate generated code
 go mod tidy       # optional: if go.mod/go.sum changed
 git fetch origin --prune
-make bazel_lint_changed
+make bazel_lint_changed # Optional: skip this step if the resolved Bazel target is //:all.
 ```
 
 ## Task -> Validation Matrix
