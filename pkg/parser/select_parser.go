@@ -182,8 +182,9 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 		if p.peek().Tp == '(' {
 			p.next()
 			for {
-				colTok, ok := p.expect(identifier)
-				if !ok {
+				colTok := p.next()
+				if !isIdentLike(colTok.Tp) || colTok.Tp == stringLit {
+					p.syntaxErrorAt(colTok)
 					return nil
 				}
 				cte.ColNameList = append(cte.ColNameList, ast.NewCIStr(colTok.Lit))
@@ -323,9 +324,10 @@ func (p *HandParser) parseWindowClause() []ast.WindowSpec {
 	p.next() // consume WINDOW
 	var specs []ast.WindowSpec
 	for {
-		// Window name (identifier)
-		nameTok, ok := p.expect(identifier)
-		if !ok {
+		// Window name (identifier or unreserved keyword)
+		nameTok := p.next()
+		if !isIdentLike(nameTok.Tp) || nameTok.Tp == stringLit {
+			p.syntaxErrorAt(nameTok)
 			return nil
 		}
 
