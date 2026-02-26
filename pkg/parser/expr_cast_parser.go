@@ -180,9 +180,27 @@ func (p *HandParser) parseTimestampDiffFunc() ast.ExprNode {
 // Returns the FieldType and whether an explicit charset was specified.
 func (p *HandParser) parseCastType() (*types.FieldType, bool) {
 	tp, explicit := p.parseCastTypeInternal()
-	if tp != nil && p.peek().Tp == array {
+	if tp == nil {
+		return nil, false
+	}
+	// Apply default flen and decimal for the CAST type when not explicitly set,
+	// matching the yacc parser behavior (e.g., SIGNED/UNSIGNED -> flen=22, decimal=0).
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
+	if tp.GetFlen() == types.UnspecifiedLength {
+		tp.SetFlen(defaultFlen)
+	}
+	if tp.GetDecimal() == types.UnspecifiedLength {
+		tp.SetDecimal(defaultDecimal)
+	}
+	if p.peek().Tp == array {
 		p.next()
 		tp.SetArray(true)
+		// For multi-valued index ARRAY types, override non-binary charset to UTF8MB4
+		// when no explicit charset was specified, matching yacc parser behavior.
+		if !explicit && tp.GetCharset() != charset.CharsetBin {
+			tp.SetCharset(charset.CharsetUTF8MB4)
+			tp.SetCollate(charset.CollationUTF8MB4)
+		}
 	}
 	return tp, explicit
 }

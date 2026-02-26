@@ -256,21 +256,21 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 
 	// --- Parse PartDefValuesOpt ---
 	if _, ok := p.accept(values); ok {
-		if partType == ast.PartitionTypeHash || partType == ast.PartitionTypeKey || partType == ast.PartitionTypeSystemTime {
-			p.error(p.peek().Offset, "VALUES clause is not allowed for HASH/KEY partitions")
-			return nil
-		}
+		// Semantic validation (e.g., rejecting VALUES for HASH/KEY partitions)
+		// is done by the DDL executor.
 		if _, ok := p.accept(less); ok {
-			// VALUES LESS THAN
-			if partType == ast.PartitionTypeList {
-				p.error(p.peek().Offset, "VALUES LESS THAN value must be used with RANGE partitioning")
-				return nil
-			}
+			// VALUES LESS THAN — semantic validation (e.g., rejecting
+			// LESS THAN in LIST partitions) is done by the DDL executor.
 			p.expect(than)
 			clause := &ast.PartitionDefinitionClauseLessThan{}
 			if _, ok := p.accept('('); ok {
 				for {
-					expr := p.parseExprOrDefault()
+					// Only expressions and MAXVALUE are valid here;
+					// bare DEFAULT is NOT valid (yacc grammar uses BitExpr|MAXVALUE).
+					expr := p.parseExpression(precNone)
+					if expr == nil {
+						return nil
+					}
 					if partType != 0 {
 						if !p.isValidPartitionExpr(expr) {
 							p.error(p.peek().Offset, "invalid expression in partition value")
@@ -279,10 +279,6 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 						// Check for NULL explicitly
 						if v, ok := expr.(ast.ValueExpr); ok && v.GetValue() == nil {
 							p.errs = append(p.errs, ErrNullInValuesLessThan.GenWithStackByArgs())
-							return nil
-						}
-						if _, ok := expr.(*ast.DefaultExpr); ok {
-							p.error(p.peek().Offset, "DEFAULT not allowed in RANGE/VALUES LESS THAN")
 							return nil
 						}
 					}
@@ -301,11 +297,8 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 			}
 			pDef.Clause = clause
 		} else if _, ok := p.accept(in); ok {
-			// VALUES IN
-			if partType == ast.PartitionTypeRange {
-				p.error(p.peek().Offset, "VALUES IN value must be used with LIST partitioning")
-				return nil
-			}
+			// VALUES IN — semantic validation (e.g., rejecting
+			// IN with RANGE partitions) is done by the DDL executor.
 			clause := &ast.PartitionDefinitionClauseIn{}
 			p.expect('(')
 			rejectMaxValue := func(expr ast.ExprNode, startTok Token) bool {
@@ -361,28 +354,13 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 		clause.Values = append(clause.Values, []ast.ExprNode{&ast.DefaultExpr{}})
 		pDef.Clause = clause
 	} else if tok, ok := p.acceptAny(history, current); ok {
-		// HISTORY or CURRENT — for SYSTEM_TIME partitions
-		if partType != 0 && partType != ast.PartitionTypeSystemTime {
-			p.error(p.peek().Offset, "HISTORY/CURRENT partition allowed only for SYSTEM_TIME")
-			return nil
-		}
+		// HISTORY or CURRENT — semantic validation is done by the DDL executor.
 		pDef.Clause = &ast.PartitionDefinitionClauseHistory{Current: tok.Tp == current}
 	}
 
-	// Default clause if none was set
+	// Default clause if none was set. Semantic validation (e.g., requiring
+	// RANGE to have VALUES LESS THAN) is done by the DDL executor.
 	if pDef.Clause == nil {
-		if partType == ast.PartitionTypeRange {
-			p.error(p.peek().Offset, "RANGE partition must have VALUES LESS THAN")
-			return nil
-		}
-		if partType == ast.PartitionTypeList {
-			p.error(p.peek().Offset, "LIST partition must have VALUES IN")
-			return nil
-		}
-		if partType == ast.PartitionTypeSystemTime {
-			p.error(p.peek().Offset, "SYSTEM_TIME partition must have HISTORY/CURRENT")
-			return nil
-		}
 		pDef.Clause = &ast.PartitionDefinitionClauseNone{}
 	}
 

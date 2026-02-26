@@ -184,13 +184,16 @@ func (p *HandParser) parseCaseExpr() ast.ExprNode {
 // SET col = DEFAULT contexts, not as a general expression. Those contexts
 // handle bare DEFAULT via parseExprOrDefault before calling parseExpression.
 func (p *HandParser) parseDefaultExpr() ast.ExprNode {
-	defTok := p.next() // consume DEFAULT
+	p.next() // consume DEFAULT
 	node := p.arena.AllocDefaultExpr()
 
 	if p.peek().Tp != '(' {
 		// Bare DEFAULT is not a valid general expression (only valid in
-		// VALUES and SET assignment contexts). Produce a syntax error.
-		p.syntaxErrorAt(defTok)
+		// VALUES and SET assignment contexts). Report error at the token
+		// AFTER default (matching yacc, which has consumed DEFAULT before
+		// detecting the error).
+		nextTok := p.peek()
+		p.errorNear(nextTok.EndOffset, nextTok.Offset)
 		return nil
 	}
 	if _, ok := p.accept('('); ok {
