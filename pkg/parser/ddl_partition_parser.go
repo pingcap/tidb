@@ -302,8 +302,9 @@ func (p *HandParser) parseSplitIndexOption() *ast.SplitIndexOption {
 		p.expect(key)
 		opt.PrimaryKey = true
 	} else if _, ok := p.accept(index); ok {
-		tok, ok := p.expect(identifier)
-		if !ok {
+		tok := p.next()
+		if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+			p.syntaxErrorAt(tok)
 			return nil
 		}
 		opt.IndexName = ast.NewCIStr(tok.Lit)

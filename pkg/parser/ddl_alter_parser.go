@@ -459,9 +459,12 @@ func (p *HandParser) parseSplitRegionSpec(spec *ast.AlterTableSpec) *ast.AlterTa
 		spec.SplitIndex.TableLevel = true
 	} else if _, ok := p.accept(index); ok {
 		// SPLIT INDEX idx
-		if tok, ok := p.expect(identifier); ok {
-			spec.SplitIndex.IndexName = ast.NewCIStr(tok.Lit)
+		tok := p.next()
+		if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+			p.syntaxErrorAt(tok)
+			return nil
 		}
+		spec.SplitIndex.IndexName = ast.NewCIStr(tok.Lit)
 	} else if _, ok := p.accept(primary); ok {
 		// SPLIT PRIMARY KEY
 		p.expect(key)

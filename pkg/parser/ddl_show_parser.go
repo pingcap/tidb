@@ -259,8 +259,9 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 	if _, ok := p.accept(forKwd); ok {
 		if _, ok := p.accept(database); ok {
 			// SHOW PLACEMENT FOR DATABASE db
-			tok, ok := p.expect(identifier)
-			if !ok {
+			tok := p.next()
+			if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+				p.syntaxErrorAt(tok)
 				return nil
 			}
 			stmt.Tp = ast.ShowPlacementForDatabase
@@ -269,8 +270,9 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 			stmt.Table = p.parseTableName()
 			if _, ok := p.accept(partition); ok {
 				// SHOW PLACEMENT FOR TABLE tbl PARTITION p
-				tok, ok := p.expect(identifier)
-				if !ok {
+				tok := p.next()
+				if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+					p.syntaxErrorAt(tok)
 					return nil
 				}
 				stmt.Tp = ast.ShowPlacementForPartition
