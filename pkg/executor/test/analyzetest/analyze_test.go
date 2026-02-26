@@ -2487,5 +2487,4 @@ func TestConsolidateSingleColIndexStats(t *testing.T) {
 		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 1 and hist_id = %d",
 		tblInfo.ID, idxA.ID,
 	)).Check(testkit.Rows("0"))
-
 }
