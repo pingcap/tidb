@@ -91,7 +91,9 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 	}
 	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.ctx)
 	if err != nil {
-		e.memTracker.Release(e.memTracker.BytesConsumed())
+		if e.memTracker != nil {
+			e.memTracker.Release(e.memTracker.BytesConsumed())
+		}
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
@@ -101,16 +103,18 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 		variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	logutil.BgLogger().Info("DEBUGMEM analyzeColumnsPushDownV2 start",
 		zap.Int64("tableID", e.tableID.TableID), zap.Int64("partitionID", e.tableID.PartitionID),
-		zap.Bool("keepSamples", keepSamplesForGlobal), zap.Int64("trackerBytes", e.memTracker.BytesConsumed()))
+		zap.Bool("keepSamples", keepSamplesForGlobal), zap.Int64("trackerBytes", e.memTrackerBytes()))
 	count, hists, topNs, fmSketches, extStats, rootCollector, err := e.buildSamplingStats(gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency, keepSamplesForGlobal)
 	if err != nil {
 		logutil.BgLogger().Info("DEBUGMEM analyzeColumnsPushDownV2 error, releasing all",
-			zap.Int64("partitionID", e.tableID.PartitionID), zap.Int64("releasing", e.memTracker.BytesConsumed()))
-		e.memTracker.Release(e.memTracker.BytesConsumed())
+			zap.Int64("partitionID", e.tableID.PartitionID), zap.Int64("releasing", e.memTrackerBytes()))
+		if e.memTracker != nil {
+			e.memTracker.Release(e.memTracker.BytesConsumed())
+		}
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
 	logutil.BgLogger().Info("DEBUGMEM analyzeColumnsPushDownV2 done",
-		zap.Int64("partitionID", e.tableID.PartitionID), zap.Int64("trackerBytes", e.memTracker.BytesConsumed()),
+		zap.Int64("partitionID", e.tableID.PartitionID), zap.Int64("trackerBytes", e.memTrackerBytes()),
 		zap.Bool("hasRootCollector", rootCollector != nil))
 	cLen := len(e.analyzePB.ColReq.ColumnsInfo)
 	colGroupResult := &statistics.AnalyzeResult{

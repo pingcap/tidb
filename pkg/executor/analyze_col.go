@@ -64,6 +64,14 @@ type AnalyzeColumnsExec struct {
 	memTracker *memory.Tracker
 }
 
+// memTrackerBytes returns the bytes consumed by the memTracker, or 0 if uninitialized.
+func (e *AnalyzeColumnsExec) memTrackerBytes() int64 {
+	if e.memTracker == nil {
+		return 0
+	}
+	return e.memTracker.BytesConsumed()
+}
+
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
 		return e.toV2().analyzeColumnsPushDownV2(gp)
