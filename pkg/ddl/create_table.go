@@ -264,16 +264,16 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 		if ctx == nil {
 			ctx = w.workCtx
 		}
-		insertSQL := sqlescape.MustEscapeSQL("INSERT IGNORE INTO mysql.tidb_mlog_purge (MLOG_ID) VALUES (%?)", mlogTblInfo.ID)
+		insertSQL := sqlescape.MustEscapeSQL("INSERT IGNORE INTO mysql.tidb_mlog_purge_info (MLOG_ID) VALUES (%?)", mlogTblInfo.ID)
 		_, err = w.sess.Execute(ctx, insertSQL, "mlog-purge-lock-row-insert")
 		failpoint.Inject("mockInsertMLogPurgeTableNotExists", func(val failpoint.Value) {
 			if val.(bool) {
-				err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge")
+				err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
 			}
 		})
 		if infoschema.ErrTableNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
-			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: required system table mysql.tidb_mlog_purge does not exist")
+			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: required system table mysql.tidb_mlog_purge_info does not exist")
 		}
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1078,11 +1078,11 @@ func (w *worker) deleteMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogID i
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mlog_purge WHERE MLOG_ID = %?", mlogID)
+	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?", mlogID)
 	_, err := w.sess.Execute(ctx, deleteSQL, "mlog-purge-info-delete")
 	failpoint.Inject("mockDeleteMaterializedViewLogPurgeInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge")
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
 		}
 	})
 	if infoschema.ErrTableNotExists.Equal(err) {
