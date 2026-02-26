@@ -193,7 +193,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.accept(eq)
 		opt.Tp = ast.TableOptionTTL
 		// TTL = col_name + INTERVAL N UNIT
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			opt.ColumnName = p.arena.AllocColumnName()
 			opt.ColumnName.Name = ast.NewCIStr(tok.Lit)
 		}

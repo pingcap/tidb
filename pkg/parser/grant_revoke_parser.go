@@ -31,13 +31,8 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 	// Detect GRANT ROLE vs GRANT PRIVILEGE.
 	// GRANT ROLE: GRANT 'role1', 'role2' TO ...
 	// GRANT PRIVILEGE: GRANT priv1, priv2 ON ...
-	// When the first token is a string literal, it's always a role grant.
-	// When the first token is an identifier, we need to look ahead through the comma-separated
-	// list to see if it ends with TO (role) or ON (privilege).
-	if p.peek().Tp == stringLit {
-		return p.parseGrantRoleStmt()
-	}
-	if p.peek().Tp == identifier {
+	// Look ahead for TO vs ON to distinguish role vs privilege grants.
+	if p.peek().Tp == stringLit || p.peek().Tp == identifier {
 		if p.isRoleStatement(to) {
 			return p.parseGrantRoleStmt()
 		}
@@ -266,7 +261,7 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		p.next()
 		for {
 			col := &ast.ColumnName{}
-			if tok, ok := p.expectAny(identifier, stringLit); ok {
+			if tok, ok := p.expectIdentLike(); ok {
 				col.Name = ast.NewCIStr(tok.Lit)
 			}
 			priv.Cols = append(priv.Cols, col)
@@ -321,12 +316,8 @@ func (p *HandParser) parseRevokeStmt() ast.StmtNode {
 	// Detect REVOKE ROLE vs REVOKE PRIVILEGE.
 	// REVOKE ROLE: REVOKE 'role1', 'role2' FROM ...
 	// REVOKE PRIVILEGE: REVOKE priv1, priv2 ON ...
-	// When the first token is a string literal, it's always a role revocation.
-	// When the first token is an identifier, scan ahead for FROM vs ON.
-	if p.peek().Tp == stringLit {
-		return p.parseRevokeRoleStmt()
-	}
-	if p.peek().Tp == identifier {
+	// Look ahead for FROM vs ON to distinguish role vs privilege revocation.
+	if p.peek().Tp == stringLit || p.peek().Tp == identifier {
 		if p.isRoleStatement(from) {
 			return p.parseRevokeRoleStmt()
 		}

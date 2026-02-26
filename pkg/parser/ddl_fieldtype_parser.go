@@ -415,7 +415,7 @@ func (p *HandParser) parseCharsetName(tp *types.FieldType) {
 	if tok, ok := p.acceptStringName(); ok {
 		cs, err := charset.GetCharsetInfo(tok.Lit)
 		if err != nil {
-			p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: '%s'", tok.Lit))
+			p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
 			return
 		}
 		tp.SetCharset(cs.Name)
@@ -445,7 +445,7 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 		p.next()
 		cs, err := charset.GetCharsetInfo("ucs2")
 		if err != nil {
-			p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: 'ucs2'"))
+			p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStackByArgs("ucs2"))
 			return
 		}
 		tp.SetCharset(cs.Name)

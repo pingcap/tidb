@@ -233,7 +233,7 @@ func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
 		return authUser
 	}
 
-	// Username: identifier or string literal
+	// Username: identifier or string literal (restricted — bare unreserved keywords not accepted).
 	tok, ok := p.expectAny(identifier, stringLit)
 	if !ok {
 		return nil
@@ -497,7 +497,7 @@ func (p *HandParser) parseUserSpecList() []*ast.UserSpec {
 func (p *HandParser) parseIdentList() []ast.CIStr {
 	var list []ast.CIStr
 	for {
-		tok, ok := p.expectAny(identifier, stringLit)
+		tok, ok := p.expectIdentLike()
 		if !ok {
 			break
 		}

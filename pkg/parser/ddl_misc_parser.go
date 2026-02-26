@@ -268,7 +268,7 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			csName := strings.ToLower(rawCharset)
 			cs, err := charset.GetCharsetInfo(csName)
 			if err != nil || cs.Name == "" {
-				p.errs = append(p.errs, fmt.Errorf("[parser:1115]Unknown character set: '%s'", rawCharset))
+				p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStackByArgs(rawCharset))
 				return nil
 			}
 			opt.Value = cs.Name

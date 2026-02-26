@@ -101,7 +101,7 @@ func (p *HandParser) parseAlterTableSpec() *ast.AlterTableSpec {
 		}
 		spec.IfExists = p.acceptIfExists()
 		if isChange {
-			if tok, ok := p.expectAny(identifier, stringLit); ok {
+			if tok, ok := p.expectIdentLike(); ok {
 				spec.OldColumnName = p.arena.AllocColumnName()
 				spec.OldColumnName.Name = ast.NewCIStr(tok.Lit)
 			}
@@ -215,7 +215,7 @@ func (p *HandParser) parseColumnPosition(spec *ast.AlterTableSpec) {
 		spec.Position.Tp = ast.ColumnPositionFirst
 	} else if _, ok := p.accept(after); ok {
 		spec.Position.Tp = ast.ColumnPositionAfter
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.Position.RelativeColumn = p.arena.AllocColumnName()
 			spec.Position.RelativeColumn.Name = ast.NewCIStr(tok.Lit)
 		}
@@ -412,7 +412,7 @@ func (p *HandParser) parseSubPartitionDefs(pDef *ast.PartitionDefinition) {
 			break
 		}
 		spd := &ast.SubPartitionDefinition{}
-		if nameTok, ok := p.expectAny(identifier, stringLit); ok {
+		if nameTok, ok := p.expectIdentLike(); ok {
 			spd.Name = ast.NewCIStr(nameTok.Lit)
 		}
 		// Subpartition options (same as partition options)

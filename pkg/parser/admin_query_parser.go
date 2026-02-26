@@ -259,7 +259,7 @@ func (p *HandParser) parseQueryWatchStmt() ast.StmtNode {
 			p.expect(group)
 			if p.peek().Tp == singleAtIdentifier {
 				stmt.GroupNameExpr = p.parseExpression(precNone)
-			} else if tok, ok := p.expectAny(identifier, stringLit); ok {
+			} else if tok, ok := p.expectIdentLike(); ok {
 				stmt.GroupNameStr = ast.NewCIStr(tok.Lit)
 			}
 		} else {
@@ -292,7 +292,7 @@ func (p *HandParser) parseQueryWatchOption() *ast.QueryWatchOption {
 		if p.peek().Tp == singleAtIdentifier {
 			// @var expression
 			rgOpt.GroupNameExpr = p.parseExpression(precNone)
-		} else if tok, ok := p.expectAny(identifier, stringLit); ok {
+		} else if tok, ok := p.expectIdentLike(); ok {
 			rgOpt.GroupNameStr = ast.NewCIStr(tok.Lit)
 		}
 		opt.ResourceGroupOption = rgOpt
@@ -317,7 +317,7 @@ func (p *HandParser) parseQueryWatchOption() *ast.QueryWatchOption {
 		} else if _, ok := p.accept(switchGroup); ok {
 			actionOpt.Type = ast.RunawayActionSwitchGroup
 			p.expect('(')
-			if tok, ok := p.expectAny(identifier, stringLit); ok {
+			if tok, ok := p.expectIdentLike(); ok {
 				actionOpt.SwitchGroupName = ast.NewCIStr(tok.Lit)
 			}
 			p.expect(')')

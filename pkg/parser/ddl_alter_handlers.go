@@ -80,7 +80,7 @@ func (p *HandParser) parseAlterAdd(spec *ast.AlterTableSpec) {
 	} else if _, ok := p.accept(statsExtended); ok {
 		spec.Tp = ast.AlterTableAddStatistics
 		spec.IfNotExists = p.acceptIfNotExists()
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.Statistics = &ast.StatisticsSpec{StatsName: tok.Lit}
 			// Parse stats type: CARDINALITY | CORRELATION | DEPENDENCY
 			if _, ok := p.accept(cardinality); ok {
@@ -93,7 +93,7 @@ func (p *HandParser) parseAlterAdd(spec *ast.AlterTableSpec) {
 			// Parse column list: (col1, col2, ...)
 			if _, ok := p.accept('('); ok {
 				for {
-					if tok, ok := p.expectAny(identifier, stringLit); ok {
+					if tok, ok := p.expectIdentLike(); ok {
 						col := p.arena.AllocColumnName()
 						col.Name = ast.NewCIStr(tok.Lit)
 						spec.Statistics.Columns = append(spec.Statistics.Columns, col)
@@ -134,7 +134,7 @@ func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 	parseDropColumn := func() {
 		spec.Tp = ast.AlterTableDropColumn
 		spec.IfExists = p.acceptIfExists()
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.OldColumnName = p.arena.AllocColumnName()
 			spec.OldColumnName.Name = ast.NewCIStr(tok.Lit)
 		}
@@ -149,18 +149,18 @@ func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 	} else if _, ok := p.acceptAny(index, key); ok {
 		spec.Tp = ast.AlterTableDropIndex
 		spec.IfExists = p.acceptIfExists()
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.Name = tok.Lit
 		}
 	} else if _, ok := p.accept(foreign); ok {
 		p.expect(key)
 		spec.Tp = ast.AlterTableDropForeignKey
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.Name = tok.Lit
 		}
 	} else if _, ok := p.acceptAny(check, constraint); ok {
 		spec.Tp = ast.AlterTableDropCheck
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			c := p.arena.AllocConstraint()
 			c.Name = tok.Lit
 			spec.Constraint = c
@@ -168,7 +168,7 @@ func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 	} else if _, ok := p.accept(statsExtended); ok {
 		spec.Tp = ast.AlterTableDropStatistics
 		spec.IfExists = p.acceptIfExists()
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.Statistics = &ast.StatisticsSpec{StatsName: tok.Lit}
 		}
 	} else if _, ok := p.acceptKeyword(first, "FIRST"); ok {
@@ -194,22 +194,22 @@ func (p *HandParser) parseAlterRename(spec *ast.AlterTableSpec) {
 		spec.NewTable = p.parseTableName()
 	} else if _, ok := p.accept(column); ok {
 		spec.Tp = ast.AlterTableRenameColumn
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.OldColumnName = p.arena.AllocColumnName()
 			spec.OldColumnName.Name = ast.NewCIStr(tok.Lit)
 		}
 		p.expect(to)
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.NewColumnName = p.arena.AllocColumnName()
 			spec.NewColumnName.Name = ast.NewCIStr(tok.Lit)
 		}
 	} else if _, ok := p.acceptAny(index, key); ok {
 		spec.Tp = ast.AlterTableRenameIndex
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.FromKey = ast.NewCIStr(tok.Lit)
 		}
 		p.expect(to)
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.ToKey = ast.NewCIStr(tok.Lit)
 		}
 	} else {
@@ -229,7 +229,7 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 	// ALTER INDEX index_name {VISIBLE|INVISIBLE}
 	if _, ok := p.accept(index); ok {
 		spec.Tp = ast.AlterTableIndexInvisible
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.IndexName = ast.NewCIStr(tok.Lit)
 		}
 		if _, ok := p.accept(visible); ok {
@@ -247,7 +247,7 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 	if _, ok := p.acceptAny(check, constraint); ok {
 		spec.Tp = ast.AlterTableAlterCheck
 		spec.Constraint = p.arena.AllocConstraint()
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			spec.Constraint.Name = tok.Lit
 		}
 		if _, ok := p.accept(enforced); ok {
@@ -320,7 +320,7 @@ func (p *HandParser) parseAlterPartition(spec *ast.AlterTableSpec) *ast.AlterTab
 	}
 	// PARTITION p0 PLACEMENT POLICY = p1
 	p.next()
-	if tok, ok := p.expectAny(identifier, stringLit); ok {
+	if tok, ok := p.expectIdentLike(); ok {
 		spec.PartitionNames = append(spec.PartitionNames, ast.NewCIStr(tok.Lit))
 	}
 	// PARTITION p ATTRIBUTES [=] DEFAULT|'str'

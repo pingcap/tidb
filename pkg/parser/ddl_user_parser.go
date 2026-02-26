@@ -501,7 +501,7 @@ func (p *HandParser) parseUserResourceGroupOption() *ast.ResourceGroupNameOption
 		p.next()
 		p.expect(group)
 		opt := Alloc[ast.ResourceGroupNameOption](p.arena)
-		if tok, ok := p.expectAny(identifier, stringLit); ok {
+		if tok, ok := p.expectIdentLike(); ok {
 			opt.Value = tok.Lit
 		}
 		return opt

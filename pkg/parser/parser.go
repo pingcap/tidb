@@ -260,6 +260,18 @@ func (p *HandParser) expectAny(expected ...int) (Token, bool) {
 	return tok, false
 }
 
+// expectIdentLike consumes and returns a token if it can be used as an identifier
+// (unreserved keywords, identifier, or stringLit). Reports an error if not.
+// This replaces expectAny(identifier, stringLit) which misses unreserved keywords.
+func (p *HandParser) expectIdentLike() (Token, bool) {
+	tok := p.next()
+	if isIdentLike(tok.Tp) {
+		return tok, true
+	}
+	p.errorNear(tok.EndOffset, tok.Offset)
+	return tok, false
+}
+
 // accept consumes the next token if it matches, returning whether it matched.
 func (p *HandParser) accept(expected int) (Token, bool) {
 	return p.lexer.Accept(expected)
