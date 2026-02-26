@@ -349,14 +349,14 @@ func buildMViewRefreshMeta(sctx sessionctx.Context, refresh *ast.MViewRefreshCla
 	case ast.MViewRefreshMethodFast:
 		method = "FAST"
 		if refresh.StartWith != nil {
-			s, err := buildAndValidateMViewScheduleExpr(sctx, refresh.StartWith, "REFRESH START WITH")
+			s, err := BuildAndValidateMViewScheduleExpr(sctx, refresh.StartWith, "REFRESH START WITH")
 			if err != nil {
 				return "", "", "", err
 			}
 			startWith = s
 		}
 		if refresh.Next != nil {
-			s, err := buildAndValidateMViewScheduleExpr(sctx, refresh.Next, "REFRESH NEXT")
+			s, err := BuildAndValidateMViewScheduleExpr(sctx, refresh.Next, "REFRESH NEXT")
 			if err != nil {
 				return "", "", "", err
 			}

@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-// buildAndValidateMViewScheduleExpr restores an AST expression into canonical SQL and
+// BuildAndValidateMViewScheduleExpr restores an AST expression into canonical SQL and
 // validates that its expression type is DATETIME/TIMESTAMP.
-func buildAndValidateMViewScheduleExpr(sctx sessionctx.Context, expr ast.ExprNode, clause string) (string, error) {
+func BuildAndValidateMViewScheduleExpr(sctx sessionctx.Context, expr ast.ExprNode, clause string) (string, error) {
 	exprSQL, err := restoreExprToCanonicalSQL(expr)
 	if err != nil {
 		return "", err

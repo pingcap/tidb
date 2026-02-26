@@ -556,3 +556,23 @@ PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
 	sql = "ALTER TABLE test.employees11 DROP PARTITION pEast;"
 	execAlter(t, tracker, sql)
 }
+
+func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next now()"))
+	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))
+	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+}
