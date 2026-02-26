@@ -22,7 +22,6 @@ go_library(
         "//pkg/owner",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
-        "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/types",
@@ -50,7 +49,7 @@ go_test(
     ],
     embed = [":schematracker"],
     flaky = True,
-    shard_count = 16,
+    shard_count = 17,
     deps = [
         "//pkg/executor",
         "//pkg/infoschema",
