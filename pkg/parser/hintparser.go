@@ -405,6 +405,7 @@ func (hp *hintParser) parseTableLevelHint(name string) []*ast.TableOptimizerHint
 
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return []*ast.TableOptimizerHint{h}
 }
@@ -449,6 +450,7 @@ func (hp *hintParser) parseIndexLevelHint(name string) []*ast.TableOptimizerHint
 
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return []*ast.TableOptimizerHint{h}
 }
@@ -475,6 +477,7 @@ func (hp *hintParser) parseBooleanHint(name string) []*ast.TableOptimizerHint {
 
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return []*ast.TableOptimizerHint{{
 		HintName: ast.NewCIStr(name),
@@ -580,6 +583,7 @@ func (hp *hintParser) parseMaxExecTimeHint(name string) []*ast.TableOptimizerHin
 	}
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return []*ast.TableOptimizerHint{{
 		HintName: ast.NewCIStr(name),
@@ -602,6 +606,7 @@ func (hp *hintParser) parseNthPlanHint(name string) []*ast.TableOptimizerHint {
 	}
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return []*ast.TableOptimizerHint{{
 		HintName: ast.NewCIStr(name),
@@ -636,6 +641,7 @@ func (hp *hintParser) parseMemoryQuotaHint(name string) []*ast.TableOptimizerHin
 
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 
 	maxValue := uint64(math.MaxInt64) / multiplier
@@ -671,6 +677,7 @@ func (hp *hintParser) parseQueryTypeHint(name string) []*ast.TableOptimizerHint 
 	}
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return []*ast.TableOptimizerHint{{
 		HintName: ast.NewCIStr(name),
@@ -747,6 +754,7 @@ func (hp *hintParser) parseResourceGroupHint(name string) []*ast.TableOptimizerH
 	ident := hp.parseIdentifier()
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return []*ast.TableOptimizerHint{{
 		HintName: ast.NewCIStr(name),
@@ -780,6 +788,7 @@ func (hp *hintParser) parseTimeRangeHint(name string) []*ast.TableOptimizerHint 
 	}
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return []*ast.TableOptimizerHint{{
 		HintName: ast.NewCIStr(name),
@@ -800,6 +809,7 @@ func (hp *hintParser) parseLeadingHint(name string) []*ast.TableOptimizerHint {
 	leadingList := hp.parseLeadingTableList()
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 
 	h := &ast.TableOptimizerHint{
@@ -882,6 +892,7 @@ func (hp *hintParser) parseStorageHint(name string) []*ast.TableOptimizerHint {
 
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return results
 }
@@ -911,6 +922,7 @@ func (hp *hintParser) parseSemijoinHint(name string) []*ast.TableOptimizerHint {
 
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
+		return nil
 	}
 	return []*ast.TableOptimizerHint{h}
 }

@@ -136,7 +136,7 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 
 	// Set text on the select body node, mirroring the original parser.
 	if stmt.Select != nil {
-		stmt.Select.SetText(nil, strings.TrimSpace(p.src[selectStartOff:selectEndOff]))
+		stmt.Select.SetText(p.connectionEncoding, strings.TrimSpace(p.src[selectStartOff:selectEndOff]))
 	}
 
 	return stmt

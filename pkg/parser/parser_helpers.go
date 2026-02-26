@@ -544,7 +544,7 @@ func (p *HandParser) parsePartitionLessThanExprFrom(spec *ast.AlterTableSpec, st
 	// Set OriginalText on the PartitionMethod so DDL executor can find it
 	// in the query string for syntactic sugar replacement.
 	if endOff > startOff && endOff <= len(p.src) {
-		spec.Partition.PartitionMethod.SetText(nil, p.src[startOff:endOff])
+		spec.Partition.PartitionMethod.SetText(p.connectionEncoding, p.src[startOff:endOff])
 	}
 }
 

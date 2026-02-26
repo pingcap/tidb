@@ -244,12 +244,15 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		hasCharset := p.acceptCharsetKw()
 		if hasCharset {
 			csTok := p.next()
-			csName := strings.ToUpper(csTok.Lit)
-			if !charset.ValidCharsetAndCollation(csName, "") {
+			// Normalize charset name to canonical lowercase form via GetCharsetInfo,
+			// matching the yacc CharsetName rule which does `$$ = cs.Name`.
+			csInfo, err := charset.GetCharsetInfo(csTok.Lit)
+			if err != nil {
 				p.errs = append(p.errs, ErrUnknownCharacterSet.
-					GenWithStack("Unknown character set: '%s'", csName))
+					GenWithStack("Unknown character set: '%s'", csTok.Lit))
 				return nil, false
 			}
+			csName := csInfo.Name
 			tp.SetCharset(csName)
 			// Look up default collation for this charset.
 			defCollation, err := charset.GetDefaultCollation(csName)

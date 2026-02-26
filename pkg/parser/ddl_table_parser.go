@@ -565,7 +565,7 @@ func (p *HandParser) parseGeneratedColumnBody(option *ast.ColumnOption) {
 	option.Expr = p.parseExpression(precNone)
 	endOff := p.peek().Offset // ')' token offset
 	if option.Expr != nil && endOff > startOff && endOff <= len(p.src) {
-		option.Expr.SetText(nil, strings.TrimSpace(p.src[startOff:endOff]))
+		option.Expr.SetText(p.connectionEncoding, strings.TrimSpace(p.src[startOff:endOff]))
 	}
 	p.expect(')')
 	// VIRTUAL / STORED

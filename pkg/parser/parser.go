@@ -221,6 +221,25 @@ func (p *HandParser) warn(format string, args ...interface{}) {
 	p.warns = append(p.warns, fmt.Errorf(format, args...))
 }
 
+// warnNear records a position-aware warning in yacc-compatible format.
+// It mirrors the yacc Scanner.Errorf layout so that SyntaxWarn produces
+// matching "line N column N near ..." output.
+func (p *HandParser) warnNear(offset int, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	// Use calcLineCol with offset directly (no +1 adjustment) to match yacc
+	// Scanner reader Col which is 0-based-then-incremented (Col==offset after
+	// reading offset bytes on a single line).
+	line, col := p.calcLineCol(offset)
+	near := ""
+	if offset < len(p.src) {
+		near = p.src[offset:]
+		if len(near) > 2048 {
+			near = near[:2048]
+		}
+	}
+	p.warns = append(p.warns, fmt.Errorf("line %d column %d near \"%s\"%s ", line, col, near, msg))
+}
+
 // peek returns the next token without consuming it.
 func (p *HandParser) peek() Token {
 	return p.lexer.Peek()
