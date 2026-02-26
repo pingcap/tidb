@@ -1051,5 +1051,8 @@ func TiCIIndexRangesToKVRanges(
 	if shardType == TiCIShardExtraShardingKey {
 		return IndexRangesToKVRanges(dctx, tids[0], idxID, ranges)
 	}
+	if shardType == TiCIShardIntHandle {
+		ranges, _ = SplitRangesAcrossInt64Boundary(ranges, false, false, false)
+	}
 	return TableHandleRangesToKVRanges(dctx, tids, shardType == TiCIShardCommonHandle, ranges)
 }
