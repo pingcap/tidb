@@ -137,6 +137,26 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "finished", gotJobInfo.Status)
 
+	// create another job, fail it before start (task reverted at init step).
+	// it should be marked as failed instead of being left pending.
+	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
+		"root", "", &importer.ImportParameters{}, 123)
+	require.NoError(t, err)
+	logicalPlan.JobID = jobID
+	bs, err = logicalPlan.ToTaskMeta()
+	require.NoError(t, err)
+	task.Meta = bs
+	task.Step = proto.StepInit
+	task.State = proto.TaskStateReverting
+	task.Error = errors.New("precheck failed")
+	require.NoError(t, ext.OnDone(ctx, d, task))
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, "failed", gotJobInfo.Status)
+	activeJobCnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), activeJobCnt)
+
 	// create another job, start it, and fail it.
 	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
 		"root", "", &importer.ImportParameters{}, 123)
