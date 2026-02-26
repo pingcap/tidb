@@ -127,6 +127,12 @@ func TestPurgeMaterializedViewLogDisallowExplicitTransaction(t *testing.T) {
 		"cannot run PURGE MATERIALIZED VIEW LOG in explicit transaction",
 	)
 	tk.MustExec("rollback")
+
+	tk.MustExec(`prepare stmt from "purge materialized view log on t_mlog_purge_txn"`)
+	defer tk.MustExec("deallocate prepare stmt")
+	tk.MustExec("begin")
+	tk.MustGetErrMsg("execute stmt", "cannot run PURGE MATERIALIZED VIEW LOG in explicit transaction")
+	tk.MustExec("rollback")
 }
 
 func TestPurgeMaterializedViewLogDoesNotMarkDDLExecution(t *testing.T) {
