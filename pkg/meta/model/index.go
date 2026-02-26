@@ -566,6 +566,15 @@ func (index *IndexInfo) HasExtraTiCIShardingKey() bool {
 	return index.HybridInfo != nil && index.HybridInfo.Sharding != nil
 }
 
+// HybridShardingColumns returns the sharding columns for a hybrid index.
+// It returns nil when the index is not hybrid or sharding is not configured.
+func (index *IndexInfo) HybridShardingColumns() []*IndexColumn {
+	if index == nil || index.HybridInfo == nil || index.HybridInfo.Sharding == nil {
+		return nil
+	}
+	return index.HybridInfo.Sharding.Columns
+}
+
 // HasCondition checks whether the index has a partial index condition.
 func (index *IndexInfo) HasCondition() bool {
 	return len(index.ConditionExprString) > 0

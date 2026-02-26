@@ -34,13 +34,15 @@ INSERT INTO t3 VALUES
 ALTER TABLE t3 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
 
 # Create multiple fulltext index by backfilling on the same table
+# And to verify the primary key with trailing spaces
 CREATE TABLE IF NOT EXISTS t4(id varchar(10),body1 TEXT,body2 TEXT,PRIMARY KEY (id) CLUSTERED);
 INSERT INTO t4 VALUES
 (1, 'This is the first test x data, used to demonstrate the insert operation','database tidb'),
 (2, 'The second record contains some sample text for testing', 'backfilling data'),
 (3, 'Third entry: verifying the TEXT field''s ability to store longer content', 'some text'),
 (4, 'Fourth data row, which can be used for subsequent query or analysis tests', 'index engine'),
-(5, 'Fifth sample entry to complete the basic insertion example', 'import engine');
+(5, 'Fifth sample entry to complete the basic insertion example', 'import engine'),
+('ts1 ', 'This is the first test x data, used to demonstrate trailing-space PK', 'trailing pk row');
 ALTER TABLE t4 ADD FULLTEXT INDEX ft_idx1 (body1) WITH PARSER standard;
 ALTER TABLE t4 ADD FULLTEXT INDEX ft_idx2 (body2) WITH PARSER standard;
 
@@ -48,5 +50,5 @@ DO SLEEP(10);
 SELECT * FROM t1 WHERE fts_match_word('first', body);
 SELECT * FROM t2 WHERE fts_match_word('first', content);
 SELECT * FROM t3 WHERE fts_match_word('hello', body);
-SELECT body1 FROM t4 WHERE fts_match_word('first', body1);
-SELECT body2 FROM t4 WHERE fts_match_word('data', body2);
+SELECT id, HEX(id) AS id_hex, body1 FROM t4 WHERE fts_match_word('first', body1) ORDER BY HEX(id);
+SELECT id,body2 FROM t4 WHERE fts_match_word('data', body2);
