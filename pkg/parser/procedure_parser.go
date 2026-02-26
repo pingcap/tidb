@@ -14,6 +14,8 @@
 package parser
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -99,11 +101,28 @@ func (p *HandParser) parseCreateProcedureStmt() ast.StmtNode {
 
 	// ( params )
 	p.expect('(')
+	paramStartOff := p.peek().Offset
 	stmt.ProcedureParam = p.parseProcedureParams()
+	paramEndOff := p.peek().Offset // offset of ')'
 	p.expect(')')
 
+	// Capture the parameter string (text between parens)
+	if paramEndOff > paramStartOff {
+		stmt.ProcedureParamStr = strings.TrimSpace(p.src[paramStartOff:paramEndOff])
+	}
+
 	// Body
+	bodyStartOff := p.peek().Offset
 	stmt.ProcedureBody = p.parseProcedureBodyStatement()
+	if stmt.ProcedureBody != nil {
+		bodyEndOff := p.peek().Offset
+		if p.peek().Tp == EOF {
+			bodyEndOff = len(p.src)
+		}
+		if bodyEndOff > bodyStartOff {
+			stmt.ProcedureBody.SetText(p.connectionEncoding, strings.TrimSpace(p.src[bodyStartOff:bodyEndOff]))
+		}
+	}
 	return stmt
 }
 

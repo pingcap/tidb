@@ -130,6 +130,7 @@ func (p *HandParser) parseSubquery() ast.ResultSetNode {
 		}
 	case '(':
 		p.next()
+		innerStartOff := p.peek().Offset
 		res = p.parseSubquery()
 		if res != nil {
 			// First set IsInBraces on the inner result (for single SELECT in parens)
@@ -144,6 +145,11 @@ func (p *HandParser) parseSubquery() ast.ResultSetNode {
 			// new SetOprStmt that needs IsInBraces=true for the outer parentheses.
 			if s, ok := res.(*ast.SetOprStmt); ok {
 				s.IsInBraces = true
+			}
+			// Set text on the inner result to match yacc SubSelect behavior.
+			innerEndOff := p.peek().Offset // offset of ')'
+			if innerEndOff > innerStartOff {
+				res.(ast.Node).SetText(p.connectionEncoding, p.src[innerStartOff:innerEndOff])
 			}
 		}
 		p.expect(')')

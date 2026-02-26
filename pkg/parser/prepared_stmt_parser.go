@@ -70,7 +70,7 @@ func (p *HandParser) parseDeallocateStmt() ast.StmtNode {
 	// Only for distinct DEALLOCATE statement.
 	// For DROP PREPARE, I'll need a different path or logic.
 	p.expect(deallocate)
-	p.accept(prepare)
+	p.expect(prepare)
 	stmt.Name = p.parseName()
 	return stmt
 }

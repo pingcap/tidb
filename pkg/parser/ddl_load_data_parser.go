@@ -108,21 +108,20 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 		stmt.ColumnsAndUserVars = make([]*ast.ColumnNameOrUserVar, 0)
 		for {
 			tok := p.peek()
-			if isIdentLike(tok.Tp) && tok.Tp != stringLit {
-				p.next()
-				node := &ast.ColumnNameOrUserVar{ColumnName: &ast.ColumnName{Name: ast.NewCIStr(tok.Lit)}}
-				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
-			} else if tok.Tp == singleAtIdentifier {
+			if tok.Tp == singleAtIdentifier {
 				// @dummy user variables (lexer fuses @ + ident into singleAtIdentifier)
 				p.next()
 				node := &ast.ColumnNameOrUserVar{UserVar: &ast.VariableExpr{Name: tok.Lit}}
 				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
 			} else if tok.Tp == '@' {
 				p.next()
-				if tok, ok := p.expect(identifier); ok {
-					node := &ast.ColumnNameOrUserVar{UserVar: &ast.VariableExpr{Name: tok.Lit}}
-					stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
-				}
+				nameTok := p.next()
+				node := &ast.ColumnNameOrUserVar{UserVar: &ast.VariableExpr{Name: nameTok.Lit}}
+				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
+			} else if isIdentLike(tok.Tp) && tok.Tp != stringLit {
+				p.next()
+				node := &ast.ColumnNameOrUserVar{ColumnName: &ast.ColumnName{Name: ast.NewCIStr(tok.Lit)}}
+				stmt.ColumnsAndUserVars = append(stmt.ColumnsAndUserVars, node)
 			}
 			if _, ok := p.accept(','); !ok {
 				break

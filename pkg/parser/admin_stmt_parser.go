@@ -298,11 +298,9 @@ func (p *HandParser) parseAdminStmt() ast.StmtNode {
 			// ADMIN CHECK INDEX t idx [(begin, end), ...]
 			stmt.Tp = ast.AdminCheckIndex
 			stmt.Tables = []*ast.TableName{p.parseTableName()}
-			if p.peek().Tp != '(' && p.peek().Tp != ';' && p.peek().Tp != EOF {
-				// Accept any token that could be an index name
-				tok := p.next()
-				stmt.Index = tok.Lit
-			}
+			// Index name is required (yacc: Identifier)
+			tok := p.next()
+			stmt.Index = tok.Lit
 			// Parse optional handle ranges: (begin, end), (begin, end), ...
 			if p.peek().Tp == '(' {
 				stmt.Tp = ast.AdminCheckIndexRange
@@ -384,15 +382,15 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 			// JOB QUERIES id,...
 			if p.peek().IsKeyword("QUERIES") {
 				p.next()
-				stmt.Tp = ast.AdminShowDDLJobQueries
-				stmt.JobIDs = p.parseIntList()
-				// Optional LIMIT [offset,] count or LIMIT count OFFSET offset
+				// Yacc has two distinct alternatives:
+				// 1. QUERIES NumList → AdminShowDDLJobQueries (int list)
+				// 2. QUERIES LIMIT ... → AdminShowDDLJobQueriesWithRange
 				if _, ok := p.accept(limit); ok {
 					stmt.Tp = ast.AdminShowDDLJobQueriesWithRange
 					if p.peek().Tp == intLit {
 						val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
 						stmt.LimitSimple.Count = uint64(val)
-						// Check for offset, count form
+						// Check for offset, count form: LIMIT offset, count
 						if _, ok := p.accept(','); ok {
 							stmt.LimitSimple.Offset = stmt.LimitSimple.Count
 							if p.peek().Tp == intLit {
@@ -409,6 +407,9 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 							}
 						}
 					}
+				} else {
+					stmt.Tp = ast.AdminShowDDLJobQueries
+					stmt.JobIDs = p.parseIntList()
 				}
 			}
 		}
@@ -422,10 +423,8 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 		if p.peek().IsKeyword("RECENT") {
 			p.next()
 			stmt.ShowSlow.Tp = ast.ShowSlowRecent
-			if p.peek().Tp == intLit {
-				val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
-				stmt.ShowSlow.Count = uint64(val)
-			}
+			val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
+			stmt.ShowSlow.Count = uint64(val)
 		} else if p.peek().IsKeyword("TOP") {
 			p.next()
 			stmt.ShowSlow.Tp = ast.ShowSlowTop
@@ -436,17 +435,18 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 				p.next()
 				stmt.ShowSlow.Kind = ast.ShowSlowKindAll
 			}
-			if p.peek().Tp == intLit {
-				val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
-				stmt.ShowSlow.Count = uint64(val)
-			}
+			val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
+			stmt.ShowSlow.Count = uint64(val)
 		}
 		return stmt
 	}
 	// ADMIN SHOW BDR ROLE
 	if p.peek().IsKeyword("BDR") {
 		p.next()
-		p.next() // ROLE
+		if tok := p.next(); tok.Tp != role && !tok.IsKeyword("ROLE") {
+			p.syntaxErrorAt(tok)
+			return nil
+		}
 		stmt.Tp = ast.AdminShowBDRRole
 		return stmt
 	}
@@ -476,7 +476,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 		}
 		if _, ok := p.accept(tableKwd); ok {
 			// ADMIN CLEANUP TABLE LOCK t, ...
-			p.accept(lock)
+			p.expect(lock)
 			cleanupStmt := Alloc[ast.CleanupTableLockStmt](p.arena)
 			cleanupStmt.Tables = p.parseTableNameList()
 			return cleanupStmt
@@ -514,6 +514,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 		} else if p.peek().IsKeyword("PLAN_CACHE") {
 			p.next()
 			stmt.Tp = ast.AdminFlushPlanCache
+			stmt.StatementScope = ast.StatementScopeSession // default scope matches yacc
 		} else {
 			// SESSION, INSTANCE, or GLOBAL followed by optional PLAN_CACHE
 			var scope ast.StatementScope
@@ -601,10 +602,8 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 			p.next()
 			p.next() // JOBS
 			stmt.Tp = ast.AdminAlterDDLJob
-			if p.peek().Tp == intLit {
-				val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
-				stmt.JobNumber = val
-			}
+			val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
+			stmt.JobNumber = val
 			for {
 				if p.peek().Tp == ';' || p.peek().Tp == EOF {
 					break
@@ -629,12 +628,10 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 }
 
 // parseAdminIndexOp is the shared implementation for ADMIN RECOVER/CLEANUP INDEX.
-// Parses: table_name [index_name]
+// Parses: table_name index_name (both required per yacc grammar)
 func (p *HandParser) parseAdminIndexOp(stmt *ast.AdminStmt, stmtType ast.AdminStmtType) ast.StmtNode {
 	stmt.Tp = stmtType
 	stmt.Tables = []*ast.TableName{p.parseTableName()}
-	if p.peek().Tp != '(' && p.peek().Tp != ';' && p.peek().Tp != EOF {
-		stmt.Index = p.next().Lit
-	}
+	stmt.Index = p.next().Lit
 	return stmt
 }
