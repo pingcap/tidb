@@ -288,7 +288,7 @@ type AdminCheckIndexInconsistentCollector struct {
 	mu     sync.Mutex
 	first  error
 	rows   []AdminCheckIndexInconsistentRow
-	rowSet map[string]struct{}
+	rowSet map[AdminCheckIndexInconsistentRow]struct{}
 }
 
 // NewAdminCheckIndexInconsistentCollector creates an uncapped collector for fast `admin check index`.
@@ -304,7 +304,7 @@ func NewAdminCheckIndexInconsistentCollectorWithLimit(limit int) *AdminCheckInde
 	}
 	return &AdminCheckIndexInconsistentCollector{
 		collectLimit: limit,
-		rowSet:       make(map[string]struct{}),
+		rowSet:       make(map[AdminCheckIndexInconsistentRow]struct{}),
 	}
 }
 
@@ -313,7 +313,7 @@ func (c *AdminCheckIndexInconsistentCollector) recordInconsistent(
 	mismatchType AdminCheckIndexInconsistentType,
 	err error,
 ) {
-	if err == nil {
+	if c == nil || err == nil {
 		return
 	}
 
@@ -326,17 +326,15 @@ func (c *AdminCheckIndexInconsistentCollector) recordInconsistent(
 		return
 	}
 
-	// Deduplicate by (handle, mismatch_type) so one handle can still appear
-	// multiple times when different mismatch types are detected.
-	rowKey := handle + "\x00" + string(mismatchType)
-	if _, exists := c.rowSet[rowKey]; exists {
-		return
-	}
 	if c.collectLimit > 0 && len(c.rows) >= c.collectLimit {
 		return
 	}
-	c.rowSet[rowKey] = struct{}{}
-	c.rows = append(c.rows, AdminCheckIndexInconsistentRow{Handle: handle, MismatchType: mismatchType})
+	row := AdminCheckIndexInconsistentRow{Handle: handle, MismatchType: mismatchType}
+	if _, exists := c.rowSet[row]; exists {
+		return
+	}
+	c.rowSet[row] = struct{}{}
+	c.rows = append(c.rows, row)
 }
 
 func (c *AdminCheckIndexInconsistentCollector) recordErr(err error) {
@@ -703,65 +701,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		return false
 	}
 
-	compareChecksumBuckets := func(tableChecksum, indexChecksum []groupByChecksum) []mismatchBucket {
-		mismatch := make([]mismatchBucket, 0)
-		i, j := 0, 0
-		for i < len(tableChecksum) && j < len(indexChecksum) {
-			if tableChecksum[i].bucket == indexChecksum[j].bucket {
-				if tableChecksum[i].checksum != indexChecksum[j].checksum {
-					mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: max(tableChecksum[i].count, indexChecksum[j].count)})
-				}
-				i++
-				j++
-				continue
-			}
-			if tableChecksum[i].bucket < indexChecksum[j].bucket {
-				mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: tableChecksum[i].count})
-				i++
-				continue
-			}
-			mismatch = append(mismatch, mismatchBucket{bucket: indexChecksum[j].bucket, count: indexChecksum[j].count})
-			j++
-		}
-		for ; i < len(tableChecksum); i++ {
-			mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: tableChecksum[i].count})
-		}
-		for ; j < len(indexChecksum); j++ {
-			mismatch = append(mismatch, mismatchBucket{bucket: indexChecksum[j].bucket, count: indexChecksum[j].count})
-		}
-		return mismatch
-	}
-	sumChecksumCount := func(checksums []groupByChecksum) int64 {
-		total := int64(0)
-		for _, checksum := range checksums {
-			total += checksum.count
-		}
-		return total
-	}
-	buildChecksumQueries := func(task checksumBucketTask, forceRoot bool) (tblQuery, idxQuery string) {
-		whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, task.offset, task.mod)
-		if forceRoot {
-			whereKey = "0"
-		}
-		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle, task.offset, task.mod, bucketSize)
-		tblQuery = fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
-			tblName, md5HandleAndIndexCol, groupByKey, tblName, whereKey, groupByKey)
-		idxQuery = fmt.Sprintf(
-			"select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
-			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, whereKey, groupByKey)
-		return tblQuery, idxQuery
-	}
-	buildRowQueries := func(task checksumBucketTask) (tableSQL, indexSQL string) {
-		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, task.offset, task.mod)
-		indexSQL = fmt.Sprintf(
-			"select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s",
-			handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name, groupByKey, handleColumns)
-		tableSQL = fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s",
-			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
-		return tableSQL, indexSQL
-	}
 	nextRecord := func(stream *leafRowStream) (*consistency.RecordData, chunk.Row, bool, error) {
 		row, ok, err := stream.Next()
 		if err != nil || !ok {
@@ -774,7 +713,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		return record, row, true, nil
 	}
 	checkLeafBucket := func(task checksumBucketTask) bool {
-		tableSQL, indexSQL := buildRowQueries(task)
+		tableSQL, indexSQL := buildRowQueries(md5Handle, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name.O, task)
 		tableStream, err := newLeafRowStream(ctx, se, tableSQL)
 		if err != nil {
 			return reportErr(err)
@@ -844,9 +783,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 					return reportErr(err)
 				}
 			default:
-				compareTableRecord := lastTableRecord
-				if compareTableRecord != nil && compareTableRecord.Handle.Equal(indexRecord.Handle) {
-					if reportInconsistent(reporter, AdminCheckIndexRowIndexMismatch, indexRecord.Handle, indexRecord, compareTableRecord) {
+				if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
+					if reportInconsistent(reporter, AdminCheckIndexRowIndexMismatch, indexRecord.Handle, indexRecord, lastTableRecord) {
 						return true
 					}
 				} else if reportInconsistent(reporter, AdminCheckIndexIndexWithoutRow, indexRecord.Handle, indexRecord, nil) {
@@ -870,7 +808,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		task := queue[0]
 		queue = queue[1:]
 
-		tblQuery, idxQuery := buildChecksumQueries(task, task.depth == 0)
+		tblQuery, idxQuery := buildChecksumQueries(md5Handle, md5HandleAndIndexCol, tblName, idxInfo.Name.O, task, task.depth == 0, bucketSize)
 		logger := logutil.BgLogger().With(
 			zap.String("table name", tblMeta.Name.String()),
 			zap.String("index name", idxInfo.Name.String()),
@@ -912,15 +850,33 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		if len(mismatches) == 0 {
 			continue
 		}
-		for _, mismatch := range mismatches {
-			logger.Info("found checksum mismatch bucket",
-				zap.Uint64("bucket", mismatch.bucket),
-				zap.Int64("count", mismatch.count))
-		}
-		// Fast path keeps original fail-fast behavior; collector mode keeps all mismatches.
+		logChecksumBucketDiffs(logger, tableChecksum, indexChecksum, bucketSize)
+
+		// Keep fail-fast behavior unchanged for SQL path.
 		if w.e.collector == nil {
-			mismatches = mismatches[:1]
+			mismatch := mismatches[0]
+			nextTask := checksumBucketTask{
+				offset: task.offset + int(mismatch.bucket)*task.mod,
+				mod:    task.mod * bucketSize,
+				depth:  task.depth + 1,
+			}
+			if nextTask.mod <= 0 {
+				if checkLeafBucket(task) {
+					return
+				}
+				continue
+			}
+			if mismatch.count <= lookupCheckThreshold || nextTask.depth >= maxRefineDepth {
+				if checkLeafBucket(nextTask) {
+					return
+				}
+				continue
+			}
+			queue = append(queue, nextTask)
+			continue
 		}
+
+		// Collector mode: keep refining all mismatched buckets and collect every mismatch.
 		for _, mismatch := range mismatches {
 			nextTask := checksumBucketTask{
 				offset: task.offset + int(mismatch.bucket)*task.mod,
@@ -931,30 +887,16 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 				if checkLeafBucket(task) {
 					return
 				}
-				if w.e.collector == nil {
-					break
-				}
 				continue
 			}
-			// Fail-fast mode: stop refining early once one candidate bucket is small enough.
-			if w.e.collector == nil && (mismatch.count <= lookupCheckThreshold || nextTask.depth >= maxRefineDepth) {
-				if checkLeafBucket(nextTask) {
-					return
-				}
-				break
-			}
-			// Collector mode: continue refining until row-level scan can enumerate
-			// all inconsistent handles deterministically.
-			if w.e.collector != nil && (mismatch.count <= 1 || nextTask.depth >= maxRefineDepth) {
+			// Continue refining until row-level scan can enumerate all inconsistent handles.
+			if mismatch.count <= 1 || nextTask.depth >= maxRefineDepth {
 				if checkLeafBucket(nextTask) {
 					return
 				}
 				continue
 			}
 			queue = append(queue, nextTask)
-			if w.e.collector == nil {
-				break
-			}
 		}
 	}
 }
@@ -985,6 +927,111 @@ func (c groupByChecksum) String() string {
 	return fmt.Sprintf("{bkt:%d,sum:%d,cnt:%d}", c.bucket, c.checksum, c.count)
 }
 
+func compareChecksumBuckets(tableChecksum, indexChecksum []groupByChecksum) []mismatchBucket {
+	mismatch := make([]mismatchBucket, 0)
+	i, j := 0, 0
+	for i < len(tableChecksum) && j < len(indexChecksum) {
+		if tableChecksum[i].bucket == indexChecksum[j].bucket {
+			if tableChecksum[i].checksum != indexChecksum[j].checksum {
+				mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: max(tableChecksum[i].count, indexChecksum[j].count)})
+			}
+			i++
+			j++
+			continue
+		}
+		if tableChecksum[i].bucket < indexChecksum[j].bucket {
+			mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: tableChecksum[i].count})
+			i++
+			continue
+		}
+		mismatch = append(mismatch, mismatchBucket{bucket: indexChecksum[j].bucket, count: indexChecksum[j].count})
+		j++
+	}
+	for ; i < len(tableChecksum); i++ {
+		mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: tableChecksum[i].count})
+	}
+	for ; j < len(indexChecksum); j++ {
+		mismatch = append(mismatch, mismatchBucket{bucket: indexChecksum[j].bucket, count: indexChecksum[j].count})
+	}
+	return mismatch
+}
+
+func sumChecksumCount(checksums []groupByChecksum) int64 {
+	total := int64(0)
+	for _, checksum := range checksums {
+		total += checksum.count
+	}
+	return total
+}
+
+func buildChecksumQueries(
+	md5Handle, md5HandleAndIndexCol, tblName string,
+	idxName string,
+	task checksumBucketTask,
+	forceRoot bool,
+	bucketSize int,
+) (tblQuery, idxQuery string) {
+	whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, task.offset, task.mod)
+	if forceRoot {
+		whereKey = "0"
+	}
+	groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle, task.offset, task.mod, bucketSize)
+	tblQuery = fmt.Sprintf(
+		"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
+		tblName, md5HandleAndIndexCol, groupByKey, tblName, whereKey, groupByKey)
+	idxQuery = fmt.Sprintf(
+		"select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
+		md5HandleAndIndexCol, groupByKey, tblName, idxName, whereKey, groupByKey)
+	return tblQuery, idxQuery
+}
+
+func buildRowQueries(
+	md5Handle, handleColumns, indexColumns, md5HandleAndIndexCol, tblName string,
+	idxName string,
+	task checksumBucketTask,
+) (tableSQL, indexSQL string) {
+	groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, task.offset, task.mod)
+	indexSQL = fmt.Sprintf(
+		"select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s",
+		handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxName, groupByKey, handleColumns)
+	tableSQL = fmt.Sprintf(
+		"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s",
+		tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
+	return tableSQL, indexSQL
+}
+
+func logChecksumBucketDiffs(logger *zap.Logger, tableChecksum, indexChecksum []groupByChecksum, bucketSize int) {
+	tableChecksumMap, indexChecksumMap := make(map[uint64]groupByChecksum), make(map[uint64]groupByChecksum)
+	for _, c := range tableChecksum {
+		tableChecksumMap[c.bucket] = c
+	}
+	for _, c := range indexChecksum {
+		indexChecksumMap[c.bucket] = c
+	}
+
+	for bktIdx := range bucketSize {
+		tblBktSum, tblOk := tableChecksumMap[uint64(bktIdx)]
+		idxBktSum, idxOk := indexChecksumMap[uint64(bktIdx)]
+		if tblOk {
+			if idxOk {
+				if tblBktSum.checksum != idxBktSum.checksum || tblBktSum.count != idxBktSum.count {
+					logger.Info("found different checksum in the same bucket",
+						zap.Int("bucket", bktIdx), zap.Stringer("tblBktSum", tblBktSum),
+						zap.Stringer("idxBktSum", idxBktSum))
+				}
+			} else {
+				logger.Info("found bucket only exists in table side",
+					zap.Int("bucket", bktIdx), zap.Stringer("tblBktSum", tblBktSum))
+			}
+		} else {
+			if !idxOk {
+				continue
+			}
+			logger.Info("found bucket only exists in index side",
+				zap.Int("bucket", bktIdx), zap.Stringer("idxBktSum", idxBktSum))
+		}
+	}
+}
 func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
 	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
