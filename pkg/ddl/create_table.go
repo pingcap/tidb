@@ -831,6 +831,13 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	return errors.Trace(err)
 }
 
+// deriveCreateMaterializedViewNextTime computes NEXT_TIME for CREATE MATERIALIZED VIEW post-build upsert.
+//
+// Rules:
+//  1. If both START WITH and NEXT are absent, NEXT_TIME is not updated.
+//  2. Otherwise expressions are evaluated in the prepared eval session (UTC timezone + job SQL mode).
+//  3. START WITH has higher priority unless it is "near now" (START WITH < now + 10s) and NEXT exists.
+//  4. If the chosen expression evaluates to NULL, NEXT_TIME is updated to NULL.
 func deriveCreateMaterializedViewNextTime(
 	ctx context.Context,
 	ddlSess *sess.Session,
