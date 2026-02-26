@@ -485,16 +485,24 @@ func detachCondAndBuildRangeForPath(
 // And unlike the normal index, the code converting the int pk's range to the final kv.KeyRange doesn't handle the NULL.
 // So after calling the function of extract normal index ranges, we need to fix the ranges for TiCI index with int handle.
 func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) []*ranger.Range {
-	var minDatum, maxDatum types.Datum
 	// isUnsigned indicates whether the handle is unsigned.
 	// Now we just cast the unsigned int to int and then store the int value inside the Datum.
 	// We wrap the uint64/int64 with Datum here to keep us untouched with Datum's internal representation.
+	var setMin, setMax func(ran *ranger.Range)
 	if isUnsigned {
-		minDatum = types.NewUintDatum(0)
-		maxDatum = types.NewUintDatum(math.MaxUint64)
+		setMin = func(ran *ranger.Range) {
+			ran.LowVal[0].SetUint64(0)
+		}
+		setMax = func(ran *ranger.Range) {
+			ran.HighVal[0].SetUint64(math.MaxUint64)
+		}
 	} else {
-		minDatum = types.NewIntDatum(math.MinInt64)
-		maxDatum = types.NewIntDatum(math.MaxInt64)
+		setMin = func(ran *ranger.Range) {
+			ran.LowVal[0].SetInt64(math.MinInt64)
+		}
+		setMax = func(ran *ranger.Range) {
+			ran.HighVal[0].SetInt64(math.MaxInt64)
+		}
 	}
 	for i := len(ranges) - 1; i >= 0; i-- {
 		ran := ranges[i]
@@ -505,11 +513,11 @@ func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) []*
 		}
 		// Convert the min and max value to the int min/max value.
 		if ran.LowVal[0].IsNull() || ran.LowVal[0].Kind() == types.KindMinNotNull {
-			ran.LowVal[0].SetInt64(minDatum.GetInt64())
+			setMin(ran)
 			ran.LowExclude = false
 		}
 		if ran.HighVal[0].Kind() == types.KindMaxValue {
-			ran.HighVal[0].SetInt64(maxDatum.GetInt64())
+			setMax(ran)
 		}
 	}
 	return ranges
