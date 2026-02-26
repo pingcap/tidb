@@ -85,6 +85,7 @@ func (e *AnalyzeColumnsExec) toV2() *AnalyzeColumnsExecV2 {
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
+	e.memTracker.EnableDebugLog(fmt.Sprintf("analyze-t%d-p%d", e.tableID.TableID, e.tableID.PartitionID))
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))

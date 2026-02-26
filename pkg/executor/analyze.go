@@ -155,6 +155,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		e.partitionSamplesToSave = make(map[int64][]byte)
 		e.samplePruners = make(map[int64]*statistics.SamplePruner)
 		e.analyzedPartitions = make(map[int64]map[int64]struct{})
+		sessionVars.StmtCtx.MemTracker.EnableDebugLog("analyze-stmt")
 	}
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
