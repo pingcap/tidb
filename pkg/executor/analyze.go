@@ -178,7 +178,13 @@ TASKLOOP:
 		// corresponding jobs so they don't stay stuck in "running" status.
 		for results := range resultsCh {
 			if results.Job != nil {
-				finishJobWithLog(statsHandle, results.Job, results.Err)
+				// Use the original error if the individual result has none,
+				// since the stats were not saved even if analysis succeeded.
+				resultErr := results.Err
+				if resultErr == nil {
+					resultErr = err
+				}
+				finishJobWithLog(statsHandle, results.Job, resultErr)
 			}
 		}
 		return err
