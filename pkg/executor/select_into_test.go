@@ -344,6 +344,25 @@ func TestSelectIntoVarsPrivilege(t *testing.T) {
 	require.Contains(t, err.Error(), "FILE")
 }
 
+func TestSelectIntoUpperCaseUserVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("select 1 into @A")
+	dt, ok := tk.Session().GetSessionVars().GetUserVarVal("A")
+	require.True(t, ok)
+	require.Equal(t, int64(1), dt.GetInt64())
+
+	tk.MustQuery("select @a").Check(testkit.Rows("1"))
+	tk.MustQuery("select @A").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @B = 2")
+	tp, ok := tk.Session().GetSessionVars().GetUserVarType("B")
+	require.True(t, ok)
+	require.Equal(t, mysql.TypeLonglong, tp.GetType())
+}
+
 func TestSelectIntoType(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

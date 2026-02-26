@@ -711,6 +711,7 @@ func (s *UserVars) Clone() UserVarsReader {
 
 // SetUserVarVal set user defined variables' value
 func (s *UserVars) SetUserVarVal(name string, dt types.Datum) {
+	name = strings.ToLower(name)
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.values[name] = dt
@@ -727,6 +728,7 @@ func (s *UserVars) UnsetUserVar(varName string) {
 
 // GetUserVarVal get user defined variables' value
 func (s *UserVars) GetUserVarVal(name string) (types.Datum, bool) {
+	name = strings.ToLower(name)
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	dt, ok := s.values[name]
@@ -735,6 +737,7 @@ func (s *UserVars) GetUserVarVal(name string) (types.Datum, bool) {
 
 // SetUserVarType set user defined variables' type
 func (s *UserVars) SetUserVarType(name string, ft *types.FieldType) {
+	name = strings.ToLower(name)
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.types[name] = ft
@@ -742,6 +745,7 @@ func (s *UserVars) SetUserVarType(name string, ft *types.FieldType) {
 
 // GetUserVarType get user defined variables' type
 func (s *UserVars) GetUserVarType(name string) (*types.FieldType, bool) {
+	name = strings.ToLower(name)
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	ft, ok := s.types[name]
@@ -2541,7 +2545,6 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 
 // SetStringUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetStringUserVar(name string, strVal string, collation string) {
-	name = strings.ToLower(name)
 	if len(collation) > 0 {
 		s.SetUserVarVal(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
 	} else {

@@ -638,7 +638,6 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 		// input variable is @name
 		case *ast.VariableExpr:
 			name := s.Procedure.Args[i].(*ast.VariableExpr).Name
-			name = strings.ToLower(name)
 			if (param.ParamType == ast.MODE_IN) || (param.ParamType == ast.MODE_INOUT) {
 				err := e.inParam(ctx, param, name)
 				if err != nil {

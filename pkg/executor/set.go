@@ -88,9 +88,9 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			continue
 		}
-		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
+			name := v.Name
 			value, err := v.Expr.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -104,6 +104,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 
+		name := strings.ToLower(v.Name)
 		if err := e.setSysVariable(ctx, name, v); err != nil {
 			return err
 		}
