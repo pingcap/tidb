@@ -3314,6 +3314,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 	}
 	e := &AnalyzeColumnsExec{
 		baseAnalyzeExec: base,
+		tableInfo:       task.TblInfo,
 		colsInfo:        task.ColsInfo,
 		handleCols:      task.HandleCols,
 		AnalyzeInfo:     task.AnalyzeInfo,
