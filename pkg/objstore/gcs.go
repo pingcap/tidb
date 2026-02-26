@@ -25,7 +25,10 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
@@ -412,7 +415,92 @@ func (s *GCSStorage) Close() {
 // used in tests
 var mustReportCredErr = false
 
-const gcsClientCnt = 16
+const (
+	defaultGCSClientCnt = 16
+	minGCSClientCnt     = 1
+	maxGCSClientCnt     = 256
+	// TIDB_GCS_CLIENT_CNT controls how many GCS clients are created for one
+	// storage instance. It is used to spread HTTP/2 pressure during global sort.
+	gcsClientCntEnv = "TIDB_GCS_CLIENT_CNT"
+
+	gcsRetryLogMarker = "global-sort-gcs-retry"
+	gcsTuneLogMarker  = "global-sort-gcs-tuning"
+	// Reduce retry log flooding when a burst of HTTP/2 INTERNAL_ERROR happens.
+	gcsRetryLogInterval = 5 * time.Second
+)
+
+var (
+	gcsClientCntOnce sync.Once
+	gcsConfiguredCnt int64 = defaultGCSClientCnt
+	gcsTuneLogOnce   sync.Once
+
+	gcsRetryLastLogNano = atomic.NewInt64(0)
+	gcsRetrySuppressed  = atomic.NewInt64(0)
+)
+
+func getConfiguredGCSClientCnt() int64 {
+	gcsClientCntOnce.Do(func() {
+		v := strings.TrimSpace(os.Getenv(gcsClientCntEnv))
+		if v == "" {
+			return
+		}
+
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			log.Warn("invalid gcs tuning value, fallback to default",
+				zap.String("marker", gcsTuneLogMarker),
+				zap.String("env", gcsClientCntEnv),
+				zap.String("value", v),
+				zap.Int("default", defaultGCSClientCnt),
+				zap.Error(err))
+			return
+		}
+		if n < minGCSClientCnt {
+			log.Warn("gcs tuning value too small, clamped",
+				zap.String("marker", gcsTuneLogMarker),
+				zap.String("env", gcsClientCntEnv),
+				zap.Int64("value", n),
+				zap.Int("min", minGCSClientCnt))
+			n = minGCSClientCnt
+		} else if n > maxGCSClientCnt {
+			log.Warn("gcs tuning value too large, clamped",
+				zap.String("marker", gcsTuneLogMarker),
+				zap.String("env", gcsClientCntEnv),
+				zap.Int64("value", n),
+				zap.Int("max", maxGCSClientCnt))
+			n = maxGCSClientCnt
+		}
+		gcsConfiguredCnt = n
+	})
+	return gcsConfiguredCnt
+}
+
+func logGCSTuningOnce(clientCnt int64) {
+	gcsTuneLogOnce.Do(func() {
+		log.Info("gcs tuning applied",
+			zap.String("marker", gcsTuneLogMarker),
+			zap.String("env", gcsClientCntEnv),
+			zap.Int64("gcs-client-cnt", clientCnt))
+	})
+}
+
+func logGCSRetryLimited(msg string, err error) {
+	now := time.Now().UnixNano()
+	last := gcsRetryLastLogNano.Load()
+	if now-int64(gcsRetryLogInterval) < last || !gcsRetryLastLogNano.CompareAndSwap(last, now) {
+		gcsRetrySuppressed.Inc()
+		return
+	}
+
+	fields := []zap.Field{
+		zap.String("marker", gcsRetryLogMarker),
+		zap.Error(err),
+	}
+	if suppressed := gcsRetrySuppressed.Swap(0); suppressed > 0 {
+		fields = append(fields, zap.Int64("suppressed", suppressed))
+	}
+	log.Warn(msg, fields...)
+}
 
 // NewGCSStorage creates a GCS external storage implementation.
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *storeapi.Options) (*GCSStorage, error) {
@@ -482,10 +570,13 @@ skipHandleCred:
 		gcs.CredentialsBlob = ""
 	}
 
+	clientCnt := getConfiguredGCSClientCnt()
+	logGCSTuningOnce(clientCnt)
+
 	ret := &GCSStorage{
 		gcs:       gcs,
 		idx:       atomic.NewInt64(0),
-		clientCnt: gcsClientCnt,
+		clientCnt: clientCnt,
 		clientOps: clientOps,
 		accessRec: opts.AccessRecording,
 	}
@@ -503,11 +594,12 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 	s.cancelAndCloseGCSClients()
 
 	clientCtx, clientCancel := context.WithCancel(context.Background())
-	s.clients = make([]*storage.Client, 0, gcsClientCnt)
+	clientCnt := max(int(s.clientCnt), minGCSClientCnt)
+	s.clients = make([]*storage.Client, 0, clientCnt)
 	wg := util.WaitGroupWrapper{}
 	cliCh := make(chan *storage.Client)
 	wg.RunWithLog(func() {
-		for range gcsClientCnt {
+		for range clientCnt {
 			select {
 			case cli := <-cliCh:
 				s.clients = append(s.clients, cli)
@@ -520,7 +612,7 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 		}
 	})
 	firstErr := atomic.NewError(nil)
-	for range gcsClientCnt {
+	for range clientCnt {
 		wg.RunWithLog(func() {
 			client, err := storage.NewClient(clientCtx, s.clientOps...)
 			if err != nil {
@@ -542,7 +634,7 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 	}
 
 	s.clientCancel = clientCancel
-	s.handles = make([]*storage.BucketHandle, gcsClientCnt)
+	s.handles = make([]*storage.BucketHandle, clientCnt)
 	for i := range s.handles {
 		s.handles[i] = s.clients[i].Bucket(s.gcs.Bucket)
 	}

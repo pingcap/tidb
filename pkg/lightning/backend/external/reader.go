@@ -20,6 +20,10 @@ import (
 	"encoding/hex"
 	goerrors "errors"
 	"io"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -32,6 +36,62 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+const (
+	defaultGlobalSortReadConn = 1000
+	minGlobalSortReadConn     = 1
+	maxGlobalSortReadConn     = 4096
+	// TIDB_GLOBAL_SORT_READ_CONN controls max goroutines used to read files in
+	// one readAllData round.
+	globalSortReadConnEnv = "TIDB_GLOBAL_SORT_READ_CONN"
+	globalSortReadMarker  = "global-sort-read-conn-tuning"
+)
+
+var (
+	globalSortReadConnOnce sync.Once
+	globalSortReadConn     = defaultGlobalSortReadConn
+)
+
+func getGlobalSortReadConnLimit() int {
+	globalSortReadConnOnce.Do(func() {
+		v := strings.TrimSpace(os.Getenv(globalSortReadConnEnv))
+		if v == "" {
+			return
+		}
+
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			logutil.BgLogger().Warn("invalid global sort read conn tuning value, fallback to default",
+				zap.String("marker", globalSortReadMarker),
+				zap.String("env", globalSortReadConnEnv),
+				zap.String("value", v),
+				zap.Int("default", defaultGlobalSortReadConn),
+				zap.Error(err))
+			return
+		}
+		if n < minGlobalSortReadConn {
+			logutil.BgLogger().Warn("global sort read conn tuning value too small, clamped",
+				zap.String("marker", globalSortReadMarker),
+				zap.String("env", globalSortReadConnEnv),
+				zap.Int("value", n),
+				zap.Int("min", minGlobalSortReadConn))
+			n = minGlobalSortReadConn
+		} else if n > maxGlobalSortReadConn {
+			logutil.BgLogger().Warn("global sort read conn tuning value too large, clamped",
+				zap.String("marker", globalSortReadMarker),
+				zap.String("env", globalSortReadConnEnv),
+				zap.Int("value", n),
+				zap.Int("max", maxGlobalSortReadConn))
+			n = maxGlobalSortReadConn
+		}
+		globalSortReadConn = n
+		logutil.BgLogger().Info("global sort read conn tuning applied",
+			zap.String("marker", globalSortReadMarker),
+			zap.String("env", globalSortReadConnEnv),
+			zap.Int("read-conn", n))
+	})
+	return globalSortReadConn
+}
 
 func readAllData(
 	ctx context.Context,
@@ -77,7 +137,7 @@ func readAllData(
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := 1000
+	readConn := getGlobalSortReadConnLimit()
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
