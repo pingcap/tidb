@@ -263,7 +263,7 @@ type IndexInfo struct {
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
 	// 0=legacy, or unique with all NOT NULL columns, or clustered.
 	// 1=v1 with partition ID in key and value.
-	// 2=v2 with partition ID in key only (TODO).
+	// 2=v2 with partition ID in key only.
 	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
 }
 
