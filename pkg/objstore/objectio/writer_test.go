@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -204,6 +205,7 @@ func TestNewCompressReader(t *testing.T) {
 	// default cfg(decode asynchronously)
 	synctest.Test(t, func(t *testing.T) {
 		pipeReader, pipeWriter := io.Pipe()
+		defer pipeReader.Close()
 
 		prevRoutineCnt := runtime.NumGoroutine()
 		r, err := compressedio.NewReader(compressedio.Zstd, compressedio.DecompressConfig{}, pipeReader)
@@ -226,6 +228,7 @@ func TestNewCompressReader(t *testing.T) {
 	// sync decode
 	synctest.Test(t, func(t *testing.T) {
 		pipeReader, pipeWriter := io.Pipe()
+		defer pipeReader.Close()
 
 		prevRoutineCnt := runtime.NumGoroutine()
 		config := compressedio.DecompressConfig{ZStdDecodeConcurrency: 1}
@@ -241,9 +244,9 @@ func TestNewCompressReader(t *testing.T) {
 		// previous synctest is async.
 		go func() {
 			_, err := pipeWriter.Write(compressedData)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			err = pipeWriter.Close()
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}()
 
 		allData, err := io.ReadAll(r)
