@@ -647,6 +647,11 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 		return
 	}
 	rc := results.RowCollector
+	// Release the memory tracked by the per-partition analyze worker. When
+	// keepRootCollector is true, buildSamplingStats intentionally skips
+	// releasing rootCollectorMemSize so the caller can use the collector.
+	// Now that we are consuming and destroying it, release the debt.
+	rcMemSize := rc.Base().MemSize
 	tableID := results.TableID.TableID
 	partitionID := results.TableID.PartitionID
 
@@ -691,11 +696,13 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 		}
 		global.MergeCollector(rc)
 		e.globalSampleCollectors[tableID] = global
+		e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
 		rc.DestroyAndPutToPool()
 		results.RowCollector = nil
 		return
 	}
 	globalCollector.MergeCollector(rc)
+	e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
 	rc.DestroyAndPutToPool()
 	results.RowCollector = nil
 }
