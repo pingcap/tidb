@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/llm"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,7 @@ func TestLLMBuiltinsUseDefaultModel(t *testing.T) {
 	rootTK.MustExec("grant LLM_EXECUTE on *.* to u1")
 
 	var gotModel string
-	restore := expression.SetLLMCompleteHookForTest(func(model, prompt string) (string, error) {
+	restore := expression.SetLLMCompleteHookForTest(func(model, prompt string, _ llm.CompleteOptions) (string, error) {
 		gotModel = model
 		return "ok", nil
 	})

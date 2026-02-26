@@ -16,8 +16,10 @@
 
 package expression
 
+import "github.com/pingcap/tidb/pkg/util/llm"
+
 // SetLLMCompleteHookForTest overrides LLM completion for tests.
-func SetLLMCompleteHookForTest(fn func(model, prompt string) (string, error)) func() {
+func SetLLMCompleteHookForTest(fn func(model, prompt string, opts llm.CompleteOptions) (string, error)) func() {
 	old := llmCompleteHook
 	llmCompleteHook = fn
 	return func() {
