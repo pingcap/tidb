@@ -678,6 +678,8 @@ func TestLLMConfigDefaults(t *testing.T) {
 	require.Equal(t, "", conf.LLM.VertexProject)
 	require.Equal(t, "", conf.LLM.VertexLocation)
 	require.Equal(t, "", conf.LLM.CredentialFile)
+	require.Equal(t, "", conf.LLM.BedrockRegion)
+	require.Equal(t, "", conf.LLM.BedrockEndpoint)
 	require.Equal(t, 30*time.Second, conf.LLM.RequestTimeout)
 }
 
@@ -690,12 +692,16 @@ vertex_project = "p1"
 vertex_location = "us-central1"
 credential_file = "/tmp/sa.json"
 request_timeout = "12s"
+bedrock_region = "us-east-1"
+bedrock_endpoint = "http://localhost:12345"
 `, &conf)
 	require.NoError(t, err)
 	require.Equal(t, "vertex", conf.LLM.Provider)
 	require.Equal(t, "p1", conf.LLM.VertexProject)
 	require.Equal(t, "us-central1", conf.LLM.VertexLocation)
 	require.Equal(t, "/tmp/sa.json", conf.LLM.CredentialFile)
+	require.Equal(t, "us-east-1", conf.LLM.BedrockRegion)
+	require.Equal(t, "http://localhost:12345", conf.LLM.BedrockEndpoint)
 	require.Equal(t, 12*time.Second, conf.LLM.RequestTimeout)
 }
 
