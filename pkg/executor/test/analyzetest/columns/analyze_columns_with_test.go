@@ -467,8 +467,8 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 					"test t p1 idx 1 1 6 1 11 12 0"))
 
 			// The single-column non-prefix index idx(c) is consolidated with column c,
-		// so no is_index=1 rows exist in stats_histograms.
-		tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
+			// so no is_index=1 rows exist in stats_histograms.
+			tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
 				testkit.Rows(fmt.Sprintf("%d 0 1 0 0 0 0 0", tblID), // global, a, not analyzed
 					fmt.Sprintf("%d 0 2 0 0 0 0 0", tblID), // global, b, not analyzed
 					fmt.Sprintf("%d 0 3 0 0 0 0 0", tblID), // global, c, not analyzed
