@@ -32,21 +32,10 @@ func TestSubmitJob(t *testing.T) {
 	ctx := context.Background()
 	sqlQuery := "IMPORT INTO ..."
 
-	// Columns expected by scanJobStatus
-	cols := []string{
-		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
-		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
-		"Create_Time", "Start_Time", "End_Time", "Created_By", "Update_Time",
-		"Step", "Processed_Size", "Total_Size", "Percent", "Speed", "ETA",
-	}
+	cols := []string{"Job_ID"}
 
 	// Case 1: Success
-	rows := sqlmock.NewRows(cols).AddRow(
-		int64(123), "", "s3://bucket/file.csv", "db.table", int64(1),
-		"import", "finished", "100MB", int64(1000), "success",
-		"2023-01-01 10:00:00", "2023-01-01 10:00:01", "2023-01-01 10:00:02", "user", "2023-01-01 10:00:02",
-		"", "100MB", "100MB", "100%", "10MB/s", "0s",
-	)
+	rows := sqlmock.NewRows(cols).AddRow(int64(123))
 	mock.ExpectQuery(sqlQuery).WillReturnRows(rows)
 
 	jobID, err := manager.SubmitJob(ctx, sqlQuery)
@@ -76,22 +65,12 @@ func TestGetJobStatus(t *testing.T) {
 	ctx := context.Background()
 	jobID := int64(123)
 
-	// Columns expected by GetJobStatus (same as scanJobStatus)
-	cols := []string{
-		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
-		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
-		"Create_Time", "Start_Time", "End_Time", "Created_By", "Update_Time",
-		"Step", "Processed_Size", "Total_Size", "Percent", "Speed", "ETA",
-	}
+	cols := []string{"Job_ID", "Group_Key", "Raw_Stats"}
 
 	// Case 1: Success
-	rows := sqlmock.NewRows(cols).AddRow(
-		jobID, "", "s3://bucket/file.csv", "db.table", int64(1),
-		"import", "finished", "100MB", int64(1000), "success",
-		"2023-01-01 10:00:00", "2023-01-01 10:00:01", "2023-01-01 10:00:02", "user", "2023-01-01 10:00:02",
-		"", "100MB", "100MB", "100%", "10MB/s", "0s",
-	)
-	mock.ExpectQuery("SHOW IMPORT JOB 123").WillReturnRows(rows)
+	raw := []byte(`{"job_id":123,"status":"finished","source_file_size_bytes":100}`)
+	rows := sqlmock.NewRows(cols).AddRow(jobID, nil, raw)
+	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnRows(rows)
 
 	status, err := manager.GetJobStatus(ctx, jobID)
 	require.NoError(t, err)
@@ -99,12 +78,12 @@ func TestGetJobStatus(t *testing.T) {
 	require.Equal(t, "finished", status.Status)
 
 	// Case 2: Job not found
-	mock.ExpectQuery("SHOW IMPORT JOB 123").WillReturnRows(sqlmock.NewRows(cols))
+	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnRows(sqlmock.NewRows(cols))
 	_, err = manager.GetJobStatus(ctx, jobID)
 	require.ErrorIs(t, err, ErrJobNotFound)
 
 	// Case 3: Error
-	mock.ExpectQuery("SHOW IMPORT JOB 123").WillReturnError(sql.ErrConnDone)
+	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnError(sql.ErrConnDone)
 	_, err = manager.GetJobStatus(ctx, jobID)
 	require.Error(t, err)
 
@@ -191,29 +170,17 @@ func TestGetJobsByGroup(t *testing.T) {
 	ctx := context.Background()
 	groupKey := "test_group"
 
-	// Columns expected by scanJobStatus
-	cols := []string{
-		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
-		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
-		"Create_Time", "Start_Time", "End_Time", "Created_By", "Update_Time",
-		"Step", "Processed_Size", "Total_Size", "Percent", "Speed", "ETA",
-	}
+	cols := []string{"Job_ID", "Group_Key", "Raw_Stats"}
 
 	// Case 1: Success
 	rows := sqlmock.NewRows(cols).
 		AddRow(
-			int64(1), groupKey, "s3://bucket/file1.csv", "db.t1", int64(1),
-			"import", "finished", "100MB", int64(1000), "success",
-			"2023-01-01 10:00:00", "2023-01-01 10:00:01", "2023-01-01 10:00:02", "user", "2023-01-01 10:00:02",
-			"", "100MB", "100MB", "100%", "10MB/s", "0s",
+			int64(1), groupKey, []byte(`{"job_id":1,"group_key":"test_group","status":"finished"}`),
 		).
 		AddRow(
-			int64(2), groupKey, "s3://bucket/file2.csv", "db.t2", int64(2),
-			"import", "running", "200MB", int64(500), "",
-			"2023-01-01 10:00:00", "2023-01-01 10:00:01", "", "user", "2023-01-01 10:00:02",
-			"", "100MB", "200MB", "50%", "10MB/s", "10s",
+			int64(2), groupKey, []byte(`{"job_id":2,"group_key":"test_group","status":"running"}`),
 		)
-	mock.ExpectQuery("SHOW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(rows)
+	mock.ExpectQuery("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(rows)
 
 	jobs, err := manager.GetJobsByGroup(ctx, groupKey)
 	require.NoError(t, err)
@@ -228,13 +195,13 @@ func TestGetJobsByGroup(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidOptions)
 
 	// Case 3: No jobs found (empty list)
-	mock.ExpectQuery("SHOW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(sqlmock.NewRows(cols))
+	mock.ExpectQuery("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(sqlmock.NewRows(cols))
 	jobs, err = manager.GetJobsByGroup(ctx, groupKey)
 	require.NoError(t, err)
 	require.Empty(t, jobs)
 
 	// Case 4: Error
-	mock.ExpectQuery("SHOW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnError(sql.ErrConnDone)
+	mock.ExpectQuery("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnError(sql.ErrConnDone)
 	_, err = manager.GetJobsByGroup(ctx, groupKey)
 	require.Error(t, err)
 

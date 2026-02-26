@@ -127,6 +127,78 @@ type JobInfo struct {
 	GroupKey     string
 }
 
+// RawImportJobStats is a machine-oriented contract for import job stats.
+// It is serialized into the `Raw_Stats` JSON column returned by:
+//   - SHOW RAW IMPORT JOB <job_id>
+//   - SHOW RAW IMPORT JOBS ...
+//
+// Keep this struct stable and evolve it additively (new fields only) so
+// external consumers (Import SDK / Lightning import-into backend) can rely on it.
+type RawImportJobStats struct {
+	JobID    int64  `json:"job_id"`
+	GroupKey string `json:"group_key,omitempty"`
+
+	DataSource  string `json:"data_source,omitempty"`
+	TargetTable string `json:"target_table,omitempty"`
+	TableID     int64  `json:"table_id,omitempty"`
+
+	Phase  string `json:"phase,omitempty"` // maps to JobInfo.Step
+	Status string `json:"status,omitempty"`
+
+	SourceFileSizeBytes int64 `json:"source_file_size_bytes,omitempty"`
+
+	// ImportedRows is:
+	// - running job: runtime.ImportRows
+	// - finished job: summary.ImportedRows (if summary exists)
+	// - otherwise: omitted
+	ImportedRows *int64 `json:"imported_rows,omitempty"`
+
+	ErrorMessage string   `json:"error_message,omitempty"`
+	Summary      *Summary `json:"summary,omitempty"`
+
+	CurrentStep *RawImportJobStepStats `json:"current_step,omitempty"`
+
+	// Times are UNIX seconds to avoid time zone / formatting concerns.
+	CreateTimeUnix int64 `json:"create_time_unix,omitempty"`
+	StartTimeUnix  int64 `json:"start_time_unix,omitempty"`
+	EndTimeUnix    int64 `json:"end_time_unix,omitempty"`
+	UpdateTimeUnix int64 `json:"update_time_unix,omitempty"`
+
+	CreatedBy string `json:"created_by,omitempty"`
+}
+
+// RawImportJobStepStats describes machine-friendly progress stats for the
+// currently running import step (if any).
+type RawImportJobStepStats struct {
+	Name             string `json:"name,omitempty"` // proto.Step2Str(...)
+	ProcessedBytes   int64  `json:"processed_bytes,omitempty"`
+	TotalBytes       int64  `json:"total_bytes,omitempty"`
+	SpeedBytesPerSec int64  `json:"speed_bytes_per_sec,omitempty"`
+
+	// RemainingSeconds is derived if speed>0 and total>0, else omitted.
+	RemainingSeconds *int64 `json:"remaining_seconds,omitempty"`
+}
+
+// IsFinished returns true if the job is finished successfully.
+func (s *RawImportJobStats) IsFinished() bool {
+	return s.Status == JobStatusFinished
+}
+
+// IsFailed returns true if the job failed.
+func (s *RawImportJobStats) IsFailed() bool {
+	return s.Status == jobStatusFailed
+}
+
+// IsCancelled returns true if the job was cancelled.
+func (s *RawImportJobStats) IsCancelled() bool {
+	return s.Status == jogStatusCancelled
+}
+
+// IsCompleted returns true if the job is in a terminal state.
+func (s *RawImportJobStats) IsCompleted() bool {
+	return s.IsFinished() || s.IsFailed() || s.IsCancelled()
+}
+
 // CanCancel returns whether the job can be cancelled.
 func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning

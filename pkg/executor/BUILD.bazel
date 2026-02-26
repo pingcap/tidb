@@ -416,6 +416,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//br/pkg/utils",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
@@ -425,6 +426,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/affinity",
         "//pkg/domain/infosync",
+        "//pkg/dxf/framework/proto",
         "//pkg/dxf/importinto",
         "//pkg/errctx",
         "//pkg/errno",

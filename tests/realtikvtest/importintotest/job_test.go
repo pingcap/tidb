@@ -16,6 +16,7 @@ package importintotest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -133,6 +134,23 @@ func (s *mockGCSSuite) TestShowJob() {
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
+	// SHOW RAW IMPORT JOB should return machine-friendly JSON stats for SDK/Lightning.
+	rawRows := s.tk.MustQuery(fmt.Sprintf("show raw import job %d", importer.TestLastImportJobID.Load())).Rows()
+	s.Len(rawRows, 1)
+	rawStatsBytes := []byte(fmt.Sprintf("%s", rawRows[0][2]))
+	var rawStats importer.RawImportJobStats
+	s.NoError(json.Unmarshal(rawStatsBytes, &rawStats))
+	s.Equal(jobInfo.ID, rawStats.JobID)
+	s.Equal(jobInfo.Parameters.FileLocation, rawStats.DataSource)
+	s.Equal(utils.EncloseDBAndTable(jobInfo.TableSchema, jobInfo.TableName), rawStats.TargetTable)
+	s.Equal(jobInfo.TableID, rawStats.TableID)
+	s.Equal(jobInfo.Step, rawStats.Phase)
+	s.Equal(jobInfo.Status, rawStats.Status)
+	s.Equal(jobInfo.SourceFileSize, rawStats.SourceFileSizeBytes)
+	s.NotNil(rawStats.ImportedRows)
+	s.Equal(jobInfo.Summary.ImportedRows, *rawStats.ImportedRows)
+	s.Nil(rawStats.CurrentStep)
+
 	// test show job by id using test_show_job2
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
 	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test-show-job/t.csv?endpoint=%s'`, gcsEndpoint)).Rows()
@@ -246,6 +264,31 @@ func (s *mockGCSSuite) TestShowJob() {
 	})
 	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s' with thread=1, __max_engine_size='1'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t3").Sort().Check(testkit.Rows("1", "2", "3", "4"))
+
+	// SHOW RAW IMPORT JOBS should be filterable by GROUP_KEY for polling.
+	const groupKey = "test_show_raw_group"
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec("CREATE TABLE t4 (i INT PRIMARY KEY);")
+	s.tk.MustExec("CREATE TABLE t5 (i INT PRIMARY KEY);")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustQuery(fmt.Sprintf(`import into t4 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
+	jobID4 := importer.TestLastImportJobID.Load()
+	s.tk.MustQuery(fmt.Sprintf(`import into t5 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
+	jobID5 := importer.TestLastImportJobID.Load()
+
+	rawList := s.tk.MustQuery(fmt.Sprintf(`show raw import jobs where group_key = '%s'`, groupKey)).Rows()
+	s.Len(rawList, 2)
+	wantJobIDs := map[int64]struct{}{jobID4: {}, jobID5: {}}
+	for _, r := range rawList {
+		b := []byte(fmt.Sprintf("%s", r[2]))
+		var st importer.RawImportJobStats
+		s.NoError(json.Unmarshal(b, &st))
+		s.Equal(groupKey, st.GroupKey)
+		_, ok := wantJobIDs[st.JobID]
+		s.True(ok)
+		delete(wantJobIDs, st.JobID)
+	}
+	s.Len(wantJobIDs, 0)
 }
 
 func (s *mockGCSSuite) TestShowDetachedJob() {

@@ -174,7 +174,9 @@ func (m *DefaultJobMonitor) processJobStatuses(
 
 		progressEstimator.updateJobProgress(job, status, jobTotalSize, jobFinishedSize)
 
-		stats.totalImportedRows += status.ImportedRows
+		if status.ImportedRows != nil {
+			stats.totalImportedRows += *status.ImportedRows
+		}
 
 		// Count stats for tracked jobs
 		switch {
@@ -200,7 +202,7 @@ func (m *DefaultJobMonitor) processJobStatuses(
 			// Set error if not success
 			if !status.IsFinished() && firstErr == nil {
 				if status.IsFailed() {
-					firstErr = errors.Errorf("job %d failed: %s", status.JobID, status.ResultMessage)
+					firstErr = errors.Errorf("job %d failed: %s", status.JobID, status.ErrorMessage)
 				} else if status.IsCancelled() {
 					firstErr = errors.Errorf("job %d was cancelled", status.JobID)
 				}
@@ -242,9 +244,13 @@ func (m *DefaultJobMonitor) logJobCompletion(job *ImportJob, status *importsdk.J
 		zap.String("table", job.TableMeta.Table),
 	)
 	if status.IsFinished() {
-		logger.Info("job completed successfully", zap.Int64("importedRows", status.ImportedRows))
+		importedRows := int64(0)
+		if status.ImportedRows != nil {
+			importedRows = *status.ImportedRows
+		}
+		logger.Info("job completed successfully", zap.Int64("importedRows", importedRows))
 	} else if status.IsFailed() {
-		logger.Error("job failed", zap.String("error", status.ResultMessage))
+		logger.Warn("job failed", zap.String("error", status.ErrorMessage))
 	} else if status.IsCancelled() {
 		logger.Warn("job was cancelled")
 	}
@@ -261,7 +267,7 @@ func (m *DefaultJobMonitor) recordCompletion(ctx context.Context, job *ImportJob
 		checkpoint.Status = CheckpointStatusFinished
 	} else {
 		checkpoint.Status = CheckpointStatusFailed
-		checkpoint.Message = status.ResultMessage
+		checkpoint.Message = status.ErrorMessage
 	}
 
 	if err := m.cpMgr.Update(ctx, checkpoint); err != nil {

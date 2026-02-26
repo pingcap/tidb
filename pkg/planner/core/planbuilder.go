@@ -3629,6 +3629,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
 			ImportJobID:           show.ImportJobID,
+			ImportJobRaw:          show.ImportJobRaw,
 			DistributionJobID:     show.DistributionJobID,
 			ImportGroupKey:        show.ShowGroupKey,
 		},
@@ -4657,6 +4658,8 @@ var (
 		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By", "Last_Update_Time",
 		"Cur_Step", "Cur_Step_Processed_Size", "Cur_Step_Total_Size", "Cur_Step_Progress_Pct", "Cur_Step_Speed", "Cur_Step_ETA",
 	}
+	rawImportIntoSchemaNames  = []string{"Job_ID", "Group_Key", "Raw_Stats"}
+	rawImportIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeJSON}
 	// ImportIntoSchemaFTypes store the field types of the show import jobs schema.
 	ImportIntoSchemaFTypes = []byte{
 		mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
@@ -6154,8 +6157,13 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	case ast.ShowImportJobs:
-		names = importIntoSchemaNames
-		ftypes = ImportIntoSchemaFTypes
+		if s.ImportJobRaw {
+			names = rawImportIntoSchemaNames
+			ftypes = rawImportIntoSchemaFTypes
+		} else {
+			names = importIntoSchemaNames
+			ftypes = ImportIntoSchemaFTypes
+		}
 	case ast.ShowImportGroups:
 		names = showImportGroupsNames
 		ftypes = showImportGroupsFTypes

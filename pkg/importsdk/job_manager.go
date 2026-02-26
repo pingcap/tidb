@@ -17,6 +17,7 @@ package importsdk
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -55,11 +56,11 @@ func (m *jobManager) SubmitJob(ctx context.Context, query string) (int64, error)
 	defer rows.Close()
 
 	if rows.Next() {
-		status, err := scanJobStatus(rows)
+		jobID, err := scanJobID(rows)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return status.JobID, nil
+		return jobID, nil
 	}
 
 	if err := rows.Err(); err != nil {
@@ -71,7 +72,7 @@ func (m *jobManager) SubmitJob(ctx context.Context, query string) (int64, error)
 
 // GetJobStatus gets the status of an import job
 func (m *jobManager) GetJobStatus(ctx context.Context, jobID int64) (*JobStatus, error) {
-	query := fmt.Sprintf("SHOW IMPORT JOB %d", jobID)
+	query := fmt.Sprintf("SHOW RAW IMPORT JOB %d", jobID)
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -120,7 +121,7 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 	if groupKey == "" {
 		return nil, ErrInvalidOptions
 	}
-	query := fmt.Sprintf("SHOW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
+	query := fmt.Sprintf("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -144,68 +145,52 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 
 func scanJobStatus(rows *sql.Rows) (*JobStatus, error) {
 	var (
-		id             int64
-		groupKey       sql.NullString
-		dataSource     string
-		targetTable    string
-		tableID        int64
-		phase          string
-		status         string
-		sourceFileSize string
-		importedRows   sql.NullInt64
-		resultMessage  sql.NullString
-		createTimeStr  string
-		startTimeStr   sql.NullString
-		endTimeStr     sql.NullString
-		createdBy      string
-		updateTimeStr  sql.NullString
-		step           sql.NullString
-		processedSize  sql.NullString
-		totalSize      sql.NullString
-		percent        sql.NullString
-		speed          sql.NullString
-		eta            sql.NullString
+		jobID    int64
+		groupKey sql.NullString
+		rawStats []byte
 	)
 
-	err := rows.Scan(
-		&id, &groupKey, &dataSource, &targetTable, &tableID,
-		&phase, &status, &sourceFileSize, &importedRows, &resultMessage,
-		&createTimeStr, &startTimeStr, &endTimeStr, &createdBy, &updateTimeStr,
-		&step, &processedSize, &totalSize, &percent, &speed, &eta,
-	)
-	if err != nil {
+	if err := rows.Scan(&jobID, &groupKey, &rawStats); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(rawStats) == 0 {
+		return nil, errors.New("Raw_Stats is empty")
+	}
 
-	// Parse times
-	createTime := parseTime(createTimeStr)
-	startTime := parseNullTime(startTimeStr)
-	endTime := parseNullTime(endTimeStr)
-	updateTime := parseNullTime(updateTimeStr)
+	status := &JobStatus{}
+	if err := json.Unmarshal(rawStats, status); err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Ensure the top-level columns and JSON are consistent.
+	status.JobID = jobID
+	if groupKey.Valid {
+		status.GroupKey = groupKey.String
+	} else {
+		status.GroupKey = ""
+	}
+	return status, nil
+}
 
-	return &JobStatus{
-		JobID:          id,
-		GroupKey:       groupKey.String,
-		DataSource:     dataSource,
-		TargetTable:    targetTable,
-		TableID:        tableID,
-		Phase:          phase,
-		Status:         status,
-		SourceFileSize: sourceFileSize,
-		ImportedRows:   importedRows.Int64,
-		ResultMessage:  resultMessage.String,
-		CreateTime:     createTime,
-		StartTime:      startTime,
-		EndTime:        endTime,
-		CreatedBy:      createdBy,
-		UpdateTime:     updateTime,
-		Step:           step.String,
-		ProcessedSize:  processedSize.String,
-		TotalSize:      totalSize.String,
-		Percent:        percent.String,
-		Speed:          speed.String,
-		ETA:            eta.String,
-	}, nil
+func scanJobID(rows *sql.Rows) (int64, error) {
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(cols) == 0 {
+		return 0, ErrNoJobIDReturned
+	}
+
+	dest := make([]any, len(cols))
+	var jobID int64
+	dest[0] = &jobID
+	// We only need Job_ID; scan the rest into dummy values.
+	for i := 1; i < len(cols); i++ {
+		dest[i] = new(any)
+	}
+	if err := rows.Scan(dest...); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return jobID, nil
 }
 
 func scanGroupStatus(rows *sql.Rows) (*GroupStatus, error) {
