@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -201,23 +202,52 @@ func TestNewCompressReader(t *testing.T) {
 	compressedData := buf.Bytes()
 
 	// default cfg(decode asynchronously)
-	prevRoutineCnt := runtime.NumGoroutine()
-	r, err := compressedio.NewReader(compressedio.Zstd, compressedio.DecompressConfig{}, bytes.NewReader(compressedData))
-	currRoutineCnt := runtime.NumGoroutine()
-	require.NoError(t, err)
-	require.Greater(t, currRoutineCnt, prevRoutineCnt)
-	allData, err := io.ReadAll(r)
-	require.NoError(t, err)
-	require.Equal(t, "data", string(allData))
+	synctest.Test(t, func(t *testing.T) {
+		pipeReader, pipeWriter := io.Pipe()
+
+		prevRoutineCnt := runtime.NumGoroutine()
+		r, err := compressedio.NewReader(compressedio.Zstd, compressedio.DecompressConfig{}, pipeReader)
+		synctest.Wait()
+
+		currRoutineCnt := runtime.NumGoroutine()
+		require.NoError(t, err)
+		require.Greater(t, currRoutineCnt, prevRoutineCnt)
+
+		_, err = pipeWriter.Write(compressedData)
+		require.NoError(t, err)
+		err = pipeWriter.Close()
+		require.NoError(t, err)
+
+		allData, err := io.ReadAll(r)
+		require.NoError(t, err)
+		require.Equal(t, "data", string(allData))
+	})
 
 	// sync decode
-	prevRoutineCnt = runtime.NumGoroutine()
-	config := compressedio.DecompressConfig{ZStdDecodeConcurrency: 1}
-	r, err = compressedio.NewReader(compressedio.Zstd, config, bytes.NewReader(compressedData))
-	require.NoError(t, err)
-	currRoutineCnt = runtime.NumGoroutine()
-	require.Equal(t, prevRoutineCnt, currRoutineCnt)
-	allData, err = io.ReadAll(r)
-	require.NoError(t, err)
-	require.Equal(t, "data", string(allData))
+	synctest.Test(t, func(t *testing.T) {
+		pipeReader, pipeWriter := io.Pipe()
+
+		prevRoutineCnt := runtime.NumGoroutine()
+		config := compressedio.DecompressConfig{ZStdDecodeConcurrency: 1}
+		r, err := compressedio.NewReader(compressedio.Zstd, config, pipeReader)
+		synctest.Wait()
+
+		require.NoError(t, err)
+		currRoutineCnt := runtime.NumGoroutine()
+		require.Equal(t, prevRoutineCnt, currRoutineCnt)
+
+		// because this is "sync" decode, the Write will block and cause a deadlock. We
+		// must use another goroutine. This is another sign that the decode is sync and
+		// previous synctest is async.
+		go func() {
+			_, err := pipeWriter.Write(compressedData)
+			require.NoError(t, err)
+			err = pipeWriter.Close()
+			require.NoError(t, err)
+		}()
+
+		allData, err := io.ReadAll(r)
+		require.NoError(t, err)
+		require.Equal(t, "data", string(allData))
+	})
 }
