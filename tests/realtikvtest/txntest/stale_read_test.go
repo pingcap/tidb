@@ -1146,7 +1146,9 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 	time.Sleep(2 * time.Second)
-	time1 := time.Now().Format("2006-1-2 15:04:05")
+	ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	time1 := oracle.GetTimeFromTS(ts).Format("2006-1-2 15:04:05")
 	testcases := []struct {
 		sql          string
 		hasStaleFlag bool

@@ -895,7 +895,18 @@ workLoop:
 					e.memTracker.Release(collector.MemSize)
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
+			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
+			if task.isColumn {
+				if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
+					numTopN = 0
+				}
+			} else {
+				idx := e.indexes[task.slicePos-colLen]
+				if isSingleColNonPrefixUniqueIndex(idx) {
+					numTopN = 0
+				}
+			}
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()
