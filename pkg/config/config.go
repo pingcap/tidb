@@ -811,13 +811,13 @@ type ModelMLflow struct {
 
 // LLMConfig controls external LLM providers.
 type LLMConfig struct {
-	Provider       string        `toml:"provider" json:"provider"`
-	VertexProject  string        `toml:"vertex_project" json:"vertex_project"`
-	VertexLocation string        `toml:"vertex_location" json:"vertex_location"`
-	CredentialFile string        `toml:"credential_file" json:"credential_file"`
-	BedrockRegion  string        `toml:"bedrock_region" json:"bedrock_region"`
-	BedrockEndpoint string       `toml:"bedrock_endpoint" json:"bedrock_endpoint"`
-	RequestTimeout time.Duration `toml:"request_timeout" json:"request_timeout"`
+	Provider        string        `toml:"provider" json:"provider"`
+	VertexProject   string        `toml:"vertex_project" json:"vertex_project"`
+	VertexLocation  string        `toml:"vertex_location" json:"vertex_location"`
+	CredentialFile  string        `toml:"credential_file" json:"credential_file"`
+	BedrockRegion   string        `toml:"bedrock_region" json:"bedrock_region"`
+	BedrockEndpoint string        `toml:"bedrock_endpoint" json:"bedrock_endpoint"`
+	RequestTimeout  time.Duration `toml:"request_timeout" json:"request_timeout"`
 }
 
 // PlanCache is the PlanCache section of the config.
