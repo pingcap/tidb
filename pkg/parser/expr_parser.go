@@ -789,8 +789,12 @@ func (p *HandParser) parseCharsetIntroducer() ast.ExprNode {
 	return expr
 }
 
-// parseOptPrecisionFunc parses a function that takes an optional integer precision:
-// NAME([intlit]). Used for NOW(), CURRENT_TIMESTAMP(), CURTIME(), LOCALTIME(), etc.
+// parseOptPrecisionFunc parses a builtin function that takes an optional precision:
+// NAME([intlit]) for CURTIME/SYSDATE, or NAME([expr]) for NOW.
+//
+// In the yacc grammar, NOW goes through FunctionNameConflict '(' ExpressionListOpt ')'
+// and accepts any expression. CURTIME/SYSDATE go through FunctionCallNonKeyword with
+// FuncDatetimePrecListOpt which only accepts intLit or empty.
 func (p *HandParser) parseOptPrecisionFunc() ast.ExprNode {
 	tok := p.next() // consume the function token
 	p.expect('(')
@@ -798,17 +802,33 @@ func (p *HandParser) parseOptPrecisionFunc() ast.ExprNode {
 	node := p.arena.AllocFuncCallExpr()
 	node.FnName = ast.NewCIStr(tok.Lit)
 
-	// Optional precision argument: NOW(6), CURTIME(3)
-	if p.peek().Tp == intLit {
-		arg := p.parseLiteral()
-		if arg == nil {
-			return nil
+	if p.peek().Tp != ')' {
+		if tok.Tp == builtinFnNow || tok.Tp == now {
+			// NOW() accepts any expression — the yacc parser routes builtinNow
+			// through FunctionNameConflict, and runtime validates via getFspByIntArg.
+			arg := p.parseExpression(precNone)
+			if arg == nil {
+				return nil
+			}
+			node.Args = []ast.ExprNode{arg}
+		} else {
+			// CURTIME()/SYSDATE() only accept an integer literal precision.
+			node.Args = []ast.ExprNode{p.parseIntLitPrecision()}
 		}
-		node.Args = []ast.ExprNode{arg}
 	}
 
 	p.expect(')')
 	return node
+}
+
+// parseIntLitPrecision expects an intLit token and returns it as a ValueExpr.
+// Used for datetime precision arguments where only integer literals are allowed.
+func (p *HandParser) parseIntLitPrecision() ast.ExprNode {
+	tok, ok := p.expectAny(intLit)
+	if !ok {
+		return nil
+	}
+	return ast.NewValueExpr(tok.Item, p.charset, p.collation)
 }
 
 // parseCurDateFunc parses CURDATE() and CURRENT_DATE().

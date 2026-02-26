@@ -318,12 +318,17 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 			}
 			for {
 				if p.peek().Tp == '(' {
-					// Tuple: (val1, val2, ...)
+					// Tuple: (val1, val2, ...) — only expressions allowed,
+					// bare DEFAULT is NOT valid inside tuples (yacc grammar
+					// uses ExpressionList, not ExprOrDefault).
 					p.next()
 					var valList []ast.ExprNode
 					for {
 						startTok := p.peek()
-						expr := p.parseExprOrDefault()
+						expr := p.parseExpression(precNone)
+						if expr == nil {
+							return nil
+						}
 						if rejectMaxValue(expr, startTok) {
 							return nil
 						}

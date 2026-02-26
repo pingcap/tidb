@@ -58,14 +58,11 @@ func (p *HandParser) parseCurrentFunc() ast.ExprNode {
 		return nil
 	}
 
-	// Optional parentheses with optional precision argument.
+	// Optional parentheses with optional integer precision argument.
+	// The yacc grammar uses FuncDatetimePrec: empty | '(' ')' | '(' intLit ')'.
 	if _, ok := p.accept('('); ok {
 		if p.peek().Tp == intLit {
-			arg := p.parseLiteral()
-			if arg == nil {
-				return nil
-			}
-			node.Args = []ast.ExprNode{arg}
+			node.Args = []ast.ExprNode{p.parseIntLitPrecision()}
 		}
 		p.expect(')')
 	}
