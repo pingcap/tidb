@@ -67,7 +67,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
-	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
 	// Physical table created.
@@ -87,8 +87,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.NotNil(t, mvTable.Meta().MaterializedView)
 	require.Equal(t, []int64{baseTable.Meta().ID}, mvTable.Meta().MaterializedView.BaseTableIDs)
 	require.Equal(t, "FAST", mvTable.Meta().MaterializedView.RefreshMethod)
-	require.Equal(t, "NOW()", mvTable.Meta().MaterializedView.RefreshStartWith)
-	require.Equal(t, "300", mvTable.Meta().MaterializedView.RefreshNext)
+	require.Equal(t, "", mvTable.Meta().MaterializedView.RefreshStartWith)
+	require.Equal(t, "NOW()", mvTable.Meta().MaterializedView.RefreshNext)
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvTable.Meta().ID)).
 		Check(testkit.Rows("1"))
 
@@ -104,6 +104,12 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	// count(column) is supported (but CREATE MATERIALIZED VIEW still requires count(*|1) in the SELECT list).
 	tk.MustExec("create materialized view mv_count_col (a, cnt_b, cnt) as select a, count(b), count(1) from t group by a")
 	tk.MustQuery("select a, cnt_b, cnt from mv_count_col order by a").Check(testkit.Rows("1 2 2", "2 1 1"))
+	is = dom.InfoSchema()
+	mvCountColTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_count_col"))
+	require.NoError(t, err)
+	require.Equal(t, "FAST", mvCountColTable.Meta().MaterializedView.RefreshMethod)
+	require.Equal(t, "", mvCountColTable.Meta().MaterializedView.RefreshStartWith)
+	require.Equal(t, "", mvCountColTable.Meta().MaterializedView.RefreshNext)
 
 	// Aggregate function names are case-insensitive in CREATE MATERIALIZED VIEW.
 	tk.MustExec("create materialized view mv_upper_agg (a, s, cnt) as select a, SUM(b), COUNT(1) from t group by a")
@@ -207,6 +213,25 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
+func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	err := tk.ExecToErr("create materialized view mv_bad_next (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	require.ErrorContains(t, err, "REFRESH NEXT expression must return DATETIME/TIMESTAMP")
+
+	err = tk.ExecToErr("create materialized view mv_bad_start (a, s, cnt) refresh fast start with 1 next now() as select a, sum(b), count(1) from t group by a")
+	require.ErrorContains(t, err, "REFRESH START WITH expression must return DATETIME/TIMESTAMP")
+
+	tk.MustExec("create materialized view mv_ok (a, s, cnt) refresh fast start with now() next now() as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("drop materialized view mv_ok")
+	tk.MustExec("drop materialized view log on t")
+}
+
 func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -228,7 +253,7 @@ func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 	go func() {
 		tkDDL := testkit.NewTestKit(t, store)
 		tkDDL.MustExec("use test")
-		ddlDone <- tkDDL.ExecToErr("create materialized view mv_state (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_state (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	}()
 
 	var initTS uint64
@@ -303,7 +328,7 @@ func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testi
 	go func() {
 		tkDDL := testkit.NewTestKit(t, store)
 		tkDDL.MustExec("use test")
-		ddlDone <- tkDDL.ExecToErr("create materialized view mv_upsert_visibility (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_upsert_visibility (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	}()
 
 	var prewriteTS uint64
@@ -363,7 +388,7 @@ func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"))
 	}()
 
-	err := tk.ExecToErr("create materialized view mv_fail (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	err := tk.ExecToErr("create materialized view mv_fail (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	require.Error(t, err)
 
 	tk.MustQuery("show tables like 'mv_fail'").Check(testkit.Rows())
@@ -390,7 +415,7 @@ func TestCreateMaterializedViewBuildContextCanceledRollback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"))
 	}()
 
-	err := tk.ExecToErr("create materialized view mv_ctx_cancel (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	err := tk.ExecToErr("create materialized view mv_ctx_cancel (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	require.Error(t, err)
 
 	tk.MustQuery("show tables like 'mv_ctx_cancel'").Check(testkit.Rows())
@@ -440,7 +465,7 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	go func() {
 		tkDDL := testkit.NewTestKit(t, store)
 		tkDDL.MustExec("use test")
-		ddlDone <- tkDDL.ExecToErr("create materialized view mv_cancel (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_cancel (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	}()
 
 	jobID := ""
@@ -499,7 +524,7 @@ func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
 	go func() {
 		tkDDL := testkit.NewTestKit(t, store)
 		tkDDL.MustExec("use test")
-		ddlDone <- tkDDL.ExecToErr("create materialized view mv_pause (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_pause (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	}()
 
 	tkCtl := testkit.NewTestKit(t, store)
@@ -563,7 +588,7 @@ func TestCreateMaterializedViewRollbackIgnoreMissingRefreshInfoTable(t *testing.
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr"))
 	}()
 
-	err := tk.ExecToErr("create materialized view mv_missing_refresh_meta (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	err := tk.ExecToErr("create materialized view mv_missing_refresh_meta (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	require.Error(t, err)
 
 	tk.MustQuery("show tables like 'mv_missing_refresh_meta'").Check(testkit.Rows())
@@ -590,7 +615,7 @@ func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpsertCreateMaterializedViewRefreshInfoTableNotExists"))
 	}()
 
-	err := tk.ExecToErr("create materialized view mv_upsert_fail (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	err := tk.ExecToErr("create materialized view mv_upsert_fail (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "tidb_mview_refresh_info")
 	require.NotContains(t, err.Error(), "Information schema is changed")
@@ -624,7 +649,7 @@ func TestCreateMaterializedViewRetryWithResidualBuildRowsRollback(t *testing.T) 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewPostBuildRetryableErr"))
 	}()
 
-	err := tk.ExecToErr("create materialized view mv_retry_residual (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	err := tk.ExecToErr("create materialized view mv_retry_residual (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "detected residual build rows on retry")
 	require.NotContains(t, err.Error(), "Duplicate entry")
@@ -667,7 +692,7 @@ func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *t
 	// Let the drop SQL pass executor pre-check and pause before DDL job submit.
 	time.Sleep(500 * time.Millisecond)
 
-	tk.MustExec("create materialized view mv_dep (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create materialized view mv_dep (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	require.NoError(t, failpoint.Disable(pauseDropFailpoint))
 	enabled = false
@@ -698,13 +723,13 @@ func TestCreateMaterializedViewRetryAfterUpsertFailure(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpsertCreateMaterializedViewRefreshInfoTableNotExists"))
 	}()
 
-	err := tk.ExecToErr("create materialized view mv_retry (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	err := tk.ExecToErr("create materialized view mv_retry (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "tidb_mview_refresh_info")
 	require.NotContains(t, err.Error(), "Information schema is changed")
 	tk.MustQuery("show tables like 'mv_retry'").Check(testkit.Rows())
 
-	tk.MustExec("create materialized view mv_retry (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create materialized view mv_retry (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv_retry order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 }
 
@@ -715,7 +740,7 @@ func TestCreateTableLikeShouldNotCarryMaterializedViewMetadata(t *testing.T) {
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge immediate")
-	tk.MustExec("create materialized view mv_src (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create materialized view mv_src (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	tk.MustExec("create table t_like like t")
 	tk.MustExec("create table mv_like like mv_src")

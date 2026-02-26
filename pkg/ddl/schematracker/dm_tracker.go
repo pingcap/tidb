@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
@@ -331,7 +330,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		} else {
 			purgeMethod = "DEFERRED"
 			if s.Purge.StartWith != nil {
-				purgeStartWith, err = restoreExprToCanonicalSQL(s.Purge.StartWith)
+				purgeStartWith, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
 				if err != nil {
 					return err
 				}
@@ -339,7 +338,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 			if s.Purge.Next == nil {
 				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
 			}
-			purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
+			purgeNext, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
 			if err != nil {
 				return err
 			}
@@ -397,15 +396,6 @@ func (*SchemaTracker) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMat
 // RefreshMaterializedView implements the DDL interface.
 func (*SchemaTracker) RefreshMaterializedView(sessionctx.Context, *ast.RefreshMaterializedViewStmt) error {
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW is not supported in schema tracker")
-}
-
-func restoreExprToCanonicalSQL(expr ast.ExprNode) (string, error) {
-	var sb strings.Builder
-	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreStringWithoutCharset, &sb)
-	if err := expr.Restore(rctx); err != nil {
-		return "", err
-	}
-	return sb.String(), nil
 }
 
 // CreateTableWithInfo implements the DDL interface.
