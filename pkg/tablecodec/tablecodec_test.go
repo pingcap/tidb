@@ -291,7 +291,7 @@ func TestHybridShardingIndexValues(t *testing.T) {
 		types.NewStringDatum("你好"),
 		types.NewStringDatum("xyz"),
 	}
-	shardingCols := hybridShardingIndexColumns(idxInfo)
+	shardingCols := idxInfo.HybridShardingColumns()
 	shardingValues, err := hybridShardingIndexValues(tblInfo, idxInfo, shardingCols, indexedValues)
 	require.NoError(t, err)
 	require.Len(t, shardingValues, 2)
@@ -320,7 +320,7 @@ func TestHybridShardingIndexValues(t *testing.T) {
 			},
 		},
 	}
-	shardingCols = hybridShardingIndexColumns(missingOffsetIndex)
+	shardingCols = missingOffsetIndex.HybridShardingColumns()
 	_, err = hybridShardingIndexValues(tblInfo, missingOffsetIndex, shardingCols, indexedValues)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "hybrid index sharding column offset 1")
@@ -493,7 +493,7 @@ func TestCutKey(t *testing.T) {
 	require.Equal(t, types.NewIntDatum(100), handleVal)
 }
 
-func TestDecodeBadDecical(t *testing.T) {
+func TestDecodeBadDecimal(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/codec/errorInDecodeDecimal", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/codec/errorInDecodeDecimal"))
@@ -763,6 +763,7 @@ func TestFulltextIndexEncodingCommonHandleRestoredData(t *testing.T) {
 	}
 
 	indexedValues := []types.Datum{
+		// the column with charset UTF8MB4, the raw value with tailing spaces should be encoded but not the padding
 		types.NewCollationStringDatum("keep  ", charset.CollationUTF8MB4),
 		types.NewIntDatum(888),
 	}
