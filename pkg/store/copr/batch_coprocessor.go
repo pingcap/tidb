@@ -1410,7 +1410,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 	if batchTask.TableShardInfos != nil {
 		retryRanges, retryShardIDs := collectFullTextRetryRanges(batchTask.TableShardInfos)
 		if len(retryRanges) == 0 {
-			return nil, errors.New("tiflash_fts node is unavailable")
+			return nil, errors.New("tiflash_fts retry has no remaining ranges")
 		}
 		for _, shardID := range retryShardIDs {
 			b.store.GetTiCIShardCache().InvalidateCachedShard(shardID)
