@@ -433,3 +433,53 @@ explain analyze update t1 set b = 2 where a = 1;
 explain analyze delete from t1 where a = 1;
 
 alter schema read_only read only 0;
+
+# test RESTRICTED_REPLICA_WRITER_ADMIN bypasses per-database read only
+drop database if exists ro_bypass;
+create database ro_bypass;
+use ro_bypass;
+create table t1(a int primary key, b int);
+
+create user 'repl_writer'@'localhost';
+grant all on ro_bypass.* to 'repl_writer'@'localhost';
+grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'repl_writer'@'localhost';
+
+create user 'normal_user'@'localhost';
+grant all on ro_bypass.* to 'normal_user'@'localhost';
+
+alter schema ro_bypass read only 1;
+
+# privileged user should bypass read-only
+connect (repl_conn,localhost,repl_writer,,ro_bypass);
+connection repl_conn;
+insert into t1 values(1, 10);
+update t1 set b = 20 where a = 1;
+delete from t1 where a = 1;
+create table t2(a int primary key);
+alter table t2 add column b int;
+drop table t2;
+
+# unprivileged user should still be blocked
+connect (normal_conn,localhost,normal_user,,ro_bypass);
+connection normal_conn;
+-- error 3989
+insert into t1 values(2, 20);
+-- error 3989
+update t1 set b = 30 where a = 1;
+-- error 3989
+delete from t1 where a = 1;
+-- error 3989
+create table t3(a int primary key);
+-- error 3989
+alter table t1 add column c int;
+-- error 3989
+drop table t1;
+
+# cleanup
+connection default;
+disconnect repl_conn;
+disconnect normal_conn;
+alter schema ro_bypass read only 0;
+drop database ro_bypass;
+drop user 'repl_writer'@'localhost';
+drop user 'normal_user'@'localhost';

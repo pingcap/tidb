@@ -371,6 +371,18 @@ func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
 
 	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
 	if exists && dbInfo.ReadOnly {
+		// Allow replication threads with RESTRICTED_REPLICA_WRITER_ADMIN to bypass.
+		// Gate on User != nil so that internal/unauthenticated sessions (including
+		// mock-store test sessions where SkipWithGrant is true) are still blocked.
+		vars := p.sctx.GetSessionVars()
+		if vars.User != nil {
+			pm := privilege.GetPrivilegeManager(p.sctx)
+			if pm != nil {
+				if pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+					return
+				}
+			}
+		}
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
 	}
 }
