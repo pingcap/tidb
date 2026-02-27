@@ -3102,9 +3102,6 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 }
 
 func (*SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
-	if s.Tp != ast.AdminReloadStatistics {
-		return errors.New("This AdminStmt is not ADMIN RELOAD STATS_EXTENDED")
-	}
 	return errors.New("Extended statistics feature has been removed")
 }
 
