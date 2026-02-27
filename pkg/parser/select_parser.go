@@ -231,6 +231,12 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 
 	// Parse main statement
 	// Use parseStatement to support UPDATE/DELETE/SELECT, etc.
+	// Reject double WITH: the yacc grammar does not allow WITH as the
+	// inner statement of a WITH clause (e.g., WITH x AS (...) WITH y AS (...) SELECT ...).
+	if p.peek().Tp == with {
+		p.syntaxErrorAt(p.peek())
+		return nil
+	}
 	stmt := p.parseStatement()
 	if stmt == nil {
 		return nil

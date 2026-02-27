@@ -470,13 +470,16 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			}
 		} else {
 			// Parenthesized join.
+			// In the yacc grammar, (table_refs) is a TableRef that is
+			// NOT followed by an alias clause (unlike derived tables).
+			// Return directly without falling through to alias parsing.
 			join := p.parseCommaJoin()
 			if join == nil {
 				return nil
 			}
 			p.expect(')')
 			join.ExplicitParens = true
-			res = join
+			return join
 		}
 
 	case dual:

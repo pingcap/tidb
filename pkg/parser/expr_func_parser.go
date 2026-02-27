@@ -255,7 +255,14 @@ func (p *HandParser) parseFrameBound() ast.FrameBound {
 		}
 	} else {
 		// expr PRECEDING/FOLLOWING
+		// The yacc parser only accepts unsigned integers for frame bounds.
+		// Reject negative numbers (e.g., RANGE -1 PRECEDING).
+		exprTok := p.peek()
 		bound.Expr = p.parseExpression(precNone)
+		if ue, ok := bound.Expr.(*ast.UnaryOperationExpr); ok && ue.Op == opcode.Minus {
+			p.errorNear(exprTok.EndOffset, exprTok.Offset)
+			return bound
+		}
 	}
 	if _, ok := p.accept(preceding); ok {
 		bound.Type = ast.Preceding

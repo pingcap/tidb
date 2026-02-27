@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
 )
 
 // parseGroupByClause parses GROUP BY expr_list [WITH ROLLUP].
@@ -327,6 +328,13 @@ func (p *HandParser) toUint64Value(expr ast.ExprNode, errTok Token) ast.ExprNode
 	// destroying parameter markers (e.g., LIMIT ? in prepared statements).
 	if _, ok := expr.(ast.ParamMarkerExpr); ok {
 		return expr
+	}
+	// Reject negative numbers (e.g., LIMIT -1). The yacc parser's LengthNum
+	// rule only accepted unsigned integer literals, so unary minus applied to
+	// a number is a syntax error in LIMIT/OFFSET context.
+	if ue, ok := expr.(*ast.UnaryOperationExpr); ok && ue.Op == opcode.Minus {
+		p.errorNear(errTok.EndOffset, errTok.Offset)
+		return ast.NewValueExpr(uint64(0), p.charset, p.collation)
 	}
 	if ve, ok := expr.(ast.ValueExpr); ok {
 		switch val := ve.GetValue().(type) {

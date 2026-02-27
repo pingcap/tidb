@@ -232,9 +232,19 @@ func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
 		return authUser
 	}
 
-	// Username: identifier or string literal (restricted — bare unreserved keywords not accepted).
-	tok, ok := p.expectAny(identifier, stringLit)
-	if !ok {
+	// Username: identifier, string literal, or unreserved keyword.
+	// The yacc parser's Username rule uses StringName (which includes unreserved
+	// keywords) for names with @host, but RoleNameString (only identifier | stringLit)
+	// for bare names. We accept unreserved keywords when followed by '@' to match
+	// the yacc RolenameComposed/Username '@' StringName rules.
+	tok := p.peek()
+	if tok.Tp == identifier || tok.Tp == stringLit {
+		p.next()
+	} else if isIdentLike(tok.Tp) && p.peekN(1).Tp == singleAtIdentifier {
+		// Unreserved keyword followed by '@host' — accept as user name.
+		p.next()
+	} else {
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 	authUser.Username = tok.Lit

@@ -125,8 +125,9 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 				tp.SetFlen(int(v))
 				p.next()
 			} else {
-				// error handling or just consume
-				p.next()
+				// Non-integer inside parens (e.g. "-4"): report error at this token's position.
+				p.syntaxErrorAt(lenTok)
+				return tp
 			}
 			p.expect(')')
 		}
@@ -331,8 +332,8 @@ func (p *HandParser) parseFieldLen() int {
 	l := p.peek()
 	val, ok := l.Item.(int64)
 	if !ok {
-		// handle error or unexpected token
-		p.next() // consume error token (replacing advance)
+		// Non-integer inside parens (e.g. "-1"): report error at this token's position.
+		p.syntaxErrorAt(l)
 		return 0
 	}
 	p.next()

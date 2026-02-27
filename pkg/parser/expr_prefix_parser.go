@@ -241,11 +241,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 			// Bare keyword → treat as column name reference (e.g., subject, score)
 			return p.parseIdentOrFuncCall()
 		}
-		tokLen := len(tok.Lit)
-		if tokLen == 0 {
-			tokLen = 1 // single-char tokens have empty Lit
-		}
-		p.errorNear(tok.Offset+tokLen, tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 }
