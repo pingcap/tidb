@@ -556,6 +556,72 @@ func TestRejectMinMaxForStage1(t *testing.T) {
 	require.ErrorContains(t, err, "not implemented")
 }
 
+func TestRejectMinMaxRecomputeValidation(t *testing.T) {
+	sctx := mock.NewContext()
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+
+	countStarDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+	require.NoError(t, err)
+	minArg := &expression.Column{Index: 0, RetType: ftInt}
+	minDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncMin, []expression.Expression{minArg}, false)
+	require.NoError(t, err)
+
+	cases := []struct {
+		name          string
+		fieldTypes    []*types.FieldType
+		aggMappings   []Mapping
+		minMax        *MinMaxRecomputeExec
+		expectedError string
+	}{
+		{
+			name:       "mapping length mismatch",
+			fieldTypes: []*types.FieldType{ftInt, ftInt},
+			aggMappings: []Mapping{
+				{AggFunc: countStarDesc, ColID: []int{1}, DependencyColID: []int{0}},
+			},
+			minMax: &MinMaxRecomputeExec{
+				KeyInputColIDs: []int{0},
+				Mappings:       nil, // expect length 1
+			},
+			expectedError: "MinMaxRecompute.Mappings length mismatch",
+		},
+		{
+			name:       "batch strategy without builder",
+			fieldTypes: []*types.FieldType{ftInt, ftInt, ftInt},
+			aggMappings: []Mapping{
+				{AggFunc: countStarDesc, ColID: []int{1}, DependencyColID: []int{0}},
+				{AggFunc: minDesc, ColID: []int{2}, DependencyColID: []int{0}},
+			},
+			minMax: &MinMaxRecomputeExec{
+				KeyInputColIDs: []int{0},
+				Mappings: []*MinMaxRecomputeMapping{
+					nil,
+					{
+						OutputColIDs:        []int{2},
+						Strategy:            MinMaxRecomputeBatch,
+						BatchResultColIdxes: []int{0},
+					},
+				},
+			},
+			expectedError: "batch strategy requires BatchBuilder",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := newMockSource(sctx, tc.fieldTypes, nil)
+			mergeExec := &Exec{
+				BaseExecutor:     exec.NewBaseExecutor(sctx, nil, 0, src),
+				AggMappings:      tc.aggMappings,
+				DeltaAggColCount: 1,
+				MinMaxRecompute:  tc.minMax,
+			}
+			err := mergeExec.Open(context.Background())
+			require.ErrorContains(t, err, tc.expectedError)
+		})
+	}
+}
+
 func TestRejectNilAggFunc(t *testing.T) {
 	sctx := mock.NewContext()
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
