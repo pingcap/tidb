@@ -79,22 +79,21 @@ The most direct implementation is: transaction + row-lock mutex + history lifecy
    - if mismatch, fail this refresh (refresh metadata changed concurrently).
    - this avoids using inconsistent refresh metadata snapshots inside one refresh flow.
 4. Record refresh `start_tso` as `REFRESH_JOB_ID`.
-5. Use an independent session to insert one `mysql.tidb_mview_refresh_hist` row with `STATUS='running'` and `REFRESH_JOB_ID=<start_tso>`.
+5. Use an independent session to insert one `mysql.tidb_mview_refresh_hist` row with `REFRESH_STATUS='running'` and `REFRESH_JOB_ID=<start_tso>`.
 6. Run refresh implementation by refresh type:
    - `COMPLETE`: `DELETE FROM <mv_table>` + `INSERT INTO <mv_table> <mv_select_sql>`.
    - `FAST`: construct internal statement and run via `ExecuteInternalStmt` (currently planner/build returns "not supported" placeholder).
 7. Success path: before commit, update `mysql.tidb_mview_refresh_info` row:
-   - `LAST_SUCCESS_READ_TSO = <COMPLETE refresh: txn for_update_ts>`
-   - and other success metadata used by next refresh.
+   - `LAST_SUCCESS_READ_TSO = <COMPLETE refresh: txn for_update_ts>`.
 8. Commit refresh transaction.
-9. After commit returns success, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID` to `STATUS='success'` and fill completion fields.
+9. After commit returns success, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID` to `REFRESH_STATUS='success'` and fill completion fields.
 
 Failure path (for example `INSERT INTO ... SELECT ...` fails):
 
 1. `ROLLBACK` the refresh transaction to roll back MV data changes (no partial MV data update).
 2. Do **not** update `mysql.tidb_mview_refresh_info` (failure does not change success watermark).
 3. After refresh transaction finishes and failure is known, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID`:
-   - `STATUS='failed'`
+   - `REFRESH_STATUS='failed'`
    - failure reason / error message
    - completion timestamp.
 4. Return original error to user.
@@ -121,9 +120,9 @@ SELECT LAST_SUCCESS_READ_TSO
 
 -- (A4) independent internal session (not this transaction) inserts running history
 INSERT INTO mysql.tidb_mview_refresh_hist (
-    MVIEW_ID, REFRESH_JOB_ID, REFRESH_TYPE, STATUS, START_TIME
+    MVIEW_ID, REFRESH_JOB_ID, REFRESH_METHOD, REFRESH_TIME, REFRESH_STATUS
 ) VALUES (
-    <mview_id>, <refresh_job_id>, <refresh_type>, 'running', NOW(6)
+    <mview_id>, <refresh_job_id>, <refresh_method>, NOW(6), 'running'
 );
 
 -- (B) full replacement
@@ -138,26 +137,26 @@ INSERT INTO <db>.<mv> <SQLContent>;
 
 -- (C) success-only metadata update in the same refresh transaction
 UPDATE mysql.tidb_mview_refresh_info
-   SET LAST_SUCCESS_READ_TSO = <for_update_ts>,
-       LAST_REFRESH_TIME = NOW(6),
-       LAST_REFRESH_TYPE = <refresh_type>
+   SET LAST_SUCCESS_READ_TSO = <for_update_ts>
  WHERE MVIEW_ID = <mview_id>;
 
 COMMIT;
 
 -- (D) independent internal session finalizes history AFTER refresh commit
 UPDATE mysql.tidb_mview_refresh_hist
-   SET STATUS = 'success',
-       END_TIME = NOW(6),
-       ERROR_MESSAGE = NULL
+   SET REFRESH_STATUS = 'success',
+       REFRESH_ENDTIME = NOW(6),
+       REFRESH_READ_TSO = <for_update_ts>,
+       REFRESH_FAILED_REASON = NULL
  WHERE MVIEW_ID = <mview_id>
    AND REFRESH_JOB_ID = <refresh_job_id>;
 
 -- (D-failed) if refresh transaction ends as failure, finalize the same row as failed
 UPDATE mysql.tidb_mview_refresh_hist
-   SET STATUS = 'failed',
-       END_TIME = NOW(6),
-       ERROR_MESSAGE = <refresh_error>
+   SET REFRESH_STATUS = 'failed',
+       REFRESH_ENDTIME = NOW(6),
+       REFRESH_READ_TSO = NULL,
+       REFRESH_FAILED_REASON = <refresh_error>
  WHERE MVIEW_ID = <mview_id>
    AND REFRESH_JOB_ID = <refresh_job_id>;
 ```
@@ -264,7 +263,7 @@ Add executor UT coverage in `pkg/executor/test/executor/` (refresh-focused) and 
    - execute `REFRESH MATERIALIZED VIEW mv COMPLETE`
    - verify MV content equals `SELECT ... GROUP BY ...`
    - verify `mysql.tidb_mview_refresh_info.LAST_SUCCESS_READ_TSO > 0`
-   - verify one row in `mysql.tidb_mview_refresh_hist` has `STATUS='success'` and `REFRESH_JOB_ID=<start_tso>`
+   - verify one row in `mysql.tidb_mview_refresh_hist` has `REFRESH_STATUS='success'` and `REFRESH_JOB_ID=<start_tso>`
 2. **Concurrency mutex**:
    - session A starts refresh and pauses after lock acquisition (`FOR UPDATE`) via failpoint or manual lock hold
    - session B executes refresh and should get NOWAIT lock conflict
@@ -274,7 +273,7 @@ Add executor UT coverage in `pkg/executor/test/executor/` (refresh-focused) and 
 4. **Failure semantics**:
    - force COMPLETE refresh failure (for example injected `INSERT ... SELECT` error)
    - verify `mysql.tidb_mview_refresh_info.LAST_SUCCESS_READ_TSO` is unchanged
-   - verify corresponding `mysql.tidb_mview_refresh_hist` row is finalized to `STATUS='failed'` with error reason
+   - verify corresponding `mysql.tidb_mview_refresh_hist` row is finalized to `REFRESH_STATUS='failed'` with error reason
 
 ## Known limitations and future direction
 
