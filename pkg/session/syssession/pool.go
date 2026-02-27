@@ -80,6 +80,15 @@ func (p *AdvancedSessionPool) getInternal() (s *session, _ error) {
 		if !ok {
 			return nil, errors.New("session pool closed")
 		}
+		fields := []zap.Field{
+			zap.String("sctx", objectStr(r.sctx)),
+			zap.Int("poolSize", len(p.pool)),
+			internalSessionStackField(),
+		}
+		logutil.BgLogger().Info(
+			"internal session fetched from pool",
+			append(fields, requestSourceFieldsForLog(r.sctx)...)...,
+		)
 		return r, nil
 	default:
 		// the pool is empty, continue to create a new session
@@ -98,7 +107,20 @@ func (p *AdvancedSessionPool) getInternal() (s *session, _ error) {
 		}
 	}()
 
-	return newInternalSession(sctx, p)
+	s, err = newInternalSession(sctx, p)
+	if err != nil {
+		return nil, err
+	}
+	fields := []zap.Field{
+		zap.String("sctx", objectStr(sctx)),
+		zap.Int("poolSize", len(p.pool)),
+		internalSessionStackField(),
+	}
+	logutil.BgLogger().Info(
+		"internal session fetched from pool",
+		append(fields, requestSourceFieldsForLog(sctx)...)...,
+	)
+	return s, nil
 }
 
 // Get gets a session from the session pool.
@@ -130,6 +152,15 @@ func (p *AdvancedSessionPool) Get() (*Session, error) {
 	}
 
 	se.internal = internal
+	fields := []zap.Field{
+		zap.String("sctx", objectStr(internal.sctx)),
+		zap.Int("poolSize", len(p.pool)),
+		internalSessionStackField(),
+	}
+	logutil.BgLogger().Info(
+		"internal session fetched from pool",
+		append(fields, requestSourceFieldsForLog(internal.sctx)...)...,
+	)
 	return se, nil
 }
 
@@ -235,6 +266,16 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 		logutil.BgLogger().Info("session pool closed, close the session directly")
 		return
 	}
+
+	fields := []zap.Field{
+		zap.String("sctx", objectStr(internal.sctx)),
+		zap.Int("poolSize", len(p.pool)),
+		internalSessionStackField(),
+	}
+	logutil.BgLogger().Info(
+		"internal session fetched from pool",
+		append(fields, requestSourceFieldsForLog(internal.sctx)...)...,
+	)
 
 	// Please notice that we should make sure `p.pool <- internal` is protected by the mutex.
 	// Consider a case the `p.Put` and `p.Close` is called concurrently, without the mutex protection, the internal
