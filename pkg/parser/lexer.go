@@ -232,6 +232,10 @@ func (s *Scanner) Lex(v *Token) int {
 		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
 			tok = tok1
 			s.lastKeyword = tok1
+			// In IGNORE_SPACE mode, isTokenIdentifier may have called
+			// skipWhitespace, advancing the reader past spaces. Update
+			// EndOffset so error column numbers match the yacc scanner.
+			v.EndOffset = s.r.pos().Offset
 		}
 	}
 	if s.sqlMode.HasANSIQuotesMode() &&

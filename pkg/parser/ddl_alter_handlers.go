@@ -158,7 +158,6 @@ func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 	} else if _, ok := p.accept(foreign); ok {
 		p.expect(key)
 		spec.Tp = ast.AlterTableDropForeignKey
-		spec.IfExists = p.acceptIfExists()
 		if tok, ok := p.expectIdentLike(); ok {
 			spec.Name = tok.Lit
 		}
