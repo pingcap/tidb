@@ -1,0 +1,38 @@
+# TestRefreshMaterializedViewTransactionValidation
+
+use test;
+
+create table t_mv_txn_66385 (a int not null, b int not null);
+insert into t_mv_txn_66385 values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_txn_66385 (a, b) purge immediate;
+create materialized view mv_txn_66385 (a, s, cnt) refresh fast next now() as
+select a, sum(b), count(1) from t_mv_txn_66385 group by a;
+
+begin;
+-- error 1105
+refresh materialized view mv_txn_66385 complete;
+rollback;
+
+prepare stmt from "refresh materialized view mv_txn_66385 complete";
+begin;
+-- error 1105
+execute stmt;
+rollback;
+deallocate prepare stmt;
+
+set autocommit = 0;
+select @@tidb_current_ts = 0;
+refresh materialized view mv_txn_66385 complete;
+select @@tidb_current_ts = 0;
+
+insert into t_mv_txn_66385 values (3, 4);
+select @@tidb_current_ts > 0;
+-- error 1105
+refresh materialized view mv_txn_66385 complete;
+rollback;
+
+set autocommit = 1;
+
+drop materialized view mv_txn_66385;
+drop materialized view log on t_mv_txn_66385;
+drop table if exists t_mv_txn_66385;
