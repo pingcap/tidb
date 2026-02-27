@@ -220,7 +220,7 @@ func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode
 			// Report error at the current position (before consuming),
 			// matching the yacc grammar's error offset.
 			tok := p.peek()
-			p.errorNear(tok.Offset+1, tok.Offset)
+			p.errorNear(tok.EndOffset, tok.Offset)
 			return nil
 		}
 		p.expect('(')
@@ -375,7 +375,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	p.expect(from)
 
 	// Table refs
-	tableRefStartOff := p.peek().Offset
+	tableRefStartTok := p.peek()
 	stmt.TableRefs = p.parseTableRefs()
 
 	// [USING]
@@ -476,7 +476,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 			}
 			if !isTableName {
 				// It's a subquery or join — report error at the start of table refs
-				p.errorNear(tableRefStartOff+1, tableRefStartOff)
+				p.errorNear(tableRefStartTok.EndOffset, tableRefStartTok.Offset)
 				return nil
 			}
 		}
@@ -650,10 +650,7 @@ func (p *HandParser) parseNonTransactionalDMLStmt() ast.StmtNode {
 	if _, ok := p.accept(dry); ok {
 		p.expect(run)
 		stmt.DryRun = ast.DryRunSplitDml
-		if ok := p.peek().Tp == query; ok {
-			p.next()
-			stmt.DryRun = ast.DryRunQuery
-		} else if p.peek().IsKeyword("QUERY") {
+		if p.peek().Tp == query || p.peek().IsKeyword("QUERY") {
 			p.next()
 			stmt.DryRun = ast.DryRunQuery
 		}

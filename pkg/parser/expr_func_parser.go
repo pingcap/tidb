@@ -496,13 +496,7 @@ func (p *HandParser) parseLeadLagFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
 		// 2nd arg: NumLiteral only (yacc grammar: unsigned int/float literal or param marker)
 		tok := p.peek()
 		switch tok.Tp {
-		case intLit, floatLit, decLit:
-			arg2 := p.parseExpression(precNone)
-			if arg2 == nil {
-				return nil
-			}
-			node.Args = append(node.Args, arg2)
-		case paramMarker:
+		case intLit, floatLit, decLit, paramMarker:
 			arg2 := p.parseExpression(precNone)
 			if arg2 == nil {
 				return nil
