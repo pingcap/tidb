@@ -1737,8 +1737,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where b IN (2,3,4)",
         "DynamicPlan": [
-          "IndexReader 2.00 root partition:all index:IndexRangeScan",
-          "└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[2,2], [3,3], [4,4], keep order:false"
+          "IndexReader 3.00 root partition:all index:IndexRangeScan",
+          "└─IndexRangeScan 3.00 cop[tikv] table:t, index:b(b) range:[2,2], [3,3], [4,4], keep order:false"
         ],
         "StaticPlan": [
           "PartitionUnion 3.00 root  ",

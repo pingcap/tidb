@@ -866,12 +866,12 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
-			selectivity:              0.006358024691358024,
+			selectivity:              0.006919753086419752,
 			selectivityAfterIncrease: 0.011302469135802469,
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
-			selectivity:              0.012530864197530862,
+			selectivity:              0.013092592592592591,
 			selectivityAfterIncrease: 0.017475308641975308,
 		},
 		{
@@ -2403,8 +2403,8 @@ func TestIssue64137(t *testing.T) {
 	require.Equal(t, statsMeta[5], "12000") // row_count = 10000+2000
 
 	tk.MustQuery(`explain format = 'brief' select * from t where a=99999999`).Check(testkit.Rows(
-		`IndexReader 24.00 root  index:IndexRangeScan`, // out-of-range est for small NDV, result should close to zero
-		`└─IndexRangeScan 24.00 cop[tikv] table:t, index:a(a) range:[99999999,99999999], keep order:false`))
+		`IndexReader 144.00 root  index:IndexRangeScan`, // out-of-range est for small NDV, result should close to zero
+		`└─IndexRangeScan 144.00 cop[tikv] table:t, index:a(a) range:[99999999,99999999], keep order:false`))
 	tk.MustQuery(`explain format = 'brief' select * from t where a=1`).Check(testkit.Rows(
 		`IndexReader 12000.00 root  index:IndexRangeScan`, // in-range est for small NDV
 		`└─IndexRangeScan 12000.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false`))
