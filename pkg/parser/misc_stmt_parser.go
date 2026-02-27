@@ -37,7 +37,13 @@ func (p *HandParser) parseKillStmt() ast.StmtNode {
 		p.accept(connection) // CONNECTION keyword (default: Query=false)
 	}
 
-	stmt.Expr = p.parseExpression(precNone)
+	// For a simple numeric connection ID, set ConnectionID directly.
+	// Some downstream code paths use ConnectionID instead of Expr.
+	if p.peek().Tp == intLit {
+		stmt.ConnectionID = p.parseUint64()
+	} else {
+		stmt.Expr = p.parseExpression(precNone)
+	}
 	return stmt
 }
 

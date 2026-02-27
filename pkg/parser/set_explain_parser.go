@@ -668,6 +668,7 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 				showStmt.Column = p.parseColumnName()
 			}
 			stmt.Stmt = showStmt
+			stmt.Format = "" // DESCRIBE form uses empty format, not "row"
 			return stmt
 		}
 		return nil
