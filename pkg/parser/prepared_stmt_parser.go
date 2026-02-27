@@ -31,7 +31,11 @@ func (p *HandParser) parsePrepareStmt() ast.StmtNode {
 		return stmt
 	}
 
-	// Must be user variable @var
+	// Must be user variable @var (yacc: PrepareSQL only accepts singleAtIdentifier)
+	if p.peek().Tp != singleAtIdentifier {
+		p.syntaxErrorAt(p.peek())
+		return nil
+	}
 	expr := p.parseVariableExpr()
 	v, ok := expr.(*ast.VariableExpr)
 	if !ok {
@@ -50,6 +54,11 @@ func (p *HandParser) parseExecuteStmt() ast.StmtNode {
 
 	if _, ok := p.accept(using); ok {
 		for {
+			// yacc: UserVariableList only accepts singleAtIdentifier
+			if p.peek().Tp != singleAtIdentifier {
+				p.syntaxErrorAt(p.peek())
+				return nil
+			}
 			expr := p.parseVariableExpr()
 			stmt.UsingVars = append(stmt.UsingVars, expr)
 			if _, ok := p.accept(','); !ok {

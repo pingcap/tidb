@@ -182,7 +182,7 @@ func (p *HandParser) parseUseStmt() ast.StmtNode {
 	p.expect(use)
 	tok := p.peek()
 	if !isIdentLike(tok.Tp) {
-		p.errorNear(p.peek().Offset, p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 	p.next()

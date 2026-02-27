@@ -252,7 +252,7 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 // Used when SHOW has been consumed but the following tokens don't form a valid SHOW statement.
 func (p *HandParser) showSyntaxError() ast.StmtNode {
 	pk := p.peek()
-	p.errorNear(pk.Offset+len(pk.Lit), pk.Offset)
+	p.syntaxErrorAt(pk)
 	return nil
 }
 

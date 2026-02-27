@@ -177,7 +177,7 @@ func (p *HandParser) parseIndexPartSpecifications() []*ast.IndexPartSpecificatio
 func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 	tok := p.next()
 	if tok.Tp != references {
-		p.errorNear(tok.Offset+len(tok.Lit), tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 	ref := Alloc[ast.ReferenceDef](p.arena)
@@ -213,7 +213,7 @@ func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 		switch p.peekN(1).Tp {
 		case deleteKwd:
 			if hasOnDelete {
-				p.errorNear(p.peekN(1).Offset+6, p.peekN(1).Offset)
+				p.syntaxErrorAt(p.peekN(1))
 				return nil
 			}
 			hasOnDelete = true
@@ -222,7 +222,7 @@ func (p *HandParser) parseReferenceDef() *ast.ReferenceDef {
 			ref.OnDelete = &ast.OnDeleteOpt{ReferOpt: p.parseReferAction()}
 		case update:
 			if hasOnUpdate {
-				p.errorNear(p.peekN(1).Offset+6, p.peekN(1).Offset)
+				p.syntaxErrorAt(p.peekN(1))
 				return nil
 			}
 			hasOnUpdate = true

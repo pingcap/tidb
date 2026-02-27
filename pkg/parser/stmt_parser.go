@@ -54,7 +54,7 @@ func (p *HandParser) ParseSQL() ([]ast.StmtNode, []error, error) {
 			// No errors recorded — generate an error for the unrecognized statement.
 			pk := p.peek()
 			if pk.Tp != EOF {
-				p.errorNear(pk.Offset+len(pk.Lit), pk.Offset)
+				p.syntaxErrorAt(pk)
 				return nil, p.warns, p.errs[0]
 			}
 			break
@@ -305,7 +305,7 @@ func (p *HandParser) parseStatement() ast.StmtNode {
 		default:
 			// Fallback to error for other identifiers — use yacc-compatible format.
 			tok := p.peek()
-			p.errorNear(tok.Offset+len(tok.Lit), tok.Offset)
+			p.syntaxErrorAt(tok)
 			return nil
 		}
 
@@ -328,7 +328,7 @@ func (p *HandParser) parseStatement() ast.StmtNode {
 
 		// No fallback — the hand parser is the sole parser.
 		tok := p.peek()
-		p.errorNear(tok.Offset+len(tok.Lit), tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 }

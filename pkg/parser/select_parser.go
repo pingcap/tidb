@@ -446,7 +446,7 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 	if _, ok := p.accept(as); ok {
 		aliasTok := p.peek()
 		if aliasTok.Tp != identifier && aliasTok.Tp != stringLit && (aliasTok.Tp < identifier || IsReserved(aliasTok.Tp)) {
-			p.errorNear(aliasTok.Offset, aliasTok.Offset)
+			p.syntaxErrorAt(aliasTok)
 			return nil
 		}
 		p.next()

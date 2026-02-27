@@ -772,10 +772,7 @@ func (p *HandParser) parseTableName() *ast.TableName {
 	}
 	// All keyword/identifier tokens have Tp >= identifier and carry their text in Lit.
 	if !isIdentLike(tok.Tp) && tok.Tp != underscoreCS {
-		// Use errorNear for yacc-compatible error format (no extra diagnostic text).
-		// colOffset uses peek (the next token after the consumed one) for column alignment,
-		// nearOffset uses the consumed token's offset for the "near" context text.
-		p.errorNear(p.peek().Offset, tok.Offset)
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 
