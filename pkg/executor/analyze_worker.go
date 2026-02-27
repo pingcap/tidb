@@ -44,7 +44,14 @@ func newAnalyzeSaveStatsWorker(
 	return worker
 }
 
+// run consumes analyze results and persists them. After a kill signal, it
+// enters "drain mode": do not save more stats, just keep consuming resultsCh
+// and finish jobs with the same error so upstream analyze workers are not
+// blocked on sending.
 func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *handle.Handle, analyzeSnapshot bool) {
+	// Report at most one error per save worker. errCh is drained only after all
+	// save workers exit, so sending every per-partition failure can fill errCh
+	// and block this worker, which may deadlock the analyze pipeline.
 	errReported := false
 	// drainErr is only used for kill-signal handling. Save failures should not
 	// switch to drain mode, so we can still try to persist stats for later
@@ -61,6 +68,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 	}()
 	for results := range worker.resultsCh {
 		if drainErr != nil {
+			// Drain mode: consume the remaining results only to unblock producers.
 			finishJobWithLog(statsHandle, results.Job, drainErr)
 			results.DestroyAndPutToPool()
 			continue
