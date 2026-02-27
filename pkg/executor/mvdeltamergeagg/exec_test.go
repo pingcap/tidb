@@ -597,7 +597,6 @@ func TestRejectMinMaxRecomputeValidation(t *testing.T) {
 				Mappings: []*MinMaxRecomputeMapping{
 					nil,
 					{
-						OutputColIDs:        []int{2},
 						Strategy:            MinMaxRecomputeBatch,
 						BatchResultColIdxes: []int{0},
 					},
