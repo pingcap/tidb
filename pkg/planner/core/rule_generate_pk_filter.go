@@ -450,13 +450,16 @@ func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *
 	// pass all checks in tryGeneratePKFilter, creating another sub-plan, etc.
 	oldPKFilter := sctx.GetSessionVars().AllowGeneratePKFilter
 	sctx.GetSessionVars().AllowGeneratePKFilter = false
-	// Do NOT include FlagPredicatePushDown: conditions are already set on
-	// both the Selection (for MaxMinEliminate) and PushedDownConds (for
-	// stats/ranger). PPD would trigger constant propagation which can cause
-	// stack overflow with cast-wrapped expressions.
+	// Include FlagPredicatePushDown so the Selection's equality conditions
+	// are properly pushed to the DataSource's PushedDownConds. Without PPD,
+	// the manually-set PushedDownConds on the cloned DataSource can be lost
+	// during sub-optimization, causing IndexFullScan instead of
+	// IndexRangeScan. The equality conditions used here are simple
+	// col = const expressions (verified by matchesIndexColumn), so
+	// constant propagation within PPD is safe for these conditions.
 	// Include FlagMaxMinEliminate so the optimizer can transform MIN/MAX(pk)
 	// into a single-row ordered index scan instead of a full aggregation.
-	optFlag := rule.FlagBuildKeyInfo | rule.FlagPruneColumns | rule.FlagMaxMinEliminate
+	optFlag := rule.FlagBuildKeyInfo | rule.FlagPruneColumns | rule.FlagMaxMinEliminate | rule.FlagPredicatePushDown
 	physicalPlan, _, err := DoOptimize(ctx, sctx, optFlag, agg)
 	sctx.GetSessionVars().AllowGeneratePKFilter = oldPKFilter
 	sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
