@@ -298,7 +298,11 @@ func (p *HandParser) parseAdminStmt() ast.StmtNode {
 		if _, ok := p.accept(index); ok {
 			// ADMIN CHECK INDEX t idx [(begin, end), ...]
 			stmt.Tp = ast.AdminCheckIndex
-			stmt.Tables = []*ast.TableName{p.parseTableName()}
+			tbl := p.parseTableName()
+			if tbl == nil {
+				return nil
+			}
+			stmt.Tables = []*ast.TableName{tbl}
 			// Index name is required (yacc: Identifier)
 			tok := p.next()
 			stmt.Index = tok.Lit
@@ -632,7 +636,11 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 // Parses: table_name index_name (both required per yacc grammar)
 func (p *HandParser) parseAdminIndexOp(stmt *ast.AdminStmt, stmtType ast.AdminStmtType) ast.StmtNode {
 	stmt.Tp = stmtType
-	stmt.Tables = []*ast.TableName{p.parseTableName()}
+	tbl := p.parseTableName()
+	if tbl == nil {
+		return nil
+	}
+	stmt.Tables = []*ast.TableName{tbl}
 	stmt.Index = p.next().Lit
 	return stmt
 }

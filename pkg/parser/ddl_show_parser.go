@@ -330,6 +330,10 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 		return stmt
 	}
 	table := p.parseTableName()
+	if table == nil {
+		p.syntaxErrorAt(p.peek())
+		return nil
+	}
 	stmt.Table = table
 
 	// Optional PARTITION (p1, p2, ...)
@@ -410,6 +414,9 @@ func (p *HandParser) parseShowIndexStmt(stmt *ast.ShowStmt) {
 	stmt.Tp = ast.ShowIndex
 	p.expectFromOrIn()
 	stmt.Table = p.parseTableName()
+	if stmt.Table == nil {
+		return
+	}
 	if dbName, ok := p.acceptFromOrIn(); ok {
 		stmt.Table.Schema = ast.NewCIStr(dbName)
 	}

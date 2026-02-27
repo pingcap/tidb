@@ -353,6 +353,9 @@ func (p *HandParser) parseStatsTablesAndPartitions() []*ast.TableName {
 	var tables []*ast.TableName
 	for {
 		tbl := p.parseTableName()
+		if tbl == nil {
+			return nil
+		}
 		tables = append(tables, tbl)
 		if _, ok := p.accept(','); !ok {
 			break

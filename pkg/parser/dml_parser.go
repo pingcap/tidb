@@ -150,7 +150,9 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		}
 	case tableKwd: // TABLE
 		// INSERT INTO ... TABLE ...
-		stmt.Select = p.parseTableStmt().(*ast.SelectStmt)
+		if ts := p.parseTableStmt(); ts != nil {
+			stmt.Select = ts.(*ast.SelectStmt)
+		}
 	case '(': // (SELECT ...) or (VALUES ...)
 		p.next()
 		if p.peek().Tp == selectKwd {

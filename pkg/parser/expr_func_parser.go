@@ -51,11 +51,11 @@ func (p *HandParser) parseFuncCall(name string) ast.ExprNode {
 		result = p.parseScalarFuncCall(name)
 	}
 
-	// Parse optional window function modifiers:
+	// Parse optional window function modifiers (only when window functions are enabled):
 	// [FROM LAST | FROM FIRST] [IGNORE NULLS | RESPECT NULLS]
 	// Use 2-token lookahead for FROM to avoid consuming FROM in SELECT...FROM.
 	var fromLast, ignoreNull bool
-	if p.peek().Tp == from && (p.peekN(1).Tp == last || p.peekN(1).Tp == first) {
+	if p.supportWindowFunc && p.peek().Tp == from && (p.peekN(1).Tp == last || p.peekN(1).Tp == first) {
 		p.next() // consume FROM
 		if _, ok := p.accept(last); ok {
 			fromLast = true
@@ -63,11 +63,11 @@ func (p *HandParser) parseFuncCall(name string) ast.ExprNode {
 			p.expect(first)
 		}
 	}
-	if p.peek().Tp == ignore && p.peekN(1).Tp == nulls {
+	if p.supportWindowFunc && p.peek().Tp == ignore && p.peekN(1).Tp == nulls {
 		p.next() // consume IGNORE
 		p.next() // consume NULLS
 		ignoreNull = true
-	} else if p.peek().Tp == respect && p.peekN(1).Tp == nulls {
+	} else if p.supportWindowFunc && p.peek().Tp == respect && p.peekN(1).Tp == nulls {
 		p.next() // consume RESPECT
 		p.next() // consume NULLS
 		// RESPECT NULLS is the default, no flag needed
@@ -76,16 +76,19 @@ func (p *HandParser) parseFuncCall(name string) ast.ExprNode {
 	// Check for window function: func(...) OVER (...)
 	// The scanner may tokenize OVER as either over (reserved keyword) or
 	// identifier (non-reserved keyword — MySQL treats OVER as non-reserved).
-	if _, ok := p.accept(over); ok || p.peek().IsKeyword("OVER") {
-		if !ok {
-			p.next() // consume the identifier "OVER" token
+	// Only parse window functions when supportWindowFunc is enabled.
+	if p.supportWindowFunc {
+		if _, ok := p.accept(over); ok || p.peek().IsKeyword("OVER") {
+			if !ok {
+				p.next() // consume the identifier "OVER" token
+			}
+			wf := p.parseWindowFuncExpr(name, result)
+			if wfExpr, ok := wf.(*ast.WindowFuncExpr); ok {
+				wfExpr.FromLast = fromLast
+				wfExpr.IgnoreNull = ignoreNull
+			}
+			return wf
 		}
-		wf := p.parseWindowFuncExpr(name, result)
-		if wfExpr, ok := wf.(*ast.WindowFuncExpr); ok {
-			wfExpr.FromLast = fromLast
-			wfExpr.IgnoreNull = ignoreNull
-		}
-		return wf
 	}
 	return result
 }
