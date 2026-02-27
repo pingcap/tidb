@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
@@ -164,7 +164,7 @@ func (ds *SingleTargetDataSink) TrySend(data *ReportData, deadline time.Time) er
 	case <-ds.ctx.Done():
 		return ds.ctx.Err()
 	default:
-		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
+		metrics.IgnoreReportChannelFullCounter.Inc()
 		return errors.New("the channel of single target dataSink is full")
 	}
 }
@@ -194,9 +194,9 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	defer func() {
 		if err != nil {
 			logutil.BgLogger().Warn("single target data sink failed to send data to receiver", zap.String("category", "top-sql"), zap.Error(err))
-			reporter_metrics.ReportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -245,11 +245,11 @@ func (ds *SingleTargetDataSink) sendBatchTopSQLRecord(ctx context.Context, recor
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportRecordCounterHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportRecordCounterHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -283,11 +283,11 @@ func (ds *SingleTargetDataSink) sendBatchTopRURecord(ctx context.Context, record
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportRURecordCounterHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportRURecordCounterHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportRURecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportRURecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportRURecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportRURecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -325,11 +325,11 @@ func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas [
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportSQLCountHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportSQLCountHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -360,11 +360,11 @@ func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMetas
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportPlanCountHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportPlanCountHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 

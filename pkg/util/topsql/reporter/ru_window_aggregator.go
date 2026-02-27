@@ -165,7 +165,12 @@ func (a *ruWindowAggregator) rotateBucketsBefore(boundaryStart uint64) {
 // buildReportRecords merges taken buckets and produces final proto records.
 // It does not require a lock.
 func buildReportRecords(buckets map[uint64]*ruPointBucket, windowStart, windowEnd, itemInterval uint64, keyspaceName []byte) []tipb.TopRURecord {
-	mergedOutput := newRUCollectingWithCaps(ruReportMergePreTopNUsers, ruReportMergePreTopNSQLsPerUser)
+	singleBucket := windowEnd-windowStart <= itemInterval
+	var mergedOutput *ruCollecting
+	if !singleBucket {
+		mergedOutput = newRUCollectingWithCaps(ruReportMergePreTopNUsers, ruReportMergePreTopNSQLsPerUser)
+	}
+
 	for intervalStart := windowStart; intervalStart < windowEnd; intervalStart += itemInterval {
 		intervalCollecting := newRUCollectingWithCaps(ruReportMergePreTopNUsers, ruReportMergePreTopNSQLsPerUser)
 		for bucketStart := intervalStart; bucketStart < intervalStart+itemInterval; bucketStart += ruBaseBucketSeconds {
@@ -178,6 +183,12 @@ func buildReportRecords(buckets map[uint64]*ruPointBucket, windowStart, windowEn
 		}
 		// Apply TopN and merge into output.
 		intervalCompacted := intervalCollecting.compactWithLimits(ruReportTopNUsers, ruReportTopNSQLsPerUser)
+		if singleBucket {
+			if intervalCompacted == nil {
+				return nil
+			}
+			return intervalCompacted.toTopRURecords(keyspaceName)
+		}
 		mergedOutput.mergeFrom(intervalCompacted, 0, false)
 	}
 	// Convert to proto at output.

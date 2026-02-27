@@ -40,7 +40,7 @@ func TestRUItemToProto(t *testing.T) {
 }
 
 func TestRURecordAdd(t *testing.T) {
-	rec := newRURecord([]byte("sql1"), []byte("plan1"))
+	rec := newRURecord(stmtstats.BinaryDigest("sql1"), stmtstats.BinaryDigest("plan1"))
 
 	// First add
 	rec.add(1000, 10.0, 1, 100)
@@ -62,11 +62,11 @@ func TestRURecordAdd(t *testing.T) {
 }
 
 func TestRURecordMerge(t *testing.T) {
-	rec1 := newRURecord([]byte("sql1"), []byte("plan1"))
+	rec1 := newRURecord(stmtstats.BinaryDigest("sql1"), stmtstats.BinaryDigest("plan1"))
 	rec1.add(1000, 10.0, 1, 100)
 	rec1.add(1001, 20.0, 2, 200)
 
-	rec2 := newRURecord([]byte("sql1"), []byte("plan1"))
+	rec2 := newRURecord(stmtstats.BinaryDigest("sql1"), stmtstats.BinaryDigest("plan1"))
 	rec2.add(1000, 5.0, 1, 50) // Same timestamp as rec1
 	rec2.add(1002, 15.0, 1, 150)
 
@@ -82,7 +82,7 @@ func TestRURecordMerge(t *testing.T) {
 func TestRURecordsTopN(t *testing.T) {
 	records := make(ruRecords, 5)
 	for i := 0; i < 5; i++ {
-		rec := newRURecord([]byte(fmt.Sprintf("sql%d", i)), nil)
+		rec := newRURecord(stmtstats.BinaryDigest(fmt.Sprintf("sql%d", i)), "")
 		rec.totalRU = float64((i + 1) * 10) // 10, 20, 30, 40, 50
 		records[i] = rec
 	}
@@ -106,9 +106,9 @@ func TestUserRUCollectingTopNSQLs(t *testing.T) {
 	// Add more SQLs than maxTopSQLsPerUser
 	numSQLs := maxTopSQLsPerUser + 10
 	for i := 0; i < numSQLs; i++ {
-		sqlDigest := []byte(fmt.Sprintf("sql%d", i))
+		sqlDigest := stmtstats.BinaryDigest(fmt.Sprintf("sql%d", i))
 		ru := float64(i + 1) // 1, 2, 3, ..., numSQLs
-		user.add(1000, sqlDigest, nil, &stmtstats.RUIncrement{TotalRU: ru, ExecCount: 1, ExecDuration: 100})
+		user.add(1000, sqlDigest, "", &stmtstats.RUIncrement{TotalRU: ru, ExecCount: 1, ExecDuration: 100})
 	}
 
 	require.Len(t, user.records, numSQLs)
@@ -123,7 +123,7 @@ func TestUserRUCollectingTopNSQLs(t *testing.T) {
 	var othersRec *ruRecord
 	normalCount := 0
 	for _, rec := range reportRecords {
-		if rec.sqlDigest == nil {
+		if len(rec.sqlDigest) == 0 && len(rec.planDigest) == 0 {
 			othersRec = rec
 		} else {
 			normalCount++
@@ -141,13 +141,49 @@ func TestUserRUCollectingPreTopNSQLCap(t *testing.T) {
 	user := newUserRUCollecting("user1")
 	extra := 5
 	for i := 0; i < maxPreTopNSQLsPerUser+extra; i++ {
-		sqlDigest := []byte(fmt.Sprintf("sql%d", i))
-		user.add(1000, sqlDigest, nil, &stmtstats.RUIncrement{TotalRU: 1.0, ExecCount: 1, ExecDuration: 10})
+		sqlDigest := stmtstats.BinaryDigest(fmt.Sprintf("sql%d", i))
+		user.add(1000, sqlDigest, "", &stmtstats.RUIncrement{TotalRU: 1.0, ExecCount: 1, ExecDuration: 10})
 	}
 
 	require.Len(t, user.records, maxPreTopNSQLsPerUser)
 	require.NotNil(t, user.othersRec)
 	require.Equal(t, float64(extra), user.othersRec.totalRU)
+}
+
+func TestOthersKeySentinel(t *testing.T) {
+	require.Equal(t, othersKey, makeKey("", ""))
+	require.NotEqual(t, othersKey, makeKey("sql", ""))
+	require.NotEqual(t, othersKey, makeKey("", "plan"))
+	require.True(t, isOthersKey(othersKey))
+	require.False(t, isOthersKey(makeKey("sql", "")))
+}
+
+func TestUserRUCollectingEmptyDigestsGoToOthersRec(t *testing.T) {
+	// Both empty digests are reserved for the aggregated "others SQL" bucket.
+	user := newUserRUCollectingWithCap("user1", 10)
+
+	user.add(1000, "", "", &stmtstats.RUIncrement{TotalRU: 3, ExecCount: 1, ExecDuration: 10})
+	require.Empty(t, user.records)
+	require.NotNil(t, user.othersRec)
+	require.Equal(t, 3.0, user.othersRec.totalRU)
+
+	user.add(1001, "sql1", "", &stmtstats.RUIncrement{TotalRU: 2, ExecCount: 1, ExecDuration: 10})
+	require.Len(t, user.records, 1)
+}
+
+func TestUserRUCollectingAddOthersFoldsLegacyOthersKey(t *testing.T) {
+	// Legacy shape: "others SQL" may have been stored in records[othersKey].
+	user := newUserRUCollectingWithCap("user1", 10)
+
+	legacy := newOthersRURecord()
+	legacy.add(1000, 3, 1, 10)
+	user.records[othersKey] = legacy
+	user.totalRU = legacy.totalRU
+
+	user.addOthers(1001, &stmtstats.RUIncrement{TotalRU: 2, ExecCount: 1, ExecDuration: 10})
+	require.NotContains(t, user.records, othersKey)
+	require.NotNil(t, user.othersRec)
+	require.Equal(t, 5.0, user.othersRec.totalRU)
 }
 
 func TestRUCollectingHybridTopN(t *testing.T) {
@@ -288,12 +324,12 @@ func TestCompactWithLimitsPreExistingOthersRecAndEvictedSQL(t *testing.T) {
 	// Contract: pre-existing othersRec and evicted SQL RU are merged into one others record.
 	collecting := newRUCollectingWithCaps(10, 10)
 	u1 := newUserRUCollectingWithCap("u1", 10)
-	u1.add(1000, []byte("sql-top"), []byte("plan-top"), &stmtstats.RUIncrement{
+	u1.add(1000, stmtstats.BinaryDigest("sql-top"), stmtstats.BinaryDigest("plan-top"), &stmtstats.RUIncrement{
 		TotalRU:      100,
 		ExecCount:    1,
 		ExecDuration: 10,
 	})
-	u1.add(1001, []byte("sql-evicted"), []byte("plan-evicted"), &stmtstats.RUIncrement{
+	u1.add(1001, stmtstats.BinaryDigest("sql-evicted"), stmtstats.BinaryDigest("plan-evicted"), &stmtstats.RUIncrement{
 		TotalRU:      40,
 		ExecCount:    1,
 		ExecDuration: 10,
@@ -313,13 +349,13 @@ func TestCompactWithLimitsPreExistingOthersRecAndEvictedSQL(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, compactedU1.records, 1)
 	for _, rec := range compactedU1.records {
-		require.Equal(t, []byte("sql-top"), rec.sqlDigest)
-		require.Equal(t, []byte("plan-top"), rec.planDigest)
+		require.Equal(t, stmtstats.BinaryDigest("sql-top"), rec.sqlDigest)
+		require.Equal(t, stmtstats.BinaryDigest("plan-top"), rec.planDigest)
 		require.Equal(t, 100.0, rec.totalRU)
 	}
 	require.NotNil(t, compactedU1.othersRec)
-	require.Nil(t, compactedU1.othersRec.sqlDigest)
-	require.Nil(t, compactedU1.othersRec.planDigest)
+	require.Empty(t, compactedU1.othersRec.sqlDigest)
+	require.Empty(t, compactedU1.othersRec.planDigest)
 	require.Equal(t, 47.0, compactedU1.othersRec.totalRU) // pre-existing 7 + evicted SQL 40
 }
 
@@ -329,7 +365,7 @@ func TestCompactWithLimitsOthersUserAndEvictedUsersBothPresent(t *testing.T) {
 	collecting := newRUCollectingWithCaps(10, 10)
 
 	u1 := newUserRUCollectingWithCap("u1", 10)
-	u1.add(2000, []byte("sql-top"), []byte("plan-top"), &stmtstats.RUIncrement{
+	u1.add(2000, stmtstats.BinaryDigest("sql-top"), stmtstats.BinaryDigest("plan-top"), &stmtstats.RUIncrement{
 		TotalRU:      100,
 		ExecCount:    1,
 		ExecDuration: 10,
@@ -337,7 +373,7 @@ func TestCompactWithLimitsOthersUserAndEvictedUsersBothPresent(t *testing.T) {
 	collecting.users["u1"] = u1
 
 	u2 := newUserRUCollectingWithCap("u2", 10)
-	u2.add(2000, []byte("sql-u2"), []byte("plan-u2"), &stmtstats.RUIncrement{
+	u2.add(2000, stmtstats.BinaryDigest("sql-u2"), stmtstats.BinaryDigest("plan-u2"), &stmtstats.RUIncrement{
 		TotalRU:      30,
 		ExecCount:    1,
 		ExecDuration: 10,
@@ -345,7 +381,7 @@ func TestCompactWithLimitsOthersUserAndEvictedUsersBothPresent(t *testing.T) {
 	collecting.users["u2"] = u2
 
 	preOthers := newUserRUCollectingWithCap(keyRUOthersUser, 10)
-	preOthers.add(2000, []byte("sql-pre-others"), []byte("plan-pre-others"), &stmtstats.RUIncrement{
+	preOthers.add(2000, stmtstats.BinaryDigest("sql-pre-others"), stmtstats.BinaryDigest("plan-pre-others"), &stmtstats.RUIncrement{
 		TotalRU:      6,
 		ExecCount:    1,
 		ExecDuration: 10,
@@ -366,8 +402,8 @@ func TestCompactWithLimitsOthersUserAndEvictedUsersBothPresent(t *testing.T) {
 	require.Equal(t, keyRUOthersUser, compacted.othersUser.user)
 	require.Empty(t, compacted.othersUser.records)
 	require.NotNil(t, compacted.othersUser.othersRec)
-	require.Nil(t, compacted.othersUser.othersRec.sqlDigest)
-	require.Nil(t, compacted.othersUser.othersRec.planDigest)
+	require.Empty(t, compacted.othersUser.othersRec.sqlDigest)
+	require.Empty(t, compacted.othersUser.othersRec.planDigest)
 	require.Equal(t, 40.0, compacted.othersUser.othersRec.totalRU) // pre-existing 6+4 + evicted user 30
 }
 
@@ -391,7 +427,7 @@ func TestCompactWithLimitsOnlyOthersUserNonEmpty(t *testing.T) {
 func TestCompactWithLimitsSingleUserSingleSQL(t *testing.T) {
 	collecting := newRUCollectingWithCaps(10, 10)
 	u1 := newUserRUCollectingWithCap("u1", 10)
-	u1.add(4000, []byte("sql-only"), []byte("plan-only"), &stmtstats.RUIncrement{
+	u1.add(4000, stmtstats.BinaryDigest("sql-only"), stmtstats.BinaryDigest("plan-only"), &stmtstats.RUIncrement{
 		TotalRU:      88,
 		ExecCount:    1,
 		ExecDuration: 10,
@@ -414,10 +450,9 @@ func TestCompactWithLimitsOnlyOthersUserLegacyRecords(t *testing.T) {
 	// Contract: compaction folds it into othersUser.othersRec.
 	collecting := newRUCollectingWithCaps(10, 10)
 	legacyOthers := newUserRUCollectingWithCap(keyRUOthersUser, 10)
-	legacyRec := newRURecord(nil, nil)
+	legacyRec := newOthersRURecord()
 	legacyRec.add(5000, 13, 2, 30)
-	legacyKey := encodeKey(legacyOthers.keyBuf, nil, nil)
-	legacyOthers.records[legacyKey] = legacyRec
+	legacyOthers.records[othersKey] = legacyRec
 	legacyOthers.totalRU = legacyRec.totalRU
 	collecting.othersUser = legacyOthers
 
@@ -427,8 +462,8 @@ func TestCompactWithLimitsOnlyOthersUserLegacyRecords(t *testing.T) {
 	require.NotNil(t, compacted.othersUser)
 	require.Empty(t, compacted.othersUser.records)
 	require.NotNil(t, compacted.othersUser.othersRec)
-	require.Nil(t, compacted.othersUser.othersRec.sqlDigest)
-	require.Nil(t, compacted.othersUser.othersRec.planDigest)
+	require.Empty(t, compacted.othersUser.othersRec.sqlDigest)
+	require.Empty(t, compacted.othersUser.othersRec.planDigest)
 	require.Equal(t, 13.0, compacted.othersUser.othersRec.totalRU)
 }
 

@@ -53,6 +53,32 @@ func fillAggregatorForWindow(agg *ruWindowAggregator, windowEnd uint64, numUsers
 	agg.addBatchToBucket(46, batch)
 }
 
+// fillAggregatorSteadyState60s fills the aggregator to the 60s boundary steady state:
+// 4 buckets (0,15,30,45) compacted to 200×200 each, and 1 bucket (60) still collecting at 400×400 cap.
+// Adding a batch to ts=61 triggers rotateBucketsBefore(60), which compacts the four buckets.
+// Used by BenchmarkTakeReportRecords_Large_60s_AtDesignLimit to measure takeReportRecords under design-limit load.
+func fillAggregatorSteadyState60s(agg *ruWindowAggregator) {
+	batch := makeRUBatch(maxPreTopNUsers, maxPreTopNSQLsPerUser)
+	agg.addBatchToBucket(1, batch)
+	agg.addBatchToBucket(16, batch)
+	agg.addBatchToBucket(31, batch)
+	agg.addBatchToBucket(46, batch)
+	agg.addBatchToBucket(61, batch) // triggers rotation: 0,15,30,45 compact to 200×200; bucket 60 starts collecting 400×400
+}
+
+// fillAggregatorSteadyState60sAt10kKeys fills the aggregator to the same 4 compacted + 1 collecting shape
+// but with 10k keys per batch (100×100), simulating maxRUKeysPerAggregate=10000 upstream.
+// Used by BenchmarkTakeReportRecords_Large_60s_At10kKeys to compare with the 160k design-limit benchmark.
+func fillAggregatorSteadyState60sAt10kKeys(agg *ruWindowAggregator) {
+	const numUsers, numSQLsPerUser = 200, 200 // 10k keys
+	batch := makeRUBatch(numUsers, numSQLsPerUser)
+	agg.addBatchToBucket(1, batch)
+	agg.addBatchToBucket(16, batch)
+	agg.addBatchToBucket(31, batch)
+	agg.addBatchToBucket(46, batch)
+	agg.addBatchToBucket(61, batch) // triggers rotation; 4 buckets compact to 200×200 (with ≤100×100 data); bucket 60 has 10k keys
+}
+
 func TestRUWindowAggregatorReportGranularity(t *testing.T) {
 	// Contract: the same four 15s buckets should be regrouped by item interval.
 	// This verifies 15/30/60 aggregation boundaries on a fixed 60s closed window.
@@ -315,6 +341,32 @@ func BenchmarkTakeReportRecords_Large_60s(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		agg := newRUWindowAggregator()
 		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+		_ = agg.takeReportRecords(60, 60, keyspace)
+	}
+}
+
+// BenchmarkTakeReportRecords_Large_60s_AtDesignLimit measures takeReportRecords(60, 60) when the
+// aggregator is in the 60s design-limit shape: 1 bucket collecting at 400×400 cap and 4 buckets
+// already compacted to 200×200. Run with -benchmem for B/op and allocs/op.
+func BenchmarkTakeReportRecords_Large_60s_AtDesignLimit(b *testing.B) {
+	keyspace := []byte("ks")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorSteadyState60s(agg)
+		_ = agg.takeReportRecords(60, 60, keyspace)
+	}
+}
+
+// BenchmarkTakeReportRecords_Large_60s_At10kKeys measures takeReportRecords(60, 60) with 10k keys
+// per bucket (4 compacted + 1 collecting), simulating maxRUKeysPerAggregate=10000. Compare with
+// BenchmarkTakeReportRecords_Large_60s_AtDesignLimit (160k keys) for 10k vs 160k reporter load.
+func BenchmarkTakeReportRecords_Large_60s_At10kKeys(b *testing.B) {
+	keyspace := []byte("ks")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorSteadyState60sAt10kKeys(agg)
 		_ = agg.takeReportRecords(60, 60, keyspace)
 	}
 }

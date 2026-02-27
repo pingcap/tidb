@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/collector"
-	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
@@ -139,7 +139,7 @@ func (tsr *RemoteTopSQLReporter) Collect(data []collector.SQLCPUTimeRecord) {
 	case tsr.collectCPUTimeChan <- data:
 	default:
 		// ignore if chan blocked
-		reporter_metrics.IgnoreCollectChannelFullCounter.Inc()
+		metrics.IgnoreCollectChannelFullCounter.Inc()
 	}
 }
 
@@ -165,7 +165,7 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 	case tsr.collectStmtStatsChan <- data:
 	default:
 		// ignore if chan blocked
-		reporter_metrics.IgnoreCollectStmtChannelFullCounter.Inc()
+		metrics.IgnoreCollectStmtChannelFullCounter.Inc()
 	}
 }
 
@@ -181,7 +181,7 @@ func (tsr *RemoteTopSQLReporter) CollectRUIncrements(data stmtstats.RUIncrementM
 	select {
 	case tsr.collectRUIncrementsChan <- data:
 	default:
-		reporter_metrics.IgnoreCollectRUChannelFullCounter.Inc()
+		metrics.IgnoreCollectRUChannelFullCounter.Inc()
 	}
 }
 
@@ -358,7 +358,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(timestamp uint64) {
 	}:
 	default:
 		// ignore if chan blocked
-		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
+		metrics.IgnoreReportChannelFullCounter.Inc()
 	}
 }
 

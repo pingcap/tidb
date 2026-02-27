@@ -111,7 +111,7 @@ func (m *aggregator) drainAndPushStmtStats() {
 // drainAndPushRU drains RU increments from all sessions, applies key caps, and
 // pushes merged data to RUCollectors when TopRU is enabled.
 func (m *aggregator) drainAndPushRU() {
-	total := RUIncrementMap{}
+	total := make(RUIncrementMap, maxRUKeysPerAggregate)
 	var droppedKeys int64
 	var droppedRU float64
 	m.statsSet.Range(func(statsAny, _ any) bool {

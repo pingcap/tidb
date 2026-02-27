@@ -15,7 +15,6 @@
 package reporter
 
 import (
-	"bytes"
 	"sort"
 	"sync"
 
@@ -82,22 +81,43 @@ func (rs ruItems) toProto() []*tipb.TopRURecordItem {
 	return items
 }
 
+type sqlPlanKey struct {
+	sqlDigest  stmtstats.BinaryDigest
+	planDigest stmtstats.BinaryDigest
+}
+
+// othersKey is the sentinel key for the aggregated "others SQL" bucket.
+// It uses the zero value (empty sql/plan digest), matching legacy encodeKey(nil, nil).
+var othersKey = sqlPlanKey{}
+
+func makeKey(sqlDigest, planDigest stmtstats.BinaryDigest) sqlPlanKey {
+	return sqlPlanKey{sqlDigest: sqlDigest, planDigest: planDigest}
+}
+
+func isOthersKey(key sqlPlanKey) bool {
+	return key == othersKey
+}
+
 // ruRecord stores RU statistics for one (sql_digest, plan_digest).
 type ruRecord struct {
-	sqlDigest  []byte
-	planDigest []byte
+	sqlDigest  stmtstats.BinaryDigest
+	planDigest stmtstats.BinaryDigest
 	items      ruItems
 	tsIndex    map[uint64]int // timestamp => index in items
 	totalRU    float64        // cumulative RU for TopN sorting
 }
 
-func newRURecord(sqlDigest, planDigest []byte) *ruRecord {
+func newRURecord(sqlDigest, planDigest stmtstats.BinaryDigest) *ruRecord {
 	return &ruRecord{
 		sqlDigest:  sqlDigest,
 		planDigest: planDigest,
-		items:      make(ruItems, 0, 16),
-		tsIndex:    make(map[uint64]int, 16),
+		items:      make(ruItems, 0, 4),
+		tsIndex:    make(map[uint64]int, 4),
 	}
+}
+
+func newOthersRURecord() *ruRecord {
+	return newRURecord("", "")
 }
 
 // add appends an RU increment for a timestamp.
@@ -168,10 +188,9 @@ func (rs ruRecords) topN(n int) (top, evicted ruRecords) {
 // userRUCollecting tracks RU data for one user with per-user SQL TopN.
 type userRUCollecting struct {
 	user               string
-	records            map[string]*ruRecord // sqlPlanKey => ruRecord
-	othersRec          *ruRecord            // Pre-aggregated "others SQL" record
-	keyBuf             *bytes.Buffer
-	totalRU            float64 // cumulative RU for user-level TopN sorting
+	records            map[sqlPlanKey]*ruRecord // sqlPlanKey => ruRecord
+	othersRec          *ruRecord                // Pre-aggregated "others SQL" record
+	totalRU            float64                  // cumulative RU for user-level TopN sorting
 	preTopNSQLsPerUser int
 }
 
@@ -185,20 +204,24 @@ func newUserRUCollectingWithCap(user string, preTopNSQLsPerUser int) *userRUColl
 	}
 	return &userRUCollecting{
 		user:               user,
-		records:            make(map[string]*ruRecord),
-		keyBuf:             bytes.NewBuffer(make([]byte, 0, 64)),
+		records:            make(map[sqlPlanKey]*ruRecord, preTopNSQLsPerUser),
 		preTopNSQLsPerUser: preTopNSQLsPerUser,
 	}
 }
 
 // add adds RU increments for one SQL.
 // When SQL count reaches the pre-cap, new SQLs are merged into "others SQL".
-func (u *userRUCollecting) add(timestamp uint64, sqlDigest, planDigest []byte, incr *stmtstats.RUIncrement) {
+func (u *userRUCollecting) add(timestamp uint64, sqlDigest, planDigest stmtstats.BinaryDigest, incr *stmtstats.RUIncrement) {
 	if incr == nil {
 		return
 	}
 
-	key := encodeKey(u.keyBuf, sqlDigest, planDigest)
+	key := makeKey(sqlDigest, planDigest)
+	if isOthersKey(key) {
+		u.addOthers(timestamp, incr)
+		return
+	}
+
 	rec, ok := u.records[key]
 	if ok {
 		rec.addIncr(timestamp, incr)
@@ -208,11 +231,7 @@ func (u *userRUCollecting) add(timestamp uint64, sqlDigest, planDigest []byte, i
 
 	// At capacity, merge into "others SQL".
 	if len(u.records) >= u.preTopNSQLsPerUser {
-		if u.othersRec == nil {
-			u.othersRec = newRURecord(nil, nil)
-		}
-		u.othersRec.addIncr(timestamp, incr)
-		u.totalRU += incr.TotalRU
+		u.addOthers(timestamp, incr)
 		return
 	}
 
@@ -227,15 +246,16 @@ func (u *userRUCollecting) addOthers(timestamp uint64, incr *stmtstats.RUIncreme
 	if incr == nil {
 		return
 	}
+
 	if u.othersRec == nil {
-		u.othersRec = newRURecord(nil, nil)
+		u.othersRec = newOthersRURecord()
 		// Compatibility: fold any legacy nil-digest record into othersRec.
-		key := encodeKey(u.keyBuf, nil, nil)
-		if rec, ok := u.records[key]; ok {
+		if rec, ok := u.records[othersKey]; ok {
 			u.othersRec.merge(rec)
-			delete(u.records, key)
+			delete(u.records, othersKey)
 		}
 	}
+
 	u.othersRec.addIncr(timestamp, incr)
 	u.totalRU += incr.TotalRU
 }
@@ -267,7 +287,7 @@ func (u *userRUCollecting) getReportRecordsWithLimit(topNSQLsPerUser int) []*ruR
 	// Merge evicted records into "others SQL".
 	if len(evicted) > 0 {
 		if othersRec == nil {
-			othersRec = newRURecord(nil, nil)
+			othersRec = newOthersRURecord()
 		}
 		for _, rec := range evicted {
 			othersRec.merge(rec)
@@ -282,34 +302,33 @@ func (u *userRUCollecting) getReportRecordsWithLimit(topNSQLsPerUser int) []*ruR
 }
 
 // mergeRecord merges srcRec into this user's records.
-// It falls back to othersRec when at capacity or when digests are nil.
-func (u *userRUCollecting) mergeRecord(sqlDigest, planDigest []byte, srcRec *ruRecord, targetTs uint64, rewriteTs bool) {
+// It falls back to othersRec when at capacity or when key is othersKey.
+func (u *userRUCollecting) mergeRecord(key sqlPlanKey, srcRec *ruRecord, targetTs uint64, rewriteTs bool) {
 	if srcRec == nil || len(srcRec.items) == 0 {
 		return
 	}
 
-	// "others SQL" path: nil digests go to othersRec.
-	if len(sqlDigest) == 0 && len(planDigest) == 0 {
+	// "others SQL" path.
+	if isOthersKey(key) {
 		if u.othersRec == nil {
-			u.othersRec = newRURecord(nil, nil)
+			u.othersRec = newOthersRURecord()
 		}
 		u.mergeRecordInto(u.othersRec, srcRec, targetTs, rewriteTs)
 		return
 	}
 
 	// Normal SQL path.
-	key := encodeKey(u.keyBuf, sqlDigest, planDigest)
 	dstRec, ok := u.records[key]
 	if !ok {
 		// Check pre-TopN cap before adding a new SQL.
 		if len(u.records) >= u.preTopNSQLsPerUser {
 			if u.othersRec == nil {
-				u.othersRec = newRURecord(nil, nil)
+				u.othersRec = newOthersRURecord()
 			}
 			u.mergeRecordInto(u.othersRec, srcRec, targetTs, rewriteTs)
 			return
 		}
-		dstRec = newRURecord(sqlDigest, planDigest)
+		dstRec = newRURecord(key.sqlDigest, key.planDigest)
 		u.records[key] = dstRec
 	}
 	u.mergeRecordInto(dstRec, srcRec, targetTs, rewriteTs)
@@ -367,7 +386,7 @@ func newRUCollectingWithCaps(preTopNUsers, preTopNSQLsPerUser int) *ruCollecting
 		preTopNSQLsPerUser = maxPreTopNSQLsPerUser
 	}
 	return &ruCollecting{
-		users:              make(map[string]*userRUCollecting),
+		users:              make(map[string]*userRUCollecting, preTopNUsers),
 		preTopNUsers:       preTopNUsers,
 		preTopNSQLsPerUser: preTopNSQLsPerUser,
 	}
@@ -391,8 +410,7 @@ func (c *ruCollecting) add(timestamp uint64, key stmtstats.RUKey, incr *stmtstat
 		userCollecting = newUserRUCollectingWithCap(user, c.preTopNSQLsPerUser)
 		c.users[user] = userCollecting
 	}
-	// Convert BinaryDigest (string) to []byte for storage.
-	userCollecting.add(timestamp, []byte(key.SQLDigest), []byte(key.PlanDigest), incr)
+	userCollecting.add(timestamp, key.SQLDigest, key.PlanDigest, incr)
 }
 
 // addBatch adds a batch of RU increments for a given timestamp.
@@ -416,7 +434,7 @@ func (c *ruCollecting) take() *ruCollecting {
 		preTopNUsers:       c.preTopNUsers,
 		preTopNSQLsPerUser: c.preTopNSQLsPerUser,
 	}
-	c.users = make(map[string]*userRUCollecting)
+	c.users = make(map[string]*userRUCollecting, c.preTopNUsers)
 	c.othersUser = nil
 	return result
 }
@@ -442,11 +460,19 @@ func (c *ruCollecting) toTopRURecords(keyspaceName []byte) []tipb.TopRURecord {
 	for _, userCollecting := range c.users {
 		for _, rec := range userCollecting.records {
 			sort.Sort(rec.items)
+			var sqlDigest []byte
+			var planDigest []byte
+			if len(rec.sqlDigest) > 0 {
+				sqlDigest = []byte(rec.sqlDigest)
+			}
+			if len(rec.planDigest) > 0 {
+				planDigest = []byte(rec.planDigest)
+			}
 			result = append(result, tipb.TopRURecord{
 				KeyspaceName: keyspaceName,
 				User:         userCollecting.user,
-				SqlDigest:    rec.sqlDigest,
-				PlanDigest:   rec.planDigest,
+				SqlDigest:    sqlDigest,
+				PlanDigest:   planDigest,
 				Items:        rec.items.toProto(),
 			})
 		}
@@ -480,10 +506,10 @@ func mergeUserIntoOthers(dst, src *userRUCollecting) {
 		return
 	}
 	for _, rec := range src.records {
-		dst.mergeRecord(nil, nil, rec, 0, false)
+		dst.mergeRecord(othersKey, rec, 0, false)
 	}
 	if src.othersRec != nil {
-		dst.mergeRecord(nil, nil, src.othersRec, 0, false)
+		dst.mergeRecord(othersKey, src.othersRec, 0, false)
 	}
 }
 
@@ -520,7 +546,7 @@ func (c *ruCollecting) compactWithLimits(maxUsers, maxSQLsPerUser int) *ruCollec
 				}
 			} else {
 				// Normal SQL record.
-				key := encodeKey(compactedUser.keyBuf, rec.sqlDigest, rec.planDigest)
+				key := makeKey(rec.sqlDigest, rec.planDigest)
 				compactedUser.records[key] = rec
 			}
 			compactedUser.totalRU += rec.totalRU
@@ -586,11 +612,12 @@ func (c *ruCollecting) mergeFrom(src *ruCollecting, targetTimestamp uint64, rewr
 	for _, srcUser := range src.users {
 		dstUser := c.getOrCreateUser(srcUser.user)
 		for _, srcRec := range srcUser.records {
-			dstUser.mergeRecord(srcRec.sqlDigest, srcRec.planDigest, srcRec, targetTimestamp, rewriteTimestamp)
+			key := makeKey(srcRec.sqlDigest, srcRec.planDigest)
+			dstUser.mergeRecord(key, srcRec, targetTimestamp, rewriteTimestamp)
 		}
 		// Also merge user's othersRec.
 		if srcUser.othersRec != nil {
-			dstUser.mergeRecord(nil, nil, srcUser.othersRec, targetTimestamp, rewriteTimestamp)
+			dstUser.mergeRecord(othersKey, srcUser.othersRec, targetTimestamp, rewriteTimestamp)
 		}
 	}
 
@@ -599,10 +626,10 @@ func (c *ruCollecting) mergeFrom(src *ruCollecting, targetTimestamp uint64, rewr
 		dstOthersUser := c.getOrCreateOthersUser()
 		// Compatibility: merge potential legacy records map into othersUser.
 		for _, srcRec := range src.othersUser.records {
-			dstOthersUser.mergeRecord(nil, nil, srcRec, targetTimestamp, rewriteTimestamp)
+			dstOthersUser.mergeRecord(othersKey, srcRec, targetTimestamp, rewriteTimestamp)
 		}
 		if src.othersUser.othersRec != nil {
-			dstOthersUser.mergeRecord(nil, nil, src.othersUser.othersRec, targetTimestamp, rewriteTimestamp)
+			dstOthersUser.mergeRecord(othersKey, src.othersUser.othersRec, targetTimestamp, rewriteTimestamp)
 		}
 	}
 }
