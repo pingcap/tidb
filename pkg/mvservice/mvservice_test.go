@@ -89,7 +89,7 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 
 	select {
 	case got := <-started:
-		t.Fatalf("unexpected concurrent start: %s", got)
+		t.Fatalf("unexpected concurrent start: %v", got)
 	default:
 	}
 

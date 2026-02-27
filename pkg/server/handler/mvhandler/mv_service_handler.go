@@ -98,13 +98,13 @@ var mvServiceSettingsFieldUpdaters = []settingsFieldUpdater{
 
 // MVServiceSettingsResponse is MV service runtime settings response.
 type MVServiceSettingsResponse struct {
-	TaskMaxConcurrency           int     `json:"task_max_concurrency"`
-	TaskTimeout                  string  `json:"task_timeout"`
-	TaskBackpressureCPUThreshold float64 `json:"task_backpressure_cpu_threshold"`
-	TaskBackpressureMemThreshold float64 `json:"task_backpressure_mem_threshold"`
-	TaskBackpressureDelay        string  `json:"task_backpressure_delay"`
-	RetryBaseDelay               string  `json:"retry_base_delay"`
-	RetryMaxDelay                string  `json:"retry_max_delay"`
+	TaskMaxConcurrency       int     `json:"task_max_concurrency"`
+	TaskTimeout              string  `json:"task_timeout"`
+	BackpressureCPUThreshold float64 `json:"backpressure_cpu_threshold"`
+	BackpressureMemThreshold float64 `json:"backpressure_mem_threshold"`
+	BackpressureDelay        string  `json:"backpressure_delay"`
+	RetryBaseDelay           string  `json:"retry_base_delay"`
+	RetryMaxDelay            string  `json:"retry_max_delay"`
 }
 
 // ServeHTTP handles request of get/update MV service settings.
@@ -188,13 +188,13 @@ func loadMVServiceRuntimeSettings(mvService mvServiceRuntimeSettingsAccessor) mv
 // writeMVServiceSettingsResponse writes runtime settings in API response format.
 func writeMVServiceSettingsResponse(w http.ResponseWriter, settings mvServiceRuntimeSettings) {
 	handler.WriteData(w, MVServiceSettingsResponse{
-		TaskMaxConcurrency:           settings.maxConcurrency,
-		TaskTimeout:                  settings.timeout.String(),
-		TaskBackpressureCPUThreshold: settings.backpressureCfg.CPUThreshold,
-		TaskBackpressureMemThreshold: settings.backpressureCfg.MemThreshold,
-		TaskBackpressureDelay:        settings.backpressureCfg.Delay.String(),
-		RetryBaseDelay:               settings.retryBase.String(),
-		RetryMaxDelay:                settings.retryMax.String(),
+		TaskMaxConcurrency:       settings.maxConcurrency,
+		TaskTimeout:              settings.timeout.String(),
+		BackpressureCPUThreshold: settings.backpressureCfg.CPUThreshold,
+		BackpressureMemThreshold: settings.backpressureCfg.MemThreshold,
+		BackpressureDelay:        settings.backpressureCfg.Delay.String(),
+		RetryBaseDelay:           settings.retryBase.String(),
+		RetryMaxDelay:            settings.retryMax.String(),
 	})
 }
 
