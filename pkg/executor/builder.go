@@ -140,6 +140,10 @@ type CTEStorages struct {
 	ResTbl    cteutil.Storage
 	IterInTbl cteutil.Storage
 	Producer  *cteProducer
+	// initOnce ensures storage initialization (including Producer setup) is executed once.
+	initOnce sync.Once
+	// initErr records initialization error from initOnce.
+	initErr error
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
@@ -6117,90 +6121,33 @@ func (b *executorBuilder) buildTableSample(v *physicalop.PhysicalTableSample) *T
 }
 
 func (b *executorBuilder) buildCTE(v *physicalop.PhysicalCTE) exec.Executor {
-	if b.Ti != nil {
-		b.Ti.UseNonRecursive = true
-	}
-	if v.RecurPlan != nil && b.Ti != nil {
-		b.Ti.UseRecursive = true
-	}
+	b.withStmtCtxLock(func() {
+		if b.Ti != nil {
+			b.Ti.UseNonRecursive = true
+			if v.RecurPlan != nil {
+				b.Ti.UseRecursive = true
+			}
+		}
+	})
 
-	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
-	if !ok {
-		b.err = errors.New("type assertion for CTEStorageMap failed")
+	storages, err := b.loadOrStoreCTEStorages(v.CTE.IDForStorage)
+	if err != nil {
+		b.err = err
 		return nil
 	}
 
-	chkSize := b.ctx.GetSessionVars().MaxChunkSize
-	// iterOutTbl will be constructed in CTEExec.Open().
-	var producer *cteProducer
-	storages, ok := storageMap[v.CTE.IDForStorage]
-	if ok {
-		// Storage already setup.
-		producer = storages.Producer
-	} else {
-		if v.SeedPlan == nil {
-			b.err = errors.New("cte.seedPlan cannot be nil")
-			return nil
-		}
-		// Build seed part.
-		corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
-		seedExec := b.build(v.SeedPlan)
-		if b.err != nil {
-			return nil
-		}
+	storages.initOnce.Do(func() {
+		storages.initErr = b.buildCTEStorageProducer(v, storages)
+	})
+	if storages.initErr != nil {
+		b.err = storages.initErr
+		return nil
+	}
 
-		// Setup storages.
-		tps := seedExec.RetFieldTypes()
-		resTbl := cteutil.NewStorageRowContainer(tps, chkSize)
-		if err := resTbl.OpenAndRef(); err != nil {
-			b.err = err
-			return nil
-		}
-		iterInTbl := cteutil.NewStorageRowContainer(tps, chkSize)
-		if err := iterInTbl.OpenAndRef(); err != nil {
-			b.err = err
-			return nil
-		}
-		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
-
-		// Build recursive part.
-		var recursiveExec exec.Executor
-		if v.RecurPlan != nil {
-			recursiveExec = b.build(v.RecurPlan)
-			if b.err != nil {
-				return nil
-			}
-			corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
-		}
-
-		var sel []int
-		if v.CTE.IsDistinct {
-			sel = make([]int, chkSize)
-			for i := range chkSize {
-				sel[i] = i
-			}
-		}
-
-		var corColHashCodes [][]byte
-		for _, corCol := range corCols {
-			corColHashCodes = append(corColHashCodes, getCorColHashCode(corCol))
-		}
-
-		producer = &cteProducer{
-			ctx:             b.ctx,
-			seedExec:        seedExec,
-			recursiveExec:   recursiveExec,
-			resTbl:          resTbl,
-			iterInTbl:       iterInTbl,
-			isDistinct:      v.CTE.IsDistinct,
-			sel:             sel,
-			hasLimit:        v.CTE.HasLimit,
-			limitBeg:        v.CTE.LimitBeg,
-			limitEnd:        v.CTE.LimitEnd,
-			corCols:         corCols,
-			corColHashCodes: corColHashCodes,
-		}
-		storageMap[v.CTE.IDForStorage].Producer = producer
+	producer := storages.Producer
+	if producer == nil {
+		b.err = errors.Errorf("producer should already be set up by CTEExec(id: %d)", v.CTE.IDForStorage)
+		return nil
 	}
 
 	return &CTEExec{
@@ -6209,20 +6156,139 @@ func (b *executorBuilder) buildCTE(v *physicalop.PhysicalCTE) exec.Executor {
 	}
 }
 
-func (b *executorBuilder) buildCTETableReader(v *physicalop.PhysicalCTETable) exec.Executor {
-	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+func (b *executorBuilder) loadCTEStorages(storageID int) (*CTEStorages, error) {
+	var storages *CTEStorages
+	var ok bool
+	b.withStmtCtxLock(func() {
+		storageMap, castOK := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+		ok = castOK
+		if !castOK {
+			return
+		}
+		storages = storageMap[storageID]
+	})
 	if !ok {
-		b.err = errors.New("type assertion for CTEStorageMap failed")
+		return nil, errors.New("type assertion for CTEStorageMap failed")
+	}
+	return storages, nil
+}
+
+func (b *executorBuilder) loadOrStoreCTEStorages(storageID int) (*CTEStorages, error) {
+	var storages *CTEStorages
+	var ok bool
+	b.withStmtCtxLock(func() {
+		storageMap, castOK := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+		ok = castOK
+		if !castOK {
+			return
+		}
+		storages = storageMap[storageID]
+		if storages == nil {
+			storages = &CTEStorages{}
+			storageMap[storageID] = storages
+		}
+	})
+	if !ok {
+		return nil, errors.New("type assertion for CTEStorageMap failed")
+	}
+	return storages, nil
+}
+
+func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, storages *CTEStorages) error {
+	if v.SeedPlan == nil {
+		return errors.New("cte.seedPlan cannot be nil")
+	}
+
+	// Build seed part.
+	corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
+	seedExec := b.build(v.SeedPlan)
+	if b.err != nil {
+		return b.err
+	}
+
+	// Setup storages.
+	chkSize := b.ctx.GetSessionVars().MaxChunkSize
+	tps := seedExec.RetFieldTypes()
+	resTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+	if err := resTbl.OpenAndRef(); err != nil {
+		return err
+	}
+	iterInTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+	if err := iterInTbl.OpenAndRef(); err != nil {
+		if closeErr := resTbl.DerefAndClose(); closeErr != nil {
+			return closeErr
+		}
+		return err
+	}
+	b.withStmtCtxLock(func() {
+		storages.ResTbl = resTbl
+		storages.IterInTbl = iterInTbl
+	})
+
+	// Build recursive part.
+	var recursiveExec exec.Executor
+	if v.RecurPlan != nil {
+		recursiveExec = b.build(v.RecurPlan)
+		if b.err != nil {
+			return b.err
+		}
+		corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
+	}
+
+	var sel []int
+	if v.CTE.IsDistinct {
+		sel = make([]int, chkSize)
+		for i := range chkSize {
+			sel[i] = i
+		}
+	}
+
+	corColHashCodes := make([][]byte, 0, len(corCols))
+	for _, corCol := range corCols {
+		corColHashCodes = append(corColHashCodes, getCorColHashCode(corCol))
+	}
+
+	producer := &cteProducer{
+		ctx:             b.ctx,
+		seedExec:        seedExec,
+		recursiveExec:   recursiveExec,
+		resTbl:          resTbl,
+		iterInTbl:       iterInTbl,
+		isDistinct:      v.CTE.IsDistinct,
+		sel:             sel,
+		hasLimit:        v.CTE.HasLimit,
+		limitBeg:        v.CTE.LimitBeg,
+		limitEnd:        v.CTE.LimitEnd,
+		corCols:         corCols,
+		corColHashCodes: corColHashCodes,
+	}
+	b.withStmtCtxLock(func() {
+		storages.Producer = producer
+	})
+	return nil
+}
+
+func (b *executorBuilder) buildCTETableReader(v *physicalop.PhysicalCTETable) exec.Executor {
+	storages, err := b.loadCTEStorages(v.IDForStorage)
+	if err != nil {
+		b.err = err
 		return nil
 	}
-	storages, ok := storageMap[v.IDForStorage]
-	if !ok {
+	if storages == nil {
+		b.err = errors.Errorf("iterInTbl should already be set up by CTEExec(id: %d)", v.IDForStorage)
+		return nil
+	}
+	var iterInTbl cteutil.Storage
+	b.withStmtCtxLock(func() {
+		iterInTbl = storages.IterInTbl
+	})
+	if iterInTbl == nil {
 		b.err = errors.Errorf("iterInTbl should already be set up by CTEExec(id: %d)", v.IDForStorage)
 		return nil
 	}
 	return &CTETableReaderExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		iterInTbl:    storages.IterInTbl,
+		iterInTbl:    iterInTbl,
 		chkIdx:       0,
 	}
 }
