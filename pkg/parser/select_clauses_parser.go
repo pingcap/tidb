@@ -220,7 +220,11 @@ func (p *HandParser) parseLockTablesAndModifiers(
 	// Optional: OF tbl_name [, tbl_name ...]
 	if _, ok := p.accept(of); ok {
 		for {
-			lockNode.Tables = append(lockNode.Tables, p.parseTableName())
+			tn := p.parseTableName()
+			if tn == nil {
+				return
+			}
+			lockNode.Tables = append(lockNode.Tables, tn)
 			if _, ok := p.accept(','); !ok {
 				break
 			}

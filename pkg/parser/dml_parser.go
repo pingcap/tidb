@@ -133,7 +133,11 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		} else {
 			// Column list: (c1, c2, ...)
 			for {
-				stmt.Columns = append(stmt.Columns, p.parseColumnName())
+				col := p.parseColumnName()
+				if col == nil {
+					return nil
+				}
+				stmt.Columns = append(stmt.Columns, col)
 				if _, ok := p.accept(','); !ok {
 					break
 				}
@@ -208,6 +212,9 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		p.expect(update)
 		for {
 			assign := p.parseAssignment()
+			if assign == nil {
+				return nil
+			}
 			stmt.OnDuplicate = append(stmt.OnDuplicate, assign)
 			if _, ok := p.accept(','); !ok {
 				break
@@ -306,6 +313,9 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 	p.expect(set)
 	for {
 		assign := p.parseAssignment()
+		if assign == nil {
+			return nil
+		}
 		stmt.List = append(stmt.List, assign)
 		if _, ok := p.accept(','); !ok {
 			break

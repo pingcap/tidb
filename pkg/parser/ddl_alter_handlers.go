@@ -272,15 +272,24 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 	// ALTER [COLUMN] col_name {SET DEFAULT expr | DROP DEFAULT}
 	p.accept(column)
 	spec.OldColumnName = p.parseColumnName()
+	if spec.OldColumnName == nil {
+		return nil
+	}
 	if _, ok := p.accept(set); ok {
 		p.expect(defaultKwd)
 		spec.Tp = ast.AlterTableAlterColumn
 		colOpt := Alloc[ast.ColumnOption](p.arena)
 		if _, ok := p.accept('('); ok {
 			colOpt.Expr = p.parseExpression(precNone)
+			if colOpt.Expr == nil {
+				return nil
+			}
 			p.expect(')')
 		} else {
 			expr := p.parseExpression(precNone)
+			if expr == nil {
+				return nil
+			}
 			// Enforce constraints: SignedLiteral
 			isValid := false
 			if _, ok := expr.(ast.ValueExpr); ok {

@@ -124,6 +124,9 @@ func (p *HandParser) parseAlterTableSpec() *ast.AlterTableSpec {
 		for {
 			item := Alloc[ast.AlterOrderItem](p.arena)
 			item.Column = p.parseColumnName()
+			if item.Column == nil {
+				return nil
+			}
 			if _, ok := p.accept(desc); ok {
 				item.Desc = true
 			} else if _, ok := p.accept(asc); ok {
@@ -528,6 +531,9 @@ func (p *HandParser) parseAlterTableSplitOption(opt *ast.SplitIndexOption) {
 				var row []ast.ExprNode
 				for {
 					expr := p.parseExpression(precNone)
+					if expr == nil {
+						return
+					}
 					row = append(row, expr)
 					if _, ok := p.accept(','); !ok {
 						break
@@ -538,6 +544,9 @@ func (p *HandParser) parseAlterTableSplitOption(opt *ast.SplitIndexOption) {
 			} else {
 				// Single value without outer parens?
 				expr := p.parseExpression(precNone)
+				if expr == nil {
+					return
+				}
 				splitOpt.ValueLists = append(splitOpt.ValueLists, []ast.ExprNode{expr})
 			}
 			if _, ok := p.accept(','); !ok {

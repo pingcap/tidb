@@ -288,6 +288,9 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			// expressions, and unary +/- but does NOT consume infix operators like
 			// NOT/AND/OR, which avoids greedily consuming column options like NOT NULL.
 			option.Expr = p.parsePrefixExpr(0)
+			if option.Expr == nil {
+				return nil
+			}
 
 			// Unwrap nested parentheses for inspection and normalization
 			var inner ast.ExprNode = option.Expr
@@ -373,6 +376,9 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			p.expect(update)
 			option.Tp = ast.ColumnOptionOnUpdate
 			option.Expr = p.parseExpression(precNone) // CURRENT_TIMESTAMP etc.
+			if option.Expr == nil {
+				return nil
+			}
 
 			// ON UPDATE only accepts specific function calls, not arbitrary expressions or parenthesized expressions.
 			// Parser.y: | "ON" "UPDATE" NowSymOptionFraction
@@ -429,6 +435,9 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			option.Enforced = true
 			p.expect('(')
 			option.Expr = p.parseExpression(precNone)
+			if option.Expr == nil {
+				return nil
+			}
 			p.expect(')')
 			if p.peek().Tp == not && p.peekN(1).IsKeyword("ENFORCED") {
 				p.next()
@@ -444,6 +453,9 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			option.Enforced = true // default is ENFORCED
 			p.expect('(')
 			option.Expr = p.parseExpression(precNone)
+			if option.Expr == nil {
+				return nil
+			}
 			p.expect(')')
 			// EnforcedOrNotOrNotNullOpt: parser.y line 3732
 			// NOT NULL → injects both CHECK and a separate ColumnOptionNotNull

@@ -66,8 +66,12 @@ func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
 
 	// Optional HAVING clause.
 	if _, ok := p.accept(having); ok {
+		expr := p.parseExpression(precNone)
+		if expr == nil {
+			return nil
+		}
 		having := Alloc[ast.HavingClause](p.arena)
-		having.Expr = p.parseExpression(precNone)
+		having.Expr = expr
 		stmt.Having = having
 	}
 

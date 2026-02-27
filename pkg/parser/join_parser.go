@@ -124,13 +124,17 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 			join.NaturalJoin = true
 			lhs = join
 		} else if _, ok := p.accept(on); ok {
+			onExpr := p.parseExpression(precNone)
+			if onExpr == nil {
+				return nil
+			}
 			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
 			join.StraightJoin = straight
 			on := Alloc[ast.OnCondition](p.arena)
-			on.Expr = p.parseExpression(precNone)
+			on.Expr = onExpr
 			join.On = on
 			lhs = join
 		} else if _, ok := p.accept(using); ok {
@@ -219,13 +223,17 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 			join.NaturalJoin = true
 			lhs = join
 		} else if _, ok := p.accept(on); ok {
+			condExpr := p.parseExpression(precNone)
+			if condExpr == nil {
+				return nil
+			}
 			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
 			join.StraightJoin = straight
 			cond := Alloc[ast.OnCondition](p.arena)
-			cond.Expr = p.parseExpression(precNone)
+			cond.Expr = condExpr
 			join.On = cond
 			lhs = join
 		} else if _, ok := p.accept(using); ok {
@@ -548,8 +556,12 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			return nil
 		}
 		p.next() // consume TIMESTAMP
+		tsExpr := p.parseExpression(precNone)
+		if tsExpr == nil {
+			return nil
+		}
 		asOfClause := Alloc[ast.AsOfClause](p.arena)
-		asOfClause.TsExpr = p.parseExpression(precNone)
+		asOfClause.TsExpr = tsExpr
 		if tn, ok := res.(*ast.TableName); ok {
 			tn.AsOf = asOfClause
 		}
@@ -696,13 +708,17 @@ func (p *HandParser) continueParsingJoinFrom(left ast.ResultSetNode) *ast.Join {
 			join.NaturalJoin = true
 			lhs = join
 		} else if _, ok := p.accept(on); ok {
+			onExpr := p.parseExpression(precNone)
+			if onExpr == nil {
+				return nil
+			}
 			join := p.arena.AllocJoin()
 			join.Left = lhs
 			join.Right = rhs
 			join.Tp = joinType
 			join.StraightJoin = straight
 			onCond := Alloc[ast.OnCondition](p.arena)
-			onCond.Expr = p.parseExpression(precNone)
+			onCond.Expr = onExpr
 			join.On = onCond
 			lhs = join
 		} else if _, ok := p.accept(using); ok {

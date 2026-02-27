@@ -160,6 +160,9 @@ func (p *HandParser) parseVariableAssignment() *ast.VariableAssignment {
 			return nil
 		}
 		va.Value = p.parseExpression(precNone)
+		if va.Value == nil {
+			return nil
+		}
 		return va
 
 	case doubleAtIdentifier:
@@ -428,6 +431,9 @@ func (p *HandParser) parseSetConfig() ast.StmtNode {
 
 	// Parse Value
 	stmt.Value = p.parseExpression(precNone)
+	if stmt.Value == nil {
+		return nil
+	}
 
 	return stmt
 }
@@ -516,6 +522,9 @@ func (p *HandParser) parseSetTransaction(isGlobal bool, hasScope bool) ast.StmtN
 					p.expect(timestampType)
 					va.Name = "tx_read_ts"
 					va.Value = p.parseExpression(precNone)
+					if va.Value == nil {
+						return nil
+					}
 				} else if p.peek().Tp == as {
 					p.next()
 					if p.peek().Tp == of {
@@ -523,6 +532,9 @@ func (p *HandParser) parseSetTransaction(isGlobal bool, hasScope bool) ast.StmtN
 						p.expect(timestampType)
 						va.Name = "tx_read_ts"
 						va.Value = p.parseExpression(precNone)
+						if va.Value == nil {
+							return nil
+						}
 					} else {
 						// Just 'AS' without 'OF'? Should not happen here in valid SQL
 						p.syntaxErrorAt(p.peek())

@@ -190,6 +190,9 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 		if p.peekN(1).Tp != '(' {
 			p.next() // consume INTERVAL
 			intervalExpr := p.parseExpression(precNone)
+			if intervalExpr == nil {
+				return nil
+			}
 			unit := p.parseTimeUnit()
 			if unit == nil {
 				return nil

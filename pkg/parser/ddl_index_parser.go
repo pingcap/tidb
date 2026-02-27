@@ -68,6 +68,9 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		cons.Tp = ast.ConstraintCheck
 		p.expect('(')
 		cons.Expr = p.parseExpression(precNone)
+		if cons.Expr == nil {
+			return nil
+		}
 		p.expect(')')
 		if _, ok := p.accept(not); ok {
 			p.expect(enforced)
@@ -387,6 +390,9 @@ func (p *HandParser) parseIndexOptions() *ast.IndexOption {
 		case where:
 			p.next()
 			opt.Condition = p.parseExpression(precNone)
+			if opt.Condition == nil {
+				return nil
+			}
 		case global, local:
 			opt.Global = p.next().Tp == global
 		case secondaryEngineAttribute:

@@ -59,6 +59,9 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 			intervalStartOff := intervalTok.Offset
 			p.expect('(')
 			intervalExpr := p.parseExpression(0)
+			if intervalExpr == nil {
+				return nil
+			}
 
 			var unit *ast.TimeUnitExpr
 			if tok := p.peek(); tok.Tp != ')' && tok.Tp != 0 {
@@ -130,6 +133,9 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 		// INTERVAL expr unit
 		if _, ok := p.accept(interval); ok {
 			opt.Expr = p.parseExpression(0)
+			if opt.Expr == nil {
+				return nil
+			}
 			unit := p.parseTimeUnit()
 			if unit != nil {
 				opt.Unit = unit.Unit
@@ -333,6 +339,9 @@ func (p *HandParser) parseSplitOption() *ast.SplitOption {
 		p.expect('(')
 		for {
 			expr := p.parseExpression(precNone)
+			if expr == nil {
+				return nil
+			}
 			opt.Lower = append(opt.Lower, expr)
 			if _, ok := p.accept(','); !ok {
 				break
@@ -346,6 +355,9 @@ func (p *HandParser) parseSplitOption() *ast.SplitOption {
 		p.expect('(')
 		for {
 			expr := p.parseExpression(precNone)
+			if expr == nil {
+				return nil
+			}
 			opt.Upper = append(opt.Upper, expr)
 			if _, ok := p.accept(','); !ok {
 				break
@@ -363,6 +375,9 @@ func (p *HandParser) parseSplitOption() *ast.SplitOption {
 			p.expect('(')
 			for {
 				expr := p.parseExpression(precNone)
+				if expr == nil {
+					return nil
+				}
 				exprs = append(exprs, expr)
 				if _, ok := p.accept(','); !ok {
 					break

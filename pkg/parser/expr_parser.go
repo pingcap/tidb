@@ -519,11 +519,15 @@ func (p *HandParser) parseNotInfixExpr(left ast.ExprNode) ast.ExprNode {
 func (p *HandParser) parseLikeExpr(left ast.ExprNode, isNot bool, isLike bool) ast.ExprNode {
 	p.next() // consume LIKE or ILIKE
 
+	pattern := p.parseExpression(precPredicate + 1)
+	if pattern == nil {
+		return nil
+	}
 	node := Alloc[ast.PatternLikeOrIlikeExpr](p.arena)
 	node.Expr = left
 	node.Not = isNot
 	node.IsLike = isLike
-	node.Pattern = p.parseExpression(precPredicate + 1)
+	node.Pattern = pattern
 
 	// Optional ESCAPE clause.
 	// Note: 'escape' can be either an identifier or the escape keyword token.
@@ -550,18 +554,23 @@ func (p *HandParser) parseLikeExpr(left ast.ExprNode, isNot bool, isLike bool) a
 func (p *HandParser) parseBetweenExpr(left ast.ExprNode, isNot bool) ast.ExprNode {
 	p.next() // consume BETWEEN
 
+	low := p.parseExpression(precPredicate + 1)
+	if low == nil {
+		return nil
+	}
+	if _, ok := p.expect(and); !ok {
+		return nil
+	}
+	high := p.parseExpression(precPredicate)
+	if high == nil {
+		return nil
+	}
+
 	node := Alloc[ast.BetweenExpr](p.arena)
 	node.Expr = left
 	node.Not = isNot
-
-	// Parse the low bound at BitExpr level (precPredicate + 1) so AND binds to BETWEEN,
-	// not to logical AND.
-	node.Left = p.parseExpression(precPredicate + 1)
-	p.expect(and)
-	// Parse the high bound at PredicateExpr level (precPredicate) so nested BETWEEN/IN/LIKE
-	// are allowed on the right. This matches the yacc grammar:
-	//   BitExpr BETWEEN BitExpr AND PredicateExpr
-	node.Right = p.parseExpression(precPredicate)
+	node.Left = low
+	node.Right = high
 
 	return node
 }
@@ -570,10 +579,14 @@ func (p *HandParser) parseBetweenExpr(left ast.ExprNode, isNot bool) ast.ExprNod
 func (p *HandParser) parseRegexpExpr(left ast.ExprNode, isNot bool) ast.ExprNode {
 	p.next() // consume REGEXP or RLIKE
 
+	pattern := p.parseExpression(precPredicate + 1)
+	if pattern == nil {
+		return nil
+	}
 	node := Alloc[ast.PatternRegexpExpr](p.arena)
 	node.Expr = left
 	node.Not = isNot
-	node.Pattern = p.parseExpression(precPredicate + 1)
+	node.Pattern = pattern
 
 	return node
 }
@@ -869,7 +882,11 @@ func (p *HandParser) parseMatchAgainstExpr() ast.ExprNode {
 	// AGAINST (expr [modifier])
 	p.expect(against)
 	p.expect('(')
-	node.Against = p.parseExpression(precPredicate + 1)
+	againstExpr := p.parseExpression(precPredicate + 1)
+	if againstExpr == nil {
+		return nil
+	}
+	node.Against = againstExpr
 
 	// Optional search modifier.
 	if _, ok := p.accept(in); ok {
@@ -943,7 +960,13 @@ func (p *HandParser) parseDateArith(left ast.ExprNode, opCode opcode.Op) ast.Exp
 	}
 	p.next() // consume INTERVAL
 	intervalExpr := p.parseExpression(precNone)
+	if intervalExpr == nil {
+		return nil
+	}
 	unit := p.parseTimeUnit()
+	if unit == nil {
+		return nil
+	}
 	fnName := "DATE_ADD"
 	if opCode == opcode.Minus {
 		fnName = "DATE_SUB"

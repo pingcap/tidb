@@ -163,10 +163,18 @@ func (p *HandParser) parseCaseExpr() ast.ExprNode {
 		if _, ok := p.accept(when); !ok {
 			break
 		}
-		when := Alloc[ast.WhenClause](p.arena)
-		when.Expr = p.parseExpression(precNone)
+		whenExpr := p.parseExpression(precNone)
+		if whenExpr == nil {
+			return nil
+		}
 		p.expect(then)
-		when.Result = p.parseExpression(precNone)
+		resultExpr := p.parseExpression(precNone)
+		if resultExpr == nil {
+			return nil
+		}
+		when := Alloc[ast.WhenClause](p.arena)
+		when.Expr = whenExpr
+		when.Result = resultExpr
 		node.WhenClauses = append(node.WhenClauses, when)
 	}
 

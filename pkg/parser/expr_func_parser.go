@@ -185,7 +185,11 @@ func (p *HandParser) parseWindowSpec() ast.WindowSpec {
 func (p *HandParser) parsePartitionByClause() *ast.PartitionByClause {
 	clause := &ast.PartitionByClause{}
 	for {
-		item := &ast.ByItem{Expr: p.parseExpression(precNone)}
+		expr := p.parseExpression(precNone)
+		if expr == nil {
+			return nil
+		}
+		item := &ast.ByItem{Expr: expr}
 		clause.Items = append(clause.Items, item)
 		if _, ok := p.accept(','); !ok {
 			break
@@ -586,6 +590,9 @@ func (p *HandParser) parseDateAddSubFuncCall(node *ast.FuncCallExpr) ast.ExprNod
 	if _, ok := p.accept(interval); ok {
 		// ADDDATE(expr, INTERVAL expr unit)
 		intervalExpr := p.parseExpression(precNone)
+		if intervalExpr == nil {
+			return nil
+		}
 		unit := p.parseTimeUnit()
 		if unit == nil {
 			return nil
@@ -595,6 +602,9 @@ func (p *HandParser) parseDateAddSubFuncCall(node *ast.FuncCallExpr) ast.ExprNod
 	} else {
 		// ADDDATE(expr, N) → ADDDATE(expr, INTERVAL N DAY)
 		intervalExpr := p.parseExpression(precNone)
+		if intervalExpr == nil {
+			return nil
+		}
 		p.expect(')')
 		unit := &ast.TimeUnitExpr{Unit: ast.TimeUnitDay}
 		node.Args = []ast.ExprNode{dateExpr, intervalExpr, unit}
@@ -650,6 +660,9 @@ func (p *HandParser) parseGetFormatFuncCall(node *ast.FuncCallExpr) ast.ExprNode
 	}
 	p.expect(',')
 	arg2 := p.parseExpression(precNone)
+	if arg2 == nil {
+		return nil
+	}
 	p.expect(')')
 	node.Args = []ast.ExprNode{selector, arg2}
 	return node

@@ -195,12 +195,20 @@ func (p *HandParser) parseDoStmt() ast.StmtNode {
 	stmt := Alloc[ast.DoStmt](p.arena)
 	p.expect(do)
 	// Parse comma-separated expression list.
-	stmt.Exprs = []ast.ExprNode{p.parseExpression(precNone)}
+	firstExpr := p.parseExpression(precNone)
+	if firstExpr == nil {
+		return nil
+	}
+	stmt.Exprs = []ast.ExprNode{firstExpr}
 	for {
 		if _, ok := p.accept(','); !ok {
 			break
 		}
-		stmt.Exprs = append(stmt.Exprs, p.parseExpression(precNone))
+		expr := p.parseExpression(precNone)
+		if expr == nil {
+			return nil
+		}
+		stmt.Exprs = append(stmt.Exprs, expr)
 	}
 	return stmt
 }

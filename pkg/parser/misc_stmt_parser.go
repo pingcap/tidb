@@ -305,6 +305,9 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 			opt := Alloc[ast.DynamicCalibrateResourceOption](p.arena)
 			opt.Tp = optTp
 			opt.Ts = p.parseExpression(precNone)
+			if opt.Ts == nil {
+				return nil
+			}
 			stmt.DynamicCalibrateResourceOptionList = append(stmt.DynamicCalibrateResourceOptionList, opt)
 		case pk.IsKeyword("DURATION"):
 			p.next()
@@ -316,9 +319,15 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 				opt.StrValue = p.next().Lit
 			} else if _, ok := p.accept(interval); ok {
 				opt.Ts = p.parseExpression(precNone)
+				if opt.Ts == nil {
+					return nil
+				}
 				opt.Unit = p.parseTimeUnit().Unit
 			} else {
 				opt.Ts = p.parseExpression(precNone)
+				if opt.Ts == nil {
+					return nil
+				}
 			}
 			stmt.DynamicCalibrateResourceOptionList = append(stmt.DynamicCalibrateResourceOptionList, opt)
 		default:
@@ -337,7 +346,15 @@ func (p *HandParser) parseRecommendOptions() []ast.RecommendIndexOption {
 		nameTok := p.next()
 		opt.Option = nameTok.Lit
 		p.expectAny(eq, assignmentEq)
-		opt.Value = p.parseExpression(precNone).(ast.ValueExpr)
+		exprResult := p.parseExpression(precNone)
+		if exprResult == nil {
+			return nil
+		}
+		valExpr, ok := exprResult.(ast.ValueExpr)
+		if !ok {
+			return nil
+		}
+		opt.Value = valExpr
 		opts = append(opts, opt)
 		if _, ok := p.accept(','); !ok {
 			break
