@@ -66,7 +66,7 @@ func (m *countMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column) error {
+func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("count merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}

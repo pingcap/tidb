@@ -6,6 +6,7 @@ go_library(
         "exec.go",
         "merge.go",
         "merge_count.go",
+        "merge_minmax.go",
         "merge_sum.go",
         "writer.go",
     ],
@@ -23,6 +24,8 @@ go_library(
         "//pkg/table",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/collate",
+        "//pkg/util/codec",
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_sync//errgroup",
     ],
@@ -31,7 +34,10 @@ go_library(
 go_test(
     name = "mvdeltamergeagg_test",
     timeout = "short",
-    srcs = ["exec_test.go"],
+    srcs = [
+        "exec_test.go",
+        "merge_minmax_test.go",
+    ],
     embed = [":mvdeltamergeagg"],
     flaky = True,
     shard_count = 21,
