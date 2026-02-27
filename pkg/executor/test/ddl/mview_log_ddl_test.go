@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -365,12 +366,58 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 	mlogID := mlogTable.Meta().ID
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_batch_delete`").Check(testkit.Rows("5"))
+	maxCommitTS, err := strconv.ParseUint(fmt.Sprint(tk.MustQuery("select max(_tidb_commit_ts) from `$mlog$t_purge_batch_delete`").Rows()[0][0]), 10, 64)
+	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 2")
 	tk.MustExec("purge materialized view log on t_purge_batch_delete")
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_batch_delete`").Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("success 5"))
+	tk.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO is not null, LAST_PURGED_TSO >= %d from mysql.tidb_mlog_purge_info where MLOG_ID = %d", maxCommitTS, mlogID)).
+		Check(testkit.Rows("1 1"))
+}
+
+func TestPurgeMaterializedViewLogLastPurgedTSOShortCircuit(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_short_circuit (a int not null, b int)")
+	tk.MustExec("create materialized view log on t_purge_short_circuit (a, b) purge immediate")
+	tk.MustExec("create materialized view mv_purge_short_circuit (a, cnt) refresh fast next now() as select a, count(1) from t_purge_short_circuit group by a")
+	tk.MustExec("insert into t_purge_short_circuit values (1, 10), (1, 20), (2, 30)")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_purge_short_circuit"))
+	require.NoError(t, err)
+	mvID := mvTable.Meta().ID
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_short_circuit"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	maxCommitTS, err := strconv.ParseUint(fmt.Sprint(tk.MustQuery("select max(_tidb_commit_ts) from `$mlog$t_purge_short_circuit`").Rows()[0][0]), 10, 64)
+	require.NoError(t, err)
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d", maxCommitTS, mvID))
+
+	tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 2")
+	tk.MustExec("purge materialized view log on t_purge_short_circuit")
+	tk.MustQuery("select count(*) from `$mlog$t_purge_short_circuit`").Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows(fmt.Sprintf("%d", maxCommitTS)))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockPurgeMaterializedViewLogDeleteErr", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockPurgeMaterializedViewLogDeleteErr"))
+	}()
+
+	// `LAST_PURGED_TSO >= safe_purge_tso` should short-circuit before delete SQL execution.
+	tk.MustExec("purge materialized view log on t_purge_short_circuit")
+	tk.MustQuery("select count(*) from `$mlog$t_purge_short_circuit`").Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("success 0"))
+	tk.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows(fmt.Sprintf("%d", maxCommitTS)))
 }
 
 func TestPurgeMaterializedViewLogDeleteErrorNoDirtyWrite(t *testing.T) {
@@ -435,7 +482,7 @@ func TestPurgeMaterializedViewLogMissingPublicMViewRefreshRow(t *testing.T) {
 
 	tk.MustExec("create table t_purge_missing_public_refresh (a int)")
 	tk.MustExec("create materialized view log on t_purge_missing_public_refresh (a) purge immediate")
-	tk.MustExec("create materialized view mv_purge_missing_public_refresh (a, cnt) refresh fast next 300 as select a, count(1) from t_purge_missing_public_refresh group by a")
+	tk.MustExec("create materialized view mv_purge_missing_public_refresh (a, cnt) refresh fast next now() as select a, count(1) from t_purge_missing_public_refresh group by a")
 
 	is := dom.InfoSchema()
 	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_purge_missing_public_refresh"))

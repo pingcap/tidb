@@ -15,9 +15,10 @@ It also records the design rationale and follow-up items for the refined MV/MLog
 - Execution is handled by a dedicated utility executor (`PurgeMaterializedViewLogExec`).
 - No DDL job is submitted for purge execution.
 - Purge metadata is split into:
-  - `mysql.tidb_mlog_purge_info`: metadata + lock-row carrier.
+  - `mysql.tidb_mlog_purge_info`: metadata + lock-row carrier (`NEXT_TIME`, `LAST_PURGED_TSO`).
   - `mysql.tidb_mlog_purge_hist`: per-purge lifecycle/result records.
 - After lock acquisition, purge inserts one `running` history row; when purge finishes, it updates the same history row to final status.
+- `LAST_PURGED_TSO` is used as a persisted purge checkpoint to skip redundant purge runs.
 
 ## Why utility execution (not DDL statement execution)
 
@@ -64,11 +65,13 @@ The statement must run as a standalone statement.
 1. Resolve base table and corresponding MLog table (`$mlog$<base_table>`).
 2. Create/get an internal system session.
 3. Execute purge in a batch loop, each batch in a separate pessimistic transaction.
-4. Use a row lock in `mysql.tidb_mlog_purge_info` as the cross-node mutex.
-5. Compute safe purge tso once.
+4. Use a row lock in `mysql.tidb_mlog_purge_info` as the cross-node mutex and read `LAST_PURGED_TSO`.
+5. Compute `safe_purge_tso` once.
 6. After first successful lock acquisition, insert one `running` row into `mysql.tidb_mlog_purge_hist`.
-7. Delete eligible MLog rows in batches.
-8. At statement end, update that history row to final status (`success` / `failed`) and fill completion fields.
+7. If `LAST_PURGED_TSO` is not null and `LAST_PURGED_TSO >= safe_purge_tso`, end this purge directly (no delete work in this run).
+8. Delete eligible MLog rows in batches.
+9. If a batch deletes `< batch_size` rows, update `LAST_PURGED_TSO = safe_purge_tso` in the same transaction before `COMMIT`.
+10. At statement end, update that history row to final status (`success` / `failed`) and fill completion fields.
 
 ## Internal context
 
@@ -81,12 +84,14 @@ The statement must run as a standalone statement.
 Each batch does:
 
 1. `BEGIN PESSIMISTIC`
-2. Acquire lock row with `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mlog_purge_info`
-3. (First successful lock only) calculate safe purge tso and create purge history (`running`) with a statement-unique `PURGE_JOB_ID`
-4. `DELETE ... WHERE _tidb_commit_ts <= safe_purge_tso LIMIT batch_size`
-5. `COMMIT`
+2. Acquire lock row and read `LAST_PURGED_TSO` with `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mlog_purge_info`
+3. (First successful lock only) calculate `safe_purge_tso` and create purge history (`running`) with a statement-unique `PURGE_JOB_ID`
+4. If `LAST_PURGED_TSO` is not null and `LAST_PURGED_TSO >= safe_purge_tso`, stop this purge directly.
+5. `DELETE ... WHERE _tidb_commit_ts <= safe_purge_tso LIMIT batch_size`
+6. If deleted rows `< batch_size`, update `LAST_PURGED_TSO = safe_purge_tso` before commit
+7. `COMMIT`
 
-Loop stops when deleted rows `< batch_size`.
+Loop stops when deleted rows `< batch_size`, or by the checkpoint short-circuit in step 4.
 
 After the loop exits (or exits with error), purge finalizes the `mysql.tidb_mlog_purge_hist` row for this `PURGE_JOB_ID`.
 
@@ -119,6 +124,12 @@ Rule:
 - Cap by current purge transaction start tso.
 - If no dependent MV exists, `safe_purge_tso` is purge transaction start tso.
 
+Checkpoint short-circuit:
+
+- At lock time, purge reads `LAST_PURGED_TSO` from `mysql.tidb_mlog_purge_info`.
+- If `LAST_PURGED_TSO` is not null and `LAST_PURGED_TSO >= safe_purge_tso`, purge can return without delete work.
+- `LAST_PURGED_TSO` advances only when a batch proves all rows with `_tidb_commit_ts <= safe_purge_tso` are deleted (`deleted_rows < batch_size`).
+
 Consistency guard for public MVs:
 
 - For public dependent MVs, all of them must have rows in `mysql.tidb_mview_refresh_info`.
@@ -129,7 +140,7 @@ Consistency guard for public MVs:
 Mutex granularity is per `MLOG_ID` via row lock in `mysql.tidb_mlog_purge_info`.
 
 - Lock SQL:
-  - `SELECT 1 FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = ? FOR UPDATE NOWAIT`
+  - `SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = ? FOR UPDATE NOWAIT`
 
 Outcomes:
 
@@ -149,6 +160,7 @@ Bootstrap creates:
 - `mysql.tidb_mlog_purge_info`
   - `MLOG_ID` (PK, lock row carrier)
   - `NEXT_TIME` (scheduling metadata)
+  - `LAST_PURGED_TSO` (last completed purge boundary checkpoint)
 - `mysql.tidb_mlog_purge_hist`
   - `PURGE_JOB_ID` (PK, one row per purge statement)
   - `MLOG_ID`
@@ -159,7 +171,9 @@ Bootstrap creates:
 
 Write responsibilities:
 
-- `tidb_mlog_purge_info`: only lock-row/scheduling metadata, no per-run result write.
+- `tidb_mlog_purge_info`:
+  - lock-row/scheduling metadata;
+  - update `LAST_PURGED_TSO` when one purge batch confirms all rows `<= safe_purge_tso` are deleted (`deleted_rows < batch_size`), and do it before committing that batch.
 - `tidb_mlog_purge_hist`:
   - insert one `running` row after lock acquisition;
   - update the same row when statement finishes.
@@ -220,5 +234,5 @@ This matches MV maintenance behavior and allows intended optimizer behavior for 
 ## Known gaps and follow-ups
 
 1. No background/asynchronous purge scheduler; purge is statement-driven.
-2. No resumable task/checkpoint framework (retry by rerunning statement).
+2. No resumable task framework beyond the `LAST_PURGED_TSO` boundary checkpoint (retry by rerunning statement).
 3. Additional observability (batch-level metrics / progress) can be improved.
