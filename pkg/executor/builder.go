@@ -6220,10 +6220,8 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 		}
 		return err
 	}
-	b.withStmtCtxLock(func() {
-		storages.ResTbl = resTbl
-		storages.IterInTbl = iterInTbl
-	})
+	storages.ResTbl = resTbl
+	storages.IterInTbl = iterInTbl
 
 	// Build recursive part.
 	var recursiveExec exec.Executor
@@ -6278,10 +6276,7 @@ func (b *executorBuilder) buildCTETableReader(v *physicalop.PhysicalCTETable) ex
 		b.err = errors.Errorf("iterInTbl should already be set up by CTEExec(id: %d)", v.IDForStorage)
 		return nil
 	}
-	var iterInTbl cteutil.Storage
-	b.withStmtCtxLock(func() {
-		iterInTbl = storages.IterInTbl
-	})
+	iterInTbl := storages.IterInTbl
 	if iterInTbl == nil {
 		b.err = errors.Errorf("iterInTbl should already be set up by CTEExec(id: %d)", v.IDForStorage)
 		return nil
