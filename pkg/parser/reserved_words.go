@@ -27,7 +27,7 @@ func IsReserved(tp int) bool {
 		distinct, distinctRow, div, doubleType, drop, dual,
 		elseKwd, elseIfKwd, enclosed, escaped, except, exists, exit, explain,
 		falseKwd, fetch, firstValue, floatType, float4Type, float8Type, forKwd,
-		force, foreign, from, full, fulltext,
+		force, foreign, from, fulltext,
 		generated, grant, group, groups,
 		having, highPriority, hourMicrosecond, hourMinute, hourSecond,
 		ifKwd, ignore, ilike, in, index, infile, inner, inout, insert, intType,
