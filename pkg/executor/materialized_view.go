@@ -118,6 +118,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	totalPurgeRows := int64(0)
 	safePurgeTSOReady := false
 	safePurgeTSO := uint64(0)
+	lockedLastPurgedTSO := uint64(0)
+	lockedLastPurgedTSOReady := false
 	purgeJobID := uint64(0)
 	purgeHistRunningInserted := false
 
@@ -154,7 +156,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			return errors.Trace(err)
 		}
 
-		if err := acquireMaterializedViewLogPurgeLock(kctx, sqlExec, schemaName, s.Table.Name, mlogID); err != nil {
+		lastPurgedTSO, hasLastPurgedTSO, err := acquireMaterializedViewLogPurgeLock(kctx, sqlExec, schemaName, s.Table.Name, mlogID)
+		if err != nil {
 			_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 			if isMLogPurgeLockConflict(err) && totalPurgeRows > 0 {
 				if histErr := finalizeSuccess(); histErr != nil {
@@ -176,6 +179,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 
 		// Calculate safe purge tso once at the first successful lock acquisition.
 		if !safePurgeTSOReady {
+			lockedLastPurgedTSO = lastPurgedTSO
+			lockedLastPurgedTSOReady = hasLastPurgedTSO
+
 			txn, err := purgeSctx.Txn(true)
 			if err != nil {
 				_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
@@ -212,7 +218,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			safePurgeTSOReady = true
 		}
 
-		if batchErr == nil && safePurgeTSO > 0 {
+		skipDeleteByCheckpoint := batchErr == nil && lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
+		if batchErr == nil && !skipDeleteByCheckpoint && safePurgeTSO > 0 {
 			batchPurgeRows, batchErr = purgeMaterializedViewLogData(
 				kctx,
 				sqlExec,
@@ -222,6 +229,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				safePurgeTSO,
 				batchSize,
 			)
+		}
+		if batchErr == nil && !skipDeleteByCheckpoint && batchPurgeRows < batchSize {
+			batchErr = updateMaterializedViewLogLastPurgedTSO(kctx, sqlExec, mlogID, safePurgeTSO)
 		}
 		if batchErr != nil {
 			_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
@@ -392,7 +402,7 @@ func acquireMaterializedViewLogPurgeLock(
 	schemaName pmodel.CIStr,
 	baseTableName pmodel.CIStr,
 	mlogID int64,
-) error {
+) (lastPurgedTSO uint64, hasLastPurgedTSO bool, _ error) {
 	forceConflict := false
 	failpoint.Inject("mockPurgeMaterializedViewLogLockConflict", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
@@ -400,7 +410,7 @@ func acquireMaterializedViewLogPurgeLock(
 		}
 	})
 	if forceConflict {
-		return errors.Annotatef(
+		return 0, false, errors.Annotatef(
 			errMLogPurgeLockConflict,
 			"another purge is running for materialized view log on %s.%s, please retry later",
 			schemaName.O,
@@ -409,11 +419,11 @@ func acquireMaterializedViewLogPurgeLock(
 	}
 
 	// Acquire the mutual exclusion lock row for this MLOG_ID. NOWAIT ensures we fail fast if another purge is running.
-	lockSQL := sqlescape.MustEscapeSQL("SELECT 1 FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT", mlogID)
+	lockSQL := sqlescape.MustEscapeSQL("SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT", mlogID)
 	rows, err := sqlexec.ExecSQL(kctx, sqlExec, lockSQL)
 	if err != nil {
 		if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
-			return errors.Annotatef(
+			return 0, false, errors.Annotatef(
 				errMLogPurgeLockConflict,
 				"another purge is running for materialized view log on %s.%s, please retry later",
 				schemaName.O,
@@ -421,14 +431,21 @@ func acquireMaterializedViewLogPurgeLock(
 			)
 		}
 		if infoschema.ErrTableNotExists.Equal(err) {
-			return errors.New("required system table mysql.tidb_mlog_purge_info does not exist")
+			return 0, false, errors.New("required system table mysql.tidb_mlog_purge_info does not exist")
 		}
-		return errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return errors.Errorf("mlog purge lock row does not exist for mlog id %d", mlogID)
+		return 0, false, errors.Errorf("mlog purge lock row does not exist for mlog id %d", mlogID)
 	}
-	return nil
+	if rows[0].IsNull(0) {
+		return 0, false, nil
+	}
+	v := rows[0].GetInt64(0)
+	if v < 0 {
+		return 0, false, errors.Errorf("invalid LAST_PURGED_TSO %d for mlog id %d", v, mlogID)
+	}
+	return uint64(v), true, nil
 }
 
 func isMLogPurgeLockConflict(err error) bool {
@@ -528,6 +545,25 @@ func purgeMaterializedViewLogData(
 		return 0, errors.Trace(err)
 	}
 	return int64(sessVars.StmtCtx.AffectedRows()), nil
+}
+
+func updateMaterializedViewLogLastPurgedTSO(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mlogID int64,
+	lastPurgedTSO uint64,
+) error {
+	updateSQL := `UPDATE mysql.tidb_mlog_purge_info
+	SET LAST_PURGED_TSO = %?
+	WHERE MLOG_ID = %?`
+	_, err := sqlExec.ExecuteInternal(kctx, updateSQL, lastPurgedTSO, mlogID)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("required system table mysql.tidb_mlog_purge_info does not exist")
+		}
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func insertMLogPurgeHistRunning(
