@@ -5040,7 +5040,28 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 			return nil, errors.New("index join inner hash join cannot locate lookup child")
 		}
 		childExecs := make([]exec.Executor, 2)
-		var err error
+		type hashJoinExecutor interface {
+			exec.Executor
+			OpenSelf() error
+		}
+		var (
+			err      error
+			joinExec hashJoinExecutor
+		)
+		defer func() {
+			if err == nil {
+				return
+			}
+			if joinExec != nil {
+				terror.Log(exec.Close(joinExec))
+				return
+			}
+			for _, childExec := range childExecs {
+				if childExec != nil {
+					terror.Log(exec.Close(childExec))
+				}
+			}
+		}()
 		childExecs[childIdx], err = builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[childIdx], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -5048,25 +5069,34 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		otherIdx := 1 - childIdx
 		childExecs[otherIdx] = builder.executorBuilder.build(v.Children()[otherIdx])
 		if builder.executorBuilder.err != nil {
-			return nil, builder.executorBuilder.err
+			err = builder.executorBuilder.err
+			return nil, err
 		}
 		if err = exec.Open(ctx, childExecs[otherIdx]); err != nil {
 			return nil, err
 		}
 		if builder.ctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
-			joinExec := builder.executorBuilder.buildHashJoinV2FromChildExecs(childExecs[0], childExecs[1], v)
+			joinExec = builder.executorBuilder.buildHashJoinV2FromChildExecs(childExecs[0], childExecs[1], v)
 			if builder.executorBuilder.err != nil {
-				return nil, builder.executorBuilder.err
+				err = builder.executorBuilder.err
+				return nil, err
 			}
 			err = joinExec.OpenSelf()
-			return joinExec, err
+			if err != nil {
+				return nil, err
+			}
+			return joinExec, nil
 		}
-		joinExec := builder.executorBuilder.buildHashJoinFromChildExecs(childExecs[0], childExecs[1], v)
+		joinExec = builder.executorBuilder.buildHashJoinFromChildExecs(childExecs[0], childExecs[1], v)
 		if builder.executorBuilder.err != nil {
-			return nil, builder.executorBuilder.err
+			err = builder.executorBuilder.err
+			return nil, err
 		}
 		err = joinExec.OpenSelf()
-		return joinExec, err
+		if err != nil {
+			return nil, err
+		}
+		return joinExec, nil
 	case *mockPhysicalIndexReader:
 		return v.e, nil
 	}
