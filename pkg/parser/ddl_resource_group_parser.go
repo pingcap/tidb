@@ -211,7 +211,9 @@ func (p *HandParser) parseRunawayOption() *ast.ResourceGroupRunawayOption {
 		p.accept(eq)
 		rule := &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleProcessedKeys}
 		if t, ok := p.accept(intLit); ok {
-			rule.ProcessedKeys = t.Item.(int64)
+			if v, ok := tokenItemToInt64(t.Item); ok {
+				rule.ProcessedKeys = v
+			}
 		}
 		return &ast.ResourceGroupRunawayOption{
 			Tp:         ast.RunawayRule,
@@ -221,7 +223,9 @@ func (p *HandParser) parseRunawayOption() *ast.ResourceGroupRunawayOption {
 		p.accept(eq)
 		rule := &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleRequestUnit}
 		if t, ok := p.accept(intLit); ok {
-			rule.RequestUnit = t.Item.(int64)
+			if v, ok := tokenItemToInt64(t.Item); ok {
+				rule.RequestUnit = v
+			}
 		}
 		return &ast.ResourceGroupRunawayOption{
 			Tp:         ast.RunawayRule,
