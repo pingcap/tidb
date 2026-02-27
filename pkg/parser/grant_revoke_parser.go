@@ -424,6 +424,11 @@ func (p *HandParser) parseExtendedPrivName(initPart string) (mysql.PrivilegeType
 		if tok.Tp == ',' || tok.Tp == on || tok.Tp == '(' || tok.Tp == ';' || tok.Tp == 0 {
 			break
 		}
+		// Extended privilege names consist of keywords and identifiers,
+		// not string literals or user/system variables (e.g. 'C' @host).
+		if tok.Tp == stringLit || tok.Tp == singleAtIdentifier || tok.Tp == doubleAtIdentifier {
+			break
+		}
 		if tok.Tp == identifier {
 			parts = append(parts, tok.Lit)
 		} else if tok.Lit != "" {

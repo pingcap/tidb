@@ -371,8 +371,9 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 		// GROUP_CONCAT accepts multiple arguments.
 	case "json_objectagg":
 		// JSON_OBJECTAGG accepts exactly 2 arguments (key, value).
+		// yacc grammar: JSON_OBJECTAGG '(' Expression ',' Expression ')' — syntax error on wrong count.
 		if len(node.Args) != 2 {
-			p.error(p.peek().Offset, "JSON_OBJECTAGG requires exactly 2 arguments")
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 	case "count":

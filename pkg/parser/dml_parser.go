@@ -421,7 +421,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 				// Convert single-table DELETE FROM t1 to Multi-table.
 				stmt.IsMultiTable = true
 				stmt.BeforeFrom = false
-				stmt.Tables = p.convertToTableList(stmt.TableRefs, usingTok.EndOffset)
+				stmt.Tables = p.convertToTableList(stmt.TableRefs, usingTok.EndOffset, usingTok.Offset)
 				if stmt.Tables == nil { //revive:disable-line
 					// Failed to convert
 				}
@@ -549,8 +549,8 @@ func (p *HandParser) isUsingForBinding() bool {
 
 // convertToTableList converts TableRefsClause (from parsing FROM ...) into DeleteTableList.
 // Used when we encounter USING and need to treat FROM clause as Targets.
-// errOff is the error column offset to use when reporting alias violations.
-func (p *HandParser) convertToTableList(refs *ast.TableRefsClause, errOff int) *ast.DeleteTableList {
+// colOff is the byte offset for column calculation; nearOff is the byte offset for "near" text.
+func (p *HandParser) convertToTableList(refs *ast.TableRefsClause, colOff, nearOff int) *ast.DeleteTableList {
 	if refs == nil || refs.TableRefs == nil {
 		return nil
 	}
@@ -574,7 +574,7 @@ func (p *HandParser) convertToTableList(refs *ast.TableRefsClause, errOff int) *
 			// In DELETE FROM ... USING, target tables cannot have aliases.
 			// MySQL grammar uses table_ident_opt_wild (no alias) here.
 			if ts.AsName.L != "" {
-				p.errorNear(errOff, errOff)
+				p.errorNear(colOff, nearOff)
 				return false
 			}
 			if tn, ok := ts.Source.(*ast.TableName); ok {
