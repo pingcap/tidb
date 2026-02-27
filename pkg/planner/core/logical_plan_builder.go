@@ -905,9 +905,11 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 			// since FullSchema is derived from left and right schema in upper layer, so rc/lc must be in FullSchema.
 			if joinTp == ast.RightJoin {
 				p.FullNames[p.FullSchema.ColumnIndex(lc)].Redundant = true
+				// Right join keeps right side as canonical output for USING/NATURAL common columns.
 				redundantColMappings = append(redundantColMappings, [2]*expression.Column{lc, rc})
 			} else {
 				p.FullNames[p.FullSchema.ColumnIndex(rc)].Redundant = true
+				// For inner/left join, left side is the canonical visible output.
 				redundantColMappings = append(redundantColMappings, [2]*expression.Column{rc, lc})
 			}
 		}
@@ -2270,6 +2272,8 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		name != nil &&
 		name.Redundant &&
 		name.OrigTblName.L != "" {
+		// ORDER BY/HAVING name resolution may still be based on FullNames. Remap
+		// redundant qualified base-table columns to canonical join outputs.
 		if mappedCol, mappedName := join.ResolveRedundantColumn(col); mappedCol != nil {
 			col, name = mappedCol, mappedName
 		}

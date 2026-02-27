@@ -2589,6 +2589,11 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			name != nil &&
 			name.Redundant &&
 			name.OrigTblName.L != "" {
+			// JOIN ... USING/NATURAL keeps redundant side in FullSchema for name-resolution,
+			// but the executable Join.Schema() only keeps canonical visible columns.
+			// For qualified base-table references (OrigTblName != ""), remap redundant
+			// column to canonical output to avoid carrying an unresolvable redundant column
+			// into later physical ResolveIndices.
 			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(planCtx.plan, column); mappedCol != nil {
 				column, name = mappedCol, mappedName
 			}
@@ -2625,6 +2630,8 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			name != nil &&
 			name.Redundant &&
 			name.OrigTblName.L != "" {
+			// Keep behavior consistent with direct-name hit above: only remap redundant
+			// base-table names from natural/using join to canonical visible output.
 			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(planCtx.plan, col); mappedCol != nil {
 				col, name = mappedCol, mappedName
 			}
@@ -2676,6 +2683,7 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 func resolveRedundantColumnFromNaturalUsingJoinPlan(p base.LogicalPlan, col *expression.Column) (*expression.Column, *types.FieldName) {
 	switch x := p.(type) {
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
+		// These nodes preserve child's column identity; continue tracing down.
 		return resolveRedundantColumnFromNaturalUsingJoinPlan(p.Children()[0], col)
 	case *logicalop.LogicalJoin:
 		// If the column belongs to this join's full schema, this is the owning join.
