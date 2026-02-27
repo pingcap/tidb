@@ -442,7 +442,7 @@ func (p *HandParser) parseCreateStmt() ast.StmtNode {
 		return p.parseCreateStatisticsStmt()
 	default:
 		// Check identifier-based keywords
-		if p.peek().IsIdent() {
+		if isIdentLike(p.peek().Tp) {
 			switch strings.ToUpper(p.peek().Lit) {
 			case "STATISTICS":
 				return p.parseCreateStatisticsStmt()

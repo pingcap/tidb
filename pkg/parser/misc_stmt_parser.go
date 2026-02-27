@@ -192,7 +192,7 @@ func (p *HandParser) parseFlushStmt() ast.StmtNode {
 			p.next()
 			stmt.Tp = ast.FlushLogs
 			// Optional log type after LOGS
-			if p.peek().IsIdent() {
+			if isIdentLike(p.peek().Tp) {
 				if lt, ok := logTypeFromName(strings.ToUpper(p.peek().Lit)); ok {
 					p.next()
 					stmt.LogType = lt

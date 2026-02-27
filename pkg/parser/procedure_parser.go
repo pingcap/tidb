@@ -64,7 +64,7 @@ func (p *HandParser) wrapWithLabel(label string, block ast.StmtNode, isLoop bool
 		return block
 	}
 	endLabel := ""
-	if tok := p.peek(); tok.IsIdent() || tok.Tp == identifier {
+	if tok := p.peek(); isIdentLike(tok.Tp) && tok.Tp != stringLit {
 		endLabel = p.next().Lit
 	}
 	if isLoop {
@@ -175,7 +175,7 @@ func (p *HandParser) parseProcedureBodyStatement() ast.StmtNode {
 	tok := p.peek()
 
 	// Check for label
-	if tok.IsIdent() && p.peekN(1).Tp == ':' {
+	if isIdentLike(tok.Tp) && tok.Tp != stringLit && p.peekN(1).Tp == ':' {
 		label := p.next().Lit
 		p.next() // consume ':'
 		return p.parseLabeledBody(label)
@@ -326,7 +326,7 @@ func (p *HandParser) parseProcedureCursor(name string) *ast.ProcedureCursor {
 func (p *HandParser) parseProcedureInnerStatement() ast.StmtNode {
 	tok := p.peek()
 
-	if tok.IsIdent() && p.peekN(1).Tp == ':' {
+	if isIdentLike(tok.Tp) && tok.Tp != stringLit && p.peekN(1).Tp == ':' {
 		label := p.next().Lit
 		p.next()
 		return p.parseLabeledBody(label)
