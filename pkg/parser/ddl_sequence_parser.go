@@ -282,14 +282,14 @@ func (p *HandParser) parseIntLit() int64 {
 			// -9223372036854775808 is valid (val = 9223372036854775808)
 			// val > 9223372036854775808 overflows
 			if val > 9223372036854775808 {
-				p.error(tok.Offset, "constant %d overflows int64", val)
+				p.error(tok.Offset, "%s", "the Signed Value should be at the range of [-9223372036854775808, 9223372036854775807].")
 				return 0
 			}
 			return -int64(val)
 		}
 		// val > 9223372036854775807 overflows
 		if val > 9223372036854775807 {
-			p.error(tok.Offset, "constant %d overflows int64", val)
+			p.error(tok.Offset, "%s", "the Signed Value should be at the range of [-9223372036854775808, 9223372036854775807].")
 			return 0
 		}
 		return int64(val)
