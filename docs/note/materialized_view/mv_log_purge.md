@@ -20,6 +20,16 @@ It also records the design rationale and follow-up items for the refined MV/MLog
 - After lock acquisition, purge inserts one `running` history row; when purge finishes, it updates the same history row to final status.
 - `LAST_PURGED_TSO` is used as a persisted purge checkpoint to skip redundant purge runs.
 
+## Runtime `NEXT_TIME` Update (Internal SQL Success Path)
+
+- For **internal SQL** triggered purge (identified by `SessionVars.InRestrictedSQL`), after successful purge completion, `mysql.tidb_mlog_purge_info.NEXT_TIME` should be updated together with purge success state.
+- Runtime `NEXT_TIME` derivation in this path is intentionally different from create-time derivation:
+  - evaluate and use only `PurgeNext` expression;
+  - do not apply create-time `START WITH` priority / near-now rules;
+  - if `PurgeStartWith` is non-empty and `PurgeNext` is empty, explicitly set `NEXT_TIME = NULL`;
+  - if both are empty, keep `NEXT_TIME` unchanged.
+- For non-internal (user) SQL purge, keep existing behavior (do not update `NEXT_TIME` on success path).
+
 ## Why utility execution (not DDL statement execution)
 
 `PURGE MATERIALIZED VIEW LOG` has maintenance semantics similar to `REFRESH MATERIALIZED VIEW`:
@@ -71,6 +81,7 @@ The statement must run as a standalone statement.
 7. If `LAST_PURGED_TSO` is not null and `LAST_PURGED_TSO >= safe_purge_tso`, end this purge directly (no delete work in this run).
 8. Delete eligible MLog rows in batches.
 9. If a batch deletes `< batch_size` rows, update `LAST_PURGED_TSO = safe_purge_tso` in the same transaction before `COMMIT`.
+   - runtime internal-SQL rule: update `NEXT_TIME` by evaluating only `PurgeNext`; if `PurgeStartWith != ''` and `PurgeNext == ''`, set `NEXT_TIME = NULL`.
 10. At statement end, update that history row to final status (`success` / `failed`) and fill completion fields.
 
 ## Internal context
@@ -174,19 +185,38 @@ Write responsibilities:
 - `tidb_mlog_purge_info`:
   - lock-row/scheduling metadata;
   - update `LAST_PURGED_TSO` when one purge batch confirms all rows `<= safe_purge_tso` are deleted (`deleted_rows < batch_size`), and do it before committing that batch.
+  - in internal SQL success path, also update `NEXT_TIME` with runtime rule (`PurgeNext`-only evaluation; explicit `NULL` when `PurgeStartWith` exists but `PurgeNext` is empty).
 - `tidb_mlog_purge_hist`:
   - insert one `running` row after lock acquisition;
   - update the same row when statement finishes.
 
-## Dependency on MLog creation path
+## Create-time `NEXT_TIME` Initialization (`CREATE MATERIALIZED VIEW LOG`)
 
 Purge requires an existing lock row in `mysql.tidb_mlog_purge_info`.
 
-`CREATE MATERIALIZED VIEW LOG` initializes this row in DDL worker:
+`CREATE MATERIALIZED VIEW LOG` initializes (or upserts) this row in DDL worker:
 
-- `INSERT IGNORE INTO mysql.tidb_mlog_purge_info (MLOG_ID) VALUES (...)`
+- `MLOG_ID` is always inserted/ensured.
+- `NEXT_TIME` is written according to create-time purge schedule derivation.
+
+Create-time `NEXT_TIME` derivation rules (for `PurgeStartWith` / `PurgeNext`) are:
+
+1. If both are empty, do not update `NEXT_TIME` (row keeps default `NULL`).
+2. Evaluate expressions in prepared eval session (`UTC` timezone + DDL job SQL mode).
+3. `START WITH` has higher priority, unless it is near-now (`START WITH < now + 10s`) and `NEXT` exists; in that case use `NEXT`.
+4. If the chosen expression evaluates to `NULL`, explicitly write `NEXT_TIME = NULL`.
+
+Purge runtime reschedule rule (internal SQL success path) is intentionally different:
+
+- runtime purge uses `PurgeNext` only;
+- runtime purge does not apply create-time `START WITH`/near-now priority.
 
 If this system table is missing, create MLog fails with explicit error.
+
+Related dependency from `CREATE MATERIALIZED VIEW` side:
+
+- purge computes `safe_purge_tso` from `mysql.tidb_mview_refresh_info` of dependent MVs;
+- `CREATE MATERIALIZED VIEW` creates/upserts those refresh-info rows and also initializes their `NEXT_TIME` with the same create-time schedule rule style (create-time `START WITH`/`NEXT` derivation).
 
 ## Error handling notes
 
