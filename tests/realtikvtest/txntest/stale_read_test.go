@@ -158,6 +158,17 @@ func TestSelectAsOf(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	now := time.Now()
 
+	// Ensure the current ts is advanced over `now` so that the future-read error ("cannot set read timestamp to a
+	// future time") won't happen.
+	for {
+		ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+		if oracle.GetTimeFromTS(ts).After(now) {
+			break
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+
 	// test setSQL with extract timestamp
 	testcases1 := []struct {
 		setTxnSQL        string
@@ -305,7 +316,7 @@ func TestStaleReadKVRequest(t *testing.T) {
 	tk.MustExec(`drop table if exists t2`)
 	tk.MustExec("create table t (id int primary key);")
 	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))`)
-	time.Sleep(1000 * time.Millisecond)
+	time.Sleep(2000 * time.Millisecond)
 	defer tk.MustExec(`drop table if exists t`)
 	defer tk.MustExec(`drop table if exists t1`)
 	conf := *config.GetGlobalConfig()
@@ -339,14 +350,14 @@ func TestStaleReadKVRequest(t *testing.T) {
 	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 	for _, testcase := range testcases {
 		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW()`)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
 		require.NoError(t, failpoint.Disable(testcase.assert))
 	}
 	for _, testcase := range testcases {
 		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW()`)
+		tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
 		tk.MustExec(`begin;`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
@@ -1146,7 +1157,9 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 	time.Sleep(2 * time.Second)
-	time1 := time.Now().Format("2006-1-2 15:04:05")
+	ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	time1 := oracle.GetTimeFromTS(ts).Format("2006-1-2 15:04:05")
 	testcases := []struct {
 		sql          string
 		hasStaleFlag bool

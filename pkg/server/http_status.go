@@ -44,6 +44,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/autoid"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -253,6 +254,10 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
 		router.Handle("/dxf/task/active", tikvhandler.NewDXFActiveTaskHandler()).Name("DXF_Task_Active")
 		router.Handle("/dxf/task/{taskID}/max_runtime_slots", tikvhandler.NewDXFTaskMaxRuntimeSlotsHandler()).Name("DXF_Task_Max_Runtime_Slots")
+	}
+
+	if kerneltype.IsNextGen() {
+		router.Handle("/ddl/check/{db}/{table}/{index}", tikvhandler.NewDDLCheckHandler(tikvHandlerTool)).Name("DDL_Check")
 	}
 
 	// HTTP path for transaction GC states.
