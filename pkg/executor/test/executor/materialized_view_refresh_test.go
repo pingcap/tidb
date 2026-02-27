@@ -66,8 +66,8 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 
 	require.NotEqual(t, oldTS, newTS)
 
-	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0, NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
-		Check(testkit.Rows("1 1"))
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
@@ -304,7 +304,7 @@ UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointVal
 	tk.MustExec("set @@tidb_snapshot = ''")
 }
 
-func TestMaterializedViewRefreshCompleteAbortOnRefreshInfoReadTSOMismatch(t *testing.T) {
+func TestMaterializedViewRefreshCompleteRefreshInfoCASUpdateAfterConcurrentPreUpdate(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -363,36 +363,34 @@ func TestMaterializedViewRefreshCompleteAbortOnRefreshInfoReadTSOMismatch(t *tes
 	}
 
 	// Update refresh info row after refresh txn start_ts but before it does the locking read.
+	injectedTS := oldTS + 1000
 	tkConcurrent := testkit.NewTestKit(t, store)
 	tkConcurrent.MustExec("use test")
-	tkConcurrent.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d", oldTS+1, mviewID))
+	tkConcurrent.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d", injectedTS, mviewID))
 
 	close(pauseCh)
 
 	select {
 	case err := <-refreshDone:
-		require.Error(t, err)
-		require.ErrorContains(t, err, "inconsistent LAST_SUCCESS_READ_TSO")
+		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for refresh to finish")
 	}
 
-	// Refresh should abort early and must not override refresh info or MV data.
-	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+	// Refresh should succeed and must override LAST_SUCCESS_READ_TSO by this refresh's read tso.
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2"))
 
 	newTSRow := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Rows()
 	require.Len(t, newTSRow, 1)
 	newTS, err := strconv.ParseUint(fmt.Sprintf("%v", newTSRow[0][0]), 10, 64)
 	require.NoError(t, err)
-	require.Equal(t, oldTS+1, newTS)
+	require.NotZero(t, newTS)
+	require.NotEqual(t, injectedTS, newTS)
 
-	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d, NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldTS+1, mviewID)).
-		Check(testkit.Rows("1 1"))
-	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("failed complete 1 1 1"))
-	reasonRow := tk.MustQuery(fmt.Sprintf("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).Rows()
-	require.Len(t, reasonRow, 1)
-	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "inconsistent LAST_SUCCESS_READ_TSO")
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", newTS, mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", newTS, mviewID)).
+		Check(testkit.Rows("success complete 1 1 1"))
 }
 
 func TestMaterializedViewRefreshCompleteConcurrentNowait(t *testing.T) {
@@ -500,8 +498,8 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 	// MV data should remain unchanged due to transactional refresh.
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
-	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d, NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldTS, mviewID)).
-		Check(testkit.Rows("1 1"))
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldTS, mviewID)).
+		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
 		Check(testkit.Rows("failed complete 1 1 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running'", mviewID)).
