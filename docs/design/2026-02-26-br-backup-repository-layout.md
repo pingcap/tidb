@@ -52,7 +52,7 @@ s3://bucket/prefix/
   _meta/snapshot/<backup-id>/backupmeta.ddl.000000001
   _meta/snapshot/<backup-id>/backupmeta.schema.stats.000000123
   _meta/snapshot/<backup-id>/checkpoints/... (optional, for checkpoint mode)
-  _data/snapshot/<store-id>/... (SSTs written by TiKV)
+  _data/snapshot/<store-id>/<backup-id>/... (SSTs written by TiKV)
 ```
 
 Key points:
