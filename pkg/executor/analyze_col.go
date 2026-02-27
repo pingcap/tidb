@@ -298,7 +298,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 			if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, col.Offset) {
 				numTopN = 0
 			}
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, col.ID, collectors[i], &col.FieldType, true, nil, true)
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, col.ID, collectors[i], &col.FieldType, true, nil)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {
