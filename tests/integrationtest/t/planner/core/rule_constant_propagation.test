@@ -74,9 +74,9 @@ INSERT INTO t3 (k, b) VALUES
 (3, 300),
 (NULL, 400),
 (6, 600);
-explain select * from t2 where not exists (select 1 from t3 where t3.k = t2.k and t3.b = t2.b and t2.k = 1);
-explain select * from t2 where exists (select 1 from t3 where t3.k = t2.k and t3.b = t2.b and t2.k = 1);
-EXPLAIN SELECT * FROM t2
+explain format = 'brief' select * from t2 where not exists (select 1 from t3 where t3.k = t2.k and t3.b = t2.b and t2.k = 1);
+explain format = 'brief' select * from t2 where exists (select 1 from t3 where t3.k = t2.k and t3.b = t2.b and t2.k = 1);
+EXPLAIN FORMAT = 'brief' SELECT * FROM t2
 WHERE NOT EXISTS (
     SELECT 1 FROM t3
     WHERE t3.k = t2.k AND t3.b = t2.b
@@ -88,7 +88,7 @@ WHERE NOT EXISTS (
     WHERE t3.k = t2.k AND t3.b = t2.b
 )
 AND t2.k = 1;
-EXPLAIN SELECT * FROM t2
+EXPLAIN FORMAT = 'brief' SELECT * FROM t2
 WHERE EXISTS (
     SELECT 1 FROM t3
     WHERE t3.k = t2.k AND t3.b = t2.b

@@ -643,6 +643,7 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 }
 
 func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
+	const stalenessTSExpr = "NOW(3) - INTERVAL 5 SECOND"
 	errMsg1 := ".*only support read-only statement during read-only staleness transactions.*"
 	errMsg2 := ".*select lock hasn't been supported in stale read yet.*"
 	errMsg3 := "GetForUpdateTS not supported for stalenessTxnProvider"
@@ -806,7 +807,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 	tk.MustExec(`set @@tidb_enable_noop_functions=1;`)
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW();`)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP ` + stalenessTSExpr + `;`)
 		if testcase.isValidate {
 			tk.MustExec(testcase.sql)
 		} else {
@@ -815,7 +816,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		tk.MustExec("commit")
-		tk.MustExec("set transaction read only as of timestamp NOW();")
+		tk.MustExec(`set transaction read only as of timestamp ` + stalenessTSExpr + `;`)
 		if testcase.isValidate || testcase.isValidateWithoutStart {
 			tk.MustExec(testcase.sql)
 		} else {
@@ -1145,7 +1146,9 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 	time.Sleep(2 * time.Second)
-	time1 := time.Now().Format("2006-1-2 15:04:05")
+	ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	time1 := oracle.GetTimeFromTS(ts).Format("2006-1-2 15:04:05")
 	testcases := []struct {
 		sql          string
 		hasStaleFlag bool

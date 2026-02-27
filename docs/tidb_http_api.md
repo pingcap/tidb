@@ -738,3 +738,18 @@ timezone.*
      ```shell
      curl http://{TiDBIP}:10080/txn-gc-states
      ```
+
+## APIs unique to TiDB-X
+
+### Run ADMIN CHECK for an index
+```shell
+# curl -XPOST "http://{TiDBIP}:10080/ddl/check/{db}/{table}/{index}"
+{
+ "check_sql": "admin check index `test`.`t` `primary`",
+ "db": "test",
+ "index": "primary",
+ "result": "success",
+ "table": "t"
+}
+```
+
