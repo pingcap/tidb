@@ -717,6 +717,15 @@ func TestMultiSchemaModifyColumnConcurrentDMLAcrossPartitions(t *testing.T) {
 		tkO.MustExec("set session tidb_enable_fast_table_check = off")
 		tkO.MustExec(`admin check table t`)
 		tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("6"))
+		shift := opSeq.Load()
+		tkO.MustQuery(`select a, b from t order by a`).Check(testkit.Rows(
+			fmt.Sprintf("1 %d", 1+shift),
+			fmt.Sprintf("2 %d", 2+shift),
+			fmt.Sprintf("11 %d", 11+shift),
+			fmt.Sprintf("12 %d", 12+shift),
+			fmt.Sprintf("21 %d", 21+shift),
+			fmt.Sprintf("22 %d", 22+shift),
+		))
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
