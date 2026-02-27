@@ -25,7 +25,6 @@ func TestDecideMinMaxFast(t *testing.T) {
 		name        string
 		isMax       bool
 		oldExists   bool
-		shouldExist bool
 		addIsDelta  bool
 		delIsDelta  bool
 		cmpDeltaOld int
@@ -37,7 +36,6 @@ func TestDecideMinMaxFast(t *testing.T) {
 			name:        "max old missing tie dominant no net add requires recompute",
 			isMax:       true,
 			oldExists:   false,
-			shouldExist: true,
 			addIsDelta:  true,
 			delIsDelta:  true,
 			cmpDeltaOld: 1,
@@ -49,7 +47,6 @@ func TestDecideMinMaxFast(t *testing.T) {
 			name:        "max delta stronger tie dominant with net add uses added",
 			isMax:       true,
 			oldExists:   true,
-			shouldExist: true,
 			addIsDelta:  true,
 			delIsDelta:  true,
 			cmpDeltaOld: 1,
@@ -61,7 +58,6 @@ func TestDecideMinMaxFast(t *testing.T) {
 			name:        "max delta stronger tie dominant without net add recompute",
 			isMax:       true,
 			oldExists:   true,
-			shouldExist: true,
 			addIsDelta:  true,
 			delIsDelta:  true,
 			cmpDeltaOld: 1,
@@ -73,7 +69,6 @@ func TestDecideMinMaxFast(t *testing.T) {
 			name:        "max equal dominant delete only recompute",
 			isMax:       true,
 			oldExists:   true,
-			shouldExist: true,
 			addIsDelta:  false,
 			delIsDelta:  true,
 			cmpDeltaOld: 0,
@@ -85,25 +80,12 @@ func TestDecideMinMaxFast(t *testing.T) {
 			name:        "min delta smaller tie dominant with net add uses added",
 			isMax:       false,
 			oldExists:   true,
-			shouldExist: true,
 			addIsDelta:  true,
 			delIsDelta:  true,
 			cmpDeltaOld: -1,
 			addedCnt:    4,
 			removedCnt:  1,
 			expected:    minMaxDecisionUseAdded,
-		},
-		{
-			name:        "min no result uses null",
-			isMax:       false,
-			oldExists:   true,
-			shouldExist: false,
-			addIsDelta:  true,
-			delIsDelta:  false,
-			cmpDeltaOld: -1,
-			addedCnt:    1,
-			removedCnt:  0,
-			expected:    minMaxDecisionUseNull,
 		},
 	}
 
@@ -112,7 +94,6 @@ func TestDecideMinMaxFast(t *testing.T) {
 			got := decideMinMaxFast(
 				tc.isMax,
 				tc.oldExists,
-				tc.shouldExist,
 				tc.addIsDelta,
 				tc.delIsDelta,
 				tc.cmpDeltaOld,
