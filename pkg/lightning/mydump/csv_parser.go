@@ -17,6 +17,7 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"go.uber.org/zap"
 	"io"
 	"regexp"
 	"slices"
@@ -569,6 +570,10 @@ func (parser *CSVParser) readQuotedField() error {
 				parser.pos = prevPos - 1
 				// set buf to parser.buf in order to print err log
 				parser.buf = content
+				parser.Logger.Warn("original error before replacing EOF",
+					zap.Error(err),
+					zap.Int64("pos", parser.pos),
+				)
 				err = parser.replaceEOF(err, errUnterminatedQuotedField)
 			}
 			return err
