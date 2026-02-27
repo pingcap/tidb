@@ -320,7 +320,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 
 	// Estimate memory usage and adjust concurrency if needed (e.g. for parquet).
 	s.estimateConcOnce.Do(func() {
-		s.estimateAndSetConcurrency(ctx, objStore, subtaskMeta.Chunks)
+		s.estimateAndSetConcurrency(ctx, s.tableImporter.GetDataStore(), subtaskMeta.Chunks)
 	})
 
 	wctx := workerpool.NewContext(ctx)

@@ -753,6 +753,7 @@ func EstimateParquetReaderMemory(
 	allocator := &trackingAllocator{}
 	parser, err := NewParquetParser(ctx, store, r, path, NewParquetFileMetaWithAllocator(allocator))
 	if err != nil {
+		_ = r.Close()
 		return 0, err
 	}
 
@@ -766,7 +767,10 @@ func EstimateParquetReaderMemory(
 
 	for range reader.MetaData().RowGroups[0].NumRows {
 		if err = parser.ReadRow(); err != nil {
-			break
+			if errors.Cause(err) == io.EOF {
+				break
+			}
+			return 0, err
 		}
 	}
 
