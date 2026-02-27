@@ -3090,7 +3090,7 @@ func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSess
 func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	switch s.Tp {
 	case ast.AdminReloadStatistics:
-		return e.executeAdminReloadStatistics(s)
+		return e.executeAdminReloadStatistics()
 	case ast.AdminFlushPlanCache:
 		return e.executeAdminFlushPlanCache(s)
 	case ast.AdminSetBDRRole:
@@ -3101,7 +3101,7 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	return nil
 }
 
-func (*SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
+func (*SimpleExec) executeAdminReloadStatistics() error {
 	return errors.New("Extended statistics feature has been removed")
 }
 
