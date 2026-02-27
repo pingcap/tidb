@@ -1,0 +1,8 @@
+[
+  {
+    "name": "TestSchemaCannotFindColumnRegression",
+    "cases": [
+      "SELECT /* issue:66272 */ id AS t0_id FROM t1 JOIN t3 USING (id) WHERE (((t3.d1 = '2024-04-29') AND (t3.id = 10)) AND (t1.k0 = 93)) AND (t3.k0 = ALL (SELECT t3.k0 AS c0 FROM t3 WHERE t3.k0 = 749))"
+    ]
+  }
+]

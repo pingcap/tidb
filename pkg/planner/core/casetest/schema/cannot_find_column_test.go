@@ -18,11 +18,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
 
 func TestSchemaCannotFindColumnRegression(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
+		tk.MustExec(`drop table if exists t1, t3`)
 		tk.MustExec(`CREATE TABLE t1 (
   id BIGINT NOT NULL,
   k0 BIGINT NOT NULL,
@@ -40,23 +42,27 @@ func TestSchemaCannotFindColumnRegression(t *testing.T) {
 )`)
 		tk.MustExec("INSERT INTO t1 (id, k0, d0, d1) VALUES (10, 93, '2024-04-14', 14.19)")
 		tk.MustExec("INSERT INTO t3 (id, k2, k0, d0, d1) VALUES (10, 's356', 749, 89.26, '2024-04-29')")
-		tk.MustQuery(`SELECT
-  id AS t0_id
-FROM t1
-JOIN t3 USING (id)
-WHERE (
-  (
-    (t3.d1 = '2024-04-29')
-    AND (t3.id = 10)
-  )
-  AND (t1.k0 = 93)
-)
-AND (
-  t3.k0 = ALL (
-    SELECT t3.k0 AS c0
-    FROM t3
-    WHERE t3.k0 = 749
-  )
-)`).Check(testkit.Rows("10"))
+
+		var input []string
+		var output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+		suite := GetSchemaSuiteData()
+		suite.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			testdata.OnRecord(func() {
+				planRows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + sql).Rows())
+				if len(planRows) == 0 {
+					t.Fatalf("empty plan for sql: %s", sql)
+				}
+				output[i].SQL = sql
+				output[i].Plan = planRows
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			})
+			tk.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+		}
 	})
 }
