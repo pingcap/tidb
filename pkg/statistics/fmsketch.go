@@ -33,14 +33,6 @@ var murmur3Pool = sync.Pool{
 	},
 }
 
-var fmSketchPool = sync.Pool{
-	New: func() any {
-		return &FMSketch{
-			hashset: swiss.NewMap[uint64, bool](uint32(128)),
-			maxSize: 0,
-		}
-	},
-}
 
 // MaxSketchSize is the maximum size of the hashset in the FM sketch.
 // TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
@@ -76,10 +68,10 @@ type FMSketch struct {
 
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
-	result := fmSketchPool.Get().(*FMSketch)
-	result.reset()
-	result.maxSize = maxSize
-	return result
+	return &FMSketch{
+		hashset: swiss.NewMap[uint64, bool](128),
+		maxSize: maxSize,
+	}
 }
 
 // Copy makes a copy for current FMSketch.
@@ -214,8 +206,7 @@ func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 	if protoSketch == nil {
 		return nil
 	}
-	sketch := fmSketchPool.Get().(*FMSketch)
-	sketch.reset()
+	sketch := NewFMSketch(0)
 	sketch.mask = protoSketch.Mask
 	for _, val := range protoSketch.Hashset {
 		sketch.hashset.Put(val, true)
@@ -256,17 +247,17 @@ func (s *FMSketch) MemoryUsage() (sum int64) {
 	return
 }
 
-func (s *FMSketch) reset() {
-	s.hashset.Clear()
-	s.mask = 0
-	s.maxSize = 0
-}
-
-// DestroyAndPutToPool resets the FMSketch and puts it to the pool.
+// DestroyAndPutToPool releases the FMSketch's internal state for GC.
+// The sync.Pool was removed because swiss.Map.Clear() — called on every
+// pool return — is O(capacity) and was consuming 88% of CPU during
+// ANALYZE with many partitions. The 24-byte struct is not worth pooling
+// when the map (the real allocation) must be recreated on each reuse.
+// TODO: remove this method and have callers nil the *FMSketch directly.
 func (s *FMSketch) DestroyAndPutToPool() {
 	if s == nil {
 		return
 	}
-	s.reset()
-	fmSketchPool.Put(s)
+	s.hashset = nil
+	s.mask = 0
+	s.maxSize = 0
 }
