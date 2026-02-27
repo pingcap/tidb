@@ -67,7 +67,10 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	})
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t index idx")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
+	))
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
@@ -75,7 +78,10 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 		return false
 	})
 	tk.MustExec("analyze table t index")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
+	))
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
@@ -157,7 +163,10 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	})
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t index idx")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
+	))
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
@@ -165,7 +174,10 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 		return false
 	})
 	tk.MustExec("analyze table t index")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
+	))
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
