@@ -350,15 +350,10 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
+		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
 	}
-	if sf.RetType != nil {
-		c.RetType = sf.RetType.DeepCopy()
-	}
-	// Keep ScalarFunc.RetType and builtinFunc.retTp aligned in cloned objects.
-	if setter, ok := c.Function.(interface{ setRetTp(*types.FieldType) }); ok {
-		setter.setRetTp(c.RetType)
-	}
+	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
 	}

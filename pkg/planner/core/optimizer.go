@@ -327,43 +327,20 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 // VolcanoOptimize includes: logicalOptimize, physicalOptimize
 func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	flag = adjustOptimizationFlags(flag, logic)
-	// todo: we can choose join order algorithm by outer flag.
-	var (
-		err          error
-		bestCost     = math.MaxFloat64
-		bestPhysical base.PhysicalPlan
-		bestLogic    base.LogicalPlan
-		logics       = []Alternative{
-			{logic, flag}, // original
-			{logic.DeepClone(), flag &^ rule.FlagDecorrelate}, // skip decorrelation
-			{logic.DeepClone(), flag &^ rule.FlagJoinReOrder}, // multi reorder algorithm
-		}
-		// todo: we can choose join order algorithm by outer flag.
-	)
-	for _, one := range logics {
-		one.logic, err = logicalOptimize(ctx, one.flag, one.logic)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if !AllowCartesianProduct.Load() && existsCartesianProduct(one.logic) {
-			return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
-		}
-		failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
-		physical, cost, err := physicalOptimize(one.logic)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if bestCost > cost {
-			bestCost = cost
-			bestPhysical = physical
-			bestLogic = one.logic
-		}
+	logic, err := logicalOptimize(ctx, flag, logic)
+	if err != nil {
+		return nil, nil, 0, err
 	}
-	if bestPhysical == nil {
-		return nil, nil, 0, plannererrors.ErrInternal.GenWithStackByArgs("volcano optimize failed to find a valid physical plan")
+	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
+		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	finalPlan := postOptimize(ctx, sctx, bestPhysical)
-	return bestLogic, finalPlan, bestCost, nil
+	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
+	physical, cost, err := physicalOptimize(logic)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	finalPlan := postOptimize(ctx, sctx, physical)
+	return logic, finalPlan, cost, nil
 }
 
 func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
@@ -1004,11 +981,6 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 		}
 	}
 	return logic, err
-}
-
-type Alternative struct {
-	logic base.LogicalPlan
-	flag  uint64
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
