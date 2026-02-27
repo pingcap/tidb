@@ -354,8 +354,8 @@ func (p *HandParser) parseShowCreate() ast.StmtNode {
 		p.next()
 		stmt.Tp = ast.ShowCreateDatabase
 		if _, ok := p.accept(ifKwd); ok {
-			p.accept(not)
-			p.accept(exists)
+			p.expect(not)
+			p.expect(exists)
 			stmt.IfNotExists = true
 		}
 		tok := p.next()
