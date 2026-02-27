@@ -2911,8 +2911,15 @@ func pickColumnList(astColChoice pmodel.ColumnChoice, astColList []*model.Column
 	return tblSavedColChoice, tblSavedColList
 }
 
+func appendAnalyzeV1DeprecationWarning(sctx base.PlanContext, version int) {
+	if version == statistics.Version1 {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(variable.ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs("ANALYZE with tidb_analyze_version=1"))
+	}
+}
+
 // buildAnalyzeTable constructs analyze tasks for each table.
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
+	appendAnalyzeV1DeprecationWarning(b.ctx, version)
 	p := &Analyze{Opts: opts}
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
 	usePersistedOptions := variable.PersistAnalyzeOptions.Load()
@@ -3008,6 +3015,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	if !versionIsSame {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
+	appendAnalyzeV1DeprecationWarning(b.ctx, version)
 	if version == statistics.Version2 {
 		return b.buildAnalyzeTable(as, opts, version)
 	}
@@ -3064,6 +3072,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	if !versionIsSame {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
+	appendAnalyzeV1DeprecationWarning(b.ctx, version)
 	if version == statistics.Version2 {
 		return b.buildAnalyzeTable(as, opts, version)
 	}
