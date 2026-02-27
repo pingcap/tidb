@@ -2884,7 +2884,7 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (preferPu
 func GetHashJoin(ge base.GroupExpression, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *physicalop.PhysicalHashJoin {
 	joins := getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
 	if len(joins) == 0 {
-		return nil
+		panic("GetHashJoin for LogicalApply should always produce at least one hash join plan")
 	}
 	return joins[0]
 }
