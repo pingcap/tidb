@@ -23,6 +23,7 @@ import (
 func (p *HandParser) parseAlterTableStmt() ast.StmtNode {
 	stmt := Alloc[ast.AlterTableStmt](p.arena)
 	p.expect(alter)
+	p.accept(ignore) // optional IGNORE keyword (parsed but not used, matching MySQL)
 	p.expect(tableKwd)
 
 	stmt.Table = p.parseTableName()

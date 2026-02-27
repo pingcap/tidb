@@ -353,10 +353,23 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 		return hp.parseUnsupportedHint(name)
 
 	default:
-		// Unknown hint — treat as unsupported (matching old grammar behavior
-		// where unknown identifiers matched UnsupportedTableLevelOptimizerHintName)
+		// Unknown hint — matching yacc grammar behavior:
+		// The yacc hint grammar has catch-all rules that match
+		// hintIdentifier '(' args ')' and produce a warning.
+		// But hintIdentifier '(' ')' with empty parens doesn't match
+		// any rule, producing a parse error.
 		if hp.peek().tp == '(' {
-			return hp.parseUnsupportedHint(name)
+			hp.next() // consume '('
+			if hp.peek().tp == ')' {
+				// Empty parens: no yacc rule matches → parse error
+				hp.next() // consume ')'
+				hp.parseError()
+				return nil
+			}
+			// Non-empty parens: yacc catch-all rules match → warning
+			hp.skipToCloseParen()
+			hp.warnUnsupportedHint(name)
+			return nil
 		}
 		hp.warnUnsupportedHint(name)
 		return nil
