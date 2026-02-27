@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -47,9 +48,15 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 	}
 
 	// Load saved samples for non-analyzed partitions and merge into global collectors.
+	statslogutil.StatsLogger().Info("analyze global: loading saved samples",
+		zap.Int("tables", len(globalStatsTableIDs)))
 	e.loadAndMergeSavedSamples(globalStatsTableIDs)
+	statslogutil.StatsLogger().Info("analyze global: loading saved samples done")
 	// Save pruned samples for freshly analyzed partitions.
+	statslogutil.StatsLogger().Info("analyze global: saving partition samples",
+		zap.Int("partitions", len(e.partitionSamplesToSave)))
 	e.savePartitionSamplesToStorage()
+	statslogutil.StatsLogger().Info("analyze global: saving partition samples done")
 
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
 	for tableID := range globalStatsTableIDs {
@@ -63,6 +70,9 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 				logutil.BgLogger().Warn("cannot find the partitioned table, skip merging global stats", zap.Int64("tableID", globalStatsID.tableID))
 				continue
 			}
+			statslogutil.StatsLogger().Info("analyze global: merge entry start",
+				zap.String("job", job.JobInfo), zap.Int64("tableID", globalStatsID.tableID),
+				zap.Int64("indexID", globalStatsID.indexID))
 			AddNewAnalyzeJob(e.Ctx(), job)
 			statsHandle.StartAnalyzeJob(job)
 
@@ -79,10 +89,14 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 					logutil.ErrVerboseLogger().Warn("build sample-based global stats failed, falling back to merge",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 				} else if gs != nil {
+					statslogutil.StatsLogger().Info("analyze global: merge entry done (sample-based)",
+						zap.String("job", job.JobInfo), zap.Int64("tableID", globalStatsID.tableID))
 					return globalstats.WriteGlobalStatsToStorage(statsHandle, gs, &info, globalStatsID.tableID)
 				}
 
 				// Fallback to existing merge-based path.
+				statslogutil.StatsLogger().Info("analyze global: merge entry using partition-merge path",
+					zap.String("job", job.JobInfo), zap.Int64("tableID", globalStatsID.tableID))
 				err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
@@ -93,6 +107,9 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 					logutil.ErrVerboseLogger().Warn("merge global stats failed",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 				}
+				statslogutil.StatsLogger().Info("analyze global: merge entry done (partition-merge)",
+					zap.String("job", job.JobInfo), zap.Int64("tableID", globalStatsID.tableID),
+					zap.Error(err))
 				return err
 			}()
 			statsHandle.FinishAnalyzeJob(job, mergeStatsErr, statistics.GlobalStatsMergeJob)
@@ -167,8 +184,14 @@ func (e *AnalyzeExec) loadAndMergeSavedSamples(tableIDs map[int64]struct{}) {
 		analyzed := e.analyzedPartitions[tableID]
 		// If all partitions were analyzed, no loading needed.
 		if len(analyzed) >= len(pi.Definitions) {
+			statslogutil.StatsLogger().Info("analyze global: all partitions freshly analyzed, skip loading saved samples",
+				zap.Int64("tableID", tableID), zap.Int("partitions", len(pi.Definitions)))
 			continue
 		}
+		toLoad := len(pi.Definitions) - len(analyzed)
+		statslogutil.StatsLogger().Info("analyze global: loading saved samples for table",
+			zap.Int64("tableID", tableID), zap.Int("analyzed", len(analyzed)),
+			zap.Int("toLoad", toLoad), zap.Int("total", len(pi.Definitions)))
 
 		for _, def := range pi.Definitions {
 			if _, freshlyAnalyzed := analyzed[def.ID]; freshlyAnalyzed {

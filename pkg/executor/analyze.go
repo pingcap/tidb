@@ -150,13 +150,20 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]statstypes.GlobalStatsInfo)
-	if needGlobalStats && sessionVars.EnableSampleBasedGlobalStats {
+	sampleBasedGlobalStats := needGlobalStats && sessionVars.EnableSampleBasedGlobalStats
+	if sampleBasedGlobalStats {
 		e.globalSampleCollectors = make(map[int64]*statistics.ReservoirRowSampleCollector)
 		e.partitionSamplesToSave = make(map[int64][]byte)
 		e.samplePruners = make(map[int64]*statistics.SamplePruner)
 		e.analyzedPartitions = make(map[int64]map[int64]struct{})
 		sessionVars.StmtCtx.MemTracker.EnableDebugLog("analyze-stmt")
 	}
+	statslogutil.StatsLogger().Info("analyze started",
+		zap.Int("tasks", len(tasks)),
+		zap.Int("partitionTasks", countPartitionTasks(tasks)),
+		zap.Int("concurrency", buildStatsConcurrency),
+		zap.Bool("needGlobalStats", needGlobalStats),
+		zap.Bool("sampleBasedGlobalStats", sampleBasedGlobalStats))
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return e.handleResultsError(buildStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
@@ -203,6 +210,9 @@ TASKLOOP:
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
+		statslogutil.StatsLogger().Info("analyze global stats merge starting",
+			zap.Int("tables", len(globalStatsMap)),
+			zap.Bool("sampleBasedGlobalStats", sampleBasedGlobalStats))
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
 		// Release accumulated sample collectors to free memory.
 		for id, c := range e.globalSampleCollectors {
@@ -213,6 +223,9 @@ TASKLOOP:
 		}
 		e.globalSampleCollectors = nil
 		e.partitionSamplesToSave = nil
+		statslogutil.StatsLogger().Info("analyze global stats merge done",
+			zap.Int("tables", len(globalStatsMap)),
+			zap.Error(err))
 		if err != nil {
 			return err
 		}
@@ -235,6 +248,8 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
+	statslogutil.StatsLogger().Info("analyze complete",
+		zap.Int("tasks", len(tasks)))
 	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
 }
 
@@ -558,6 +573,10 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			break
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
+		statslogutil.StatsLogger().Info("analyze partition start",
+			zap.String("table", task.job.TableName),
+			zap.String("partition", task.job.PartitionName),
+			zap.String("job", task.job.JobInfo))
 		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
