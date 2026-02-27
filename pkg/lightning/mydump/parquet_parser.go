@@ -23,11 +23,14 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/file"
+	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
@@ -36,7 +39,7 @@ import (
 
 const (
 	// defaultBufSize specifies the default size of skip buffer.
-	// Skip buffer is used when reading data from the cloud.If there is a gap
+	// Skip buffer is used when reading data from the cloud. If there is a gap
 	// between the current read position and the last read position, these
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
@@ -45,12 +48,14 @@ const (
 
 var (
 	unsupportedParquetTypes = map[schema.ConvertedType]struct{}{
+		// TODO(joechenrh): support read list type as vector
+		schema.ConvertedTypes.List: {},
+		// The below types are not used for data exported from aurora/snowflake,
+		// so we don't support them for now.
 		schema.ConvertedTypes.Map:         {},
 		schema.ConvertedTypes.MapKeyValue: {},
-		// TODO(joechenrh): support read list type as vector
-		schema.ConvertedTypes.List:     {},
-		schema.ConvertedTypes.Interval: {},
-		schema.ConvertedTypes.NA:       {},
+		schema.ConvertedTypes.Interval:    {},
+		schema.ConvertedTypes.NA:          {},
 	}
 
 	// readBatchSize is the number of rows to read in a single batch
@@ -173,8 +178,7 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 
 	value := it.values[it.valueOffset]
 	it.valueOffset++
-	it.setter(value, d)
-	return nil
+	return it.setter(value, d)
 }
 
 func createColumnIterator(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) iterator {
@@ -210,104 +214,106 @@ type convertedType struct {
 	IsAdjustedToUTC bool
 }
 
-// parquetFileWrapper is a wrapper for storage.ReadSeekCloser
-// It implements io.ReaderAt interface to read parquet file using arrow-go.
-type parquetFileWrapper struct {
-	ctx context.Context
+// rowGroupParser parses rows from one parquet row group.
+type rowGroupParser struct {
+	rowGroup  int
+	readRows  int64
+	totalRows int64
 
-	storage.ReadSeekCloser
-	lastOff int64
-	skipBuf []byte
-
-	// current file path and store, used to open file
-	store storage.ExternalStorage
-	path  string
+	readers   []*file.Reader
+	iterators []iterator
 }
 
-func (pf *parquetFileWrapper) readNBytes(p []byte) (int, error) {
-	n, err := io.ReadFull(pf, p)
-	if err != nil && err != io.EOF {
-		return 0, errors.Trace(err)
-	}
-	if n != len(p) {
-		return n, errors.Errorf("error reading %d bytes, only read %d bytes", len(p), n)
-	}
-	return n, nil
-}
+// init creates column iterators for each column.
+func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location) (err error) {
+	meta := rgp.readers[0].MetaData()
+	numCols := meta.Schema.NumColumns()
+	rgp.iterators = make([]iterator, numCols)
 
-// ReadAt implement ReaderAt interface
-func (pf *parquetFileWrapper) ReadAt(p []byte, off int64) (int, error) {
-	// We want to minimize the number of Seek call as much as possible,
-	// since the underlying reader may require reopening the file.
-	gap := int(off - pf.lastOff)
-	if gap < 0 || gap > cap(pf.skipBuf) {
-		if _, err := pf.Seek(off, io.SeekStart); err != nil {
-			return 0, err
+	defer func() {
+		if err != nil {
+			for _, iter := range rgp.iterators {
+				if iter != nil {
+					_ = iter.Close()
+				}
+			}
 		}
-	} else {
-		pf.skipBuf = pf.skipBuf[:gap]
-		if read, err := pf.readNBytes(pf.skipBuf); err != nil {
-			return read, err
+	}()
+
+	for idx := range numCols {
+		tp := meta.Schema.Column(idx).PhysicalType()
+		iter := createColumnIterator(tp, &colTypes[idx], loc, readBatchSize)
+		if iter == nil {
+			return errors.Errorf("unsupported parquet type %s", tp.String())
+		}
+
+		rowGroup := rgp.readers[idx].RowGroup(rgp.rowGroup)
+		colReader, err := rowGroup.Column(idx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		iter.SetReader(colReader)
+		rgp.iterators[idx] = iter
+	}
+	rgp.totalRows = meta.RowGroups[rgp.rowGroup].NumRows
+	return nil
+}
+
+func (rgp *rowGroupParser) isDone() bool {
+	return rgp == nil || rgp.readRows == rgp.totalRows
+}
+
+func (rgp *rowGroupParser) readRow(row []types.Datum) error {
+	if rgp.isDone() {
+		return io.EOF
+	}
+
+	for col, iter := range rgp.iterators {
+		if err := iter.Next(&row[col]); err != nil {
+			return errors.Annotate(err, "parquet read column failed")
 		}
 	}
-
-	read, err := pf.readNBytes(p)
-	if err != nil {
-		return read, err
-	}
-	pf.lastOff = off + int64(read)
-
-	return len(p), nil
+	rgp.readRows++
+	return nil
 }
 
-// Seek implemement Seeker interface
-func (pf *parquetFileWrapper) Seek(offset int64, whence int) (int64, error) {
-	newOffset, err := pf.ReadSeekCloser.Seek(offset, whence)
-	pf.lastOff = newOffset
-	return newOffset, err
-}
-
-func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
-	return 0, errors.New("unsupported operation")
-}
-
-func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeekerOpener, error) {
-	reader, err := pf.store.Open(pf.ctx, pf.path, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
+func (rgp *rowGroupParser) Close() error {
+	var onceErr common.OnceError
+	for _, iter := range rgp.iterators {
+		err := iter.Close()
+		onceErr.Set(err)
 	}
-
-	newPf := &parquetFileWrapper{
-		ReadSeekCloser: reader,
-		store:          pf.store,
-		ctx:            pf.ctx,
-		path:           pf.path,
-		skipBuf:        make([]byte, defaultBufSize),
+	for _, r := range rgp.readers {
+		err := r.Close()
+		onceErr.Set(err)
 	}
-	return newPf, nil
+	return onceErr.Get()
 }
 
 // ParquetParser parses a parquet file for import
-// It implements the Parser interface.
 type ParquetParser struct {
-	reader   *file.Reader
+	fileMeta *metadata.FileMetaData
 	colTypes []convertedType
 	colNames []string
 
+	ctx   context.Context
+	store storeapi.Storage
+	path  string
+	prop  *parquet.ReaderProperties
+	loc   *time.Location
+
 	alloc memory.Allocator
 
-	iterators []iterator
+	rowGroup *rowGroupParser
 
 	rowPool *zeropool.Pool[[]types.Datum]
 
 	curRowGroup   int
 	totalRowGroup int
 
-	readRowInGroup   int   // number of rows read in current group
-	totalRowsInGroup int   // total rows in current group
-	totalRows        int   // total rows in this file
-	totalReadRows    int64 // total rows read
-	totalReadBytes   int   // total bytes read, estimated by all the read datum.
+	totalRows      int64 // total rows in this file
+	totalReadRows  int64 // total rows read
+	totalReadBytes int   // total bytes read, estimated by all the read datum.
 
 	lastRow Row
 	logger  log.Logger
@@ -315,38 +321,123 @@ type ParquetParser struct {
 
 // Init initializes the Parquet parser and allocate necessary buffers
 func (pp *ParquetParser) Init(loc *time.Location) error {
-	meta := pp.reader.MetaData()
+	meta := pp.fileMeta
+	pp.totalRowGroup = meta.NumRowGroups()
+	if pp.totalRowGroup == 0 {
+		return nil
+	}
 
-	pp.curRowGroup, pp.totalRowGroup, pp.totalRows = -1, pp.reader.NumRowGroups(), int(meta.NumRows)
-
-	numCols := meta.Schema.NumColumns()
-	pp.iterators = make([]iterator, numCols)
+	pp.totalRows = meta.NumRows
 
 	if loc == nil {
 		loc = timeutil.SystemLocation()
 	}
-	for i := range numCols {
-		pp.iterators[i] = createColumnIterator(
-			meta.Schema.Column(i).PhysicalType(), &pp.colTypes[i], loc, readBatchSize)
-		if pp.iterators[i] == nil {
-			return errors.Errorf("unsupported parquet type %s", meta.Schema.Column(i).PhysicalType().String())
-		}
+	pp.loc = loc
+
+	return pp.buildRowGroupParser()
+}
+
+func (pp *ParquetParser) buildRowGroupParser() (err error) {
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
+	eg.SetLimit(8)
+
+	builder, err := pp.getBuilder(egCtx)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
+	readers := make([]*file.Reader, pp.fileMeta.NumColumns())
+	defer func() {
+		if err != nil {
+			for _, r := range readers {
+				if r != nil {
+					_ = r.Close()
+				}
+			}
+		}
+	}()
+
+	for i := range pp.fileMeta.NumColumns() {
+		eg.Go(func() error {
+			wrapper, err := builder(i)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			reader, err := file.NewParquetReader(
+				wrapper,
+				file.WithReadProps(pp.prop),
+				file.WithMetadata(pp.fileMeta),
+			)
+			if err != nil {
+				_ = wrapper.Close()
+				return errors.Trace(err)
+			}
+			readers[i] = reader
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+
+	rgp := &rowGroupParser{
+		rowGroup: pp.curRowGroup,
+		readers:  readers,
+	}
+	if err := rgp.init(pp.colTypes, pp.loc); err != nil {
+		return errors.Trace(err)
+	}
+	pp.rowGroup = rgp
 	return nil
 }
 
-// resetIterators is used to reclaim the memory used by the column reader.
-func (pp *ParquetParser) resetIterators() error {
-	var err error
-	for _, d := range pp.iterators {
-		err2 := d.Close()
-		if err2 != nil && err == nil {
-			err = err2
+func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSeekerCloser, error), error) {
+	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
+		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pp.logger.Debug("use in memory reader for parquet file", zap.String("path", pp.path))
+		return func(c int) (readerAtSeekerCloser, error) {
+			return &inMemoryParquetWrapper{
+				base:     base,
+				pos:      ranges.columnStarts[c],
+				fileSize: pp.fileMeta.GetSourceFileSize(),
+			}, nil
+		}, nil
+	}
+
+	return func(c int) (readerAtSeekerCloser, error) {
+		return newParquetWrapper(ctx, pp.store, pp.path,
+			&storeapi.ReaderOption{
+				StartOffset: &ranges.columnStarts[c],
+				EndOffset:   &ranges.columnEnds[c],
+			})
+	}, nil
+}
+
+func (pp *ParquetParser) moveToNextRowGroup() error {
+	if pp.rowGroup != nil {
+		err := pp.rowGroup.Close()
+		pp.rowGroup = nil
+		if err != nil {
+			return err
 		}
 	}
 
-	return err
+	pp.curRowGroup++
+	if pp.curRowGroup >= pp.totalRowGroup {
+		return io.EOF
+	}
+
+	return pp.buildRowGroupParser()
 }
 
 // readSingleRow read one row internally and store them in the row buffer.
@@ -354,38 +445,18 @@ func (pp *ParquetParser) resetIterators() error {
 // so copy it if you need to keep the data before the next read.
 func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 	// Move to next row group
-	if pp.readRowInGroup == pp.totalRowsInGroup {
-		if pp.curRowGroup >= 0 {
-			if err := pp.resetIterators(); err != nil {
-				return err
-			}
+	if pp.rowGroup.isDone() {
+		if err := pp.moveToNextRowGroup(); err != nil {
+			return err
 		}
-		pp.curRowGroup++
-		if pp.curRowGroup >= pp.totalRowGroup {
-			return io.EOF
-		}
-
-		rowGroup := pp.reader.RowGroup(pp.curRowGroup)
-		for c := range len(pp.iterators) {
-			colReader, err := rowGroup.Column(c)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			pp.iterators[c].SetReader(colReader)
-		}
-		pp.readRowInGroup, pp.totalRowsInGroup = 0, int(pp.reader.MetaData().RowGroups[pp.curRowGroup].NumRows)
 	}
 
-	// Read in this group
-	for col, iter := range pp.iterators {
-		if err := iter.Next(&row[col]); err != nil {
-			return errors.Annotate(err, "parquet read column failed")
-		}
+	if err := pp.rowGroup.readRow(row); err != nil {
+		return err
 	}
 
 	pp.totalReadBytes += estimateRowSize(row)
 	pp.totalReadRows++
-	pp.readRowInGroup++
 	return nil
 }
 
@@ -429,10 +500,15 @@ func (pp *ParquetParser) Close() error {
 		}
 	}()
 
-	if err := pp.resetIterators(); err != nil {
-		pp.logger.Warn("Close parquet parser get error", zap.Error(err))
+	var onceErr common.OnceError
+	if pp.rowGroup != nil {
+		if err := pp.rowGroup.Close(); err != nil {
+			onceErr.Set(err)
+			pp.logger.Warn("Close parquet parser get error", zap.Error(err))
+		}
+		pp.rowGroup = nil
 	}
-	return pp.reader.Close()
+	return onceErr.Get()
 }
 
 // ReadRow reads a row in the parquet file by the parser.
@@ -487,39 +563,21 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 	pp.lastRow.RowID = rowID
 }
 
-// OpenParquetReader opens a parquet file and returns a handle that can at least read the file.
-func OpenParquetReader(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	path string,
-) (storage.ReadSeekCloser, error) {
-	r, err := store.Open(ctx, path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	pf := &parquetFileWrapper{
-		ReadSeekCloser: r,
-		store:          store,
-		ctx:            ctx,
-		path:           path,
-		skipBuf:        make([]byte, defaultBufSize),
-	}
-	return pf, nil
-}
-
 // ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
 func ReadParquetFileRowCountByFile(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	fileMeta SourceFileMeta,
 ) (int64, error) {
 	r, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	defer func() {
+		_ = r.Close()
+	}()
 
-	reader, err := file.NewParquetReader(&parquetFileWrapper{ReadSeekCloser: r})
+	reader, err := file.NewParquetReader(&parquetWrapper{ReadSeekCloser: r})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -530,29 +588,23 @@ func ReadParquetFileRowCountByFile(
 // NewParquetParser generates a parquet parser.
 func NewParquetParser(
 	ctx context.Context,
-	store storage.ExternalStorage,
-	r storage.ReadSeekCloser,
+	store storeapi.Storage,
+	r storeapi.ReadSeekCloser,
 	path string,
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
-	wrapper, ok := r.(*parquetFileWrapper)
-	if !ok {
-		wrapper = &parquetFileWrapper{
-			ReadSeekCloser: r,
-			store:          store,
-			ctx:            ctx,
-			path:           path,
-			skipBuf:        make([]byte, defaultBufSize),
-		}
-	}
+	wrapper := &parquetWrapper{ReadSeekCloser: r}
+	defer func() {
+		_ = r.Close()
+	}()
 
 	allocator := memory.NewGoAllocator()
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
 
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop), file.WithPrefetch(8))
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -591,9 +643,13 @@ func NewParquetParser(
 	})
 
 	parser := &ParquetParser{
-		reader:   reader,
+		fileMeta: reader.MetaData(),
 		colTypes: colTypes,
 		colNames: colNames,
+		ctx:      ctx,
+		store:    store,
+		path:     path,
+		prop:     prop,
 		alloc:    allocator,
 		logger:   logger,
 		rowPool:  &pool,
@@ -609,7 +665,7 @@ func NewParquetParser(
 func SampleStatisticsFromParquet(
 	ctx context.Context,
 	path string,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 ) (
 	rowCount int64,
 	avgRowSize float64,
@@ -630,12 +686,12 @@ func SampleStatisticsFromParquet(
 
 	var rowSize int64
 
-	reader := parser.reader
-	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
+	meta := parser.fileMeta
+	if meta.NumRowGroups() == 0 || meta.RowGroups[0].NumRows == 0 {
 		return 0, 0, nil
 	}
 
-	totalReadRows := reader.MetaData().NumRows
+	totalReadRows := meta.NumRows
 	readRows := min(totalReadRows, int64(1024))
 	for range readRows {
 		err = parser.ReadRow()

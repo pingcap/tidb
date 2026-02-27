@@ -6,9 +6,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage/recording",
         "//pkg/dxf/framework/metering",
         "//pkg/dxf/framework/proto",
+        "//pkg/objstore/recording",
         "@org_uber_go_atomic//:atomic",
     ],
 )

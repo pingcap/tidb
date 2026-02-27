@@ -20,7 +20,6 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -28,6 +27,7 @@ import (
 	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -53,13 +53,13 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	if len(taskMeta.CloudStorageURI) == 0 {
 		return nil
 	}
-	backend, err := storage.ParseBackend(taskMeta.CloudStorageURI, nil)
+	backend, err := objstore.ParseBackend(taskMeta.CloudStorageURI, nil)
 	logger := logutil.Logger(ctx).With(zap.Int64("task-id", task.ID))
 	if err != nil {
 		logger.Warn("failed to parse cloud storage uri", zap.Error(err))
 		return err
 	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	extStore, err := objstore.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
 		logger.Warn("failed to create cloud storage", zap.Error(err))
 		return err

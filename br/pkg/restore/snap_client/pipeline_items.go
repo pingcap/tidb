@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -131,7 +131,6 @@ func (rc *SnapClient) updateTemporaryUserTable(ctx context.Context, renamedTable
 func (rc *SnapClient) replaceTables(
 	ctx context.Context,
 	createdTables []*restoreutils.CreatedTable,
-	schemaVersionPair SchemaVersionPairT,
 	restoreTS uint64,
 	loadStatsPhysical, loadSysTablePhysical bool,
 	kvClient kv.Client,
@@ -155,7 +154,7 @@ func (rc *SnapClient) replaceTables(
 		return 0, errors.Trace(err)
 	}
 
-	if err := updateStatsTableSchema(ctx, renamedTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
+	if err := updateStatsTableSchema(ctx, renamedTables, rc.dom.InfoSchema(), rc.db.Session().Execute); err != nil {
 		return 0, errors.Trace(err)
 	}
 
@@ -182,12 +181,11 @@ type PipelineContext struct {
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
-	SchemaVersionPair   SchemaVersionPairT
 	RestoreTS           uint64
 
 	// pipeline item tool client
 	KvClient   kv.Client
-	ExtStorage storage.ExternalStorage
+	ExtStorage storeapi.Storage
 	Glue       glue.Glue
 }
 
@@ -209,7 +207,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	}
 	progressLen := int64(pipelineNum * len(createdTables))
 	if plCtx.LoadStatsPhysical || plCtx.LoadSysTablePhysical {
-		renamedTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
+		renamedTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -561,7 +559,7 @@ func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, s
 
 func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	builder *PipelineConcurrentBuilder,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
 ) {

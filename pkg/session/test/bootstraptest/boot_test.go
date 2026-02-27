@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -184,6 +185,7 @@ func TestTiDBEnablePagingVariable(t *testing.T) {
 }
 
 func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := session.CreateSessionAndSetID(t, store)

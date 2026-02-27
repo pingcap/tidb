@@ -9,7 +9,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 36,
+    shard_count = 37,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -26,7 +26,9 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
+        "//pkg/store/mockstore",
         "//pkg/testkit",  #keep
+        "//pkg/testkit/testenv",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",

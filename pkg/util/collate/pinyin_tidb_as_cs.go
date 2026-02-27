@@ -38,6 +38,11 @@ func (*zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(_ string) []byte {
 	panic("implement me")
 }
 
+// MaxKeyLen implements Collator interface.
+func (*zhPinyinTiDBASCSCollator) MaxKeyLen(string) int {
+	panic("implement me")
+}
+
 // Pattern is not implemented.
 func (*zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
 	panic("implement me")

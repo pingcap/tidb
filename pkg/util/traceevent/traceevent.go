@@ -480,7 +480,8 @@ func DumpFlightRecorderToLogger(reason string) {
 	// Perform full dump
 	logger.Info("dump flight recorder", zap.String("reason", reason), zap.Int("event_count", len(events)))
 	for _, ev := range events {
-		fields := make([]zap.Field, 0, len(ev.Fields)+4)
+		fields := make([]zap.Field, 0, len(ev.Fields)+5)
+		fields = append(fields, zap.String("event_name", ev.Name))
 		fields = append(fields, zap.String("category", ev.Category.String()))
 		fields = append(fields, zap.Int64("event_ts", ev.Timestamp.UnixMicro()))
 		if len(ev.TraceID) > 0 {

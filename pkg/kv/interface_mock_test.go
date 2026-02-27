@@ -30,10 +30,6 @@ type mockTxn struct {
 	valid bool
 }
 
-func (t *mockTxn) SetAssertion(_ []byte, _ ...FlagsOp) error {
-	return nil
-}
-
 // Commit always returns a retryable error.
 func (t *mockTxn) Commit(ctx context.Context) error {
 	return ErrTxnRetryable
@@ -168,12 +164,7 @@ func (t *mockTxn) ClearDiskFullOpt() {
 	// TODO nothing
 }
 
-func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
-
-}
-
 func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
-
 }
 
 func (t *mockTxn) MemHookSet() bool { return false }

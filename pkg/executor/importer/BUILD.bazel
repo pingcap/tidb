@@ -15,7 +15,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/executor/importer",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -42,6 +41,9 @@ go_library(
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
+        "//pkg/objstore/compressedio",
+        "//pkg/objstore/storeapi",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",
@@ -113,7 +115,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 33,
+    shard_count = 34,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",

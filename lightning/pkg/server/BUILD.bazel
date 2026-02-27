@@ -13,7 +13,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/restore/split",
-        "//br/pkg/storage",
         "//br/pkg/version/build",
         "//lightning/pkg/importer",
         "//lightning/pkg/importinto",
@@ -28,6 +27,8 @@ go_library(
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",
         "//pkg/lightning/tikv",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/planner/core",
         "//pkg/util",
         "//pkg/util/logutil",

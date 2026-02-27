@@ -20,10 +20,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
 
@@ -40,7 +41,7 @@ type FileScanner interface {
 type fileScanner struct {
 	sourcePath string
 	db         *sql.DB
-	store      storage.ExternalStorage
+	store      storeapi.Storage
 	loader     *mydump.MDLoader
 	logger     log.Logger
 	config     *SDKConfig
@@ -48,11 +49,11 @@ type fileScanner struct {
 
 // NewFileScanner creates a new FileScanner
 func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDKConfig) (FileScanner, error) {
-	u, err := storage.ParseBackend(sourcePath, nil)
+	u, err := objstore.ParseBackend(sourcePath, nil)
 	if err != nil {
 		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s, err=%v", sourcePath, err)
 	}
-	store, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
+	store, err := objstore.New(ctx, u, &storeapi.Options{})
 	if err != nil {
 		return nil, errors.Annotatef(ErrCreateExternalStorage, "source=%s, err=%v", sourcePath, err)
 	}
@@ -73,8 +74,10 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	if cfg.concurrency > 0 {
 		loaderOptions = append(loaderOptions, mydump.WithScanFileConcurrency(cfg.concurrency))
 	}
+	if !cfg.estimateRealSize {
+		loaderOptions = append(loaderOptions, mydump.WithSkipRealSizeEstimation(true))
+	}
 
-	// TODO: we can skip some time-consuming operation in constructFileInfo (like get real size of compressed file).
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
 		if loader == nil || !errors.ErrorEqual(err, common.ErrTooManySourceFiles) {

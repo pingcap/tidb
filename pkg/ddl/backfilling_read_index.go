@@ -25,8 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -43,6 +41,8 @@ import (
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -129,7 +129,7 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 	subtask *proto.Subtask,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
-	extStore storage.ExternalStorage,
+	extStore storeapi.Storage,
 ) error {
 	pipe, err := r.buildExternalStorePipeline(wctx, extStore, subtask.TaskID, subtask.ID, sm, concurrency)
 	if err != nil {
@@ -208,7 +208,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	var (
 		accessRec = &recording.AccessStats{}
-		objStore  storage.ExternalStorage
+		objStore  storeapi.Storage
 	)
 	if r.isGlobalSort() {
 		accessRec, objStore, err = handle.NewObjStoreWithRecording(ctx, r.cloudStorageURI)
@@ -295,7 +295,7 @@ func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource 
 	return nil
 }
 
-func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storage.ExternalStorage) error {
+func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storeapi.Storage) error {
 	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish", r.backend)
 	if !r.isGlobalSort() {
 		return nil
@@ -413,7 +413,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 
 func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	wctx *workerpool.Context,
-	extStore storage.ExternalStorage,
+	extStore storeapi.Storage,
 	taskID int64,
 	subtaskID int64,
 	sm *BackfillSubTaskMeta,

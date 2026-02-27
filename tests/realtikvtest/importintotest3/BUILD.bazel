@@ -4,6 +4,7 @@ go_test(
     name = "importintotest3_test",
     timeout = "moderate",
     srcs = [
+        "cleanup_on_error_test.go",
         "cross_ks_test.go",
         "extra_param_test.go",
         "file_compression_test.go",
@@ -14,7 +15,6 @@ go_test(
     race = "on",
     shard_count = 2,
     deps = [
-        "//br/pkg/storage",
         "//pkg/config/kerneltype",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/storage",
@@ -24,9 +24,11 @@ go_test(
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/mydump",
+        "//pkg/objstore",
         "//pkg/planner/core",
         "//pkg/sessionctx/vardef",
         "//pkg/store",
+        "//pkg/store/driver/error",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",

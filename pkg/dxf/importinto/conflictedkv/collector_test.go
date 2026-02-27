@@ -24,13 +24,13 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -103,7 +103,7 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 	ctx := context.Background()
 
 	doTestFn := func(t *testing.T, kvGroup string, maxSize int64, outFileCnt int) {
-		objStore := storage.NewMemStorage()
+		objStore := objstore.NewMemStorage()
 		t.Cleanup(func() {
 			objStore.Close()
 		})

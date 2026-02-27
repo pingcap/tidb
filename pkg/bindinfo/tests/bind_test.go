@@ -555,7 +555,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		utilCleanBindingEnv(tk)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
-		h.LoadFromStorageToCache(true)
+		h.LoadFromStorageToCache(true, false)
 		res := tk.MustQuery(`show global bindings`).Rows()
 
 		require.Equalf(t, 1, len(res), "sql: %s", sql)
@@ -563,7 +563,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
 		require.NoError(t, h.GCBinding(), "sql: %s", sql)
-		h.LoadFromStorageToCache(true)
+		h.LoadFromStorageToCache(true, false)
 		tk.MustQuery("show global bindings").Check(testkit.Rows())
 	}
 
@@ -803,6 +803,11 @@ func TestFuzzyBindingHints(t *testing.T) {
 }
 
 func TestBatchDropBindings(t *testing.T) {
+	originLease := bindinfo.Lease
+	bindinfo.Lease = 0
+	defer func() {
+		bindinfo.Lease = originLease
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)

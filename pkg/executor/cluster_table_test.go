@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -198,6 +199,23 @@ select 7;`
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
 		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
+
+	executor.DashboardSlowLogReadBlockCnt4Test = 0
+	// 2020-02-16T00:00:00.000000+08:00
+	unixTimeStart := time.Date(2020, 2, 16, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	// 2020-02-17T00:00:00.000000+08:00
+	unixTimeEnd := time.Date(2020, 2, 17, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	// check dashboard query pattern. Only reduce limit to check if it works.
+	sql := fmt.Sprintf(`SELECT Digest, Query, Conn_ID, (UNIX_TIMESTAMP(Time) + 0E0) AS timestamp, Query_time, Mem_max
+				FROM INFORMATION_SCHEMA.CLUSTER_SLOW_QUERY
+                WHERE Time BETWEEN FROM_UNIXTIME(%d) AND FROM_UNIXTIME(%d)
+                ORDER BY Time DESC LIMIT 2`, unixTimeStart.Unix(), unixTimeEnd.Unix())
+	rows := tk.MustQuery(sql).Rows()
+	require.Equal(t, 2, len(rows))
+	require.Equal(t, "select 5;", rows[0][1])
+	require.Equal(t, "select 4;", rows[1][1])
+	// 3 means we read 2 blocks of logData3, and last block of logData2
+	require.EqualValues(t, 3, executor.DashboardSlowLogReadBlockCnt4Test)
 }
 
 func TestIssue20236(t *testing.T) {

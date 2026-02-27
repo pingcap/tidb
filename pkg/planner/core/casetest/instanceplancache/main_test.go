@@ -27,7 +27,7 @@ import (
 
 var (
 	typeInt      = "int"
-	typeVarchar  = "varchar(255)"
+	typeVarchar  = "varchar(128)"
 	typeFloat    = "float"
 	typeDouble   = "double"
 	typeDecimal  = "decimal(10,2)"

@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -38,18 +38,20 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -58,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -948,8 +951,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 		restoreStartTs := cfg.RestoreStartTS
 		if restoreStartTs == 0 {
-			log.Warn("restoreStartTS is not set, skip building blocklist")
-			return
+			log.Warn("restoreStartTS is not set, the blocklist will block from 0 to restoreCommitTs")
 		}
 		// Convert map to slice for function call
 		tableIdsSlice := make([]int64, 0, len(downstreamTableIds))
@@ -961,7 +963,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreErr = err
 			return
 		}
-		logTaskStorage, err := storage.Create(c, logTaskBackend, false)
+		logTaskStorage, err := objstore.Create(c, logTaskBackend, false)
 		if err != nil {
 			restoreErr = err
 			return
@@ -1128,7 +1130,7 @@ func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) (bool, erro
 type SnapshotRestoreConfig struct {
 	*RestoreConfig
 	piTRTaskInfo           *PiTRTaskInfo
-	logRestoreStorage      storage.ExternalStorage
+	logRestoreStorage      storeapi.Storage
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
 }
@@ -1151,6 +1153,17 @@ func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
 	return false, errors.New(errMsg)
 }
 
+func isRestoreSysTablesPhysically(cfg *SnapshotRestoreConfig) (loadSysTablePhysical, loadStatsPhysical bool) {
+	if kerneltype.IsNextGen() {
+		// physical restore system tables requires rename table, while in
+		// next-gen kernel, wo forbid rename table on system tables.
+		return false, false
+	}
+	loadSysTablePhysical = cfg.FastLoadSysTables && cfg.WithSysTable
+	loadStatsPhysical = cfg.FastLoadSysTables && cfg.LoadStats
+	return
+}
+
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *SnapshotRestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
@@ -1164,8 +1177,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	loadSysTablePhysical := cfg.FastLoadSysTables && cfg.WithSysTable
-	loadStatsPhysical := cfg.FastLoadSysTables && cfg.LoadStats
+	loadSysTablePhysical, loadStatsPhysical := isRestoreSysTablesPhysically(cfg)
 
 	// check if this is part of the PiTR operation
 	isPiTR, err := cfg.isPiTR()
@@ -1184,8 +1196,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UpstreamClusterID == 0 {
 		cfg.UpstreamClusterID = backupMeta.ClusterId
 	}
-	schemaVersionPair := snapclient.SchemaVersionPairT{}
 	if loadStatsPhysical || loadSysTablePhysical {
+		schemaVersionPair := snapclient.SchemaVersionPairT{}
 		upstreamClusterVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
 		if upstreamClusterVersion == nil {
 			log.Warn("The cluster version from backupmeta is invalid. Fallback to logically load system tables.",
@@ -1428,7 +1440,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("checking ongoing conflicting restore task using restore registry",
 			zap.Int("tables_count", len(tables)),
 			zap.Uint64("current_restore_id", cfg.RestoreID))
-		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, tables)
+		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, dbs, tables)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1519,11 +1531,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.piTRTaskInfo != nil {
 			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
 		}
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, hash, cpEnabledAndExists)
+		sets, restoreSchedulersConfigFromCheckpoint, newRestoreStartTS, err := client.InitCheckpoint(
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, cfg.RestoreStartTS, logRestoredTS, hash, cpEnabledAndExists)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Info("try to reuse restore start timestamp for blocklist",
+			zap.Uint64("new restore start ts", newRestoreStartTS),
+			zap.Uint64("old restore start ts", cfg.RestoreStartTS),
+		)
+		cfg.RestoreStartTS = newRestoreStartTS
 		if restoreSchedulersConfigFromCheckpoint != nil {
 			// The last range rule will be dropped when the last restore quits.
 			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
@@ -1548,10 +1565,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	sp := utils.BRServiceSafePoint{
+	sp := gc.BRServiceSafePoint{
 		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+		TTL:      gc.DefaultBRGCSafePointTTL,
+		ID:       gc.MakeSafePointID(),
 	}
 	g.Record("BackupTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
@@ -1560,10 +1577,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
-		// set the ttl to 0 to remove the gc-safe-point
-		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
-			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+		// remove the gc-safe-point
+		if err := mgr.GetGCManager().DeleteServiceSafePoint(ctx, sp); err != nil {
+			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
@@ -1572,7 +1588,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
-	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
+	err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1750,7 +1766,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
 		StatsConcurrency:    cfg.StatsConcurrency,
-		SchemaVersionPair:   schemaVersionPair,
 		RestoreTS:           restoreTS,
 
 		KvClient:   mgr.GetStorage().GetClient(),

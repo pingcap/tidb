@@ -26,15 +26,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
@@ -50,10 +45,11 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -118,7 +114,6 @@ func getTableImporter(
 func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.logger.Info("init subtask env")
 	var tableImporter *importer.TableImporter
-	var taskManager *dxfstorage.TaskManager
 	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store, s.logger)
 	if err != nil {
 		return err
@@ -136,26 +131,6 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		}
 	}()
 
-	if kerneltype.IsClassic() {
-		taskManager, err = dxfstorage.GetTaskManager()
-		if err != nil {
-			return err
-		}
-		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			// User can write table between precheck and alter table mode to Import,
-			// so check table emptyness again.
-			isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
-			if err2 != nil {
-				return err2
-			}
-			if !isEmpty {
-				return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
@@ -194,7 +169,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	var (
 		dataKVFiles, indexKVFiles atomic.Int64
 		accessRec                 = &recording.AccessStats{}
-		objStore                  storage.ExternalStorage
+		objStore                  storeapi.Storage
 	)
 	defer func() {
 		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
@@ -258,6 +233,15 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		indexKVFileCount: &indexKVFiles,
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
+	defer func() {
+		s.sharedVars.Delete(subtaskMeta.ID)
+		if err == nil || !s.tableImporter.IsLocalSort() {
+			return
+		}
+		if cleanupErr := s.tableImporter.Backend().CleanupAllLocalEngines(context.Background()); cleanupErr != nil {
+			logger.Warn("cleanup engines failed", zap.Error(cleanupErr))
+		}
+	}()
 
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
@@ -299,7 +283,7 @@ func (s *importStepExecutor) ResetSummary() {
 	s.summary.Reset()
 }
 
-func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, extStore storage.ExternalStorage) error {
+func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, extStore storeapi.Storage) error {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -358,7 +342,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		}
 	}
 
-	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -487,7 +470,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	return m.onFinished(ctx, subtask, objStore)
 }
 
-func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sortStore storage.ExternalStorage) error {
+func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sortStore storeapi.Storage) error {
 	var subtaskMeta MergeSortStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -524,10 +507,6 @@ func (m *mergeSortStepExecutor) ResetSummary() {
 }
 
 func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup string) (engineapi.OnDuplicateKey, error) {
-	if kerneltype.IsNextGen() {
-		// will adapt for next-gen later
-		return engineapi.OnDuplicateKeyIgnore, nil
-	}
 	if kvGroup == external.DataKVGroup {
 		return engineapi.OnDuplicateKeyRecord, nil
 	}
@@ -537,6 +516,10 @@ func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup stri
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Trace(err2)
 	}
+	return getOnDupForIndex(indicesGenKV, indexID)
+}
+
+func getOnDupForIndex(indicesGenKV map[int64]importer.GenKVIndex, indexID int64) (engineapi.OnDuplicateKey, error) {
 	info, ok := indicesGenKV[indexID]
 	if !ok {
 		// shouldn't happen
@@ -677,7 +660,7 @@ func (e *writeAndIngestStepExecutor) ResetSummary() {
 	e.summary.Reset()
 }
 
-func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, objStore storage.ExternalStorage) error {
+func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, objStore storeapi.Storage) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -781,8 +764,11 @@ func NewImportExecutor(
 }
 
 func (*importExecutor) IsIdempotent(*proto.Subtask) bool {
-	// import don't have conflict detection and resolution now, so it's ok
-	// to import data twice.
+	// for local sort, there is no conflict detection and resolution , so it's
+	// ok to import data twice.
+	// for global-sort, subtasks are safe to retry because duplicate KVs are
+	// recorded during encode/merge/ingest steps and conflicted rows are
+	// resolved in later steps.
 	return true
 }
 

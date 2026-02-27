@@ -30,6 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/vitess"
 )
 
+// UUIDStrLen is the length of a UUID in string format
+// 16 bytes in hex is 32 characters, plus 4 hyphens = 36 characters (hex/ASCII, 1 byte chars)
+// https://datatracker.ietf.org/doc/html/rfc9562#name-uuid-format
+const UUIDStrLen = 36
+
 func (b *builtinInetNtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
@@ -207,7 +212,7 @@ func (b *builtinUUIDSig) vectorized() bool {
 
 func (b *builtinUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	result.ReserveString(n)
+	result.ReserveStringWithSizeHint(n, UUIDStrLen)
 	var id uuid.UUID
 	var err error
 	for range n {
@@ -226,7 +231,7 @@ func (b *builtinUUIDv4Sig) vectorized() bool {
 
 func (b *builtinUUIDv4Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	result.ReserveString(n)
+	result.ReserveStringWithSizeHint(n, UUIDStrLen)
 	var id uuid.UUID
 	var err error
 	for range n {
@@ -245,7 +250,7 @@ func (b *builtinUUIDv7Sig) vectorized() bool {
 
 func (b *builtinUUIDv7Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	result.ReserveString(n)
+	result.ReserveStringWithSizeHint(n, UUIDStrLen)
 	var id uuid.UUID
 	var err error
 	for range n {

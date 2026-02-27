@@ -1621,6 +1621,11 @@ error = '''
 Invalid AFFINITY %s
 '''
 
+["ddl:8267"]
+error = '''
+%s is forbidden
+'''
+
 ["ddl:8270"]
 error = '''
 Invalid engine attribute format: %s

@@ -57,10 +57,10 @@ func TestAutoAnalyzeForMissingPartition(t *testing.T) {
 	tk.MustExec("set @@tidb_skip_missing_partition_stats = 1")
 	tk.MustExec("create table t (a int, b int, c int, index idx_b(b)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300))")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t partition p1")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	originalVal2 := tk.MustQuery("select @@tidb_auto_analyze_ratio").Rows()[0][0].(string)
 	defer func() {

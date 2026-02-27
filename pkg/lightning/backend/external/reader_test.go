@@ -24,10 +24,10 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -39,7 +39,7 @@ func TestReadAllDataBasic(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 
 	var summary *WriterSummary
@@ -79,7 +79,7 @@ func TestReadAllOneFile(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 
 	var summary *WriterSummary
@@ -115,7 +115,7 @@ func TestReadAllOneFile(t *testing.T) {
 
 func TestReadLargeFile(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	backup := ConcurrentReaderBufferSizePerConc
 	t.Cleanup(func() {
 		ConcurrentReaderBufferSizePerConc = backup
@@ -165,7 +165,7 @@ func TestReadLargeFile(t *testing.T) {
 
 func TestReadKVFilesAsync(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	var summary *WriterSummary
 	w := NewWriterBuilder().

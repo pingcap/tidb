@@ -113,10 +113,10 @@ l_returnflag,
 l_linestatus;
 id	task	access object	operator info
 Sort	root		tpch50.lineitem.l_returnflag, tpch50.lineitem.l_linestatus
-└─Projection	root		tpch50.lineitem.l_returnflag, tpch50.lineitem.l_linestatus, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23, Column#24, Column#25
-  └─HashAgg	root		group by:tpch50.lineitem.l_linestatus, tpch50.lineitem.l_returnflag, funcs:sum(Column#26)->Column#18, funcs:sum(Column#27)->Column#19, funcs:sum(Column#28)->Column#20, funcs:sum(Column#29)->Column#21, funcs:avg(Column#30, Column#31)->Column#22, funcs:avg(Column#32, Column#33)->Column#23, funcs:avg(Column#34, Column#35)->Column#24, funcs:count(Column#36)->Column#25, funcs:firstrow(tpch50.lineitem.l_returnflag)->tpch50.lineitem.l_returnflag, funcs:firstrow(tpch50.lineitem.l_linestatus)->tpch50.lineitem.l_linestatus
+└─Projection	root		tpch50.lineitem.l_returnflag, tpch50.lineitem.l_linestatus, Column, Column, Column, Column, Column, Column, Column, Column
+  └─HashAgg	root		group by:tpch50.lineitem.l_linestatus, tpch50.lineitem.l_returnflag, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:avg(Column, Column)->Column, funcs:avg(Column, Column)->Column, funcs:avg(Column, Column)->Column, funcs:count(Column)->Column, funcs:firstrow(tpch50.lineitem.l_returnflag)->tpch50.lineitem.l_returnflag, funcs:firstrow(tpch50.lineitem.l_linestatus)->tpch50.lineitem.l_linestatus
     └─TableReader	root		data:HashAgg
-      └─HashAgg	cop[tikv]		group by:tpch50.lineitem.l_linestatus, tpch50.lineitem.l_returnflag, funcs:sum(tpch50.lineitem.l_quantity)->Column#26, funcs:sum(tpch50.lineitem.l_extendedprice)->Column#27, funcs:sum(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)))->Column#28, funcs:sum(mul(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), plus(1, tpch50.lineitem.l_tax)))->Column#29, funcs:count(tpch50.lineitem.l_quantity)->Column#30, funcs:sum(tpch50.lineitem.l_quantity)->Column#31, funcs:count(tpch50.lineitem.l_extendedprice)->Column#32, funcs:sum(tpch50.lineitem.l_extendedprice)->Column#33, funcs:count(tpch50.lineitem.l_discount)->Column#34, funcs:sum(tpch50.lineitem.l_discount)->Column#35, funcs:count(1)->Column#36
+      └─HashAgg	cop[tikv]		group by:tpch50.lineitem.l_linestatus, tpch50.lineitem.l_returnflag, funcs:sum(tpch50.lineitem.l_quantity)->Column, funcs:sum(tpch50.lineitem.l_extendedprice)->Column, funcs:sum(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)))->Column, funcs:sum(mul(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), plus(1, tpch50.lineitem.l_tax)))->Column, funcs:count(tpch50.lineitem.l_quantity)->Column, funcs:sum(tpch50.lineitem.l_quantity)->Column, funcs:count(tpch50.lineitem.l_extendedprice)->Column, funcs:sum(tpch50.lineitem.l_extendedprice)->Column, funcs:count(tpch50.lineitem.l_discount)->Column, funcs:sum(tpch50.lineitem.l_discount)->Column, funcs:count(1)->Column
         └─Selection	cop[tikv]		le(tpch50.lineitem.l_shipdate, 1998-08-15 00:00:00.000000)
           └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
 /*
@@ -178,7 +178,7 @@ id	task	access object	operator info
 Projection	root		tpch50.supplier.s_acctbal, tpch50.supplier.s_name, tpch50.nation.n_name, tpch50.part.p_partkey, tpch50.part.p_mfgr, tpch50.supplier.s_address, tpch50.supplier.s_phone, tpch50.supplier.s_comment
 └─TopN	root		tpch50.supplier.s_acctbal:desc, tpch50.nation.n_name, tpch50.supplier.s_name, tpch50.part.p_partkey, offset:0, count:100
   └─Projection	root		tpch50.part.p_partkey, tpch50.part.p_mfgr, tpch50.supplier.s_name, tpch50.supplier.s_address, tpch50.supplier.s_phone, tpch50.supplier.s_acctbal, tpch50.supplier.s_comment, tpch50.nation.n_name
-    └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey) eq(tpch50.partsupp.ps_supplycost, Column#50)]
+    └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey) eq(tpch50.partsupp.ps_supplycost, Column)]
       ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.partsupp.ps_partkey, tpch50.part.p_partkey)]
       │ ├─TableReader(Build)	root		data:Selection
       │ │ └─Selection	cop[tikv]		eq(tpch50.part.p_size, 30), like(tpch50.part.p_type, "%STEEL", 92)
@@ -195,8 +195,8 @@ Projection	root		tpch50.supplier.s_acctbal, tpch50.supplier.s_name, tpch50.natio
       │   │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
       │   └─TableReader(Probe)	root		data:TableFullScan
       │     └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
-      └─Selection(Probe)	root		not(isnull(Column#50))
-        └─HashAgg	root		group by:tpch50.partsupp.ps_partkey, funcs:min(tpch50.partsupp.ps_supplycost)->Column#50, funcs:firstrow(tpch50.partsupp.ps_partkey)->tpch50.partsupp.ps_partkey
+      └─Selection(Probe)	root		not(isnull(Column))
+        └─HashAgg	root		group by:tpch50.partsupp.ps_partkey, funcs:min(tpch50.partsupp.ps_supplycost)->Column, funcs:firstrow(tpch50.partsupp.ps_partkey)->tpch50.partsupp.ps_partkey
           └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
             ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
             │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
@@ -243,10 +243,10 @@ revenue desc,
 o_orderdate
 limit 10;
 id	task	access object	operator info
-Projection	root		tpch50.lineitem.l_orderkey, Column#35, tpch50.orders.o_orderdate, tpch50.orders.o_shippriority
-└─TopN	root		Column#35:desc, tpch50.orders.o_orderdate, offset:0, count:10
-  └─HashAgg	root		group by:Column#42, Column#43, Column#44, funcs:sum(Column#41)->Column#35, funcs:firstrow(Column#42)->tpch50.orders.o_orderdate, funcs:firstrow(Column#43)->tpch50.orders.o_shippriority, funcs:firstrow(Column#44)->tpch50.lineitem.l_orderkey
-    └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#41, tpch50.orders.o_orderdate->Column#42, tpch50.orders.o_shippriority->Column#43, tpch50.lineitem.l_orderkey->Column#44
+Projection	root		tpch50.lineitem.l_orderkey, Column, tpch50.orders.o_orderdate, tpch50.orders.o_shippriority
+└─TopN	root		Column:desc, tpch50.orders.o_orderdate, offset:0, count:10
+  └─HashAgg	root		group by:Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->tpch50.orders.o_orderdate, funcs:firstrow(Column)->tpch50.orders.o_shippriority, funcs:firstrow(Column)->tpch50.lineitem.l_orderkey
+    └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column, tpch50.orders.o_orderdate->Column, tpch50.orders.o_shippriority->Column, tpch50.lineitem.l_orderkey->Column
       └─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
         ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
         │ ├─TableReader(Build)	root		data:Selection
@@ -290,8 +290,8 @@ order by
 o_orderpriority;
 id	task	access object	operator info
 Sort	root		tpch50.orders.o_orderpriority
-└─Projection	root		tpch50.orders.o_orderpriority, Column#27
-  └─HashAgg	root		group by:tpch50.orders.o_orderpriority, funcs:count(1)->Column#27, funcs:firstrow(tpch50.orders.o_orderpriority)->tpch50.orders.o_orderpriority
+└─Projection	root		tpch50.orders.o_orderpriority, Column
+  └─HashAgg	root		group by:tpch50.orders.o_orderpriority, funcs:count(1)->Column, funcs:firstrow(tpch50.orders.o_orderpriority)->tpch50.orders.o_orderpriority
     └─IndexHashJoin	root		semi join, inner:IndexLookUp, left side:TableReader, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		ge(tpch50.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch50.orders.o_orderdate, 1995-04-01 00:00:00.000000)
@@ -337,10 +337,10 @@ n_name
 order by
 revenue desc;
 id	task	access object	operator info
-Sort	root		Column#49:desc
-└─Projection	root		tpch50.nation.n_name, Column#49
-  └─HashAgg	root		group by:Column#51, funcs:sum(Column#50)->Column#49, funcs:firstrow(Column#51)->tpch50.nation.n_name
-    └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#50, tpch50.nation.n_name->Column#51
+Sort	root		Column:desc
+└─Projection	root		tpch50.nation.n_name, Column
+  └─HashAgg	root		group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->tpch50.nation.n_name
+    └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column, tpch50.nation.n_name->Column
       └─Projection	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.nation.n_name
         └─HashJoin	root		inner join, equal:[eq(tpch50.orders.o_custkey, tpch50.customer.c_custkey) eq(tpch50.supplier.s_nationkey, tpch50.customer.c_nationkey)]
           ├─TableReader(Build)	root		data:TableFullScan
@@ -383,9 +383,9 @@ and l_shipdate < date_add('1994-01-01', interval '1' year)
 and l_discount between 0.06 - 0.01 and 0.06 + 0.01
 and l_quantity < 24;
 id	task	access object	operator info
-HashAgg	root		funcs:sum(Column#19)->Column#18
+HashAgg	root		funcs:sum(Column)->Column
 └─TableReader	root		data:HashAgg
-  └─HashAgg	cop[tikv]		funcs:sum(mul(tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount))->Column#19
+  └─HashAgg	cop[tikv]		funcs:sum(mul(tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount))->Column
     └─Selection	cop[tikv]		ge(tpch50.lineitem.l_discount, 0.05), ge(tpch50.lineitem.l_shipdate, 1994-01-01 00:00:00.000000), le(tpch50.lineitem.l_discount, 0.07), lt(tpch50.lineitem.l_quantity, 24), lt(tpch50.lineitem.l_shipdate, 1995-01-01 00:00:00.000000)
       └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
 /*
@@ -439,10 +439,10 @@ supp_nation,
 cust_nation,
 l_year;
 id	task	access object	operator info
-Sort	root		tpch50.nation.n_name, tpch50.nation.n_name, Column#50
-└─Projection	root		tpch50.nation.n_name, tpch50.nation.n_name, Column#50, Column#52
-  └─HashAgg	root		group by:Column#56, Column#57, Column#58, funcs:sum(Column#55)->Column#52, funcs:firstrow(Column#56)->tpch50.nation.n_name, funcs:firstrow(Column#57)->tpch50.nation.n_name, funcs:firstrow(Column#58)->Column#50
-    └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#55, tpch50.nation.n_name->Column#56, tpch50.nation.n_name->Column#57, extract(YEAR, tpch50.lineitem.l_shipdate)->Column#58
+Sort	root		tpch50.nation.n_name, tpch50.nation.n_name, Column
+└─Projection	root		tpch50.nation.n_name, tpch50.nation.n_name, Column, Column
+  └─HashAgg	root		group by:Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->tpch50.nation.n_name, funcs:firstrow(Column)->tpch50.nation.n_name, funcs:firstrow(Column)->Column
+    └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column, tpch50.nation.n_name->Column, tpch50.nation.n_name->Column, extract(YEAR, tpch50.lineitem.l_shipdate)->Column
       └─Projection	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.lineitem.l_shipdate, tpch50.nation.n_name, tpch50.nation.n_name
         └─HashJoin	root		inner join, equal:[eq(tpch50.customer.c_nationkey, tpch50.nation.n_nationkey)], other cond:or(and(eq(tpch50.nation.n_name, "JAPAN"), eq(tpch50.nation.n_name, "INDIA")), and(eq(tpch50.nation.n_name, "INDIA"), eq(tpch50.nation.n_name, "JAPAN")))
           ├─TableReader(Build)	root		data:Selection
@@ -512,10 +512,10 @@ o_year
 order by
 o_year;
 id	task	access object	operator info
-Sort	root		Column#62
-└─Projection	root		Column#62, div(Column#64, Column#65)->Column#66
-  └─HashAgg	root		group by:Column#74, funcs:sum(Column#72)->Column#64, funcs:sum(Column#73)->Column#65, funcs:firstrow(Column#74)->Column#62
-    └─Projection	root		case(eq(tpch50.nation.n_name, INDIA), mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), 0.0000)->Column#72, mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#73, extract(YEAR, tpch50.orders.o_orderdate)->Column#74
+Sort	root		Column
+└─Projection	root		Column, div(Column, Column)->Column
+  └─HashAgg	root		group by:Column, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->Column
+    └─Projection	root		case(eq(tpch50.nation.n_name, INDIA), mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), 0.0000)->Column, mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column, extract(YEAR, tpch50.orders.o_orderdate)->Column
       └─Projection	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.orders.o_orderdate, tpch50.nation.n_name
         └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_nationkey, tpch50.nation.n_nationkey)]
           ├─TableReader(Build)	root		data:TableFullScan
@@ -588,10 +588,10 @@ order by
 nation,
 o_year desc;
 id	task	access object	operator info
-Sort	root		tpch50.nation.n_name, Column#53:desc
-└─Projection	root		tpch50.nation.n_name, Column#53, Column#55
-  └─HashAgg	root		group by:Column#60, Column#61, funcs:sum(Column#59)->Column#55, funcs:firstrow(Column#60)->tpch50.nation.n_name, funcs:firstrow(Column#61)->Column#53
-    └─Projection	root		minus(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), mul(tpch50.partsupp.ps_supplycost, tpch50.lineitem.l_quantity))->Column#59, tpch50.nation.n_name->Column#60, extract(YEAR, tpch50.orders.o_orderdate)->Column#61
+Sort	root		tpch50.nation.n_name, Column:desc
+└─Projection	root		tpch50.nation.n_name, Column, Column
+  └─HashAgg	root		group by:Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->tpch50.nation.n_name, funcs:firstrow(Column)->Column
+    └─Projection	root		minus(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), mul(tpch50.partsupp.ps_supplycost, tpch50.lineitem.l_quantity))->Column, tpch50.nation.n_name->Column, extract(YEAR, tpch50.orders.o_orderdate)->Column
       └─Projection	root		tpch50.lineitem.l_quantity, tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.partsupp.ps_supplycost, tpch50.orders.o_orderdate, tpch50.nation.n_name
         └─HashJoin	root		inner join, equal:[eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)]
           ├─TableReader(Build)	root		data:TableFullScan
@@ -655,10 +655,10 @@ order by
 revenue desc
 limit 20;
 id	task	access object	operator info
-Projection	root		tpch50.customer.c_custkey, tpch50.customer.c_name, Column#39, tpch50.customer.c_acctbal, tpch50.nation.n_name, tpch50.customer.c_address, tpch50.customer.c_phone, tpch50.customer.c_comment
-└─TopN	root		Column#39:desc, offset:0, count:20
-  └─HashAgg	root		group by:Column#43, Column#44, Column#45, Column#46, Column#47, Column#48, Column#49, funcs:sum(Column#42)->Column#39, funcs:firstrow(Column#43)->tpch50.customer.c_custkey, funcs:firstrow(Column#44)->tpch50.customer.c_name, funcs:firstrow(Column#45)->tpch50.customer.c_address, funcs:firstrow(Column#46)->tpch50.customer.c_phone, funcs:firstrow(Column#47)->tpch50.customer.c_acctbal, funcs:firstrow(Column#48)->tpch50.customer.c_comment, funcs:firstrow(Column#49)->tpch50.nation.n_name
-    └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#42, tpch50.customer.c_custkey->Column#43, tpch50.customer.c_name->Column#44, tpch50.customer.c_address->Column#45, tpch50.customer.c_phone->Column#46, tpch50.customer.c_acctbal->Column#47, tpch50.customer.c_comment->Column#48, tpch50.nation.n_name->Column#49
+Projection	root		tpch50.customer.c_custkey, tpch50.customer.c_name, Column, tpch50.customer.c_acctbal, tpch50.nation.n_name, tpch50.customer.c_address, tpch50.customer.c_phone, tpch50.customer.c_comment
+└─TopN	root		Column:desc, offset:0, count:20
+  └─HashAgg	root		group by:Column, Column, Column, Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->tpch50.customer.c_custkey, funcs:firstrow(Column)->tpch50.customer.c_name, funcs:firstrow(Column)->tpch50.customer.c_address, funcs:firstrow(Column)->tpch50.customer.c_phone, funcs:firstrow(Column)->tpch50.customer.c_acctbal, funcs:firstrow(Column)->tpch50.customer.c_comment, funcs:firstrow(Column)->tpch50.nation.n_name
+    └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column, tpch50.customer.c_custkey->Column, tpch50.customer.c_name->Column, tpch50.customer.c_address->Column, tpch50.customer.c_phone->Column, tpch50.customer.c_acctbal->Column, tpch50.customer.c_comment->Column, tpch50.nation.n_name->Column
       └─Projection	root		tpch50.customer.c_custkey, tpch50.customer.c_name, tpch50.customer.c_address, tpch50.customer.c_phone, tpch50.customer.c_acctbal, tpch50.customer.c_comment, tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.nation.n_name
         └─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
           ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
@@ -710,13 +710,13 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	task	access object	operator info
-Projection	root		tpch50.partsupp.ps_partkey, Column#35->Column#59
+Projection	root		tpch50.partsupp.ps_partkey, Column
 └─TableDual	root		rows:0
-ScalarSubQuery	root		Output: ScalarQueryCol#57
+ScalarSubQuery	root		Output: ScalarQueryCol#66
 └─MaxOneRow	root		
-  └─Projection	root		mul(Column#53, 0.0001000000)->Column#54
-    └─HashAgg	root		funcs:sum(Column#56)->Column#53
-      └─Projection	root		mul(tpch50.partsupp.ps_supplycost, cast(tpch50.partsupp.ps_availqty, decimal(10,0) BINARY))->Column#56
+  └─Projection	root		mul(Column, 0.0001000000)->Column
+    └─HashAgg	root		funcs:sum(Column)->Column
+      └─Projection	root		mul(tpch50.partsupp.ps_supplycost, cast(tpch50.partsupp.ps_availqty, decimal(10,0) BINARY))->Column
         └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
           ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
           │ ├─TableReader(Build)	root		data:Selection
@@ -767,9 +767,9 @@ order by
 l_shipmode;
 id	task	access object	operator info
 Sort	root		tpch50.lineitem.l_shipmode
-└─Projection	root		tpch50.lineitem.l_shipmode, Column#27, Column#28
-  └─HashAgg	root		group by:Column#36, funcs:sum(Column#34)->Column#27, funcs:sum(Column#35)->Column#28, funcs:firstrow(Column#36)->tpch50.lineitem.l_shipmode
-    └─Projection	root		cast(case(or(eq(tpch50.orders.o_orderpriority, 1-URGENT), eq(tpch50.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(20,0) BINARY)->Column#34, cast(case(and(ne(tpch50.orders.o_orderpriority, 1-URGENT), ne(tpch50.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(20,0) BINARY)->Column#35, tpch50.lineitem.l_shipmode->Column#36
+└─Projection	root		tpch50.lineitem.l_shipmode, Column, Column
+  └─HashAgg	root		group by:Column, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->tpch50.lineitem.l_shipmode
+    └─Projection	root		cast(case(or(eq(tpch50.orders.o_orderpriority, 1-URGENT), eq(tpch50.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(20,0) BINARY)->Column, cast(case(and(ne(tpch50.orders.o_orderpriority, 1-URGENT), ne(tpch50.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(20,0) BINARY)->Column, tpch50.lineitem.l_shipmode->Column
       └─Projection	root		tpch50.orders.o_orderpriority, tpch50.lineitem.l_shipmode
         └─IndexJoin	root		inner join, inner:TableReader, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.orders.o_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)
           ├─TableReader(Build)	root		data:Selection
@@ -807,10 +807,10 @@ order by
 custdist desc,
 c_count desc;
 id	task	access object	operator info
-Sort	root		Column#19:desc, Column#18:desc
-└─Projection	root		Column#18, Column#19
-  └─HashAgg	root		group by:Column#18, funcs:count(1)->Column#19, funcs:firstrow(Column#18)->Column#18
-    └─HashAgg	root		group by:tpch50.customer.c_custkey, funcs:count(tpch50.orders.o_orderkey)->Column#18
+Sort	root		Column:desc, Column:desc
+└─Projection	root		Column, Column
+  └─HashAgg	root		group by:Column, funcs:count(1)->Column, funcs:firstrow(Column)->Column
+    └─HashAgg	root		group by:tpch50.customer.c_custkey, funcs:count(tpch50.orders.o_orderkey)->Column
       └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
         ├─TableReader(Build)	root		data:TableFullScan
         │ └─TableFullScan	cop[tikv]	table:customer	keep order:false
@@ -839,9 +839,9 @@ l_partkey = p_partkey
 and l_shipdate >= '1996-12-01'
 and l_shipdate < date_add('1996-12-01', interval '1' month);
 id	task	access object	operator info
-Projection	root		div(mul(100.00, Column#27), Column#28)->Column#29
-└─HashAgg	root		funcs:sum(Column#31)->Column#27, funcs:sum(Column#32)->Column#28
-  └─Projection	root		case(like(tpch50.part.p_type, PROMO%, 92), mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), 0.0000)->Column#31, mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#32
+Projection	root		div(mul(100.00, Column), Column)->Column
+└─HashAgg	root		funcs:sum(Column)->Column, funcs:sum(Column)->Column
+  └─Projection	root		case(like(tpch50.part.p_type, PROMO%, 92), mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), 0.0000)->Column, mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column
     └─HashJoin	root		inner join, equal:[eq(tpch50.lineitem.l_partkey, tpch50.part.p_partkey)]
       ├─TableReader(Build)	root		data:TableFullScan
       │ └─TableFullScan	cop[tikv]	table:part	keep order:false
@@ -928,9 +928,9 @@ p_brand,
 p_type,
 p_size;
 id	task	access object	operator info
-Sort	root		Column#23:desc, tpch50.part.p_brand, tpch50.part.p_type, tpch50.part.p_size
-└─Projection	root		tpch50.part.p_brand, tpch50.part.p_type, tpch50.part.p_size, Column#23
-  └─HashAgg	root		group by:tpch50.part.p_brand, tpch50.part.p_size, tpch50.part.p_type, funcs:count(distinct tpch50.partsupp.ps_suppkey)->Column#23, funcs:firstrow(tpch50.part.p_brand)->tpch50.part.p_brand, funcs:firstrow(tpch50.part.p_type)->tpch50.part.p_type, funcs:firstrow(tpch50.part.p_size)->tpch50.part.p_size
+Sort	root		Column:desc, tpch50.part.p_brand, tpch50.part.p_type, tpch50.part.p_size
+└─Projection	root		tpch50.part.p_brand, tpch50.part.p_type, tpch50.part.p_size, Column
+  └─HashAgg	root		group by:tpch50.part.p_brand, tpch50.part.p_size, tpch50.part.p_type, funcs:count(distinct tpch50.partsupp.ps_suppkey)->Column, funcs:firstrow(tpch50.part.p_brand)->tpch50.part.p_brand, funcs:firstrow(tpch50.part.p_type)->tpch50.part.p_type, funcs:firstrow(tpch50.part.p_size)->tpch50.part.p_size
     └─HashJoin	root		anti semi join, left side:Projection, equal:[eq(tpch50.partsupp.ps_suppkey, tpch50.supplier.s_suppkey)]
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		like(tpch50.supplier.s_comment, "%Customer%Complaints%", 92)
@@ -971,18 +971,18 @@ where
 l_partkey = p_partkey
 );
 id	task	access object	operator info
-Projection	root		div(Column#46, 7.0)->Column#47
-└─HashAgg	root		funcs:sum(tpch50.lineitem.l_extendedprice)->Column#46
-  └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.lineitem.l_partkey)], other cond:lt(tpch50.lineitem.l_quantity, mul(0.2, Column#44))
+Projection	root		div(Column, 7.0)->Column
+└─HashAgg	root		funcs:sum(tpch50.lineitem.l_extendedprice)->Column
+  └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.lineitem.l_partkey)], other cond:lt(tpch50.lineitem.l_quantity, mul(0.2, Column))
     ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.lineitem.l_partkey)]
     │ ├─TableReader(Build)	root		data:Selection
     │ │ └─Selection	cop[tikv]		eq(tpch50.part.p_brand, "Brand#44"), eq(tpch50.part.p_container, "WRAP PKG")
     │ │   └─TableFullScan	cop[tikv]	table:part	keep order:false
     │ └─TableReader(Probe)	root		data:TableFullScan
     │   └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
-    └─HashAgg(Probe)	root		group by:tpch50.lineitem.l_partkey, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(tpch50.lineitem.l_partkey)->tpch50.lineitem.l_partkey
+    └─HashAgg(Probe)	root		group by:tpch50.lineitem.l_partkey, funcs:avg(Column, Column)->Column, funcs:firstrow(tpch50.lineitem.l_partkey)->tpch50.lineitem.l_partkey
       └─TableReader	root		data:HashAgg
-        └─HashAgg	cop[tikv]		group by:tpch50.lineitem.l_partkey, funcs:count(tpch50.lineitem.l_quantity)->Column#50, funcs:sum(tpch50.lineitem.l_quantity)->Column#51
+        └─HashAgg	cop[tikv]		group by:tpch50.lineitem.l_partkey, funcs:count(tpch50.lineitem.l_quantity)->Column, funcs:sum(tpch50.lineitem.l_quantity)->Column
           └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
 /*
 Q18 Large Volume Customer Query
@@ -1027,15 +1027,15 @@ o_totalprice desc,
 o_orderdate
 limit 100;
 id	task	access object	operator info
-Projection	root		tpch50.customer.c_name, tpch50.customer.c_custkey, tpch50.orders.o_orderkey, tpch50.orders.o_orderdate, tpch50.orders.o_totalprice, Column#54
+Projection	root		tpch50.customer.c_name, tpch50.customer.c_custkey, tpch50.orders.o_orderkey, tpch50.orders.o_orderdate, tpch50.orders.o_totalprice, Column
 └─TopN	root		tpch50.orders.o_totalprice:desc, tpch50.orders.o_orderdate, offset:0, count:100
-  └─HashAgg	root		group by:tpch50.customer.c_custkey, tpch50.customer.c_name, tpch50.orders.o_orderdate, tpch50.orders.o_orderkey, tpch50.orders.o_totalprice, funcs:sum(tpch50.lineitem.l_quantity)->Column#54, funcs:firstrow(tpch50.customer.c_custkey)->tpch50.customer.c_custkey, funcs:firstrow(tpch50.customer.c_name)->tpch50.customer.c_name, funcs:firstrow(tpch50.orders.o_orderkey)->tpch50.orders.o_orderkey, funcs:firstrow(tpch50.orders.o_totalprice)->tpch50.orders.o_totalprice, funcs:firstrow(tpch50.orders.o_orderdate)->tpch50.orders.o_orderdate
+  └─HashAgg	root		group by:tpch50.customer.c_custkey, tpch50.customer.c_name, tpch50.orders.o_orderdate, tpch50.orders.o_orderkey, tpch50.orders.o_totalprice, funcs:sum(tpch50.lineitem.l_quantity)->Column, funcs:firstrow(tpch50.customer.c_custkey)->tpch50.customer.c_custkey, funcs:firstrow(tpch50.customer.c_name)->tpch50.customer.c_name, funcs:firstrow(tpch50.orders.o_orderkey)->tpch50.orders.o_orderkey, funcs:firstrow(tpch50.orders.o_totalprice)->tpch50.orders.o_totalprice, funcs:firstrow(tpch50.orders.o_orderdate)->tpch50.orders.o_orderdate
     └─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
       ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)]
-      │ ├─Selection(Build)	root		gt(Column#52, 314)
-      │ │ └─HashAgg	root		group by:tpch50.lineitem.l_orderkey, funcs:sum(Column#77)->Column#52, funcs:firstrow(tpch50.lineitem.l_orderkey)->tpch50.lineitem.l_orderkey
+      │ ├─Selection(Build)	root		gt(Column, 314)
+      │ │ └─HashAgg	root		group by:tpch50.lineitem.l_orderkey, funcs:sum(Column)->Column, funcs:firstrow(tpch50.lineitem.l_orderkey)->tpch50.lineitem.l_orderkey
       │ │   └─TableReader	root		data:HashAgg
-      │ │     └─HashAgg	cop[tikv]		group by:tpch50.lineitem.l_orderkey, funcs:sum(tpch50.lineitem.l_quantity)->Column#77
+      │ │     └─HashAgg	cop[tikv]		group by:tpch50.lineitem.l_orderkey, funcs:sum(tpch50.lineitem.l_quantity)->Column
       │ │       └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
       │ └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
       │   ├─TableReader(Build)	root		data:TableFullScan
@@ -1091,8 +1091,8 @@ and l_shipmode in ('AIR', 'AIR REG')
 and l_shipinstruct = 'DELIVER IN PERSON'
 );
 id	task	access object	operator info
-HashAgg	root		funcs:sum(Column#28)->Column#27
-└─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#28
+HashAgg	root		funcs:sum(Column)->Column
+└─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column
   └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.lineitem.l_partkey)], other cond:or(and(and(eq(tpch50.part.p_brand, "Brand#52"), in(tpch50.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(tpch50.lineitem.l_quantity, 4), and(le(tpch50.lineitem.l_quantity, 14), le(tpch50.part.p_size, 5)))), or(and(and(eq(tpch50.part.p_brand, "Brand#11"), in(tpch50.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(tpch50.lineitem.l_quantity, 18), and(le(tpch50.lineitem.l_quantity, 28), le(tpch50.part.p_size, 10)))), and(and(eq(tpch50.part.p_brand, "Brand#51"), in(tpch50.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(tpch50.lineitem.l_quantity, 29), and(le(tpch50.lineitem.l_quantity, 39), le(tpch50.part.p_size, 15))))))
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		ge(tpch50.part.p_size, 1), or(and(eq(tpch50.part.p_brand, "Brand#52"), and(in(tpch50.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(tpch50.part.p_size, 5))), or(and(eq(tpch50.part.p_brand, "Brand#11"), and(in(tpch50.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(tpch50.part.p_size, 10))), and(eq(tpch50.part.p_brand, "Brand#51"), and(in(tpch50.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(tpch50.part.p_size, 15)))))
@@ -1150,8 +1150,8 @@ id	task	access object	operator info
 Sort	root		tpch50.supplier.s_name
 └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
   ├─HashAgg(Build)	root		group by:tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_suppkey)->tpch50.partsupp.ps_suppkey
-  │ └─Selection	root		gt(cast(tpch50.partsupp.ps_availqty, decimal(10,0) BINARY), mul(0.5, Column#44))
-  │   └─HashAgg	root		group by:tpch50.partsupp.ps_partkey, tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_suppkey)->tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_availqty)->tpch50.partsupp.ps_availqty, funcs:sum(tpch50.lineitem.l_quantity)->Column#44
+  │ └─Selection	root		gt(cast(tpch50.partsupp.ps_availqty, decimal(10,0) BINARY), mul(0.5, Column))
+  │   └─HashAgg	root		group by:tpch50.partsupp.ps_partkey, tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_suppkey)->tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_availqty)->tpch50.partsupp.ps_availqty, funcs:sum(tpch50.lineitem.l_quantity)->Column
   │     └─HashJoin	root		left outer join, left side:IndexHashJoin, equal:[eq(tpch50.partsupp.ps_partkey, tpch50.lineitem.l_partkey) eq(tpch50.partsupp.ps_suppkey, tpch50.lineitem.l_suppkey)]
   │       ├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:tpch50.part.p_partkey, inner key:tpch50.partsupp.ps_partkey, equal cond:eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey)
   │       │ ├─TableReader(Build)	root		data:Selection
@@ -1218,9 +1218,9 @@ numwait desc,
 s_name
 limit 100;
 id	task	access object	operator info
-Projection	root		tpch50.supplier.s_name, Column#72
-└─TopN	root		Column#72:desc, tpch50.supplier.s_name, offset:0, count:100
-  └─HashAgg	root		group by:tpch50.supplier.s_name, funcs:count(1)->Column#72, funcs:firstrow(tpch50.supplier.s_name)->tpch50.supplier.s_name
+Projection	root		tpch50.supplier.s_name, Column
+└─TopN	root		Column:desc, tpch50.supplier.s_name, offset:0, count:100
+  └─HashAgg	root		group by:tpch50.supplier.s_name, funcs:count(1)->Column, funcs:firstrow(tpch50.supplier.s_name)->tpch50.supplier.s_name
     └─IndexHashJoin	root		anti semi join, inner:IndexLookUp, left side:IndexHashJoin, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.lineitem.l_orderkey), other cond:ne(tpch50.lineitem.l_suppkey, tpch50.lineitem.l_suppkey)
       ├─IndexHashJoin(Build)	root		semi join, inner:IndexLookUp, left side:IndexJoin, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.lineitem.l_orderkey), other cond:ne(tpch50.lineitem.l_suppkey, tpch50.lineitem.l_suppkey)
       │ ├─IndexJoin(Build)	root		inner join, inner:TableReader, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.orders.o_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)
@@ -1291,15 +1291,15 @@ cntrycode
 order by
 cntrycode;
 id	task	access object	operator info
-Sort	root		Column#32
-└─Projection	root		Column#32, Column#33, Column#34
-  └─HashAgg	root		group by:Column#37, funcs:count(1)->Column#33, funcs:sum(Column#36)->Column#34, funcs:firstrow(Column#37)->Column#32
-    └─Projection	root		tpch50.customer.c_acctbal->Column#36, substring(tpch50.customer.c_phone, 1, 2)->Column#37
+Sort	root		Column
+└─Projection	root		Column, Column, Column
+  └─HashAgg	root		group by:Column, funcs:count(1)->Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->Column
+    └─Projection	root		tpch50.customer.c_acctbal->Column, substring(tpch50.customer.c_phone, 1, 2)->Column
       └─TableDual	root		rows:0
-ScalarSubQuery	root		Output: ScalarQueryCol#22
+ScalarSubQuery	root		Output: ScalarQueryCol#24
 └─MaxOneRow	root		
-  └─HashAgg	root		funcs:avg(Column#18, Column#19)->Column#17
+  └─HashAgg	root		funcs:avg(Column, Column)->Column
     └─TableReader	root		data:HashAgg
-      └─HashAgg	cop[tikv]		funcs:count(tpch50.customer.c_acctbal)->Column#18, funcs:sum(tpch50.customer.c_acctbal)->Column#19
+      └─HashAgg	cop[tikv]		funcs:count(tpch50.customer.c_acctbal)->Column, funcs:sum(tpch50.customer.c_acctbal)->Column
         └─Selection	cop[tikv]		gt(tpch50.customer.c_acctbal, 0.00), in(substring(tpch50.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
           └─TableFullScan	cop[tikv]	table:customer	keep order:false
