@@ -23,9 +23,11 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -730,7 +732,9 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	if err := t.checkMetaClient(); err != nil {
 		return nil, err
 	}
-	resp, err := t.metaClient.client.GetShardLocalCacheInfo(ctx, request)
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(tidbconfig.GetGlobalConfig().PDClient.PDServerTimeout)*time.Second)
+	defer cancel()
+	resp, err := t.metaClient.client.GetShardLocalCacheInfo(requestCtx, request)
 	if err != nil {
 		return nil, err
 	}
