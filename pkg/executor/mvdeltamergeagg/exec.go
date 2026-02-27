@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -799,8 +800,21 @@ func (e *Exec) recomputeMinMaxSingleRow(
 	if len(worker.KeyCols) != len(keyColIDs) {
 		return errors.Errorf("min/max single-row key column mismatch for mapping %d: expect %d, got %d", mappingIdx, len(keyColIDs), len(worker.KeyCols))
 	}
+	keyTypes := make([]*types.FieldType, len(keyColIDs))
+	for keyPos, keyColID := range keyColIDs {
+		if keyColID < 0 || keyColID >= len(childTypes) {
+			return errors.Errorf("min/max single-row key col id %d out of range [0,%d)", keyColID, len(childTypes))
+		}
+		if worker.KeyCols[keyPos] == nil || worker.KeyCols[keyPos].Data == nil {
+			return errors.Errorf("min/max single-row worker %d key col %d is not initialized", workerIdx, keyPos)
+		}
+		keyTypes[keyPos] = childTypes[keyColID]
+	}
 	resultChk := exec.NewFirstChunk(worker.Exec)
 	mapping := e.AggMappings[mappingIdx]
+	if _, err := ensureMappingOverride(overrides, mappingIdx, len(mapping.ColID), len(recomputeRows)); err != nil {
+		return err
+	}
 	rowValues := make([]types.Datum, len(mapping.ColID))
 
 	for _, rowIdx := range recomputeRows {
@@ -815,13 +829,7 @@ func (e *Exec) recomputeMinMaxSingleRow(
 		}
 		inputRow := input.GetRow(rowIdx)
 		for keyPos, keyColID := range keyColIDs {
-			if keyColID < 0 || keyColID >= len(childTypes) {
-				return errors.Errorf("min/max single-row key col id %d out of range [0,%d)", keyColID, len(childTypes))
-			}
-			if worker.KeyCols[keyPos] == nil || worker.KeyCols[keyPos].Data == nil {
-				return errors.Errorf("min/max single-row worker %d key col %d is not initialized", workerIdx, keyPos)
-			}
-			keyDatum := inputRow.GetDatum(keyColID, childTypes[keyColID])
+			keyDatum := inputRow.GetDatum(keyColID, keyTypes[keyPos])
 			keyDatum.Copy(worker.KeyCols[keyPos].Data)
 		}
 
@@ -869,14 +877,41 @@ func (e *Exec) recomputeMinMaxBatch(
 	}
 	tz := e.Ctx().GetSessionVars().StmtCtx.TimeZone()
 	keyColIDs := e.MinMaxRecompute.KeyInputColIDs
+	keyTypes := make([]*types.FieldType, len(keyColIDs))
+	for keyPos, keyColID := range keyColIDs {
+		if keyColID < 0 || keyColID >= len(childTypes) {
+			return errors.Errorf("min/max batch key col id %d out of range [0,%d)", keyColID, len(childTypes))
+		}
+		if childTypes[keyColID] == nil {
+			return errors.Errorf("min/max batch key col id %d type is unavailable", keyColID)
+		}
+		keyTypes[keyPos] = childTypes[keyColID]
+	}
+	rowCnt := input.NumRows()
+
 	lookupKeys := make([]*MinMaxBatchLookupContent, 0)
-	rowsByKey := make(map[string][]batchRowRef)
+	keyIdxByEncoded := make(map[string]int)
+	refsByLookupKey := make([][]batchRowRef, 0)
+	seenByMapping := make([][]bool, len(e.AggMappings))
+	keyBuffer := make([]types.Datum, len(keyColIDs))
+
+	for _, mappingIdx := range batchMappings {
+		rows := recomputeRowsByMapping[mappingIdx]
+		if len(rows) == 0 {
+			continue
+		}
+		mapping := e.AggMappings[mappingIdx]
+		if _, err := ensureMappingOverride(overrides, mappingIdx, len(mapping.ColID), len(rows)); err != nil {
+			return err
+		}
+		seenByMapping[mappingIdx] = make([]bool, rowCnt)
+	}
 
 	for _, mappingIdx := range batchMappings {
 		rows := recomputeRowsByMapping[mappingIdx]
 		for _, rowIdx := range rows {
-			if rowIdx < 0 || rowIdx >= input.NumRows() {
-				return errors.Errorf("min/max batch recompute row idx %d out of range [0,%d)", rowIdx, input.NumRows())
+			if rowIdx < 0 || rowIdx >= rowCnt {
+				return errors.Errorf("min/max batch recompute row idx %d out of range [0,%d)", rowIdx, rowCnt)
 			}
 			if countStarVals[rowIdx] < 0 {
 				return errors.Errorf("count(*) becomes negative (%d) at row %d", countStarVals[rowIdx], rowIdx)
@@ -885,22 +920,26 @@ func (e *Exec) recomputeMinMaxBatch(
 				continue
 			}
 			inputRow := input.GetRow(rowIdx)
-			keyDatums := make([]types.Datum, len(keyColIDs))
 			for keyPos, keyColID := range keyColIDs {
-				if keyColID < 0 || keyColID >= len(childTypes) {
-					return errors.Errorf("min/max batch key col id %d out of range [0,%d)", keyColID, len(childTypes))
-				}
-				d := inputRow.GetDatum(keyColID, childTypes[keyColID])
-				d.Copy(&keyDatums[keyPos])
+				d := inputRow.GetDatum(keyColID, keyTypes[keyPos])
+				d.Copy(&keyBuffer[keyPos])
 			}
-			encodedKey, err := encodeDatumKey(tz, keyDatums)
+			encodedKey, err := encodeDatumKey(tz, keyBuffer)
 			if err != nil {
 				return err
 			}
-			if _, exists := rowsByKey[encodedKey]; !exists {
+			keyIdx, exists := keyIdxByEncoded[encodedKey]
+			if !exists {
+				keyIdx = len(lookupKeys)
+				keyIdxByEncoded[encodedKey] = keyIdx
+				keyDatums := make([]types.Datum, len(keyBuffer))
+				for i := range keyBuffer {
+					keyBuffer[i].Copy(&keyDatums[i])
+				}
 				lookupKeys = append(lookupKeys, &MinMaxBatchLookupContent{Keys: keyDatums})
+				refsByLookupKey = append(refsByLookupKey, nil)
 			}
-			rowsByKey[encodedKey] = append(rowsByKey[encodedKey], batchRowRef{mappingIdx: mappingIdx, rowIdx: rowIdx})
+			refsByLookupKey[keyIdx] = append(refsByLookupKey[keyIdx], batchRowRef{mappingIdx: mappingIdx, rowIdx: rowIdx})
 		}
 	}
 	if len(lookupKeys) == 0 {
@@ -930,8 +969,7 @@ func (e *Exec) recomputeMinMaxBatch(
 		)
 	}
 
-	resolvedByMapping := make(map[int]map[int][]types.Datum, len(batchMappings))
-	keyBuffer := make([]types.Datum, len(keyColIDs))
+	resultKeyBuffer := make([]types.Datum, len(keyColIDs))
 	resultChk := exec.NewFirstChunk(batchExec)
 	for {
 		resultChk.Reset()
@@ -944,59 +982,59 @@ func (e *Exec) recomputeMinMaxBatch(
 		for rowIdx := 0; rowIdx < resultChk.NumRows(); rowIdx++ {
 			resultRow := resultChk.GetRow(rowIdx)
 			for keyPos := range keyColIDs {
-				resultRow.DatumWithBuffer(keyPos, batchTypes[keyPos], &keyBuffer[keyPos])
+				resultRow.DatumWithBuffer(keyPos, batchTypes[keyPos], &resultKeyBuffer[keyPos])
 			}
-			encodedKey, err := encodeDatumKey(tz, keyBuffer)
+			encodedKey, err := encodeDatumKey(tz, resultKeyBuffer)
 			if err != nil {
 				return err
 			}
-			refs := rowsByKey[encodedKey]
+			keyIdx, exists := keyIdxByEncoded[encodedKey]
+			if !exists {
+				continue
+			}
+			refs := refsByLookupKey[keyIdx]
 			if len(refs) == 0 {
 				continue
 			}
 			for _, ref := range refs {
+				seenRows := seenByMapping[ref.mappingIdx]
+				if seenRows == nil {
+					return errors.Errorf("min/max batch recompute seen-rows bitmap is missing for mapping %d", ref.mappingIdx)
+				}
+				if seenRows[ref.rowIdx] {
+					return errors.Errorf("min/max batch recompute has duplicate result for mapping %d row %d", ref.mappingIdx, ref.rowIdx)
+				}
 				recomputeMeta := e.MinMaxRecompute.Mappings[ref.mappingIdx]
 				mapping := e.AggMappings[ref.mappingIdx]
-				rowValues := make([]types.Datum, len(mapping.ColID))
-				for colPos, outputColID := range mapping.ColID {
-					resultColIdx := recomputeMeta.BatchResultColIdxes[colPos]
-					if resultColIdx < 0 || resultColIdx >= len(batchTypes) {
-						return errors.Errorf(
-							"min/max batch recompute result col idx %d out of range [0,%d) for mapping %d",
-							resultColIdx,
-							len(batchTypes),
-							ref.mappingIdx,
-						)
-					}
-					d := resultRow.GetDatum(resultColIdx, childTypes[outputColID])
-					d.Copy(&rowValues[colPos])
+				if err := appendMappingOverrideFromResultRow(
+					overrides,
+					ref.mappingIdx,
+					ref.rowIdx,
+					resultRow,
+					childTypes,
+					mapping,
+					recomputeMeta.BatchResultColIdxes,
+					len(batchTypes),
+				); err != nil {
+					return err
 				}
-				rowMap := resolvedByMapping[ref.mappingIdx]
-				if rowMap == nil {
-					rowMap = make(map[int][]types.Datum)
-					resolvedByMapping[ref.mappingIdx] = rowMap
-				}
-				rowMap[ref.rowIdx] = rowValues
+				seenRows[ref.rowIdx] = true
 			}
 		}
 	}
 
 	for _, mappingIdx := range batchMappings {
+		seenRows := seenByMapping[mappingIdx]
+		if seenRows == nil {
+			return errors.Errorf("min/max batch recompute seen-rows bitmap is missing for mapping %d", mappingIdx)
+		}
 		rows := recomputeRowsByMapping[mappingIdx]
-		rowValues := resolvedByMapping[mappingIdx]
 		for _, rowIdx := range rows {
-			if countStarVals[rowIdx] < 0 {
-				return errors.Errorf("count(*) becomes negative (%d) at row %d", countStarVals[rowIdx], rowIdx)
-			}
 			if countStarVals[rowIdx] == 0 {
 				continue
 			}
-			values, exists := rowValues[rowIdx]
-			if !exists {
+			if !seenRows[rowIdx] {
 				return errors.Errorf("min/max batch recompute misses row %d for mapping %d", rowIdx, mappingIdx)
-			}
-			if err := appendMappingOverrideFromValues(overrides, mappingIdx, rowIdx, values); err != nil {
-				return err
 			}
 		}
 	}
@@ -1065,30 +1103,53 @@ type batchRowRef struct {
 	rowIdx     int
 }
 
+func ensureMappingOverride(
+	overrides []*mappingRecomputeOverride,
+	mappingIdx int,
+	outputCnt int,
+	rowCap int,
+) (*mappingRecomputeOverride, error) {
+	if mappingIdx < 0 || mappingIdx >= len(overrides) {
+		return nil, errors.Errorf("mapping idx %d out of override range [0,%d)", mappingIdx, len(overrides))
+	}
+	if outputCnt < 0 {
+		return nil, errors.Errorf("output count must be non-negative, got %d", outputCnt)
+	}
+	if rowCap < 0 {
+		rowCap = 0
+	}
+	override := overrides[mappingIdx]
+	if override == nil {
+		override = &mappingRecomputeOverride{
+			rowIdxes:       make([]int, 0, rowCap),
+			valuesByOutput: make([][]types.Datum, outputCnt),
+		}
+		for i := range override.valuesByOutput {
+			override.valuesByOutput[i] = make([]types.Datum, 0, rowCap)
+		}
+		overrides[mappingIdx] = override
+		return override, nil
+	}
+	if len(override.valuesByOutput) != outputCnt {
+		return nil, errors.Errorf(
+			"override output column count mismatch for mapping %d: override=%d values=%d",
+			mappingIdx,
+			len(override.valuesByOutput),
+			outputCnt,
+		)
+	}
+	return override, nil
+}
+
 func appendMappingOverrideFromValues(
 	overrides []*mappingRecomputeOverride,
 	mappingIdx int,
 	rowIdx int,
 	values []types.Datum,
 ) error {
-	if mappingIdx < 0 || mappingIdx >= len(overrides) {
-		return errors.Errorf("mapping idx %d out of override range [0,%d)", mappingIdx, len(overrides))
-	}
-	override := overrides[mappingIdx]
-	if override == nil {
-		override = &mappingRecomputeOverride{
-			rowIdxes:       make([]int, 0, 8),
-			valuesByOutput: make([][]types.Datum, len(values)),
-		}
-		overrides[mappingIdx] = override
-	}
-	if len(override.valuesByOutput) != len(values) {
-		return errors.Errorf(
-			"override output column count mismatch for mapping %d: override=%d values=%d",
-			mappingIdx,
-			len(override.valuesByOutput),
-			len(values),
-		)
+	override, err := ensureMappingOverride(overrides, mappingIdx, len(values), 0)
+	if err != nil {
+		return err
 	}
 	override.rowIdxes = append(override.rowIdxes, rowIdx)
 	for idx := range values {
@@ -1099,12 +1160,56 @@ func appendMappingOverrideFromValues(
 	return nil
 }
 
+func appendMappingOverrideFromResultRow(
+	overrides []*mappingRecomputeOverride,
+	mappingIdx int,
+	rowIdx int,
+	resultRow chunk.Row,
+	childTypes []*types.FieldType,
+	mapping Mapping,
+	resultColIdxes []int,
+	resultColCnt int,
+) error {
+	override, err := ensureMappingOverride(overrides, mappingIdx, len(mapping.ColID), 0)
+	if err != nil {
+		return err
+	}
+	if len(resultColIdxes) != len(mapping.ColID) {
+		return errors.Errorf(
+			"batch result column count mismatch for mapping %d: result=%d mapping=%d",
+			mappingIdx,
+			len(resultColIdxes),
+			len(mapping.ColID),
+		)
+	}
+	override.rowIdxes = append(override.rowIdxes, rowIdx)
+	for colPos, outputColID := range mapping.ColID {
+		resultColIdx := resultColIdxes[colPos]
+		if resultColIdx < 0 || resultColIdx >= resultColCnt {
+			return errors.Errorf(
+				"min/max batch recompute result col idx %d out of range [0,%d) for mapping %d",
+				resultColIdx,
+				resultColCnt,
+				mappingIdx,
+			)
+		}
+		if outputColID < 0 || outputColID >= len(childTypes) {
+			return errors.Errorf("mapping %d output col id %d out of range [0,%d)", mappingIdx, outputColID, len(childTypes))
+		}
+		var copied types.Datum
+		d := resultRow.GetDatum(resultColIdx, childTypes[outputColID])
+		d.Copy(&copied)
+		override.valuesByOutput[colPos] = append(override.valuesByOutput[colPos], copied)
+	}
+	return nil
+}
+
 func encodeDatumKey(tz *time.Location, datums []types.Datum) (string, error) {
 	encoded, err := codec.EncodeKey(tz, nil, datums...)
 	if err != nil {
 		return "", err
 	}
-	return string(encoded), nil
+	return string(hack.String(encoded)), nil
 }
 
 func rebuildColumnWithOverrides(

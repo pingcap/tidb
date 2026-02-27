@@ -15,6 +15,8 @@
 package mvdeltamergeagg
 
 import (
+	"cmp"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -307,16 +309,12 @@ func chooseDeltaSource(isMax bool, addExists, delExists bool, cmpAddDel int) (de
 func decideMinMaxFast(
 	isMax bool,
 	oldExists bool,
-	shouldExist bool,
 	addIsDelta bool,
 	delIsDelta bool,
 	cmpDeltaOld int,
 	addedCnt int64,
 	removedCnt int64,
 ) minMaxDecision {
-	if !shouldExist {
-		return minMaxDecisionUseNull
-	}
 	deltaExists := addIsDelta || delIsDelta
 	if !oldExists {
 		if !deltaExists {
@@ -386,28 +384,6 @@ func appendMinMaxRecomputeRow(workerData *mvMergeAggWorkerData, mappingIdx int, 
 	return nil
 }
 
-func cmpInt64(a, b int64) int {
-	switch {
-	case a > b:
-		return 1
-	case a < b:
-		return -1
-	default:
-		return 0
-	}
-}
-
-func cmpUint64(a, b uint64) int {
-	switch {
-	case a > b:
-		return 1
-	case a < b:
-		return -1
-	default:
-		return 0
-	}
-}
-
 func cmpFloat32(a, b float32) int {
 	switch {
 	case a > b:
@@ -464,19 +440,19 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 
 		cmpAddDel := 0
 		if addExists && delExists {
-			cmpAddDel = cmpInt64(addedVals[rowIdx], removedVals[rowIdx])
+			cmpAddDel = cmp.Compare(addedVals[rowIdx], removedVals[rowIdx])
 		}
 		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
 		cmpDeltaOld := 0
 		if oldExists && deltaExists {
 			if chooseAdded {
-				cmpDeltaOld = cmpInt64(addedVals[rowIdx], oldVals[rowIdx])
+				cmpDeltaOld = cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
 			} else {
-				cmpDeltaOld = cmpInt64(removedVals[rowIdx], oldVals[rowIdx])
+				cmpDeltaOld = cmp.Compare(removedVals[rowIdx], oldVals[rowIdx])
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, shouldExist, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -543,19 +519,19 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 
 		cmpAddDel := 0
 		if addExists && delExists {
-			cmpAddDel = cmpUint64(addedVals[rowIdx], removedVals[rowIdx])
+			cmpAddDel = cmp.Compare(addedVals[rowIdx], removedVals[rowIdx])
 		}
 		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
 		cmpDeltaOld := 0
 		if oldExists && deltaExists {
 			if chooseAdded {
-				cmpDeltaOld = cmpUint64(addedVals[rowIdx], oldVals[rowIdx])
+				cmpDeltaOld = cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
 			} else {
-				cmpDeltaOld = cmpUint64(removedVals[rowIdx], oldVals[rowIdx])
+				cmpDeltaOld = cmp.Compare(removedVals[rowIdx], oldVals[rowIdx])
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, shouldExist, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -634,7 +610,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, shouldExist, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -713,7 +689,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, shouldExist, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -792,7 +768,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, shouldExist, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -871,7 +847,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, shouldExist, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -938,19 +914,19 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 
 		cmpAddDel := 0
 		if addExists && delExists {
-			cmpAddDel = cmpInt64(int64(addedVals[rowIdx]), int64(removedVals[rowIdx]))
+			cmpAddDel = cmp.Compare(int64(addedVals[rowIdx]), int64(removedVals[rowIdx]))
 		}
 		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
 		cmpDeltaOld := 0
 		if oldExists && deltaExists {
 			if chooseAdded {
-				cmpDeltaOld = cmpInt64(int64(addedVals[rowIdx]), int64(oldVals[rowIdx]))
+				cmpDeltaOld = cmp.Compare(int64(addedVals[rowIdx]), int64(oldVals[rowIdx]))
 			} else {
-				cmpDeltaOld = cmpInt64(int64(removedVals[rowIdx]), int64(oldVals[rowIdx]))
+				cmpDeltaOld = cmp.Compare(int64(removedVals[rowIdx]), int64(oldVals[rowIdx]))
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, shouldExist, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -1036,7 +1012,7 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, shouldExist, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultCol.AppendString(oldVal)
