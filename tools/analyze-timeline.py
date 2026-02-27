@@ -396,9 +396,12 @@ def main():
     PAT_GLOBAL_DONE = "global_done"
     PAT_COMPLETE = "complete"
 
+    PAT_PART_START = "part_start"
+
     # Map handler function → pattern ID for summary tracking.
     handler_to_pat = {
         _analyze_started: PAT_STARTED,
+        _partition_start: PAT_PART_START,
         _partition_finished: PAT_PART_DONE,
         _partition_failed: PAT_PART_FAILED,
         _global_merge_starting: PAT_GLOBAL_START,
@@ -437,6 +440,7 @@ def main():
             "last_entry_written_ts": None,
             "merge_entries_sample": 0,
             "merge_entries_merge": 0,
+            "auto": None,
         }
 
     for line in fh:
@@ -487,6 +491,8 @@ def main():
             cur_run["concurrency"] = extract(line, "concurrency")
             cur_run["sample_based"] = extract(line, "sampleBasedGlobalStats")
         elif cur_run is not None:
+            if pat_id == PAT_PART_START and cur_run["auto"] is None:
+                cur_run["auto"] = "auto analyze" in line
             if pat_id == PAT_PART_DONE:
                 cur_run["partition_count"] += 1
             elif pat_id == PAT_PART_FAILED:
@@ -546,17 +552,17 @@ def main():
             return fmt_delta(end - start)
         return "-"
 
-    sep = "=" * 130
+    sep = "=" * 140
     print(f"\n{sep}")
     print("SUMMARY: per-ANALYZE breakdown")
     print(sep)
-    sfmt = "{:>4}  {:>12}  {:>5}  {:>5}  {:>4}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>6}  {}"
+    sfmt = "{:>4}  {:>12}  {:>6}  {:>5}  {:>5}  {:>4}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>6}  {}"
     print(sfmt.format(
-        "#", "START", "TASKS", "PARTS", "CONC",
+        "#", "START", "TYPE", "TASKS", "PARTS", "CONC",
         "TOTAL", "ANALYZE", "LOAD", "SAVE", "BUILD", "WRITE", "GLOBAL",
         "PATH", "SAMPLE"))
     print(sfmt.format(
-        "----", "------------", "-----", "-----", "----",
+        "----", "------------", "------", "-----", "-----", "----",
         "---------", "---------", "---------", "---------", "---------",
         "---------", "---------",
         "------", "------"))
@@ -593,9 +599,10 @@ def main():
         start_str = short_ts(r["start_ts"]) if r["start_ts"] else "?"
         failed = f" ({r['partition_failed']}err)" if r["partition_failed"] else ""
         sample_str = r["sample_based"] if r["sample_based"] else "-"
+        type_str = "auto" if r["auto"] else "manual" if r["auto"] is False else "?"
 
         print(sfmt.format(
-            i, start_str,
+            i, start_str, type_str,
             r["tasks"], str(r["partition_count"]) + failed, r["concurrency"],
             total_dur, analyze_dur, load_dur, save_dur, build_dur, write_dur,
             global_dur, path, sample_str))
