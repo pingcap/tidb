@@ -99,22 +99,14 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 		joinType, natural, straight, _ = p.parseJoinType()
 
 		// Parse the right side.
-		// In MySQL grammar:
-		// - NATURAL JOIN, CROSS/INNER JOIN, STRAIGHT_JOIN take table_factor (single table)
-		//   on the right, making them left-associative.
-		// - LEFT/RIGHT JOIN take table_reference (recursive) on the right,
-		//   allowing ON to bind to inner joins (right-leaning subtree).
+		// In MySQL grammar, NATURAL JOIN and STRAIGHT_JOIN take table_factor
+		// (single table) on the right, making them left-associative.
+		// Other joins (LEFT/RIGHT/CROSS/INNER) use parseJoinRHS for
+		// right-leaning subtree needed for ON clause binding.
 		var rhs ast.ResultSetNode
 		if natural || straight {
-			// table_factor: single table source, left-associative.
 			rhs = p.parseTableSource()
-		} else if joinType == ast.LeftJoin || joinType == ast.RightJoin {
-			// table_reference: recursive, right-leaning for ON binding.
-			rhs = p.parseJoinRHS()
 		} else {
-			// CROSS/INNER JOIN: also takes table_factor in grammar, but we use
-			// parseJoinRHS to handle ON binding for stacked ON clauses like
-			// "t1 JOIN t2 JOIN t3 ON c1 ON c2".
 			rhs = p.parseJoinRHS()
 		}
 		if rhs == nil {
