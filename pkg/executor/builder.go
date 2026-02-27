@@ -6252,6 +6252,17 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 	}
 	storages.ResTbl = resTbl
 	storages.IterInTbl = iterInTbl
+	cleanupStoragesOnErr := true
+	defer func() {
+		if !cleanupStoragesOnErr {
+			return
+		}
+		storages.ResTbl = nil
+		storages.IterInTbl = nil
+		storages.Producer = nil
+		terror.Log(iterInTbl.DerefAndClose())
+		terror.Log(resTbl.DerefAndClose())
+	}()
 
 	// Build recursive part.
 	var recursiveExec exec.Executor
@@ -6293,6 +6304,7 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 	b.withStmtCtxLock(func() {
 		storages.Producer = producer
 	})
+	cleanupStoragesOnErr = false
 	return nil
 }
 

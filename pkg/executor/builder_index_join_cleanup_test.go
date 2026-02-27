@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
@@ -99,4 +100,38 @@ func TestBuildExecutorForIndexJoinHashJoinErrorCleansChildren(t *testing.T) {
 	require.ErrorContains(t, err, "Unknown Plan *executor.mockPhysicalIndexReader")
 	require.Equal(t, int32(1), lookupExecClosed.Load())
 	require.Equal(t, int32(0), otherExecClosed.Load())
+}
+
+func TestBuildCTEStorageProducerCleansStoragesOnRecursiveBuildError(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.CTEStorageMap = map[int]*CTEStorages{}
+	builder := newExecutorBuilder(ctx, nil, nil)
+
+	stats := &property.StatsInfo{RowCount: 1}
+	schema := expression.NewSchema(&expression.Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Index:    0,
+	})
+	seedPlan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+	seedPlan.SetSchema(schema)
+
+	ctePlan := physicalop.PhysicalCTE{
+		SeedPlan:  seedPlan,
+		RecurPlan: &mockPhysicalIndexReader{PhysicalPlan: seedPlan},
+		CTE:       &logicalop.CTEClass{IDForStorage: 1},
+	}.Init(ctx, stats)
+	ctePlan.SetSchema(schema)
+
+	storages, err := builder.loadOrStoreCTEStorages(1)
+	require.NoError(t, err)
+
+	err = builder.buildCTEStorageProducer(ctePlan, storages)
+	require.ErrorContains(t, err, "Unknown Plan *executor.mockPhysicalIndexReader")
+	require.Nil(t, storages.ResTbl)
+	require.Nil(t, storages.IterInTbl)
+	require.Nil(t, storages.Producer)
+
+	require.NoError(t, resetCTEStorageMap(ctx))
+	require.Nil(t, ctx.GetSessionVars().StmtCtx.CTEStorageMap)
 }
