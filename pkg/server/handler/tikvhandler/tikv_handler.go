@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
@@ -2012,34 +2013,45 @@ type rowKeyDeleteResponse struct {
 	Key string `json:"key"`
 }
 
-// DeleteRowKeyHandler is the handler for deleting a row key. It's used for testing GC and lock resolving.
-type DeleteRowKeyHandler struct {
+// DeleteKeyHandler is the handler for deleting row/index keys. It's used for testing GC and lock resolving.
+type DeleteKeyHandler struct {
 	*handler.TikvHandlerTool
 }
 
-// NewDeleteRowKeyHandler creates a new DeleteRowKeyHandler.
-func NewDeleteRowKeyHandler(tool *handler.TikvHandlerTool) *DeleteRowKeyHandler {
-	return &DeleteRowKeyHandler{
+// NewDeleteKeyHandler creates a new DeleteKeyHandler.
+func NewDeleteKeyHandler(tool *handler.TikvHandlerTool) *DeleteKeyHandler {
+	return &DeleteKeyHandler{
 		TikvHandlerTool: tool,
 	}
 }
 
 // Supported operations:
-//   - delete?db={db}&table={table}&handle={intHandle}
-//   - delete?db={db}&table={table}&{pkCol}={pkVal}[&{pkCol2}={pkVal2}...]
+//   - /test/delete/rowkey/{db}/{table}?handle={intHandle}
+//   - /test/delete/rowkey/{db}/{table}?{pkCol}={pkVal}[&{pkCol2}={pkVal2}...]
 //     (for clustered common handle tables)
-func (h *DeleteRowKeyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+//   - /test/delete/indexkey/{db}/{table}/{index}?handle={intHandle}&{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]
+//   - /test/delete/indexkey/{db}/{table}/{index}?{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]
+//     (for index keys; clustered common handle tables can use PK columns instead of handle)
+func (h *DeleteKeyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		handler.WriteError(w, errors.Errorf("This api only support POST method"))
 		return
 	}
-	values := req.URL.Query()
-	dbName := values.Get(handler.DBName)
+	pathParams := mux.Vars(req)
+	values := make(url.Values)
+	if err := parseQuery(req.URL.RawQuery, values, true); err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	indexName := pathParams[handler.IndexName]
+	handleStr := values.Get(handler.Handle)
+	dbName := pathParams[handler.DBName]
 	if dbName == "" {
 		handler.WriteError(w, errors.BadRequestf("db is required"))
 		return
 	}
-	tableName := values.Get(handler.TableName)
+	tableName := pathParams[handler.TableName]
 	if tableName == "" {
 		handler.WriteError(w, errors.BadRequestf("table is required"))
 		return
@@ -2051,17 +2063,16 @@ func (h *DeleteRowKeyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 
-	params := make(map[string]string, 1)
-	if handleStr := values.Get(handler.Handle); handleStr != "" {
-		params[handler.Handle] = handleStr
+	handleParams := make(map[string]string, 1)
+	if handleStr != "" {
+		handleParams[handler.Handle] = handleStr
 	}
-	handle, err := h.GetHandle(tb, params, values)
+	handle, err := h.GetHandle(tb, handleParams, values)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
 	}
 
-	encodedKey := tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
 	store, ok := h.Store.(kv.Storage)
 	if !ok {
 		handler.WriteError(w, errors.New("store does not support kv operations"))
@@ -2069,6 +2080,37 @@ func (h *DeleteRowKeyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTools)
+	var encodedKey []byte
+	if indexName == "" {
+		encodedKey = tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
+	} else {
+		var idxCols []*model.ColumnInfo
+		var idx table.Index
+		for _, v := range tb.Indices() {
+			if strings.EqualFold(v.Meta().Name.String(), indexName) {
+				for _, c := range v.Meta().Columns {
+					idxCols = append(idxCols, tb.Meta().Columns[c.Offset])
+				}
+				idx = v
+				break
+			}
+		}
+		if idx == nil {
+			handler.WriteError(w, errors.NotFoundf("Index %s not found!", indexName))
+			return
+		}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+		idxRow, err := h.FormValue2DatumRow(sc, values, idxCols)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		encodedKey, _, err = idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow, handle, nil)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+	}
 	err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		return txn.Delete(encodedKey)
 	})
