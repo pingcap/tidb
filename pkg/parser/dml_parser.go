@@ -70,9 +70,11 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 	// Optional priority modifiers (INSERT and REPLACE).
 	stmt.Priority = p.parsePriority()
 
-	// Optional IGNORE.
-	if _, ok := p.accept(ignore); ok {
-		stmt.IgnoreErr = true
+	// Optional IGNORE (INSERT only, not REPLACE — matching MySQL grammar).
+	if !isReplace {
+		if _, ok := p.accept(ignore); ok {
+			stmt.IgnoreErr = true
+		}
 	}
 
 	// Optional INTO.
