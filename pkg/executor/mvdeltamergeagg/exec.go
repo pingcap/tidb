@@ -89,9 +89,6 @@ type MinMaxRecomputeSingleRowExec struct {
 
 // MinMaxRecomputeMapping is recompute metadata for one MIN/MAX mapping.
 type MinMaxRecomputeMapping struct {
-	// OutputColIDs are target output columns to be recomputed.
-	// They are usually a subset of Mapping.ColID.
-	OutputColIDs []int
 	// Strategy is the recompute mode.
 	Strategy MinMaxRecomputeStrategy
 	// SingleRow is set when Strategy is MinMaxRecomputeSingleRow.
@@ -407,15 +404,6 @@ func isMinMaxAgg(aggName string) bool {
 	return aggName == ast.AggFuncMin || aggName == ast.AggFuncMax
 }
 
-func containsColID(colIDs []int, target int) bool {
-	for i := range colIDs {
-		if colIDs[i] == target {
-			return true
-		}
-	}
-	return false
-}
-
 func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 	if e.MinMaxRecompute == nil {
 		return nil
@@ -454,19 +442,6 @@ func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 		if recompute == nil {
 			return errors.Errorf("missing MinMaxRecompute mapping for agg index %d (%s)", mappingIdx, aggName)
 		}
-		if len(recompute.OutputColIDs) == 0 {
-			return errors.Errorf("MinMaxRecompute mapping %d requires non-empty OutputColIDs", mappingIdx)
-		}
-		seenOutput := make(map[int]struct{}, len(recompute.OutputColIDs))
-		for _, outputColID := range recompute.OutputColIDs {
-			if !containsColID(agg.ColID, outputColID) {
-				return errors.Errorf("MinMaxRecompute mapping %d output col %d is not in AggMappings[%d].ColID", mappingIdx, outputColID, mappingIdx)
-			}
-			if _, dup := seenOutput[outputColID]; dup {
-				return errors.Errorf("duplicate MinMaxRecompute output col %d in mapping %d", outputColID, mappingIdx)
-			}
-			seenOutput[outputColID] = struct{}{}
-		}
 		switch recompute.Strategy {
 		case MinMaxRecomputeSingleRow:
 			if recompute.SingleRow == nil {
@@ -495,8 +470,8 @@ func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 			if len(recompute.BatchResultColIdxes) == 0 {
 				return errors.Errorf("MinMaxRecompute mapping %d batch strategy requires BatchResultColIdxes", mappingIdx)
 			}
-			if len(recompute.BatchResultColIdxes) != len(recompute.OutputColIDs) {
-				return errors.Errorf("MinMaxRecompute mapping %d batch result column mismatch: OutputColIDs=%d BatchResultColIdxes=%d", mappingIdx, len(recompute.OutputColIDs), len(recompute.BatchResultColIdxes))
+			if len(recompute.BatchResultColIdxes) != len(agg.ColID) {
+				return errors.Errorf("MinMaxRecompute mapping %d batch result column mismatch: Mapping.ColID=%d BatchResultColIdxes=%d", mappingIdx, len(agg.ColID), len(recompute.BatchResultColIdxes))
 			}
 			seenBatchResult := make(map[int]struct{}, len(recompute.BatchResultColIdxes))
 			for _, resultColIdx := range recompute.BatchResultColIdxes {
