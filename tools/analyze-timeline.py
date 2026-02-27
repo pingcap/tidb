@@ -341,6 +341,10 @@ def main():
     prev_ts = None
     count = 0
 
+    # Per-run accumulator for summary.
+    runs = []       # list of completed run dicts
+    cur_run = None  # current run being tracked
+
     hdr_fmt = "{:<12}  {:>8}  {:>8}  {:<50}  {}"
     row_fmt = "{:<12}  {:>8}  {:>8}  {:<50}  {}"
     print(hdr_fmt.format("TIMESTAMP", "DELTA", "ELAPSED", "EVENT", "DETAILS"))
@@ -354,14 +358,73 @@ def main():
         )
     )
 
+    # Pattern IDs for tracking run phases.
+    PAT_STARTED = "started"
+    PAT_PART_DONE = "part_done"
+    PAT_PART_FAILED = "part_failed"
+    PAT_GLOBAL_START = "global_start"
+    PAT_SAVE_START = "save_start"
+    PAT_SAVE_DONE = "save_done"
+    PAT_LOAD_START = "load_start"
+    PAT_LOAD_DONE = "load_done"
+    PAT_MERGE_DONE_SAMPLE = "merge_done_sample"
+    PAT_MERGE_DONE_MERGE = "merge_done_merge"
+    PAT_GLOBAL_DONE = "global_done"
+    PAT_COMPLETE = "complete"
+
+    # Augmented patterns: (regex, handler, pat_id_or_None)
+    aug_patterns = [
+        (PATTERNS[0][0], PATTERNS[0][1], PAT_STARTED),
+        (PATTERNS[1][0], PATTERNS[1][1], None),  # partition start
+        (PATTERNS[2][0], PATTERNS[2][1], PAT_PART_DONE),
+        (PATTERNS[3][0], PATTERNS[3][1], PAT_PART_FAILED),
+        (PATTERNS[4][0], PATTERNS[4][1], PAT_GLOBAL_START),
+        (PATTERNS[5][0], PATTERNS[5][1], PAT_LOAD_START),
+        (PATTERNS[6][0], PATTERNS[6][1], None),  # load skip
+        (PATTERNS[7][0], PATTERNS[7][1], None),  # load table
+        (PATTERNS[8][0], PATTERNS[8][1], PAT_LOAD_DONE),
+        (PATTERNS[9][0], PATTERNS[9][1], PAT_SAVE_START),
+        (PATTERNS[10][0], PATTERNS[10][1], PAT_SAVE_DONE),
+        (PATTERNS[11][0], PATTERNS[11][1], None),  # merge entry start
+        (PATTERNS[12][0], PATTERNS[12][1], PAT_MERGE_DONE_SAMPLE),
+        (PATTERNS[13][0], PATTERNS[13][1], None),  # merge fallback
+        (PATTERNS[14][0], PATTERNS[14][1], PAT_MERGE_DONE_MERGE),
+        (PATTERNS[15][0], PATTERNS[15][1], None),  # async merge
+        (PATTERNS[16][0], PATTERNS[16][1], None),  # blocking merge
+        (PATTERNS[17][0], PATTERNS[17][1], PAT_GLOBAL_DONE),
+        (PATTERNS[18][0], PATTERNS[18][1], PAT_COMPLETE),
+    ]
+
+    def new_run(ts):
+        return {
+            "start_ts": ts,
+            "end_ts": None,
+            "tasks": "",
+            "partitions": "",
+            "concurrency": "",
+            "sample_based": "",
+            "partition_count": 0,
+            "partition_failed": 0,
+            "global_merge_start_ts": None,
+            "global_merge_end_ts": None,
+            "load_start_ts": None,
+            "load_end_ts": None,
+            "save_start_ts": None,
+            "save_end_ts": None,
+            "merge_entries_sample": 0,
+            "merge_entries_merge": 0,
+        }
+
     for line in fh:
         if args.table and args.table not in line:
             continue
 
         result = None
-        for pat, handler in PATTERNS:
+        pat_id = None
+        for pat, handler, pid in aug_patterns:
             if pat.search(line):
                 result = handler(line)
+                pat_id = pid
                 break
 
         if result is None and show_debug and DEBUGMEM_RE.search(line):
@@ -392,14 +455,107 @@ def main():
             )
         )
 
+        # Track run stats.
+        if pat_id == PAT_STARTED:
+            cur_run = new_run(ts)
+            cur_run["tasks"] = extract(line, "tasks")
+            cur_run["partitions"] = extract(line, "partitionTasks")
+            cur_run["concurrency"] = extract(line, "concurrency")
+            cur_run["sample_based"] = extract(line, "sampleBasedGlobalStats")
+        elif cur_run is not None:
+            if pat_id == PAT_PART_DONE:
+                cur_run["partition_count"] += 1
+            elif pat_id == PAT_PART_FAILED:
+                cur_run["partition_count"] += 1
+                cur_run["partition_failed"] += 1
+            elif pat_id == PAT_GLOBAL_START:
+                cur_run["global_merge_start_ts"] = ts
+            elif pat_id == PAT_LOAD_START:
+                cur_run["load_start_ts"] = ts
+            elif pat_id == PAT_LOAD_DONE:
+                cur_run["load_end_ts"] = ts
+            elif pat_id == PAT_SAVE_START:
+                cur_run["save_start_ts"] = ts
+            elif pat_id == PAT_SAVE_DONE:
+                cur_run["save_end_ts"] = ts
+            elif pat_id == PAT_MERGE_DONE_SAMPLE:
+                cur_run["merge_entries_sample"] += 1
+            elif pat_id == PAT_MERGE_DONE_MERGE:
+                cur_run["merge_entries_merge"] += 1
+            elif pat_id == PAT_GLOBAL_DONE:
+                cur_run["global_merge_end_ts"] = ts
+            elif pat_id == PAT_COMPLETE:
+                cur_run["end_ts"] = ts
+                runs.append(cur_run)
+                cur_run = None
+
+    # If a run was started but never completed, include it anyway.
+    if cur_run is not None:
+        cur_run["end_ts"] = prev_ts
+        runs.append(cur_run)
+
     if fh is not sys.stdin:
         fh.close()
 
     if count == 0:
         print("(no analyze timeline events found)")
-    else:
-        total = fmt_delta(prev_ts - first_ts) if first_ts and prev_ts else "-"
-        print(f"\n{count} events, total elapsed: {total}")
+        return
+
+    total = fmt_delta(prev_ts - first_ts) if first_ts and prev_ts else "-"
+    print(f"\n{count} events, total elapsed: {total}")
+
+    # Print per-run summary.
+    if not runs:
+        return
+
+    def td(start, end):
+        if start and end:
+            return fmt_delta(end - start)
+        return "-"
+
+    print(f"\n{'=' * 110}")
+    print("SUMMARY: per-ANALYZE breakdown")
+    print(f"{'=' * 110}")
+    sfmt = "{:>4}  {:>12}  {:>5}  {:>5}  {:>5}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>6}  {}"
+    print(sfmt.format(
+        "#", "START", "TASKS", "PARTS", "CONC",
+        "TOTAL", "PARTITNS", "LOAD", "SAVE", "MERGE",
+        "PATH", "SAMPLE-BASED"))
+    print(sfmt.format(
+        "----", "------------", "-----", "-----", "-----",
+        "---------", "---------", "---------", "---------", "---------",
+        "------", "------------"))
+
+    for i, r in enumerate(runs, 1):
+        total_dur = td(r["start_ts"], r["end_ts"])
+
+        # Partition phase: from start to global merge start (or end if no global merge).
+        part_end = r["global_merge_start_ts"] or r["end_ts"]
+        part_dur = td(r["start_ts"], part_end)
+
+        load_dur = td(r["load_start_ts"], r["load_end_ts"])
+        save_dur = td(r["save_start_ts"], r["save_end_ts"])
+        merge_dur = td(r["global_merge_start_ts"], r["global_merge_end_ts"])
+
+        sample_entries = r["merge_entries_sample"]
+        merge_entries = r["merge_entries_merge"]
+        if sample_entries > 0 and merge_entries == 0:
+            path = "sample"
+        elif merge_entries > 0 and sample_entries == 0:
+            path = "merge"
+        elif sample_entries > 0 and merge_entries > 0:
+            path = "mixed"
+        else:
+            path = "-"
+
+        start_str = short_ts(r["start_ts"]) if r["start_ts"] else "?"
+        failed = f" ({r['partition_failed']}err)" if r["partition_failed"] else ""
+
+        print(sfmt.format(
+            i, start_str,
+            r["tasks"], str(r["partition_count"]) + failed, r["concurrency"],
+            total_dur, part_dur, load_dur, save_dur, merge_dur,
+            path, r["sample_based"]))
 
 
 if __name__ == "__main__":
