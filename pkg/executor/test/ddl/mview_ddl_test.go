@@ -232,6 +232,105 @@ func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	tk.MustExec("drop materialized view log on t")
 }
 
+func TestCreateMaterializedViewRefreshInfoNextTimeDerivation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	getMViewID := func(name string) int64 {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(name))
+		require.NoError(t, err)
+		return mvTable.Meta().ID
+	}
+
+	// START WITH and NEXT both present, START WITH is not near-now: NEXT_TIME should use START WITH.
+	tk.MustExec("create materialized view mv_start_only (a, s, cnt) refresh fast start with date_add(now(), interval 40 minute) next date_add(now(), interval 20 minute) as select a, sum(b), count(1) from t group by a")
+	mvStartOnlyID := getMViewID("mv_start_only")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 30 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvStartOnlyID,
+	)).Check(testkit.Rows("1 1 1"))
+
+	// NEXT only: NEXT_TIME should use evaluated NEXT.
+	tk.MustExec("create materialized view mv_next_only (a, s, cnt) refresh fast next date_add(now(), interval 20 minute) as select a, sum(b), count(1) from t group by a")
+	mvNextOnlyID := getMViewID("mv_next_only")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 10 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvNextOnlyID,
+	)).Check(testkit.Rows("1 1 1"))
+
+	// Neither START WITH nor NEXT: NEXT_TIME should stay unchanged (create path: NULL).
+	tk.MustExec("create materialized view mv_no_schedule (a, s, cnt) refresh fast as select a, sum(b), count(1) from t group by a")
+	mvNoScheduleID := getMViewID("mv_no_schedule")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvNoScheduleID,
+	)).Check(testkit.Rows("1"))
+
+	// START WITH near-now and NEXT present: NEXT_TIME should use NEXT.
+	tk.MustExec("create materialized view mv_near_now (a, s, cnt) refresh fast start with now() next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t group by a")
+	mvNearNowID := getMViewID("mv_near_now")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvNearNowID,
+	)).Check(testkit.Rows("1 1 1"))
+
+	tk.MustExec("drop materialized view mv_start_only")
+	tk.MustExec("drop materialized view mv_next_only")
+	tk.MustExec("drop materialized view mv_no_schedule")
+	tk.MustExec("drop materialized view mv_near_now")
+	tk.MustExec("drop materialized view log on t")
+}
+
+func TestCreateMaterializedViewRefreshInfoNextTimeUsesUTC(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	getMViewID := func(name string) int64 {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(name))
+		require.NoError(t, err)
+		return mvTable.Meta().ID
+	}
+
+	tk.MustExec("create materialized view mv_utc_next (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+	mvID := getMViewID("mv_utc_next")
+
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, "+
+			"NEXT_TIME > UTC_TIMESTAMP(6) - interval 5 minute, "+
+			"NEXT_TIME < UTC_TIMESTAMP(6) + interval 5 minute, "+
+			"NEXT_TIME < NOW(6) - interval 7 hour "+
+			"from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvID,
+	)).Check(testkit.Rows("1 1 1 1"))
+
+	// START WITH should also be evaluated in UTC even when session timezone is +08:00.
+	tk.MustExec("create materialized view mv_utc_start (a, s, cnt) refresh fast start with date_add(now(), interval 40 minute) next date_add(now(), interval 20 minute) as select a, sum(b), count(1) from t group by a")
+	mvStartID := getMViewID("mv_utc_start")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, "+
+			"NEXT_TIME > UTC_TIMESTAMP(6) + interval 20 minute, "+
+			"NEXT_TIME < UTC_TIMESTAMP(6) + interval 2 hour, "+
+			"NEXT_TIME < NOW(6) - interval 7 hour "+
+			"from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mvStartID,
+	)).Check(testkit.Rows("1 1 1 1"))
+
+	tk.MustExec("drop materialized view mv_utc_next")
+	tk.MustExec("drop materialized view mv_utc_start")
+	tk.MustExec("drop materialized view log on t")
+}
+
 func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
