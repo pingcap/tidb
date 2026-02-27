@@ -173,17 +173,17 @@ set @@tidb_replica_read='leader';
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
 ## stale read is not supported
 do sleep(0.1);
-explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 as of timestamp NOW(6) - interval 0.05 second;
-start transaction read only as of timestamp now(6) - interval 0.05 second;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 as of timestamp NOW(6) - interval 0.1 second;
+start transaction read only as of timestamp now(6) - interval 0.1 second;
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
 rollback;
-set transaction read only as of timestamp now(6) - interval 0.05 second;
+set transaction read only as of timestamp now(6) - interval 0.1 second;
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
 ## historical read is not supported
 --disable_warnings
 insert ignore into mysql.tidb VALUES ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800', 'mock for index lookup push down test');
 --enable_warnings
-set @@tidb_snapshot=(now(6) - interval 0.05 second);
+set @@tidb_snapshot=(now(6) - interval 0.1 second);
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
 set @@tidb_snapshot='';
 delete from mysql.tidb where VARIABLE_NAME='tikv_gc_safe_point' and COMMENT='mock for index lookup push down test';

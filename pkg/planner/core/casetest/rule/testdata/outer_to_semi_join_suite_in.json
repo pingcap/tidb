@@ -59,7 +59,8 @@
       "select B.val, A.id from A right join B on A.val <=> B.val where A.id IS NULL",
       "select A.id, B.id from A left join B on A.id < B.a_id where B.id is null",
       "select A.val, B.val from A left join B on A.val = B.val where B.non_null_col IS NULL",
-      "select A.id, B.val from A left join B on A.id = B.a_id where B.val > 0"
+      "select A.id, B.val from A left join B on A.id = B.a_id where B.val > 0",
+      "SELECT * FROM t1 LEFT JOIN (t2 LEFT JOIN t3 ON t3.i = t2.i) ON t2.i = t1.i WHERE t3.i IS NULL"
     ]
   }
 ]

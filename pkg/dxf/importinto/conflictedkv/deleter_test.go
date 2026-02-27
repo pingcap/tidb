@@ -21,7 +21,6 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,9 +35,6 @@ import (
 )
 
 func TestDeleter(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip test for next-gen kernel temporarily, we need to adapt the test later")
-	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -125,9 +121,12 @@ func TestDeleter(t *testing.T) {
 				conflictedKVs[i], conflictedKVs[j] = conflictedKVs[j], conflictedKVs[i]
 			})
 			for _, kv := range conflictedKVs {
+				encodedKey := store.GetCodec().EncodeKey(kv.Key)
+				encodedKV := external.KVPair{Key: encodedKey, Value: kv.Value}
 				// sending the conflicted KV twice
 				for range 2 {
-					ch <- &kv
+					kvCopy := encodedKV
+					ch <- &kvCopy
 				}
 			}
 			close(ch)

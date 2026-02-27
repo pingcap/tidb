@@ -1046,6 +1046,49 @@ func TestAllHistory(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
+func TestDDLCheckHandler(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("DDL check handler is only available for next-gen kernel")
+	}
+
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	ts.prepareData(t)
+	defer ts.stopServer(t)
+
+	resp, err := ts.FetchStatus("/ddl/check/tidb/test/idx1")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Contains(t, string(body), "only support POST")
+
+	resp, err = ts.PostStatus("/ddl/check/tidb/test/idx_not_exist", "application/json", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	decoder := json.NewDecoder(resp.Body)
+	var result map[string]any
+	err = decoder.Decode(&result)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "failed", result["result"])
+	require.NotEmpty(t, result["error"])
+
+	resp, err = ts.PostStatus("/ddl/check/tidb/test/idx1", "application/json", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&result)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "tidb", result["db"])
+	require.Equal(t, "test", result["table"])
+	require.Equal(t, "idx1", result["index"])
+	require.Equal(t, "admin check index `tidb`.`test` `idx1`", result["check_sql"])
+	require.Equal(t, "success", result["result"])
+}
+
 func filterSpaces(bs []byte) []byte {
 	if len(bs) == 0 {
 		return nil

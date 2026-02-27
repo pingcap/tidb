@@ -203,6 +203,8 @@ type MemBuffer interface {
 	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// UpdateFlags updates the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
+	// UpdateAssertionFlags updates the assertion flags associated with key.
+	UpdateAssertionFlags(Key, AssertionOp)
 	// DeleteWithFlags delete key with the given KeyFlags
 	DeleteWithFlags(Key, ...FlagsOp) error
 
@@ -260,7 +262,6 @@ type LockCtx = tikvstore.LockCtx
 // This is not thread safe.
 type Transaction interface {
 	RetrieverMutator
-	AssertionProto
 	FairLockingController
 	// Size returns sum of keys and values length.
 	Size() int
@@ -332,21 +333,10 @@ type Transaction interface {
 
 	// RollbackMemDBToCheckpoint rollbacks the transaction's memDB to the specified checkpoint.
 	RollbackMemDBToCheckpoint(*tikv.MemDBCheckpoint)
-
-	// UpdateMemBufferFlags updates the flags of a node in the mem buffer.
-	UpdateMemBufferFlags(key []byte, flags ...FlagsOp)
 	// IsPipelined returns whether the transaction is used for pipelined DML.
 	IsPipelined() bool
 	// MayFlush flush the pipelined memdb if the keys or size exceeds threshold, no effect for standard DML.
 	MayFlush() error
-}
-
-// AssertionProto is an interface defined for the assertion protocol.
-type AssertionProto interface {
-	// SetAssertion sets an assertion for an operation on the key.
-	// TODO: Use a special type instead of `FlagsOp`. Otherwise there's risk that the assertion flag is incorrectly used
-	// in other places like `MemBuffer.SetWithFlags`.
-	SetAssertion(key []byte, assertion ...FlagsOp) error
 }
 
 // FairLockingController is the interface that defines fair locking related operations.
