@@ -53,7 +53,7 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 		endOffset := p.peek().Offset // ')' token
 		// Set subquery text from the original SQL (matching the behavior).
 		if endOffset > startOffset && endOffset <= len(p.src) {
-			query.SetText(p.connectionEncoding, p.src[startOffset:endOffset])
+			query.SetText(nil, p.src[startOffset:endOffset])
 		}
 		p.expect(')')
 		sub := p.arena.AllocSubqueryExpr()
@@ -75,7 +75,7 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 			p.errs = p.errs[:savedErrs]
 			endOffset := p.peek().Offset
 			if endOffset > startOffset && endOffset <= len(p.src) {
-				query.SetText(p.connectionEncoding, p.src[startOffset:endOffset])
+				query.SetText(nil, p.src[startOffset:endOffset])
 			}
 			p.expect(')')
 			sub := p.arena.AllocSubqueryExpr()

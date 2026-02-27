@@ -153,7 +153,7 @@ func (p *HandParser) parseSubquery() ast.ResultSetNode {
 			// Set text on the inner result to match yacc SubSelect behavior.
 			innerEndOff := p.peek().Offset // offset of ')'
 			if innerEndOff > innerStartOff {
-				res.(ast.Node).SetText(p.connectionEncoding, p.src[innerStartOff:innerEndOff])
+				res.(ast.Node).SetText(nil, p.src[innerStartOff:innerEndOff])
 			}
 		}
 		p.expect(')')
@@ -373,7 +373,7 @@ func (p *HandParser) parseFieldList() *ast.FieldList {
 		if field.Expr != nil {
 			endOffset := p.peek().Offset
 			if endOffset > field.Offset && endOffset <= len(p.src) {
-				field.SetText(p.connectionEncoding, strings.TrimSpace(p.src[field.Offset:endOffset]))
+				field.SetText(nil, strings.TrimSpace(p.src[field.Offset:endOffset]))
 			}
 		}
 		fl.Fields = append(fl.Fields, field)
@@ -454,7 +454,7 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 	// Capture text from source for field text.
 	endOff := p.peek().Offset
 	if endOff > startOff && endOff <= len(p.src) {
-		sf.SetText(p.connectionEncoding, strings.TrimSpace(p.src[startOff:endOff]))
+		sf.SetText(nil, strings.TrimSpace(p.src[startOff:endOff]))
 	}
 
 	return sf

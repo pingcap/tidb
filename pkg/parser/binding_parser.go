@@ -125,7 +125,7 @@ func (p *HandParser) parseAndSetText() ast.StmtNode {
 			endOff = p.peek().Offset
 		}
 		if endOff > startOff {
-			stmt.SetText(p.connectionEncoding, strings.TrimRight(p.lexer.src[startOff:endOff], "; \t\n"))
+			stmt.SetText(nil, strings.TrimRight(p.lexer.src[startOff:endOff], "; \t\n"))
 		}
 	}
 	return stmt

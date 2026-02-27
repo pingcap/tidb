@@ -684,7 +684,7 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 		if p.peek().Tp == EOF {
 			endOff = len(p.src)
 		}
-		sub.SetText(p.connectionEncoding, strings.TrimSpace(p.src[subStartOff:endOff]))
+		sub.SetText(nil, strings.TrimSpace(p.src[subStartOff:endOff]))
 	}
 	stmt.Stmt = sub
 	return stmt

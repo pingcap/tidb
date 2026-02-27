@@ -84,7 +84,7 @@ func (p *HandParser) parseTraceStmt() ast.StmtNode {
 		innerEndOff = len(p.src)
 	}
 	if innerEndOff > innerStartOff {
-		stmt.Stmt.SetText(p.connectionEncoding, strings.TrimRight(p.src[innerStartOff:innerEndOff], "; \t\n"))
+		stmt.Stmt.SetText(nil, strings.TrimRight(p.src[innerStartOff:innerEndOff], "; \t\n"))
 	}
 	return stmt
 }

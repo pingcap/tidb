@@ -192,7 +192,7 @@ func (p *HandParser) parsePlanReplayerDump(stmt *ast.PlanReplayerStmt) ast.StmtN
 	// If a semicolon follows, it's not consumed yet, so offset points to it (or EOF).
 	// This covers the statement text.
 	if nested != nil {
-		nested.SetText(p.connectionEncoding, p.src[start:end])
+		nested.SetText(nil, p.src[start:end])
 	}
 
 	if plan, ok := nested.(*ast.PlanReplayerStmt); ok {

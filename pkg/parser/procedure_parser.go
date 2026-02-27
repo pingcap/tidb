@@ -120,7 +120,7 @@ func (p *HandParser) parseCreateProcedureStmt() ast.StmtNode {
 			bodyEndOff = len(p.src)
 		}
 		if bodyEndOff > bodyStartOff {
-			stmt.ProcedureBody.SetText(p.connectionEncoding, strings.TrimSpace(p.src[bodyStartOff:bodyEndOff]))
+			stmt.ProcedureBody.SetText(nil, strings.TrimSpace(p.src[bodyStartOff:bodyEndOff]))
 		}
 	}
 	return stmt
