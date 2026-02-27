@@ -330,15 +330,19 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec("set tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
 		"Warning 1105 analyzing vector index is not supported, skip idx",
 		"Warning 1105 analyzing vector index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
 		"Warning 1105 analyzing vector index is not supported, skip idx"))
 	tk.MustExec("analyze table t index a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustExec("analyze table t index a, idx, idx2")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
 		"Warning 1105 analyzing vector index is not supported, skip idx",
 		"Warning 1105 analyzing vector index is not supported, skip idx2"))
 }
