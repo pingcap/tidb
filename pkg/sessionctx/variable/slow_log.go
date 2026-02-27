@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc64"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -161,6 +162,17 @@ const (
 	SlowLogRewriteTimeStr = "Rewrite_time"
 	// SlowLogOptimizeTimeStr is the optimization time.
 	SlowLogOptimizeTimeStr = "Optimize_time"
+	// SlowLogOptimizeLogicalOpt is the logical optimization time.
+	SlowLogOptimizeLogicalOpt = "Opt_logical"
+	// SlowLogOptimizePhysicalOpt is the physical optimization time.
+	SlowLogOptimizePhysicalOpt = "Opt_physical"
+	// SlowLogOptimizeBindingMatch is the binding match time.
+	SlowLogOptimizeBindingMatch = "Opt_binding_match"
+	// SlowLogOptimizeStatsSyncWait is the stats sync wait time.
+	SlowLogOptimizeStatsSyncWait = "Opt_stats_sync_wait"
+	// SlowLogOptimizeStatsDerive is the stats derive time.
+	SlowLogOptimizeStatsDerive = "Opt_stats_derive"
+
 	// SlowLogWaitTSTimeStr is the time of waiting TS.
 	SlowLogWaitTSTimeStr = "Wait_TS"
 	// SlowLogDBStr is slow log field name.
@@ -207,6 +219,8 @@ const (
 	SlowLogExecRetryCount = "Exec_retry_count"
 	// SlowLogResourceGroup is the resource group name that the current session bind.
 	SlowLogResourceGroup = "Resource_group"
+	// SlowLogCopMVCCReadAmplification is total_keys / processed_keys in coprocessor scan detail.
+	SlowLogCopMVCCReadAmplification = "cop_mvcc_read_amplification"
 )
 
 // JSONSQLWarnForSlowLog helps to print the SQLWarn through the slow log in JSON format.
@@ -389,7 +403,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	buf.WriteString("\n")
 
-	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(s.DurationOptimization.Seconds(), 'f', -1, 64))
+	// optimizer time
+	buf.WriteString(SlowLogRowPrefixStr)
+	buf.WriteString(SlowLogOptimizeTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.Total.Seconds(), 'f', -1, 64) + " ")
+	buf.WriteString(SlowLogOptimizeLogicalOpt + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.LogicalOpt.Seconds(), 'f', -1, 64) + " ")
+	buf.WriteString(SlowLogOptimizePhysicalOpt + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.PhysicalOpt.Seconds(), 'f', -1, 64) + " ")
+	buf.WriteString(SlowLogOptimizeBindingMatch + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.BindingMatch.Seconds(), 'f', -1, 64) + " ")
+	buf.WriteString(SlowLogOptimizeStatsSyncWait + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.StatsSyncWait.Seconds(), 'f', -1, 64) + " ")
+	buf.WriteString(SlowLogOptimizeStatsDerive + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.StatsDerive.Seconds(), 'f', -1, 64))
+	buf.WriteString("\n")
+
 	writeSlowLogItem(&buf, SlowLogWaitTSTimeStr, strconv.FormatFloat(s.DurationWaitTS.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
@@ -633,12 +656,33 @@ func matchZero(threshold any) bool {
 	}
 }
 
-// ParseString converts the input string to lowercase and returns it.
-func ParseString(v string) (any, error)  { return v, nil }
-func parseInt64(v string) (any, error)   { return strconv.ParseInt(v, 10, 64) }
-func parseUint64(v string) (any, error)  { return strconv.ParseUint(v, 10, 64) }
-func parseFloat64(v string) (any, error) { return strconv.ParseFloat(v, 64) }
-func parseBool(v string) (any, error)    { return strconv.ParseBool(v) }
+// ParseString returns the input string as-is.
+func ParseString(v string) (any, error) { return v, nil }
+func parseInt64(v string) (any, error) {
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	if n < 0 {
+		return nil, fmt.Errorf("threshold value must be non-negative, got %d", n)
+	}
+	return n, nil
+}
+func parseUint64(v string) (any, error) { return strconv.ParseUint(v, 10, 64) }
+func parseFloat64(v string) (any, error) {
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return nil, err
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return nil, fmt.Errorf("threshold value must be finite, got %v", f)
+	}
+	if f < 0 {
+		return nil, fmt.Errorf("threshold value must be non-negative, got %v", f)
+	}
+	return f, nil
+}
+func parseBool(v string) (any, error) { return strconv.ParseBool(v) }
 
 // SlowLogRuleFieldAccessors defines the set of field accessors for SlowQueryLogItems
 // that are relevant to evaluating and triggering SlowLogRules.
@@ -704,7 +748,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 	strings.ToLower(SlowLogOptimizeTimeStr): {
 		Parse: parseFloat64,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, seVars.DurationOptimization.Seconds())
+			return matchGE(threshold, seVars.DurationOptimizer.Total.Seconds())
 		},
 	},
 	strings.ToLower(SlowLogWaitTSTimeStr): {
@@ -878,6 +922,14 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 				return matchZero(threshold)
 			}
 			return matchGE(threshold, d.ScanDetail.ProcessedKeys)
+		}),
+	strings.ToLower(SlowLogCopMVCCReadAmplification): makeExecDetailAccessor(
+		parseFloat64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			if d.ScanDetail == nil || d.ScanDetail.ProcessedKeys <= 0 {
+				return matchZero(threshold)
+			}
+			return matchGE(threshold, float64(d.ScanDetail.TotalKeys)/float64(d.ScanDetail.ProcessedKeys))
 		}),
 	strings.ToLower(execdetails.PreWriteTimeStr): makeExecDetailAccessor(
 		parseFloat64,

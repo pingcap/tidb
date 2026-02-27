@@ -301,6 +301,10 @@ type PlanReplayerStmt struct {
 	// 2. plan replayer dump explain <analyze> 'file'
 	File string
 
+	// StmtList is used for PLAN REPLAYER DUMP EXPLAIN [ANALYZE] ( "sql1", "sql2", ... )
+	// When non-nil, multiple SQL strings are dumped in one command.
+	StmtList []string
+
 	// Fields below are currently useless.
 
 	// Where is the where clause in select statement.
@@ -346,6 +350,17 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EXPLAIN ANALYZE ")
 	} else {
 		ctx.WriteKeyWord("EXPLAIN ")
+	}
+	if len(n.StmtList) > 0 {
+		ctx.WritePlain("(")
+		for i, s := range n.StmtList {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteString(s)
+		}
+		ctx.WritePlain(")")
+		return nil
 	}
 	if n.Stmt == nil {
 		if len(n.File) > 0 {
@@ -1039,6 +1054,7 @@ const (
 	FlushHosts
 	FlushLogs
 	FlushClientErrorsSummary
+	FlushStatsDelta
 )
 
 // LogType is the log type used in FLUSH statement.
@@ -1063,6 +1079,7 @@ type FlushStmt struct {
 	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 	Plugins         []string
+	IsCluster       bool // For FlushStatsDelta, whether to flush cluster-wide stats delta
 }
 
 // Restore implements Node interface.
@@ -1122,6 +1139,12 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(logType)
 	case FlushClientErrorsSummary:
 		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
+	case FlushStatsDelta:
+		ctx.WriteKeyWord("STATS_DELTA")
+		if n.IsCluster {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("CLUSTER")
+		}
 	default:
 		return errors.New("Unsupported type of FlushStmt")
 	}
@@ -2544,6 +2567,7 @@ const (
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
 	AdminWorkloadRepoCreate
+	AdminReloadClusterBindings
 	// adminTpCount is the total number of admin statement types.
 	adminTpCount
 )
@@ -2811,6 +2835,8 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	case AdminReloadBindings:
 		ctx.WriteKeyWord("RELOAD BINDINGS")
+	case AdminReloadClusterBindings:
+		ctx.WriteKeyWord("RELOAD CLUSTER BINDINGS")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
@@ -3796,17 +3822,32 @@ func RedactURL(str string) string {
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
 	})
+
+	var redactKeys map[string]struct{}
 	switch strings.ToLower(scheme) {
-	case "s3", "ks3":
+	case "s3", "ks3", "oss":
+		redactKeys = map[string]struct{}{
+			"access-key":        {},
+			"secret-access-key": {},
+			"session-token":     {},
+		}
+	case "azure", "azblob":
+		redactKeys = map[string]struct{}{
+			"sas-token": {},
+		}
+	}
+
+	if len(redactKeys) > 0 {
 		values := u.Query()
 		for k := range values {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" || normalizedKey == "session-token" {
+			if _, ok := redactKeys[normalizedKey]; ok {
 				values[k] = []string{"xxxxxx"}
 			}
 		}
+		// In go1.25.5, url.Values.Encode() will sort the keys.
 		u.RawQuery = values.Encode()
 	}
 	return u.String()

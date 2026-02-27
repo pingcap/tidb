@@ -71,7 +71,7 @@ func InitMemoryMetrics() {
 		Subsystem: subsystem,
 		Name:      "arbitration_duration_seconds",
 		Help:      "Bucketed histogram of mem quota arbitration time (s) in SQL execution",
-		Buckets:   prometheus.ExponentialBuckets(0.00005, 4, 18),
+		Buckets:   prometheus.ExponentialBucketsRange(0.00005 /*50us*/, 3600*24 /*1d*/, 17),
 	})
 	GlobalMemArbitratorQuota = *metricscommon.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,

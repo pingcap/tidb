@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -142,6 +143,7 @@ func NewWorkerPool[T TaskMayPanic, R any](
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
+	failpoint.InjectCall("NewWorkerPool", numWorkers)
 
 	p := &WorkerPool[T, R]{
 		name:          name,

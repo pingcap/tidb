@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "kv",
     srcs = [
+        "assertion.go",
         "cachedb.go",
         "checker.go",
         "error.go",
@@ -107,6 +108,7 @@ go_test(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",

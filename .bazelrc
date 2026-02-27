@@ -8,6 +8,7 @@ build --http_timeout_scaling=0.1
 build --announce_rc
 build --experimental_guard_against_concurrent_changes
 build --incompatible_strict_action_env --incompatible_enable_cc_toolchain_resolution
+build --remote_retries=6 --remote_retry_max_delay=8s
 build:ci --color=yes
 build:ci --experimental_remote_cache_compression
 build:release --workspace_status_command=./build/print-workspace-status.sh --stamp

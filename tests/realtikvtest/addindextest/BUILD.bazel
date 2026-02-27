@@ -15,7 +15,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
-        "//pkg/disttask/framework/testutil",
+        "//pkg/dxf/framework/testutil",
         "//pkg/meta/model",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

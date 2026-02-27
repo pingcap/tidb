@@ -60,12 +60,12 @@ c_custkey	c_count
 6	0
 explain format='plan_tree' select c_custkey, count(o_orderkey) as c_count from customer left outer join orders on c_custkey = o_custkey group by c_custkey;
 id	task	access object	operator info
-Projection	root		planner__core__integration.customer.c_custkey, Column#7
-└─HashAgg	root		group by:planner__core__integration.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__integration.customer.c_custkey)->planner__core__integration.customer.c_custkey
+Projection	root		planner__core__integration.customer.c_custkey, Column
+└─HashAgg	root		group by:planner__core__integration.customer.c_custkey, funcs:count(Column)->Column, funcs:firstrow(planner__core__integration.customer.c_custkey)->planner__core__integration.customer.c_custkey
   └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__integration.customer.c_custkey, planner__core__integration.orders.o_custkey)]
-    ├─HashAgg(Build)	root		group by:planner__core__integration.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(planner__core__integration.orders.o_custkey)->planner__core__integration.orders.o_custkey
+    ├─HashAgg(Build)	root		group by:planner__core__integration.orders.o_custkey, funcs:count(Column)->Column, funcs:firstrow(planner__core__integration.orders.o_custkey)->planner__core__integration.orders.o_custkey
     │ └─TableReader	root		data:HashAgg
-    │   └─HashAgg	cop[tikv]		group by:planner__core__integration.orders.o_custkey, funcs:count(planner__core__integration.orders.o_orderkey)->Column#9
+    │   └─HashAgg	cop[tikv]		group by:planner__core__integration.orders.o_custkey, funcs:count(planner__core__integration.orders.o_orderkey)->Column
     │     └─TableFullScan	cop[tikv]	table:orders	keep order:false, stats:pseudo
     └─TableReader(Probe)	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:customer	keep order:false, stats:pseudo
@@ -74,12 +74,12 @@ c_custkey	c_count
 6	0
 explain format='plan_tree' select c_custkey, count(o_orderkey) as c_count from orders right outer join customer on c_custkey = o_custkey group by c_custkey;
 id	task	access object	operator info
-Projection	root		planner__core__integration.customer.c_custkey, Column#7
-└─HashAgg	root		group by:planner__core__integration.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__integration.customer.c_custkey)->planner__core__integration.customer.c_custkey
+Projection	root		planner__core__integration.customer.c_custkey, Column
+└─HashAgg	root		group by:planner__core__integration.customer.c_custkey, funcs:count(Column)->Column, funcs:firstrow(planner__core__integration.customer.c_custkey)->planner__core__integration.customer.c_custkey
   └─HashJoin	root		right outer join, left side:HashAgg, equal:[eq(planner__core__integration.orders.o_custkey, planner__core__integration.customer.c_custkey)]
-    ├─HashAgg(Build)	root		group by:planner__core__integration.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(planner__core__integration.orders.o_custkey)->planner__core__integration.orders.o_custkey
+    ├─HashAgg(Build)	root		group by:planner__core__integration.orders.o_custkey, funcs:count(Column)->Column, funcs:firstrow(planner__core__integration.orders.o_custkey)->planner__core__integration.orders.o_custkey
     │ └─TableReader	root		data:HashAgg
-    │   └─HashAgg	cop[tikv]		group by:planner__core__integration.orders.o_custkey, funcs:count(planner__core__integration.orders.o_orderkey)->Column#9
+    │   └─HashAgg	cop[tikv]		group by:planner__core__integration.orders.o_custkey, funcs:count(planner__core__integration.orders.o_orderkey)->Column
     │     └─TableFullScan	cop[tikv]	table:orders	keep order:false, stats:pseudo
     └─TableReader(Probe)	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:customer	keep order:false, stats:pseudo
@@ -312,15 +312,15 @@ drop table if exists t;
 create table t(a int);
 explain format='verbose' select /*+ stream_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-StreamAgg_16	1.00	304652.01	root		funcs:count(Column#4)->Column#3
+StreamAgg_16	1.00	304652.01	root		funcs:count(Column#5)->Column#4
 └─TableReader_17	1.00	304602.11	root		data:StreamAgg_10
-  └─StreamAgg_10	1.00	4569000.00	cop[tikv]		funcs:count(1)->Column#4
+  └─StreamAgg_10	1.00	4569000.00	cop[tikv]		funcs:count(1)->Column#5
     └─TableFullScan_15	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='verbose' select /*+ hash_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-HashAgg_11	1.00	286269.86	root		funcs:count(Column#4)->Column#3
+HashAgg_11	1.00	286269.86	root		funcs:count(Column#5)->Column#4
 └─TableReader_12	1.00	284742.60	root		data:HashAgg_6
-  └─HashAgg_6	1.00	4271107.30	cop[tikv]		funcs:count(1)->Column#4
+  └─HashAgg_6	1.00	4271107.30	cop[tikv]		funcs:count(1)->Column#5
     └─TableFullScan_10	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, pt, vt;
 create table t(a int, b int);
@@ -339,12 +339,12 @@ set @@tidb_partition_prune_mode='static';
 explain format='plan_tree' select approx_count_distinct(a), b from t group by b order by b desc;
 id	task	access object	operator info
 Sort	root		planner__core__integration.t.b:desc
-└─HashAgg	root		group by:planner__core__integration.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->planner__core__integration.t.b
+└─HashAgg	root		group by:planner__core__integration.t.b, funcs:approx_count_distinct(Column)->Column, funcs:firstrow(Column)->planner__core__integration.t.b
   └─PartitionUnion	root		
-    ├─HashAgg	root		group by:planner__core__integration.t.b, funcs:approx_count_distinct(planner__core__integration.t.a)->Column#5, funcs:firstrow(planner__core__integration.t.b)->Column#6, funcs:firstrow(planner__core__integration.t.b)->planner__core__integration.t.b
+    ├─HashAgg	root		group by:planner__core__integration.t.b, funcs:approx_count_distinct(planner__core__integration.t.a)->Column, funcs:firstrow(planner__core__integration.t.b)->Column, funcs:firstrow(planner__core__integration.t.b)->planner__core__integration.t.b
     │ └─TableReader	root		data:TableFullScan
     │   └─TableFullScan	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
-    └─HashAgg	root		group by:planner__core__integration.t.b, funcs:approx_count_distinct(planner__core__integration.t.a)->Column#5, funcs:firstrow(planner__core__integration.t.b)->Column#6, funcs:firstrow(planner__core__integration.t.b)->planner__core__integration.t.b
+    └─HashAgg	root		group by:planner__core__integration.t.b, funcs:approx_count_distinct(planner__core__integration.t.a)->Column, funcs:firstrow(planner__core__integration.t.b)->Column, funcs:firstrow(planner__core__integration.t.b)->planner__core__integration.t.b
       └─TableReader	root		data:TableFullScan
         └─TableFullScan	cop[tikv]	table:t, partition:p1	keep order:false, stats:pseudo
 select approx_count_distinct(a), b from t group by b order by b desc;
@@ -2289,9 +2289,9 @@ drop table t;
 explain format='plan_tree' select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
 id	task	access object	operator info
 HashJoin	root		CARTESIAN left outer join, left side:Projection
-├─Projection(Build)	root		2->Column#2
+├─Projection(Build)	root		2->Column
 │ └─TableDual	root		rows:1
-└─Projection(Probe)	root		1->Column#1
+└─Projection(Probe)	root		1->Column
   └─TableDual	root		rows:1
 select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
 1	2
@@ -2848,7 +2848,7 @@ count(1)
 0
 explain format='plan_tree' select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(1)->Column#5
+StreamAgg	root		funcs:count(1)->Column
 └─Selection	root		gt(planner__core__integration.t0.c, 10)
   └─Projection	root		planner__core__integration.t0.b, planner__core__integration.t0.c
     └─TableReader	root		data:Selection
@@ -3596,10 +3596,10 @@ Projection	root		planner__core__integration.t1.a
           └─TableFullScan	cop[tikv]	table:two	keep order:false, stats:pseudo
 explain format='plan_tree' select rank() over (partition by table_name) from information_schema.tables;
 id	task	access object	operator info
-Projection	root		Column#29->Column#30
+Projection	root		Column
 └─Shuffle	root		execution info: concurrency:5, data sources:[MemTableScan]
-  └─Window	root		rank()->Column#29 over(partition by Column#3)
-    └─Sort	root		Column#3
+  └─Window	root		rank()->Column#29 over(partition by Column)
+    └─Sort	root		Column
       └─ShuffleReceiver	root		
         └─MemTableScan	root	table:TABLES	
 drop table if exists t;
@@ -3953,7 +3953,7 @@ create table t(a int, b int);
 set session tidb_isolation_read_engines='tiflash,tidb';
 create view v0 (a, avg_b) as select a, avg(b) from t group by a;
 select * from v0;
-Error 1815 (HY000): Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash,tidb', valid values can be 'tikv'.
+Error 1815 (HY000): Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash,tidb', valid values can be 'tikv'. Please check tiflash replica.
 set session tidb_isolation_read_engines='tikv,tiflash,tidb';
 select * from v0;
 a	avg_b
@@ -4269,14 +4269,14 @@ KEY k (k)
 );
 explain format='plan_tree'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
-└─Window	root		row_number()->Column#6 over(order by planner__core__integration.sbtest.k rows between current row and current row)
+Projection	root		Column
+└─Window	root		row_number()->Column#7 over(order by planner__core__integration.sbtest.k rows between current row and current row)
   └─Sort	root		planner__core__integration.sbtest.k
     └─TableReader	root		data:TableRangeScan
       └─TableRangeScan	cop[tikv]	table:sbtest	range:[0,10), keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
 id	task	access object	operator info
-StreamAgg	root		group by:planner__core__integration.sbtest.k, funcs:count(1)->Column#5
+StreamAgg	root		group by:planner__core__integration.sbtest.k, funcs:count(1)->Column
 └─Sort	root		planner__core__integration.sbtest.k
   └─TableReader	root		data:TableRangeScan
     └─TableRangeScan	cop[tikv]	table:sbtest	range:[0,1), keep order:false, stats:pseudo
@@ -4300,8 +4300,8 @@ drop table if exists t;
 create table t (col timestamp);
 explain format='plan_tree' select cast(col as char) from t group by cast(col as char);
 id	task	access object	operator info
-Projection	root		cast(planner__core__integration.t.col, var_string(19))->Column#3
-└─HashAgg	root		group by:Column#5, funcs:firstrow(Column#6)->planner__core__integration.t.col
+Projection	root		cast(planner__core__integration.t.col, var_string(19))->Column
+└─HashAgg	root		group by:Column, funcs:firstrow(Column)->planner__core__integration.t.col
   └─TableReader	root		data:HashAgg
-    └─HashAgg	cop[tikv]		group by:cast(planner__core__integration.t.col, var_string(19)), funcs:firstrow(planner__core__integration.t.col)->Column#6
+    └─HashAgg	cop[tikv]		group by:cast(planner__core__integration.t.col, var_string(19)), funcs:firstrow(planner__core__integration.t.col)->Column
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo

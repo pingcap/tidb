@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -916,7 +916,7 @@ func TestMultiSchemaChangeMDLView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	unistoreMDLView := session.CreateTiDBMDLView
+	unistoreMDLView := metadef.CreateTiDBMDLView
 	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_processlist", "processlist")
 	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_tidb_trx", "tidb_trx")
 	tk.MustExec(unistoreMDLView)

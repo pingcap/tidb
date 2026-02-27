@@ -125,6 +125,9 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
+	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
+	// Fill index paths for all paths
+	ds.CheckPartialIndexes()
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -241,7 +244,7 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		adjustCountAfterAccess(ds, path)
 	}
 	if path.IndexFilters != nil {
-		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
@@ -334,7 +337,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
 	// Current code will exclude partitioned tables from this optimization.
 	// TODO: Enhance this optimization to support partitioned tables.
-	if lenAccessConds == 0 && ds.Table.GetPartitionedTable() == nil {
+	if lenAccessConds == 0 && len(path.Ranges) > 0 && ds.Table.GetPartitionedTable() == nil {
 		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	} else {
 		var countEst statistics.RowEstimate
@@ -527,7 +530,7 @@ func initStats(ds *logicalop.DataSource) {
 }
 
 func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
-	selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, filledPaths)
+	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = cost.SelectionFactor
@@ -551,7 +554,8 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	)
 	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
 	var tiflashPath *util.AccessPath
-	if ds.PreferStoreType&h.PreferTiFlash != 0 {
+	isMPPEnforced := ds.SCtx().GetSessionVars().IsMPPEnforced()
+	if ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
@@ -574,6 +578,8 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
+			// Reevaluate path.IsSingleScan because it may have been set incorrectly
+			// in the pruning logic.
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3
@@ -651,7 +657,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		ds.PossibleAccessPaths[0] = selected
 		ds.PossibleAccessPaths = ds.PossibleAccessPaths[:1]
 		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
-		keep := ds.PreferStoreType&h.PreferTiFlash != 0 && selected.StoreType != kv.TiFlash
+		keep := (ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced) && selected.StoreType != kv.TiFlash
 		if keep {
 			// also keep tiflash path as well.
 			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, tiflashPath)

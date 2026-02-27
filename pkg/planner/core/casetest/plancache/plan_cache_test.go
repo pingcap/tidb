@@ -15,6 +15,7 @@
 package plancache
 
 import (
+	"strconv"
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -23,6 +24,63 @@ import (
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDropPrepare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b int not null, key(a), key(b))")
+	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3)`)
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+
+	// 1. Prepare and execute statement A to cache its plan.
+	tk.MustExec(`prepare stmt from 'select * from t where a = ?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`) // First execution to generate a plan.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @a=2`)
+	tk.MustQuery(`execute stmt using @a`) // Second execution to cache the plan.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// 2. Get the cached plan for statement A.
+	// Note: `explain for connection` is used to get the real cached plan.
+	tk.MustQuery(`execute stmt using @a`)
+	planA := tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10))
+	// 3. Deallocate/drop the prepared statement.
+	tk.MustExec(`deallocate prepare stmt`)
+
+	// 4. Prepare and execute statement B with the same name.
+	// This statement has a different structure and should generate a different plan.
+	tk.MustExec(`prepare stmt from 'select * from t where b = ?'`)
+	tk.MustExec(`set @b=1`)
+	tk.MustExec(`execute stmt using @b`)
+
+	// 5. Check if the cache was hit. It must NOT be hit because of the deallocation.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @b=3`)
+	tk.MustExec(`execute stmt using @b`)
+	// 6. Get the new plan for statement B.
+	planB := tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10))
+
+	// 7. Core Assertions:
+	//    a. Assert that Plan A and Plan B are different.
+	require.NotEqual(t, planA.Rows(), planB.Rows(), "Plan A and Plan B should be different")
+	//    b. Check the content of the plans to be sure.
+	//       Plan A should use index `a`. Plan B should use index `b`.
+	planA.Check(testkit.Rows(
+		`IndexLookUp_8 10.00 0 root  time:0s, open:0s, close:0s, loops:0  N/A N/A`,
+		`├─IndexRangeScan_6(Build) 10.00 0 cop[tikv] table:t, index:a(a)  range:[2,2], keep order:false, stats:pseudo N/A N/A`,
+		`└─TableRowIDScan_7(Probe) 10.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A`))
+	planB.Check(testkit.Rows(
+		`IndexLookUp_8 10.00 0 root  time:0s, open:0s, close:0s, loops:0  N/A N/A`,
+		`├─IndexRangeScan_6(Build) 10.00 0 cop[tikv] table:t, index:b(b)  range:[3,3], keep order:false, stats:pseudo N/A N/A`,
+		`└─TableRowIDScan_7(Probe) 10.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A`))
+
+	// 8. Execute statement B again and verify it hits the cache now.
+	tk.MustExec(`execute stmt using @b`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
 
 func BenchmarkNewPlanCacheKey(b *testing.B) {
 	store := testkit.CreateMockStore(b)
@@ -76,5 +134,8 @@ func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkNewPlanCacheKey,
 		BenchmarkNewPlanCacheKeyInTxn,
+		BenchmarkPlanCacheBindingMatch,
+		BenchmarkPlanCacheInsert,
+		BenchmarkNonPreparedPlanCacheDML,
 	)
 }

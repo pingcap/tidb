@@ -1778,9 +1778,13 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	// Delete old affinity groups (best-effort cleanup - ignore errors)
 	// ALTER TABLE AFFINITY: only delete when old table had affinity configuration
 	// This ensures 'ALTER TABLE AFFINITY = 'none'' correctly cleans up stale affinity groups
+	// Skip deletion if the affinity level remains the same to ensure idempotency
 	if oldTblInfo.Affinity != nil {
-		if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
-			logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+		// Only delete if affinity is removed or level changed (same level means same group IDs)
+		if tblInfo.Affinity == nil || oldTblInfo.Affinity.Level != tblInfo.Affinity.Level {
+			if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
+				logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+			}
 		}
 	}
 

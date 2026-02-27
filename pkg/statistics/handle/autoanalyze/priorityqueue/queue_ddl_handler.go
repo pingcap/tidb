@@ -37,20 +37,21 @@ import (
 
 // HandleDDLEvent handles DDL events for the priority queue.
 func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
-	// Check if auto analyze is enabled.
-	if !vardef.RunAutoAnalyze.Load() {
-		// Close the priority queue if auto analyze is disabled.
-		// This ensures proper cleanup of the DDL notifier (mysql.tidb_ddl_notifier) and prevents the queue from remaining
-		// in an unknown state. When auto analyze is re-enabled, the priority queue can be properly re-initialized.
-		// NOTE: It is safe to call Close multiple times and it will get the lock internally.
-		pq.Close()
-		return nil
-	}
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	// If the priority queue is not initialized, we should retry later.
 	if !pq.syncFields.initialized {
-		return notifier.ErrNotReadyRetryLater
+		// If auto analyze is enabled but the priority queue is not initialized,
+		// it means the priority queue initialization is not finished yet.
+		// So we should retry later.
+		if vardef.RunAutoAnalyze.Load() {
+			return notifier.ErrNotReadyRetryLater
+		}
+		// NOTE: If auto analyze is disabled and the priority queue is not initialized,
+		// we can just ignore the DDL events.
+		// SAFETY: Once auto analyze is enabled again, the priority queue will be initialized
+		// and it will recreate the jobs for all tables.
+		return nil
 	}
 
 	var err error

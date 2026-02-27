@@ -3991,6 +3991,15 @@ type SplitRegionStmt struct {
 	SplitOpt *SplitOption
 }
 
+type SplitIndexOption struct {
+	stmtNode
+
+	TableLevel bool
+	PrimaryKey bool
+	IndexName  CIStr
+	SplitOpt   *SplitOption
+}
+
 type SplitOption struct {
 	stmtNode
 
@@ -4145,6 +4154,38 @@ func (n *SplitOption) Accept(v Visitor) (Node, bool) {
 		}
 	}
 	return v.Leave(n)
+}
+
+func (n *SplitIndexOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SplitIndexOption)
+
+	node, ok := n.SplitOpt.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.SplitOpt = node.(*SplitOption)
+
+	return v.Leave(n)
+}
+
+func (n *SplitIndexOption) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SPLIT ")
+
+	// Table split, empty prefix
+	if n.TableLevel {
+	} else if n.PrimaryKey {
+		ctx.WriteKeyWord("PRIMARY KEY ")
+	} else {
+		ctx.WriteKeyWord("INDEX ")
+		ctx.WriteName(n.IndexName.String())
+		ctx.WritePlain(" ")
+	}
+
+	return n.SplitOpt.Restore(ctx)
 }
 
 type FulltextSearchModifier int

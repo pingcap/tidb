@@ -25,7 +25,6 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -47,7 +47,7 @@ func TestCheckCSVHeader(t *testing.T) {
 	dir := t.TempDir()
 
 	ctx := context.Background()
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	type tableSource struct {
@@ -602,7 +602,7 @@ func TestCheckTableEmpty(t *testing.T) {
 func TestLocalResource(t *testing.T) {
 	dir := t.TempDir()
 
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize", "return(2048)")

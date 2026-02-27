@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
+	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -1042,6 +1042,19 @@ func (m *Mutator) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	}
 
 	err = m.txn.HSet(dbKey, tableKey, data)
+	return errors.Trace(err)
+}
+
+// IterDatabases iterates all the Databases at once, stop iterate when fn returns an error.
+func (m *Mutator) IterDatabases(fn func(info *model.DBInfo) error) error {
+	err := m.txn.HGetIter(mDBs, func(r structure.HashPair) error {
+		dbInfo := &model.DBInfo{}
+		err := json.Unmarshal(r.Value, dbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return fn(dbInfo)
+	})
 	return errors.Trace(err)
 }
 

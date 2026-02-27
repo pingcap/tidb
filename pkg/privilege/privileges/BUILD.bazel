@@ -66,6 +66,7 @@ go_test(
         "//pkg/domain",
         "//pkg/errno",
         "//pkg/kv",
+        "//pkg/meta/metadef",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

@@ -24,10 +24,9 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
-	"github.com/pingcap/tidb/pkg/disttask/importinto/conflictedkv"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -150,9 +149,6 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -456,9 +452,6 @@ abc,10,11,11,11,11
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -581,9 +574,6 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -625,9 +615,6 @@ func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -656,21 +643,18 @@ func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
 	}
 
 	s.Run("retry on collect conflicts step", func() {
-		doTestWithFP(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/afterCollectOneKVGroup")
+		doTestWithFP(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/afterCollectOneKVGroup")
 	})
 
 	s.Run("retry on conflict resolution step", func() {
-		doTestWithFP(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/afterResolveOneKVGroup")
+		doTestWithFP(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/afterResolveOneKVGroup")
 	})
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictedRowsExceedMaxFileSize() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceHandleConflictsBySingleThread", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
 	bak := conflictedkv.MaxConflictRowFileSize
 	conflictedkv.MaxConflictRowFileSize = 48
 	s.T().Cleanup(func() {
@@ -706,15 +690,12 @@ func (s *mockGCSSuite) TestGlobalSortConflictedRowsExceedMaxFileSize() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceHandleConflictsBySingleThread", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
 	var fpEntered atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/conflictedkv/mockHandleSetSizeLimit", func(limitP *int64) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockHandleSetSizeLimit", func(limitP *int64) {
 		*limitP = 0
 		fpEntered.CompareAndSwap(0, 1)
 	})

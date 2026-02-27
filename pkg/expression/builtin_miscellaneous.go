@@ -1540,7 +1540,7 @@ func (c *uuidv4FunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(36)
 	sig := &builtinUUIDv4Sig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_UUID)
+	sig.setPbCode(tipb.ScalarFuncSig_UUIDv4)
 	return sig, nil
 }
 
@@ -1587,7 +1587,7 @@ func (c *uuidv7FunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(36)
 	sig := &builtinUUIDv7Sig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_UUID)
+	sig.setPbCode(tipb.ScalarFuncSig_UUIDv7)
 	return sig, nil
 }
 
@@ -1631,6 +1631,7 @@ func (c *uuidVersionFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	}
 	bf.tp.SetFlen(10)
 	sig := &builtinUUIDVersionSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUIDVersion)
 	return sig, nil
 }
 
@@ -1656,7 +1657,7 @@ func (b *builtinUUIDVersionSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	}
 	u, err := uuid.Parse(val)
 	if err != nil {
-		return 0, isNull, err
+		return 0, isNull, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_version")
 	}
 	return int64(u.Version()), false, nil
 }
@@ -1677,6 +1678,7 @@ func (c *uuidTimestampFunctionClass) getFunction(ctx BuildContext, args []Expres
 	bf.tp.SetFlen(18)
 	bf.tp.SetDecimalUnderLimit(6)
 	sig := &builtinUUIDTimestampSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUIDTimestamp)
 	return sig, nil
 }
 
@@ -1702,13 +1704,11 @@ func (b *builtinUUIDTimestampSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 	}
 	u, err := uuid.Parse(val)
 	if err != nil {
-		return new(types.MyDecimal), isNull, err
+		return new(types.MyDecimal), isNull, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_timestamp")
 	}
 
 	switch u.Version() {
-	case 1:
-	case 6:
-	case 7:
+	case 1, 6, 7:
 	default:
 		// No timestamp, return NULL
 		return new(types.MyDecimal), true, nil

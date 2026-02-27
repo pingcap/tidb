@@ -11,15 +11,16 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
-        "//pkg/disttask/framework/handle",
-        "//pkg/disttask/framework/schstatus",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/schstatus",
+        "//pkg/dxf/framework/storage",
         "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
-        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend/local",
         "//pkg/meta",
@@ -67,7 +68,7 @@ go_test(
     embed = [":tikvhandler"],
     flaky = True,
     deps = [
-        "//pkg/disttask/framework/schstatus",
+        "//pkg/dxf/framework/schstatus",
         "@com_github_stretchr_testify//require",
     ],
 )

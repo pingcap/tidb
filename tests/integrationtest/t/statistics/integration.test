@@ -22,3 +22,17 @@ explain format = 'plan_tree' select * from t2 left join t1 on t1.a=t2.a order by
 explain format = 'plan_tree' select * from t1 right join t2 on t1.a=t2.a order by t1.a, t2.a;
 explain format = 'plan_tree' select * from t2 right join t1 on t1.a=t2.a order by t1.a, t2.a;
 
+# TestTopNNotStoredForUniqueValues
+# Shows that TopN is not collected for Unique single columns,
+# even when TopN is explicit requested.
+drop table if exists t;
+set @@session.tidb_analyze_version = 2;
+create table t(a int, b int, index idx_a(a), unique index uidx_b(b));
+insert into t values (1,1),(1,2),(2,3);
+analyze table t with 5 topn;
+--sorted_result
+show stats_topn where table_name = 't';
+set @@session.tidb_analyze_version = default;
+
+# Cleanup
+drop table if exists t,t1,t2;

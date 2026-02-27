@@ -63,7 +63,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	schema := ast.NewCIStr("test")
 	tbl1, err := dom.InfoSchema().TableByName(ctx, schema, ast.NewCIStr("t1"))
@@ -85,8 +85,8 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 
 	// Insert 10 rows into t1.
 	tk.MustExec("insert into t1 values (2), (3)")
-	// Dump the stats to kv.
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	// Flush the stats delta.
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
@@ -167,7 +167,7 @@ func TestTruncateTable(t *testing.T) {
 	statstestutil.HandleNextDDLEventWithTxn(h)
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -233,7 +233,7 @@ func testTruncatePartitionedTable(
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -283,7 +283,7 @@ func TestDropTable(t *testing.T) {
 	statstestutil.HandleNextDDLEventWithTxn(h)
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -349,7 +349,7 @@ func testDropPartitionedTable(
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -401,7 +401,7 @@ func TestTruncateTablePartition(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -461,7 +461,7 @@ func TestDropTablePartition(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -527,7 +527,7 @@ func TestExchangeTablePartition(t *testing.T) {
 	// Insert some data.
 	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,3),(4,4)")
 	testKit.MustExec("insert into t2 values (1,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -590,7 +590,7 @@ func TestReorganizeTablePartition(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -650,7 +650,7 @@ func TestAlterTablePartitioning(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -710,7 +710,7 @@ func TestRemovePartitioning(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -770,7 +770,7 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Create a non-partitioned table.
 	testKit.MustExec("create table t2 (c1 int, c2 int, index idx(c1, c2))")
@@ -778,7 +778,7 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t2 values (1,2),(2,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -836,7 +836,7 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	testKit.MustExec("set global tidb_partition_prune_mode='static'")
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(6,6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -939,7 +939,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Add two indexes.
 	testKit.MustExec("alter table t add index idx1(c1)")
@@ -991,7 +991,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testin
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
@@ -1061,7 +1061,7 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	statstestutil.HandleNextDDLEventWithTxn(h)
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
@@ -1108,7 +1108,7 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	require.Equal(t, columnInfo[0].Name.L, "c1")
 }
 
-func TestTurnOffAutoAnalyze(t *testing.T) {
+func TestTurnOffAutoAnalyzeAfterQueueInit(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -1122,7 +1122,7 @@ func TestTurnOffAutoAnalyze(t *testing.T) {
 	statstestutil.HandleNextDDLEventWithTxn(h)
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
 	statistics.AutoAnalyzeMinCnt = 0
@@ -1141,31 +1141,71 @@ func TestTurnOffAutoAnalyze(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 
-	// Truncate table.
-	testKit.MustExec("truncate table t")
+	// Add a new index on column c1.
+	testKit.MustExec("alter table t add index idx1(c1)")
 
-	// Find the truncate table event.
-	truncateTableEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionTruncateTable)
+	// Find the add index event.
+	addIndexEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent)
 
 	// Disable the auto analyze.
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze = 0;")
 
-	// Handle the truncate table event.
-	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
+	// Handle the add index event.
+	err = statstestutil.HandleDDLEventWithTxn(h, addIndexEvent)
 	require.NoError(t, err)
 
-	sctx := testKit.Session().(sessionctx.Context)
-	// Handle the truncate table event in priority queue.
-	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, truncateTableEvent))
+	// Handle the add index event in priority queue.
+	require.NoError(t, statsutil.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+		return pq.HandleDDLEvent(ctx, sctx, addIndexEvent)
+	}, statsutil.FlagWrapTxn))
 
-	// Because the auto analyze is turned off, the priority queue should be closed properly.
-	_, err = pq.IsEmptyForTest()
-	require.ErrorContains(t, err, "priority queue not initialized")
-
-	// The priority queue can be re-initialized after turning on the auto analyze.
-	// We manually mock it here.
-	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
-	require.True(t, isEmpty)
+	require.False(t, isEmpty)
+}
+
+func TestTurnOffAutoAnalyzeBeforeQueueInit(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
+	h := do.StatsHandle()
+	statstestutil.HandleNextDDLEventWithTxn(h)
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("flush stats_delta")
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	// Disable the auto analyze.
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze = 0;")
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	ctx := context.Background()
+
+	// Add a new index on column c1.
+	testKit.MustExec("alter table t add index idx1(c1)")
+
+	// Find the add index event.
+	addIndexEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent)
+
+	// Handle the add index event.
+	err := statstestutil.HandleDDLEventWithTxn(h, addIndexEvent)
+	require.NoError(t, err)
+
+	// Handle the add index event in priority queue.
+	require.NoError(t, statsutil.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+		return pq.HandleDDLEvent(ctx, sctx, addIndexEvent)
+	}, statsutil.FlagWrapTxn))
+
+	_, err = pq.IsEmptyForTest()
+	require.ErrorContains(t, err, "priority queue not initialized")
 }
