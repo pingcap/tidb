@@ -119,13 +119,17 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			p.next() // consume ')'
 			stmt.Columns = make([]*ast.ColumnName, 0)
 		} else if p.peek().Tp == selectKwd || p.peek().Tp == with {
-			// Subquery in parens: INSERT INTO t1 (SELECT ...).
-			query := p.parseSelectStmt()
-			res := p.maybeParseUnion(query)
+			// Subquery in parens: INSERT INTO t1 (SELECT ...) or (WITH cte AS (...) SELECT ...).
+			sub := p.parseSubquery()
+			if sub != nil {
+				sub = p.maybeParseUnion(sub)
+			}
 			p.expect(')')
 			// Mark the select as "in braces" so Restore() preserves the parens.
-			markIsInBraces(res)
-			stmt.Select = res
+			if sub != nil {
+				markIsInBraces(sub)
+			}
+			stmt.Select = sub
 		} else {
 			// Column list: (c1, c2, ...)
 			for {
@@ -155,15 +159,20 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		if ts := p.parseTableStmt(); ts != nil {
 			stmt.Select = ts.(*ast.SelectStmt)
 		}
-	case '(': // (SELECT ...) or (VALUES ...)
+	case '(': // (SELECT ...) or (VALUES ...) or (WITH ...) or ((SELECT ...))
 		p.next()
-		if p.peek().Tp == selectKwd {
-			sel := p.parseSelectStmt()
-			stmt.Select = p.maybeParseUnion(sel)
+		if p.peek().Tp == selectKwd || p.peek().Tp == with || p.peek().Tp == tableKwd || p.peek().Tp == '(' {
+			sub := p.parseSubquery()
+			if sub != nil {
+				sub = p.maybeParseUnion(sub)
+			}
 			p.expect(')')
-			markIsInBraces(stmt.Select)
+			if sub != nil {
+				markIsInBraces(sub)
+			}
+			stmt.Select = sub
 		} else if p.peek().Tp == values { // (VALUES ...)
-			stmt.Lists = p.parseValueList(isReplace, false) // subquery VALUES? Assuming false for now.
+			stmt.Lists = p.parseValueList(isReplace, false)
 			p.expect(')')
 		} else { //revive:disable-line
 			// Assuming recursive calls handle complex cases.

@@ -366,6 +366,9 @@ func (p *HandParser) toUint64Value(expr ast.ExprNode, errTok Token) ast.ExprNode
 // It starts with an already-parsed left-hand side (first) and parses the rest of the chain
 // using precedence climbing to build a correct binary tree (ast.SetOprStmt).
 func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode {
+	if first == nil {
+		return nil
+	}
 	res := p.parseSetOprRest(first, 0)
 
 	// Outer ORDER BY / LIMIT should only be parsed when:

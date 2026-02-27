@@ -107,6 +107,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 			if intervalEndOff > intervalStartOff && intervalEndOff <= len(p.src) {
 				pi.SetText(nil, p.src[intervalStartOff:intervalEndOff])
 			}
+			pi.SetOriginTextPosition(intervalStartOff)
 
 			opt.Interval = pi
 		}
