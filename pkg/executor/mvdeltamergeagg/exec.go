@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -70,6 +72,8 @@ type MinMaxBatchBuildRequest struct {
 
 // MinMaxBatchExecBuilder builds one opened recompute executor for one batch request.
 type MinMaxBatchExecBuilder interface {
+	// Build must return an opened executor.
+	// The result schema must put group-key columns first, in the same order as MinMaxRecomputeExec.KeyInputColIDs.
 	Build(context.Context, *MinMaxBatchBuildRequest) (exec.Executor, error)
 }
 
@@ -181,9 +185,10 @@ type Exec struct {
 }
 
 type mvMergeAggWorkerData struct {
-	updateRows      []int
-	updateOpIndexes []int
-	updateChanged   []bool
+	updateRows                   []int
+	updateOpIndexes              []int
+	updateChanged                []bool
+	minMaxRecomputeRowsByMapping [][]int
 }
 
 // Open implements the Executor interface.
@@ -264,9 +269,10 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 	workerWG := sync.WaitGroup{}
 	workerWG.Add(workerCnt)
 	for i := 0; i < workerCnt; i++ {
+		workerIdx := i
 		g.Go(func() error {
 			defer workerWG.Done()
-			return e.runWorker(gctx, inputCh, resultCh)
+			return e.runWorker(gctx, inputCh, resultCh, workerIdx)
 		})
 	}
 
@@ -318,6 +324,7 @@ func (e *Exec) runWorker(
 	ctx context.Context,
 	inputCh <-chan *chunk.Chunk,
 	resultCh chan<- *ChunkResult,
+	workerIdx int,
 ) error {
 	var workerData mvMergeAggWorkerData
 	for {
@@ -334,7 +341,7 @@ func (e *Exec) runWorker(
 			}
 		}
 
-		result, err := e.mergeOneChunk(chk, &workerData)
+		result, err := e.mergeOneChunk(ctx, chk, &workerData, workerIdx)
 		if err != nil {
 			return err
 		}
@@ -461,6 +468,11 @@ func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 				if len(worker.KeyCols) != len(meta.KeyInputColIDs) {
 					return errors.Errorf("MinMaxRecompute mapping %d single-row worker %d key column mismatch: expect %d, got %d", mappingIdx, workerIdx, len(meta.KeyInputColIDs), len(worker.KeyCols))
 				}
+				for keyIdx, keyCol := range worker.KeyCols {
+					if keyCol == nil || keyCol.Data == nil {
+						return errors.Errorf("MinMaxRecompute mapping %d single-row worker %d key column %d is not initialized", mappingIdx, workerIdx, keyIdx)
+					}
+				}
 			}
 		case MinMaxRecomputeBatch:
 			hasBatch = true
@@ -526,6 +538,33 @@ func (e *Exec) prepareMergers() error {
 	if len(e.AggMappings[0].ColID) != 1 {
 		return errors.Errorf("the first MVDeltaMergeAgg mapping must output exactly 1 column, got %d", len(e.AggMappings[0].ColID))
 	}
+	minMaxOutputCols := make(map[int]struct{})
+	for i := range e.AggMappings {
+		mapping := e.AggMappings[i]
+		if mapping.AggFunc == nil {
+			continue
+		}
+		if !isMinMaxAgg(mapping.AggFunc.Name) {
+			continue
+		}
+		for _, outputColID := range mapping.ColID {
+			minMaxOutputCols[outputColID] = struct{}{}
+		}
+	}
+	if len(minMaxOutputCols) > 0 {
+		for mappingIdx := range e.AggMappings {
+			mapping := e.AggMappings[mappingIdx]
+			for _, depColID := range mapping.DependencyColID {
+				if _, isMinMaxOutput := minMaxOutputCols[depColID]; isMinMaxOutput {
+					return errors.Errorf(
+						"AggMappings[%d] depends on MIN/MAX output col %d, which is unsupported in stage1",
+						mappingIdx,
+						depColID,
+					)
+				}
+			}
+		}
+	}
 
 	for i := range e.AggMappings {
 		mapping := e.AggMappings[i]
@@ -558,7 +597,11 @@ func (e *Exec) prepareMergers() error {
 		case ast.AggFuncSum:
 			merger, err = e.buildSumMerger(mapping, colID2ComputedIdx, childTypes)
 		case ast.AggFuncMin, ast.AggFuncMax:
-			err = errors.Errorf("%s merge is not implemented yet", aggName)
+			if e.MinMaxRecompute == nil {
+				err = errors.Errorf("%s merge requires MinMaxRecompute metadata", aggName)
+				break
+			}
+			merger, err = e.buildMinMaxMerger(i, mapping, colID2ComputedIdx, childTypes)
 		default:
 			err = errors.Errorf("unsupported agg function in Exec: %s", aggName)
 		}
@@ -584,7 +627,10 @@ func (e *Exec) prepareMergers() error {
 	return nil
 }
 
-func (e *Exec) mergeOneChunk(chk *chunk.Chunk, workerData *mvMergeAggWorkerData) (*ChunkResult, error) {
+func (e *Exec) mergeOneChunk(ctx context.Context, chk *chunk.Chunk, workerData *mvMergeAggWorkerData, workerIdx int) (*ChunkResult, error) {
+	if workerData != nil {
+		workerData.prepareMinMaxRecomputeRows(len(e.AggMappings))
+	}
 	computedByOrder := make([]*chunk.Column, e.compiledOutputColCnt)
 	computedBuiltCnt := 0
 	computedByColID := make([]*chunk.Column, chk.NumCols())
@@ -598,7 +644,7 @@ func (e *Exec) mergeOneChunk(chk *chunk.Chunk, workerData *mvMergeAggWorkerData)
 			return nil, errors.Errorf("computed output overflow: built=%d current=%d total=%d", computedBuiltCnt, outputCnt, len(computedByOrder))
 		}
 		outputCols := computedByOrder[computedBuiltCnt : computedBuiltCnt+outputCnt]
-		if err := merger.mergeChunk(chk, computedByOrder[:computedBuiltCnt], outputCols); err != nil {
+		if err := merger.mergeChunk(chk, computedByOrder[:computedBuiltCnt], outputCols, workerData); err != nil {
 			return nil, err
 		}
 		for idx, col := range outputCols {
@@ -613,6 +659,9 @@ func (e *Exec) mergeOneChunk(chk *chunk.Chunk, workerData *mvMergeAggWorkerData)
 	if computedBuiltCnt != e.compiledOutputColCnt {
 		return nil, errors.Errorf("computed output count mismatch, expected=%d got=%d", e.compiledOutputColCnt, computedBuiltCnt)
 	}
+	if err := e.recomputeMinMaxRows(ctx, chk, computedByColID, workerData, workerIdx); err != nil {
+		return nil, err
+	}
 
 	rowOps, updateTouchedBitmap, updateTouchedStride, updateTouchedBitCnt, err := e.buildRowOps(chk, computedByColID, workerData)
 	if err != nil {
@@ -626,6 +675,520 @@ func (e *Exec) mergeOneChunk(chk *chunk.Chunk, workerData *mvMergeAggWorkerData)
 		UpdateTouchedStride: updateTouchedStride,
 		UpdateTouchedBitCnt: updateTouchedBitCnt,
 	}, nil
+}
+
+func (d *mvMergeAggWorkerData) prepareMinMaxRecomputeRows(mappingCnt int) {
+	if mappingCnt <= 0 {
+		d.minMaxRecomputeRowsByMapping = nil
+		return
+	}
+	if len(d.minMaxRecomputeRowsByMapping) < mappingCnt {
+		old := d.minMaxRecomputeRowsByMapping
+		d.minMaxRecomputeRowsByMapping = make([][]int, mappingCnt)
+		copy(d.minMaxRecomputeRowsByMapping, old)
+	}
+	d.minMaxRecomputeRowsByMapping = d.minMaxRecomputeRowsByMapping[:mappingCnt]
+	for idx := range d.minMaxRecomputeRowsByMapping {
+		d.minMaxRecomputeRowsByMapping[idx] = d.minMaxRecomputeRowsByMapping[idx][:0]
+	}
+}
+
+func (e *Exec) recomputeMinMaxRows(
+	ctx context.Context,
+	input *chunk.Chunk,
+	computedByColID []*chunk.Column,
+	workerData *mvMergeAggWorkerData,
+	workerIdx int,
+) error {
+	if e.MinMaxRecompute == nil || workerData == nil {
+		return nil
+	}
+	if len(workerData.minMaxRecomputeRowsByMapping) == 0 {
+		return nil
+	}
+	if len(e.aggOutputColIDs) == 0 {
+		return errors.New("min/max recompute requires aggregate outputs")
+	}
+	countStarOutputColID := e.aggOutputColIDs[0]
+	if countStarOutputColID < 0 || countStarOutputColID >= len(computedByColID) {
+		return errors.Errorf("count(*) output col %d out of computed-by-col-id range [0,%d)", countStarOutputColID, len(computedByColID))
+	}
+	countStarCol := computedByColID[countStarOutputColID]
+	if countStarCol == nil {
+		return errors.Errorf("count(*) output col %d is missing in computed columns", countStarOutputColID)
+	}
+	countStarVals := countStarCol.Int64s()
+	childTypes := e.Children(0).RetFieldTypes()
+	overrides := make([]*mappingRecomputeOverride, len(e.AggMappings))
+	batchMappings := make([]int, 0)
+
+	for mappingIdx, rows := range workerData.minMaxRecomputeRowsByMapping {
+		if len(rows) == 0 {
+			continue
+		}
+		if mappingIdx < 0 || mappingIdx >= len(e.AggMappings) {
+			return errors.Errorf("min/max recompute mapping idx %d out of range [0,%d)", mappingIdx, len(e.AggMappings))
+		}
+		recomputeMeta := e.MinMaxRecompute.Mappings[mappingIdx]
+		if recomputeMeta == nil {
+			return errors.Errorf("missing MinMaxRecompute mapping for agg index %d", mappingIdx)
+		}
+		switch recomputeMeta.Strategy {
+		case MinMaxRecomputeSingleRow:
+			if err := e.recomputeMinMaxSingleRow(
+				ctx,
+				input,
+				childTypes,
+				countStarVals,
+				workerIdx,
+				mappingIdx,
+				rows,
+				overrides,
+			); err != nil {
+				return err
+			}
+		case MinMaxRecomputeBatch:
+			batchMappings = append(batchMappings, mappingIdx)
+		default:
+			return errors.Errorf("unknown MinMaxRecompute strategy %d for mapping %d", recomputeMeta.Strategy, mappingIdx)
+		}
+	}
+	if len(batchMappings) > 0 {
+		if err := e.recomputeMinMaxBatch(
+			ctx,
+			input,
+			childTypes,
+			countStarVals,
+			batchMappings,
+			workerData.minMaxRecomputeRowsByMapping,
+			overrides,
+		); err != nil {
+			return err
+		}
+	}
+	return e.applyMinMaxRecomputeOverrides(computedByColID, childTypes, overrides)
+}
+
+func (e *Exec) recomputeMinMaxSingleRow(
+	ctx context.Context,
+	input *chunk.Chunk,
+	childTypes []*types.FieldType,
+	countStarVals []int64,
+	workerIdx int,
+	mappingIdx int,
+	recomputeRows []int,
+	overrides []*mappingRecomputeOverride,
+) error {
+	recomputeMeta := e.MinMaxRecompute.Mappings[mappingIdx]
+	if recomputeMeta == nil || recomputeMeta.SingleRow == nil {
+		return errors.Errorf("single-row MinMaxRecompute metadata is missing for mapping %d", mappingIdx)
+	}
+	if workerIdx < 0 || workerIdx >= len(recomputeMeta.SingleRow.Workers) {
+		return errors.Errorf(
+			"min/max single-row worker idx %d out of range [0,%d) for mapping %d",
+			workerIdx,
+			len(recomputeMeta.SingleRow.Workers),
+			mappingIdx,
+		)
+	}
+	worker := recomputeMeta.SingleRow.Workers[workerIdx]
+	if worker.Exec == nil {
+		return errors.Errorf("min/max single-row worker %d executor is nil for mapping %d", workerIdx, mappingIdx)
+	}
+	keyColIDs := e.MinMaxRecompute.KeyInputColIDs
+	if len(worker.KeyCols) != len(keyColIDs) {
+		return errors.Errorf("min/max single-row key column mismatch for mapping %d: expect %d, got %d", mappingIdx, len(keyColIDs), len(worker.KeyCols))
+	}
+	resultChk := exec.NewFirstChunk(worker.Exec)
+	mapping := e.AggMappings[mappingIdx]
+	rowValues := make([]types.Datum, len(mapping.ColID))
+
+	for _, rowIdx := range recomputeRows {
+		if rowIdx < 0 || rowIdx >= input.NumRows() {
+			return errors.Errorf("min/max single-row recompute row idx %d out of range [0,%d)", rowIdx, input.NumRows())
+		}
+		if countStarVals[rowIdx] < 0 {
+			return errors.Errorf("count(*) becomes negative (%d) at row %d", countStarVals[rowIdx], rowIdx)
+		}
+		if countStarVals[rowIdx] == 0 {
+			continue
+		}
+		inputRow := input.GetRow(rowIdx)
+		for keyPos, keyColID := range keyColIDs {
+			if keyColID < 0 || keyColID >= len(childTypes) {
+				return errors.Errorf("min/max single-row key col id %d out of range [0,%d)", keyColID, len(childTypes))
+			}
+			if worker.KeyCols[keyPos] == nil || worker.KeyCols[keyPos].Data == nil {
+				return errors.Errorf("min/max single-row worker %d key col %d is not initialized", workerIdx, keyPos)
+			}
+			keyDatum := inputRow.GetDatum(keyColID, childTypes[keyColID])
+			keyDatum.Copy(worker.KeyCols[keyPos].Data)
+		}
+
+		if err := exec.Open(ctx, worker.Exec); err != nil {
+			return err
+		}
+		resultChk.Reset()
+		nextErr := exec.Next(ctx, worker.Exec, resultChk)
+		closeErr := worker.Exec.Close()
+		if nextErr != nil {
+			return nextErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if resultChk.NumRows() == 0 {
+			return errors.Errorf("min/max single-row recompute returns no row for mapping %d row %d", mappingIdx, rowIdx)
+		}
+
+		resultRow := resultChk.GetRow(0)
+		for colPos, outputColID := range mapping.ColID {
+			if outputColID < 0 || outputColID >= len(childTypes) {
+				return errors.Errorf("mapping %d output col id %d out of range [0,%d)", mappingIdx, outputColID, len(childTypes))
+			}
+			rowValues[colPos] = resultRow.GetDatum(colPos, childTypes[outputColID])
+		}
+		if err := appendMappingOverrideFromValues(overrides, mappingIdx, rowIdx, rowValues); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Exec) recomputeMinMaxBatch(
+	ctx context.Context,
+	input *chunk.Chunk,
+	childTypes []*types.FieldType,
+	countStarVals []int64,
+	batchMappings []int,
+	recomputeRowsByMapping [][]int,
+	overrides []*mappingRecomputeOverride,
+) (retErr error) {
+	if e.MinMaxRecompute.BatchBuilder == nil {
+		return errors.New("min/max batch recompute requires BatchBuilder")
+	}
+	tz := e.Ctx().GetSessionVars().StmtCtx.TimeZone()
+	keyColIDs := e.MinMaxRecompute.KeyInputColIDs
+	lookupKeys := make([]*MinMaxBatchLookupContent, 0)
+	rowsByKey := make(map[string][]batchRowRef)
+
+	for _, mappingIdx := range batchMappings {
+		rows := recomputeRowsByMapping[mappingIdx]
+		for _, rowIdx := range rows {
+			if rowIdx < 0 || rowIdx >= input.NumRows() {
+				return errors.Errorf("min/max batch recompute row idx %d out of range [0,%d)", rowIdx, input.NumRows())
+			}
+			if countStarVals[rowIdx] < 0 {
+				return errors.Errorf("count(*) becomes negative (%d) at row %d", countStarVals[rowIdx], rowIdx)
+			}
+			if countStarVals[rowIdx] == 0 {
+				continue
+			}
+			inputRow := input.GetRow(rowIdx)
+			keyDatums := make([]types.Datum, len(keyColIDs))
+			for keyPos, keyColID := range keyColIDs {
+				if keyColID < 0 || keyColID >= len(childTypes) {
+					return errors.Errorf("min/max batch key col id %d out of range [0,%d)", keyColID, len(childTypes))
+				}
+				d := inputRow.GetDatum(keyColID, childTypes[keyColID])
+				d.Copy(&keyDatums[keyPos])
+			}
+			encodedKey, err := encodeDatumKey(tz, keyDatums)
+			if err != nil {
+				return err
+			}
+			if _, exists := rowsByKey[encodedKey]; !exists {
+				lookupKeys = append(lookupKeys, &MinMaxBatchLookupContent{Keys: keyDatums})
+			}
+			rowsByKey[encodedKey] = append(rowsByKey[encodedKey], batchRowRef{mappingIdx: mappingIdx, rowIdx: rowIdx})
+		}
+	}
+	if len(lookupKeys) == 0 {
+		return nil
+	}
+
+	batchExec, err := e.MinMaxRecompute.BatchBuilder.Build(ctx, &MinMaxBatchBuildRequest{LookupKeys: lookupKeys})
+	if err != nil {
+		return err
+	}
+	if batchExec == nil {
+		return errors.New("min/max batch recompute builder returns nil executor")
+	}
+	defer func() {
+		closeErr := batchExec.Close()
+		if retErr == nil && closeErr != nil {
+			retErr = closeErr
+		}
+	}()
+
+	batchTypes := exec.RetTypes(batchExec)
+	if len(batchTypes) < len(keyColIDs) {
+		return errors.Errorf(
+			"min/max batch recompute result schema too small: key columns=%d, result columns=%d",
+			len(keyColIDs),
+			len(batchTypes),
+		)
+	}
+
+	resolvedByMapping := make(map[int]map[int][]types.Datum, len(batchMappings))
+	keyBuffer := make([]types.Datum, len(keyColIDs))
+	resultChk := exec.NewFirstChunk(batchExec)
+	for {
+		resultChk.Reset()
+		if retErr = exec.Next(ctx, batchExec, resultChk); retErr != nil {
+			return retErr
+		}
+		if resultChk.NumRows() == 0 {
+			break
+		}
+		for rowIdx := 0; rowIdx < resultChk.NumRows(); rowIdx++ {
+			resultRow := resultChk.GetRow(rowIdx)
+			for keyPos := range keyColIDs {
+				resultRow.DatumWithBuffer(keyPos, batchTypes[keyPos], &keyBuffer[keyPos])
+			}
+			encodedKey, err := encodeDatumKey(tz, keyBuffer)
+			if err != nil {
+				return err
+			}
+			refs := rowsByKey[encodedKey]
+			if len(refs) == 0 {
+				continue
+			}
+			for _, ref := range refs {
+				recomputeMeta := e.MinMaxRecompute.Mappings[ref.mappingIdx]
+				mapping := e.AggMappings[ref.mappingIdx]
+				rowValues := make([]types.Datum, len(mapping.ColID))
+				for colPos, outputColID := range mapping.ColID {
+					resultColIdx := recomputeMeta.BatchResultColIdxes[colPos]
+					if resultColIdx < 0 || resultColIdx >= len(batchTypes) {
+						return errors.Errorf(
+							"min/max batch recompute result col idx %d out of range [0,%d) for mapping %d",
+							resultColIdx,
+							len(batchTypes),
+							ref.mappingIdx,
+						)
+					}
+					d := resultRow.GetDatum(resultColIdx, childTypes[outputColID])
+					d.Copy(&rowValues[colPos])
+				}
+				rowMap := resolvedByMapping[ref.mappingIdx]
+				if rowMap == nil {
+					rowMap = make(map[int][]types.Datum)
+					resolvedByMapping[ref.mappingIdx] = rowMap
+				}
+				rowMap[ref.rowIdx] = rowValues
+			}
+		}
+	}
+
+	for _, mappingIdx := range batchMappings {
+		rows := recomputeRowsByMapping[mappingIdx]
+		rowValues := resolvedByMapping[mappingIdx]
+		for _, rowIdx := range rows {
+			if countStarVals[rowIdx] < 0 {
+				return errors.Errorf("count(*) becomes negative (%d) at row %d", countStarVals[rowIdx], rowIdx)
+			}
+			if countStarVals[rowIdx] == 0 {
+				continue
+			}
+			values, exists := rowValues[rowIdx]
+			if !exists {
+				return errors.Errorf("min/max batch recompute misses row %d for mapping %d", rowIdx, mappingIdx)
+			}
+			if err := appendMappingOverrideFromValues(overrides, mappingIdx, rowIdx, values); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *Exec) applyMinMaxRecomputeOverrides(
+	computedByColID []*chunk.Column,
+	childTypes []*types.FieldType,
+	overrides []*mappingRecomputeOverride,
+) error {
+	for mappingIdx, override := range overrides {
+		if override == nil || len(override.rowIdxes) == 0 {
+			continue
+		}
+		mapping := e.AggMappings[mappingIdx]
+		if len(override.valuesByOutput) != len(mapping.ColID) {
+			return errors.Errorf(
+				"min/max override output count mismatch for mapping %d: override=%d mapping=%d",
+				mappingIdx,
+				len(override.valuesByOutput),
+				len(mapping.ColID),
+			)
+		}
+		for colPos, outputColID := range mapping.ColID {
+			if outputColID < 0 || outputColID >= len(computedByColID) {
+				return errors.Errorf("min/max override output col id %d out of range [0,%d)", outputColID, len(computedByColID))
+			}
+			if outputColID < 0 || outputColID >= len(childTypes) {
+				return errors.Errorf("min/max override output col id %d out of field type range [0,%d)", outputColID, len(childTypes))
+			}
+			if len(override.valuesByOutput[colPos]) != len(override.rowIdxes) {
+				return errors.Errorf(
+					"min/max override row/value count mismatch for mapping %d output position %d: rows=%d values=%d",
+					mappingIdx,
+					colPos,
+					len(override.rowIdxes),
+					len(override.valuesByOutput[colPos]),
+				)
+			}
+			oldCol := computedByColID[outputColID]
+			if oldCol == nil {
+				return errors.Errorf("min/max override target output col %d is nil", outputColID)
+			}
+			ft := childTypes[outputColID]
+			if ft == nil {
+				return errors.Errorf("min/max override output col %d type is unavailable", outputColID)
+			}
+			newCol, err := rebuildColumnWithOverrides(oldCol, ft, override.rowIdxes, override.valuesByOutput[colPos])
+			if err != nil {
+				return err
+			}
+			computedByColID[outputColID] = newCol
+		}
+	}
+	return nil
+}
+
+type mappingRecomputeOverride struct {
+	rowIdxes       []int
+	valuesByOutput [][]types.Datum
+}
+
+type batchRowRef struct {
+	mappingIdx int
+	rowIdx     int
+}
+
+func appendMappingOverrideFromValues(
+	overrides []*mappingRecomputeOverride,
+	mappingIdx int,
+	rowIdx int,
+	values []types.Datum,
+) error {
+	if mappingIdx < 0 || mappingIdx >= len(overrides) {
+		return errors.Errorf("mapping idx %d out of override range [0,%d)", mappingIdx, len(overrides))
+	}
+	override := overrides[mappingIdx]
+	if override == nil {
+		override = &mappingRecomputeOverride{
+			rowIdxes:       make([]int, 0, 8),
+			valuesByOutput: make([][]types.Datum, len(values)),
+		}
+		overrides[mappingIdx] = override
+	}
+	if len(override.valuesByOutput) != len(values) {
+		return errors.Errorf(
+			"override output column count mismatch for mapping %d: override=%d values=%d",
+			mappingIdx,
+			len(override.valuesByOutput),
+			len(values),
+		)
+	}
+	override.rowIdxes = append(override.rowIdxes, rowIdx)
+	for idx := range values {
+		var copied types.Datum
+		values[idx].Copy(&copied)
+		override.valuesByOutput[idx] = append(override.valuesByOutput[idx], copied)
+	}
+	return nil
+}
+
+func encodeDatumKey(tz *time.Location, datums []types.Datum) (string, error) {
+	encoded, err := codec.EncodeKey(tz, nil, datums...)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func rebuildColumnWithOverrides(
+	oldCol *chunk.Column,
+	ft *types.FieldType,
+	rowIdxes []int,
+	values []types.Datum,
+) (*chunk.Column, error) {
+	if oldCol == nil {
+		return nil, errors.New("cannot rebuild nil column")
+	}
+	if len(rowIdxes) != len(values) {
+		return nil, errors.Errorf("override row/value count mismatch: rows=%d values=%d", len(rowIdxes), len(values))
+	}
+	rowCnt := oldCol.Rows()
+	newCol := chunk.NewColumn(ft, rowCnt)
+	overridePos := 0
+	prevOverrideRow := -1
+	for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
+		if overridePos < len(rowIdxes) {
+			overrideRow := rowIdxes[overridePos]
+			if overrideRow < prevOverrideRow {
+				return nil, errors.Errorf("override rows are not in ascending order: prev=%d curr=%d", prevOverrideRow, overrideRow)
+			}
+			if overrideRow < rowIdx {
+				return nil, errors.Errorf("override row %d repeats or is out of order", overrideRow)
+			}
+			if overrideRow == rowIdx {
+				if err := appendDatumToColumn(newCol, &values[overridePos], ft); err != nil {
+					return nil, err
+				}
+				prevOverrideRow = overrideRow
+				overridePos++
+				continue
+			}
+		}
+		newCol.AppendCellNTimes(oldCol, rowIdx, 1)
+	}
+	if overridePos != len(rowIdxes) {
+		return nil, errors.Errorf("override rows out of range: consumed=%d total=%d rows=%d", overridePos, len(rowIdxes), rowCnt)
+	}
+	return newCol, nil
+}
+
+func appendDatumToColumn(col *chunk.Column, d *types.Datum, ft *types.FieldType) error {
+	if d == nil || d.IsNull() {
+		col.AppendNull()
+		return nil
+	}
+	switch ft.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+			col.AppendUint64(d.GetUint64())
+		} else {
+			col.AppendInt64(d.GetInt64())
+		}
+	case mysql.TypeYear:
+		col.AppendInt64(d.GetInt64())
+	case mysql.TypeFloat:
+		col.AppendFloat32(d.GetFloat32())
+	case mysql.TypeDouble:
+		col.AppendFloat64(d.GetFloat64())
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		col.AppendString(d.GetString())
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		col.AppendTime(d.GetMysqlTime())
+	case mysql.TypeDuration:
+		col.AppendDuration(d.GetMysqlDuration())
+	case mysql.TypeNewDecimal:
+		col.AppendMyDecimal(d.GetMysqlDecimal())
+	case mysql.TypeEnum:
+		col.AppendEnum(d.GetMysqlEnum())
+	case mysql.TypeSet:
+		col.AppendSet(d.GetMysqlSet())
+	case mysql.TypeBit:
+		col.AppendBytes(d.GetBytes())
+	case mysql.TypeJSON:
+		col.AppendJSON(d.GetMysqlJSON())
+	case mysql.TypeTiDBVectorFloat32:
+		col.AppendVectorFloat32(d.GetVectorFloat32())
+	default:
+		return errors.Errorf("unsupported MySQL type %d when appending recompute datum", ft.GetType())
+	}
+	return nil
 }
 
 func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mvMergeAggWorkerData) ([]RowOp, []uint8, int, int, error) {

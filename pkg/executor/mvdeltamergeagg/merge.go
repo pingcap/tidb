@@ -22,7 +22,7 @@ import (
 
 type aggMerger interface {
 	outputColIDs() []int
-	mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column) error
+	mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error
 }
 
 type depRefSource uint8

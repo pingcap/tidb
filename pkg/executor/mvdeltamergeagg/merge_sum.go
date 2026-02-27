@@ -139,7 +139,7 @@ func (m *sumIntMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column) error {
+func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("sum merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -227,7 +227,7 @@ func (m *sumUintMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column) error {
+func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("sum merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -322,7 +322,7 @@ func (m *sumRealMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumRealMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column) error {
+func (m *sumRealMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("sum merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -400,7 +400,7 @@ func (m *sumDecimalMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column) error {
+func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("sum merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
