@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
@@ -521,8 +522,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			finishJobWithLog(statsHandle, results.Job, err)
 			continue
 		}
-		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		recordPartitionForGlobalStats(needGlobalStats, globalStatsMap, results)
 		e.mergePartitionSamplesForGlobal(results)
+		// Save pruned samples immediately using pool session (not analyze session).
+		if e.globalSampleCollectors != nil {
+			e.flushPartitionSample(statsHandle, results.TableID.PartitionID)
+		}
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		saveResultsCh <- results
 	}
@@ -738,6 +743,24 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 	results.RowCollector = nil
 }
 
+// flushPartitionSample saves a single partition's pruned sample to storage
+// using a pool session (not the analyze session's memory tracker), then
+// removes it from the pending map.
+func (e *AnalyzeExec) flushPartitionSample(statsHandle *handle.Handle, partitionID int64) {
+	data, ok := e.partitionSamplesToSave[partitionID]
+	if !ok || len(data) == 0 {
+		return
+	}
+	delete(e.partitionSamplesToSave, partitionID)
+	err := handleutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		return storage.SavePartitionSampleData(sctx, partitionID, data)
+	}, handleutil.FlagWrapTxn)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to save partition samples",
+			zap.Int64("partitionID", partitionID), zap.Error(err))
+	}
+}
+
 // serializePrunedSamples prunes the collector's samples to targetSize and
 // serializes the result to protobuf bytes. Works with any RowSampleCollector type.
 // Serializing immediately avoids shared-pointer issues with FMSketches when the
@@ -783,7 +806,7 @@ func countPartitionTasks(tasks []*analyzeTask) int {
 	return len(seen)
 }
 
-func handleGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, results *statistics.AnalyzeResults) {
+func recordPartitionForGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, results *statistics.AnalyzeResults) {
 	if results.TableID.IsPartitionTable() && needGlobalStats {
 		for _, result := range results.Ars {
 			if result.IsIndex == 0 {

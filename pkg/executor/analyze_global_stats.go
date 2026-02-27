@@ -52,11 +52,8 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 		zap.Int("tables", len(globalStatsTableIDs)))
 	e.loadAndMergeSavedSamples(globalStatsTableIDs)
 	statslogutil.StatsLogger().Info("analyze global: loading saved samples done")
-	// Save pruned samples for freshly analyzed partitions.
-	statslogutil.StatsLogger().Info("analyze global: saving partition samples",
-		zap.Int("partitions", len(e.partitionSamplesToSave)))
-	e.savePartitionSamplesToStorage()
-	statslogutil.StatsLogger().Info("analyze global: saving partition samples done")
+	// Flush any partition samples that weren't saved inline (defensive).
+	e.flushAllPartitionSamples(statsHandle)
 
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
 	for tableID := range globalStatsTableIDs {
@@ -225,19 +222,11 @@ func (e *AnalyzeExec) loadAndMergeSavedSamples(tableIDs map[int64]struct{}) {
 	}
 }
 
-// savePartitionSamplesToStorage persists the pre-serialized per-partition
-// sample data to mysql.stats_global_merge_data.
-func (e *AnalyzeExec) savePartitionSamplesToStorage() {
-	if len(e.partitionSamplesToSave) == 0 {
-		return
-	}
-	sctx := e.Ctx()
-	for partitionID, data := range e.partitionSamplesToSave {
-		if err := storage.SavePartitionSampleData(sctx, partitionID, data); err != nil {
-			logutil.BgLogger().Warn("failed to save partition samples",
-				zap.Int64("partitionID", partitionID), zap.Error(err))
-		}
-		delete(e.partitionSamplesToSave, partitionID)
+// flushAllPartitionSamples is a defensive fallback that saves any partition
+// samples that weren't already flushed inline during result processing.
+func (e *AnalyzeExec) flushAllPartitionSamples(statsHandle *handle.Handle) {
+	for partitionID := range e.partitionSamplesToSave {
+		e.flushPartitionSample(statsHandle, partitionID)
 	}
 }
 
