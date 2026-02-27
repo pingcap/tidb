@@ -132,6 +132,95 @@ func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	tk.MustExec("create materialized view log on t (a) purge start with now() next now()")
 }
 
+func TestCreateMaterializedViewLogPurgeInfoNextTimeDerivation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	getMLogID := func(baseTable string) int64 {
+		is := dom.InfoSchema()
+		mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$"+baseTable))
+		require.NoError(t, err)
+		return mlogTable.Meta().ID
+	}
+
+	// START WITH and NEXT both present, START WITH is not near-now: NEXT_TIME should use START WITH.
+	tk.MustExec("create table t_purge_start_only (a int)")
+	tk.MustExec("create materialized view log on t_purge_start_only (a) purge start with date_add(now(), interval 40 minute) next date_add(now(), interval 20 minute)")
+	mlogStartOnlyID := getMLogID("t_purge_start_only")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 30 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogStartOnlyID,
+	)).Check(testkit.Rows("1 1 1"))
+
+	// NEXT only: NEXT_TIME should use evaluated NEXT.
+	tk.MustExec("create table t_purge_next_only (a int)")
+	tk.MustExec("create materialized view log on t_purge_next_only (a) purge next date_add(now(), interval 20 minute)")
+	mlogNextOnlyID := getMLogID("t_purge_next_only")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 10 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogNextOnlyID,
+	)).Check(testkit.Rows("1 1 1"))
+
+	// Neither START WITH nor NEXT: NEXT_TIME should stay unchanged (create path: NULL).
+	tk.MustExec("create table t_purge_no_schedule (a int)")
+	tk.MustExec("create materialized view log on t_purge_no_schedule (a)")
+	mlogNoScheduleID := getMLogID("t_purge_no_schedule")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is null from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogNoScheduleID,
+	)).Check(testkit.Rows("1"))
+
+	// START WITH near-now and NEXT present: NEXT_TIME should use NEXT.
+	tk.MustExec("create table t_purge_near_now (a int)")
+	tk.MustExec("create materialized view log on t_purge_near_now (a) purge start with now() next date_add(now(), interval 40 minute)")
+	mlogNearNowID := getMLogID("t_purge_near_now")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogNearNowID,
+	)).Check(testkit.Rows("1 1 1"))
+}
+
+func TestCreateMaterializedViewLogPurgeInfoNextTimeUsesUTC(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+08:00'")
+
+	getMLogID := func(baseTable string) int64 {
+		is := dom.InfoSchema()
+		mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$"+baseTable))
+		require.NoError(t, err)
+		return mlogTable.Meta().ID
+	}
+
+	tk.MustExec("create table t_purge_utc_next (a int)")
+	tk.MustExec("create materialized view log on t_purge_utc_next (a) purge next now()")
+	mlogNextID := getMLogID("t_purge_utc_next")
+
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, "+
+			"NEXT_TIME > UTC_TIMESTAMP(6) - interval 5 minute, "+
+			"NEXT_TIME < UTC_TIMESTAMP(6) + interval 5 minute, "+
+			"NEXT_TIME < NOW(6) - interval 7 hour "+
+			"from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogNextID,
+	)).Check(testkit.Rows("1 1 1 1"))
+
+	// START WITH should also be evaluated in UTC even when session timezone is +08:00.
+	tk.MustExec("create table t_purge_utc_start (a int)")
+	tk.MustExec("create materialized view log on t_purge_utc_start (a) purge start with date_add(now(), interval 40 minute) next date_add(now(), interval 20 minute)")
+	mlogStartID := getMLogID("t_purge_utc_start")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, "+
+			"NEXT_TIME > UTC_TIMESTAMP(6) + interval 20 minute, "+
+			"NEXT_TIME < UTC_TIMESTAMP(6) + interval 2 hour, "+
+			"NEXT_TIME < NOW(6) - interval 7 hour "+
+			"from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogStartID,
+	)).Check(testkit.Rows("1 1 1 1"))
+}
+
 func TestCreateMaterializedViewLogMetaColumnNameConflict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

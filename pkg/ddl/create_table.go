@@ -257,27 +257,13 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 		return ver, errors.Trace(err)
 	}
 
-	// Insert the lock row used by PURGE MATERIALIZED VIEW LOG for mutual exclusion.
-	// The row is keyed by MLOG_ID and acts as a cross-node row-lock carrier.
-	{
-		ctx := jobCtx.stepCtx
-		if ctx == nil {
-			ctx = w.workCtx
-		}
-		insertSQL := sqlescape.MustEscapeSQL("INSERT IGNORE INTO mysql.tidb_mlog_purge_info (MLOG_ID) VALUES (%?)", mlogTblInfo.ID)
-		_, err = w.sess.Execute(ctx, insertSQL, "mlog-purge-lock-row-insert")
-		failpoint.Inject("mockInsertMLogPurgeTableNotExists", func(val failpoint.Value) {
-			if val.(bool) {
-				err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
-			}
-		})
-		if infoschema.ErrTableNotExists.Equal(err) {
+	// Upsert the purge-state row used by PURGE MATERIALIZED VIEW LOG for mutual
+	// exclusion and deferred schedule bookkeeping.
+	if err = w.upsertCreateMaterializedViewLogPurgeInfo(jobCtx, job.SchemaName, mlogTblInfo, job.SQLMode); err != nil {
+		if dbterror.ErrInvalidDDLJob.Equal(err) {
 			job.State = model.JobStateCancelled
-			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: required system table mysql.tidb_mlog_purge_info does not exist")
 		}
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+		return ver, errors.Trace(err)
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: baseTblInfo})
@@ -799,6 +785,33 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvS
 	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, nextTime, shouldUpdateNextTime))
 }
 
+func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogSchemaName string, mlogTblInfo *model.TableInfo, sqlMode mysql.SQLMode) error {
+	if mlogTblInfo == nil || mlogTblInfo.MaterializedViewLog == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: invalid materialized view log metadata")
+	}
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+
+	evalSessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	evalSess := sess.NewSession(evalSessCtx)
+	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, sqlMode)
+	defer func() {
+		restoreEvalSession()
+		w.sessPool.Put(evalSessCtx)
+	}()
+
+	nextTime, shouldUpdateNextTime, err := deriveCreateMaterializedViewLogNextTime(ctx, evalSess, mlogSchemaName, mlogTblInfo.Name.O, mlogTblInfo.MaterializedViewLog)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(execCreateMaterializedViewLogPurgeInfoUpsert(ctx, w.sess, mlogTblInfo.ID, nextTime, shouldUpdateNextTime))
+}
+
 func warmupCreateMaterializedViewRefreshInfoTxn(
 	ctx context.Context,
 	ddlSess *sess.Session,
@@ -872,9 +885,56 @@ func deriveCreateMaterializedViewNextTime(
 	if mvInfo == nil {
 		return nil, false, nil
 	}
+	return deriveCreateMaterializedScheduleNextTime(
+		ctx,
+		ddlSess,
+		mvSchemaName,
+		mvTableName,
+		mvInfo.RefreshStartWith,
+		mvInfo.RefreshNext,
+		logCreateMaterializedViewNextTimeUpdateNull,
+	)
+}
 
-	startExpr := strings.TrimSpace(mvInfo.RefreshStartWith)
-	nextExpr := strings.TrimSpace(mvInfo.RefreshNext)
+// deriveCreateMaterializedViewLogNextTime computes NEXT_TIME for CREATE MATERIALIZED VIEW LOG upsert.
+//
+// Rules:
+//  1. If both START WITH and NEXT are absent, NEXT_TIME is not updated.
+//  2. Otherwise expressions are evaluated in the prepared eval session (UTC timezone + job SQL mode).
+//  3. START WITH has higher priority unless it is "near now" (START WITH < now + 10s) and NEXT exists.
+//  4. If the chosen expression evaluates to NULL, NEXT_TIME is updated to NULL.
+func deriveCreateMaterializedViewLogNextTime(
+	ctx context.Context,
+	ddlSess *sess.Session,
+	mlogSchemaName string,
+	mlogTableName string,
+	mlogInfo *model.MaterializedViewLogInfo,
+) (*string, bool, error) {
+	if mlogInfo == nil {
+		return nil, false, nil
+	}
+	return deriveCreateMaterializedScheduleNextTime(
+		ctx,
+		ddlSess,
+		mlogSchemaName,
+		mlogTableName,
+		mlogInfo.PurgeStartWith,
+		mlogInfo.PurgeNext,
+		logCreateMaterializedViewLogNextTimeUpdateNull,
+	)
+}
+
+func deriveCreateMaterializedScheduleNextTime(
+	ctx context.Context,
+	ddlSess *sess.Session,
+	schemaName string,
+	tableName string,
+	startExpr string,
+	nextExpr string,
+	logNullUpdate func(schemaName string, tableName string, nullExprClause string, startExpr string, nextExpr string),
+) (*string, bool, error) {
+	startExpr = strings.TrimSpace(startExpr)
+	nextExpr = strings.TrimSpace(nextExpr)
 	if startExpr == "" && nextExpr == "" {
 		return nil, false, nil
 	}
@@ -902,7 +962,7 @@ func deriveCreateMaterializedViewNextTime(
 			return nil, true, err
 		}
 		if startAt == nil {
-			logCreateMaterializedViewNextTimeUpdateNull(mvSchemaName, mvTableName, "START WITH", startExpr, nextExpr)
+			logNullUpdate(schemaName, tableName, "START WITH", startExpr, nextExpr)
 			return nil, true, nil
 		}
 		if nextExpr == "" {
@@ -922,7 +982,7 @@ func deriveCreateMaterializedViewNextTime(
 				return nil, true, err
 			}
 			if nextAt == nil {
-				logCreateMaterializedViewNextTimeUpdateNull(mvSchemaName, mvTableName, "NEXT", startExpr, nextExpr)
+				logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
 				return nil, true, nil
 			}
 			s := nextAt.String()
@@ -939,7 +999,7 @@ func deriveCreateMaterializedViewNextTime(
 			return nil, true, err
 		}
 		if nextAt == nil {
-			logCreateMaterializedViewNextTimeUpdateNull(mvSchemaName, mvTableName, "NEXT", startExpr, nextExpr)
+			logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
 			return nil, true, nil
 		}
 		s := nextAt.String()
@@ -962,6 +1022,23 @@ func logCreateMaterializedViewNextTimeUpdateNull(
 		zap.String("nullExprClause", nullExprClause),
 		zap.String("refreshStartWith", startExpr),
 		zap.String("refreshNext", nextExpr),
+	)
+}
+
+func logCreateMaterializedViewLogNextTimeUpdateNull(
+	mlogSchemaName string,
+	mlogTableName string,
+	nullExprClause string,
+	startExpr string,
+	nextExpr string,
+) {
+	logutil.DDLLogger().Warn(
+		"create materialized view log: purge schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", mlogSchemaName),
+		zap.String("tableName", mlogTableName),
+		zap.String("nullExprClause", nullExprClause),
+		zap.String("purgeStartWith", startExpr),
+		zap.String("purgeNext", nextExpr),
 	)
 }
 
@@ -1071,6 +1148,49 @@ func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint6
 		mviewID,
 		readTS,
 	)
+}
+
+func buildCreateMaterializedViewLogPurgeInfoUpsertSQL(mlogID int64, nextTime *string, shouldUpdateNextTime bool) string {
+	if shouldUpdateNextTime {
+		var nextTimeArg any
+		if nextTime != nil {
+			nextTimeArg = *nextTime
+		}
+		return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mlog_purge_info (
+			MLOG_ID,
+			NEXT_TIME
+		) VALUES (%?, %?)
+		ON DUPLICATE KEY UPDATE
+			NEXT_TIME = VALUES(NEXT_TIME)`,
+			mlogID,
+			nextTimeArg,
+		)
+	}
+	return sqlescape.MustEscapeSQL("INSERT IGNORE INTO mysql.tidb_mlog_purge_info (MLOG_ID) VALUES (%?)", mlogID)
+}
+
+func execCreateMaterializedViewLogPurgeInfoUpsert(
+	ctx context.Context,
+	ddlSess *sess.Session,
+	mlogID int64,
+	nextTime *string,
+	shouldUpdateNextTime bool,
+) error {
+	upsertSQL := buildCreateMaterializedViewLogPurgeInfoUpsertSQL(mlogID, nextTime, shouldUpdateNextTime)
+	_, err := ddlSess.Execute(ctx, upsertSQL, "mlog-purge-info-upsert")
+	failpoint.Inject("mockInsertMLogPurgeTableNotExists", func(val failpoint.Value) {
+		if val.(bool) {
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
+		}
+	})
+	return errors.Trace(convertCreateMaterializedViewLogPurgeInfoTableNotExistsErr(err))
+}
+
+func convertCreateMaterializedViewLogPurgeInfoTableNotExistsErr(err error) error {
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: required system table mysql.tidb_mlog_purge_info does not exist")
+	}
+	return errors.Trace(err)
 }
 
 func (w *worker) deleteMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogID int64) error {
