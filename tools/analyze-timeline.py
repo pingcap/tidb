@@ -141,6 +141,18 @@ def short_ts(ts):
     return ts.strftime("%H:%M:%S.%f")[:12]
 
 
+def fmt_bytes(n):
+    if n <= 0:
+        return "-"
+    if n < 1024:
+        return f"{n}B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f}K"
+    if n < 1024 * 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f}M"
+    return f"{n / (1024 * 1024 * 1024):.2f}G"
+
+
 # ---------------------------------------------------------------------------
 # Field extraction from TiDB bracketed log fields: [key=value]
 # ---------------------------------------------------------------------------
@@ -441,11 +453,31 @@ def main():
             "merge_entries_sample": 0,
             "merge_entries_merge": 0,
             "auto": None,
+            "peak_mem": 0,
         }
+
+    def _update_peak_mem(run, line):
+        """Extract memory bytes from DEBUGMEM lines and track peak."""
+        v = extract(line, "stmtTrackerBytes")
+        if v:
+            try:
+                run["peak_mem"] = max(run["peak_mem"], int(v))
+            except ValueError:
+                pass
+        v = extract(line, "trackerBytes")
+        if v:
+            try:
+                run["peak_mem"] = max(run["peak_mem"], int(v))
+            except ValueError:
+                pass
 
     for line in fh:
         if args.table and args.table not in line:
             continue
+
+        # Track peak memory from DEBUGMEM lines (even if not displayed).
+        if cur_run is not None and DEBUGMEM_RE.search(line):
+            _update_peak_mem(cur_run, line)
 
         result = None
         pat_id = None
@@ -552,20 +584,25 @@ def main():
             return fmt_delta(end - start)
         return "-"
 
-    sep = "=" * 140
+    has_mem = any(r["peak_mem"] > 0 for r in runs)
+
+    sep = "=" * (150 if has_mem else 140)
     print(f"\n{sep}")
     print("SUMMARY: per-ANALYZE breakdown")
     print(sep)
-    sfmt = "{:>4}  {:>12}  {:>6}  {:>5}  {:>5}  {:>4}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>6}  {}"
-    print(sfmt.format(
-        "#", "START", "TYPE", "TASKS", "PARTS", "CONC",
-        "TOTAL", "ANALYZE", "LOAD", "SAVE", "BUILD", "WRITE", "GLOBAL",
-        "PATH", "SAMPLE"))
-    print(sfmt.format(
-        "----", "------------", "------", "-----", "-----", "----",
-        "---------", "---------", "---------", "---------", "---------",
-        "---------", "---------",
-        "------", "------"))
+    cols = ["#", "START", "TYPE", "TASKS", "PARTS", "CONC",
+            "TOTAL", "ANALYZE", "LOAD", "SAVE", "BUILD", "WRITE", "GLOBAL",
+            "PATH", "SAMPLE"]
+    dashes = ["----", "------------", "------", "-----", "-----", "----",
+              "---------", "---------", "---------", "---------", "---------",
+              "---------", "---------", "------", "------"]
+    sfmt = "{:>4}  {:>12}  {:>6}  {:>5}  {:>5}  {:>4}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>6}  {:>6}"
+    if has_mem:
+        cols.append("PEAK MEM")
+        dashes.append("--------")
+        sfmt += "  {:>8}"
+    print(sfmt.format(*cols))
+    print(sfmt.format(*dashes))
 
     for i, r in enumerate(runs, 1):
         total_dur = td(r["start_ts"], r["end_ts"])
@@ -601,11 +638,13 @@ def main():
         sample_str = r["sample_based"] if r["sample_based"] else "-"
         type_str = "auto" if r["auto"] else "manual" if r["auto"] is False else "?"
 
-        print(sfmt.format(
-            i, start_str, type_str,
-            r["tasks"], str(r["partition_count"]) + failed, r["concurrency"],
-            total_dur, analyze_dur, load_dur, save_dur, build_dur, write_dur,
-            global_dur, path, sample_str))
+        vals = [i, start_str, type_str,
+                r["tasks"], str(r["partition_count"]) + failed, r["concurrency"],
+                total_dur, analyze_dur, load_dur, save_dur, build_dur, write_dur,
+                global_dur, path, sample_str]
+        if has_mem:
+            vals.append(fmt_bytes(r["peak_mem"]))
+        print(sfmt.format(*vals))
 
 
 if __name__ == "__main__":
