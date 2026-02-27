@@ -1809,8 +1809,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				// Nothing to do now.
 			}
 		case ast.AlterTableDropForeignKey:
-			// NOTE: we do not check `if not exists` and `if exists` for ForeignKey now.
-			err = e.DropForeignKey(sctx, ident, ast.NewCIStr(spec.Name))
+			err = e.DropForeignKey(sctx, ident, ast.NewCIStr(spec.Name), spec.IfExists)
 		case ast.AlterTableModifyColumn:
 			err = e.ModifyColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableChangeColumn:
@@ -5349,7 +5348,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	return errors.Trace(err)
 }
 
-func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName ast.CIStr) error {
+func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName ast.CIStr, ifExists bool) error {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -5369,6 +5368,10 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName a
 		}
 	}
 	if !foundFK {
+		if ifExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrForeignKeyNotExists.FastGenByArgs(fkName))
+			return nil
+		}
 		return infoschema.ErrForeignKeyNotExists.GenWithStackByArgs(fkName)
 	}
 

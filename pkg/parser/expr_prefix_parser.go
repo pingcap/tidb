@@ -238,19 +238,20 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 			node.Args = []ast.ExprNode{seqArg}
 			return node
 		}
-		// Fallback: any keyword token (Tp >= identifier) can be used as an
-		// identifier in expression context. MySQL allows most non-reserved keywords
-		// as column/table names. However, reserved clause-introducing keywords
-		// (FROM, WHERE, etc.) must NOT be consumed as identifiers — they terminate
-		// the current expression/field list.
+		// Fallback: any keyword token (Tp >= identifier) can be used in
+		// expression context. Reserved clause-introducing keywords (FROM, WHERE,
+		// etc.) must NOT be consumed — they terminate the current expression.
 		if tok.Tp >= identifier && !isReservedClauseKeyword(tok.Tp) {
 			if p.peekN(1).Tp == '(' {
-				// keyword followed by '(' → function call (e.g., AVG(...))
+				// keyword followed by '(' → function call (e.g., LEFT(...))
 				p.next() // consume the keyword token
 				return p.parseFuncCall(tok.Lit)
 			}
-			// Bare keyword → treat as column name reference (e.g., subject, score)
-			return p.parseIdentOrFuncCall()
+			// Bare keyword → treat as column name only for unreserved keywords.
+			// Reserved keywords (OF, RANGE, etc.) cannot be bare identifiers.
+			if isIdentLike(tok.Tp) {
+				return p.parseIdentOrFuncCall()
+			}
 		}
 		p.syntaxErrorAt(tok)
 		return nil

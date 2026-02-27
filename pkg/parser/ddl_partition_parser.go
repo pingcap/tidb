@@ -154,6 +154,15 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 		return nil
 	}
 
+	// [PARTITIONS num] — must come before SUBPARTITION BY (yacc: PartitionNumOpt SubPartitionOpt)
+	if _, ok := p.acceptKeyword(partitions, "PARTITIONS"); ok {
+		opt.Num = p.parseUint64()
+		if opt.Num == 0 {
+			p.error(p.peek().Offset, "Number of partitions must be a positive integer")
+			return nil
+		}
+	}
+
 	// [SUBPARTITION BY ...]
 	if p.peekKeyword(subpartition, "SUBPARTITION") {
 		p.next()
@@ -192,15 +201,6 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 		}
 
 		opt.Sub = subOpt
-	}
-
-	// [PARTITIONS num]
-	if _, ok := p.acceptKeyword(partitions, "PARTITIONS"); ok {
-		opt.Num = p.parseUint64()
-		if opt.Num == 0 {
-			p.error(p.peek().Offset, "Number of partitions must be a positive integer")
-			return nil
-		}
 	}
 
 	// [(PARTITION p1 VALUES ... [options] [(SUBPARTITION ...)] , ...)]
