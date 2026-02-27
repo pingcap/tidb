@@ -821,16 +821,16 @@ func (ds *DataSource) CheckPartialIndexByFilters(index *model.IndexInfo, filters
 //
 // The v8.5 planner PredicatePushDown interface cannot return an error. The FTS
 // validation rule invokes this method immediately after predicate pushdown.
-func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFunc bool) error {
+func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 	hasDirtyWrite := ds.SCtx().HasDirtyContent(ds.TableInfo.ID)
-	if !hasFTSFunc && hasDirtyWrite {
+	if !hasFTSFuncGlobal && hasDirtyWrite {
 		// If there is no FTS function, and there're dirty writes on the table,
 		// we should not use any TiCI index.
 		// Because the TiCI index may be not consistent with the table data.
 		// These TiCI indexes will be removed by CleanUnusedTiCIIndexes later.
 		return nil
 	}
-	if hasFTSFunc && hasDirtyWrite {
+	if hasFTSFuncGlobal && hasDirtyWrite {
 		return errors.Errorf("Fulltext search currently can not be used in transaction with uncommitted data")
 	}
 	// Predicate pushdown performs the conversion before statistics derivation.
@@ -844,16 +844,25 @@ func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFunc bool) error {
 	var matchedIdx *model.IndexInfo
 	tmpMatchedExprSet := intset.NewFastIntSet()
 	matchedExprSetForChosenIndex := intset.NewFastIntSet()
-	hasUnmatchedFTSOverAllIdx := hasFTSFunc
+	condHasFTSFunc := intset.NewFastIntSet()
+	hasUnmatchedFTSOverAllIdx := false
+	if hasFTSFuncGlobal {
+		for i, cond := range ds.PushedDownConds {
+			if expression.ContainsFullTextSearchFn(cond) {
+				condHasFTSFunc.Insert(i)
+				hasUnmatchedFTSOverAllIdx = true
+			}
+		}
+	}
 	matchedIndexIsHinted := false
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.Index == nil || !path.Index.IsTiCIIndex() {
 			continue
 		}
-		if hasFTSFunc && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
+		if hasFTSFuncGlobal && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
 			continue
 		}
-		if !hasFTSFunc {
+		if !hasFTSFuncGlobal {
 			if ds.HasForceHints && !path.Forced {
 				continue
 			}
@@ -893,7 +902,7 @@ func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFunc bool) error {
 			if !fullyCovered {
 				// If this expression can not be calculated at TiCI side, check whether it has fts function.
 				// If yes, we should skip this index path.
-				if expression.ContainsFullTextSearchFn(cond) {
+				if condHasFTSFunc.Has(i) {
 					allFTSFuncIsCovered = false
 					break checkExprForIndexLoop
 				}
