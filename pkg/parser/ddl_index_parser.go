@@ -105,6 +105,9 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		}
 		cons.Keys = p.parseIndexPartSpecifications()
 		cons.Option = p.parseIndexOptions()
+		if cons.Option == nil {
+			cons.Option = Alloc[ast.IndexOption](p.arena)
+		}
 	case vectorType, columnar:
 		var consTp ast.ConstraintType
 		if p.peek().Tp == vectorType {
@@ -124,6 +127,9 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 			cons.IsEmptyIndex = false
 		}
 		p.parseIndexDefinition(cons)
+		if cons.Option == nil {
+			cons.Option = Alloc[ast.IndexOption](p.arena)
+		}
 		cons.Tp = consTp
 	default:
 		return nil

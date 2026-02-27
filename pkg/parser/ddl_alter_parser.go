@@ -102,10 +102,7 @@ func (p *HandParser) parseAlterTableSpec() *ast.AlterTableSpec {
 		}
 		spec.IfExists = p.acceptIfExists()
 		if isChange {
-			if tok, ok := p.expectIdentLike(); ok {
-				spec.OldColumnName = p.arena.AllocColumnName()
-				spec.OldColumnName.Name = ast.NewCIStr(tok.Lit)
-			}
+			spec.OldColumnName = p.parseColumnName()
 		}
 		spec.NewColumns = []*ast.ColumnDef{p.parseColumnDef()}
 		p.parseColumnPosition(spec)

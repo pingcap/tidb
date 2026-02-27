@@ -279,9 +279,12 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 	// ---- Index-level hints: NAME([qb] table [idx, ...]) ----
 	case hintUseIndex, hintForceIndex, hintIgnoreIndex,
 		hintUseIndexMerge, hintOrderIndex, hintNoOrderIndex,
-		hintHypoIndex,
 		hintIndexLookUpPushDown, hintNoIndexLookUpPushDown:
 		return hp.parseIndexLevelHint(name)
+
+	// ---- HYPO_INDEX: all args stored as Tables entries ----
+	case hintHypoIndex:
+		return hp.parseHypoIndexHint(name)
 
 	// ---- Boolean hints: NAME([qb] TRUE/FALSE) ----
 	case hintUseToja, hintUseCascades:
@@ -459,6 +462,41 @@ func (hp *hintParser) parseIndexLevelHint(name string) []*ast.TableOptimizerHint
 			idx = hp.parseIdentifier()
 			h.Indexes = append(h.Indexes, ast.NewCIStr(idx))
 		}
+	}
+
+	if _, ok := hp.expect(')'); !ok {
+		hp.skipToCloseParen()
+		return nil
+	}
+	return []*ast.TableOptimizerHint{h}
+}
+
+// parseHypoIndexHint parses HYPO_INDEX(table, indexName, col1, col2, ...).
+// The planner expects all arguments as Tables entries (not Indexes).
+func (hp *hintParser) parseHypoIndexHint(name string) []*ast.TableOptimizerHint {
+	if _, ok := hp.expect('('); !ok {
+		return nil
+	}
+
+	qb := hp.parseQBName()
+
+	if hp.peek().tp == ')' {
+		hp.parseError()
+		hp.skipToCloseParen()
+		return nil
+	}
+
+	tbl := hp.parseHintTable()
+	h := &ast.TableOptimizerHint{
+		HintName: ast.NewCIStr(name),
+		QBName:   ast.NewCIStr(qb),
+		Tables:   []ast.HintTable{tbl},
+	}
+
+	// Parse remaining comma-separated identifiers as Tables entries
+	for hp.match(',') {
+		id := hp.parseIdentifier()
+		h.Tables = append(h.Tables, ast.HintTable{TableName: ast.NewCIStr(id)})
 	}
 
 	if _, ok := hp.expect(')'); !ok {
