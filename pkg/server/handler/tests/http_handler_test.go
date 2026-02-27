@@ -73,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -769,8 +770,7 @@ func TestGetIndexMVCC(t *testing.T) {
 
 func TestDeleteKeyHandler(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/enableTestAPI", "return"))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/enableTestAPI")) }()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/server/enableTestAPI", "return")
 	ts.startServer(t)
 	ts.prepareData(t)
 	defer ts.stopServer(t)
