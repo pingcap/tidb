@@ -158,7 +158,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 	if _, ok := p.acceptKeyword(partitions, "PARTITIONS"); ok {
 		opt.Num = p.parseUint64()
 		if opt.Num == 0 {
-			p.error(p.peek().Offset, "Number of partitions must be a positive integer")
+			p.errs = append(p.errs, ast.ErrNoParts.GenWithStackByArgs("partitions"))
 			return nil
 		}
 	}
@@ -195,7 +195,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 		if _, ok := p.acceptKeyword(subpartitions, "SUBPARTITIONS"); ok {
 			subOpt.Num = p.parseUint64()
 			if subOpt.Num == 0 {
-				p.error(p.peek().Offset, "Number of subpartitions must be a positive integer")
+				p.errs = append(p.errs, ast.ErrNoParts.GenWithStackByArgs("subpartitions"))
 				return nil
 			}
 		}

@@ -14,6 +14,7 @@
 package parser
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -114,7 +115,6 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 			return opt
 		}
 		p.expect('(')
-		seenRunawayTypes := make(map[ast.RunawayOptionType]bool)
 		for {
 			if _, ok := p.accept(')'); ok {
 				break
@@ -122,13 +122,10 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 			p.accept(',') // optional comma separator
 			runawayOpt := p.parseRunawayOption()
 			if runawayOpt != nil {
-				// Only ACTION and WATCH can appear at most once. Multiple rules
-				// (EXEC_ELAPSED, RU, PROCESSED_KEYS) are allowed.
-				if runawayOpt.Tp != ast.RunawayRule && seenRunawayTypes[runawayOpt.Tp] {
-					p.error(p.peek().Offset, "duplicate QUERY_LIMIT sub-option")
-					return opt
+				if !ast.CheckRunawayAppend(opt.RunawayOptionList, runawayOpt) {
+					p.errs = append(p.errs, fmt.Errorf("Dupliated runaway options specified"))
+					return nil
 				}
-				seenRunawayTypes[runawayOpt.Tp] = true
 				opt.RunawayOptionList = append(opt.RunawayOptionList, runawayOpt)
 			} else {
 				// Skip unexpected tokens; error on unclosed parentheses
@@ -164,6 +161,10 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 				if tok, ok := p.accept(stringLit); ok {
 					bgOpt.StrValue = tok.Lit
 				}
+				if !ast.CheckBackgroundAppend(opt.BackgroundOptions, bgOpt) {
+					p.errs = append(p.errs, fmt.Errorf("Dupliated background options specified"))
+					return nil
+				}
 				opt.BackgroundOptions = append(opt.BackgroundOptions, bgOpt)
 			} else if _, ok := p.accept(utilizationLimit); ok {
 				p.accept(eq)
@@ -180,6 +181,10 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 					bgOpt.UintValue = uint64(v)
 				case uint64:
 					bgOpt.UintValue = v
+				}
+				if !ast.CheckBackgroundAppend(opt.BackgroundOptions, bgOpt) {
+					p.errs = append(p.errs, fmt.Errorf("Dupliated background options specified"))
+					return nil
 				}
 				opt.BackgroundOptions = append(opt.BackgroundOptions, bgOpt)
 			} else {
@@ -291,6 +296,10 @@ func (p *HandParser) parseResourceGroupOptionList() []*ast.ResourceGroupOption {
 		opt := p.parseResourceGroupOption()
 		if opt == nil {
 			break
+		}
+		if !ast.CheckAppend(opts, opt) {
+			p.errs = append(p.errs, fmt.Errorf("Dupliated options specified"))
+			return nil
 		}
 		opts = append(opts, opt)
 	}
