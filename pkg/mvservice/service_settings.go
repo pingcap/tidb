@@ -17,6 +17,7 @@ package mvservice
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"time"
 
 	basic "github.com/pingcap/tidb/pkg/util"
@@ -44,15 +45,27 @@ type Config struct {
 // DefaultMVServiceConfig returns the default MV service config.
 func DefaultMVServiceConfig() Config {
 	return Config{
-		TaskMaxConcurrency:           defaultMVTaskMaxConcurrency,
+		TaskMaxConcurrency:           defaultMVTaskMaxConcurrency(),
 		TaskTimeout:                  defaultMVTaskTimeout,
 		FetchInterval:                defaultMVFetchInterval,
 		BasicInterval:                defaultMVBasicInterval,
-		ServerRefreshInterval:        defaultTiDBServerRefreshInterval,
+		ServerRefreshInterval:        defaultServerRefreshInterval,
 		RetryBaseDelay:               defaultMVTaskRetryBase,
 		RetryMaxDelay:                defaultMVTaskRetryMax,
-		ServerConsistentHashReplicas: defaultServerConsistentHashReplicas,
+		ServerConsistentHashReplicas: defaultCHReplicas,
+		TaskBackpressure: TaskBackpressureConfig{
+			CPUThreshold: defaultBackpressureCPUThreshold,
+			MemThreshold: defaultBackpressureMemThreshold,
+			Delay:        defaultTaskBackpressureDelay,
+		},
 	}
+}
+
+func defaultMVTaskMaxConcurrency() int {
+	if maxProcs := runtime.GOMAXPROCS(0); maxProcs > 0 {
+		return maxProcs
+	}
+	return 1
 }
 
 // normalizeMVServiceConfig clamps invalid values to safe defaults.

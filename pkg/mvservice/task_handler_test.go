@@ -351,8 +351,8 @@ func TestMVServiceNotifyDDLChangeTriggersFetch(t *testing.T) {
 	}, time.Second, 20*time.Millisecond)
 	require.Eventually(t, func() bool {
 		return helper.runEventCount(mvRunEventFetchByDDL) > 0 &&
-			helper.runEventCount(mvRunEventFetchMVLogPurgeOK) > 0 &&
-			helper.runEventCount(mvRunEventFetchMVRefreshOK) > 0
+			helper.runEventCount(mvRunEventFetchMLogOK) > 0 &&
+			helper.runEventCount(mvRunEventFetchMViewOK) > 0
 	}, time.Second, 20*time.Millisecond)
 }
 
@@ -397,10 +397,10 @@ func TestMVServiceFetchAllMVMetaReportsDuration(t *testing.T) {
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 
 	require.NoError(t, svc.fetchAllMVMeta())
-	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMVLogPurge, mvDurationResultSuccess))
-	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMVRefresh, mvDurationResultSuccess))
-	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMVLogPurge, mvDurationResultFailed))
-	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMVRefresh, mvDurationResultFailed))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMLogPurge, mvDurationResultSuccess))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMViewRefresh, mvDurationResultSuccess))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchTypeMLogPurge, mvDurationResultFailed))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchTypeMViewRefresh, mvDurationResultFailed))
 }
 
 func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
@@ -434,14 +434,14 @@ func TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError(t *testing.T) {
 	err := svc.fetchAllMVMeta()
 	require.Error(t, err)
 	require.Equal(t, int64(0), svc.lastRefresh.Load())
-	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMVLogPurge, mvDurationResultSuccess))
-	require.Equal(t, 1, helper.fetchDurationCount(mvFetchDurationTypeMVRefresh, mvDurationResultFailed))
-	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMVLogPurge, mvDurationResultFailed))
-	require.Equal(t, 0, helper.fetchDurationCount(mvFetchDurationTypeMVRefresh, mvDurationResultSuccess))
-	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMVLogPurgeOK))
-	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMVRefreshError))
-	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMVLogPurgeError))
-	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMVRefreshOK))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMLogPurge, mvDurationResultSuccess))
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMViewRefresh, mvDurationResultFailed))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchTypeMLogPurge, mvDurationResultFailed))
+	require.Equal(t, 0, helper.fetchDurationCount(mvFetchTypeMViewRefresh, mvDurationResultSuccess))
+	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMLogOK))
+	require.Equal(t, 1, helper.runEventCount(mvRunEventFetchMViewErr))
+	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMLogErr))
+	require.Equal(t, 0, helper.runEventCount(mvRunEventFetchMViewOK))
 
 	svc.mvLogPurgeMu.Lock()
 	_, hasOldMLog := svc.mvLogPurgeMu.pending[101]

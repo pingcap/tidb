@@ -22,9 +22,9 @@ import (
 )
 
 const (
-	defaultMVTaskBackpressureCPUThreshold = 0.8
-	defaultMVTaskBackpressureMemThreshold = 0.8
-	defaultTaskBackpressureDelay          = 100 * time.Millisecond
+	defaultBackpressureCPUThreshold = 0.8
+	defaultBackpressureMemThreshold = 0.8
+	defaultTaskBackpressureDelay    = 100 * time.Millisecond
 )
 
 // TaskBackpressureController decides whether task execution should be delayed.

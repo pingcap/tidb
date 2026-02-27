@@ -82,11 +82,11 @@ func (sch *ServerConsistentHash) init() bool {
 			return true
 		}
 
-		waitBackoff := min(backoff, time.Second*5)
+		waitDur := min(backoff, time.Second*5)
 		logutil.BgLogger().Warn(
 			"get local TiDB server info failed, retrying after backoff",
 			zap.Int("attempt", attempt),
-			zap.Duration("backoff", waitBackoff),
+			zap.Duration("backoff", waitDur),
 			zap.Error(err),
 		)
 		select {
@@ -97,8 +97,8 @@ func (sch *ServerConsistentHash) init() bool {
 				zap.NamedError("context_error", sch.ctx.Err()),
 			)
 			return false
-		case <-mvsAfter(waitBackoff):
-			backoff = waitBackoff * 2
+		case <-mvsAfter(waitDur):
+			backoff = waitDur * 2
 		}
 	}
 }
@@ -122,34 +122,34 @@ func (sch *ServerConsistentHash) RemoveServer(srvID string) {
 // refresh reloads server membership and rebuilds the hash ring when changed.
 func (sch *ServerConsistentHash) refresh() error {
 	sch.mu.RLock()
-	oldServerCount := len(sch.servers)
+	oldSrvCnt := len(sch.servers)
 	sch.mu.RUnlock()
 
-	newServerInfos, err := sch.helper.getAllServerInfo(sch.ctx)
+	newInfos, err := sch.helper.getAllServerInfo(sch.ctx)
 	if err != nil {
 		logutil.BgLogger().Warn(
 			"get available TiDB nodes failed",
-			zap.Int("old_server_count", oldServerCount),
+			zap.Int("old_server_count", oldSrvCnt),
 			zap.NamedError("context_error", sch.ctx.Err()),
 			zap.Error(err),
 		)
 		return err
 	}
 	// Filter servers by helper policy.
-	for k, v := range newServerInfos {
+	for k, v := range newInfos {
 		if !sch.helper.serverFilter(v) {
-			delete(newServerInfos, k)
+			delete(newInfos, k)
 		}
 	}
 
 	{ // Return early when there is no membership change.
 		sch.mu.RLock()
 
-		noChanged := len(sch.servers) == len(newServerInfos)
-		if noChanged {
-			for id := range newServerInfos {
+		unchanged := len(sch.servers) == len(newInfos)
+		if unchanged {
+			for id := range newInfos {
 				if _, ok := sch.servers[id]; !ok {
-					noChanged = false
+					unchanged = false
 					break
 				}
 			}
@@ -157,14 +157,14 @@ func (sch *ServerConsistentHash) refresh() error {
 
 		sch.mu.RUnlock()
 
-		if noChanged {
+		if unchanged {
 			return nil
 		}
 	}
 	{
 		sch.mu.Lock() // Guard server map and hash-ring rebuild.
 
-		sch.servers = newServerInfos
+		sch.servers = newInfos
 		sch.chash.Rebuild(sch.servers)
 
 		sch.mu.Unlock() // Release guard after rebuild.
@@ -172,8 +172,8 @@ func (sch *ServerConsistentHash) refresh() error {
 
 	logutil.BgLogger().Info(
 		"refreshed TiDB server membership for MV scheduler",
-		zap.Int("old_server_count", oldServerCount),
-		zap.Int("new_server_count", len(newServerInfos)),
+		zap.Int("old_server_count", oldSrvCnt),
+		zap.Int("new_server_count", len(newInfos)),
 	)
 	return nil
 }

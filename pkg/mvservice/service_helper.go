@@ -202,8 +202,8 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
 	var (
-		baseSchemaName string
-		baseTableName  string
+		baseSchema string
+		baseTable  string
 	)
 	startAt := mvsNow()
 	defer func() {
@@ -213,8 +213,8 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 		logutil.BgLogger().Warn(
 			"purge materialized view log failed",
 			zap.Int64("mvlog_id", mvLogID),
-			zap.String("base_table_schema", baseSchemaName),
-			zap.String("base_table_name", baseTableName),
+			zap.String("base_table_schema", baseSchema),
+			zap.String("base_table_name", baseTable),
 			zap.Duration("elapsed", mvsSince(startAt)),
 			zap.Error(err),
 		)
@@ -232,39 +232,39 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 		return time.Time{}, errors.New("materialized view log id is invalid")
 	}
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mvLogTable, ok := infoSchema.TableByID(ctx, mvLogID)
+	mLogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
 	if !ok {
 		return time.Time{}, nil
 	}
-	mvLogMeta := mvLogTable.Meta()
-	if mvLogMeta == nil {
+	mLogMeta := mLogTbl.Meta()
+	if mLogMeta == nil {
 		return time.Time{}, errors.New("materialized view log metadata is invalid")
 	}
 
-	mvLogInfo := mvLogMeta.MaterializedViewLog
-	if mvLogInfo == nil || mvLogInfo.BaseTableID <= 0 {
+	mLogInfo := mLogMeta.MaterializedViewLog
+	if mLogInfo == nil || mLogInfo.BaseTableID <= 0 {
 		return time.Time{}, errors.New("materialized view log metadata is invalid")
 	}
 
-	baseTable, ok := infoSchema.TableByID(ctx, mvLogInfo.BaseTableID)
+	baseTbl, ok := infoSchema.TableByID(ctx, mLogInfo.BaseTableID)
 	if !ok {
 		return time.Time{}, errors.New("materialized view base table not found")
 	}
-	baseTableMeta := baseTable.Meta()
-	if baseTableMeta == nil {
+	baseMeta := baseTbl.Meta()
+	if baseMeta == nil {
 		return time.Time{}, errors.New("materialized view base table metadata is invalid")
 	}
-	baseTableName = baseTableMeta.Name.L
-	if baseTableName == "" {
+	baseTable = baseMeta.Name.L
+	if baseTable == "" {
 		return time.Time{}, errors.New("materialized view base table name is empty")
 	}
-	if dbInfo, ok := infoSchema.SchemaByID(baseTableMeta.DBID); ok && dbInfo != nil && dbInfo.Name.L != "" {
-		baseSchemaName = dbInfo.Name.L
+	if dbInfo, ok := infoSchema.SchemaByID(baseMeta.DBID); ok && dbInfo != nil && dbInfo.Name.L != "" {
+		baseSchema = dbInfo.Name.L
 	}
-	if baseSchemaName == "" {
+	if baseSchema == "" {
 		return time.Time{}, errors.New("materialized view base table schema name is empty")
 	}
-	if _, err = execRCRestrictedSQL(ctx, sctx, purgeMVLogSQL, []any{baseSchemaName, baseTableName}); err != nil {
+	if _, err = execRCRestrictedSQL(ctx, sctx, purgeMVLogSQL, []any{baseSchema, baseTable}); err != nil {
 		return time.Time{}, err
 	}
 
@@ -390,11 +390,6 @@ func RegisterMVService(
 	}
 
 	cfg := DefaultMVServiceConfig()
-	cfg.TaskBackpressure = TaskBackpressureConfig{
-		CPUThreshold: defaultMVTaskBackpressureCPUThreshold,
-		MemThreshold: defaultMVTaskBackpressureMemThreshold,
-		Delay:        defaultTaskBackpressureDelay,
-	}
 	mvService := NewMVService(ctx, se, newServiceHelper(), cfg)
 	mvService.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
 

@@ -88,36 +88,35 @@ type MVService struct {
 }
 
 const (
-	defaultMVTaskMaxConcurrency      = 10
-	defaultMVTaskTimeout             = 60 * time.Second
-	defaultMVFetchInterval           = 30 * time.Second
-	defaultMVBasicInterval           = time.Second
-	defaultTiDBServerRefreshInterval = 5 * time.Second
-	defaultMVTaskRetryBase           = 10 * time.Second
-	defaultMVTaskRetryMax            = 120 * time.Second
-	maxNextScheduleTs                = 9e18
+	defaultMVTaskTimeout         = 5 * time.Minute
+	defaultMVFetchInterval       = 30 * time.Second
+	defaultMVBasicInterval       = time.Second
+	defaultServerRefreshInterval = 5 * time.Second
+	defaultMVTaskRetryBase       = 10 * time.Second
+	defaultMVTaskRetryMax        = 120 * time.Second
+	maxNextScheduleTs            = 9e18
 
-	defaultServerConsistentHashReplicas = 10
+	defaultCHReplicas = 20
 
 	mvTaskDurationTypeRefresh = "mv_refresh"
 	mvTaskDurationTypePurge   = "mvlog_purge"
 
-	mvFetchDurationTypeMVLogPurge = "fetch_mlog"
-	mvFetchDurationTypeMVRefresh  = "fetch_mviews"
+	mvFetchTypeMLogPurge    = "fetch_mlog"
+	mvFetchTypeMViewRefresh = "fetch_mviews"
 
 	mvDurationResultSuccess = "success"
 	mvDurationResultFailed  = "failed"
 
-	mvRunEventInitFailed           = "init_failed"
-	mvRunEventRecoveredPanic       = "mv_service_panic"
-	mvRunEventServerRefreshOK      = "server_refresh_ok"
-	mvRunEventServerRefreshError   = "server_refresh_error"
-	mvRunEventFetchByDDL           = "fetch_meta_trigger_ddl"
-	mvRunEventFetchByInterval      = "fetch_meta_trigger_interval"
-	mvRunEventFetchMVLogPurgeOK    = "fetch_mlog_ok"
-	mvRunEventFetchMVLogPurgeError = "fetch_mlog_error"
-	mvRunEventFetchMVRefreshOK     = "fetch_mviews_ok"
-	mvRunEventFetchMVRefreshError  = "fetch_mviews_error"
+	mvRunEventInitFailed         = "init_failed"
+	mvRunEventRecoveredPanic     = "mv_service_panic"
+	mvRunEventServerRefreshOK    = "server_refresh_ok"
+	mvRunEventServerRefreshError = "server_refresh_error"
+	mvRunEventFetchByDDL         = "fetch_meta_trigger_ddl"
+	mvRunEventFetchByInterval    = "fetch_meta_trigger_interval"
+	mvRunEventFetchMLogOK        = "fetch_mlog_ok"
+	mvRunEventFetchMLogErr       = "fetch_mlog_error"
+	mvRunEventFetchMViewOK       = "fetch_mviews_ok"
+	mvRunEventFetchMViewErr      = "fetch_mviews_error"
 )
 
 type mv struct {
@@ -502,18 +501,18 @@ func (t *MVService) fetchAllTiDBMVLogPurge() (map[int64]*mvLog, error) {
 	start := mvsNow()
 	result := mvDurationResultSuccess
 	defer func() {
-		t.mh.observeFetchDuration(mvFetchDurationTypeMVLogPurge, result, mvsSince(start))
+		t.mh.observeFetchDuration(mvFetchTypeMLogPurge, result, mvsSince(start))
 	}()
 
 	newPending, err := t.mh.fetchAllTiDBMVLogPurge(t.ctx, t.sysSessionPool)
 	if err != nil {
 		result = mvDurationResultFailed
-		t.mh.observeRunEvent(mvRunEventFetchMVLogPurgeError)
+		t.mh.observeRunEvent(mvRunEventFetchMLogErr)
 		fields := append(t.runtimeLogFields(), zap.Error(err))
 		logutil.BgLogger().Warn("fetch all mvlog purge tasks failed", fields...)
 		return nil, err
 	}
-	t.mh.observeRunEvent(mvRunEventFetchMVLogPurgeOK)
+	t.mh.observeRunEvent(mvRunEventFetchMLogOK)
 	filterUnownedTasks(t.sch, newPending)
 	return newPending, nil
 }
@@ -523,34 +522,34 @@ func (t *MVService) fetchAllTiDBMVRefresh() (map[int64]*mv, error) {
 	start := mvsNow()
 	result := mvDurationResultSuccess
 	defer func() {
-		t.mh.observeFetchDuration(mvFetchDurationTypeMVRefresh, result, mvsSince(start))
+		t.mh.observeFetchDuration(mvFetchTypeMViewRefresh, result, mvsSince(start))
 	}()
 
 	newPending, err := t.mh.fetchAllTiDBMVRefresh(t.ctx, t.sysSessionPool)
 	if err != nil {
 		result = mvDurationResultFailed
-		t.mh.observeRunEvent(mvRunEventFetchMVRefreshError)
+		t.mh.observeRunEvent(mvRunEventFetchMViewErr)
 		fields := append(t.runtimeLogFields(), zap.Error(err))
 		logutil.BgLogger().Warn("fetch all materialized view refresh tasks failed", fields...)
 		return nil, err
 	}
-	t.mh.observeRunEvent(mvRunEventFetchMVRefreshOK)
+	t.mh.observeRunEvent(mvRunEventFetchMViewOK)
 	filterUnownedTasks(t.sch, newPending)
 	return newPending, nil
 }
 
 // fetchAllMVMeta refreshes both purge and refresh task queues from metadata tables.
 func (t *MVService) fetchAllMVMeta() error {
-	newMVLogPending, err := t.fetchAllTiDBMVLogPurge()
+	newMLogPending, err := t.fetchAllTiDBMVLogPurge()
 	if err != nil {
 		return fmt.Errorf("fetch mvlog purge metadata failed: %w", err)
 	}
-	newMVRefreshPending, err := t.fetchAllTiDBMVRefresh()
+	newMViewPending, err := t.fetchAllTiDBMVRefresh()
 	if err != nil {
 		return fmt.Errorf("fetch mview refresh metadata failed: %w", err)
 	}
-	t.buildMVLogPurgeTasks(newMVLogPending)
-	t.buildMVRefreshTasks(newMVRefreshPending)
+	t.buildMVLogPurgeTasks(newMLogPending)
+	t.buildMVRefreshTasks(newMViewPending)
 
 	t.lastRefresh.Store(mvsNow().UnixMilli())
 	return nil
@@ -601,7 +600,7 @@ func (t *MVService) Run() {
 		t.mh.reportMetrics(t)
 	}()
 
-	lastServerRefresh := time.Time{}
+	lastSrvRefresh := time.Time{}
 	for {
 		ddlDirty := false
 		select {
@@ -618,7 +617,7 @@ func (t *MVService) Run() {
 
 		now := mvsNow()
 
-		if now.Sub(lastServerRefresh) >= t.serverRefreshInterval {
+		if now.Sub(lastSrvRefresh) >= t.serverRefreshInterval {
 			if err := t.sch.refresh(); err != nil {
 				t.mh.observeRunEvent(mvRunEventServerRefreshError)
 				fields := append(t.runtimeLogFields(), zap.Error(err))
@@ -626,22 +625,22 @@ func (t *MVService) Run() {
 			} else {
 				t.mh.observeRunEvent(mvRunEventServerRefreshOK)
 			}
-			lastServerRefresh = now
+			lastSrvRefresh = now
 		}
 
-		shouldFetch := t.shouldFetchMVMeta(now)
-		if ddlDirty || shouldFetch {
+		needFetch := t.shouldFetchMVMeta(now)
+		if ddlDirty || needFetch {
 			if ddlDirty {
 				t.mh.observeRunEvent(mvRunEventFetchByDDL)
 			}
-			if shouldFetch {
+			if needFetch {
 				t.mh.observeRunEvent(mvRunEventFetchByInterval)
 			}
 			// Fetch metadata on demand; errors are throttled via lastRefresh update below.
 			if err := t.fetchAllMVMeta(); err != nil {
 				fields := append(t.runtimeLogFields(),
 					zap.Bool("ddl_dirty", ddlDirty),
-					zap.Bool("periodic_fetch", shouldFetch),
+					zap.Bool("periodic_fetch", needFetch),
 					zap.Error(err),
 				)
 				logutil.BgLogger().Warn("fetch materialized view metadata failed", fields...)
