@@ -140,7 +140,13 @@ def short_ts(ts):
 def extract(line, name):
     # Match [name=...] where value runs until the closing bracket.
     m = re.search(r"\[" + re.escape(name) + r"=([^\]]*)\]", line)
-    return m.group(1) if m else ""
+    if not m:
+        return ""
+    v = m.group(1)
+    # Strip surrounding quotes that zap adds to string values.
+    if len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+        v = v[1:-1]
+    return v
 
 
 # ---------------------------------------------------------------------------
