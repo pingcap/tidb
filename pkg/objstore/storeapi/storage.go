@@ -116,9 +116,9 @@ type WriterOption struct {
 
 // ReaderOption reader option.
 type ReaderOption struct {
-	// StartOffset is inclusive. And it's incompatible with Seek.
+	// StartOffset is inclusive.
 	StartOffset *int64
-	// EndOffset is exclusive. And it's incompatible with Seek.
+	// EndOffset is exclusive.
 	EndOffset *int64
 	// PrefetchSize will switch to NewPrefetchReader if value is positive.
 	PrefetchSize int
