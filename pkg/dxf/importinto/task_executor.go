@@ -60,6 +60,17 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const (
+	// writerMemBudgetRatio reserves per-thread memory for KV writer buffers in
+	// getWriterMemorySizeLimit.
+	// This is an empirically chosen value and may not be optimal.
+	writerMemBudgetRatio = 0.5
+	// readerMemBudgetRatio reserves total task memory for parquet reader and
+	// decode overhead when estimating concurrency.
+	// This is an empirically chosen value and may not be optimal.
+	readerMemBudgetRatio = 0.3
+)
+
 // importStepExecutor is a executor for import step.
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
@@ -79,8 +90,8 @@ type importStepExecutor struct {
 	dataBlockSize           int
 	// concurrency is the number of workers to use for encode and sort.
 	// For parquet format, this is capped by memory to avoid OOM.
-	concurrency          int
-	estimateConcOnce     sync.Once
+	concurrency      int
+	estimateConcOnce sync.Once
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -207,17 +218,13 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, stor
 		return
 	}
 
-	// 50% of total memory is used by writer, the rest is for reader and other things.
-	// Reader can use up to 60% of the rest memory.
 	totalMem := s.GetResource().Mem.Capacity()
-	readerMemBudget := int64(float64(totalMem) * 0.5 * 0.6)
-	memBasedConcurrency := int(readerMemBudget / peakMem)
-	if memBasedConcurrency < 1 {
-		memBasedConcurrency = 1
-	}
+	// Use a fixed fraction of total memory for parquet reader-side budget.
+	readerMemBudget := int64(float64(totalMem) * readerMemBudgetRatio)
+	memBasedConcurrency := max(1, int(readerMemBudget/peakMem))
 
 	if memBasedConcurrency < s.concurrency {
-		s.logger.Info("adjusting concurrency based on parquet memory estimation",
+		s.logger.Warn("adjusting concurrency based on parquet memory estimation; consider reducing parquet data page size or row group size to lower reader memory usage",
 			zap.Int("cpu-concurrency", s.concurrency),
 			zap.Int("mem-concurrency", memBasedConcurrency),
 			zap.String("total-mem", units.BytesSize(float64(totalMem))),

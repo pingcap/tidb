@@ -166,3 +166,8 @@ func (s *StepResource) String() string {
 	return fmt.Sprintf("[CPU=%d, Mem=%s]", s.CPU.Capacity(),
 		units.BytesSize(float64(s.Mem.Capacity())))
 }
+
+// MemoryPerCore returns the memory per core of the StepResource.
+func (s *StepResource) MemoryPerCore() int64 {
+	return s.Mem.Capacity() / s.CPU.Capacity()
+}
