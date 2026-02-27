@@ -1,7 +1,7 @@
 # TiDB Design Documents
 
-- Author(s): GPT-5.2-codex, @[YuJuncen](https://github.com/YuJuncen)
-- Discussion PR: TBD
+- Author(s): GPT-5.2-codex, [@YuJuncen](https://github.com/YuJuncen)
+- Discussion PR: #66576
 - Tracking Issue: TBD
 
 ## Table of Contents
