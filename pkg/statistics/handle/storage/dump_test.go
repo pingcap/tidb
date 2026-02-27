@@ -98,7 +98,7 @@ func TestConversion(t *testing.T) {
 	tk.MustExec("insert into t(a,b) values (1, 1),(3, 1),(5, 10)")
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.Nil(t, h.Update(context.Background(), is))
 
 	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -481,7 +481,7 @@ func TestDumpExtendedStats(t *testing.T) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1,5),(2,4),(3,3),(4,2),(5,1)")
 	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	tk.MustExec("analyze table t")
 

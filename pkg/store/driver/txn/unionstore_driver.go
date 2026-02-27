@@ -57,6 +57,10 @@ func (m *memBuffer) UpdateFlags(k kv.Key, ops ...kv.FlagsOp) {
 	m.MemBuffer.UpdateFlags(k, getTiKVFlagsOps(ops)...)
 }
 
+func (m *memBuffer) UpdateAssertionFlags(k kv.Key, op kv.AssertionOp) {
+	m.MemBuffer.UpdateFlags(k, getTiKVAssertionOp(op))
+}
+
 func (m *memBuffer) Get(ctx context.Context, key kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
 	data, err := m.MemBuffer.Get(ctx, key, options...)
 	return data, derr.ToTiDBErr(err)
@@ -181,11 +185,11 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	}
 
 	if flag.HasAssertExist() {
-		v = kv.ApplyFlagsOps(v, kv.SetAssertExist)
+		v = kv.ApplyAssertionOp(v, kv.AssertExist)
 	} else if flag.HasAssertNotExist() {
-		v = kv.ApplyFlagsOps(v, kv.SetAssertNotExist)
+		v = kv.ApplyAssertionOp(v, kv.AssertNotExist)
 	} else if flag.HasAssertUnknown() {
-		v = kv.ApplyFlagsOps(v, kv.SetAssertUnknown)
+		v = kv.ApplyAssertionOp(v, kv.AssertUnknown)
 	}
 
 	if flag.HasNeedConstraintCheckInPrewrite() {
@@ -195,20 +199,15 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	return v
 }
 
+// NOTE: assertion flags are intentionally excluded here.
+// Assertion ops are separated from kv.FlagsOp in TiDB, and should only be applied via
+// MemBuffer.UpdateAssertionFlags (see getTiKVAssertionOp) to avoid accidental misuse.
 func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
 	switch op {
 	case kv.SetPresumeKeyNotExists:
 		return tikvstore.SetPresumeKeyNotExists
 	case kv.SetNeedLocked:
 		return tikvstore.SetNeedLocked
-	case kv.SetAssertExist:
-		return tikvstore.SetAssertExist
-	case kv.SetAssertNotExist:
-		return tikvstore.SetAssertNotExist
-	case kv.SetAssertUnknown:
-		return tikvstore.SetAssertUnknown
-	case kv.SetAssertNone:
-		return tikvstore.SetAssertNone
 	case kv.SetNeedConstraintCheckInPrewrite:
 		return tikvstore.SetNeedConstraintCheckInPrewrite
 	case kv.SetPreviousPresumeKeyNotExists:
@@ -223,4 +222,18 @@ func getTiKVFlagsOps(ops []kv.FlagsOp) []tikvstore.FlagsOp {
 		v[i] = getTiKVFlagsOp(ops[i])
 	}
 	return v
+}
+
+func getTiKVAssertionOp(op kv.AssertionOp) tikvstore.FlagsOp {
+	switch op {
+	case kv.AssertExist:
+		return tikvstore.SetAssertExist
+	case kv.AssertNotExist:
+		return tikvstore.SetAssertNotExist
+	case kv.AssertUnknown:
+		return tikvstore.SetAssertUnknown
+	case kv.AssertNone:
+		return tikvstore.SetAssertNone
+	}
+	return 0
 }

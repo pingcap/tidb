@@ -41,14 +41,14 @@ StreamAgg	root		group by:Column, funcs:group_concat(Column, Column separator ","
     └─TableFullScan	cop[tikv]	table:t	keep order:true, stats:pseudo
 explain format = TRADITIONAL select group_concat(a, b) from t group by id;
 id	estRows	task	access object	operator info
-StreamAgg_12	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column#6 separator ",")->Column#4
-└─Projection_24	10000.00	root		cast(explain.t.a, var_string(20))->Column#5, cast(explain.t.b, var_string(20))->Column#6, explain.t.id->Column#7
+StreamAgg_12	8000.00	root		group by:Column#8, funcs:group_concat(Column#6, Column#7 separator ",")->Column#5
+└─Projection_24	10000.00	root		cast(explain.t.a, var_string(20))->Column#6, cast(explain.t.b, var_string(20))->Column#7, explain.t.id->Column#8
   └─TableReader_19	10000.00	root		data:TableFullScan_18
     └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 explain format = 'row' select group_concat(a, b) from t group by id;
 id	estRows	task	access object	operator info
-StreamAgg_12	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column#6 separator ",")->Column#4
-└─Projection_24	10000.00	root		cast(explain.t.a, var_string(20))->Column#5, cast(explain.t.b, var_string(20))->Column#6, explain.t.id->Column#7
+StreamAgg_12	8000.00	root		group by:Column#8, funcs:group_concat(Column#6, Column#7 separator ",")->Column#5
+└─Projection_24	10000.00	root		cast(explain.t.a, var_string(20))->Column#6, cast(explain.t.b, var_string(20))->Column#7, explain.t.id->Column#8
   └─TableReader_19	10000.00	root		data:TableFullScan_18
     └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 drop table t;

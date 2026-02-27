@@ -27,12 +27,9 @@ import (
 	"github.com/pingcap/failpoint"
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
@@ -53,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -118,7 +114,6 @@ func getTableImporter(
 func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.logger.Info("init subtask env")
 	var tableImporter *importer.TableImporter
-	var taskManager *dxfstorage.TaskManager
 	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store, s.logger)
 	if err != nil {
 		return err
@@ -136,26 +131,6 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		}
 	}()
 
-	if kerneltype.IsClassic() {
-		taskManager, err = dxfstorage.GetTaskManager()
-		if err != nil {
-			return err
-		}
-		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			// User can write table between precheck and alter table mode to Import,
-			// so check table emptyness again.
-			isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
-			if err2 != nil {
-				return err2
-			}
-			if !isEmpty {
-				return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
@@ -532,10 +507,6 @@ func (m *mergeSortStepExecutor) ResetSummary() {
 }
 
 func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup string) (engineapi.OnDuplicateKey, error) {
-	if kerneltype.IsNextGen() {
-		// will adapt for next-gen later
-		return engineapi.OnDuplicateKeyIgnore, nil
-	}
 	if kvGroup == external.DataKVGroup {
 		return engineapi.OnDuplicateKeyRecord, nil
 	}
@@ -545,6 +516,10 @@ func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup stri
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Trace(err2)
 	}
+	return getOnDupForIndex(indicesGenKV, indexID)
+}
+
+func getOnDupForIndex(indicesGenKV map[int64]importer.GenKVIndex, indexID int64) (engineapi.OnDuplicateKey, error) {
 	info, ok := indicesGenKV[indexID]
 	if !ok {
 		// shouldn't happen
@@ -789,8 +764,11 @@ func NewImportExecutor(
 }
 
 func (*importExecutor) IsIdempotent(*proto.Subtask) bool {
-	// import don't have conflict detection and resolution now, so it's ok
-	// to import data twice.
+	// for local sort, there is no conflict detection and resolution , so it's
+	// ok to import data twice.
+	// for global-sort, subtasks are safe to retry because duplicate KVs are
+	// recorded during encode/merge/ingest steps and conflicted rows are
+	// resolved in later steps.
 	return true
 }
 

@@ -1063,8 +1063,8 @@ func TestQuickBinding(t *testing.T) {
 			nil,
 		},
 
-		{`update /*+ hash_join(t1),leading(t1,t2@sel_2) */ t1 set b = 1 where c in (select a from t2 where c = 1) and c in (select a from t2 where c = ?)`,
-			"leading(`test`.`t1`, `test`.`t2`@`sel_2`, `test`.`t2`@`sel_1`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` ), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t2` ), agg_to_cop(@`sel_1`)",
+		{`update /*+ leading(t2@sel_1,t1,t2@sel_2) */ t1 set b = 1 where c in (select a from t2 where c = 1) and c in (select a from t2 where c = ?)`,
+			"leading(`test`.`t2`@`sel_1`, `test`.`t1`, `test`.`t2`@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t2` ), agg_to_cop(@`sel_1`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` ), agg_to_cop(@`sel_2`)",
 			nil,
 		},
 	}
