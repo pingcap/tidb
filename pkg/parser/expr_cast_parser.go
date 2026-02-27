@@ -353,7 +353,7 @@ func (p *HandParser) parseCastTypeInternal() (*types.FieldType, bool) {
 		tp := types.NewFieldType(mysql.TypeFloat)
 		flen, _ := p.parseFloatOpt()
 		if flen >= 54 {
-			p.error(tok.Offset, "precision %d too big for CAST (max 53)", flen)
+			p.errs = append(p.errs, ErrTooBigPrecision.GenWithStackByArgs(flen, "CAST", 53))
 			return nil, false
 		}
 		if flen >= 25 {

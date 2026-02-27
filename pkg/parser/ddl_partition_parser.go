@@ -410,7 +410,7 @@ func (p *HandParser) parseKeyAlgorithmAndColumns(opt *ast.PartitionMethod) {
 			alg.Type = v
 		}
 		if alg.Type < 1 || alg.Type > 2 {
-			p.error(algTok.Offset, "Unknown partition key algorithm")
+			p.syntaxError(0)
 			return
 		}
 		opt.KeyAlgorithm = alg

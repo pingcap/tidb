@@ -33,7 +33,7 @@ type LexerBridge struct {
 	src string
 }
 
-const maxLookahead = 8
+const maxLookahead = 32
 
 // NewLexerBridge creates a LexerBridge backed by the given lexer.
 func NewLexerBridge(lexer Lexer, src string) *LexerBridge {

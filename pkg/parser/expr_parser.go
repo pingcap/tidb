@@ -114,14 +114,19 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 		case is:
 			// IS is at the same precedence as comparison operators (=, >=, etc.)
 			// in MySQL grammar — both are at the bool_primary level.
-			// IS [NOT] TRUE/FALSE/NULL chains left-to-right:
+			// IS [NOT] NULL chains left-to-right at boolean_primary level:
 			// "A IS NULL IS NULL IS NULL" parses as ((A IS NULL) IS NULL) IS NULL.
+			// IS [NOT] TRUE/FALSE/UNKNOWN is at expr level and does NOT chain.
 			if minPrec > precComparison {
 				return left
 			}
-			left = p.parseIsExpr(left)
+			var chainable bool
+			left, chainable = p.parseIsExpr(left)
 			if left == nil {
 				return nil
+			}
+			if !chainable {
+				return left
 			}
 			continue
 
@@ -607,7 +612,10 @@ func (p *HandParser) parseJSONExtract(left ast.ExprNode, unquote bool) ast.ExprN
 }
 
 // parseIsExpr parses IS [NOT] NULL | IS [NOT] TRUE | IS [NOT] FALSE | IS [NOT] UNKNOWN.
-func (p *HandParser) parseIsExpr(left ast.ExprNode) ast.ExprNode {
+// Returns (node, chainable). In MySQL grammar IS [NOT] NULL is at bool_primary level
+// and chains left-to-right, while IS [NOT] TRUE/FALSE/UNKNOWN is at expr level and
+// does NOT chain (e.g. "SELECT TRUE IS TRUE IS TRUE" is a syntax error in MySQL).
+func (p *HandParser) parseIsExpr(left ast.ExprNode) (ast.ExprNode, bool) {
 	p.next() // consume IS
 
 	isNot := false
@@ -621,7 +629,7 @@ func (p *HandParser) parseIsExpr(left ast.ExprNode) ast.ExprNode {
 		node := Alloc[ast.IsNullExpr](p.arena)
 		node.Expr = left
 		node.Not = isNot
-		return node
+		return node, true // IS NULL chains at boolean_primary level
 
 	case trueKwd, falseKwd:
 		trueVal := int64(0)
@@ -633,7 +641,7 @@ func (p *HandParser) parseIsExpr(left ast.ExprNode) ast.ExprNode {
 		node.Expr = left
 		node.Not = isNot
 		node.True = trueVal
-		return node
+		return node, false // IS TRUE/FALSE does NOT chain
 
 	default:
 		// IS [NOT] UNKNOWN — UNKNOWN is not a reserved keyword, so it comes as
@@ -643,10 +651,10 @@ func (p *HandParser) parseIsExpr(left ast.ExprNode) ast.ExprNode {
 			node := Alloc[ast.IsNullExpr](p.arena)
 			node.Expr = left
 			node.Not = isNot
-			return node
+			return node, false // IS UNKNOWN does NOT chain (expr level in MySQL grammar)
 		}
 		p.syntaxErrorAt(p.peek())
-		return nil
+		return nil, false
 	}
 }
 

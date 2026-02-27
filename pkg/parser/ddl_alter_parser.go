@@ -506,7 +506,7 @@ func (p *HandParser) parseAlterTablePartitionOptions(spec *ast.AlterTableSpec) *
 			}
 		}
 		if len(spec.PartitionNames) == 0 {
-			p.syntaxError(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 	}

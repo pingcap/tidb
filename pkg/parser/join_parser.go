@@ -99,17 +99,22 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 		joinType, natural, straight, _ = p.parseJoinType()
 
 		// Parse the right side.
-		// NATURAL JOIN never takes ON/USING, so it completes immediately
-		// at this level (left-associative). Use parseTableSource() for it
-		// to avoid absorbing subsequent joins.
-		// STRAIGHT_JOIN CAN take ON clause (like regular joins).
-		// For all other joins (including STRAIGHT_JOIN), use parseJoinRHS()
-		// which recursively absorbs subsequent JOINs and their ON/USING
-		// clauses, building a right-leaning subtree for stacked ON clauses.
+		// In MySQL grammar:
+		// - NATURAL JOIN, CROSS/INNER JOIN, STRAIGHT_JOIN take table_factor (single table)
+		//   on the right, making them left-associative.
+		// - LEFT/RIGHT JOIN take table_reference (recursive) on the right,
+		//   allowing ON to bind to inner joins (right-leaning subtree).
 		var rhs ast.ResultSetNode
-		if natural {
+		if natural || straight {
+			// table_factor: single table source, left-associative.
 			rhs = p.parseTableSource()
+		} else if joinType == ast.LeftJoin || joinType == ast.RightJoin {
+			// table_reference: recursive, right-leaning for ON binding.
+			rhs = p.parseJoinRHS()
 		} else {
+			// CROSS/INNER JOIN: also takes table_factor in grammar, but we use
+			// parseJoinRHS to handle ON binding for stacked ON clauses like
+			// "t1 JOIN t2 JOIN t3 ON c1 ON c2".
 			rhs = p.parseJoinRHS()
 		}
 		if rhs == nil {
@@ -198,10 +203,12 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 		joinType, natural, straight, _ = p.parseJoinType()
 
 		// Parse the right side.
-		// NATURAL JOIN: uses parseTableSource (left-associative, no ON).
-		// All others (including STRAIGHT_JOIN): recurse into parseJoinRHS.
+		// In MySQL grammar:
+		// - NATURAL JOIN, STRAIGHT_JOIN take table_factor (left-associative).
+		// - LEFT/RIGHT JOIN take table_reference (right-leaning for ON binding).
+		// - CROSS/INNER JOIN: also table_factor, but use parseJoinRHS for ON binding.
 		var rhs ast.ResultSetNode
-		if natural {
+		if natural || straight {
 			rhs = p.parseTableSource()
 		} else {
 			rhs = p.parseJoinRHS()
