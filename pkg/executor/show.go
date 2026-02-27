@@ -232,7 +232,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowEvents:
 		// empty result
 	case ast.ShowStatsExtended:
-		return e.fetchShowStatsExtended(ctx)
+		// The extended statistics feature has been removed; keep SHOW for compatibility.
+		return nil
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta(ctx)
 	case ast.ShowStatsHistograms:

@@ -3101,14 +3101,11 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
+func (*SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
 		return errors.New("This AdminStmt is not ADMIN RELOAD STATS_EXTENDED")
 	}
-	if !e.Ctx().GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	return domain.GetDomain(e.Ctx()).StatsHandle().ReloadExtendedStatistics()
+	return errors.New("Extended statistics feature has been removed")
 }
 
 func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {

@@ -527,9 +527,6 @@ func TestAdminStmt(t *testing.T) {
 		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
 		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
 		{"admin reload cluster bindings", true, "ADMIN RELOAD CLUSTER BINDINGS"},
-		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
-		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
-		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
 		// Test for 'admin flush plan_cache'
 		{"admin flush instance plan_cache", true, "ADMIN FLUSH INSTANCE PLAN_CACHE"},
 		{"admin flush session plan_cache", true, "ADMIN FLUSH SESSION PLAN_CACHE"},
@@ -1298,9 +1295,6 @@ func TestDBAStmt(t *testing.T) {
 		// for show create sequence
 		{"show create sequence seq", true, "SHOW CREATE SEQUENCE `seq`"},
 		{"show create sequence test.seq", true, "SHOW CREATE SEQUENCE `test`.`seq`"},
-		// for show stats_extended.
-		{"show stats_extended", true, "SHOW STATS_EXTENDED"},
-		{"show stats_extended where table_name = 't'", true, "SHOW STATS_EXTENDED WHERE `table_name`=_UTF8MB4't'"},
 		// for show stats_meta.
 		{"show stats_meta", true, "SHOW STATS_META"},
 		{"show stats_meta where table_name = 't'", true, "SHOW STATS_META WHERE `table_name`=_UTF8MB4't'"},
