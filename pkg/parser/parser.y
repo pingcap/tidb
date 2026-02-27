@@ -1431,6 +1431,9 @@ import (
 		MViewNextOpt                           "materialized view NEXT option"
 		MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
 		MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
+		MLogCreateOptionListOpt                "materialized view log create options"
+		MLogCreateOptionList                   "materialized view log create option list"
+		MLogCreateOption                       "materialized view log create option"
 		MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
 		MLogPurgeClause                        "materialized view log PURGE clause"
 		MLogStartWithOpt                       "materialized view log START WITH option"
@@ -5260,6 +5263,7 @@ CreateMaterializedViewStmt:
 				Cols:            $6.([]model.CIStr),
 				Comment:         opts.comment,
 				Refresh:         opts.refresh,
+				Options:         opts.options,
 				Select:          $10.(ast.StmtNode).(ast.ResultSetNode),
 			}
 			$$ = x
@@ -5284,32 +5288,65 @@ MViewCreateOptionList:
 	{
 		opts := $1.(*mviewCreateOptions)
 		opt := $2.(*mviewCreateOptions)
-			if opt.hasComment {
-				if opts.hasComment {
-					yylex.AppendError(yylex.Errorf("Duplicate COMMENT specified in CREATE MATERIALIZED VIEW"))
-				}
-				opts.hasComment = true
-				opts.comment = opt.comment
+		if opt.hasComment {
+			if opts.hasComment {
+				yylex.AppendError(yylex.Errorf("Duplicate COMMENT specified in CREATE MATERIALIZED VIEW"))
 			}
-			if opt.hasRefresh {
-				if opts.hasRefresh {
-					yylex.AppendError(yylex.Errorf("Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW"))
-				}
-				opts.hasRefresh = true
+			opts.hasComment = true
+			opts.comment = opt.comment
+		}
+		if opt.hasRefresh {
+			if opts.hasRefresh {
+				yylex.AppendError(yylex.Errorf("Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasRefresh = true
 			opts.refresh = opt.refresh
 		}
+		if opt.hasShardRowIDBits {
+			if opts.hasShardRowIDBits {
+				yylex.AppendError(yylex.Errorf("Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasShardRowIDBits = true
+		}
+		if opt.hasPreSplitRegion {
+			if opts.hasPreSplitRegion {
+				yylex.AppendError(yylex.Errorf("Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasPreSplitRegion = true
+		}
+		opts.options = append(opts.options, opt.options...)
 		$$ = opts
 	}
 
-	MViewCreateOption:
-		"COMMENT" "=" stringLit
-		{
-			$$ = &mviewCreateOptions{hasComment: true, comment: $3}
+MViewCreateOption:
+	"COMMENT" "=" stringLit
+	{
+		$$ = &mviewCreateOptions{hasComment: true, comment: $3}
+	}
+|	MViewRefreshClause
+	{
+		$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
+	}
+|	"SHARD_ROW_ID_BITS" EqOpt LengthNum
+	{
+		$$ = &mviewCreateOptions{
+			hasShardRowIDBits: true,
+			options: []*ast.TableOption{{
+				Tp:        ast.TableOptionShardRowID,
+				UintValue: $3.(uint64),
+			}},
 		}
-	|	MViewRefreshClause
-		{
-			$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt LengthNum
+	{
+		$$ = &mviewCreateOptions{
+			hasPreSplitRegion: true,
+			options: []*ast.TableOption{{
+				Tp:        ast.TableOptionPreSplitRegion,
+				UintValue: $3.(uint64),
+			}},
 		}
+	}
 
 MViewRefreshClause:
 	"REFRESH" "FAST" MViewRefreshOnClauseOpt
@@ -5371,20 +5408,79 @@ MViewNextOpt:
 	}
 
 	CreateMaterializedViewLogStmt:
-		"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogPurgeClauseOpt
+		"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt
 		{
+			opts := $10.(*mlogCreateOptions)
 			x := &ast.CreateMaterializedViewLogStmt{
-				Table:            $6.(*ast.TableName),
-				Cols:             $8.([]model.CIStr),
-				Purge:            $10.(*ast.MLogPurgeClause),
+				Table:   $6.(*ast.TableName),
+				Cols:    $8.([]model.CIStr),
+				Options: opts.options,
+				Purge:   $11.(*ast.MLogPurgeClause),
 			}
 			$$ = x
 		}
 
-	MLogPurgeClauseOpt:
-		/* EMPTY */
-		{
-			$$ = (*ast.MLogPurgeClause)(nil)
+MLogCreateOptionListOpt:
+	/* EMPTY */
+	{
+		$$ = &mlogCreateOptions{}
+	}
+|	MLogCreateOptionList
+	{
+		$$ = $1
+	}
+
+MLogCreateOptionList:
+	MLogCreateOption
+	{
+		$$ = $1
+	}
+|	MLogCreateOptionList MLogCreateOption
+	{
+		opts := $1.(*mlogCreateOptions)
+		opt := $2.(*mlogCreateOptions)
+		if opt.hasShardRowIDBits {
+			if opts.hasShardRowIDBits {
+				yylex.AppendError(yylex.Errorf("Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW LOG"))
+			}
+			opts.hasShardRowIDBits = true
+		}
+		if opt.hasPreSplitRegion {
+			if opts.hasPreSplitRegion {
+				yylex.AppendError(yylex.Errorf("Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW LOG"))
+			}
+			opts.hasPreSplitRegion = true
+		}
+		opts.options = append(opts.options, opt.options...)
+		$$ = opts
+	}
+
+MLogCreateOption:
+	"SHARD_ROW_ID_BITS" EqOpt LengthNum
+	{
+		$$ = &mlogCreateOptions{
+			hasShardRowIDBits: true,
+			options: []*ast.TableOption{{
+				Tp:        ast.TableOptionShardRowID,
+				UintValue: $3.(uint64),
+			}},
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt LengthNum
+	{
+		$$ = &mlogCreateOptions{
+			hasPreSplitRegion: true,
+			options: []*ast.TableOption{{
+				Tp:        ast.TableOptionPreSplitRegion,
+				UintValue: $3.(uint64),
+			}},
+		}
+	}
+
+MLogPurgeClauseOpt:
+	/* EMPTY */
+	{
+		$$ = (*ast.MLogPurgeClause)(nil)
 	}
 |	MLogPurgeClause
 	{

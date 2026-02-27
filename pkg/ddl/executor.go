@@ -1123,8 +1123,9 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	}
 
 	createTableStmt := &ast.CreateTableStmt{
-		Table: &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
-		Cols:  colDefs,
+		Table:   &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
+		Cols:    colDefs,
+		Options: s.Options,
 	}
 	mlogTableInfo, err := BuildTableInfoWithStmt(
 		NewMetaBuildContextWithSctx(ctx),

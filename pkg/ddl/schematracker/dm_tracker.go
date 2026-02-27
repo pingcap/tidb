@@ -306,8 +306,9 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	}
 
 	createTableStmt := &ast.CreateTableStmt{
-		Table: &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
-		Cols:  colDefs,
+		Table:   &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
+		Cols:    colDefs,
+		Options: s.Options,
 	}
 	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(
 		ctx,
