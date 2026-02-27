@@ -165,7 +165,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 	mvTableInfo.Comment = s.Comment
 
-	refreshMethod, refreshStartWith, refreshNext, err := buildMViewRefreshMeta(s.Refresh)
+	refreshMethod, refreshStartWith, refreshNext, err := buildMViewRefreshMeta(ctx, s.Refresh)
 	if err != nil {
 		return err
 	}
@@ -587,27 +587,24 @@ WHERE MVIEW_ID = %?`
 	return nil
 }
 
-func buildMViewRefreshMeta(refresh *ast.MViewRefreshClause) (method, startWith, next string, _ error) {
-	const defaultNextSeconds = 300
+func buildMViewRefreshMeta(sctx sessionctx.Context, refresh *ast.MViewRefreshClause) (method, startWith, next string, _ error) {
 	if refresh == nil {
-		return "FAST", "NOW()", fmt.Sprintf("%d", defaultNextSeconds), nil
+		return "FAST", "", "", nil
 	}
 	switch refresh.Method {
 	case ast.MViewRefreshMethodNever:
 		return "NEVER", "", "", nil
 	case ast.MViewRefreshMethodFast:
 		method = "FAST"
-		startWith = "NOW()"
 		if refresh.StartWith != nil {
-			s, err := restoreExprToCanonicalSQL(refresh.StartWith)
+			s, err := BuildAndValidateMViewScheduleExpr(sctx, refresh.StartWith, "REFRESH START WITH")
 			if err != nil {
 				return "", "", "", err
 			}
 			startWith = s
 		}
-		next = fmt.Sprintf("%d", defaultNextSeconds)
 		if refresh.Next != nil {
-			s, err := restoreExprToCanonicalSQL(refresh.Next)
+			s, err := BuildAndValidateMViewScheduleExpr(sctx, refresh.Next, "REFRESH NEXT")
 			if err != nil {
 				return "", "", "", err
 			}
@@ -751,8 +748,13 @@ func validateCreateMaterializedViewQuery(
 				if len(expr.Args) != 1 {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("count(*)/count(1) must have exactly one argument in CREATE MATERIALIZED VIEW")
 				}
-				if _, ok := expr.Args[0].(*ast.ColumnNameExpr); ok {
-					// count(column) is supported
+				if argCol, ok := expr.Args[0].(*ast.ColumnNameExpr); ok {
+					// count(column) is supported.
+					colName, err := resolveMViewColumnName(argCol.Name, baseTableName, fromAlias, baseColMap)
+					if err != nil {
+						return nil, err
+					}
+					usedCols[colName] = struct{}{}
 					continue
 				}
 				if expr.Args[0] == nil {
@@ -778,7 +780,7 @@ func validateCreateMaterializedViewQuery(
 				if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports SUM/MIN/MAX on NOT NULL column")
 				}
-				if expr.F == ast.AggFuncMin || expr.F == ast.AggFuncMax {
+				if aggFunc == ast.AggFuncMin || aggFunc == ast.AggFuncMax {
 					hasMinOrMax = true
 				}
 				usedCols[colName] = struct{}{}

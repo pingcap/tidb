@@ -20,6 +20,7 @@ import (
 	"math"
 	"strings"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -50,7 +51,9 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -357,13 +360,19 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		// Publish the prewrite row before entering build stage.
+		// See prewriteCreateMaterializedViewRefreshInfo for the purge-safety contract.
+		if err = w.prewriteCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID); err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
 
 		job.SchemaState = model.StateWriteReorganization
 		job.State = model.JobStateRunning
 		return ver, nil
 
 	case model.StateWriteReorganization:
-		// Phase-2: run initial build and persist refresh result in mysql.tidb_mview_refresh.
+		// Phase-2: run initial build and persist refresh read tso in mysql.tidb_mview_refresh_info.
 		// CREATE MATERIALIZED VIEW build is non-resumable in this stage. For normal retry/recovery
 		// paths, if this step restarts without an active reorg context and MV table already has
 		// rows, fail fast and roll back the whole job to avoid duplicate build writes.
@@ -415,10 +424,16 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 		}
 
-		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, mvTblInfo.ID, job.SnapshotVer, true, ""); err != nil {
+		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, job.SchemaName, mvTblInfo, job.SnapshotVer, job.SQLMode); err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
+		failpoint.InjectCall("afterCreateMaterializedViewSuccessRefreshInfoUpsert")
+		failpoint.Inject("mockCreateMaterializedViewPostBuildAfterRefreshInfoUpsertRetryableErr", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(ver, dbterror.ErrWaitReorgTimeout)
+			}
+		})
 
 		if job.BinlogInfo != nil {
 			ver = job.BinlogInfo.SchemaVersion
@@ -528,6 +543,22 @@ func getCreateMaterializedViewBuildReadTS(ctx context.Context, ddlSess *sess.Ses
 		return 0, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 	}
 	return readTS, nil
+}
+
+func getCreateMaterializedViewTxnStartTS(ddlSess *sess.Session) (uint64, error) {
+	startTS := ddlSess.GetSessionVars().TxnCtx.StartTS
+	if startTS != 0 {
+		return startTS, nil
+	}
+	txn, err := ddlSess.Txn()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	startTS = txn.StartTS()
+	if startTS == 0 {
+		return 0, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid init refresh tso")
+	}
+	return startTS, nil
 }
 
 func buildCreateMaterializedViewInsertSQL(schemaName string, mvTblInfo *model.TableInfo) (string, error) {
@@ -660,22 +691,126 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 	return w.buildCreateMaterializedViewDataByImport(ctx, job, mvTblInfo)
 }
 
-func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64, readTS uint64, success bool, failedReason string) error {
+// prewriteCreateMaterializedViewRefreshInfo upserts a metadata row for CREATE
+// MATERIALIZED VIEW before the initial build starts, in an independent
+// transaction.
+//
+// Rationale (see docs/design/materialized_view/mv_log_purge.md):
+//  1. PURGE MATERIALIZED VIEW LOG computes safe_purge_tso from
+//     MIN(COALESCE(LAST_SUCCESS_READ_TSO, 0)) across dependent MVs,
+//     including in-building CREATE MATERIALIZED VIEW jobs.
+//  2. If the refresh row is only visible after the DDL step transaction commits,
+//     purge can miss this in-building MV and delete MLog rows that are still
+//     needed by the initial build.
+//  3. Prewrite stores this transaction startTS as a conservative lower bound
+//     during build. The final success upsert (in the DDL step transaction)
+//     overwrites it with the actual build readTS (job.SnapshotVer).
+//  4. If CREATE MATERIALIZED VIEW rolls back, rollbackCreateMaterializedView
+//     deletes this row, so failed jobs do not leave stale refresh metadata.
+func (w *worker) prewriteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64) error {
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, success, failedReason)
-	_, err := w.sess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ddlSess := sess.NewSession(sessCtx)
+	defer w.sessPool.Put(sessCtx)
+
+	err = ddlSess.Begin(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Run a lightweight statement right after BEGIN so startTS remains available
+	// even if transaction start becomes lazy in future implementations.
+	if err = warmupCreateMaterializedViewRefreshInfoTxn(ctx, ddlSess, mviewID); err != nil {
+		return errors.Trace(err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			ddlSess.Rollback()
+		}
+	}()
+	startTS, err := getCreateMaterializedViewTxnStartTS(ddlSess)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = execCreateMaterializedViewRefreshInfoUpsert(ctx, ddlSess, mviewID, startTS, nil, false); err != nil {
+		return errors.Trace(err)
+	}
+	if err = ddlSess.Commit(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	committed = true
+	return nil
+}
+
+func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvSchemaName string, mvTblInfo *model.TableInfo, readTS uint64, sqlMode mysql.SQLMode) error {
+	if mvTblInfo == nil || mvTblInfo.MaterializedView == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid materialized view metadata")
+	}
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+
+	evalSessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	evalSess := sess.NewSession(evalSessCtx)
+	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, sqlMode)
+	defer func() {
+		restoreEvalSession()
+		w.sessPool.Put(evalSessCtx)
+	}()
+
+	nextTime, shouldUpdateNextTime, err := deriveCreateMaterializedViewNextTime(ctx, evalSess, mvSchemaName, mvTblInfo.Name.O, mvTblInfo.MaterializedView)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, nextTime, shouldUpdateNextTime))
+}
+
+func warmupCreateMaterializedViewRefreshInfoTxn(
+	ctx context.Context,
+	ddlSess *sess.Session,
+	mviewID int64,
+) error {
+	warmupSQL := sqlescape.MustEscapeSQL(
+		"SELECT 1 FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? LIMIT 1",
+		mviewID,
+	)
+	_, err := ddlSess.Execute(ctx, warmupSQL, "mview-refresh-info-prewrite-warmup")
+	return errors.Trace(convertCreateMaterializedViewRefreshInfoTableNotExistsErr(err))
+}
+
+func execCreateMaterializedViewRefreshInfoUpsert(
+	ctx context.Context,
+	ddlSess *sess.Session,
+	mviewID int64,
+	readTS uint64,
+	nextTime *string,
+	shouldUpdateNextTime bool,
+) error {
+	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, nextTime, shouldUpdateNextTime)
+	_, err := ddlSess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
 		}
 	})
+	return errors.Trace(convertCreateMaterializedViewRefreshInfoTableNotExistsErr(err))
+}
+
+func convertCreateMaterializedViewRefreshInfoTableNotExistsErr(err error) error {
 	if infoschema.ErrTableNotExists.Equal(err) {
-		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: required system table mysql.tidb_mview_refresh does not exist")
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64) error {
@@ -683,11 +818,11 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %?", mviewID)
+	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?", mviewID)
 	_, err := w.sess.Execute(ctx, deleteSQL, "mview-refresh-info-delete")
 	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh")
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
 		}
 	})
 	if infoschema.ErrTableNotExists.Equal(err) {
@@ -696,37 +831,222 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	return errors.Trace(err)
 }
 
-func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, success bool, failedReason string) string {
-	result := "failed"
-	refreshType := "complete"
-	var successfulReadTS any
-	var refreshFailedReason any = failedReason
-	if success {
-		result = "success"
-		successfulReadTS = readTS
-		refreshFailedReason = nil
+// deriveCreateMaterializedViewNextTime computes NEXT_TIME for CREATE MATERIALIZED VIEW post-build upsert.
+//
+// Rules:
+//  1. If both START WITH and NEXT are absent, NEXT_TIME is not updated.
+//  2. Otherwise expressions are evaluated in the prepared eval session (UTC timezone + job SQL mode).
+//  3. START WITH has higher priority unless it is "near now" (START WITH < now + 10s) and NEXT exists.
+//  4. If the chosen expression evaluates to NULL, NEXT_TIME is updated to NULL.
+func deriveCreateMaterializedViewNextTime(
+	ctx context.Context,
+	ddlSess *sess.Session,
+	mvSchemaName string,
+	mvTableName string,
+	mvInfo *model.MaterializedViewInfo,
+) (*string, bool, error) {
+	if mvInfo == nil {
+		return nil, false, nil
 	}
-	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh (
-		MVIEW_ID,
-		LAST_REFRESH_RESULT,
-		LAST_REFRESH_TYPE,
-		LAST_REFRESH_TIME,
-		LAST_SUCCESSFUL_REFRESH_READ_TSO,
-		LAST_REFRESH_FAILED_REASON
-	) VALUES (%?, %?, %?, NOW(6), %?, %?)
-	ON DUPLICATE KEY UPDATE
-		LAST_REFRESH_RESULT = VALUES(LAST_REFRESH_RESULT),
-		LAST_REFRESH_TYPE = VALUES(LAST_REFRESH_TYPE),
-		LAST_REFRESH_TIME = VALUES(LAST_REFRESH_TIME),
-		LAST_SUCCESSFUL_REFRESH_READ_TSO = VALUES(LAST_SUCCESSFUL_REFRESH_READ_TSO),
-		LAST_REFRESH_FAILED_REASON = VALUES(LAST_REFRESH_FAILED_REASON)`,
-		mviewID,
-		result,
-		refreshType,
-		successfulReadTS,
-		refreshFailedReason,
+
+	startExpr := strings.TrimSpace(mvInfo.RefreshStartWith)
+	nextExpr := strings.TrimSpace(mvInfo.RefreshNext)
+	if startExpr == "" && nextExpr == "" {
+		return nil, false, nil
+	}
+
+	nowTime, err := loadCreateMaterializedViewScheduleNowUTC(ctx, ddlSess)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+
+	evalExprToDatetime := func(exprSQL string) (*types.Time, error) {
+		t, err := evalCreateMaterializedViewScheduleExprToDatetime(ddlSess, exprSQL)
+		if err != nil {
+			return nil, err
+		}
+		if t == nil {
+			return nil, nil
+		}
+		return t, nil
+	}
+
+	// Rule-1 / Rule-2: START WITH has higher priority unless it's near-now and NEXT exists.
+	if startExpr != "" {
+		startAt, err := evalExprToDatetime(startExpr)
+		if err != nil {
+			return nil, true, err
+		}
+		if startAt == nil {
+			logCreateMaterializedViewNextTimeUpdateNull(mvSchemaName, mvTableName, "START WITH", startExpr, nextExpr)
+			return nil, true, nil
+		}
+		if nextExpr == "" {
+			s := startAt.String()
+			return &s, true, nil
+		}
+
+		// Evaluate schedule in UTC and compare with a UTC near-now threshold.
+		goNow, err := nowTime.GoTime(time.UTC)
+		if err != nil {
+			return nil, true, errors.Trace(err)
+		}
+		nearNowThreshold := types.NewTime(types.FromGoTime(goNow.Add(10*time.Second)), nowTime.Type(), nowTime.Fsp())
+		if startAt.Compare(nearNowThreshold) < 0 {
+			nextAt, err := evalExprToDatetime(nextExpr)
+			if err != nil {
+				return nil, true, err
+			}
+			if nextAt == nil {
+				logCreateMaterializedViewNextTimeUpdateNull(mvSchemaName, mvTableName, "NEXT", startExpr, nextExpr)
+				return nil, true, nil
+			}
+			s := nextAt.String()
+			return &s, true, nil
+		}
+		s := startAt.String()
+		return &s, true, nil
+	}
+
+	// Rule-3: START WITH absent, fallback to NEXT when present.
+	if nextExpr != "" {
+		nextAt, err := evalExprToDatetime(nextExpr)
+		if err != nil {
+			return nil, true, err
+		}
+		if nextAt == nil {
+			logCreateMaterializedViewNextTimeUpdateNull(mvSchemaName, mvTableName, "NEXT", startExpr, nextExpr)
+			return nil, true, nil
+		}
+		s := nextAt.String()
+		return &s, true, nil
+	}
+	return nil, false, nil
+}
+
+func logCreateMaterializedViewNextTimeUpdateNull(
+	mvSchemaName string,
+	mvTableName string,
+	nullExprClause string,
+	startExpr string,
+	nextExpr string,
+) {
+	logutil.DDLLogger().Warn(
+		"create materialized view: schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", mvSchemaName),
+		zap.String("tableName", mvTableName),
+		zap.String("nullExprClause", nullExprClause),
+		zap.String("refreshStartWith", startExpr),
+		zap.String("refreshNext", nextExpr),
 	)
-	return upsertSQL
+}
+
+func setCreateMaterializedViewScheduleEvalSession(sctx sessionctx.Context, sqlMode mysql.SQLMode) func() {
+	sessVars := sctx.GetSessionVars()
+	originalSQLMode := sessVars.SQLMode
+	originalTypeFlags := sessVars.StmtCtx.TypeFlags()
+	originalErrLevels := sessVars.StmtCtx.ErrLevels()
+
+	var originalTZ *time.Location
+	if sessVars.TimeZone != nil {
+		tz := *sessVars.TimeZone
+		originalTZ = &tz
+	}
+	originalStmtTZ := sessVars.StmtCtx.TimeZone()
+
+	sessVars.SQLMode = sqlMode
+	sessVars.StmtCtx.SetErrLevels(reorgErrLevelsWithSQLMode(sqlMode))
+	sessVars.StmtCtx.SetTypeFlags(reorgTypeFlagsWithSQLMode(sqlMode))
+
+	sessVars.TimeZone = time.UTC
+	sessVars.StmtCtx.SetTimeZone(time.UTC)
+
+	return func() {
+		sessVars.SQLMode = originalSQLMode
+		sessVars.StmtCtx.SetErrLevels(originalErrLevels)
+		sessVars.StmtCtx.SetTypeFlags(originalTypeFlags)
+
+		sessVars.TimeZone = originalTZ
+		if originalStmtTZ != nil {
+			sessVars.StmtCtx.SetTimeZone(originalStmtTZ)
+			return
+		}
+		sessVars.StmtCtx.SetTimeZone(sessVars.Location())
+	}
+}
+
+func loadCreateMaterializedViewScheduleNowUTC(
+	ctx context.Context,
+	ddlSess *sess.Session,
+) (types.Time, error) {
+	rows, err := ddlSess.Execute(ctx, "SELECT NOW(6)", "mview-refresh-info-next-time-now-utc")
+	if err != nil {
+		return types.ZeroTime, errors.Trace(err)
+	}
+	if len(rows) != 1 || rows[0].IsNull(0) {
+		return types.ZeroTime, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: failed to evaluate refresh schedule expression")
+	}
+	return rows[0].GetTime(0), nil
+}
+
+func evalCreateMaterializedViewScheduleExprToDatetime(ddlSess *sess.Session, exprSQL string) (*types.Time, error) {
+	exprNode, err := generatedexpr.ParseExpression(exprSQL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	builtExpr, err := expression.BuildSimpleExpr(ddlSess.Session().GetExprCtx(), exprNode)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	evalCtx := ddlSess.Session().GetExprCtx().GetEvalCtx()
+	v, err := builtExpr.Eval(evalCtx, chunk.Row{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if v.IsNull() {
+		return nil, nil
+	}
+
+	targetTp := types.NewFieldType(mysql.TypeDatetime)
+	targetTp.SetDecimal(types.MaxFsp)
+	datetimeV, err := v.ConvertTo(evalCtx.TypeCtx(), targetTp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	t := datetimeV.GetMysqlTime()
+	return &t, nil
+}
+
+func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, nextTime *string, shouldUpdateNextTime bool) string {
+	if shouldUpdateNextTime {
+		var nextTimeArg any
+		if nextTime != nil {
+			nextTimeArg = *nextTime
+		}
+		return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
+		MVIEW_ID,
+		LAST_SUCCESS_READ_TSO,
+		NEXT_TIME
+	) VALUES (%?, %?, %?)
+	ON DUPLICATE KEY UPDATE
+		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO),
+		NEXT_TIME = VALUES(NEXT_TIME)`,
+			mviewID,
+			readTS,
+			nextTimeArg,
+		)
+	}
+	return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
+		MVIEW_ID,
+		LAST_SUCCESS_READ_TSO
+	) VALUES (%?, %?)
+	ON DUPLICATE KEY UPDATE
+		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO)`,
+		mviewID,
+		readTS,
+	)
 }
 
 // updateMaterializedViewBaseInfoOnCreate keeps base-table reverse metadata in sync

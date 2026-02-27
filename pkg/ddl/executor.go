@@ -1146,7 +1146,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		} else {
 			purgeMethod = "DEFERRED"
 			if s.Purge.StartWith != nil {
-				purgeStartWith, err = restoreExprToCanonicalSQL(s.Purge.StartWith)
+				purgeStartWith, err = BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
 				if err != nil {
 					return err
 				}
@@ -1154,7 +1154,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 			if s.Purge.Next == nil {
 				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
 			}
-			purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
+			purgeNext, err = BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
 			if err != nil {
 				return err
 			}
@@ -1864,8 +1864,8 @@ func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
 	return false
 }
 
-func isMVTableAlterTiFlashReplica(tblInfo *model.TableInfo, specs []*ast.AlterTableSpec) bool {
-	return tblInfo.MaterializedView != nil && len(specs) == 1 && specs[0].Tp == ast.AlterTableSetTiFlashReplica
+func isAlterTiFlashReplica(specs []*ast.AlterTableSpec) bool {
+	return len(specs) == 1 && specs[0].Tp == ast.AlterTableSetTiFlashReplica
 }
 
 func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
@@ -1887,13 +1887,10 @@ func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt
 	if tb.Meta().IsView() || tb.Meta().IsSequence() {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
-	allowMVSetTiFlashReplica := isMVTableAlterTiFlashReplica(tb.Meta(), validSpecs)
 	if !allowMaterializedViewRelated {
-		if allowMVSetTiFlashReplica {
-			if err := checkTableMaterializedViewConstraintsAllowMVTable(tb.Meta(), "ALTER TABLE"); err != nil {
-				return errors.Trace(err)
-			}
-		} else {
+		// ALTER TABLE ... SET TIFLASH REPLICA only changes replica placement metadata.
+		// It is safe for both MV tables and base tables with MV dependencies.
+		if !isAlterTiFlashReplica(validSpecs) {
 			if err := checkTableMaterializedViewConstraints(tb.Meta(), "ALTER TABLE"); err != nil {
 				return errors.Trace(err)
 			}
