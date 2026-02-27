@@ -139,11 +139,7 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 
 	// [ON COMMIT DELETE ROWS | ON COMMIT PRESERVE ROWS] — only valid for GLOBAL TEMPORARY
 	if p.peek().Tp == on {
-		if stmt.TemporaryKeyword != ast.TemporaryGlobal {
-			// ON COMMIT is only valid for GLOBAL TEMPORARY tables.
-			p.error(p.peek().Offset, "ON COMMIT can only be used with GLOBAL TEMPORARY tables")
-			return nil
-		}
+		onOff := p.peek().Offset
 		p.next() // consume ON
 		p.expect(commit)
 		if _, ok := p.accept(deleteKwd); ok {
@@ -153,10 +149,13 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 			p.expect(rows)
 			// OnCommitDelete remains false — PRESERVE ROWS is the default.
 		}
+		if stmt.TemporaryKeyword != ast.TemporaryGlobal {
+			// Yacc: append error but still produce the statement
+			p.error(onOff, "ON COMMIT can only be used with GLOBAL TEMPORARY tables")
+		}
 	} else if stmt.TemporaryKeyword == ast.TemporaryGlobal {
-		// GLOBAL TEMPORARY requires ON COMMIT DELETE ROWS or ON COMMIT PRESERVE ROWS.
+		// Yacc: append error but still produce the statement
 		p.error(p.peek().Offset, "GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together")
-		return nil
 	}
 
 	// [SPLIT ...]
