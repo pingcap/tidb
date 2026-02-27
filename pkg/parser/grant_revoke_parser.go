@@ -79,13 +79,12 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 			// MySQL compatibility: parsed but ignored
 			for {
 				pk := p.peek()
-				if pk.IsKeyword("MAX_QUERIES_PER_HOUR") || pk.IsKeyword("MAX_UPDATES_PER_HOUR") ||
-					pk.IsKeyword("MAX_CONNECTIONS_PER_HOUR") || pk.IsKeyword("MAX_USER_CONNECTIONS") {
-					p.next()
-					p.next() // consume the number
-				} else {
+				if !pk.IsKeyword("MAX_QUERIES_PER_HOUR") && !pk.IsKeyword("MAX_UPDATES_PER_HOUR") &&
+					!pk.IsKeyword("MAX_CONNECTIONS_PER_HOUR") && !pk.IsKeyword("MAX_USER_CONNECTIONS") {
 					break
 				}
+				p.next()
+				p.next() // consume the number
 			}
 		}
 	}
