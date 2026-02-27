@@ -87,23 +87,30 @@ type MinMaxRecomputeSingleRowExec struct {
 	Workers []MinMaxRecomputeSingleRowWorker
 }
 
-// MinMaxRecomputeBatchExec stores batch recompute runtime metadata.
-type MinMaxRecomputeBatchExec struct {
-	// Builder creates a new executor for each batch.
-	// Build must be safe for concurrent calls across MV merge workers.
-	Builder MinMaxBatchExecBuilder
-}
-
-// MinMaxRecomputeExec is recompute metadata for one MIN/MAX mapping.
-type MinMaxRecomputeExec struct {
-	// KeyInputColIDs are group-key column IDs in child schema.
-	KeyInputColIDs []int
+// MinMaxRecomputeMapping is recompute metadata for one MIN/MAX mapping.
+type MinMaxRecomputeMapping struct {
+	// OutputColIDs are target output columns to be recomputed.
+	// They are usually a subset of Mapping.ColID.
+	OutputColIDs []int
 	// Strategy is the recompute mode.
 	Strategy MinMaxRecomputeStrategy
 	// SingleRow is set when Strategy is MinMaxRecomputeSingleRow.
 	SingleRow *MinMaxRecomputeSingleRowExec
-	// Batch is set when Strategy is MinMaxRecomputeBatch.
-	Batch *MinMaxRecomputeBatchExec
+	// BatchResultColIdxes are result-column indexes in batch recompute output.
+	// It is valid only when Strategy is MinMaxRecomputeBatch.
+	BatchResultColIdxes []int
+}
+
+// MinMaxRecomputeExec stores all MIN/MAX recompute metadata.
+type MinMaxRecomputeExec struct {
+	// KeyInputColIDs are group-key columns in child schema.
+	KeyInputColIDs []int
+	// Mappings is aligned with Exec.AggMappings by mapping index.
+	// Non MIN/MAX positions should be nil.
+	Mappings []*MinMaxRecomputeMapping
+	// BatchBuilder creates one batch recompute executor.
+	// Build must be safe for concurrent calls across MV merge workers.
+	BatchBuilder MinMaxBatchExecBuilder
 }
 
 // RowOpType is the row write operation on MV table.
@@ -156,8 +163,8 @@ type Exec struct {
 
 	AggMappings      []Mapping
 	DeltaAggColCount int
-	// MinMaxRecompute maps mapping index to recompute metadata.
-	MinMaxRecompute map[int]*MinMaxRecomputeExec
+	// MinMaxRecompute stores MIN/MAX recompute metadata.
+	MinMaxRecompute *MinMaxRecomputeExec
 
 	WorkerCnt int
 	Writer    ResultWriter
@@ -396,6 +403,124 @@ func aggFuncForErr(aggFunc *aggregation.AggFuncDesc) string {
 	return aggFunc.StringWithCtx(exprctx.EmptyParamValues, errors.RedactLogDisable)
 }
 
+func isMinMaxAgg(aggName string) bool {
+	return aggName == ast.AggFuncMin || aggName == ast.AggFuncMax
+}
+
+func containsColID(colIDs []int, target int) bool {
+	for i := range colIDs {
+		if colIDs[i] == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
+	if e.MinMaxRecompute == nil {
+		return nil
+	}
+	meta := e.MinMaxRecompute
+	if len(meta.KeyInputColIDs) == 0 {
+		return errors.New("MinMaxRecompute requires non-empty KeyInputColIDs")
+	}
+	if len(meta.Mappings) != len(e.AggMappings) {
+		return errors.Errorf("MinMaxRecompute.Mappings length mismatch: expect %d, got %d", len(e.AggMappings), len(meta.Mappings))
+	}
+	seenKey := make(map[int]struct{}, len(meta.KeyInputColIDs))
+	for _, keyColID := range meta.KeyInputColIDs {
+		if keyColID < 0 || keyColID >= len(childTypes) {
+			return errors.Errorf("MinMaxRecompute key col %d out of range [0,%d)", keyColID, len(childTypes))
+		}
+		if _, dup := seenKey[keyColID]; dup {
+			return errors.Errorf("duplicate MinMaxRecompute key col %d", keyColID)
+		}
+		seenKey[keyColID] = struct{}{}
+	}
+	hasBatch := false
+	for mappingIdx := range e.AggMappings {
+		agg := e.AggMappings[mappingIdx]
+		if agg.AggFunc == nil {
+			return errors.Errorf("MinMaxRecompute validation requires AggMappings[%d].AggFunc", mappingIdx)
+		}
+		aggName := agg.AggFunc.Name
+		recompute := meta.Mappings[mappingIdx]
+		if !isMinMaxAgg(aggName) {
+			if recompute != nil {
+				return errors.Errorf("MinMaxRecompute mapping %d is set for non-MIN/MAX agg=%s", mappingIdx, aggName)
+			}
+			continue
+		}
+		if recompute == nil {
+			return errors.Errorf("missing MinMaxRecompute mapping for agg index %d (%s)", mappingIdx, aggName)
+		}
+		if len(recompute.OutputColIDs) == 0 {
+			return errors.Errorf("MinMaxRecompute mapping %d requires non-empty OutputColIDs", mappingIdx)
+		}
+		seenOutput := make(map[int]struct{}, len(recompute.OutputColIDs))
+		for _, outputColID := range recompute.OutputColIDs {
+			if !containsColID(agg.ColID, outputColID) {
+				return errors.Errorf("MinMaxRecompute mapping %d output col %d is not in AggMappings[%d].ColID", mappingIdx, outputColID, mappingIdx)
+			}
+			if _, dup := seenOutput[outputColID]; dup {
+				return errors.Errorf("duplicate MinMaxRecompute output col %d in mapping %d", outputColID, mappingIdx)
+			}
+			seenOutput[outputColID] = struct{}{}
+		}
+		switch recompute.Strategy {
+		case MinMaxRecomputeSingleRow:
+			if recompute.SingleRow == nil {
+				return errors.Errorf("MinMaxRecompute mapping %d requires SingleRow execution metadata", mappingIdx)
+			}
+			if len(recompute.BatchResultColIdxes) > 0 {
+				return errors.Errorf("MinMaxRecompute mapping %d single-row strategy should not set BatchResultColIdxes", mappingIdx)
+			}
+			if e.WorkerCnt > 0 && len(recompute.SingleRow.Workers) != e.WorkerCnt {
+				return errors.Errorf("MinMaxRecompute mapping %d single-row worker slots mismatch: expect %d, got %d", mappingIdx, e.WorkerCnt, len(recompute.SingleRow.Workers))
+			}
+			for workerIdx := range recompute.SingleRow.Workers {
+				worker := recompute.SingleRow.Workers[workerIdx]
+				if worker.Exec == nil {
+					return errors.Errorf("MinMaxRecompute mapping %d single-row worker %d requires executor", mappingIdx, workerIdx)
+				}
+				if len(worker.KeyCols) != len(meta.KeyInputColIDs) {
+					return errors.Errorf("MinMaxRecompute mapping %d single-row worker %d key column mismatch: expect %d, got %d", mappingIdx, workerIdx, len(meta.KeyInputColIDs), len(worker.KeyCols))
+				}
+			}
+		case MinMaxRecomputeBatch:
+			hasBatch = true
+			if recompute.SingleRow != nil {
+				return errors.Errorf("MinMaxRecompute mapping %d batch strategy should not set SingleRow metadata", mappingIdx)
+			}
+			if len(recompute.BatchResultColIdxes) == 0 {
+				return errors.Errorf("MinMaxRecompute mapping %d batch strategy requires BatchResultColIdxes", mappingIdx)
+			}
+			if len(recompute.BatchResultColIdxes) != len(recompute.OutputColIDs) {
+				return errors.Errorf("MinMaxRecompute mapping %d batch result column mismatch: OutputColIDs=%d BatchResultColIdxes=%d", mappingIdx, len(recompute.OutputColIDs), len(recompute.BatchResultColIdxes))
+			}
+			seenBatchResult := make(map[int]struct{}, len(recompute.BatchResultColIdxes))
+			for _, resultColIdx := range recompute.BatchResultColIdxes {
+				if resultColIdx < 0 {
+					return errors.Errorf("MinMaxRecompute mapping %d batch result col idx %d must be non-negative", mappingIdx, resultColIdx)
+				}
+				if _, dup := seenBatchResult[resultColIdx]; dup {
+					return errors.Errorf("duplicate batch result col idx %d in MinMaxRecompute mapping %d", resultColIdx, mappingIdx)
+				}
+				seenBatchResult[resultColIdx] = struct{}{}
+			}
+		default:
+			return errors.Errorf("MinMaxRecompute mapping %d has unknown strategy %d", mappingIdx, recompute.Strategy)
+		}
+	}
+	if hasBatch && meta.BatchBuilder == nil {
+		return errors.New("MinMaxRecompute batch strategy requires BatchBuilder")
+	}
+	if !hasBatch && meta.BatchBuilder != nil {
+		return errors.New("MinMaxRecompute BatchBuilder is set but no batch strategy mapping exists")
+	}
+	return nil
+}
+
 func (e *Exec) prepareMergers() error {
 	if e.ChildrenLen() != 1 {
 		return errors.Errorf("Exec expects exactly 1 child, got %d", e.ChildrenLen())
@@ -407,6 +532,9 @@ func (e *Exec) prepareMergers() error {
 	childTypes := exec.RetTypes(e.Children(0))
 	if e.DeltaAggColCount < 0 || e.DeltaAggColCount > len(childTypes) {
 		return errors.Errorf("DeltaAggColCount %d out of range [0,%d]", e.DeltaAggColCount, len(childTypes))
+	}
+	if err := e.validateMinMaxRecompute(childTypes); err != nil {
+		return err
 	}
 	colID2ComputedIdx := make(map[int]int, len(e.AggMappings))
 	e.compiledMergers = make([]aggMerger, 0, len(e.AggMappings))
