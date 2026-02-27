@@ -16,8 +16,11 @@ At the moment:
 
 1. **Transactional all-or-nothing for MV data**: one refresh must commit or roll back data replacement atomically.
 2. **Concurrency mutex**: for one MV, when multiple sessions refresh concurrently, only one can enter the execution path; others fail immediately with a locking error.
-3. **Success-only refresh metadata update**: only when refresh succeeds, update the MV row in `mysql.tidb_mview_refresh_info`, especially:
-   - `LAST_SUCCESS_READ_TSO = <for_update_ts of this COMPLETE refresh transaction>`
+3. **Success-only refresh metadata update with CAS + double check**: only when refresh succeeds, update the MV row in `mysql.tidb_mview_refresh_info`, especially:
+   - read `refresh_read_tso` from `TxnCtx.GetForUpdateTS()`
+   - update `LAST_SUCCESS_READ_TSO` by CAS-style condition
+     (`WHERE MVIEW_ID = <mview_id> AND LAST_SUCCESS_READ_TSO <=> <locked_tso>`)
+   - re-read `LAST_SUCCESS_READ_TSO` and require it equals `refresh_read_tso`, otherwise fail refresh as inconsistent
 4. **Refresh lifecycle history**: after lock acquisition, insert a `running` row into `mysql.tidb_mview_refresh_hist` using an independent session.
    - `REFRESH_JOB_ID` uses this refresh's `start_tso`.
 5. **Finalize history after refresh commit**: after refresh transaction commit outcome is known, update the same history row to `success` or `failed`.
@@ -74,19 +77,19 @@ The most direct implementation is: transaction + row-lock mutex + history lifecy
 `COMPLETE` and `FAST` share the same outer framework; only the "refresh implementation" step differs.
 
 1. Get an internal session from session pool and start a transaction on it (recommended **pessimistic**, so `FOR UPDATE NOWAIT` works immediately).
-2. In transaction, lock refresh-info row by `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh_info` (used as refresh mutex).
-3. Read `LAST_SUCCESS_READ_TSO` once again by plain `SELECT` and compare with step 2:
-   - if mismatch, fail this refresh (refresh metadata changed concurrently).
-   - this avoids using inconsistent refresh metadata snapshots inside one refresh flow.
-4. Record refresh `start_tso` as `REFRESH_JOB_ID`.
-5. Use an independent session to insert one `mysql.tidb_mview_refresh_hist` row with `REFRESH_STATUS='running'` and `REFRESH_JOB_ID=<start_tso>`.
-6. Run refresh implementation by refresh type:
+2. In transaction, lock refresh-info row by `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh_info` (used as refresh mutex), and remember the locked row's `LAST_SUCCESS_READ_TSO` value (nullable).
+3. Record refresh `start_tso` as `REFRESH_JOB_ID`.
+4. Use an independent session to insert one `mysql.tidb_mview_refresh_hist` row with `REFRESH_STATUS='running'` and `REFRESH_JOB_ID=<start_tso>`.
+5. Run refresh implementation by refresh type:
    - `COMPLETE`: `DELETE FROM <mv_table>` + `INSERT INTO <mv_table> <mv_select_sql>`.
    - `FAST`: construct internal statement and run via `ExecuteInternalStmt` (currently planner/build returns "not supported" placeholder).
-7. Success path: before commit, update `mysql.tidb_mview_refresh_info` row:
-   - `LAST_SUCCESS_READ_TSO = <COMPLETE refresh: txn for_update_ts>`.
-8. Commit refresh transaction.
-9. After commit returns success, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID` to `REFRESH_STATUS='success'` and fill completion fields.
+6. Success path: read `refresh_read_tso` from transaction context (`TxnCtx.GetForUpdateTS()`).
+7. Before commit, persist success metadata with CAS-style SQL:
+   - `UPDATE ... SET LAST_SUCCESS_READ_TSO = <refresh_read_tso> WHERE MVIEW_ID = <mview_id> AND LAST_SUCCESS_READ_TSO <=> <locked_tso>`.
+8. Do double check by reading back `LAST_SUCCESS_READ_TSO` from `mysql.tidb_mview_refresh_info`:
+   - if value is `NULL` or not equal to `<refresh_read_tso>`, treat as unknown inconsistency and fail refresh.
+9. Commit refresh transaction.
+10. After commit returns success, use independent session to update `mysql.tidb_mview_refresh_hist` for this `REFRESH_JOB_ID` to `REFRESH_STATUS='success'` and fill completion fields.
 
 Failure path (for example `INSERT INTO ... SELECT ...` fails):
 
@@ -109,16 +112,12 @@ SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO
   FROM mysql.tidb_mview_refresh_info
  WHERE MVIEW_ID = <mview_id>
  FOR UPDATE NOWAIT;
+-- locked_last_success_read_tso := row.LAST_SUCCESS_READ_TSO (nullable)
 
--- (A2) consistency check: plain read must match step (A)
-SELECT LAST_SUCCESS_READ_TSO
-  FROM mysql.tidb_mview_refresh_info
- WHERE MVIEW_ID = <mview_id>;
-
--- (A3) use transaction start_tso as refresh job id
+-- (A2) use transaction start_tso as refresh job id
 -- refresh_job_id := <start_tso>;
 
--- (A4) independent internal session (not this transaction) inserts running history
+-- (A3) independent internal session (not this transaction) inserts running history
 INSERT INTO mysql.tidb_mview_refresh_hist (
     MVIEW_ID, REFRESH_JOB_ID, REFRESH_METHOD, REFRESH_TIME, REFRESH_STATUS
 ) VALUES (
@@ -135,10 +134,20 @@ INSERT INTO <db>.<mv> <SQLContent>;
   -- SQLContent is MV definition SELECT (rollback whole refresh txn on failure)
   -- so COMPLETE refresh can leverage TiFlash for heavy scans.
 
--- (C) success-only metadata update in the same refresh transaction
+-- (C1) read refresh tso from transaction context
+-- refresh_read_tso := <TxnCtx.GetForUpdateTS()>;
+
+-- (C2) success-only metadata update in the same refresh transaction (CAS style)
 UPDATE mysql.tidb_mview_refresh_info
-   SET LAST_SUCCESS_READ_TSO = <for_update_ts>
+   SET LAST_SUCCESS_READ_TSO = <refresh_read_tso>
+ WHERE MVIEW_ID = <mview_id>
+   AND LAST_SUCCESS_READ_TSO <=> <locked_last_success_read_tso>;
+
+-- (C3) double check after UPDATE
+SELECT LAST_SUCCESS_READ_TSO
+  FROM mysql.tidb_mview_refresh_info
  WHERE MVIEW_ID = <mview_id>;
+-- if result is NULL or != <refresh_read_tso>, fail refresh as inconsistent
 
 COMMIT;
 
@@ -146,7 +155,7 @@ COMMIT;
 UPDATE mysql.tidb_mview_refresh_hist
    SET REFRESH_STATUS = 'success',
        REFRESH_ENDTIME = NOW(6),
-       REFRESH_READ_TSO = <for_update_ts>,
+       REFRESH_READ_TSO = <refresh_read_tso>,
        REFRESH_FAILED_REASON = NULL
  WHERE MVIEW_ID = <mview_id>
    AND REFRESH_JOB_ID = <refresh_job_id>;
@@ -178,7 +187,7 @@ For `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh_info`, there are
 `FOR UPDATE NOWAIT` is meaningful only inside a transaction and should fail immediately on conflict.
 Explicit `BEGIN PESSIMISTIC` ensures lock acquisition and conflict behavior match mutex semantics.
 
-### COMPLETE refresh read tso (`for_update_ts`)
+### Refresh read tso (`for_update_ts`)
 
 Requirement: on successful COMPLETE refresh, `LAST_SUCCESS_READ_TSO` must store the transaction `for_update_ts` used for refresh read.
 
@@ -187,17 +196,13 @@ So MV data snapshot corresponds to `for_update_ts`.
 If only `start_ts` is stored, users may observe that MV data includes rows newer than `LAST_SUCCESS_READ_TSO`,
 which also misleads later incremental-refresh/check logic.
 
-`FAST` real incremental logic is not implemented yet (planner still returns placeholder),
-so only COMPLETE read-tso semantics are defined for now.
+`FAST` real incremental logic is not implemented yet (planner still returns placeholder), so only COMPLETE read-tso behavior is effective in practice right now.
 
-Implementation options:
+Current code path always reads refresh success tso from transaction context:
 
-1. **Read from TxnCtx**: after refresh DML (`DELETE` / `INSERT ... SELECT ...`), read `sctx.GetSessionVars().TxnCtx.GetForUpdateTS()`.
-2. **Reuse last_query_info**: after key DML in transaction, read `for_update_ts` from `@@tidb_last_query_info` JSON.
-
-Option (1) is preferred (direct and no extra SQL), and guarantees transaction-context `for_update_ts`.
-
-Current code uses option (1): after COMPLETE DML finishes, read `for_update_ts` from `TxnCtx` and persist it to `LAST_SUCCESS_READ_TSO`.
+1. after refresh data changes, call `sctx.GetSessionVars().TxnCtx.GetForUpdateTS()`
+2. if the value is `0`, fail refresh
+3. persist it to `LAST_SUCCESS_READ_TSO` through CAS update + post-update readback check.
 
 ## Code placement (current implementation)
 
@@ -218,6 +223,7 @@ Core execution semantics:
 - Refresh uses internal session, not caller session transaction/variables.
 - Refresh path uses dedicated internal source type (`kv.InternalTxnMVMaintenance`).
 - Uses `BEGIN PESSIMISTIC` + `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh_info` for mutex.
+- On success path, updates `LAST_SUCCESS_READ_TSO` with CAS condition (`LAST_SUCCESS_READ_TSO <=> <locked_tso>`) and verifies readback equals `TxnCtx.GetForUpdateTS()`.
 - On refresh execution failure, rolls back the whole refresh transaction to guarantee all-or-nothing MV data replacement.
 - `COMPLETE` rebuilds data with `DELETE FROM mv` + `INSERT INTO mv SELECT ...`.
 - `FAST` uses internal-only statement `RefreshMaterializedViewImplementStmt` as framework entry
