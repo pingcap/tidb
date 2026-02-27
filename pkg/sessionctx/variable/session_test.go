@@ -266,6 +266,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Storage_from_mpp: false`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
+	ruDetails := util.NewRUDetailsWith(50.0, 100.56, 134*time.Millisecond)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -303,9 +304,9 @@ func TestSlowLogFormat(t *testing.T) {
 		IsWriteCacheTable: true,
 		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
-		RRU:               50.0,
-		WRU:               100.56,
-		WaitRUDuration:    134 * time.Millisecond,
+		RRU:               ruDetails.RRU(),
+		WRU:               ruDetails.WRU(),
+		WaitRUDuration:    ruDetails.RUWaitDuration(),
 		StorageKV:         true,
 		StorageMPP:        false,
 	}
