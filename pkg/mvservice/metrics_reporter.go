@@ -75,7 +75,7 @@ func (h *serviceHelper) observeRunEvent(eventType string) {
 // getDurationObserver returns a cached observer for (type, result) labels.
 func (h *serviceHelper) getDurationObserver(metricType, result string) prometheus.Observer {
 	if h == nil {
-		return tidbmetrics.MVServiceMetaFetchDurationHistogramVec.WithLabelValues(metricType, result)
+		return tidbmetrics.MVServiceOperationDurationHistogramVec.WithLabelValues(metricType, result)
 	}
 	key := mvMetricTypeResultKey{typ: metricType, result: result}
 	h.durationObserverCache.mu.RLock()
@@ -90,7 +90,7 @@ func (h *serviceHelper) getDurationObserver(metricType, result string) prometheu
 	if observer, ok := h.durationObserverCache.data[key]; ok {
 		return observer
 	}
-	observer := tidbmetrics.MVServiceMetaFetchDurationHistogramVec.WithLabelValues(metricType, result)
+	observer := tidbmetrics.MVServiceOperationDurationHistogramVec.WithLabelValues(metricType, result)
 	h.durationObserverCache.data[key] = observer
 	return observer
 }

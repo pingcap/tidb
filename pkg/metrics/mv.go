@@ -22,7 +22,7 @@ import (
 var (
 	MVServiceTaskStatusGaugeVec *prometheus.GaugeVec
 
-	MVServiceMetaFetchDurationHistogramVec *prometheus.HistogramVec
+	MVServiceOperationDurationHistogramVec *prometheus.HistogramVec
 
 	MVServiceRunEventCounterVec *prometheus.CounterVec
 
@@ -52,12 +52,12 @@ func InitMVMetrics() {
 			Help:      "Number of MV service and task executor tasks by status.",
 		}, []string{LblType})
 
-	MVServiceMetaFetchDurationHistogramVec = NewHistogramVec(
+	MVServiceOperationDurationHistogramVec = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "mv",
-			Name:      "service_meta_fetch_duration_seconds",
-			Help:      "Bucketed histogram of MV service metadata fetch duration.",
+			Name:      "service_operation_duration_seconds",
+			Help:      "Bucketed histogram of MV service operation duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
 
