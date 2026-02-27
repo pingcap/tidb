@@ -112,7 +112,7 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 		if len(stmt.ColumnsAndUserVars) > 0 {
 			for _, cuv := range stmt.ColumnsAndUserVars {
 				if cuv.UserVar != nil {
-					p.error(p.peek().Offset, "Cannot use user variable(%s) in IMPORT INTO FROM SELECT statement", cuv.UserVar.Name)
+					p.error(p.peek().Offset, "Cannot use user variable(%s) in IMPORT INTO FROM SELECT statement.", cuv.UserVar.Name)
 					return nil
 				}
 			}

@@ -319,7 +319,7 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 
 	if p.peek().Tp == order {
 		if isMultiTable {
-			p.error(p.peek().Offset, "Incorrect usage of UPDATE and ORDER BY")
+			p.errs = append(p.errs, ErrWrongUsage.GenWithStackByArgs("UPDATE", "ORDER BY"))
 			return nil
 		}
 		stmt.Order = p.parseOrderByClause()
@@ -328,7 +328,7 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 	// [LIMIT]
 	if p.peek().Tp == limit {
 		if isMultiTable {
-			p.error(p.peek().Offset, "Incorrect usage of UPDATE and LIMIT")
+			p.errs = append(p.errs, ErrWrongUsage.GenWithStackByArgs("UPDATE", "LIMIT"))
 			return nil
 		}
 		stmt.Limit = p.parseLimitClause()

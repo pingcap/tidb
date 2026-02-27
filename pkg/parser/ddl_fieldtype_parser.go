@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -121,8 +120,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 
 			if valid {
 				if v != 4 {
-					// Use raw error to match test expectation (no location prefix)
-					p.errs = append(p.errs, errors.New("[parser:1818]Supports only YEAR or YEAR(4) column"))
+					p.errs = append(p.errs, ErrInvalidYearColumnLength.GenWithStackByArgs())
 				}
 				tp.SetFlen(int(v))
 				p.next()
@@ -262,7 +260,7 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 			case doubleType, float8Type:
 				// VECTOR<DOUBLE> — parsed but rejected per parser.y (AppendError is fatal)
 				p.next()
-				p.errs = append(p.errs, fmt.Errorf("only VECTOR is supported for now"))
+				p.errs = append(p.errs, fmt.Errorf("Only VECTOR is supported for now"))
 				p.expect('>')
 				return nil
 			default:

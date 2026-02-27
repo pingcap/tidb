@@ -276,14 +276,14 @@ func (p *HandParser) parseSelectOpts(stmt *ast.SelectStmt) {
 		case all:
 			p.next()
 			if opts.Distinct {
-				p.error(p.peek().Offset, "Incorrect usage of ALL and DISTINCT")
+				p.errs = append(p.errs, ErrWrongUsage.GenWithStackByArgs("ALL", "DISTINCT"))
 				return
 			}
 			opts.ExplicitAll = true
 		case distinct, distinctRow:
 			p.next()
 			if opts.ExplicitAll {
-				p.error(p.peek().Offset, "Incorrect usage of ALL and DISTINCT")
+				p.errs = append(p.errs, ErrWrongUsage.GenWithStackByArgs("ALL", "DISTINCT"))
 				return
 			}
 			stmt.Distinct = true
