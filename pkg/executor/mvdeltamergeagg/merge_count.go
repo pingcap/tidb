@@ -29,8 +29,8 @@ func (e *Exec) buildCountMerger(
 	if len(mapping.ColID) != 1 {
 		return nil, errors.Errorf("COUNT mapping expects exactly 1 output column, got %d", len(mapping.ColID))
 	}
-	if len(mapping.DependencyColID) < 1 {
-		return nil, errors.New("COUNT mapping requires at least one dependency column")
+	if len(mapping.DependencyColID) != 1 {
+		return nil, errors.Errorf("COUNT mapping expects exactly 1 dependency column, got %d", len(mapping.DependencyColID))
 	}
 	outputColID := mapping.ColID[0]
 	deltaRef, err := resolveDepRef(mapping.DependencyColID[0], colID2ComputedIdx, e.DeltaAggColCount)
