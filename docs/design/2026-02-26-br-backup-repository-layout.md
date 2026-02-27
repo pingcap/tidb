@@ -52,13 +52,21 @@ s3://bucket/prefix/
   _meta/snapshot/<backup-id>/backupmeta.ddl.000000001
   _meta/snapshot/<backup-id>/backupmeta.schema.stats.000000123
   _meta/snapshot/<backup-id>/checkpoints/... (optional, for checkpoint mode)
-  _data/snapshot/<store-id>/<backup-id>/... (SSTs written by TiKV)
+  _data/snapshot/<store-id>/... (SSTs written by TiKV)
 ```
 
 Key points:
 - Data is still sharded by `<store-id>/` under `_data/snapshot/`.
 - `<backup-id>` is placed immediately after `<store-id>` in SST object keys to enable prefix-based deletion without a full scan.
 - Metadata is namespaced per backup under `_meta/snapshot/<backup-id>/`.
+
+### TiKV Capability Probe (Guard Rail)
+
+BR should detect whether TiKV supports the repo-v1 object key format before starting a backup:
+- A capability flag (to be added) is reported by TiKV; BR checks all TiKV nodes.
+- If any TiKV does not support repo-v1 naming (i.e. does not place `unique_id` immediately after `<store-id>`), BR must fail fast in repo-v1 mode.
+
+This prevents partially-upgraded clusters from producing backups that cannot be cleaned up safely.
 
 ### IDs and Naming
 
@@ -171,7 +179,7 @@ Suggested namespace:
 ### Compatibility
 
 - BR: new `--storage-layout=repo-v1`, `br repo` subcommands, and layout helper.
-- TiKV: SST key naming must include `unique_id` immediately after `<store-id>`.
+- TiKV: SST key naming must include `unique_id` immediately after `<store-id>` and report repo-v1 capability.
 - PD: backup ID allocation via TSO.
 - Upgrade: legacy layout remains supported; repo-v1 is opt-in.
 - Downgrade: avoid writing repo-v1 from older BR; repo marker signals layout.
@@ -184,6 +192,7 @@ Suggested namespace:
 - Verify repo marker and `backup.lock` creation.
 - Verify backup-id is PD-assigned and hex16 formatted.
 - Verify SST object key naming inserts `<backup-id>` after `<store-id>`.
+- Verify BR fails fast in repo-v1 mode if any TiKV lacks the capability flag.
 - Verify `br repo snapshot list` returns completed backups only.
 - Verify `for-files-of-backup --do=print` outputs correct keys.
 - Verify `for-files-of-backup --do=delete` deletes matching objects and metadata.
@@ -216,7 +225,7 @@ Impacts:
 Risks:
 - Incorrect key parsing could delete wrong objects.
 - `for-orphans` requires full scans and can be expensive.
-- Repo-v1 depends on TiKV naming changes; mixing versions could break cleanup.
+- Repo-v1 depends on TiKV naming changes; mixing versions could break cleanup (mitigated by capability probe).
 
 ## Investigation & Alternatives
 
