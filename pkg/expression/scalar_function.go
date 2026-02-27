@@ -348,12 +348,12 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
+	clonedBuiltinFunc := sf.Function.Clone()
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  sf.RetType,
-		Function: sf.Function.Clone(),
+		RetType:  clonedBuiltinFunc.getRetTp(),
+		Function: clonedBuiltinFunc,
 	}
-	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
 	}

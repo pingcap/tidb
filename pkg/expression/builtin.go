@@ -417,10 +417,6 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
-func (b *baseBuiltinFunc) setRetTp(tp *types.FieldType) {
-	b.tp = tp
-}
-
 func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
