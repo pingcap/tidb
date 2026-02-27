@@ -336,23 +336,28 @@ func (p *HandParser) toUint64Value(expr ast.ExprNode, errTok Token) ast.ExprNode
 		p.errorNear(errTok.EndOffset, errTok.Offset)
 		return ast.NewValueExpr(uint64(0), p.charset, p.collation)
 	}
-	if ve, ok := expr.(ast.ValueExpr); ok {
-		switch val := ve.GetValue().(type) {
-		case int64:
-			if val >= 0 {
-				return ast.NewValueExpr(uint64(val), p.charset, p.collation)
-			}
-		case uint64:
-			return ast.NewValueExpr(val, p.charset, p.collation)
-		default:
-			// Decimal overflow (number > MaxUint64): report a syntax error.
-			// The yacc parser's LengthNum rule only accepted intLit tokens,
-			// so numbers that overflow uint64 (tokenized as decLit) caused
-			// a parse error. We replicate that behavior here.
-			_ = val
-			p.errorNear(errTok.EndOffset, errTok.Offset)
-			return ast.NewValueExpr(uint64(math.MaxUint64), p.charset, p.collation)
+	ve, ok := expr.(ast.ValueExpr)
+	if !ok {
+		// The yacc parser's LimitOption rule only accepts LengthNum (bare integer)
+		// or paramMarker. Reject any other expression (e.g., 1+1, column refs).
+		p.errorNear(errTok.EndOffset, errTok.Offset)
+		return ast.NewValueExpr(uint64(0), p.charset, p.collation)
+	}
+	switch val := ve.GetValue().(type) {
+	case int64:
+		if val >= 0 {
+			return ast.NewValueExpr(uint64(val), p.charset, p.collation)
 		}
+	case uint64:
+		return ast.NewValueExpr(val, p.charset, p.collation)
+	default:
+		// Decimal overflow (number > MaxUint64): report a syntax error.
+		// The yacc parser's LengthNum rule only accepted intLit tokens,
+		// so numbers that overflow uint64 (tokenized as decLit) caused
+		// a parse error. We replicate that behavior here.
+		_ = val
+		p.errorNear(errTok.EndOffset, errTok.Offset)
+		return ast.NewValueExpr(uint64(math.MaxUint64), p.charset, p.collation)
 	}
 	return expr
 }
