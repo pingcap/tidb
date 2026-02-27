@@ -396,17 +396,31 @@ func RegisterMVService(
 	// callback for DDL events only will be triggered on the DDL owner
 	// other nodes will get notified through the NotifyDDLChange method from the domain service registry
 	registerHandler(notifier.MVServiceHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
-		switch event.GetType() {
-		case meta.ActionCreateMaterializedViewLog, meta.ActionCreateMaterializedView:
+		if shouldHandleMVCreateEvent(event) {
 			onDDLHandled()
-		default:
-			_ = event
-			// do nothing for other events
-			// just let the regular refresh loop handle them
-			// no need to fan out immediately
 		}
 		return nil
 	})
 
 	return mvService
+}
+
+func shouldHandleMVCreateEvent(event *notifier.SchemaChangeEvent) bool {
+	if event == nil {
+		return false
+	}
+
+	switch event.GetType() {
+	case meta.ActionCreateMaterializedViewLog, meta.ActionCreateMaterializedView:
+		return true
+	case meta.ActionCreateTable:
+		tbl := event.GetCreateTableInfo()
+		if tbl == nil {
+			return false
+		}
+		return tbl.MaterializedView != nil || tbl.MaterializedViewLog != nil
+	default:
+		// For other DDL types, rely on periodic refresh.
+		return false
+	}
 }

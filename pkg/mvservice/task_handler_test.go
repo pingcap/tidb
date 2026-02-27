@@ -701,15 +701,33 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	require.NoError(t, gotHandler(context.Background(), nil, createTable))
 	require.Equal(t, int32(0), called.Load())
 
+	createMVLogTable := notifier.NewCreateTableEvent(&meta.TableInfo{
+		ID: 2,
+		MaterializedViewLog: &meta.MaterializedViewLogInfo{
+			BaseTableID: 1,
+		},
+	})
+	require.NoError(t, gotHandler(context.Background(), nil, createMVLogTable))
+	require.Equal(t, int32(1), called.Load())
+
+	createMVTable := notifier.NewCreateTableEvent(&meta.TableInfo{
+		ID: 3,
+		MaterializedView: &meta.MaterializedViewInfo{
+			BaseTableIDs: []int64{1},
+		},
+	})
+	require.NoError(t, gotHandler(context.Background(), nil, createMVTable))
+	require.Equal(t, int32(2), called.Load())
+
 	mvLogEvent := &notifier.SchemaChangeEvent{}
 	require.NoError(t, mvLogEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionCreateMaterializedViewLog))))
 	require.NoError(t, gotHandler(context.Background(), nil, mvLogEvent))
-	require.Equal(t, int32(1), called.Load())
+	require.Equal(t, int32(3), called.Load())
 
 	mvEvent := &notifier.SchemaChangeEvent{}
 	require.NoError(t, mvEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionCreateMaterializedView))))
 	require.NoError(t, gotHandler(context.Background(), nil, mvEvent))
-	require.Equal(t, int32(2), called.Load())
+	require.Equal(t, int32(4), called.Load())
 }
 
 func TestServerHelperFetchAllTiDBMLogPurge(t *testing.T) {
