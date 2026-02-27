@@ -89,9 +89,13 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 					logutil.ErrVerboseLogger().Warn("build sample-based global stats failed, falling back to merge",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 				} else if gs != nil {
-					statslogutil.StatsLogger().Info("analyze global: merge entry done (sample-based)",
+					statslogutil.StatsLogger().Info("analyze global: merge entry built (sample-based)",
 						zap.String("job", job.JobInfo), zap.Int64("tableID", globalStatsID.tableID))
-					return globalstats.WriteGlobalStatsToStorage(statsHandle, gs, &info, globalStatsID.tableID)
+					writeErr := globalstats.WriteGlobalStatsToStorage(statsHandle, gs, &info, globalStatsID.tableID)
+					statslogutil.StatsLogger().Info("analyze global: merge entry written",
+						zap.String("job", job.JobInfo), zap.Int64("tableID", globalStatsID.tableID),
+						zap.Error(writeErr))
+					return writeErr
 				}
 
 				// Fallback to existing merge-based path.

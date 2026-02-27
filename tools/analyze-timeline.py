@@ -63,16 +63,23 @@ Phase 3 -- Global stats merge
     Start of one global-stats entry (columns or one index).
     Fields: job, tableID, indexID
 
-  "analyze global: merge entry done (sample-based)"
-    Entry completed via the sample-based path.
+  "analyze global: merge entry built (sample-based)"
+    Sample-based build computation done (before write).
     Fields: job, tableID
 
   "analyze global: merge entry using partition-merge path"
     Entry falling back to the traditional partition-merge path.
     Fields: job, tableID
 
+  "analyze global: merge entry built (partition-merge, internal)"
+    Partition-merge build computation done (before write).
+    Logged from inside the merge wrapper. Fields: tableID
+
+  "analyze global: merge entry written"
+    Stats written to storage (both paths). Fields: tableID, error
+
   "analyze global: merge entry done (partition-merge)"
-    Entry completed via the partition-merge path.
+    Entry completed via the partition-merge path (after build+write).
     Fields: job, tableID, error
 
   "use async merge global stats"
@@ -227,12 +234,24 @@ def _merge_entry_start(line):
     return (f"  merge entry start: {label} {tid}", extract(line, "job"))
 
 
-def _merge_entry_done_sample(line):
-    return ("  merge entry done (sample-based)", extract(line, "job"))
+def _merge_entry_built_sample(line):
+    return ("  merge entry built (sample-based)", extract(line, "job"))
 
 
 def _merge_entry_fallback(line):
     return ("  merge entry fallback to partition-merge", extract(line, "job"))
+
+
+def _merge_entry_built_merge_internal(line):
+    return ("  merge entry built (partition-merge)", f"tableID={extract(line, 'tableID')}")
+
+
+def _merge_entry_written(line):
+    err = extract(line, "error")
+    detail = f"tableID={extract(line, 'tableID')}"
+    if err and err != "<nil>":
+        detail += f" ERROR={err}"
+    return ("  merge entry written", detail)
 
 
 def _merge_entry_done_merge(line):
@@ -292,8 +311,10 @@ PATTERNS = [
     (re.compile(r'"analyze global: saving partition samples"'), _save_samples_start),
     (re.compile(r'"analyze global: saving partition samples done"'), _save_samples_done),
     (re.compile(r'"analyze global: merge entry start"'), _merge_entry_start),
-    (re.compile(r'"analyze global: merge entry done \(sample-based\)"'), _merge_entry_done_sample),
+    (re.compile(r'"analyze global: merge entry built \(sample-based\)"'), _merge_entry_built_sample),
     (re.compile(r'"analyze global: merge entry using partition-merge path"'), _merge_entry_fallback),
+    (re.compile(r'"analyze global: merge entry built \(partition-merge, internal\)"'), _merge_entry_built_merge_internal),
+    (re.compile(r'"analyze global: merge entry written"'), _merge_entry_written),
     (re.compile(r'"analyze global: merge entry done \(partition-merge\)"'), _merge_entry_done_merge),
     (re.compile(r'"use async merge global stats"'), _async_merge),
     (re.compile(r'"use blocking merge global stats"'), _blocking_merge),
@@ -367,33 +388,32 @@ def main():
     PAT_SAVE_DONE = "save_done"
     PAT_LOAD_START = "load_start"
     PAT_LOAD_DONE = "load_done"
-    PAT_MERGE_DONE_SAMPLE = "merge_done_sample"
+    PAT_MERGE_ENTRY_START = "merge_entry_start"
+    PAT_MERGE_BUILT_SAMPLE = "merge_built_sample"
+    PAT_MERGE_BUILT_MERGE = "merge_built_merge"
+    PAT_MERGE_WRITTEN = "merge_written"
     PAT_MERGE_DONE_MERGE = "merge_done_merge"
     PAT_GLOBAL_DONE = "global_done"
     PAT_COMPLETE = "complete"
 
-    # Augmented patterns: (regex, handler, pat_id_or_None)
-    aug_patterns = [
-        (PATTERNS[0][0], PATTERNS[0][1], PAT_STARTED),
-        (PATTERNS[1][0], PATTERNS[1][1], None),  # partition start
-        (PATTERNS[2][0], PATTERNS[2][1], PAT_PART_DONE),
-        (PATTERNS[3][0], PATTERNS[3][1], PAT_PART_FAILED),
-        (PATTERNS[4][0], PATTERNS[4][1], PAT_GLOBAL_START),
-        (PATTERNS[5][0], PATTERNS[5][1], PAT_LOAD_START),
-        (PATTERNS[6][0], PATTERNS[6][1], None),  # load skip
-        (PATTERNS[7][0], PATTERNS[7][1], None),  # load table
-        (PATTERNS[8][0], PATTERNS[8][1], PAT_LOAD_DONE),
-        (PATTERNS[9][0], PATTERNS[9][1], PAT_SAVE_START),
-        (PATTERNS[10][0], PATTERNS[10][1], PAT_SAVE_DONE),
-        (PATTERNS[11][0], PATTERNS[11][1], None),  # merge entry start
-        (PATTERNS[12][0], PATTERNS[12][1], PAT_MERGE_DONE_SAMPLE),
-        (PATTERNS[13][0], PATTERNS[13][1], None),  # merge fallback
-        (PATTERNS[14][0], PATTERNS[14][1], PAT_MERGE_DONE_MERGE),
-        (PATTERNS[15][0], PATTERNS[15][1], None),  # async merge
-        (PATTERNS[16][0], PATTERNS[16][1], None),  # blocking merge
-        (PATTERNS[17][0], PATTERNS[17][1], PAT_GLOBAL_DONE),
-        (PATTERNS[18][0], PATTERNS[18][1], PAT_COMPLETE),
-    ]
+    # Map handler function → pattern ID for summary tracking.
+    handler_to_pat = {
+        _analyze_started: PAT_STARTED,
+        _partition_finished: PAT_PART_DONE,
+        _partition_failed: PAT_PART_FAILED,
+        _global_merge_starting: PAT_GLOBAL_START,
+        _load_samples_start: PAT_LOAD_START,
+        _load_samples_done: PAT_LOAD_DONE,
+        _save_samples_start: PAT_SAVE_START,
+        _save_samples_done: PAT_SAVE_DONE,
+        _merge_entry_start: PAT_MERGE_ENTRY_START,
+        _merge_entry_built_sample: PAT_MERGE_BUILT_SAMPLE,
+        _merge_entry_built_merge_internal: PAT_MERGE_BUILT_MERGE,
+        _merge_entry_written: PAT_MERGE_WRITTEN,
+        _merge_entry_done_merge: PAT_MERGE_DONE_MERGE,
+        _global_merge_done: PAT_GLOBAL_DONE,
+        _analyze_complete: PAT_COMPLETE,
+    }
 
     def new_run(ts):
         return {
@@ -411,6 +431,10 @@ def main():
             "load_end_ts": None,
             "save_start_ts": None,
             "save_end_ts": None,
+            # Per-entry build/write tracking (accumulates across entries).
+            "first_entry_start_ts": None,
+            "last_entry_built_ts": None,
+            "last_entry_written_ts": None,
             "merge_entries_sample": 0,
             "merge_entries_merge": 0,
         }
@@ -421,10 +445,10 @@ def main():
 
         result = None
         pat_id = None
-        for pat, handler, pid in aug_patterns:
+        for pat, handler in PATTERNS:
             if pat.search(line):
                 result = handler(line)
-                pat_id = pid
+                pat_id = handler_to_pat.get(handler)
                 break
 
         if result is None and show_debug and DEBUGMEM_RE.search(line):
@@ -478,10 +502,19 @@ def main():
                 cur_run["save_start_ts"] = ts
             elif pat_id == PAT_SAVE_DONE:
                 cur_run["save_end_ts"] = ts
-            elif pat_id == PAT_MERGE_DONE_SAMPLE:
+            elif pat_id == PAT_MERGE_ENTRY_START:
+                if cur_run["first_entry_start_ts"] is None:
+                    cur_run["first_entry_start_ts"] = ts
+            elif pat_id == PAT_MERGE_BUILT_SAMPLE:
                 cur_run["merge_entries_sample"] += 1
+                cur_run["last_entry_built_ts"] = ts
+            elif pat_id == PAT_MERGE_BUILT_MERGE:
+                cur_run["last_entry_built_ts"] = ts
+            elif pat_id == PAT_MERGE_WRITTEN:
+                cur_run["last_entry_written_ts"] = ts
             elif pat_id == PAT_MERGE_DONE_MERGE:
                 cur_run["merge_entries_merge"] += 1
+                cur_run["last_entry_written_ts"] = ts
             elif pat_id == PAT_GLOBAL_DONE:
                 cur_run["global_merge_end_ts"] = ts
             elif pat_id == PAT_COMPLETE:
@@ -513,29 +546,38 @@ def main():
             return fmt_delta(end - start)
         return "-"
 
-    print(f"\n{'=' * 110}")
+    sep = "=" * 130
+    print(f"\n{sep}")
     print("SUMMARY: per-ANALYZE breakdown")
-    print(f"{'=' * 110}")
-    sfmt = "{:>4}  {:>12}  {:>5}  {:>5}  {:>5}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>6}  {}"
+    print(sep)
+    sfmt = "{:>4}  {:>12}  {:>5}  {:>5}  {:>4}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>6}  {}"
     print(sfmt.format(
         "#", "START", "TASKS", "PARTS", "CONC",
-        "TOTAL", "PARTITNS", "LOAD", "SAVE", "MERGE",
-        "PATH", "SAMPLE-BASED"))
+        "TOTAL", "ANALYZE", "LOAD", "SAVE", "BUILD", "WRITE", "GLOBAL",
+        "PATH", "SAMPLE"))
     print(sfmt.format(
-        "----", "------------", "-----", "-----", "-----",
+        "----", "------------", "-----", "-----", "----",
         "---------", "---------", "---------", "---------", "---------",
-        "------", "------------"))
+        "---------", "---------",
+        "------", "------"))
 
     for i, r in enumerate(runs, 1):
         total_dur = td(r["start_ts"], r["end_ts"])
 
-        # Partition phase: from start to global merge start (or end if no global merge).
+        # ANALYZE: partition analysis phase (start → global merge start).
         part_end = r["global_merge_start_ts"] or r["end_ts"]
-        part_dur = td(r["start_ts"], part_end)
+        analyze_dur = td(r["start_ts"], part_end)
 
         load_dur = td(r["load_start_ts"], r["load_end_ts"])
         save_dur = td(r["save_start_ts"], r["save_end_ts"])
-        merge_dur = td(r["global_merge_start_ts"], r["global_merge_end_ts"])
+
+        # BUILD: first merge entry start → last "built" log.
+        build_dur = td(r["first_entry_start_ts"], r["last_entry_built_ts"])
+        # WRITE: last "built" → last "written" (or done for partition-merge).
+        write_dur = td(r["last_entry_built_ts"], r["last_entry_written_ts"])
+
+        # GLOBAL: entire global merge phase.
+        global_dur = td(r["global_merge_start_ts"], r["global_merge_end_ts"])
 
         sample_entries = r["merge_entries_sample"]
         merge_entries = r["merge_entries_merge"]
@@ -550,12 +592,13 @@ def main():
 
         start_str = short_ts(r["start_ts"]) if r["start_ts"] else "?"
         failed = f" ({r['partition_failed']}err)" if r["partition_failed"] else ""
+        sample_str = r["sample_based"] if r["sample_based"] else "-"
 
         print(sfmt.format(
             i, start_str,
             r["tasks"], str(r["partition_count"]) + failed, r["concurrency"],
-            total_dur, part_dur, load_dur, save_dur, merge_dur,
-            path, r["sample_based"]))
+            total_dur, analyze_dur, load_dur, save_dur, build_dur, write_dur,
+            global_dur, path, sample_str))
 
 
 if __name__ == "__main__":
