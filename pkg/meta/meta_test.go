@@ -150,6 +150,7 @@ func TestMaskingPolicy(t *testing.T) {
 
 	err = m.CreateMaskingPolicy(policy)
 	require.NotNil(t, err)
+	require.True(t, meta.ErrMaskingPolicyExists.Equal(err))
 
 	val, err := m.GetMaskingPolicy(1)
 	require.NoError(t, err)

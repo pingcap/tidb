@@ -72,6 +72,9 @@ type MaskingPolicyInfo struct {
 
 // Clone clones MaskingPolicyInfo.
 func (p *MaskingPolicyInfo) Clone() *MaskingPolicyInfo {
+	if p == nil {
+		return nil
+	}
 	cloned := *p
 	return &cloned
 }

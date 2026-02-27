@@ -155,9 +155,9 @@ var (
 	// ErrPolicyNotExists is the error for policy not exists.
 	ErrPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyNotExists)
 	// ErrMaskingPolicyExists is the error for masking policy exists.
-	ErrMaskingPolicyExists = errors.New("masking policy already exists")
+	ErrMaskingPolicyExists = dbterror.ClassMeta.NewStdErr(errno.ErrPlacementPolicyExists, mysql.Message("masking policy already exists", nil))
 	// ErrMaskingPolicyNotExists is the error for masking policy not exists.
-	ErrMaskingPolicyNotExists = errors.New("masking policy doesn't exist")
+	ErrMaskingPolicyNotExists = dbterror.ClassMeta.NewStdErr(errno.ErrPlacementPolicyNotExists, mysql.Message("masking policy doesn't exist", nil))
 	// ErrResourceGroupExists is the error for resource group exists.
 	ErrResourceGroupExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists is the error for resource group not exists.
