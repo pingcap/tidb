@@ -676,6 +676,7 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
+// During multi-schema modify-column on a partitioned table, concurrent owner/non-owner DML should remain consistent and end with stable data.
 func TestMultiSchemaModifyColumnConcurrentDMLAcrossPartitions(t *testing.T) {
 	createSQL := `create table t (
 		a int primary key,
@@ -698,6 +699,7 @@ func TestMultiSchemaModifyColumnConcurrentDMLAcrossPartitions(t *testing.T) {
 		if schemaState == model.StateNone.String() {
 			return
 		}
+		// Generate disjoint PK/value pairs per loop to avoid incidental conflicts between owner and non-owner sessions.
 		n := opSeq.Add(1)
 		ownerPK := 1000 + n*2
 		nonOwnerPK := ownerPK + 1

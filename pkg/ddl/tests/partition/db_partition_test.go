@@ -3090,6 +3090,7 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
 }
 
+// Modifying an indexed column on a range-partitioned table should advance reorg progress to the next physical partition in recreate-index stage.
 func TestModifyColumnPartitionedTableRecreateIndexCursorReset(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3120,6 +3121,7 @@ func TestModifyColumnPartitionedTableRecreateIndexCursorReset(t *testing.T) {
 	require.Len(t, partIDs, 4)
 
 	var firstNextPID atomic.Int64
+	// Read ddl_reorg progress inside the callback and keep only the first observed physical_id for recreate-index stage.
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdatePartitionReorgInfo", func(job *model.Job) {
 		if firstNextPID.Load() != 0 {
 			return
@@ -3145,6 +3147,7 @@ func TestModifyColumnPartitionedTableRecreateIndexCursorReset(t *testing.T) {
 	require.Equal(t, partIDs[1], firstNextPID.Load())
 }
 
+// A forced failure during modify-column should roll back cleanly without leaving reorg rows or transient schema states.
 func TestModifyColumnPartitionedTableRollbackCleanup(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3173,6 +3176,7 @@ func TestModifyColumnPartitionedTableRollbackCleanup(t *testing.T) {
 		}
 	})
 
+	// Force index-record decode failure so the DDL enters rollback path deterministically.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr"))
@@ -3200,6 +3204,7 @@ func TestModifyColumnPartitionedTableRollbackCleanup(t *testing.T) {
 	tk.MustExec("admin check table t_rb")
 }
 
+// Modifying a globally indexed column on a partitioned table should keep global-index lookup and uniqueness consistent.
 func TestModifyColumnPartitionedTableGlobalIndexConsistency(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3222,9 +3227,11 @@ func TestModifyColumnPartitionedTableGlobalIndexConsistency(t *testing.T) {
 	tk.MustQuery("select count(*) from t_global_idx").Check(testkit.Rows("5"))
 }
 
+// Covers modify-column on LIST COLUMNS and KEY partitioned tables and verifies index-read correctness after type change.
 func TestModifyColumnPartitionedTableListAndKeyPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
+	// LIST COLUMNS partition variant.
 	t.Run("list columns", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
@@ -3246,6 +3253,7 @@ func TestModifyColumnPartitionedTableListAndKeyPartition(t *testing.T) {
 		tk.MustQuery(`select a, b, c from t_list_mod use index(idx_c) where c = 20`).Check(testkit.Rows("2 2 20"))
 	})
 
+	// KEY partition variant.
 	t.Run("key partition", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
