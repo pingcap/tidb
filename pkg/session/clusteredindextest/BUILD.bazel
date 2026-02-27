@@ -9,8 +9,12 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD:pkg/session/clusteredindextest/BUILD.bazel
     race = "on",
     shard_count = 3,
+=======
+    shard_count = 10,
+>>>>>>> bf3590904f3 (variable: fix uint threshold type mismatch in slow log rule matching (#66132)):pkg/sessionctx/variable/tests/slowlog/BUILD.bazel
     deps = [
         "//pkg/config",
         "//pkg/kv",
