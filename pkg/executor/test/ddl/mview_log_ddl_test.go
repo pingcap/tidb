@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -32,6 +33,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
+
+func mustExecInternal(t *testing.T, tk *testkit.TestKit, sql string) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMVMaintenance)
+	rs, err := tk.Session().ExecuteInternal(ctx, sql)
+	require.NoError(t, err)
+	require.Nil(t, rs)
+}
 
 func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -614,4 +622,60 @@ func TestPurgeMaterializedViewLogWritesState(t *testing.T) {
 		Check(testkit.Rows("success 0 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
 		Check(testkit.Rows("2"))
+}
+
+func TestPurgeMaterializedViewLogNextTimeOnlyUpdatesForInternalSQL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_internal_next (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_purge_internal_next (a, b) purge start with date_add(now(), interval 2 hour) next date_add(now(), interval 40 minute)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_internal_next"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set NEXT_TIME = null where MLOG_ID = %d", mlogID))
+
+	// User SQL purge should not update NEXT_TIME.
+	tk.MustExec("purge materialized view log on t_purge_internal_next")
+	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("1"))
+
+	// Internal SQL purge should update NEXT_TIME by evaluating PurgeNext.
+	mustExecInternal(t, tk, "purge materialized view log on t_purge_internal_next")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows("1 1 1"))
+}
+
+func TestPurgeMaterializedViewLogInternalSQLStartWithNoNextSetsNextTimeNull(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_internal_start_only (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_purge_internal_start_only (a, b) purge start with date_add(now(), interval 2 hour) next date_add(now(), interval 40 minute)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_internal_start_only"))
+	require.NoError(t, err)
+	require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+	// Simulate scheduler metadata state: START WITH is set but NEXT is empty.
+	mlogTable.Meta().MaterializedViewLog.PurgeStartWith = "DATE_ADD(NOW(), INTERVAL 2 HOUR)"
+	mlogTable.Meta().MaterializedViewLog.PurgeNext = ""
+	mlogID := mlogTable.Meta().ID
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set NEXT_TIME = UTC_TIMESTAMP() + interval 3 hour where MLOG_ID = %d", mlogID))
+
+	// User SQL purge should keep NEXT_TIME unchanged.
+	tk.MustExec("purge materialized view log on t_purge_internal_start_only")
+	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is not null from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("1"))
+
+	// Internal SQL purge should explicitly set NEXT_TIME = NULL when START WITH exists and NEXT is empty.
+	mustExecInternal(t, tk, "purge materialized view log on t_purge_internal_start_only")
+	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("1"))
 }
