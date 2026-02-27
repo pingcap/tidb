@@ -28,7 +28,7 @@ This file provides guidance to agents working in this repository.
 | RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md`). |
 | Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
 | Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
-| Before finishing | SHOULD run `make bazel_lint_changed`. |
+| Before finishing | MUST run `make bazel_lint_changed` if there are code changes. SHOULD self-review diff quality before finishing. |
 
 ## Pre-flight Checklist
 
@@ -73,7 +73,7 @@ make bazel_bin
 make gogenerate   # optional: regenerate generated code
 go mod tidy       # optional: if go.mod/go.sum changed
 git fetch origin --prune
-make bazel_lint_changed
+make bazel_lint_changed # required for code changes; skip this step if the resolved Bazel target is //:all.
 ```
 
 ## Task -> Validation Matrix
@@ -109,11 +109,15 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 
 ### Go and backend code
 
+- Because TiDB is a complex system, code SHOULD remain maintainable for future readers with basic TiDB familiarity, including readers who are not experts in the specific subsystem/feature.
 - Follow existing package-local conventions first and keep style consistent with nearby files.
+- Code SHOULD be self-documenting through clear naming and structure.
+  - Example: when implementing a well-known algorithm, naming SHOULD be clear enough to make the approach recognizable; if naming alone may not make intent obvious, add a brief comment.
 - Keep changes focused; avoid unrelated refactors, renames, or moves in the same PR.
-- For implementation details, add comments only for non-obvious intent, invariants, concurrency guarantees, SQL/compatibility contracts, or important performance trade-offs; avoid comments that only restate nearby code. Keep exported-symbol doc comments, and prefer semantic constraints over name restatement.
 - Keep error handling actionable and contextual; avoid silently swallowing errors.
 - For new source files (for example `*.go`), include the standard TiDB license header (copyright + Apache 2.0) by copying from a nearby file and updating year if needed.
+- Comments SHOULD explain non-obvious intent, constraints, invariants, concurrency guarantees, SQL/compatibility contracts, or important performance trade-offs, and SHOULD NOT restate what the code already makes clear.
+- Keep exported-symbol doc comments, and prefer semantic constraints over name restatement.
 
 ### Tests and testdata
 
@@ -127,6 +131,7 @@ Typical package unit test command: `go test -run <TestName> -tags=intest,deadloc
 
 - Commands in docs SHOULD be copy-pasteable from repository root unless explicitly scoped.
 - Use explicit placeholders such as `<package_name>`, `<TestName>`, and `<dir>`.
+- Documentation updates SHOULD keep terminology, policy wording, and command conventions consistent across related docs.
 - Keep guidance executable and concrete; avoid ambiguous phrasing.
 - Issues and PRs MUST be written in English (title and description).
 

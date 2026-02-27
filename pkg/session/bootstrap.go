@@ -773,6 +773,7 @@ const (
 	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
 		MLOG_ID bigint NOT NULL,
 		NEXT_TIME datetime DEFAULT NULL,
+		LAST_PURGED_TSO bigint DEFAULT NULL,
 		PRIMARY KEY(MLOG_ID))`
 
 	// CreateTiDBMViewRefreshHistTable is a table to store mview refresh history.
@@ -780,8 +781,8 @@ const (
 		REFRESH_JOB_ID bigint NOT NULL,
 		MVIEW_ID bigint NOT NULL,
 		REFRESH_METHOD varchar(32) NOT NULL,
-		REFRESH_TIME datetime DEFAULT NULL,
-		REFRESH_ENDTIME datetime DEFAULT NULL,
+		REFRESH_TIME datetime(6) DEFAULT NULL,
+		REFRESH_ENDTIME datetime(6) DEFAULT NULL,
 		REFRESH_STATUS varchar(16) DEFAULT NULL,
 		REFRESH_ROWS bigint DEFAULT NULL,
 		REFRESH_READ_TSO bigint DEFAULT NULL,
@@ -793,8 +794,8 @@ const (
 		PURGE_JOB_ID bigint NOT NULL,
 		MLOG_ID bigint NOT NULL,
 		PURGE_METHOD varchar(32) NOT NULL,
-		PURGE_TIME datetime DEFAULT NULL,
-		PURGE_ENDTIME datetime DEFAULT NULL,
+		PURGE_TIME datetime(6) DEFAULT NULL,
+		PURGE_ENDTIME datetime(6) DEFAULT NULL,
 		PURGE_ROWS bigint NOT NULL,
 		PURGE_STATUS varchar(16) DEFAULT NULL,
 		PURGE_FAILED_REASON text DEFAULT NULL,

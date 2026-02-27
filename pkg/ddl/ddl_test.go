@@ -122,6 +122,27 @@ func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
 	require.False(t, changed)
 }
 
+func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
+	compactSQL := func(sql string) string {
+		return strings.Join(strings.Fields(sql), " ")
+	}
+
+	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, nil, false))
+	require.NotContains(t, sqlNoUpdate, "NEXT_TIME")
+	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_TIME)")
+
+	next := "2026-01-02 03:04:05"
+	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &next, true))
+	require.Contains(t, sqlWithValue, "NEXT_TIME")
+	require.Contains(t, sqlWithValue, "VALUES(NEXT_TIME)")
+	require.Contains(t, sqlWithValue, "2026-01-02 03:04:05")
+
+	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, nil, true))
+	require.Contains(t, sqlWithNull, "NEXT_TIME")
+	require.Contains(t, sqlWithNull, "VALUES(NEXT_TIME)")
+	require.Contains(t, sqlWithNull, ", NULL)")
+}
+
 func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *types.FieldType {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")

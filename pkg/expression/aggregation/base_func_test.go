@@ -74,3 +74,35 @@ func TestBaseFunc_InferAggRetType(t *testing.T) {
 		}
 	}
 }
+
+func TestBaseFunc_InferMaxMinCountRetType(t *testing.T) {
+	ctx := mock.NewContext()
+	retType := types.NewFieldType(mysql.TypeLonglong)
+	retType.SetFlen(21)
+	retType.SetDecimal(0)
+	retType.AddFlag(mysql.NotNullFlag)
+	types.SetBinChsClnFlag(retType)
+
+	inputTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeBit),
+	}
+	funcNames := []string{
+		ast.AggFuncMaxCount,
+		ast.AggFuncMinCount,
+	}
+
+	for _, inputType := range inputTypes {
+		col := &expression.Column{
+			UniqueID: 0,
+			RetType:  inputType,
+		}
+		for _, name := range funcNames {
+			desc, err := newBaseFuncDesc(ctx, name, []expression.Expression{col})
+			require.NoError(t, err)
+			err = desc.TypeInfer(ctx)
+			require.NoError(t, err)
+			require.Equal(t, retType, desc.RetTp)
+		}
+	}
+}

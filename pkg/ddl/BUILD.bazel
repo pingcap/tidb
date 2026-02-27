@@ -51,6 +51,7 @@ go_library(
         "mock.go",
         "modify_column.go",
         "multi_schema_change.go",
+        "mview_schedule_expr.go",
         "options.go",
         "owner_mgr.go",
         "partition.go",

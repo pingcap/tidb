@@ -148,6 +148,18 @@ func DeserializeTypesDuration(posAndBuf *PosAndBuf) types.Duration {
 	return retVal
 }
 
+// DeserializeVectorFloat32 deserializes VectorFloat32 type.
+func DeserializeVectorFloat32(posAndBuf *PosAndBuf) types.VectorFloat32 {
+	buf := deserializeBuffer(posAndBuf)
+	tmp := make([]byte, len(buf))
+	copy(tmp, buf)
+	vec, _, err := types.ZeroCopyDeserializeVectorFloat32(tmp)
+	if err != nil {
+		panic(err)
+	}
+	return vec
+}
+
 // DeserializeJSONTypeCode deserializes JSONTypeCode type
 func DeserializeJSONTypeCode(posAndBuf *PosAndBuf) types.JSONTypeCode {
 	retVal := *(*types.JSONTypeCode)(unsafe.Pointer(&posAndBuf.Buf[posAndBuf.Pos]))

@@ -79,6 +79,18 @@ var (
 	_ AggFunc = (*maxMin4VectorFloat32)(nil)
 	_ AggFunc = (*maxMin4Enum)(nil)
 	_ AggFunc = (*maxMin4Set)(nil)
+	_ AggFunc = (*maxMinCount4Int)(nil)
+	_ AggFunc = (*maxMinCount4Uint)(nil)
+	_ AggFunc = (*maxMinCount4Float32)(nil)
+	_ AggFunc = (*maxMinCount4Float64)(nil)
+	_ AggFunc = (*maxMinCount4Decimal)(nil)
+	_ AggFunc = (*maxMinCount4String)(nil)
+	_ AggFunc = (*maxMinCount4Time)(nil)
+	_ AggFunc = (*maxMinCount4Duration)(nil)
+	_ AggFunc = (*maxMinCount4JSON)(nil)
+	_ AggFunc = (*maxMinCount4VectorFloat32)(nil)
+	_ AggFunc = (*maxMinCount4Enum)(nil)
+	_ AggFunc = (*maxMinCount4Set)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
