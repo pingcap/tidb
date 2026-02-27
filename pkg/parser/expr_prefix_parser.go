@@ -191,9 +191,17 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 			p.next() // consume INTERVAL
 			intervalExpr := p.parseExpression(precNone)
 			unit := p.parseTimeUnit()
+			if unit == nil {
+				return nil
+			}
 			// Expect '+' then date expression
-			p.expect('+')
+			if _, ok := p.expect('+'); !ok {
+				return nil
+			}
 			dateExpr := p.parseExpression(precNone)
+			if dateExpr == nil {
+				return nil
+			}
 			return &ast.FuncCallExpr{
 				FnName: ast.NewCIStr("DATE_ADD"),
 				Args:   []ast.ExprNode{dateExpr, intervalExpr, unit},

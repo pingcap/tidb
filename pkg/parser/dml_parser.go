@@ -372,6 +372,9 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 		stmt.IsMultiTable = true
 		stmt.BeforeFrom = true
 		stmt.Tables = p.parseDeleteTableList()
+		if stmt.Tables == nil {
+			return nil
+		}
 	}
 
 	p.expect(from)
@@ -503,7 +506,9 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	// Clear wildcard in Tables (targets) to ensure AST normalization.
 	if stmt.Tables != nil {
 		for _, t := range stmt.Tables.Tables {
-			t.HasWildcard = false
+			if t != nil {
+				t.HasWildcard = false
+			}
 		}
 	}
 
@@ -574,6 +579,9 @@ func (p *HandParser) parseDeleteTableList() *ast.DeleteTableList {
 	list := Alloc[ast.DeleteTableList](p.arena)
 	for {
 		tn := p.parseTableName()
+		if tn == nil {
+			return nil
+		}
 		// .*.
 		if p.peek().Tp == '.' && p.peekN(1).Tp == '*' {
 			p.next() // .

@@ -368,9 +368,23 @@ func (p *HandParser) toUint64Value(expr ast.ExprNode, errTok Token) ast.ExprNode
 func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode {
 	res := p.parseSetOprRest(first, 0)
 
-	// Parse optional ORDER BY and LIMIT applying to the result of the set operation (or the single statement).
-	// This covers cases like `(SELECT ...) UNION (SELECT ...) ORDER BY ... LIMIT ...`
-	// or `(SELECT ...) LIMIT ...` if `first` was a parenthesized subquery.
+	// Outer ORDER BY / LIMIT should only be parsed when:
+	// 1. A set operation was found (res != first), e.g. SELECT ... UNION SELECT ... ORDER BY ...
+	// 2. The input was a parenthesized query, e.g. (SELECT ...) ORDER BY ...
+	// For a plain SELECT that already parsed its own ORDER BY / LIMIT in parseSelectStmt,
+	// we must NOT re-parse here (that would accept invalid SQL like "SELECT 1 ORDER BY a ORDER BY b").
+	if res == first {
+		isInBraces := false
+		if s, ok := first.(*ast.SetOprStmt); ok && s.IsInBraces {
+			isInBraces = true
+		}
+		if s, ok := first.(*ast.SelectStmt); ok && s.IsInBraces {
+			isInBraces = true
+		}
+		if !isInBraces {
+			return res
+		}
+	}
 
 	hasOuterOrderBy := p.peek().Tp == order
 	pt := p.peek().Tp
