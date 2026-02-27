@@ -75,8 +75,12 @@ func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
 	// The scanner may tokenize WINDOW as window or identifier.
 	// Disambiguate: WINDOW clause is always `WINDOW name AS (...)`,
 	// so check if the next token after WINDOW is an identifier followed by AS.
-	if p.supportWindowFunc && (p.peek().Tp == window || (p.peek().IsKeyword("WINDOW") && p.peekN(1).Tp == identifier && p.peekN(2).Tp == as)) {
-		stmt.WindowSpecs = p.parseWindowClause()
+	if p.supportWindowFunc {
+		isWindowClause := p.peek().Tp == window ||
+			(p.peek().IsKeyword("WINDOW") && p.peekN(1).Tp == identifier && p.peekN(2).Tp == as)
+		if isWindowClause {
+			stmt.WindowSpecs = p.parseWindowClause()
+		}
 	}
 
 	// Optional ORDER BY clause.
