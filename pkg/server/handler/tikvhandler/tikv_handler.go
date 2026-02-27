@@ -2008,7 +2008,6 @@ func (h *TestHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-
 type rowKeyDeleteResponse struct {
 	Key string `json:"key"`
 }
