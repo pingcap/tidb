@@ -69,11 +69,24 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 		stmt.AuthTokenOrTLSOptions = p.parseTLSOptions()
 	}
 
-	// Optional WITH GRANT OPTION
+	// Optional WITH GRANT OPTION (or WITH MAX_QUERIES_PER_HOUR etc. which are parsed but ignored)
 	if _, ok := p.accept(with); ok {
 		if _, ok := p.accept(grant); ok {
 			p.expect(option)
 			stmt.WithGrant = true
+		} else {
+			// WITH MAX_QUERIES_PER_HOUR NUM, MAX_UPDATES_PER_HOUR NUM, etc.
+			// MySQL compatibility: parsed but ignored
+			for {
+				pk := p.peek()
+				if pk.IsKeyword("MAX_QUERIES_PER_HOUR") || pk.IsKeyword("MAX_UPDATES_PER_HOUR") ||
+					pk.IsKeyword("MAX_CONNECTIONS_PER_HOUR") || pk.IsKeyword("MAX_USER_CONNECTIONS") {
+					p.next()
+					p.next() // consume the number
+				} else {
+					break
+				}
+			}
 		}
 	}
 

@@ -234,8 +234,9 @@ func (p *HandParser) parseRestartStmt() ast.StmtNode {
 func (p *HandParser) parseHelpStmt() ast.StmtNode {
 	stmt := Alloc[ast.HelpStmt](p.arena)
 	p.expect(help)
-	tok := p.next()
-	stmt.Topic = tok.Lit
+	if tok, ok := p.expect(stringLit); ok {
+		stmt.Topic = tok.Lit
+	}
 	return stmt
 }
 

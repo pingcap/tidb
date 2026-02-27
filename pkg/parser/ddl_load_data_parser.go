@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 )
 
 // parseLoadDataStmt parses LOAD DATA statements.
@@ -37,9 +38,6 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 		stmt.FileLocRef = ast.FileLocServerOrRemote
 	}
 
-	// [REPLACE | IGNORE] (before INFILE)
-	stmt.OnDuplicate = p.acceptOnDuplicateOpt()
-
 	p.expect(infile)
 	if tok, ok := p.expect(stringLit); ok {
 		stmt.Path = tok.Lit
@@ -52,10 +50,8 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 		}
 	}
 
-	// [REPLACE | IGNORE] (after INFILE path, only if not already set)
-	if stmt.OnDuplicate == ast.OnDuplicateKeyHandlingError {
-		stmt.OnDuplicate = p.acceptOnDuplicateOpt()
-	}
+	// DuplicateOpt: [REPLACE | IGNORE]
+	stmt.OnDuplicate = p.acceptOnDuplicateOpt()
 
 	// If LOCAL specified and no modifier, default is IGNORE (logic from parser.y)
 	if stmt.FileLocRef == ast.FileLocClient && stmt.OnDuplicate == ast.OnDuplicateKeyHandlingError {
@@ -66,11 +62,16 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	p.expect(tableKwd)
 	stmt.Table = p.parseTableName()
 
-	// CharsetOpt
+	// CharsetOpt: CHARACTER SET charset_name
 	if _, ok := p.acceptKeyword(character, "CHARACTER"); ok {
 		p.expect(set)
 		if tok, ok := p.expectAny(stringLit, identifier); ok {
-			stmt.Charset = sptr(tok.Lit)
+			cs, err := charset.GetCharsetInfo(tok.Lit)
+			if err != nil || cs.Name == "" {
+				p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
+				return nil
+			}
+			stmt.Charset = sptr(cs.Name)
 		}
 	}
 
@@ -128,6 +129,12 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 			}
 		}
 		p.expect(')')
+		// Build Columns list from column names (excluding user variables)
+		for _, v := range stmt.ColumnsAndUserVars {
+			if v.ColumnName != nil {
+				stmt.Columns = append(stmt.Columns, v.ColumnName)
+			}
+		}
 	}
 
 	// SET assignments

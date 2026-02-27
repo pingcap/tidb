@@ -107,7 +107,7 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 			stmt.OnDuplicate = ast.OnDuplicateKeyHandlingReplace
 		}
 
-		// [AS] SELECT|TABLE|VALUES Stmt | (SELECT ...)
+		// [AS] SELECT|TABLE|VALUES Stmt | (SELECT ...) | WITH CTE SELECT
 		p.accept(as) // optional AS
 		if tok := p.peek(); tok.Tp == selectKwd {
 			selStmt := p.parseSelectStmt()
@@ -119,6 +119,13 @@ func (p *HandParser) parseCreateTableStmt() ast.StmtNode {
 			sub := p.parseSubquery()
 			if sub != nil {
 				stmt.Select = p.maybeParseUnion(sub)
+			}
+		} else if tok.Tp == with {
+			// WITH CTE AS (...) SELECT ...
+			if withStmt := p.parseWithStmt(); withStmt != nil {
+				if rs, ok := withStmt.(ast.ResultSetNode); ok {
+					stmt.Select = rs
+				}
 			}
 		} else if tok.Tp == tableKwd {
 			if tblStmt := p.parseTableStmt(); tblStmt != nil {

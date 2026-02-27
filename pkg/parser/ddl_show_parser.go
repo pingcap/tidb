@@ -121,6 +121,24 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		}
 		return p.showSyntaxError()
 
+	case builtinCount:
+		// SHOW COUNT(*) WARNINGS | SHOW COUNT(*) ERRORS
+		p.next()
+		p.expect('(')
+		p.expect('*')
+		p.expect(')')
+		if _, ok := p.accept(warnings); ok {
+			stmt.Tp = ast.ShowWarnings
+			stmt.CountWarningsOrErrors = true
+		} else if p.peek().IsKeyword("ERRORS") {
+			p.next()
+			stmt.Tp = ast.ShowErrors
+			stmt.CountWarningsOrErrors = true
+		} else {
+			return p.showSyntaxError()
+		}
+		return stmt
+
 	case variables, status, warnings:
 		switch p.next().Tp {
 		case variables:
