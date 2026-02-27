@@ -118,17 +118,16 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 				valid = true
 			}
 
-			if valid {
-				if v != 4 {
-					p.errs = append(p.errs, ErrInvalidYearColumnLength.GenWithStackByArgs())
-				}
-				tp.SetFlen(int(v))
-				p.next()
-			} else {
+			if !valid {
 				// Non-integer inside parens (e.g. "-4"): report error at this token's position.
 				p.syntaxErrorAt(lenTok)
 				return tp
 			}
+			if v != 4 {
+				p.errs = append(p.errs, ErrInvalidYearColumnLength.GenWithStackByArgs())
+			}
+			tp.SetFlen(int(v))
+			p.next()
 			p.expect(')')
 		}
 		// Discard options for YEAR type to match yacc parser behavior
