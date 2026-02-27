@@ -443,15 +443,12 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	}
 	if from.tp != nil {
 		b.tp = from.tp.DeepCopy()
-	} else {
-		b.tp = nil
 	}
+
 	b.pbCode = from.pbCode
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
 		b.ctor = from.ctor.Clone()
-	} else {
-		b.ctor = nil
 	}
 }
 
