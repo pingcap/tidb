@@ -30,7 +30,9 @@ func (p *HandParser) parseCreatePlacementPolicyStmt() ast.StmtNode {
 
 	stmt.IfNotExists = p.acceptIfNotExists()
 
-	stmt.PolicyName = ast.NewCIStr(p.next().Lit)
+	if tok, ok := p.expectIdentLike(); ok {
+		stmt.PolicyName = ast.NewCIStr(tok.Lit)
+	}
 
 	for {
 		opt := p.parsePlacementOption()
@@ -52,7 +54,9 @@ func (p *HandParser) parseAlterPlacementPolicyStmt() ast.StmtNode {
 
 	stmt.IfExists = p.acceptIfExists()
 
-	stmt.PolicyName = ast.NewCIStr(p.next().Lit)
+	if tok, ok := p.expectIdentLike(); ok {
+		stmt.PolicyName = ast.NewCIStr(tok.Lit)
+	}
 
 	for {
 		opt := p.parsePlacementOption()
@@ -74,7 +78,9 @@ func (p *HandParser) parseDropPlacementPolicyStmt() ast.StmtNode {
 
 	stmt.IfExists = p.acceptIfExists()
 
-	stmt.PolicyName = ast.NewCIStr(p.next().Lit)
+	if tok, ok := p.expectIdentLike(); ok {
+		stmt.PolicyName = ast.NewCIStr(tok.Lit)
+	}
 	return stmt
 }
 
