@@ -166,7 +166,6 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("create table MemTracker4DeleteExec2 (id int, a int, b int, index idx_a(a), index idx_b(b))")
 

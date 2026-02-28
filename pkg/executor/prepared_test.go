@@ -356,7 +356,6 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -769,7 +768,6 @@ func TestPlanCacheOperators(t *testing.T) {
 func TestIssue29101(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec(`use test`)
