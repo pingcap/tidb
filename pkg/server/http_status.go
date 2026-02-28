@@ -526,6 +526,10 @@ func (s *Server) startHTTPServer() {
 		})
 
 		router.Handle("/test/{mod}/{op}", tikvhandler.NewTestHandler(tikvHandlerTool, 0))
+		// used to delete so specific row or index KEY directly to mock the
+		// dangling index or dangling record for test.
+		router.Handle("/test/delete/rowkey/{db}/{table}", tikvhandler.NewDeleteKeyHandler(tikvHandlerTool)).Name("DeleteRowKey")
+		router.Handle("/test/delete/indexkey/{db}/{table}/{index}", tikvhandler.NewDeleteKeyHandler(tikvHandlerTool)).Name("DeleteIndexKey")
 	})
 
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
