@@ -250,6 +250,28 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
+func TestShowCreateMaterializedView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_show_mv (a int, b int not null)")
+	tk.MustExec("create materialized view log on t_show_mv (a, b) purge immediate")
+	tk.MustExec("create materialized view mv_show_mv (a, s, cnt) comment = 'c1' refresh fast next now() shard_row_id_bits = 2 pre_split_regions = 2 as select a, sum(b), count(1) from t_show_mv group by a")
+
+	rows := tk.MustQuery("show create materialized view mv_show_mv").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "mv_show_mv", rows[0][0])
+	showCreate, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW `mv_show_mv` (`a`, `s`, `cnt`)")
+	require.Contains(t, showCreate, "COMMENT = 'c1'")
+	require.Contains(t, showCreate, "REFRESH FAST NEXT NOW()")
+	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
+	require.Contains(t, showCreate, "AS SELECT `a`,SUM(`b`),COUNT(1) FROM `test`.`t_show_mv` GROUP BY `a`")
+	require.Equal(t, "utf8mb4", rows[0][2])
+	require.Equal(t, "utf8mb4_bin", rows[0][3])
+}
+
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

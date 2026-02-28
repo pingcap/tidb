@@ -3003,6 +3003,7 @@ const (
 	ShowCollation
 	ShowCreateTable
 	ShowCreateView
+	ShowCreateMaterializedView
 	ShowCreateUser
 	ShowCreateSequence
 	ShowCreatePlacementPolicy
@@ -3161,6 +3162,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE VIEW ")
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.VIEW")
+		}
+	case ShowCreateMaterializedView:
+		ctx.WriteKeyWord("CREATE MATERIALIZED VIEW ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW")
 		}
 	case ShowCreateDatabase:
 		ctx.WriteKeyWord("CREATE DATABASE ")
@@ -3519,7 +3525,7 @@ func (n *ShowStmt) NeedLimitRSRow() bool {
 	default:
 		// There are five classes of Show STMT.
 		// 1) The STMT Only return one row:
-		//    ShowCreateTable, ShowCreateView, ShowCreateUser, ShowCreateDatabase, ShowMasterStatus,
+		//    ShowCreateTable, ShowCreateView, ShowCreateMaterializedView, ShowCreateUser, ShowCreateDatabase, ShowMasterStatus,
 		//
 		// 2) The STMT is a MySQL syntax extend, so just keep it behavior as before:
 		//    ShowCreateSequence, ShowCreatePlacementPolicy, ShowConfig, ShowStatsExtended,
