@@ -1859,11 +1859,12 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 }
 
 // BuildPartitionTableScanFromInfos build tipb.PartitonTableScan with *model.TableInfo and *model.ColumnInfo.
+// Currently it's only used for TiFlash.
 func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo, fastScan bool) *tipb.PartitionTableScan {
 	pkColIDs := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
-		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false, false),
+		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false, true),
 		PrimaryColumnIds: pkColIDs,
 		IsFastScan:       &fastScan,
 	}
