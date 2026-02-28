@@ -250,7 +250,9 @@ func (p *HandParser) parseFlushStmt() ast.StmtNode {
 	return stmt
 }
 
-// parseCalibrateResourceStmt parses: CALIBRATE RESOURCE [WORKLOAD workload_type] [options...]
+// parseCalibrateResourceStmt parses: CALIBRATE RESOURCE [WORKLOAD workload_type | dynamic_options]
+// yacc grammar: CalibrateOption is either empty, DynamicCalibrateOptionList, or
+// CalibrateResourceWorkloadOption — these are mutually exclusive alternatives.
 func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 	p.next() // consume CALIBRATE
 	// Expect RESOURCE
@@ -260,9 +262,34 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 
 	stmt := Alloc[ast.CalibrateResourceStmt](p.arena)
 
-	// Parse options: WORKLOAD, START_TIME, END_TIME, DURATION
+	pk := p.peek()
+
+	// WORKLOAD option (static calibration) — mutually exclusive with dynamic options.
+	if pk.Tp == workload || pk.IsKeyword("WORKLOAD") {
+		p.next()
+		wlTok := p.next()
+		switch strings.ToUpper(wlTok.Lit) {
+		case "TPCC":
+			stmt.Tp = ast.TPCC
+		case "OLTP_READ_WRITE":
+			stmt.Tp = ast.OLTPREADWRITE
+		case "OLTP_READ_ONLY":
+			stmt.Tp = ast.OLTPREADONLY
+		case "OLTP_WRITE_ONLY":
+			stmt.Tp = ast.OLTPWRITEONLY
+		case "TPCH_10":
+			stmt.Tp = ast.TPCH10
+		default:
+			p.error(wlTok.Offset, "unknown CALIBRATE workload: %s", wlTok.Lit)
+			return nil
+		}
+		return stmt
+	}
+
+	// Dynamic calibration options: START_TIME, END_TIME, DURATION
+	// yacc checks for duplicate options and rejects them.
 	for {
-		pk := p.peek()
+		pk = p.peek()
 		if pk.Tp == ';' || pk.Tp == EOF {
 			break
 		}
@@ -272,26 +299,7 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 			continue
 		}
 
-		// Match by token type (for keyword tokens) or by string (for identifiers)
 		switch {
-		case pk.Tp == workload || pk.IsKeyword("WORKLOAD"):
-			p.next()
-			wlTok := p.next()
-			switch strings.ToUpper(wlTok.Lit) {
-			case "TPCC":
-				stmt.Tp = ast.TPCC
-			case "OLTP_READ_WRITE":
-				stmt.Tp = ast.OLTPREADWRITE
-			case "OLTP_READ_ONLY":
-				stmt.Tp = ast.OLTPREADONLY
-			case "OLTP_WRITE_ONLY":
-				stmt.Tp = ast.OLTPWRITEONLY
-			case "TPCH_10":
-				stmt.Tp = ast.TPCH10
-			default:
-				p.error(wlTok.Offset, "unknown CALIBRATE workload: %s", wlTok.Lit)
-				return nil
-			}
 		case pk.Tp == startTime || pk.IsKeyword("START_TIME") ||
 			pk.Tp == endTime || pk.IsKeyword("END_TIME"):
 			var optTp ast.DynamicCalibrateType
@@ -299,6 +307,13 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 				optTp = ast.CalibrateStartTime
 			} else {
 				optTp = ast.CalibrateEndTime
+			}
+			// Duplicate check (matching yacc: "Dupliated options specified").
+			for _, existing := range stmt.DynamicCalibrateResourceOptionList {
+				if existing.Tp == optTp {
+					p.errs = append(p.errs, ErrParse.GenWithStackByArgs("Dupliated options specified"))
+					return nil
+				}
 			}
 			p.next()
 			p.acceptEqOrAssign()
@@ -310,6 +325,13 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 			}
 			stmt.DynamicCalibrateResourceOptionList = append(stmt.DynamicCalibrateResourceOptionList, opt)
 		case pk.IsKeyword("DURATION"):
+			// Duplicate check.
+			for _, existing := range stmt.DynamicCalibrateResourceOptionList {
+				if existing.Tp == ast.CalibrateDuration {
+					p.errs = append(p.errs, ErrParse.GenWithStackByArgs("Dupliated options specified"))
+					return nil
+				}
+			}
 			p.next()
 			p.acceptEqOrAssign()
 			opt := Alloc[ast.DynamicCalibrateResourceOption](p.arena)
@@ -331,7 +353,7 @@ func (p *HandParser) parseCalibrateResourceStmt() ast.StmtNode {
 			}
 			stmt.DynamicCalibrateResourceOptionList = append(stmt.DynamicCalibrateResourceOptionList, opt)
 		default:
-			// Unknown option, stop parsing options
+			// No more recognized options
 			return stmt
 		}
 	}
