@@ -196,6 +196,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateUser(ctx)
 	case ast.ShowCreateView:
 		return e.fetchShowCreateView()
+	case ast.ShowCreateMaterializedView:
+		return e.fetchShowCreateMaterializedView()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
 	case ast.ShowCreatePlacementPolicy:
@@ -1564,6 +1566,27 @@ func (e *ShowExec) fetchShowCreateView() error {
 	return nil
 }
 
+func (e *ShowExec) fetchShowCreateMaterializedView() error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if tb.Meta().MaterializedView == nil {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "MATERIALIZED VIEW")
+	}
+
+	var buf bytes.Buffer
+	fetchShowCreateTable4MaterializedView(e.Ctx(), tb.Meta(), &buf)
+	e.appendRow([]any{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
+	return nil
+}
+
 func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
@@ -1581,6 +1604,53 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 		}
 	}
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
+}
+
+func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	mvInfo := tb.MaterializedView
+	if mvInfo == nil {
+		return
+	}
+
+	fmt.Fprintf(buf, "CREATE MATERIALIZED VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
+	needComma := false
+	for _, col := range tb.Cols() {
+		if col == nil || col.Hidden {
+			continue
+		}
+		if needComma {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(stringutil.Escape(col.Name.O, sqlMode))
+		needComma = true
+	}
+	buf.WriteString(")")
+	if len(tb.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT = '%s'", format.OutputFormat(tb.Comment))
+	}
+
+	refreshMethod := mvInfo.RefreshMethod
+	if refreshMethod == "" {
+		refreshMethod = "FAST"
+	}
+	fmt.Fprintf(buf, " REFRESH %s", refreshMethod)
+	if strings.EqualFold(refreshMethod, "FAST") {
+		if mvInfo.RefreshStartWith != "" {
+			fmt.Fprintf(buf, " START WITH %s", mvInfo.RefreshStartWith)
+		}
+		if mvInfo.RefreshNext != "" {
+			fmt.Fprintf(buf, " NEXT %s", mvInfo.RefreshNext)
+		}
+	}
+
+	if tb.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", tb.ShardRowIDBits)
+	}
+	if tb.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", tb.PreSplitRegions)
+	}
+	fmt.Fprintf(buf, " AS %s", mvInfo.SQLContent)
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
