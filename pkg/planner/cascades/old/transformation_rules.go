@@ -871,11 +871,15 @@ func (*pushDownJoin) predicatePushDown(
 		tempCond = append(tempCond, join.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), tempCond)
+		crossConds := extractCrossJoinCondsForCascades(tempCond, leftSchema, rightSchema)
 		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), nil, tempCond...)
 		// Return table dual when filter is constant false or null.
 		dual := logicalop.Conds2TableDual(join, tempCond)
 		if dual != nil {
 			return leftCond, rightCond, remainCond, dual
+		}
+		if len(crossConds) > 0 {
+			tempCond = expression.RemoveDupExprs(append(tempCond, crossConds...))
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(tempCond, leftSchema, rightSchema, true, true)
 		join.LeftConditions = nil
@@ -945,6 +949,33 @@ func (*pushDownJoin) predicatePushDown(
 	rightCond = expression.RemoveDupExprs(rightCond)
 
 	return
+}
+
+func extractCrossJoinCondsForCascades(conds []expression.Expression, leftSchema, rightSchema *expression.Schema) []expression.Expression {
+	if leftSchema == nil || rightSchema == nil || len(conds) == 0 {
+		return nil
+	}
+	crossConds := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		cols := expression.ExtractColumns(cond)
+		if len(cols) == 0 {
+			continue
+		}
+		fromLeft, fromRight := false, false
+		for _, col := range cols {
+			if !fromLeft && leftSchema.Contains(col) {
+				fromLeft = true
+			}
+			if !fromRight && rightSchema.Contains(col) {
+				fromRight = true
+			}
+			if fromLeft && fromRight {
+				crossConds = append(crossConds, cond)
+				break
+			}
+		}
+	}
+	return crossConds
 }
 
 // PushSelDownJoin pushes Selection through Join.
