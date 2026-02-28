@@ -553,6 +553,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			e.flushPartitionSample(statsHandle, results.TableID.PartitionID)
 		}
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
+		failpoint.InjectCall("analyzeBeforeSendToSaveResults")
 		saveResultsCh <- results
 	}
 	close(saveResultsCh)

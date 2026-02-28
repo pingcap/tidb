@@ -39,18 +39,18 @@ var planPeplayerTables = map[string]map[string]struct{}{
 
 var statsTables = map[string]map[string]struct{}{
 	"mysql": {
-		"stats_buckets":           {},
-		"stats_extended":          {},
-		"stats_feedback":          {},
-		"stats_fm_sketch":         {},
-		"stats_global_merge_data": {},
-		"stats_histograms":        {},
-		"stats_history":           {},
-		"stats_meta":              {},
-		"stats_meta_history":      {},
-		"stats_table_locked":      {},
-		"stats_top_n":             {},
-		"column_stats_usage":      {},
+		"stats_buckets":      {},
+		"stats_extended":     {},
+		"stats_feedback":     {},
+		"stats_fm_sketch":    {},
+		"stats_table_data":   {},
+		"stats_histograms":   {},
+		"stats_history":      {},
+		"stats_meta":         {},
+		"stats_meta_history": {},
+		"stats_table_locked": {},
+		"stats_top_n":        {},
+		"column_stats_usage": {},
 	},
 }
 

@@ -154,8 +154,8 @@ const (
 	SysDatabaseID = ReservedGlobalIDUpperBound - 60
 	// TiDBSoftDeleteTableStatusTableID is the table ID of `tidb_softdelete_table_status`.
 	TiDBSoftDeleteTableStatusTableID = ReservedGlobalIDUpperBound - 61
-	// StatsGlobalMergeDataTableID is the table ID of `stats_global_merge_data`.
-	StatsGlobalMergeDataTableID = ReservedGlobalIDUpperBound - 62
+	// StatsTableDataTableID is the table ID of `stats_table_data`.
+	StatsTableDataTableID = ReservedGlobalIDUpperBound - 62
 )
 
 // IsReservedID checks if the given ID is a reserved global ID.

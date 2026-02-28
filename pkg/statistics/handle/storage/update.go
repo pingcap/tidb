@@ -270,7 +270,7 @@ func removeExtendedStatsItem(statsCache types.StatsCache,
 
 var changeGlobalStatsTables = []string{
 	"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets",
-	"stats_histograms", "column_stats_usage", "stats_global_merge_data",
+	"stats_histograms", "column_stats_usage", "stats_table_data",
 }
 
 // ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
