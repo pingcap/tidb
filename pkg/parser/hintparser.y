@@ -128,6 +128,7 @@ import (
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 	hintNoDecorrelate         "NO_DECORRELATE"
+	hintIndexJoinFirst        "INDEX_JOIN_FIRST"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -755,6 +756,7 @@ NullaryHintName:
 |	"STRAIGHT_JOIN"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"INDEX_JOIN_FIRST"
 
 HintQueryType:
 	"OLAP"
@@ -841,6 +843,7 @@ Identifier:
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"INDEX_JOIN_FIRST"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"
