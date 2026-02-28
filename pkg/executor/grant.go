@@ -268,6 +268,11 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 	}
 
+	// Check if granting INSERT/UPDATE/DELETE to users with special roles
+	if err := e.checkDataPrivGrantToSpecialRoles(internalCtx, internalSession); err != nil {
+		return err
+	}
+
 	// Grant for each user
 	for _, user := range e.Users {
 		// If there is no privilege entry in corresponding table, insert a new one.

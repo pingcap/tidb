@@ -2135,12 +2135,21 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 		}
 	}
 
+	if err := checkSpecialRoleGrantingByRoot(e.Ctx(), s.Roles); err != nil {
+		return err
+	}
+
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
 	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
 	sqlExecutor := restrictedCtx.GetSQLExecutor()
+
+	err = checkExclusiveRoleGranting(internalCtx, sqlExecutor, s.Roles, s.Users)
+	if err != nil {
+		return err
+	}
 
 	// begin a transaction to insert role graph edges.
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
