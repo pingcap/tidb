@@ -82,6 +82,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
@@ -1013,10 +1014,17 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	baseExec := exec.NewBaseExecutor(b.ctx, nil, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
-	sourceStmt := tables.MLogSourceInsert
+	op, sourceStmt := "INSERT", tables.MLogSourceInsert
 	if v.IsReplace {
-		sourceStmt = tables.MLogSourceReplace
+		op, sourceStmt = "REPLACE", tables.MLogSourceReplace
 	}
+	tblInfo := v.Table.Meta()
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.ctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tblInfo, "", op))
+		return true
+	})
 	insertTable := b.wrapTableWithMLogIfExists(v.Table, sourceStmt)
 	if b.err != nil {
 		return nil
@@ -1066,6 +1074,12 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.ctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "IMPORT"))
+		return true
+	})
 	if !tbl.Meta().IsBaseTable() {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "IMPORT")
 		return nil
@@ -1105,6 +1119,12 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.ctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "LOAD"))
+		return true
+	})
 	if !tbl.Meta().IsBaseTable() {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
 		return nil
@@ -2802,6 +2822,12 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 				}
 			}
 		}
+		// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+		intest.AssertFunc(func() bool {
+			sv := b.ctx.GetSessionVars()
+			intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "UPDATE"))
+			return true
+		})
 		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceUpdate)
 		if b.err != nil {
 			return nil
@@ -2873,6 +2899,13 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
+		// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+		intest.AssertFunc(func() bool {
+			sv := b.ctx.GetSessionVars()
+			err := plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "DELETE")
+			intest.AssertNoError(err)
+			return true
+		})
 		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceDelete)
 		if b.err != nil {
 			return nil

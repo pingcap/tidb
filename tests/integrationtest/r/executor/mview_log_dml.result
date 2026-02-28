@@ -7,18 +7,21 @@ insert into t values (1,10,100,1000);
 select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 id	uk	v	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
 1	10	100	I	1
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, uk, v);
 update t set v=101 where id=1;
 select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 id	uk	v	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
 1	10	100	U	-1
 1	10	101	U	1
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, uk, v);
 update t set extra=2000 where id=1;
 select count(*) from `$mlog$t`;
 count(*)
 0
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, uk, v);
 delete from t where id=1;
 select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 id	uk	v	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
@@ -67,7 +70,8 @@ select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id
 id	uk	v	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
 1	10	100	U	-1
 1	10	101	U	1
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, uk, v);
 insert into t values (1, 10, 200) on duplicate key update id = 3, v = values(v);
 select id, uk, v from t order by id;
 id	uk	v
@@ -81,7 +85,8 @@ drop table if exists `$mlog$t`;
 create table t (id int primary key, tracked int, untracked int);
 create materialized view log on t (id, tracked);
 insert into t values (1, 10, 100);
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, tracked);
 alter table t add column c_new int default 0;
 update t set untracked = 101 where id = 1;
 select count(*) from `$mlog$t`;
@@ -133,4 +138,82 @@ _tidb_rowid	a	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
 3	2	U	1
 4	2	I	1
 5	3	I	1
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int);
+create materialized view log on t (a, b);
+insert into `$mlog$t` values (1, 2, 'I', 1);
+Error 1288 (HY000): The target table $mlog$t of the INSERT is not updatable
+replace into `$mlog$t` values (1, 2, 'I', 1);
+Error 1288 (HY000): The target table $mlog$t of the REPLACE is not updatable
+update `$mlog$t` set a=1;
+Error 1288 (HY000): The target table $mlog$t of the UPDATE is not updatable
+delete from `$mlog$t`;
+Error 1288 (HY000): The target table $mlog$t of the DELETE is not updatable
+select * from `$mlog$t`;
+a	b	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int not null);
+create materialized view log on t (a, b);
+create materialized view v (a, s, cnt) as select a, sum(b), count(1) from t group by a;
+insert into v values (1, 10, 1);
+Error 1288 (HY000): The target table v of the INSERT is not updatable
+replace into v values (1, 10, 1);
+Error 1288 (HY000): The target table v of the REPLACE is not updatable
+update v set s=1;
+Error 1288 (HY000): The target table v of the UPDATE is not updatable
+delete from v;
+Error 1288 (HY000): The target table v of the DELETE is not updatable
+drop materialized view v;
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int);
+create materialized view log on t (a, b);
+prepare stmt_ins from 'insert into `$mlog$t` values (?, ?, ?, ?)';
+Error 1288 (HY000): The target table $mlog$t of the INSERT is not updatable
+prepare stmt_upd from 'update `$mlog$t` set a=?';
+Error 1288 (HY000): The target table $mlog$t of the UPDATE is not updatable
+prepare stmt_del from 'delete from `$mlog$t` where a=?';
+Error 1288 (HY000): The target table $mlog$t of the DELETE is not updatable
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int not null);
+create materialized view log on t (a, b);
+create materialized view v (a, s, cnt) as select a, sum(b), count(1) from t group by a;
+prepare stmt_ins from 'insert into v values (?, ?, ?)';
+Error 1288 (HY000): The target table v of the INSERT is not updatable
+prepare stmt_upd from 'update v set s=? where a=?';
+Error 1288 (HY000): The target table v of the UPDATE is not updatable
+prepare stmt_del from 'delete from v where a=?';
+Error 1288 (HY000): The target table v of the DELETE is not updatable
+drop materialized view v;
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int);
+create materialized view log on t (a, b);
+load data local infile '/nonexistent.csv' into table `$mlog$t` fields terminated by ',';
+Error 1288 (HY000): The target table $mlog$t of the LOAD is not updatable
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int not null);
+create materialized view log on t (a, b);
+create materialized view v (a, s, cnt) as select a, sum(b), count(1) from t group by a;
+load data local infile '/nonexistent.csv' into table v fields terminated by ',';
+Error 1288 (HY000): The target table v of the LOAD is not updatable
+drop materialized view v;
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int);
+create materialized view log on t (a, b);
+import into `$mlog$t` from '/nonexistent.csv';
+Error 1288 (HY000): The target table $mlog$t of the IMPORT is not updatable
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int not null);
+create materialized view log on t (a, b);
+create materialized view v (a, s, cnt) as select a, sum(b), count(1) from t group by a;
+import into v from '/nonexistent.csv';
+Error 1288 (HY000): The target table v of the IMPORT is not updatable
+drop materialized view v;
 drop table if exists t, `$mlog$t`;
