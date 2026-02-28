@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -149,6 +150,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		Table:       s.ViewName,
 		Cols:        colDefs,
 		Constraints: constraints,
+		Options:     s.Options,
 	}
 	mvTableInfo, err := BuildTableInfoWithStmt(
 		NewMetaBuildContextWithSctx(ctx),
@@ -166,12 +168,18 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err != nil {
 		return err
 	}
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	mvTableInfo.MaterializedView = &model.MaterializedViewInfo{
-		BaseTableIDs:     []int64{baseTableID},
-		SQLContent:       selectSQL,
-		RefreshMethod:    refreshMethod,
-		RefreshStartWith: refreshStartWith,
-		RefreshNext:      refreshNext,
+		BaseTableIDs:      []int64{baseTableID},
+		SQLContent:        selectSQL,
+		RefreshMethod:     refreshMethod,
+		RefreshStartWith:  refreshStartWith,
+		RefreshNext:       refreshNext,
+		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
+		DefinitionTimeZone: model.TimeZoneLocation{
+			Name:   tzName,
+			Offset: tzOffset,
+		},
 	}
 
 	// CREATE MATERIALIZED VIEW is submitted as reorg DDL: create table first, then initial build in reorg phase.
@@ -277,10 +285,6 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)
 }
 
-func (*executor) PurgeMaterializedViewLog(sessionctx.Context, *ast.PurgeMaterializedViewLogStmt) error {
-	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE MATERIALIZED VIEW LOG is not supported")
-}
-
 func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMaterializedViewStmt) error {
 	for _, action := range s.Actions {
 		switch action.Tp {
@@ -337,10 +341,6 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 
 func (*executor) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterializedViewLogStmt) error {
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG ... PURGE is not supported")
-}
-
-func (*executor) RefreshMaterializedView(sessionctx.Context, *ast.RefreshMaterializedViewStmt) error {
-	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW is not supported")
 }
 
 func buildMViewRefreshMeta(sctx sessionctx.Context, refresh *ast.MViewRefreshClause) (method, startWith, next string, _ error) {

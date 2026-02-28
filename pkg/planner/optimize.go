@@ -211,7 +211,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	}
 
 	// This should be handled after `set_var`
-	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) {
+	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) && !sessVars.InMaterializedViewMaintenance {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {

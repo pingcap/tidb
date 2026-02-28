@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "executor_test.go",
         "main_test.go",
+        "materialized_view_refresh_test.go",
     ],
     flaky = True,
     shard_count = 50,
@@ -23,6 +24,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/parser",
+        "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

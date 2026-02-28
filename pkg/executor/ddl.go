@@ -216,10 +216,6 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.ddlExecutor.DropMaterializedView(e.Ctx(), x)
 	case *ast.DropMaterializedViewLogStmt:
 		err = e.ddlExecutor.DropMaterializedViewLog(e.Ctx(), x)
-	case *ast.PurgeMaterializedViewLogStmt:
-		err = e.ddlExecutor.PurgeMaterializedViewLog(e.Ctx(), x)
-	case *ast.RefreshMaterializedViewStmt:
-		err = e.ddlExecutor.RefreshMaterializedView(e.Ctx(), x)
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
 	case *ast.CreatePlacementPolicyStmt:

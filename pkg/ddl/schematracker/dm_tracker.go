@@ -306,8 +306,9 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	}
 
 	createTableStmt := &ast.CreateTableStmt{
-		Table: &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
-		Cols:  colDefs,
+		Table:   &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
+		Cols:    colDefs,
+		Options: s.Options,
 	}
 	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(
 		ctx,
@@ -383,11 +384,6 @@ func (*SchemaTracker) DropMaterializedViewLog(sessionctx.Context, *ast.DropMater
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("DROP MATERIALIZED VIEW LOG is not supported in schema tracker")
 }
 
-// PurgeMaterializedViewLog implements the DDL interface.
-func (*SchemaTracker) PurgeMaterializedViewLog(sessionctx.Context, *ast.PurgeMaterializedViewLogStmt) error {
-	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE MATERIALIZED VIEW LOG is not supported in schema tracker")
-}
-
 // AlterMaterializedView implements the DDL interface.
 func (*SchemaTracker) AlterMaterializedView(sessionctx.Context, *ast.AlterMaterializedViewStmt) error {
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW is not supported in schema tracker")
@@ -396,11 +392,6 @@ func (*SchemaTracker) AlterMaterializedView(sessionctx.Context, *ast.AlterMateri
 // AlterMaterializedViewLog implements the DDL interface.
 func (*SchemaTracker) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterializedViewLogStmt) error {
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG is not supported in schema tracker")
-}
-
-// RefreshMaterializedView implements the DDL interface.
-func (*SchemaTracker) RefreshMaterializedView(sessionctx.Context, *ast.RefreshMaterializedViewStmt) error {
-	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW is not supported in schema tracker")
 }
 
 // CreateTableWithInfo implements the DDL interface.

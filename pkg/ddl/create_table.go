@@ -256,9 +256,6 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err = w.upsertCreateMaterializedViewLogPurgeInfo(jobCtx, mlogTblInfo); err != nil {
-		return ver, errors.Trace(err)
-	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: baseTblInfo})
 	if err != nil {
@@ -584,22 +581,23 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 	return len(rows) > 0, nil
 }
 
-func createMaterializedViewBuildSQLMode(sqlMode mysql.SQLMode) mysql.SQLMode {
-	return mysql.DelSQLMode(sqlMode, mysql.ModeStrictTransTables|mysql.ModeStrictAllTables)
-}
-
 func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) (func(), error) {
-	restore := restoreSessCtx(sessCtx)
 	if reorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
-	buildReorgMeta := *reorgMeta
-	buildReorgMeta.SQLMode = createMaterializedViewBuildSQLMode(buildReorgMeta.SQLMode)
-	if err := initSessCtx(sessCtx, &buildReorgMeta); err != nil {
+	restore := restoreSessCtx(sessCtx)
+	origInMaterializedViewMaintenance := sessCtx.GetSessionVars().InMaterializedViewMaintenance
+	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
+		// initSessCtx may mutate session vars before returning error (for example invalid timezone).
+		// Restore immediately to avoid leaking partial state into the pooled session.
+		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	// MV init build should follow the same TiFlash strict-mode bypass path as MV refresh.
+	sessCtx.GetSessionVars().InMaterializedViewMaintenance = true
 	return func() {
 		restore(sessCtx)
+		sessCtx.GetSessionVars().InMaterializedViewMaintenance = origInMaterializedViewMaintenance
 	}, nil
 }
 
@@ -610,56 +608,6 @@ func (w *worker) setCreateMaterializedViewBuildReadTSInReorgCtx(jobID int64, rea
 	}
 	rc.setSnapshotVer(readTS)
 	return nil
-}
-
-func parseMaterializedViewLogInitialNextTime(purgeMethod, purgeStartWith string) any {
-	if !strings.EqualFold(purgeMethod, "DEFERRED") {
-		return nil
-	}
-	purgeStartWith = strings.TrimSpace(purgeStartWith)
-	if len(purgeStartWith) < 2 || purgeStartWith[0] != '\'' || purgeStartWith[len(purgeStartWith)-1] != '\'' {
-		return nil
-	}
-	purgeStartWith = strings.Trim(purgeStartWith, "'")
-	nextTime, err := time.ParseInLocation("2006-01-02 15:04:05", purgeStartWith, time.Local)
-	if err != nil {
-		return nil
-	}
-	return nextTime
-}
-
-func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogTblInfo *model.TableInfo) error {
-	if mlogTblInfo == nil || mlogTblInfo.MaterializedViewLog == nil {
-		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: invalid table info")
-	}
-	ctx := jobCtx.stepCtx
-	if ctx == nil {
-		ctx = w.workCtx
-	}
-
-	nextTime := parseMaterializedViewLogInitialNextTime(
-		mlogTblInfo.MaterializedViewLog.PurgeMethod,
-		mlogTblInfo.MaterializedViewLog.PurgeStartWith,
-	)
-	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mlog_purge_info (
-		MLOG_ID,
-		NEXT_TIME
-	) VALUES (%?, %?)
-	ON DUPLICATE KEY UPDATE
-		NEXT_TIME = VALUES(NEXT_TIME)`,
-		mlogTblInfo.ID,
-		nextTime,
-	)
-	_, err := w.sess.Execute(ctx, upsertSQL, "mlog-purge-info-upsert")
-	failpoint.Inject("mockUpsertCreateMaterializedViewLogPurgeInfoTableNotExists", func(val failpoint.Value) {
-		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
-		}
-	})
-	if infoschema.ErrTableNotExists.Equal(err) {
-		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: required system table mysql.tidb_mlog_purge_info does not exist")
-	}
-	return errors.Trace(err)
 }
 
 func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {

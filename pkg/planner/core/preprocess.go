@@ -321,9 +321,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inCreateOrDropTable
 	case *ast.AlterMaterializedViewLogStmt:
 		p.stmtTp = TypeAlter
-	case *ast.PurgeMaterializedViewLogStmt:
-		// The base table name here is a DDL object name, not a query source table.
-		p.flag |= inCreateOrDropTable
 	case *ast.RefreshMaterializedViewStmt:
 		// The view name is not an existing table. Avoid resolving it as a normal table name.
 		p.flag |= inCreateOrDropTable
@@ -637,7 +634,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inCreateOrDropTable
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.PurgeMaterializedViewLogStmt, *ast.RefreshMaterializedViewStmt:
+	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {

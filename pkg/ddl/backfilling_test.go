@@ -275,25 +275,22 @@ func TestReorgExprContext(t *testing.T) {
 	}
 }
 
-func TestCreateMaterializedViewBuildSessionSQLMode(t *testing.T) {
+func TestCreateMaterializedViewBuildSessionMVMaintenance(t *testing.T) {
 	store := &mockStorage{client: &mock.Client{}}
 	sctx := newMockReorgSessCtx(store)
-	originalSQLMode := mysql.ModeStrictTransTables | mysql.ModeNoZeroDate
-	sctx.GetSessionVars().SQLMode = originalSQLMode
-	require.True(t, sctx.GetSessionVars().SQLMode.HasStrictMode())
+	originalInMaterializedViewMaintenance := sctx.GetSessionVars().InMaterializedViewMaintenance
+	sctx.GetSessionVars().InMaterializedViewMaintenance = originalInMaterializedViewMaintenance
 
 	reorgMeta := &model.DDLReorgMeta{
-		SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
 		Location:          &model.TimeZoneLocation{Name: "UTC"},
 		ResourceGroupName: "default",
 	}
 	restore, err := initCreateMaterializedViewBuildSession(sctx, reorgMeta)
 	require.NoError(t, err)
-	require.False(t, sctx.GetSessionVars().SQLMode.HasStrictMode())
-	require.Equal(t, mysql.ModeAllowInvalidDates, sctx.GetSessionVars().SQLMode)
+	require.True(t, sctx.GetSessionVars().InMaterializedViewMaintenance)
 
 	restore()
-	require.Equal(t, originalSQLMode, sctx.GetSessionVars().SQLMode)
+	require.Equal(t, originalInMaterializedViewMaintenance, sctx.GetSessionVars().InMaterializedViewMaintenance)
 }
 
 func TestReorgTableMutateContext(t *testing.T) {
