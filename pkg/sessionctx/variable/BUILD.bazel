@@ -112,7 +112,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/executor",
-        "//pkg/executor/join/joinversion",
         "//pkg/kv",
         "//pkg/parser",
         "//pkg/parser/auth",
