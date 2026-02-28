@@ -61,6 +61,15 @@ func (col *CorrelatedColumn) Clone() Expression {
 	}
 }
 
+// CloneAndClearIndexResolvedFlag implements Expression interface.
+func (col *CorrelatedColumn) CloneAndClearIndexResolvedFlag() Expression {
+	return col.Clone()
+}
+
+// ClearIndexResolvedFlag implements Expression interface.
+func (*CorrelatedColumn) ClearIndexResolvedFlag() {
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (col *CorrelatedColumn) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETInt, input, result)
@@ -212,8 +221,9 @@ func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndices(_ *Schema) (Expression, error) {
-	return col, nil
+func (col *CorrelatedColumn) ResolveIndices(_ *Schema) (Expression, bool, error) {
+	// todo in order to follow the original behavior, maybe we should always clone a new correlated column here?
+	return col, false, nil
 }
 
 func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
@@ -677,6 +687,16 @@ func (col *Column) Clone() Expression {
 	return &newCol
 }
 
+// CloneAndClearIndexResolvedFlag implements Expression interface.
+func (col *Column) CloneAndClearIndexResolvedFlag() Expression {
+	newCol := col.Clone()
+	return newCol
+}
+
+// ClearIndexResolvedFlag implements Expression interface.
+func (col *Column) ClearIndexResolvedFlag() {
+}
+
 // IsCorrelated implements Expression interface.
 func (col *Column) IsCorrelated() bool {
 	return false
@@ -714,13 +734,13 @@ func (col *Column) CleanHashCode() {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *Column) ResolveIndices(schema *Schema) (Expression, error) {
+func (col *Column) ResolveIndices(schema *Schema) (Expression, bool, error) {
 	newCol := col.Clone()
 	err := newCol.resolveIndices(schema)
-	return newCol, err
+	return newCol, true, err
 }
 
-func (col *Column) resolveIndices(schema *Schema) error {
+func (col *Column) resolveIndices(schema *Schema) (err error) {
 	col.Index = schema.ColumnIndex(col)
 	if col.Index == -1 {
 		return errors.Errorf("Can't find column %s in schema %s", col, schema)
