@@ -132,9 +132,9 @@ func (p *HandParser) parseCreateViewStmt() ast.StmtNode {
 		}
 		// CASCADED is the default — accept it but don't change.
 		p.accept(cascaded)
-		// CHECK OPTION
+		// CHECK OPTION (both keywords mandatory in yacc)
 		p.expect(check)
-		p.accept(option)
+		p.expect(option)
 	}
 
 	// Set text on the select body node, mirroring the original parser.

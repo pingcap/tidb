@@ -170,8 +170,9 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		p.parseShowIndexStmt(stmt)
 		return stmt
 
-	case character:
-		// SHOW CHARACTER SET [LIKE|WHERE]
+	case character, charType:
+		// SHOW CHARACTER SET or SHOW CHAR SET [LIKE|WHERE]
+		// Yacc CharsetKw: CHARACTER SET | CHARSET | CHAR SET
 		p.next()
 		p.expect(set)
 		stmt.Tp = ast.ShowCharset
@@ -205,8 +206,8 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 	case importKwd:
 		return p.parseShowImportStmt()
 
-	case database, databases:
-		// SHOW DATABASES
+	case databases:
+		// SHOW DATABASES (yacc only accepts plural DATABASES, not singular DATABASE)
 		p.next()
 		stmt.Tp = ast.ShowDatabases
 		p.parseShowLikeOrWhere(stmt)
@@ -229,7 +230,7 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 
 	case open:
 		p.next()
-		p.accept(tables)
+		p.expect(tables) // yacc requires TABLES keyword
 		stmt.Tp = ast.ShowOpenTables
 		stmt.DBName = p.parseShowDatabaseNameOpt()
 		p.parseShowLikeOrWhere(stmt)
@@ -303,18 +304,19 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 			p.syntaxErrorAt(p.peek())
 			return nil
 		}
-		// After FOR clause, only LIKE/WHERE or statement end is valid.
+		// SHOW PLACEMENT FOR ... does NOT support LIKE/WHERE in yacc.
+		// Validate no unexpected trailing tokens.
 		next := p.peek().Tp
-		if next != ';' && next != EOF && next != like && next != where {
+		if next != ';' && next != EOF {
 			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 	} else {
-		// SHOW PLACEMENT (no FOR clause)
+		// SHOW PLACEMENT (no FOR clause) — LIKE/WHERE is only valid here
 		stmt.Tp = ast.ShowPlacement
+		p.parseShowLikeOrWhere(stmt)
 	}
 
-	p.parseShowLikeOrWhere(stmt)
 	return stmt
 }
 
@@ -377,16 +379,10 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 	}
 	if stmt.Tp != 0 {
 		p.next()
-		p.parseShowLikeOrWhere(stmt)
-		return stmt
-	}
-	// Fallback: Check for TABLE STATUS
-	if p.peekKeyword(status, "STATUS") {
-		p.next()
-		stmt.Tp = ast.ShowTableStatus
-		stmt.Table = nil
-		stmt.DBName = p.parseShowDatabaseNameOpt()
-		p.parseShowLikeOrWhere(stmt)
+		// Yacc only supports WHERE for REGIONS/DISTRIBUTIONS, not LIKE
+		if _, ok := p.accept(where); ok {
+			stmt.Where = p.parseExpression(precNone)
+		}
 		return stmt
 	}
 	p.syntaxErrorAt(p.peek())
@@ -401,11 +397,11 @@ func (p *HandParser) parseShowDatabaseNameOpt() string {
 }
 
 // parseShowTableClause parses: FROM|IN tablename [FROM|IN dbname]
+// In yacc, ShowTableAliasOpt has only FROM/IN TableName — no empty alternative.
 func (p *HandParser) parseShowTableClause(stmt *ast.ShowStmt) {
-	if _, ok := p.acceptAny(from, in); ok {
-		stmt.Table = p.parseTableName()
-		stmt.DBName = p.parseShowDatabaseNameOpt()
-	}
+	p.expectFromOrIn()
+	stmt.Table = p.parseTableName()
+	stmt.DBName = p.parseShowDatabaseNameOpt()
 }
 
 // parseShowIndexStmt parses the common body of SHOW {INDEX|KEYS|INDEXES}:

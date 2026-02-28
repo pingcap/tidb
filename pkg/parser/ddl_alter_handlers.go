@@ -623,7 +623,8 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 			case "INSTANT":
 				spec.Algorithm = ast.AlgorithmTypeInstant
 			default:
-				spec.Algorithm = ast.AlgorithmTypeDefault
+				p.errs = append(p.errs, ErrUnknownAlterAlgorithm.GenWithStackByArgs(tok.Lit))
+				return true
 			}
 		}
 		return true
@@ -674,7 +675,13 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 		if _, ok := p.accept(defaultKwd); ok {
 			opt.Default = true
 		} else if tok, ok := p.acceptStringName(); ok {
-			opt.StrValue = tok.Lit
+			// Validate and normalize charset name (matching yacc CharsetName rule)
+			ci, err := charset.GetCharsetInfo(tok.Lit)
+			if err != nil {
+				p.errs = append(p.errs, err)
+				return true
+			}
+			opt.StrValue = ci.Name
 		}
 		spec.Options = []*ast.TableOption{opt}
 		if _, ok := p.accept(collate); ok {

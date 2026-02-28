@@ -573,9 +573,12 @@ func (p *HandParser) parseSimpleColumnNameList() ([]ast.CIStr, bool) {
 	return list, true
 }
 
-// acceptRestrictOrCascade consumes optional RESTRICT or CASCADE keywords.
+// acceptRestrictOrCascade consumes optional RESTRICT or CASCADE (mutually exclusive).
+// Yacc RestrictOrCascadeOpt: /* empty */ | RESTRICT | CASCADE
 func (p *HandParser) acceptRestrictOrCascade() {
-	p.accept(restrict)
+	if _, ok := p.accept(restrict); ok {
+		return
+	}
 	p.accept(cascade)
 }
 

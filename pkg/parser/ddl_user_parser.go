@@ -242,12 +242,6 @@ func (p *HandParser) parsePasswordAndLockOptions() []*ast.PasswordOrLockOption {
 				// Just PASSWORD token? unlikely in CREATE USER options
 				return opts
 			}
-		} else if tok.Tp == lock || tok.Tp == unlock {
-			if p.next().Tp == lock {
-				opt.Type = ast.Lock
-			} else {
-				opt.Type = ast.Unlock
-			}
 		} else if tok.Tp == account {
 			p.next() // ACCOUNT
 			if p.peek().Tp != lock && p.peek().Tp != unlock {
