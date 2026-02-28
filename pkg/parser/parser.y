@@ -102,8 +102,6 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	binaryType        "BINARY"
 	blobType          "BLOB"
 	both              "BOTH"
-	by                "BY"
-	call              "CALL"
 	cascade           "CASCADE"
 	caseKwd           "CASE"
 	change            "CHANGE"
