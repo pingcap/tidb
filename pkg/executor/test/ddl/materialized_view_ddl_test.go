@@ -907,4 +907,3 @@ func TestCreateTableLikeShouldNotCarryMaterializedViewMetadata(t *testing.T) {
 	require.Equal(t, mlogSrc.Meta().ID, baseTable.Meta().MaterializedViewBase.MLogID)
 	require.Equal(t, []int64{mvSrc.Meta().ID}, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
-
