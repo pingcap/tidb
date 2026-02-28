@@ -133,10 +133,7 @@ func TestMaskingPolicy(t *testing.T) {
 	policy := &model.MaskingPolicyInfo{
 		ID:          1,
 		Name:        ast.NewCIStr("mp1"),
-		SchemaName:  ast.NewCIStr("test"),
-		TableName:   ast.NewCIStr("t"),
 		TableID:     10,
-		ColumnName:  ast.NewCIStr("c"),
 		ColumnID:    11,
 		MaskingType: model.MaskingPolicyTypeMaskFull,
 		Expression:  "mask_full(c)",
