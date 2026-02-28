@@ -253,29 +253,20 @@ func (p *HandParser) parseRevokeStmt() ast.StmtNode {
 	}
 
 	// REVOKE ... FROM ... (role revoke or REVOKE ALL ... FROM ...)
-	// Check for REVOKE ALL with no ON — e.g. REVOKE ALL, GRANT OPTION FROM ...
-	if len(roleOrPrivs) > 0 {
-		if rp := roleOrPrivs[0]; rp.Node != nil {
-			if pe, ok := rp.Node.(*ast.PrivElem); ok && pe.Priv == mysql.AllPriv {
-				// REVOKE ALL [PRIVILEGES], GRANT OPTION FROM ...
-				privs, err := p.convertToPriv(roleOrPrivs)
-				if err != nil {
-					p.errs = append(p.errs, err)
-					return nil
-				}
-				stmt := Alloc[ast.RevokeStmt](p.arena)
-				stmt.ObjectType = ast.ObjectTypeNone
-				stmt.Privs = privs
-				stmt.Level = Alloc[ast.GrantLevel](p.arena)
-				stmt.Level.Level = ast.GrantLevelGlobal
-				p.expect(from)
-				stmt.Users = p.parseUserSpecList()
-				if stmt.Users == nil {
-					return nil
-				}
-				return stmt
-			}
+	// Check for REVOKE ALL, GRANT OPTION FROM ... (special syntax).
+	// yacc requires exactly 2 elements: ALL + GRANT OPTION (isRevokeAllGrant).
+	if p.isRevokeAllGrant(roleOrPrivs) {
+		stmt := Alloc[ast.RevokeStmt](p.arena)
+		stmt.ObjectType = ast.ObjectTypeNone
+		stmt.Privs = []*ast.PrivElem{{Priv: mysql.AllPriv}, {Priv: mysql.GrantPriv}}
+		stmt.Level = Alloc[ast.GrantLevel](p.arena)
+		stmt.Level.Level = ast.GrantLevelGlobal
+		p.expect(from)
+		stmt.Users = p.parseUserSpecList()
+		if stmt.Users == nil {
+			return nil
 		}
+		return stmt
 	}
 
 	// REVOKE role1, role2 FROM user1, user2
@@ -477,11 +468,15 @@ func (p *HandParser) tryParsePrivilege() *ast.PrivElem {
 		priv.Priv = mysql.ReloadPriv
 	case replication:
 		p.next()
-		next := p.next()
+		next := p.peek()
 		if next.IsKeyword("CLIENT") {
+			p.next()
 			priv.Priv = mysql.ReplicationClientPriv
-		} else {
+		} else if next.IsKeyword("SLAVE") {
+			p.next()
 			priv.Priv = mysql.ReplicationSlavePriv
+		} else {
+			return nil // yacc requires REPLICATION CLIENT or REPLICATION SLAVE
 		}
 	case create:
 		p.next()
@@ -497,7 +492,7 @@ func (p *HandParser) tryParsePrivilege() *ast.PrivElem {
 			priv.Priv = mysql.CreateRolePriv
 		case temporary:
 			p.next()
-			p.accept(tables)
+			p.expect(tables)
 			priv.Priv = mysql.CreateTMPTablePriv
 		case tablespace:
 			p.next()
@@ -512,21 +507,19 @@ func (p *HandParser) tryParsePrivilege() *ast.PrivElem {
 		}
 	case show:
 		p.next()
-		if p.peek().Tp == databases || p.peek().Tp == database {
+		if p.peek().Tp == databases {
 			p.next()
 			priv.Priv = mysql.ShowDBPriv
 		} else if p.peek().Tp == view {
 			p.next()
 			priv.Priv = mysql.ShowViewPriv
+		} else {
+			return nil // yacc only accepts SHOW DATABASES or SHOW VIEW
 		}
 	case lock:
 		p.next()
-		p.accept(tables)
+		p.expect(tables)
 		priv.Priv = mysql.LockTablesPriv
-	case proxy:
-		p.next()
-		priv.Priv = mysql.AllPriv // PROXY is handled specially
-		priv.Name = "PROXY"
 	default:
 		return nil
 	}
@@ -548,6 +541,27 @@ func (p *HandParser) tryParsePrivilege() *ast.PrivElem {
 	}
 
 	return priv
+}
+
+// isRevokeAllGrant checks if roleOrPrivList matches the yacc special case:
+// exactly [ALL, GRANT OPTION]. This is the "second syntax" for REVOKE:
+// REVOKE ALL PRIVILEGES, GRANT OPTION FROM user [, user] ...
+func (*HandParser) isRevokeAllGrant(roleOrPrivList []*ast.RoleOrPriv) bool {
+	if len(roleOrPrivList) != 2 {
+		return false
+	}
+	priv, err := roleOrPrivList[0].ToPriv()
+	if err != nil {
+		return false
+	}
+	if priv.Priv != mysql.AllPriv {
+		return false
+	}
+	priv, err = roleOrPrivList[1].ToPriv()
+	if err != nil {
+		return false
+	}
+	return priv.Priv == mysql.GrantPriv
 }
 
 // convertToPriv converts a RoleOrPriv list to PrivElem list.

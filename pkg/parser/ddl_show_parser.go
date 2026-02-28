@@ -358,7 +358,14 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 		p.expect(')')
 	}
 
-	// Optional INDEX idx
+	// SHOW TABLE tbl NEXT_ROW_ID — no PARTITION, no INDEX, no WHERE (yacc).
+	if p.peek().Tp == next_row_id {
+		p.next()
+		stmt.Tp = ast.ShowTableNextRowId
+		return stmt
+	}
+
+	// Optional INDEX idx — only valid before REGIONS (yacc).
 	if _, ok := p.accept(index); ok {
 		tok := p.peek()
 		if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
@@ -369,18 +376,15 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 		stmt.IndexName = ast.NewCIStr(tok.Lit)
 	}
 
-	// Check for REGIONS, NEXT_ROW_ID, or DISTRIBUTIONS
+	// Check for REGIONS or DISTRIBUTIONS (both support WHERE).
 	switch p.peek().Tp {
 	case regions:
 		stmt.Tp = ast.ShowRegions
-	case next_row_id:
-		stmt.Tp = ast.ShowTableNextRowId
 	case distributions:
 		stmt.Tp = ast.ShowDistributions
 	}
 	if stmt.Tp != 0 {
 		p.next()
-		// Yacc only supports WHERE for REGIONS/DISTRIBUTIONS, not LIKE
 		if _, ok := p.accept(where); ok {
 			stmt.Where = p.parseExpression(precNone)
 		}

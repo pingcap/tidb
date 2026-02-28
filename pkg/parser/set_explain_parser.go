@@ -95,16 +95,17 @@ func (p *HandParser) parseSetStmt() ast.StmtNode {
 		if _, ok := p.accept(forKwd); ok {
 			pwdStmt.User = p.parseUserIdentity()
 		}
-		p.acceptEqOrAssign()
-		// Accept PASSWORD('string') form or bare string literal
+		p.expectAny(eq, assignmentEq)
+		// Accept PASSWORD('string') form or bare string literal.
+		// yacc PasswordOpt only accepts stringLit or PASSWORD(stringLit).
 		if _, ok := p.accept(password); ok {
 			p.expect('(')
 			if tok, ok := p.expect(stringLit); ok {
 				pwdStmt.Password = tok.Lit
 			}
 			p.expect(')')
-		} else {
-			pwdStmt.Password = p.next().Lit
+		} else if tok, ok := p.expect(stringLit); ok {
+			pwdStmt.Password = tok.Lit
 		}
 		return pwdStmt
 	}

@@ -54,7 +54,9 @@ func TestDifferential(t *testing.T) {
 		// --- Hand parser ---
 		hp := parser.NewHandParser()
 		scanner := parser.NewScanner(sql)
+		scanner.EnableWindowFunc(true)
 		hp.Init(scanner, sql)
+		hp.EnableWindowFunc(true)
 		hp.SetCharsetCollation("utf8mb4", "utf8mb4_bin")
 		handStmts, _, handErr := hp.ParseSQL()
 
