@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -79,6 +80,14 @@ type AnalyzeExec struct {
 	samplePruners map[int64]*statistics.SamplePruner
 	// analyzedPartitions tracks freshly analyzed partition IDs per table.
 	analyzedPartitions map[int64]map[int64]struct{} // tableID → set of partitionIDs
+	// globalSampleColsInfo stores the filtered ColsInfo from the analyze task
+	// for each table, keyed by table ID. These match the column positions in
+	// the sample collectors (after filterSkipColumnTypes).
+	globalSampleColsInfo map[int64][]*model.ColumnInfo
+	// globalSampleIndexes stores the adjusted Indexes from the analyze task
+	// for each table, keyed by table ID. Their col.Offset values match the
+	// positions in globalSampleColsInfo (after getModifiedIndexesInfoForAnalyze).
+	globalSampleIndexes map[int64][]*model.IndexInfo
 }
 
 var (
@@ -157,6 +166,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		e.partitionSamplesToSave = make(map[int64][]byte)
 		e.samplePruners = make(map[int64]*statistics.SamplePruner)
 		e.analyzedPartitions = make(map[int64]map[int64]struct{})
+		e.globalSampleColsInfo = make(map[int64][]*model.ColumnInfo)
+		e.globalSampleIndexes = make(map[int64][]*model.IndexInfo)
 		sessionVars.StmtCtx.MemTracker.EnableDebugLog("analyze-stmt")
 	}
 	statslogutil.StatsLogger().Info("analyze started",
@@ -172,6 +183,19 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
+		// Capture the filtered ColsInfo and adjusted Indexes from partition
+		// column tasks so that buildGlobalStatsFromSamples can pass them
+		// (instead of raw table.Meta().Columns/Indices) to align with sample
+		// collector positions after filterSkipColumnTypes.
+		if sampleBasedGlobalStats && task.taskType == colTask && task.colExec != nil {
+			tableID := task.colExec.tableID
+			if tableID.IsPartitionTable() {
+				if _, ok := e.globalSampleColsInfo[tableID.TableID]; !ok {
+					e.globalSampleColsInfo[tableID.TableID] = task.colExec.colsInfo
+					e.globalSampleIndexes[tableID.TableID] = task.colExec.indexes
+				}
+			}
+		}
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())

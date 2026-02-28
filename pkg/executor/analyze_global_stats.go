@@ -143,13 +143,23 @@ func (e *AnalyzeExec) buildGlobalStatsFromSamples(
 		return nil, nil
 	}
 
-	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(context.Background(), key.tableID)
-	if !ok {
-		return nil, nil
+	// Use the filtered ColsInfo and adjusted Indexes captured from the analyze
+	// task. These match the sample collector positions (after filterSkipColumnTypes
+	// and getModifiedIndexesInfoForAnalyze), unlike table.Meta().Columns/Indices
+	// which include all columns (e.g. json/blob that were skipped during analyze).
+	colsInfo := e.globalSampleColsInfo[key.tableID]
+	indexes := e.globalSampleIndexes[key.tableID]
+	if len(colsInfo) == 0 {
+		// Defensive fallback: if we don't have filtered metadata (shouldn't
+		// happen), fall back to table metadata.
+		is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+		table, ok := is.TableByID(context.Background(), key.tableID)
+		if !ok {
+			return nil, nil
+		}
+		colsInfo = table.Meta().Columns
+		indexes = table.Meta().Indices
 	}
-	colsInfo := table.Meta().Columns
-	indexes := table.Meta().Indices
 
 	isIndex := info.IsIndex == 1
 	return globalstats.BuildGlobalStatsFromSamples(
