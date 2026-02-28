@@ -1899,11 +1899,15 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				err = e.AlterCheckConstraint(sctx, ident, pmodel.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
+<<<<<<< HEAD
 			if !variable.EnableCheckConstraint.Load() {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 			} else {
 				err = e.DropCheckConstraint(sctx, ident, pmodel.NewCIStr(spec.Constraint.Name))
 			}
+=======
+			err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
+>>>>>>> cb5f8621607 (ddl: allow dropping CHECK constraints when tidb_enable_check_constraint is OFF (#65243))
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
