@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -47,7 +47,7 @@ func TestCanSkipNullColumnAfterNotNullToNullDDL(t *testing.T) {
 	// is now nullable (NotNullFlag is cleared).
 	colInfo := &model.ColumnInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("c"),
+		Name: ast.NewCIStr("c"),
 	}
 	colInfo.SetType(mysql.TypeLong)
 	colInfo.SetFlag(0) // NOT NULL flag is cleared after DDL
@@ -60,7 +60,7 @@ func TestCanSkipNullColumnAfterNotNullToNullDDL(t *testing.T) {
 
 	tblInfo := &model.TableInfo{
 		ID:      1,
-		Name:    pmodel.NewCIStr("t"),
+		Name:    ast.NewCIStr("t"),
 		Columns: []*model.ColumnInfo{colInfo},
 	}
 
@@ -83,7 +83,7 @@ func TestCanSkipNullColumnAlwaysNullable(t *testing.T) {
 	// A column that was always nullable, with nil defaults from creation.
 	colInfo := &model.ColumnInfo{
 		ID:   2,
-		Name: pmodel.NewCIStr("d"),
+		Name: ast.NewCIStr("d"),
 	}
 	colInfo.SetType(mysql.TypeLong)
 	colInfo.SetFlag(0) // nullable
@@ -95,7 +95,7 @@ func TestCanSkipNullColumnAlwaysNullable(t *testing.T) {
 
 	tblInfo := &model.TableInfo{
 		ID:      2,
-		Name:    pmodel.NewCIStr("t2"),
+		Name:    ast.NewCIStr("t2"),
 		Columns: []*model.ColumnInfo{colInfo},
 	}
 
@@ -114,7 +114,7 @@ func TestCanSkipNullColumnAlwaysNullable(t *testing.T) {
 func TestCanSkipPKColumn(t *testing.T) {
 	colInfo := &model.ColumnInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("id"),
+		Name: ast.NewCIStr("id"),
 	}
 	colInfo.SetType(mysql.TypeLong)
 	colInfo.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
@@ -124,7 +124,7 @@ func TestCanSkipPKColumn(t *testing.T) {
 
 	tblInfo := &model.TableInfo{
 		ID:         3,
-		Name:       pmodel.NewCIStr("t3"),
+		Name:       ast.NewCIStr("t3"),
 		Columns:    []*model.ColumnInfo{colInfo},
 		PKIsHandle: true,
 	}
@@ -140,7 +140,7 @@ func TestCanSkipPKColumn(t *testing.T) {
 func TestCanSkipVirtualGeneratedColumn(t *testing.T) {
 	colInfo := &model.ColumnInfo{
 		ID:                  3,
-		Name:                pmodel.NewCIStr("v"),
+		Name:                ast.NewCIStr("v"),
 		GeneratedExprString: "`a` + 1",
 		GeneratedStored:     false, // virtual
 	}
@@ -151,7 +151,7 @@ func TestCanSkipVirtualGeneratedColumn(t *testing.T) {
 
 	tblInfo := &model.TableInfo{
 		ID:      4,
-		Name:    pmodel.NewCIStr("t4"),
+		Name:    ast.NewCIStr("t4"),
 		Columns: []*model.ColumnInfo{colInfo},
 	}
 
@@ -167,7 +167,7 @@ func TestCanSkipVirtualGeneratedColumn(t *testing.T) {
 func TestCanSkipNonNullValueWithDefault(t *testing.T) {
 	colInfo := &model.ColumnInfo{
 		ID:   4,
-		Name: pmodel.NewCIStr("e"),
+		Name: ast.NewCIStr("e"),
 	}
 	colInfo.SetType(mysql.TypeLong)
 	colInfo.SetFlag(0) // nullable
@@ -179,7 +179,7 @@ func TestCanSkipNonNullValueWithDefault(t *testing.T) {
 
 	tblInfo := &model.TableInfo{
 		ID:      5,
-		Name:    pmodel.NewCIStr("t5"),
+		Name:    ast.NewCIStr("t5"),
 		Columns: []*model.ColumnInfo{colInfo},
 	}
 
@@ -194,7 +194,7 @@ func TestCanSkipNonNullValueWithDefault(t *testing.T) {
 func TestCanSkipNullColumnWithNonNilDefault(t *testing.T) {
 	colInfo := &model.ColumnInfo{
 		ID:   5,
-		Name: pmodel.NewCIStr("f"),
+		Name: ast.NewCIStr("f"),
 	}
 	colInfo.SetType(mysql.TypeLong)
 	colInfo.SetFlag(0) // nullable
@@ -206,7 +206,7 @@ func TestCanSkipNullColumnWithNonNilDefault(t *testing.T) {
 
 	tblInfo := &model.TableInfo{
 		ID:      6,
-		Name:    pmodel.NewCIStr("t6"),
+		Name:    ast.NewCIStr("t6"),
 		Columns: []*model.ColumnInfo{colInfo},
 	}
 
