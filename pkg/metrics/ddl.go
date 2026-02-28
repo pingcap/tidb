@@ -53,6 +53,7 @@ var (
 	UpdateGlobalState = "update_global_state"
 
 	OwnerHandleSyncerHistogram *prometheus.HistogramVec
+	IsOwnerSinceGauge          *prometheus.GaugeVec
 
 	// Metrics for job_worker.go.
 	WorkerAddDDLJob    = "add_job"
@@ -84,11 +85,6 @@ var (
 	DDLLockVerDurationHist  prometheus.Observer
 	DDLCleanMDLInfoHist     prometheus.Observer
 	RetryableErrorCount     *prometheus.CounterVec
-
-	CreateDDLInstance = "create_ddl_instance"
-	CreateDDL         = "create_ddl"
-	DDLOwner          = "owner"
-	DDLCounter        *prometheus.CounterVec
 
 	BackfillTotalCounter  *prometheus.CounterVec
 	BackfillProgressGauge *prometheus.GaugeVec
@@ -161,14 +157,6 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblAction, LblResult})
 
-	DDLCounter = metricscommon.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ddl",
-			Name:      "worker_operation_total",
-			Help:      "Counter of creating ddl/worker and isowner.",
-		}, []string{LblType})
-
 	BackfillTotalCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -225,6 +213,14 @@ func InitDDLMetrics() {
 	DDLTransitOneStepOpHist = DDLWorkerHistogram.WithLabelValues("transit_one_step", "*", "*")
 	DDLLockVerDurationHist = DDLWorkerHistogram.WithLabelValues("lock_ver_duration", "*", "*")
 	DDLCleanMDLInfoHist = DDLWorkerHistogram.WithLabelValues("clean_mdl_info", "*", "*")
+
+	IsOwnerSinceGauge = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "owner",
+			Name:      "is_owner_since_seconds",
+			Help:      "The start time in seconds since epoch when the current instance became owner. The value is 0 if the instance is not owner.",
+		}, []string{LblType})
 }
 
 var (
