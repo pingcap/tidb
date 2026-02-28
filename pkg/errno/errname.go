@@ -896,6 +896,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' might not be affected by SET_VAR hint.", nil),
 	ErrExistsInHistoryPassword:                               mysql.Message("Cannot use these credentials for '%s@%s' because they contradict the password history policy.", nil),
 	ErrInvalidDefaultUTF8MB4Collation:                        mysql.Message("Invalid default collation %s: utf8mb4_0900_ai_ci or utf8mb4_general_ci or utf8mb4_bin expected", nil),
+	ErrInvalidDefaultUTF8Collation:                           mysql.Message("Invalid default collation %s: utf8_unicode_ci or utf8_general_ci or utf8_bin expected", nil),
 	ErrForeignKeyCannotDropParent:                            mysql.Message("Cannot drop table '%s' referenced by a foreign key constraint '%s' on table '%s'.", nil),
 	ErrForeignKeyCannotUseVirtualColumn:                      mysql.Message("Foreign key '%s' uses virtual column '%s' which is not supported.", nil),
 	ErrForeignKeyNoColumnInParent:                            mysql.Message("Failed to add the foreign key constraint. Missing column '%s' for constraint '%s' in the referenced table '%s'", nil),

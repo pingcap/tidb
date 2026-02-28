@@ -47,6 +47,8 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 				require.Equal(t, sqlMode, ctx.GetSQLMode())
 				require.Equal(t, sctx.GetSessionVars().DefaultCollationForUTF8MB4, ctx.GetDefaultCollationForUTF8MB4())
 				require.Equal(t, "utf8mb4_bin", ctx.GetDefaultCollationForUTF8MB4())
+				require.Equal(t, sctx.GetSessionVars().DefaultCollationForUTF8, ctx.GetDefaultCollationForUTF8())
+				require.Equal(t, "utf8_bin", ctx.GetDefaultCollationForUTF8())
 				warn := errors.New("warn1")
 				note := errors.New("note1")
 				ctx.AppendWarning(warn)

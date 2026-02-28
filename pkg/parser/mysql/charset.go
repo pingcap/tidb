@@ -546,6 +546,7 @@ const (
 	BinaryDefaultCollationID  = 63
 	GB18030DefaultCollationID = 248
 	UTF8MB4DefaultCollation   = "utf8mb4_bin"
+	UTF8DefaultCollation      = "utf8_bin"
 	DefaultCollationName      = UTF8MB4DefaultCollation
 	UTF8MB4GeneralCICollation = "utf8mb4_general_ci"
 

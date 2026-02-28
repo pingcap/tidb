@@ -73,6 +73,17 @@ func checkDefaultCollationForUTF8MB4(vars *SessionVars, normalizedValue string, 
 	return coll.Name, nil
 }
 
+func checkDefaultCollationForUTF8(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+	coll, err := collate.GetCollationByName(normalizedValue)
+	if err != nil {
+		return normalizedValue, errors.Trace(err)
+	}
+	if !collate.IsDefaultCollationForUTF8(coll.Name) {
+		return "", ErrInvalidDefaultUTF8Collation.GenWithStackByArgs(coll.Name)
+	}
+	return coll.Name, nil
+}
+
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
 		return normalizedValue, errors.Trace(ErrWrongValueForVar.FastGenByArgs(argName, "NULL"))

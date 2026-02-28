@@ -102,6 +102,8 @@ type BuildContext interface {
 	GetCharsetInfo() (string, string)
 	// GetDefaultCollationForUTF8MB4 returns the default collation of UTF8MB4.
 	GetDefaultCollationForUTF8MB4() string
+	// GetDefaultCollationForUTF8 returns the default collation of UTF8.
+	GetDefaultCollationForUTF8() string
 	// GetBlockEncryptionMode returns the variable `block_encryption_mode`.
 	GetBlockEncryptionMode() string
 	// GetSysdateIsNow returns a bool to determine whether Sysdate is an alias of Now function.
