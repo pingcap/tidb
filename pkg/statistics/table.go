@@ -960,13 +960,7 @@ func (t *Table) IsOutdated() bool {
 
 // ReleaseAndPutToPool releases data structures of Table and put itself back to pool.
 func (t *Table) ReleaseAndPutToPool() {
-	for _, col := range t.columns {
-		col.FMSketch.DestroyAndPutToPool()
-	}
 	clear(t.columns)
-	for _, idx := range t.indices {
-		idx.FMSketch.DestroyAndPutToPool()
-	}
 	clear(t.indices)
 }
 
