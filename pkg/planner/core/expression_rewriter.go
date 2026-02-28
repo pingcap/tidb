@@ -1534,7 +1534,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *driver.ValueExpr:
 		// set right not null flag for constant value
-		retType := v.Type.Clone()
+		retType := v.Type.DeepClone()
 		switch v.Datum.Kind() {
 		case types.KindNull:
 			retType.DelFlag(mysql.NotNullFlag)
@@ -1710,7 +1710,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 				break
 			}
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
-			exprType := arg.GetType(er.sctx.GetEvalCtx()).Clone()
+			exprType := arg.GetType(er.sctx.GetEvalCtx()).DeepClone()
 			// if arg type is json, we should cast it to longtext if there is collate clause.
 			if arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeJSON {
 				exprType = types.NewFieldType(mysql.TypeLongBlob)
@@ -2131,7 +2131,7 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 			if er.ctxStack[i].GetType(er.sctx.GetEvalCtx()).GetCollate() == coll.Collation {
 				continue
 			}
-			tp := er.ctxStack[i].GetType(er.sctx.GetEvalCtx()).Clone()
+			tp := er.ctxStack[i].GetType(er.sctx.GetEvalCtx()).DeepClone()
 			if er.ctxStack[i].GetType(er.sctx.GetEvalCtx()).Hybrid() {
 				if !(expression.GetAccurateCmpType(er.sctx.GetEvalCtx(), er.ctxStack[stkLen-elemCnt-1], er.ctxStack[i]) == types.ETString) {
 					continue
@@ -2526,7 +2526,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 			er.ctxStackAppend(function, types.EmptyName)
 		} else {
 			function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
-			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType(er.sctx.GetEvalCtx()).Clone(), DeferredExpr: function}
+			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType(er.sctx.GetEvalCtx()).DeepClone(), DeferredExpr: function}
 			er.ctxStackAppend(c, types.EmptyName)
 		}
 	} else {
@@ -2755,7 +2755,7 @@ func (er *expressionRewriter) evalFieldDefaultValue(field *types.FieldName, tblI
 		}
 		val = &expression.Constant{
 			Value:   d,
-			RetType: col.FieldType.Clone(),
+			RetType: col.FieldType.DeepClone(),
 		}
 	}
 	if er.err != nil {

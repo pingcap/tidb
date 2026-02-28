@@ -232,8 +232,8 @@ func TestSetVarFromColumn(t *testing.T) {
 	ft1.SetType(mysql.TypeVarString)
 	ft1.SetFlen(20)
 
-	ft2 := ft1.Clone()
-	ft3 := ft1.Clone()
+	ft2 := ft1.DeepClone()
+	ft3 := ft1.DeepClone()
 	// Construct arguments.
 	argVarName := &Constant{
 		Value:   types.NewStringDatum("a"),

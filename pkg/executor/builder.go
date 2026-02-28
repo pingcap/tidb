@@ -1879,21 +1879,21 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 	leftExecTypes, rightExecTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)+len(v.LeftNAJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys)+len(v.RightNAJoinKeys))
 	for i, col := range v.LeftJoinKeys {
-		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].DeepClone())
 		leftTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	offset := len(v.LeftJoinKeys)
 	for i, col := range v.LeftNAJoinKeys {
-		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].DeepClone())
 		leftTypes[i+offset].SetFlag(col.RetType.GetFlag())
 	}
 	for i, col := range v.RightJoinKeys {
-		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].DeepClone())
 		rightTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	offset = len(v.RightJoinKeys)
 	for i, col := range v.RightNAJoinKeys {
-		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].DeepClone())
 		rightTypes[i+offset].SetFlag(col.RetType.GetFlag())
 	}
 
@@ -2053,21 +2053,21 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)+len(v.LeftNAJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys)+len(v.RightNAJoinKeys))
 	// set left types and right types for joiner.
 	for i, col := range v.LeftJoinKeys {
-		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].DeepClone())
 		leftTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	offset := len(v.LeftJoinKeys)
 	for i, col := range v.LeftNAJoinKeys {
-		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].DeepClone())
 		leftTypes[i+offset].SetFlag(col.RetType.GetFlag())
 	}
 	for i, col := range v.RightJoinKeys {
-		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].DeepClone())
 		rightTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	offset = len(v.RightJoinKeys)
 	for i, col := range v.RightNAJoinKeys {
-		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].DeepClone())
 		rightTypes[i+offset].SetFlag(col.RetType.GetFlag())
 	}
 
@@ -3553,7 +3553,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
-		innerTypes[i] = col.RetType.Clone()
+		innerTypes[i] = col.RetType.DeepClone()
 		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
 		// to build hash map or construct lookup keys. So we need to modify its flen otherwise there would be
 		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
@@ -3564,7 +3564,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 
 	// Use the probe table's collation.
 	for i, col := range v.OuterHashKeys {
-		outerTypes[col.Index] = outerTypes[col.Index].Clone()
+		outerTypes[col.Index] = outerTypes[col.Index].DeepClone()
 		outerTypes[col.Index].SetCollate(innerTypes[v.InnerHashKeys[i].Index].GetCollate())
 		outerTypes[col.Index].SetFlag(col.RetType.GetFlag())
 	}
@@ -3576,11 +3576,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 	innerHashTypes := make([]*types.FieldType, len(v.InnerHashKeys))
 	outerHashTypes := make([]*types.FieldType, len(v.OuterHashKeys))
 	for i, col := range v.InnerHashKeys {
-		innerHashTypes[i] = innerTypes[col.Index].Clone()
+		innerHashTypes[i] = innerTypes[col.Index].DeepClone()
 		innerHashTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	for i, col := range v.OuterHashKeys {
-		outerHashTypes[i] = outerTypes[col.Index].Clone()
+		outerHashTypes[i] = outerTypes[col.Index].DeepClone()
 		outerHashTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	hashIsNullEQ := make([]bool, len(v.InnerHashKeys))
@@ -3696,7 +3696,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
-		innerTypes[i] = col.RetType.Clone()
+		innerTypes[i] = col.RetType.DeepClone()
 		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
 		// to build hash map or construct lookup keys. So we need to modify its flen otherwise there would be
 		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.

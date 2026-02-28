@@ -230,7 +230,7 @@ func IsNewFormat(rowData []byte) bool {
 // FieldTypeFromModelColumn creates a types.FieldType from model.ColumnInfo.
 // export for test case and CDC.
 func FieldTypeFromModelColumn(col *model.ColumnInfo) *types.FieldType {
-	return col.FieldType.Clone()
+	return col.FieldType.DeepClone()
 }
 
 // ColData combines the column info as well as its datum. It's used to calculate checksum.

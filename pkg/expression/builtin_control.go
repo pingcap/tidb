@@ -343,10 +343,10 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
 			return nil, err
 		}
-		argTps = append(argTps, args[i].GetType(ctx.GetEvalCtx()), fieldTp.Clone())
+		argTps = append(argTps, args[i].GetType(ctx.GetEvalCtx()), fieldTp.DeepClone())
 	}
 	if l%2 == 1 {
-		argTps = append(argTps, fieldTp.Clone())
+		argTps = append(argTps, fieldTp.DeepClone())
 	}
 	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, tp, argTps...)
 	if err != nil {
@@ -716,7 +716,7 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType(ctx.GetEvalCtx()).Clone(), retTp.Clone(), retTp.Clone())
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType(ctx.GetEvalCtx()).DeepClone(), retTp.DeepClone(), retTp.DeepClone())
 	if err != nil {
 		return nil, err
 	}
@@ -967,7 +967,7 @@ func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, retTp.Clone(), retTp.Clone())
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, retTp.DeepClone(), retTp.DeepClone())
 	if err != nil {
 		return nil, err
 	}

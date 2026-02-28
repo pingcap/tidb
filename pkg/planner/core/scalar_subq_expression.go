@@ -159,7 +159,7 @@ func (s *ScalarSubQueryExpr) GetType(_ expression.EvalContext) *types.FieldType 
 // Clone copies an expression totally.
 func (s *ScalarSubQueryExpr) Clone() expression.Expression {
 	ret := *s
-	ret.RetType = s.RetType.Clone()
+	ret.RetType = s.RetType.DeepClone()
 	return &ret
 }
 

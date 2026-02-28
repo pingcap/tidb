@@ -188,13 +188,13 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 func getReturnTypes(joinType base.JoinType, param spillTestParam) []*types.FieldType {
 	resultTypes := make([]*types.FieldType, 0, len(param.leftUsed)+len(param.rightUsed))
 	for _, colIndex := range param.leftUsed {
-		resultTypes = append(resultTypes, param.leftTypes[colIndex].Clone())
+		resultTypes = append(resultTypes, param.leftTypes[colIndex].DeepClone())
 		if joinType == base.RightOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
 	for _, colIndex := range param.rightUsed {
-		resultTypes = append(resultTypes, param.rightTypes[colIndex].Clone())
+		resultTypes = append(resultTypes, param.rightTypes[colIndex].DeepClone())
 		if joinType == base.LeftOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}

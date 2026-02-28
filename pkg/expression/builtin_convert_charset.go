@@ -67,7 +67,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 		if err != nil {
 			return nil, err
 		}
-		bf.tp = args[0].GetType(ctx.GetEvalCtx()).Clone()
+		bf.tp = args[0].GetType(ctx.GetEvalCtx()).DeepClone()
 		bf.tp.SetType(mysql.TypeVarString)
 		bf.tp.SetCharset(charset.CharsetBin)
 		bf.tp.SetCollate(charset.CollationBin)
@@ -358,7 +358,7 @@ func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, f
 			return BuildToBinaryFunction(ctx, expr)
 		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin &&
 			expr.GetType(ctx.GetEvalCtx()).GetType() != mysql.TypeNull {
-			ft := expr.GetType(ctx.GetEvalCtx()).Clone()
+			ft := expr.GetType(ctx.GetEvalCtx()).DeepClone()
 			ft.SetCharset(ec.Charset)
 			ft.SetCollate(ec.Collation)
 			return BuildFromBinaryFunction(ctx, expr, ft, explicitCast)
