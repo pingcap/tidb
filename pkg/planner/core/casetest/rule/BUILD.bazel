@@ -20,11 +20,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< gensubq
-    shard_count = 22,
-=======
-    shard_count = 20,
->>>>>>> master
+    shard_count = 23,
     deps = [
         "//pkg/config",
         "//pkg/domain",
