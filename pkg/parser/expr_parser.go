@@ -905,10 +905,12 @@ func (p *HandParser) parseMatchAgainstExpr() ast.ExprNode {
 
 	node := &ast.MatchAgainst{}
 
-	// Column list.
+	// Column list — yacc uses ColumnNameList which supports qualified names.
 	for {
-		tok := p.next()
-		col := &ast.ColumnName{Name: ast.NewCIStr(tok.Lit)}
+		col := p.parseColumnName()
+		if col == nil {
+			return nil
+		}
 		node.ColumnNames = append(node.ColumnNames, col)
 		if _, ok := p.accept(','); !ok {
 			break

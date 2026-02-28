@@ -661,10 +661,11 @@ func (p *HandParser) parseGetFormatFuncCall(node *ast.FuncCallExpr) ast.ExprNode
 		selector.Selector = ast.GetFormatSelectorDate
 	case timeType:
 		selector.Selector = ast.GetFormatSelectorTime
-	case datetimeType:
+	case datetimeType, timestampType:
 		selector.Selector = ast.GetFormatSelectorDatetime
 	default:
-		selector.Selector = ast.GetFormatSelectorDatetime
+		p.syntaxErrorAt(tok)
+		return nil
 	}
 	p.expect(',')
 	arg2 := p.parseExpression(precNone)
