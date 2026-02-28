@@ -4648,6 +4648,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		IndexHints:          b.TableHints().IndexHintList,
 		IndexMergeHints:     indexMergeHints,
 		PossibleAccessPaths: possiblePaths,
+		AllPossibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		PartitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
