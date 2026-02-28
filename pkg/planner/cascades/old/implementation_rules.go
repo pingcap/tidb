@@ -160,7 +160,7 @@ func (*ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Physi
 		Exprs:            logicProj.Exprs,
 		CalculateNoDelay: logicProj.CalculateNoDelay,
 	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(logicProj.SCtx().GetSessionVars(), reqProp.ExpectedCnt), logicProj.QueryBlockOffset(), childProp)
-	proj.SetSchema(logicProp.Schema)
+	proj.SetSchema(logicProj.Schema().Clone())
 	return []memo.Implementation{impl.NewProjectionImpl(proj)}, nil
 }
 
@@ -390,6 +390,7 @@ func (*ImplTopN) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty)
 		Count:   lt.Count,
 		Offset:  lt.Offset,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.QueryBlockOffset(), resultProp)
+	topN.SetSchema(lt.Schema().Clone())
 	switch expr.Group.EngineType {
 	case pattern.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBTopNImpl(topN)}, nil
@@ -425,7 +426,7 @@ func (*ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalPr
 		Offset: lt.Offset,
 		Count:  lt.Count,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.QueryBlockOffset(), newProp)
-	physicalLimit.SetSchema(expr.Group.Prop.Schema.Clone())
+	physicalLimit.SetSchema(lt.Schema().Clone())
 	return []memo.Implementation{impl.NewLimitImpl(physicalLimit)}, nil
 }
 
@@ -623,6 +624,15 @@ func (*ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 		lw.QueryBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems},
 	)
-	physicalWindow.SetSchema(expr.Group.Prop.Schema)
+	childSchema := expr.Children[0].Prop.Schema
+	if childSchema != nil && lw.Schema() != nil && lw.Schema().Len() >= childSchema.Len() {
+		schema := childSchema.Clone()
+		for i := childSchema.Len(); i < lw.Schema().Len(); i++ {
+			schema.Append(lw.Schema().Columns[i])
+		}
+		physicalWindow.SetSchema(schema)
+	} else {
+		physicalWindow.SetSchema(lw.Schema().Clone())
+	}
 	return []memo.Implementation{impl.NewWindowImpl(physicalWindow)}, nil
 }

@@ -295,6 +295,14 @@ func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column
 	for i, item := range p.OrderBy {
 		p.OrderBy[i].Col = ruleutil.ResolveColumnAndReplace(item.Col, replace)
 	}
+	if p.Frame != nil {
+		for i, expr := range p.Frame.Start.CalcFuncs {
+			p.Frame.Start.CalcFuncs[i] = ruleutil.ResolveExprAndReplace(expr, replace)
+		}
+		for i, expr := range p.Frame.End.CalcFuncs {
+			p.Frame.End.CalcFuncs[i] = ruleutil.ResolveExprAndReplace(expr, replace)
+		}
+	}
 }
 
 // *************************** end implementation of Plan interface ***************************
@@ -340,15 +348,110 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) (base.
 	}
 	parentUsedCols = parentUsedCols[:cnt]
 	parentUsedCols = p.extractUsedCols(parentUsedCols)
+	parentUsedCols = rebindUsedColsToSchema(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Children()[0].Schema())
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
 
+	p.rebindWindowColumns()
 	p.SetSchema(p.Children()[0].Schema().Clone())
 	p.Schema().Append(windowColumns...)
 	return p, nil
+}
+
+func rebindUsedColsToSchema(evalCtx expression.EvalContext, cols []*expression.Column, schema *expression.Schema) []*expression.Column {
+	if schema == nil || len(cols) == 0 {
+		return cols
+	}
+	rebased := make([]*expression.Column, 0, len(cols))
+	for _, col := range cols {
+		if col == nil {
+			continue
+		}
+		if schema.Contains(col) {
+			rebased = append(rebased, col)
+			continue
+		}
+		if col.VirtualExpr != nil {
+			if newCol, ok := col.ResolveIndicesByVirtualExpr(evalCtx, schema); ok {
+				rebased = append(rebased, newCol.(*expression.Column))
+				continue
+			}
+		}
+		if col.ID != 0 {
+			found := false
+			for _, c := range schema.Columns {
+				if c.ID == col.ID {
+					rebased = append(rebased, c)
+					found = true
+					break
+				}
+			}
+			if found {
+				continue
+			}
+		}
+		if col.OrigName != "" {
+			found := false
+			for _, c := range schema.Columns {
+				if c.OrigName == col.OrigName {
+					rebased = append(rebased, c)
+					found = true
+					break
+				}
+			}
+			if found {
+				continue
+			}
+		}
+		rebased = append(rebased, col)
+	}
+	return rebased
+}
+
+func (p *LogicalWindow) rebindWindowColumns() {
+	childSchema := p.Children()[0].Schema()
+	if childSchema == nil || childSchema.Len() == 0 {
+		return
+	}
+	rebind := func(col *expression.Column) *expression.Column {
+		if col == nil {
+			return col
+		}
+		if childSchema.Contains(col) {
+			return col
+		}
+		if col.ID != 0 {
+			for _, c := range childSchema.Columns {
+				if c.ID == col.ID {
+					return c
+				}
+			}
+		}
+		if col.OrigName != "" {
+			for _, c := range childSchema.Columns {
+				if c.OrigName == col.OrigName {
+					return c
+				}
+			}
+		}
+		return col
+	}
+	for i, item := range p.PartitionBy {
+		p.PartitionBy[i].Col = rebind(item.Col)
+	}
+	for i, item := range p.OrderBy {
+		p.OrderBy[i].Col = rebind(item.Col)
+	}
+	for _, desc := range p.WindowFuncDescs {
+		for i, arg := range desc.Args {
+			if col, ok := arg.(*expression.Column); ok {
+				desc.Args[i] = rebind(col)
+			}
+		}
+	}
 }
 
 // FindBestTask inherits BaseLogicalPlan.LogicalPlan.<3rd> implementation.
