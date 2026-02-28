@@ -107,6 +107,64 @@ type baseGroupConcatDistinct4String struct {
 	baseGroupConcat4String
 }
 
+func (*baseGroupConcatDistinct4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p := new(partialResult4GroupConcatDistinct)
+	p.valsBuf = &bytes.Buffer{}
+	setSize := int64(0)
+	p.valSet, setSize = set.NewStringToStringSetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + DefBytesBufferSize + setSize
+}
+
+func (*baseGroupConcatDistinct4String) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4GroupConcatDistinct)(pr)
+	p.buffer = nil
+	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
+}
+
+func (e *baseGroupConcatDistinct4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4GroupConcatDistinct)(pr)
+	v, isNull := "", false
+	memDelta += int64(-p.valsBuf.Cap()) + (int64(-cap(p.encodeBytesBuffer)))
+
+	defer func() {
+		memDelta += int64(p.valsBuf.Cap()) + (int64(cap(p.encodeBytesBuffer)))
+	}()
+
+	collators := make([]collate.Collator, 0, len(e.args))
+	for _, arg := range e.args {
+		collators = append(collators, collate.GetCollator(arg.GetType(sctx).GetCollate()))
+	}
+
+	for _, row := range rowsInGroup {
+		p.valsBuf.Reset()
+		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
+		for i, arg := range e.args {
+			v, isNull, err = arg.EvalString(sctx, row)
+			if err != nil {
+				return memDelta, err
+			}
+			if isNull {
+				break
+			}
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].ImmutableKey(v))
+			p.valsBuf.WriteString(v)
+		}
+		if isNull {
+			continue
+		}
+		joinedVal := string(p.encodeBytesBuffer)
+		if p.valSet.Exist(joinedVal) {
+			continue
+		}
+		valStr := p.valsBuf.String()
+		memDelta += p.valSet.Insert(joinedVal, valStr)
+		memDelta += int64(len(joinedVal))
+		memDelta += int64(len(valStr))
+	}
+
+	return memDelta, nil
+}
+
 func (e *baseGroupConcatDistinct4String) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 
@@ -284,64 +342,6 @@ func (e *groupPartialConcatDistinct) MergePartialResult(_ AggFuncUpdateContext, 
 
 type groupOriginalConcatDistinct struct {
 	baseGroupConcatDistinct4String
-}
-
-func (*groupOriginalConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	p := new(partialResult4GroupConcatDistinct)
-	p.valsBuf = &bytes.Buffer{}
-	setSize := int64(0)
-	p.valSet, setSize = set.NewStringToStringSetWithMemoryUsage()
-	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + DefBytesBufferSize + setSize
-}
-
-func (*groupOriginalConcatDistinct) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4GroupConcatDistinct)(pr)
-	p.buffer = nil
-	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
-}
-
-func (e *groupOriginalConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4GroupConcatDistinct)(pr)
-	v, isNull := "", false
-	memDelta += int64(-p.valsBuf.Cap()) + (int64(-cap(p.encodeBytesBuffer)))
-
-	defer func() {
-		memDelta += int64(p.valsBuf.Cap()) + (int64(cap(p.encodeBytesBuffer)))
-	}()
-
-	collators := make([]collate.Collator, 0, len(e.args))
-	for _, arg := range e.args {
-		collators = append(collators, collate.GetCollator(arg.GetType(sctx).GetCollate()))
-	}
-
-	for _, row := range rowsInGroup {
-		p.valsBuf.Reset()
-		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
-		for i, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
-			if err != nil {
-				return memDelta, err
-			}
-			if isNull {
-				break
-			}
-			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].ImmutableKey(v))
-			p.valsBuf.WriteString(v)
-		}
-		if isNull {
-			continue
-		}
-		joinedVal := string(p.encodeBytesBuffer)
-		if p.valSet.Exist(joinedVal) {
-			continue
-		}
-		valStr := p.valsBuf.String()
-		memDelta += p.valSet.Insert(joinedVal, valStr)
-		memDelta += int64(len(joinedVal))
-		memDelta += int64(len(valStr))
-	}
-
-	return memDelta, nil
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
