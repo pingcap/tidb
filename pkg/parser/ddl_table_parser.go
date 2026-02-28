@@ -375,39 +375,12 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			p.next()
 			p.expect(update)
 			option.Tp = ast.ColumnOptionOnUpdate
-			option.Expr = p.parseExpression(precNone) // CURRENT_TIMESTAMP etc.
+			// yacc: "ON" "UPDATE" NowSymOptionFraction
+			// Only NOW-family and CURDATE-family functions are valid here.
+			option.Expr = p.parseNowSymOptionFraction()
 			if option.Expr == nil {
 				return nil
 			}
-
-			// ON UPDATE only accepts specific function calls, not arbitrary expressions or parenthesized expressions.
-			// Parser.y: | "ON" "UPDATE" NowSymOptionFraction
-			// NowSymOptionFraction allows: NowSym, NowSymFunc '(' ')', etc. but NOT parenthesized wrapper.
-			if _, ok := option.Expr.(*ast.ParenthesesExpr); ok {
-				p.error(p.peek().Offset, "Invalid ON UPDATE clause: parenthesized expression not allowed")
-				return nil
-			}
-
-			// Reject bare identifiers (ColumnNameExpr)
-			if cn, ok := option.Expr.(*ast.ColumnNameExpr); ok {
-				switch strings.ToLower(cn.Name.Name.L) {
-				case ast.Now, ast.LocalTime, ast.LocalTimestamp, ast.CurrentTimestamp:
-					p.error(p.peek().Offset, "%s as ON UPDATE requires parentheses", cn.Name.Name.O)
-					return nil
-				}
-				// Other identifiers also invalid
-				p.error(p.peek().Offset, "Invalid ON UPDATE clause: expected function")
-				return nil
-			}
-
-			// Must be FuncCallExpr
-			fc, ok := option.Expr.(*ast.FuncCallExpr)
-			if !ok {
-				// Reject other types (ValueExpr, etc)
-				p.error(p.peek().Offset, "Invalid ON UPDATE clause")
-				return nil
-			}
-			normalizeDDLFuncName(fc)
 		case as, generated:
 			if p.next().Tp == generated {
 				p.expect(always)
@@ -439,10 +412,20 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				return nil
 			}
 			p.expect(')')
-			if p.peek().Tp == not && p.peekN(1).IsKeyword("ENFORCED") {
-				p.next()
-				p.next()
-				option.Enforced = false
+			// EnforcedOrNotOrNotNullOpt (same handling as CHECK without CONSTRAINT prefix)
+			if p.peek().Tp == not {
+				if p.peekN(1).Tp == null {
+					// CONSTRAINT [name] CHECK (expr) NOT NULL → inject both CHECK and NOT NULL
+					p.next() // consume NOT
+					p.next() // consume NULL
+					options = append(options, option)
+					options = append(options, &ast.ColumnOption{Tp: ast.ColumnOptionNotNull})
+					continue
+				} else if p.peekN(1).IsKeyword("ENFORCED") {
+					p.next()
+					p.next()
+					option.Enforced = false
+				}
 			} else if p.peek().IsKeyword("ENFORCED") {
 				p.next()
 				option.Enforced = true
@@ -486,15 +469,18 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			// parseStringOptions on the field type, or already present
 			// as a prior column option. Implicit type collation (e.g. BINARY)
 			// does NOT count as duplicate.
-			if hasExplicitCollate {
-				p.error(p.peek().Offset, "duplicate COLLATE clause")
-				return nil
-			}
-			for _, prev := range options {
-				if prev.Tp == ast.ColumnOptionCollate {
-					p.error(p.peek().Offset, "duplicate COLLATE clause")
-					return nil
+			isDuplicate := hasExplicitCollate
+			if !isDuplicate {
+				for _, prev := range options {
+					if prev.Tp == ast.ColumnOptionCollate {
+						isDuplicate = true
+						break
+					}
 				}
+			}
+			if isDuplicate {
+				p.errs = append(p.errs, ErrParse.GenWithStackByArgs("Multiple COLLATE clauses", p.buildNearString(p.peek().Offset)))
+				return nil
 			}
 			p.next()
 			option.Tp = ast.ColumnOptionCollate
@@ -600,5 +586,60 @@ func (p *HandParser) parseGlobalLocalOption(option *ast.ColumnOption) {
 		option.StrValue = "Global"
 	} else {
 		p.accept(local)
+	}
+}
+
+// parseNowSymOptionFraction parses the NowSymOptionFraction production from yacc:
+//
+//	NowSym (bare CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP)
+//	NowSymFunc '(' ')' or '(' NUM ')'
+//	CurdateSym '(' ')' (CURDATE/CURRENT_DATE with parens)
+//	CURRENT_DATE (bare)
+//
+// All results are normalized to CURRENT_TIMESTAMP or CURRENT_DATE FuncCallExpr.
+func (p *HandParser) parseNowSymOptionFraction() ast.ExprNode {
+	tok := p.peek()
+	node := p.arena.AllocFuncCallExpr()
+
+	switch tok.Tp {
+	case currentTs, localTime, localTs:
+		// NowSym / NowSymFunc: bare keyword or with optional parens + fsp
+		p.next()
+		node.FnName = ast.NewCIStr("CURRENT_TIMESTAMP")
+		if _, ok := p.accept('('); ok {
+			if p.peek().Tp == intLit {
+				node.Args = []ast.ExprNode{p.parseIntLitPrecision()}
+			}
+			p.expect(')')
+		}
+		return node
+	case builtinNow, now:
+		// NOW() — must have parens (it's a builtin function token)
+		p.next()
+		node.FnName = ast.NewCIStr("CURRENT_TIMESTAMP")
+		p.expect('(')
+		if p.peek().Tp == intLit {
+			node.Args = []ast.ExprNode{p.parseIntLitPrecision()}
+		}
+		p.expect(')')
+		return node
+	case currentDate:
+		// CURRENT_DATE — bare or with parens
+		p.next()
+		node.FnName = ast.NewCIStr("CURRENT_DATE")
+		if _, ok := p.accept('('); ok {
+			p.expect(')')
+		}
+		return node
+	case curDate, builtinFnCurDate:
+		// CURDATE() — must have parens
+		p.next()
+		node.FnName = ast.NewCIStr("CURRENT_DATE")
+		p.expect('(')
+		p.expect(')')
+		return node
+	default:
+		p.syntaxErrorAt(tok)
+		return nil
 	}
 }

@@ -216,6 +216,20 @@ func (p *HandParser) syntaxError(_ int) {
 	p.errs = append(p.errs, errSyntax)
 }
 
+// buildNearString produces a position string matching the yacc Scanner.Errorf("")
+// output, for use with ErrParse.GenWithStackByArgs.
+func (p *HandParser) buildNearString(offset int) string {
+	line, col := p.calcLineCol(offset)
+	near := ""
+	if offset < len(p.src) {
+		near = p.src[offset:]
+		if len(near) > 2048 {
+			near = near[:2048]
+		}
+	}
+	return fmt.Sprintf("line %d column %d near \"%s\" ", line, col, near)
+}
+
 // warn records a parse warning.
 func (p *HandParser) warn(format string, args ...interface{}) {
 	p.warns = append(p.warns, fmt.Errorf(format, args...))
