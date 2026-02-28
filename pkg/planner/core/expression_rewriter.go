@@ -2570,6 +2570,21 @@ func (er *expressionRewriter) clause() clauseCode {
 	return expressionClause
 }
 
+func shouldRemapRedundantBaseColumn(planCtx *exprRewriterPlanCtx, clause clauseCode, name *types.FieldName) bool {
+	if planCtx == nil || planCtx.builder == nil || name == nil {
+		return false
+	}
+	if clause != whereClause && clause != havingClause {
+		return false
+	}
+	// UPDATE/DELETE build JOIN schema/output names in merged (non-coalesced) order.
+	// Skip redundant-column remap in DML to avoid mixing coalesced mapping semantics.
+	if planCtx.builder.inUpdateStmt || planCtx.builder.inDeleteStmt {
+		return false
+	}
+	return name.Redundant && name.OrigTblName.L != ""
+}
+
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	planCtx := er.planCtx
 	idx, err := expression.FindFieldName(er.names, v)
@@ -2584,11 +2599,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
-		if planCtx != nil &&
-			(er.clause() == whereClause || er.clause() == havingClause) &&
-			name != nil &&
-			name.Redundant &&
-			name.OrigTblName.L != "" {
+		if shouldRemapRedundantBaseColumn(planCtx, er.clause(), name) {
 			// JOIN ... USING/NATURAL keeps redundant side in FullSchema for name-resolution,
 			// but the executable Join.Schema() only keeps canonical visible columns.
 			// For qualified base-table references (OrigTblName != ""), remap redundant
@@ -2626,10 +2637,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.err = err
 		return
 	} else if col != nil {
-		if (er.clause() == whereClause || er.clause() == havingClause) &&
-			name != nil &&
-			name.Redundant &&
-			name.OrigTblName.L != "" {
+		if shouldRemapRedundantBaseColumn(planCtx, er.clause(), name) {
 			// Keep behavior consistent with direct-name hit above: only remap redundant
 			// base-table names from natural/using join to canonical visible output.
 			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(planCtx.plan, col); mappedCol != nil {

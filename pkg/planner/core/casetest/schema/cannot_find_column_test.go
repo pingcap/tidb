@@ -72,6 +72,9 @@ func TestSchemaCannotFindColumnRegression(t *testing.T) {
 		tk.MustQuery("SELECT /* issue:66272-orderby */ t1.id FROM t1 JOIN t3 USING(id) WHERE t3.id = 10 ORDER BY t3.id").Check(testkit.Rows(
 			"10",
 		))
+		tk.MustQuery("SELECT /* issue:66272-all */ id AS t0_id FROM t1 JOIN t3 USING(id) WHERE (((t3.right_v = 749) AND (t3.id = 10)) AND (t1.left_v = 93)) AND (t3.right_v = ALL (SELECT t3.right_v FROM t3 WHERE t3.right_v = 749))").Check(testkit.Rows(
+			"10",
+		))
 
 		tk.MustExec("drop table if exists t_up_l, t_up_r")
 		tk.MustExec("create table t_up_l (id int primary key, a int not null)")
