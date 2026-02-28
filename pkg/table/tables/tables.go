@@ -1528,8 +1528,10 @@ func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
 // Note: Previously, columns with nil default, nil origin default, and null value
 // were also skipped. This was removed because it violates the Row Format v2 spec
 // (docs/design/2018-07-19-row-format.md) which states:
-//   "we can not omit the null column ID because if the column ID is not found
-//    in the row, we will use the default value in the schema which may not be null"
+//
+//	"we can not omit the null column ID because if the column ID is not found
+//	 in the row, we will use the default value in the schema which may not be null"
+//
 // After NOT NULL→NULL DDL changes, both defaults become nil, causing downstream
 // components (TiFlash) to misinterpret missing null column IDs as "use default"
 // instead of "value is NULL". See https://github.com/pingcap/tidb/issues/61709
