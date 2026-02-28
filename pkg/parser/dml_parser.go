@@ -683,10 +683,9 @@ func (p *HandParser) parseNonTransactionalDMLStmt() ast.StmtNode {
 		stmt.ShardColumn = p.parseColumnName()
 	}
 
-	if _, ok := p.accept(limit); ok {
-		if tok, ok := p.expect(intLit); ok {
-			stmt.Limit = tokenItemToUint64(tok.Item)
-		}
+	p.expect(limit) // yacc requires LIMIT in BATCH
+	if tok, ok := p.expect(intLit); ok {
+		stmt.Limit = tokenItemToUint64(tok.Item)
 	}
 
 	// DRY RUN

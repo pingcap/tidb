@@ -584,10 +584,13 @@ func (p *HandParser) parseLikeExpr(left ast.ExprNode, isNot bool, isLike bool) a
 	node.IsLike = isLike
 	node.Pattern = pattern
 
-	// Optional ESCAPE clause.
+	// Optional ESCAPE clause — yacc requires stringLit after ESCAPE.
 	// Note: 'escape' can be either an identifier or the escape keyword token.
 	if _, ok := p.acceptKeyword(escape, "escape"); ok {
-		escTok := p.next()
+		escTok, ok := p.expect(stringLit)
+		if !ok {
+			return nil
+		}
 		switch len(escTok.Lit) {
 		case 0:
 			// Empty string: default to backslash (Restore omits ESCAPE when '\\').
