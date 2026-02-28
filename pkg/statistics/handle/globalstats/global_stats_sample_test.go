@@ -68,7 +68,7 @@ func TestBuildGlobalStatsFromSamplesWithFilteredColumns(t *testing.T) {
 	colB.FieldType = *types.NewFieldType(mysql.TypeLong)
 
 	unfilteredCols := []*model.ColumnInfo{colA, colJSON, colB} // 3 columns
-	filteredCols := []*model.ColumnInfo{colA, colB}             // 2 columns (what samples use)
+	filteredCols := []*model.ColumnInfo{colA, colB}            // 2 columns (what samples use)
 
 	// Build a ReservoirRowSampleCollector with 2 columns (the filtered layout).
 	numFilteredCols := len(filteredCols)

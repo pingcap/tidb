@@ -4,13 +4,14 @@ go_test(
     name = "analyze_test",
     timeout = "moderate",
     srcs = [
+        "analyze_json_test.go",
         "analyze_sample_save_load_test.go",
         "analyze_test.go",
         "main_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "//pkg/domain",
         "//pkg/metrics",
