@@ -40,7 +40,7 @@ type serviceHelper struct {
 
 	reportCache struct {
 		submittedCount int64
-		completedCount int64
+		finishedCount  int64
 		failedCount    int64
 		timeoutCount   int64
 		rejectedCount  int64

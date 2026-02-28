@@ -63,7 +63,7 @@ func TestTaskExecutorMaxConcurrency(t *testing.T) {
 	second := waitForStart(t, started, time.Hour)
 	require.NotEqual(t, first, second)
 
-	waitForCount(t, exec.metrics.counters.completedCount.Load, 2)
+	waitForCount(t, exec.metrics.counters.finishedCount.Load, 2)
 	assertTaskExecutorMetrics(t, exec, 2, 2, 0, 0, 0, 0, 0, 0)
 }
 
@@ -103,7 +103,7 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 
 	close(block)
 
-	waitForCount(t, exec.metrics.counters.completedCount.Load, 2)
+	waitForCount(t, exec.metrics.counters.finishedCount.Load, 2)
 	assertTaskExecutorMetrics(t, exec, 2, 2, 0, 0, 0, 0, 0, 0)
 }
 
@@ -143,7 +143,7 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 
 	close(block)
 
-	waitForCount(t, exec.metrics.counters.completedCount.Load, 2)
+	waitForCount(t, exec.metrics.counters.finishedCount.Load, 2)
 	assertTaskExecutorMetrics(t, exec, 2, 2, 0, 1, 0, 0, 0, 0)
 }
 
@@ -182,7 +182,7 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 	close(block)
 
 	waitForCount(t, exec.metrics.counters.timeoutCount.Load, 1)
-	waitForCount(t, exec.metrics.counters.completedCount.Load, 2)
+	waitForCount(t, exec.metrics.counters.finishedCount.Load, 2)
 	assertTaskExecutorMetrics(t, exec, 2, 2, 0, 1, 0, 0, 0, 0)
 }
 
@@ -331,7 +331,7 @@ func TestTaskExecutorBackpressureCheckDoesNotBlockSubmit(t *testing.T) {
 	waitStarted("t1")
 	waitStarted("t2")
 	require.Eventually(t, func() bool {
-		return exec.metrics.counters.completedCount.Load() == 2
+		return exec.metrics.counters.finishedCount.Load() == 2
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -782,7 +782,7 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 		h.waitRefreshTask(1001)
 
 		require.Eventually(t, func() bool {
-			return h.svc.executor.metrics.counters.completedCount.Load() == 2
+			return h.svc.executor.metrics.counters.finishedCount.Load() == 2
 		}, time.Second, 10*time.Millisecond)
 		assertTaskExecutorMetrics(t, h.svc.executor, 2, 2, 0, 0, 0, 0, 0, 0)
 		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
@@ -870,12 +870,12 @@ func waitForSignal(t *testing.T, ch <-chan struct{}, timeout time.Duration) {
 func assertTaskExecutorMetrics(
 	t *testing.T,
 	exec *TaskExecutor,
-	submitted, completed, failed, timeout, rejected int64,
+	submitted, finished, failed, timeout, rejected int64,
 	running, waiting, timedOutRunning int64,
 ) {
 	t.Helper()
 	require.Equal(t, submitted, exec.metrics.counters.submittedCount.Load())
-	require.Equal(t, completed, exec.metrics.counters.completedCount.Load())
+	require.Equal(t, finished, exec.metrics.counters.finishedCount.Load())
 	require.Equal(t, failed, exec.metrics.counters.failedCount.Load())
 	require.Equal(t, timeout, exec.metrics.counters.timeoutCount.Load())
 	require.Equal(t, rejected, exec.metrics.counters.rejectedCount.Load())

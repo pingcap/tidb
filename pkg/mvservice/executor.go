@@ -36,7 +36,7 @@ type TaskExecutor struct {
 	metrics struct {
 		counters struct {
 			submittedCount atomic.Int64
-			completedCount atomic.Int64
+			finishedCount  atomic.Int64
 			failedCount    atomic.Int64
 			timeoutCount   atomic.Int64
 			rejectedCount  atomic.Int64
@@ -425,9 +425,9 @@ func (e *TaskExecutor) finishTask(name string, err error) {
 	e.logResult(name, err)
 }
 
-// logResult updates completion/failure counters and emits warning logs on failures.
+// logResult updates finish/failure counters and emits warning logs on failures.
 func (e *TaskExecutor) logResult(name string, err error) {
-	e.metrics.counters.completedCount.Add(1)
+	e.metrics.counters.finishedCount.Add(1)
 	if err == nil {
 		return
 	}

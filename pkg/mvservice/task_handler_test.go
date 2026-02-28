@@ -155,10 +155,10 @@ func buildMockMVBaseAndMVLogTables(baseTableID, mLogID int64, mViewIDs ...int64)
 	return baseTable, mlogTable
 }
 
-func waitExecutorCompletedCount(t *testing.T, svc *MVService, expected int64) {
+func waitExecutorFinishedCount(t *testing.T, svc *MVService, expected int64) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.completedCount.Load() == expected
+		return svc.executor.metrics.counters.finishedCount.Load() == expected
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -471,7 +471,7 @@ func TestMVServicePurgeMVLogRemoveOnDeleted(t *testing.T) {
 
 	svc.purgeMVLog([]*mvLog{l})
 
-	waitExecutorCompletedCount(t, svc, 1)
+	waitExecutorFinishedCount(t, svc, 1)
 	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	require.Eventually(t, func() bool {
@@ -502,7 +502,7 @@ func TestMVServicePurgeMVLogSuccessUpdatesNextPurgeAndOrderTS(t *testing.T) {
 
 	svc.purgeMVLog([]*mvLog{l})
 
-	waitExecutorCompletedCount(t, svc, 1)
+	waitExecutorFinishedCount(t, svc, 1)
 	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	svc.mvLogPurgeMu.Lock()
@@ -528,7 +528,7 @@ func TestMVServiceRefreshMVRemoveOnZeroNextRefresh(t *testing.T) {
 
 	svc.refreshMV([]*mv{m})
 
-	waitExecutorCompletedCount(t, svc, 1)
+	waitExecutorFinishedCount(t, svc, 1)
 	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	require.Eventually(t, func() bool {
@@ -559,7 +559,7 @@ func TestMVServiceRefreshMVSuccessUpdatesNextRefreshAndOrderTS(t *testing.T) {
 
 	svc.refreshMV([]*mv{m})
 
-	waitExecutorCompletedCount(t, svc, 1)
+	waitExecutorFinishedCount(t, svc, 1)
 	require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
 
 	svc.mvRefreshMu.Lock()
@@ -640,7 +640,7 @@ func TestMVServiceTaskExecutionReportsDuration(t *testing.T) {
 	svc.refreshMV([]*mv{m})
 	svc.purgeMVLog([]*mvLog{l})
 
-	waitExecutorCompletedCount(t, svc, 2)
+	waitExecutorFinishedCount(t, svc, 2)
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
 	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultFailed))
@@ -671,7 +671,7 @@ func TestMVServiceTaskExecutionReportsDurationFailed(t *testing.T) {
 	svc.refreshMV([]*mv{m})
 	svc.purgeMVLog([]*mvLog{l})
 
-	waitExecutorCompletedCount(t, svc, 2)
+	waitExecutorFinishedCount(t, svc, 2)
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultFailed))
 	require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultFailed))
 	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
