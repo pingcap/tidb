@@ -110,10 +110,10 @@ func (p *HandParser) parseRollbackStmt() ast.StmtNode {
 	p.expect(rollback)
 
 	if _, ok := p.accept(to); ok {
-		// ROLLBACK TO [SAVEPOINT] ident
+		// ROLLBACK TO [SAVEPOINT] Identifier
 		p.accept(savepoint) // optional
-		tok := p.next()
-		stmt.SavepointName = tok.Lit
+		// yacc: ROLLBACK TO Identifier — requires valid identifier
+		stmt.SavepointName = p.parseName()
 	} else {
 		stmt.CompletionType = p.parseCompletionType()
 	}
@@ -156,22 +156,22 @@ func (p *HandParser) parseCompletionType() ast.CompletionType {
 	return ast.CompletionTypeDefault
 }
 
-// parseSavepointStmt parses:  SAVEPOINT ident
+// parseSavepointStmt parses:  SAVEPOINT Identifier
 func (p *HandParser) parseSavepointStmt() ast.StmtNode {
 	stmt := Alloc[ast.SavepointStmt](p.arena)
 	p.expect(savepoint)
-	tok := p.next()
-	stmt.Name = tok.Lit
+	// yacc: SAVEPOINT Identifier — requires valid identifier
+	stmt.Name = p.parseName()
 	return stmt
 }
 
-// parseReleaseSavepointStmt parses:  RELEASE SAVEPOINT ident
+// parseReleaseSavepointStmt parses:  RELEASE SAVEPOINT Identifier
 func (p *HandParser) parseReleaseSavepointStmt() ast.StmtNode {
 	stmt := Alloc[ast.ReleaseSavepointStmt](p.arena)
 	p.expect(release)
 	p.expect(savepoint)
-	tok := p.next()
-	stmt.Name = tok.Lit
+	// yacc: RELEASE SAVEPOINT Identifier — requires valid identifier
+	stmt.Name = p.parseName()
 	return stmt
 }
 
@@ -311,9 +311,8 @@ func (p *HandParser) parseAdminStmt() ast.StmtNode {
 				return nil
 			}
 			stmt.Tables = []*ast.TableName{tbl}
-			// Index name is required (yacc: Identifier)
-			tok := p.next()
-			stmt.Index = tok.Lit
+			// yacc: Identifier — requires valid identifier for index name
+			stmt.Index = p.parseName()
 			// Parse optional handle ranges: (begin, end), (begin, end), ...
 			if p.peek().Tp == '(' {
 				stmt.Tp = ast.AdminCheckIndexRange
@@ -529,7 +528,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 			stmt.Tp = ast.AdminFlushPlanCache
 			stmt.StatementScope = ast.StatementScopeSession // default scope matches yacc
 		} else {
-			// SESSION, INSTANCE, or GLOBAL followed by optional PLAN_CACHE
+			// yacc: "ADMIN" "FLUSH" StatementScope "PLAN_CACHE"
 			var scope ast.StatementScope
 			switch {
 			case p.peek().IsKeyword("SESSION"):
@@ -542,9 +541,8 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 				p.next()
 				scope = ast.StatementScopeGlobal
 			}
-			if p.peek().IsKeyword("PLAN_CACHE") {
-				p.next()
-			}
+			// yacc: PLAN_CACHE is mandatory after scope
+			p.expectKeyword(0, "PLAN_CACHE")
 			stmt.Tp = ast.AdminFlushPlanCache
 			stmt.StatementScope = scope
 		}
@@ -557,7 +555,8 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 			stmt.Tp = ast.AdminEvolveBindings
 		}
 		p.next()
-		p.next() // BINDINGS
+		// yacc: "ADMIN" "CAPTURE"/"EVOLVE" "BINDINGS" — BINDINGS is mandatory
+		p.expectKeyword(0, "BINDINGS")
 		return stmt
 	}
 	if p.peek().IsKeyword("PAUSE") {
@@ -649,6 +648,7 @@ func (p *HandParser) parseAdminIndexOp(stmt *ast.AdminStmt, stmtType ast.AdminSt
 		return nil
 	}
 	stmt.Tables = []*ast.TableName{tbl}
-	stmt.Index = p.next().Lit
+	// yacc: Identifier — requires valid identifier for index name
+	stmt.Index = p.parseName()
 	return stmt
 }

@@ -76,10 +76,9 @@ func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
 	}
 
 	// Optional WINDOW clause (only when window functions are enabled).
-	// The scanner may tokenize WINDOW as window or identifier.
-	// Disambiguate: WINDOW clause is always `WINDOW name AS (...)`,
-	// so check if the next token after WINDOW is an identifier followed by AS.
-	if p.supportWindowFunc {
+	// yacc: WINDOW is only allowed in SelectStmtFromTable (with actual FROM),
+	// not in SelectStmtBasic or SelectStmtFromDualTable.
+	if p.supportWindowFunc && stmt.From != nil {
 		isWindowClause := p.peek().Tp == window ||
 			(p.peek().IsKeyword("WINDOW") && p.peekN(1).Tp == identifier && p.peekN(2).Tp == as)
 		if isWindowClause {
@@ -93,23 +92,20 @@ func (p *HandParser) parseSelectStmt() *ast.SelectStmt {
 	}
 
 	// Optional LIMIT clause.
+	// yacc: LIMIT or FETCH (no standalone OFFSET)
 	isFetch := p.peekKeyword(fetch, "FETCH")
-	if p.peek().Tp == limit || isFetch || p.peek().Tp == offset {
+	if p.peek().Tp == limit || isFetch {
 		stmt.Limit = p.parseLimitClause()
 	}
 
-	// INTO OUTFILE can appear before or after FOR UPDATE/SHARE.
-	if p.peek().Tp == into {
-		stmt.SelectIntoOpt = p.parseSelectIntoOption()
-	}
-
 	// Optional FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE.
+	// yacc order: SelectLockOpt SelectStmtIntoOption
 	if tp := p.peek().Tp; tp == forKwd || tp == lock {
 		stmt.LockInfo = p.parseSelectLock()
 	}
 
-	// INTO OUTFILE can also appear after FOR UPDATE/SHARE.
-	if stmt.SelectIntoOpt == nil && p.peek().Tp == into {
+	// INTO OUTFILE (after FOR UPDATE/SHARE per yacc)
+	if p.peek().Tp == into {
 		stmt.SelectIntoOpt = p.parseSelectIntoOption()
 	}
 
@@ -408,7 +404,8 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 	sf.Offset = startOff
 
 	// Check for qualified wildcards: table.* or schema.table.*
-	if p.peek().Tp == identifier {
+	// yacc: Identifier '.' '*' — Identifier includes unreserved keywords
+	if isIdentLike(p.peek().Tp) && p.peek().Tp != stringLit {
 		if p.lexer.PeekN(1).Tp == '.' {
 			if p.lexer.PeekN(2).Tp == '*' {
 				// table.*
@@ -419,7 +416,7 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 				wf.Table = ast.NewCIStr(tableName.Lit)
 				sf.WildCard = wf
 				return sf
-			} else if p.lexer.PeekN(2).Tp == identifier &&
+			} else if isIdentLike(p.lexer.PeekN(2).Tp) && p.lexer.PeekN(2).Tp != stringLit &&
 				p.lexer.PeekN(3).Tp == '.' &&
 				p.lexer.PeekN(4).Tp == '*' {
 				// schema.table.*

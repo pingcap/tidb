@@ -270,7 +270,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 	for {
 		option := Alloc[ast.ColumnOption](p.arena)
 		switch p.peek().Tp {
-		case not:
+		case not, not2:
 			p.next()
 			if _, ok := p.accept(null); !ok {
 				// Parse error: expected NULL after NOT
@@ -413,7 +413,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			}
 			p.expect(')')
 			// EnforcedOrNotOrNotNullOpt (same handling as CHECK without CONSTRAINT prefix)
-			if p.peek().Tp == not {
+			if p.peek().Tp == not || p.peek().Tp == not2 {
 				if p.peekN(1).Tp == null {
 					// CONSTRAINT [name] CHECK (expr) NOT NULL → inject both CHECK and NOT NULL
 					p.next() // consume NOT
@@ -444,7 +444,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			// NOT NULL → injects both CHECK and a separate ColumnOptionNotNull
 			// NOT ENFORCED → sets Enforced = false
 			// ENFORCED → sets Enforced = true (default)
-			if p.peek().Tp == not {
+			if p.peek().Tp == not || p.peek().Tp == not2 {
 				if p.peekN(1).Tp == null {
 					// CHECK (expr) NOT NULL → inject separate NOT NULL option
 					p.next() // consume NOT
@@ -484,7 +484,7 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			}
 			p.next()
 			option.Tp = ast.ColumnOptionCollate
-			p.accept(eq) // optional =
+			// yacc: ColumnOption "COLLATE" CollationName — no EqOpt (unlike table-level COLLATE)
 			tok := p.peek()
 			if isIdentLike(tok.Tp) || tok.Tp == stringLit {
 				info, err := charset.GetCollationByName(tok.Lit)

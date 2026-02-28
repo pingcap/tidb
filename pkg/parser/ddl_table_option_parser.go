@@ -242,10 +242,11 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 	case packKeys:
 		p.parseTableOptionDefaultOrDiscard(opt, ast.TableOptionPackKeys)
 	case insertMethod:
+		// yacc: "INSERT_METHOD" EqOpt StringName (stringLit | Identifier)
 		p.next()
 		p.accept(eq)
 		opt.Tp = ast.TableOptionInsertMethod
-		if tok, ok := p.expectAny(identifier, no, first, last); ok {
+		if tok, ok := p.expectAny(stringLit, identifier, no, first, last); ok {
 			opt.StrValue = tok.Lit
 			if tok.Tp == first {
 				opt.StrValue = "FIRST"
@@ -376,33 +377,27 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			opt.UintValue = tokenItemToUint64(tok.Item)
 		}
 	case statsSampleRate:
+		// yacc: "STATS_SAMPLE_RATE" EqOpt NumLiteral — no DEFAULT alternative
 		p.next()
 		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsSampleRate
-		if _, ok := p.accept(defaultKwd); ok {
-			opt.Default = true
-		} else {
-			// Accepts int or float literal
-			if tok, ok := p.expectAny(intLit, decLit); ok {
-				opt.Value = ast.NewValueExpr(tok.Item, "", "")
-			}
+		if tok, ok := p.expectAny(intLit, decLit); ok {
+			opt.Value = ast.NewValueExpr(tok.Item, "", "")
 		}
 	case statsColChoice:
+		// yacc: "STATS_COL_CHOICE" EqOpt stringLit — no DEFAULT
 		p.next()
 		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsColsChoice
-		if _, ok := p.accept(defaultKwd); ok {
-			opt.Default = true
-		} else if tok, ok := p.accept(stringLit); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			opt.StrValue = tok.Lit
 		}
 	case statsColList:
+		// yacc: "STATS_COL_LIST" EqOpt stringLit — no DEFAULT
 		p.next()
 		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsColList
-		if _, ok := p.accept(defaultKwd); ok {
-			opt.Default = true
-		} else if tok, ok := p.accept(stringLit); ok {
+		if tok, ok := p.expect(stringLit); ok {
 			opt.StrValue = tok.Lit
 		}
 	default:

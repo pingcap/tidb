@@ -112,26 +112,33 @@ func (p *HandParser) parseAlterAdd(spec *ast.AlterTableSpec) {
 				p.expect(')')
 			}
 		}
-	} else if p.peek().Tp == '(' {
-		p.next()
-		spec.Tp = ast.AlterTableAddColumns
-		for {
-			tp := p.peek().Tp
-			if isConstraintToken(tp) {
-				spec.NewConstraints = append(spec.NewConstraints, p.parseConstraint())
-			} else {
-				spec.NewColumns = append(spec.NewColumns, p.parseColumnDef())
-			}
-			if _, ok := p.accept(','); !ok {
-				break
-			}
-		}
-		p.expect(')')
 	} else {
-		// Assume ADD COLUMN by default if none of the above
-		spec.Tp = ast.AlterTableAddColumns
-		spec.NewColumns = []*ast.ColumnDef{p.parseColumnDef()}
-		p.parseColumnPosition(spec)
+		// ADD [IF NOT EXISTS] (col_defs) or ADD [IF NOT EXISTS] col_def
+		// yacc: "ADD" ColumnKeywordOpt IfNotExists '(' TableElementList ')'
+		//      | "ADD" ColumnKeywordOpt IfNotExists ColumnDef ColumnPosition
+		ifNotExists := p.acceptIfNotExists()
+		if p.peek().Tp == '(' {
+			p.next()
+			spec.Tp = ast.AlterTableAddColumns
+			spec.IfNotExists = ifNotExists
+			for {
+				tp := p.peek().Tp
+				if isConstraintToken(tp) {
+					spec.NewConstraints = append(spec.NewConstraints, p.parseConstraint())
+				} else {
+					spec.NewColumns = append(spec.NewColumns, p.parseColumnDef())
+				}
+				if _, ok := p.accept(','); !ok {
+					break
+				}
+			}
+			p.expect(')')
+		} else {
+			spec.Tp = ast.AlterTableAddColumns
+			spec.IfNotExists = ifNotExists
+			spec.NewColumns = []*ast.ColumnDef{p.parseColumnDef()}
+			p.parseColumnPosition(spec)
+		}
 	}
 }
 

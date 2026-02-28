@@ -62,10 +62,13 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 	p.expect(tableKwd)
 	stmt.Table = p.parseTableName()
 
-	// CharsetOpt: CHARACTER SET charset_name
+	// CharsetOpt: CHARACTER SET CharsetName
+	// yacc: CharsetName = StringName | binaryType
 	if _, ok := p.acceptKeyword(character, "CHARACTER"); ok {
 		p.expect(set)
-		if tok, ok := p.expectAny(stringLit, identifier); ok {
+		if _, ok := p.accept(binaryType); ok {
+			stmt.Charset = sptr(charset.CharsetBin)
+		} else if tok, ok := p.acceptStringName(); ok {
 			cs, err := charset.GetCharsetInfo(tok.Lit)
 			if err != nil || cs.Name == "" {
 				p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))

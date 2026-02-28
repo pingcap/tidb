@@ -94,20 +94,10 @@ func (p *HandParser) parseByItems() []*ast.ByItem {
 }
 
 // parseLimitClause parses LIMIT [offset,] count or LIMIT count OFFSET offset
-// or OFFSET offset {ROW|ROWS} FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}
-// or FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}
+// or FETCH {FIRST|NEXT} [count] {ROW|ROWS} ONLY
+// yacc: no standalone OFFSET before FETCH, no WITH TIES
 func (p *HandParser) parseLimitClause() *ast.Limit {
 	limitNode := Alloc[ast.Limit](p.arena)
-
-	// Handle OFFSET first if present (Standard SQL)
-	if _, ok := p.accept(offset); ok {
-		exprTok := p.peek()
-		limitNode.Offset = p.toUint64Value(p.parseExpression(precNone), exprTok)
-		// Optional ROW/ROWS
-		if p.peek().Tp == row || p.peek().Tp == rows {
-			p.next()
-		}
-	}
 
 	// Handle LIMIT or FETCH
 	if _, ok := p.accept(limit); ok {
@@ -158,22 +148,11 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 			}
 		}
 
-		// ONLY or WITH TIES
+		// yacc: ONLY (no WITH TIES in TiDB grammar)
 		if _, ok := p.acceptKeyword(only, "ONLY"); !ok {
-			if _, ok := p.acceptKeyword(with, "WITH"); !ok {
-				p.error(p.peek().Offset, "expected ONLY or WITH TIES")
-				return nil
-			}
-			// Expect TIES
-			if ident, ok := p.expect(identifier); !ok || !ident.IsKeyword("TIES") {
-				p.error(p.peek().Offset, "expected TIES after WITH")
-				return nil
-			}
-			// ast.Limit doesn't support WithTies. Ignore.
+			p.error(p.peek().Offset, "expected ONLY")
+			return nil
 		}
-	} else if limitNode.Offset == nil {
-		p.error(p.peek().Offset, "expected LIMIT, OFFSET or FETCH")
-		return nil
 	}
 
 	return limitNode

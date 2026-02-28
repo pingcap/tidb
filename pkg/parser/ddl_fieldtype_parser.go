@@ -158,16 +158,20 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		// NCHAR/CHAR/CHARACTER [VARYING|VARCHAR|VARCHARACTER]
 		p.next()
 		if p.resolveCharVarchar() {
+			// yacc: Varchar FieldLen / NVarchar FieldLen — length is mandatory
 			tp.SetType(mysql.TypeVarchar)
+			tp.SetFlen(p.parseFieldLen())
 		} else {
+			// yacc: Char OptFieldLen / NChar OptFieldLen — length is optional
 			tp.SetType(mysql.TypeString)
+			p.parseOptionalFieldLen(tp)
 		}
-		p.parseOptionalFieldLen(tp)
 		p.parseStringOptions(tp)
 	case nvarcharType, varcharType, varcharacter:
+		// yacc: Varchar FieldLen / NVarchar FieldLen — length is mandatory
 		p.next()
 		tp.SetType(mysql.TypeVarchar)
-		p.parseOptionalFieldLen(tp)
+		tp.SetFlen(p.parseFieldLen())
 		p.parseStringOptions(tp)
 	case binaryType:
 		p.parseBinaryFieldType(tp, mysql.TypeString, false)

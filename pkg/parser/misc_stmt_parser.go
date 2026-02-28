@@ -195,15 +195,9 @@ func (p *HandParser) parseFlushStmt() ast.StmtNode {
 		tok := p.peek()
 		switch strings.ToUpper(tok.Lit) {
 		case "LOGS":
+			// yacc: LogTypeOpt "LOGS" — log type only BEFORE LOGS, not after
 			p.next()
 			stmt.Tp = ast.FlushLogs
-			// Optional log type after LOGS
-			if isIdentLike(p.peek().Tp) {
-				if lt, ok := logTypeFromName(strings.ToUpper(p.peek().Lit)); ok {
-					p.next()
-					stmt.LogType = lt
-				}
-			}
 		case "ENGINE", "ERROR", "GENERAL", "SLOW":
 			// FLUSH ENGINE/ERROR/GENERAL/SLOW LOGS
 			lt, _ := logTypeFromName(strings.ToUpper(tok.Lit))
