@@ -331,6 +331,15 @@ func (p *HandParser) peekKeyword(tokKeyword int, keyword string) bool {
 	return tok.Tp == tokKeyword || (tok.Tp == identifier && strings.EqualFold(tok.Lit, keyword))
 }
 
+// expectKeyword is like acceptKeyword but reports a syntax error if the keyword is not found.
+func (p *HandParser) expectKeyword(tokKeyword int, keyword string) (Token, bool) {
+	if tok, ok := p.acceptKeyword(tokKeyword, keyword); ok {
+		return tok, true
+	}
+	p.syntaxErrorAt(p.peek())
+	return Token{}, false
+}
+
 // acceptIfNotExists consumes IF NOT EXISTS if present, returning true if found.
 // Consolidates the 3-line pattern: accept(ifKwd) → expect(not) → expect(exists).
 func (p *HandParser) acceptIfNotExists() bool {

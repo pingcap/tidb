@@ -163,7 +163,7 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 			tok := p.next() // option name (identifier or keyword)
 			opt := &ast.LoadDataOpt{Name: strings.ToLower(tok.Lit)}
 			if p.acceptEqOrAssign() {
-				opt.Value = p.parseExpression(precNone)
+				opt.Value = p.parseSignedLiteral()
 			}
 			stmt.Options = append(stmt.Options, opt)
 			if _, ok := p.accept(','); !ok {

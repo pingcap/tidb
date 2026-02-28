@@ -93,25 +93,9 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 				stmt.Format = sptr(tok.Lit)
 			}
 		}
-	} else if p.peek().Tp == '(' {
-		// FROM (SELECT ...) — yacc uses SubSelect which unwraps and sets IsInBraces.
-		p.next() // consume '('
-		sel := p.parseSelectStmt()
-		if sel == nil {
-			return nil
-		}
-		unionSel := p.maybeParseUnion(sel)
-		// Match yacc: set IsInBraces on the inner statement (no TableSource wrapper).
-		if s, ok := unionSel.(*ast.SelectStmt); ok {
-			s.IsInBraces = true
-		} else if s, ok := unionSel.(*ast.SetOprStmt); ok {
-			s.IsInBraces = true
-		}
-		stmt.Select = unionSel
-		p.expect(')')
-	} else if p.peek().Tp == selectKwd || p.peek().Tp == with {
-		// FROM SELECT ... or FROM WITH CTE SELECT ...
-		// Validate: no user vars or SET in SELECT source.
+	} else if p.peek().Tp == '(' || p.peek().Tp == selectKwd || p.peek().Tp == with {
+		// FROM (SELECT ...) | FROM SELECT ... | FROM WITH CTE SELECT ...
+		// Validate: no user vars or SET in SELECT source (yacc checks for all paths).
 		if len(stmt.ColumnsAndUserVars) > 0 {
 			for _, cuv := range stmt.ColumnsAndUserVars {
 				if cuv.UserVar != nil {
@@ -125,7 +109,23 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 			return nil
 		}
 
-		if p.peek().Tp == with {
+		if p.peek().Tp == '(' {
+			// FROM (SELECT ...) — yacc uses SubSelect which unwraps and sets IsInBraces.
+			p.next() // consume '('
+			sel := p.parseSelectStmt()
+			if sel == nil {
+				return nil
+			}
+			unionSel := p.maybeParseUnion(sel)
+			// Match yacc: set IsInBraces on the inner statement (no TableSource wrapper).
+			if s, ok := unionSel.(*ast.SelectStmt); ok {
+				s.IsInBraces = true
+			} else if s, ok := unionSel.(*ast.SetOprStmt); ok {
+				s.IsInBraces = true
+			}
+			stmt.Select = unionSel
+			p.expect(')')
+		} else if p.peek().Tp == with {
 			// WITH CTE form: use standard parseWithStmt which handles
 			// multiple CTEs, column lists, RECURSIVE, etc.
 			withStmt := p.parseWithStmt()
@@ -152,7 +152,7 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 			optTok := p.next()
 			opt := &ast.LoadDataOpt{Name: strings.ToLower(optTok.Lit)}
 			if p.acceptEqOrAssign() {
-				opt.Value = p.parseExpression(precNone)
+				opt.Value = p.parseSignedLiteral()
 			}
 			stmt.Options = append(stmt.Options, opt)
 			if _, ok := p.accept(','); !ok {

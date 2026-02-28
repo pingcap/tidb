@@ -203,56 +203,41 @@ func (p *HandParser) parsePasswordAndLockOptions() []*ast.PasswordOrLockOption {
 						count, _ := strconv.ParseInt(val.Lit, 10, 64)
 						opt.Count = count
 					}
-					// DAY is usually expected but might be implied or checked
-					if p.peekKeyword(day, "DAY") {
-						p.next()
-					}
+					p.expectKeyword(day, "DAY")
 				}
 			} else if next.Tp == history {
 				p.next() // HISTORY
-				opt.Type = ast.PasswordHistory
 				if p.peek().Tp == defaultKwd {
 					p.next()
 					opt.Type = ast.PasswordHistoryDefault
-				} else if val, ok := p.accept(intLit); ok {
-					count, _ := strconv.ParseInt(val.Lit, 10, 64)
-					opt.Count = count
+				} else {
+					opt.Type = ast.PasswordHistory
+					if val, ok := p.expect(intLit); ok {
+						count, _ := strconv.ParseInt(val.Lit, 10, 64)
+						opt.Count = count
+					}
 				}
 			} else if next.Tp == reuse {
 				p.next() // REUSE
-				// INTERVAL [DEFAULT | N DAY]
-				if p.peek().Tp == interval {
-					p.next()
-					if p.peek().Tp == defaultKwd {
-						p.next()
-						opt.Type = ast.PasswordReuseDefault
-					} else {
-						opt.Type = ast.PasswordReuseInterval
-						if val, ok := p.expect(intLit); ok {
-							count, _ := strconv.ParseInt(val.Lit, 10, 64)
-							opt.Count = count
-						}
-						if p.peekKeyword(day, "DAY") {
-							p.next()
-						}
-					}
-				} else if p.peek().Tp == defaultKwd {
+				// yacc: PASSWORD REUSE INTERVAL DEFAULT | PASSWORD REUSE INTERVAL NUM DAY
+				p.expect(interval)
+				if p.peek().Tp == defaultKwd {
 					p.next()
 					opt.Type = ast.PasswordReuseDefault
+				} else {
+					opt.Type = ast.PasswordReuseInterval
+					if val, ok := p.expect(intLit); ok {
+						count, _ := strconv.ParseInt(val.Lit, 10, 64)
+						opt.Count = count
+					}
+					p.expectKeyword(day, "DAY")
 				}
 			} else if next.Tp == require {
-				// PASSWORD REQUIRE CURRENT [DEFAULT | OPTIONAL]
+				// yacc: PASSWORD REQUIRE CURRENT DEFAULT (only form)
 				p.next() // REQUIRE
-				if p.peek().Tp == current {
-					p.next() // CURRENT
-					if p.peek().Tp == defaultKwd {
-						p.next()
-						opt.Type = ast.PasswordRequireCurrentDefault
-					} else if p.peek().Tp == optional {
-						p.next()
-						// ast.PasswordRequireCurrentOptional ? (Not in my list, maybe 0?)
-					}
-				}
+				p.expect(current)
+				p.expect(defaultKwd)
+				opt.Type = ast.PasswordRequireCurrentDefault
 			} else {
 				// Just PASSWORD token? unlikely in CREATE USER options
 				return opts
@@ -280,7 +265,7 @@ func (p *HandParser) parsePasswordAndLockOptions() []*ast.PasswordOrLockOption {
 			if p.peek().Tp == unbounded {
 				p.next()
 				opt.Type = ast.PasswordLockTimeUnbounded
-			} else if val, ok := p.accept(intLit); ok {
+			} else if val, ok := p.expect(intLit); ok {
 				count, _ := strconv.ParseInt(val.Lit, 10, 64)
 				opt.Count = count
 			}
@@ -353,22 +338,13 @@ func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 		p.next() // consume (
 		p.expect(')')
 
-		// Parse auth option for CurrentAuth
-		// The ALTER USER USER() form only accepts IDENTIFIED BY 'string',
-		// NOT IDENTIFIED BY PASSWORD 'hash' (which is only valid in UserSpec).
-		if _, ok := p.accept(identified); ok {
-			stmt.CurrentAuth = Alloc[ast.AuthOption](p.arena)
-			if _, ok := p.accept(by); ok {
-				// Reject IDENTIFIED BY PASSWORD '...' — not valid for USER() form
-				if tok := p.peek(); tok.Tp == password {
-					p.errorNear(tok.EndOffset, tok.Offset)
-					return nil
-				}
-				if tok, ok := p.expect(stringLit); ok {
-					stmt.CurrentAuth.ByAuthString = true
-					stmt.CurrentAuth.AuthString = tok.Lit
-				}
-			}
+		// yacc: ALTER USER USER() IDENTIFIED BY AuthString — IDENTIFIED BY is required
+		p.expect(identified)
+		stmt.CurrentAuth = Alloc[ast.AuthOption](p.arena)
+		p.expect(by)
+		if tok, ok := p.expect(stringLit); ok {
+			stmt.CurrentAuth.ByAuthString = true
+			stmt.CurrentAuth.AuthString = tok.Lit
 		}
 	} else {
 		for {
@@ -398,11 +374,6 @@ func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 	if c := p.parseCommentOrAttributeOption(); c != nil {
 		stmt.CommentOrAttributeOption = c
 	}
-	// Resource Group option?
-	// Check CreateUserStmt logic for Resource Group.
-	// Reuse parseCreateUserStmt logic?
-	// Snippet 26301 showed RESOURCE GROUP logic.
-	// I'll add it here.
 	if opt := p.parseUserResourceGroupOption(); opt != nil {
 		stmt.ResourceGroupNameOption = opt
 	}
@@ -491,12 +462,6 @@ func (p *HandParser) parseUserSpec() *ast.UserSpec {
 						spec.AuthOpt.HashString = tok.Lit
 					}
 				}
-			}
-		} else if _, ok := p.accept(as); ok {
-			// IDENTIFIED AS 'hashstring' (restored form from BY PASSWORD)
-			if tok, ok := p.expectAny(stringLit, hexLit); ok {
-				spec.AuthOpt.ByHashString = true
-				spec.AuthOpt.HashString = tok.Lit
 			}
 		} else {
 			// IDENTIFIED BY [PASSWORD] 'password'
