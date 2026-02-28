@@ -67,8 +67,14 @@ type FMSketch struct {
 
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
+	initialSize := maxSize
+	if initialSize > 128 {
+		initialSize = 128
+	} else if initialSize < 0 {
+		initialSize = 0
+	}
 	return &FMSketch{
-		hashset: make(map[uint64]struct{}),
+		hashset: make(map[uint64]struct{}, initialSize),
 		maxSize: maxSize,
 	}
 }
