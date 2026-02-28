@@ -2269,6 +2269,11 @@ func preferIndexJoinFamily(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (p
 	if physicPlan == nil {
 		return false
 	}
+	// index_join_first: prefer any index join method on either side.
+	if p.PreferAny(h.PreferIndexJoinFirst) {
+		_, _, isIndexJoin := getIndexJoinSideAndMethod(physicPlan)
+		return isIndexJoin
+	}
 	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
 		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
 		return false // no force index join hints

@@ -129,6 +129,10 @@ const (
 	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
 	HintMaxExecutionTime = "max_execution_time"
 
+	// HintIndexJoinFirst is a SQL hint to indicate the optimizer should always prefer index join over other join types.
+	// It applies to all joins in the query and does not take any parameters.
+	HintIndexJoinFirst = "index_join_first"
+
 	// HintWriteSlowLog is a SQL hint used to explicitly trigger writing a statement into the slow log.
 	HintWriteSlowLog = "write_slow_log"
 
@@ -199,6 +203,9 @@ const (
 	PreferMPP1PhaseAgg
 	// PreferMPP2PhaseAgg indicates that the optimizer prefers to use 2-phase aggregation.
 	PreferMPP2PhaseAgg
+	// PreferIndexJoinFirst indicates that the optimizer should prefer index join over other join types when possible.
+	// Unlike PreferLeftAsINLJInner/PreferRightAsINLJInner, this flag applies to any index join method on either side.
+	PreferIndexJoinFirst
 )
 
 const (
@@ -571,6 +578,7 @@ type PlanHints struct {
 	CTEMerge          bool // merge
 	TimeRangeHint     ast.HintTimeRange
 	StraightJoinOrder bool // straight_join
+	IndexJoinFirst    bool // index_join_first: prefer index join over other join types when possible
 }
 
 // HintedTable indicates which table this hint should take effect on.
@@ -786,6 +794,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		leadingHintCnt                                                                  int
 		leadingList                                                                     *ast.LeadingList
 		straightJoinHint                                                                bool
+		indexJoinFirst                                                                  bool
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -954,6 +963,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				continue
 			}
 			subQueryHintFlags |= HintFlagNoDecorrelate
+		case HintIndexJoinFirst:
+			indexJoinFirst = true
 		case HintStraightJoin:
 			straightJoinHint = true
 		default:
@@ -993,6 +1004,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		HJProbe:               hjProbeTables,
 		NoIndexLookUpPushDown: noIndexLookUpPushDownTables,
 		StraightJoinOrder:     straightJoinHint,
+		IndexJoinFirst:        indexJoinFirst,
 	}, subQueryHintFlags, nil
 }
 

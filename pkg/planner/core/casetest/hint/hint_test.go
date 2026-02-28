@@ -17,6 +17,7 @@ package hint
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -438,5 +439,85 @@ func TestOptimizerCostFactorHints(t *testing.T) {
 		require.Less(t, planCost1, planCost2)
 		// Reset table scan cost factor variable to default
 		testKit.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
+	})
+}
+
+// TestIndexJoinFirstHint verifies that INDEX_JOIN_FIRST() hint prefers index join over other join types.
+func TestIndexJoinFirstHint(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1, t2, t3")
+		// t1 has an index on a, making index join possible when joined on a.
+		testKit.MustExec("create table t1(a int, b int, index idx_a(a))")
+		testKit.MustExec("create table t2(a int, b int, index idx_a(a))")
+		// t3 has no index, index join is not possible.
+		testKit.MustExec("create table t3(a int, b int)")
+
+		// Verify hint is parsed and index join is chosen when an index is available.
+		rows := testKit.MustQuery("explain format='brief' select /*+ INDEX_JOIN_FIRST() */ t1.a, t2.b from t1 join t2 on t1.a = t2.a").Rows()
+		hasIndexJoin := false
+		for _, row := range rows {
+			planType := row[0].(string)
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+				hasIndexJoin = true
+				break
+			}
+		}
+		require.True(t, hasIndexJoin, "INDEX_JOIN_FIRST() hint should prefer index join when index is available")
+
+		// Verify hint on three-way join picks index join.
+		rows = testKit.MustQuery("explain format='brief' select /*+ INDEX_JOIN_FIRST() */ t1.a, t2.b, t3.b from t1 join t2 on t1.a = t2.a join t3 on t2.a = t3.a").Rows()
+		hasIndexJoin = false
+		for _, row := range rows {
+			planType := row[0].(string)
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+				hasIndexJoin = true
+				break
+			}
+		}
+		require.True(t, hasIndexJoin, "INDEX_JOIN_FIRST() hint should prefer index join in multi-way join when index is available")
+
+		// Verify show warnings contains no error when hint is used.
+		testKit.MustQuery("select /*+ INDEX_JOIN_FIRST() */ t1.a from t1 join t2 on t1.a = t2.a")
+		warnings := testKit.Session().GetSessionVars().StmtCtx.GetWarnings()
+		for _, warn := range warnings {
+			require.NotContains(t, warn.Err.Error(), "is inapplicable", "INDEX_JOIN_FIRST() should not produce inapplicable warnings when index exists")
+		}
+
+		// Verify INDEX_JOIN_FIRST + LEADING: join order is determined by LEADING, join method by INDEX_JOIN_FIRST.
+		rows = testKit.MustQuery("explain format='brief' select /*+ INDEX_JOIN_FIRST() LEADING(t2, t1) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a").Rows()
+		hasIndexJoin = false
+		for _, row := range rows {
+			planType := row[0].(string)
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+				hasIndexJoin = true
+				break
+			}
+		}
+		require.True(t, hasIndexJoin, "INDEX_JOIN_FIRST() should prefer index join even when LEADING hint controls join order")
+
+		// Verify INDEX_JOIN_FIRST + LEADING on three-way join.
+		rows = testKit.MustQuery("explain format='brief' select /*+ INDEX_JOIN_FIRST() LEADING(t1, t2, t3) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a join t3 on t2.a = t3.a").Rows()
+		hasIndexJoin = false
+		for _, row := range rows {
+			planType := row[0].(string)
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+				hasIndexJoin = true
+				break
+			}
+		}
+		require.True(t, hasIndexJoin, "INDEX_JOIN_FIRST() should prefer index join alongside LEADING in multi-way join")
+
+		// Verify INDEX_JOIN_FIRST + STRAIGHT_JOIN: join order fixed by table order, join method by INDEX_JOIN_FIRST.
+		rows = testKit.MustQuery("explain format='brief' select /*+ INDEX_JOIN_FIRST() STRAIGHT_JOIN() */ t1.a, t2.b from t1 join t2 on t1.a = t2.a").Rows()
+		hasIndexJoin = false
+		for _, row := range rows {
+			planType := row[0].(string)
+			if strings.Contains(planType, "IndexJoin") || strings.Contains(planType, "IndexHashJoin") {
+				hasIndexJoin = true
+				break
+			}
+		}
+		require.True(t, hasIndexJoin, "INDEX_JOIN_FIRST() should prefer index join even when STRAIGHT_JOIN() controls join order")
 	})
 }

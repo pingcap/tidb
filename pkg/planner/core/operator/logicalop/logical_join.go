@@ -1707,6 +1707,12 @@ func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(hintInfo *utilhint.PlanHints)
 		p.PreferJoinType |= utilhint.PreferRightAsHJProbe
 		p.RightPreferJoinType |= utilhint.PreferHJProbe
 	}
+	// index_join_first is a statement-level hint that prefers index join on all joins.
+	// It is applied after table-specific hints; if a table-specific index join hint was set,
+	// it is already covered. We only set the flag here when no specific side is forced.
+	if hintInfo.IndexJoinFirst {
+		p.PreferJoinType |= utilhint.PreferIndexJoinFirst
+	}
 	hasConflict := false
 	if !p.SCtx().GetSessionVars().EnableAdvancedJoinHint || p.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		if containDifferentJoinTypes(p.PreferJoinType) {
@@ -2004,6 +2010,8 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 	preferJoinType &= ^utilhint.PreferNoIndexJoin
 	preferJoinType &= ^utilhint.PreferNoIndexHashJoin
 	preferJoinType &= ^utilhint.PreferNoIndexMergeJoin
+	// PreferIndexJoinFirst is a soft preference that doesn't conflict with other join types.
+	preferJoinType &= ^utilhint.PreferIndexJoinFirst
 
 	inlMask := utilhint.PreferRightAsINLJInner ^ utilhint.PreferLeftAsINLJInner
 	inlhjMask := utilhint.PreferRightAsINLHJInner ^ utilhint.PreferLeftAsINLHJInner
