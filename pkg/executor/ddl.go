@@ -43,8 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // DDLExec represents a DDL executor.
@@ -57,23 +55,6 @@ type DDLExec struct {
 	is           infoschema.InfoSchema
 	tempTableDDL temptable.TemporaryTableDDL
 	done         bool
-}
-
-// toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
-func (e *DDLExec) toErr(err error) error {
-	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
-	dom := domain.GetDomain(e.Ctx())
-	checker := domain.NewSchemaChecker(dom.GetSchemaValidator(), e.is.SchemaMetaVersion(), nil, true)
-	txn, err1 := e.Ctx().Txn(true)
-	if err1 != nil {
-		logutil.BgLogger().Error("active txn failed", zap.Error(err1))
-		return err
-	}
-	_, schemaInfoErr := checker.Check(txn.StartTS())
-	if schemaInfoErr != nil {
-		return errors.Trace(schemaInfoErr)
-	}
-	return err
 }
 
 func (e *DDLExec) getLocalTemporaryTable(schema ast.CIStr, table ast.CIStr) (table.Table, bool, error) {
@@ -229,12 +210,6 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeAlterResourceGroup(x)
 	}
 	if err != nil {
-		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
-		// otherwise, ErrTableNotExists can be returned before putting this DDL job to the job queue.
-		isDDLJobInQueue := e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue.Load()
-		if (isDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) || !isDDLJobInQueue {
-			return e.toErr(err)
-		}
 		return err
 	}
 
