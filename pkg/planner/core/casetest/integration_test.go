@@ -208,7 +208,6 @@ func TestTiFlashPartitionTableScan(t *testing.T) {
 
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
-		tk.MustExec("set tidb_cost_model_version=1")
 		tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 		tk.MustExec("set @@tidb_enforce_mpp = on")

@@ -70,7 +70,6 @@ explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.
 # TestIssue44025
 drop table if exists t;
 create table t(a int, b int, c int, d int, index ia(a), index ibc(b,c));
-set @@tidb_cost_model_version=1;
 explain select * from t where a between 1 and 5 and b != 200 and c = 20 limit 100000;
 
 

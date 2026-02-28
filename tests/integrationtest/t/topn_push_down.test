@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 CREATE TABLE `tr` (
   `id` bigint(20) NOT NULL,
   `biz_date` date NOT NULL,

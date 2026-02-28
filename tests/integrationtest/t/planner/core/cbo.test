@@ -43,7 +43,6 @@ set tidb_cost_model_version=2;
 explain format='cost_trace' select * from t;
 --replace_column 8 <execution_info> 9 <operator_info> 10 <memory> 11 <disk>
 explain analyze format='cost_trace' select * from t;
-set tidb_cost_model_version=1;
 ## cost trace on model ver1 is not supported
 explain format='cost_trace' select * from t;
 --replace_column 8 <execution_info> 9 <operator_info> 10 <memory> 11 <disk>

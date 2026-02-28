@@ -75,7 +75,6 @@ func TestIssue36243(t *testing.T) {
 		return
 	}
 
-	tk.MustExec(`set @@tidb_cost_model_version=1`)
 	// Selection has the same cost with TableReader, ignore Selection cost for compatibility in cost model ver1.
 	selCost, readerCost := getCost()
 	require.Equal(t, selCost, readerCost)

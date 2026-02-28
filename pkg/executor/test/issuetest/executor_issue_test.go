@@ -44,7 +44,6 @@ func TestIssue24210(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=1")
 
 	// for ProjectionExec
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockProjectionExecBaseExecutorOpenReturnedError", `return(true)`))

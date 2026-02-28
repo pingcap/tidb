@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 drop table if exists t;
 create table t(a bigint, b bigint);
 explain format = 'plan_tree' insert into t values(1, 1);

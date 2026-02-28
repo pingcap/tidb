@@ -217,7 +217,6 @@ func TestRightShiftPushDownToTiFlash(t *testing.T) {
 func TestBitColumnPushDown(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
-		testKit.MustExec("set tidb_cost_model_version=1")
 		testKit.MustExec("create table t1(a bit(8), b int)")
 		testKit.MustExec("create table t2(a bit(8), b int)")
 		testKit.MustExec("insert into t1 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)")
