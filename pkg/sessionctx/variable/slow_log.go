@@ -659,14 +659,14 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			return MatchEqual(threshold, strings.ToLower(seVars.CurrentDB))
 		},
 	},
-		strings.ToLower(SlowLogExecRetryCount): {
-			Parse: parseUint64,
-			Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
-				items.ExecRetryCount = seVars.StmtCtx.ExecRetryCount
-			},
-			Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
-				return matchGE(threshold, items.ExecRetryCount)
-			},
+	strings.ToLower(SlowLogExecRetryCount): {
+		Parse: parseUint64,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.ExecRetryCount = seVars.StmtCtx.ExecRetryCount
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, items.ExecRetryCount)
+		},
 	},
 	strings.ToLower(SlowLogQueryTimeStr): {
 		Parse: parseFloat64,
