@@ -1668,7 +1668,18 @@ SET sql_mode = 'NO_ZERO_IN_DATE';
 SELECT DATE(test_date) FROM t;
 show warnings;
 drop table if exists t;
+set sql_mode = default;
 
 # Issue 59420
 SELECT GET_FORMAT(TIME, 'usa'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'UsA'), GET_FORMAT(time, 'UsA'), GET_FORMAT(TIme, 'UsA');
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
+
+# Issue 59424
+SELECT DATE_FORMAT('2023-10-30', ''),DATE_FORMAT('2023-10-32', ''),DATE_FORMAT('0000-00-00', ''),DATE_FORMAT('0', ''),DATE_FORMAT(0, ''),DATE_FORMAT(0.0, '');
+show warnings;
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (d VARCHAR(20),fmt VARCHAR(20));
+INSERT INTO t VALUES ('2023-10-30', ''),('2023-10-32', ''),('0000-00-00', ''),('0', ''),(0, ''),(0.0, '');
+SELECT d, fmt, DATE_FORMAT(d, fmt) AS result FROM t;
+show warnings;
+DROP TABLE IF EXISTS t;
