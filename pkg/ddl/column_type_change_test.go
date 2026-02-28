@@ -215,54 +215,58 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
 func TestRowFormat(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+	type testCase struct {
+		checksum     bool
+		modifySQL    string
+		expectedData []byte
+	}
 
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int primary key, v varchar(10))")
-	tk.MustExec("insert into t values (1, \"123\");")
-	tk.MustExec("alter table t modify column v varchar(5);")
-
-	tbl := external.GetTableByName(t, tk, "test", "t")
-	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
-
-	h := helper.NewHelper(store.(helper.Storage))
-	data, err := h.GetMvccByEncodedKey(encodedKey)
-	require.NoError(t, err)
 	// The new format will start with CodecVer = 128 (0x80).
-	require.Equal(t, []byte{0x80, 0x0, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33}, data.Info.Writes[0].ShortValue)
-	tk.MustExec("drop table if exists t")
-}
-
-func TestRowFormatWithChecksums(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+	tcs := []testCase{
+		{
+			false,
+			"alter table t modify column v varchar(5)",
+			[]byte{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x3, 0x0, 0x31, 0x32, 0x33},
+		},
+		{
+			false,
+			"alter table t modify column v varbinary(5)",
+			[]byte{0x80, 0x0, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33},
+		},
+		{
+			true,
+			"alter table t modify column v varchar(5)",
+			[]byte{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x3, 0x0, 0x31, 0x32, 0x33},
+		},
+		{
+			true,
+			"alter table t modify column v varbinary(5)",
+			[]byte{0x80, 0x2, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x2, 0x9e, 0x56, 0xf5, 0x45},
+		},
+	}
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int primary key, v varchar(10))")
-	tk.MustExec("insert into t values (1, \"123\");")
-	tk.MustExec("alter table t modify column v varchar(5);")
 
-	tbl := external.GetTableByName(t, tk, "test", "t")
-	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
+	for _, tc := range tcs {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_row_level_checksum = %v", tc.checksum))
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key, v varchar(10))")
+		tk.MustExec("insert into t values (1, '123');")
+		tk.MustExec(tc.modifySQL)
 
-	h := helper.NewHelper(store.(helper.Storage))
-	data, err := h.GetMvccByEncodedKey(encodedKey)
-	require.NoError(t, err)
-	// row value with checksums
-	expected := []byte{0x80, 0x2, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x2, 0x9e, 0x56, 0xf5, 0x45}
-	require.Equal(t, expected, data.Info.Writes[0].ShortValue)
-	tk.MustExec("drop table if exists t")
+		tbl := external.GetTableByName(t, tk, "test", "t")
+		encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
+
+		h := helper.NewHelper(store.(helper.Storage))
+		data, err := h.GetMvccByEncodedKey(encodedKey)
+		require.NoError(t, err)
+		require.Equal(t, tc.expectedData, data.Info.Writes[0].ShortValue)
+	}
 }
 
 func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -270,9 +274,8 @@ func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\")")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceRowLevelChecksumOnUpdateColumnBackfill", "return"))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceRowLevelChecksumOnUpdateColumnBackfill")
-	tk.MustExec("alter table t add column vv int, modify column v varchar(5)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceRowLevelChecksumOnUpdateColumnBackfill", "return")
+	tk.MustExec("alter table t add column vv int, modify column v varbinary(5)")
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
