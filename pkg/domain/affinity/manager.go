@@ -32,15 +32,6 @@ type pdManager struct {
 	pdhttp.Client
 }
 
-// TODO: remove these interface shims after the pdhttp.Client includes these methods directly.
-type affinityGroupsCreator interface {
-	CreateAffinityGroupsWithSkipExistCheck(ctx context.Context, affinityGroups map[string][]pdhttp.AffinityGroupKeyRange) (map[string]*pdhttp.AffinityGroupState, error)
-}
-
-type affinityGroupsGetter interface {
-	GetAffinityGroups(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error)
-}
-
 const (
 	maxAffinityGroupIDsQueryLen = 4096
 	maxAffinityGroupIDsCount    = 100
@@ -59,38 +50,7 @@ func (m *pdManager) CreateAffinityGroupsIfNotExists(ctx context.Context, groups 
 		return nil
 	}
 
-	if creator, ok := m.Client.(affinityGroupsCreator); ok {
-		_, err := creator.CreateAffinityGroupsWithSkipExistCheck(ctx, groups)
-		return err
-	}
-
-	// Collect group IDs to check
-	groupIDs := make([]string, 0, len(groups))
-	for id := range groups {
-		groupIDs = append(groupIDs, id)
-	}
-
-	// Fallback for older PD clients: check which groups already exist.
-	existingGroups, err := m.GetAffinityGroups(ctx, groupIDs)
-	if err != nil {
-		return err
-	}
-
-	// Filter out groups that already exist
-	groupsToCreate := make(map[string][]pdhttp.AffinityGroupKeyRange)
-	for id, ranges := range groups {
-		if _, exists := existingGroups[id]; !exists {
-			groupsToCreate[id] = ranges
-		}
-	}
-
-	// If all groups already exist, return success
-	if len(groupsToCreate) == 0 {
-		return nil
-	}
-
-	// Create only the groups that don't exist
-	_, err = m.Client.CreateAffinityGroups(ctx, groupsToCreate)
+	_, err := m.Client.CreateAffinityGroups(ctx, groups, pdhttp.WithSkipExistCheck())
 	return err
 }
 
@@ -115,17 +75,7 @@ func (m *pdManager) GetAffinityGroups(ctx context.Context, ids []string) (map[st
 		}
 		return filterAffinityGroups(allGroups, ids), nil
 	}
-
-	if getter, ok := m.Client.(affinityGroupsGetter); ok {
-		return getter.GetAffinityGroups(ctx, ids)
-	}
-
-	allGroups, err := m.Client.GetAllAffinityGroups(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return filterAffinityGroups(allGroups, ids), nil
+	return m.Client.GetAffinityGroups(ctx, ids)
 }
 
 func affinityGroupIDsQueryLen(ids []string) int {
