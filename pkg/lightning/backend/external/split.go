@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"math"
 	"slices"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -55,6 +56,21 @@ func (h *exhaustedHeap) Pop() any {
 	x := old[n-1]
 	*h = old[:n-1]
 	return x
+}
+
+// CalRangeSize calculates the range size and range keys.
+// see writeStepMemShareCount for more info.
+func CalRangeSize(memPerCore int64, regionSplitSize, regionSplitKeys int64) (int64, int64) {
+	ss := int64(float64(memPerCore) / writeStepMemShareCount)
+	var rangeSize int64
+	if ss < regionSplitSize {
+		rangeCnt := int64(math.Ceil(float64(regionSplitSize) / float64(ss)))
+		rangeSize = regionSplitSize/rangeCnt + 1
+	} else {
+		rangeSize = (ss / regionSplitSize) * regionSplitSize
+	}
+	avgKeySize := float64(regionSplitSize) / float64(regionSplitKeys)
+	return rangeSize, int64(float64(rangeSize) / avgKeySize)
 }
 
 // RangeSplitter is used to split key ranges of an external engine. Please see

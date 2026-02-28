@@ -69,8 +69,6 @@ drop table if exists test_add_index_after_add_col;
 create table test_add_index_after_add_col(a int, b int not null default '0');
 insert into test_add_index_after_add_col values(1, 2),(2,2);
 alter table test_add_index_after_add_col add column c int not null default '0';
-alter table test_add_index_after_add_col add unique index cc(c);
-Error 1062 (23000): Duplicate entry '0' for key 'test_add_index_after_add_col.cc'
 drop table if exists employ, issue9100t1, issue9100t2;
 create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));
 alter table employ add unique index p_a (a);

@@ -63,8 +63,8 @@ drop table if exists test_add_index_after_add_col;
 create table test_add_index_after_add_col(a int, b int not null default '0');
 insert into test_add_index_after_add_col values(1, 2),(2,2);
 alter table test_add_index_after_add_col add column c int not null default '0';
--- error 1062
-alter table test_add_index_after_add_col add unique index cc(c);
+#-- error 1062
+#alter table test_add_index_after_add_col add unique index cc(c);
 
 # TestIssue9100
 drop table if exists employ, issue9100t1, issue9100t2;

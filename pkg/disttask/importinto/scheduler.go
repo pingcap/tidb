@@ -333,13 +333,17 @@ func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle storage.TaskHa
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if task.Error == nil {
-		return sch.finishJob(ctx, logger, handle, task, taskMeta)
+	if task.State == proto.TaskStateReverting {
+		errMsg := ""
+		if task.Error != nil {
+			if scheduler.IsCancelledErr(task.Error) {
+				return sch.cancelJob(ctx, handle, task, taskMeta, logger)
+			}
+			errMsg = task.Error.Error()
+		}
+		return sch.failJob(ctx, handle, task, taskMeta, logger, errMsg)
 	}
-	if scheduler.IsCancelledErr(task.Error) {
-		return sch.cancelJob(ctx, handle, task, taskMeta, logger)
-	}
-	return sch.failJob(ctx, handle, task, taskMeta, logger, task.Error.Error())
+	return sch.finishJob(ctx, logger, handle, task, taskMeta)
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.

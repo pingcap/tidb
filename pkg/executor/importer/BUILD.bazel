@@ -100,7 +100,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 28,
+    shard_count = 27,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/mock",

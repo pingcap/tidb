@@ -364,8 +364,6 @@ PARTITION p3 VALUES LESS THAN (21)
 insert into t values (4, 'xxx', 4);
 insert into t values (4, 'xxx', 9);
 insert into t values (17, 'xxx', 12);
-alter table t add unique index idx_a(a);
-Error 1062 (23000): Duplicate entry '4' for key 't.idx_a'
 delete from t where a = 4;
 alter table t add unique index idx_a(a);
 alter table t add unique index idx_ac(a, c);

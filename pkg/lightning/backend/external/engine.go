@@ -38,6 +38,42 @@ import (
 	"go.uber.org/zap"
 )
 
+// writeStepMemShareCount defines the number of shares of memory per job worker.
+// For each job worker, the memory it can use is determined by cpu:mem ratio, say
+// a 16c32G machine, each worker can use 2G memory.
+// And for the memory corresponding to each job worker, we divide into below and
+// total 6.5 shares:
+//   - one share used by HTTP and GRPC buf, such as loadBatchRegionData, write TiKV
+//   - one share used by loadBatchRegionData to store loaded data batch A
+//   - one share used by generateAndSendJob for handle loaded data batch B
+//   - one share used by the active job on job worker
+//   - 2.5 share for others, and burst allocation to avoid OOM
+//
+// the share size 'SS' determines the max data size 'RangeS' for a split-range
+// which is split out by RangeSplitter.
+// split-range is intersected with region to generate range job which is handled
+// by range job worker, and each range job corresponding to one ingested SST on TiKV.
+// our goal here is to load as many data as possible to make all range job workers
+// fully parallelized, while minimizing the number of SSTs (too many SST file, say
+// 500K, will cause TiKV slow down when ingest), i.e. to make RangeS larger, and
+// also try to make the SST be more even, so we calculate RangeS by:
+//   - RS = region size
+//   - let TempRangeS = SS
+//   - if TempRangeS < RS, RangeS = RS / ceil(RS / TempRangeS) + 1,
+//     trailing 1 is for RS divided by odd number.
+//   - else RangeS = floor(TempRangeS / RS) * RS.
+//
+// RangeS for different region size and cpu:mem ratio, the number in parentheses
+// is the number of SST files per region:
+//
+//	|   RS  | RangeS        | RangeS        |
+//	|       | cpu:mem=1:1.7 | cpu:mem=1:3.5 |
+//	|-------|---------------|---------------|
+//	|   96M |       192M(1) |       480M(1) |
+//	|  256M |       256M(1) |       512M(1) |
+//	|  512M |       256M(2) |       512M(1) |
+const writeStepMemShareCount = 6.5
+
 // during test on ks3, we found that we can open about 8000 connections to ks3,
 // bigger than that, we might receive "connection reset by peer" error, and
 // the read speed will be very slow, still investigating the reason.
@@ -127,12 +163,12 @@ type Engine struct {
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
+	memLimit        int
 }
 
 var _ common.Engine = (*Engine)(nil)
 
 const (
-	memLimit       = 12 * units.GiB
 	smallBlockSize = units.MiB
 )
 
@@ -154,7 +190,12 @@ func NewExternalEngine(
 	totalKVSize int64,
 	totalKVCount int64,
 	checkHotspot bool,
+	memCapacity int64,
 ) common.Engine {
+	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
+	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
+	logutil.BgLogger().Info("create external engine",
+		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:    storage,
@@ -185,6 +226,7 @@ func NewExternalEngine(
 		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
+		memLimit:           memLimit,
 	}
 }
 
@@ -234,8 +276,11 @@ func getFilesReadConcurrency(
 		return nil, nil, err
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
+	totalFileSize := uint64(0)
 	for i := range statsFiles {
-		expectedConc := (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		size := endOffs[i] - startOffs[i]
+		totalFileSize += size
+		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.
 		expectedConc += 1
@@ -258,6 +303,8 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
+	logutil.Logger(ctx).Info("estimated file size of this range group",
+		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
 }
 
@@ -272,6 +319,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
+	// read all data in range [startKey, endKey)
 	err := readAllData(
 		ctx,
 		e.storage,
@@ -397,13 +445,14 @@ func (e *Engine) LoadIngestData(
 	outCh chan<- common.DataAndRanges,
 ) error {
 	// try to make every worker busy for each batch
-	regionBatchSize := e.workerConcurrency
+	rangeBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
-		regionBatchSize = val.(int)
+		rangeBatchSize = val.(int)
 	})
-	for start := 0; start < len(e.jobKeys)-1; start += regionBatchSize {
+	logutil.Logger(ctx).Info("load ingest data", zap.Int("batchSize", rangeBatchSize))
+	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
 		// want to generate N ranges, so we need N+1 keys
-		end := min(1+start+regionBatchSize, len(e.jobKeys))
+		end := min(1+start+rangeBatchSize, len(e.jobKeys))
 		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
@@ -502,7 +551,7 @@ func (e *Engine) Close() error {
 
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
-	memLimiter := membuf.NewLimiter(memLimit)
+	memLimiter := membuf.NewLimiter(e.memLimit)
 	if e.smallBlockBufPool != nil {
 		e.smallBlockBufPool.Destroy()
 		e.smallBlockBufPool = membuf.NewPool(
