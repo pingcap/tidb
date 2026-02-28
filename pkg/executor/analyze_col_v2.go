@@ -101,21 +101,13 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 	keepSamplesForGlobal := e.tableID.IsPartitionTable() &&
 		e.ctx.GetSessionVars().EnableSampleBasedGlobalStats &&
 		variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
-	logutil.BgLogger().Info("DEBUGMEM analyzeColumnsPushDownV2 start",
-		zap.Int64("tableID", e.tableID.TableID), zap.Int64("partitionID", e.tableID.PartitionID),
-		zap.Bool("keepSamples", keepSamplesForGlobal), zap.Int64("trackerBytes", e.memTrackerBytes()))
 	count, hists, topNs, fmSketches, extStats, rootCollector, err := e.buildSamplingStats(gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency, keepSamplesForGlobal)
 	if err != nil {
-		logutil.BgLogger().Info("DEBUGMEM analyzeColumnsPushDownV2 error, releasing all",
-			zap.Int64("partitionID", e.tableID.PartitionID), zap.Int64("releasing", e.memTrackerBytes()))
 		if e.memTracker != nil {
 			e.memTracker.Release(e.memTracker.BytesConsumed())
 		}
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
-	logutil.BgLogger().Info("DEBUGMEM analyzeColumnsPushDownV2 done",
-		zap.Int64("partitionID", e.tableID.PartitionID), zap.Int64("trackerBytes", e.memTrackerBytes()),
-		zap.Bool("hasRootCollector", rootCollector != nil))
 	cLen := len(e.analyzePB.ColReq.ColumnsInfo)
 	colGroupResult := &statistics.AnalyzeResult{
 		Hist:    hists[cLen:],
@@ -303,11 +295,6 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 				mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
 				"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
 			delta := rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize
-			logutil.BgLogger().Info("DEBUGMEM merge subCollector into root",
-				zap.Int64("partitionID", e.tableID.PartitionID),
-				zap.Int64("consume", delta),
-				zap.Int64("rootMemSize", rootRowCollector.Base().MemSize),
-				zap.Int("rootSamples", rootRowCollector.Base().Samples.Len()))
 			e.memTracker.Consume(delta)
 			mergeResult.collector.DestroyAndPutToPool()
 		}
@@ -323,21 +310,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	}
 	err = mergeEg.Wait()
 	rootCollectorMemSize := rootRowCollector.Base().MemSize
-	logutil.BgLogger().Info("DEBUGMEM rootCollector after merge",
-		zap.Int64("partitionID", e.tableID.PartitionID),
-		zap.Int64("rootCollectorMemSize", rootCollectorMemSize),
-		zap.Int("rootSamples", rootRowCollector.Base().Samples.Len()),
-		zap.Bool("keepRootCollector", keepRootCollector))
 	defer func() {
 		if !keepRootCollector || err != nil {
-			logutil.BgLogger().Info("DEBUGMEM release rootCollector",
-				zap.Int64("partitionID", e.tableID.PartitionID),
-				zap.Int64("releasing", rootCollectorMemSize))
 			e.memTracker.Release(rootCollectorMemSize)
-		} else {
-			logutil.BgLogger().Info("DEBUGMEM keeping rootCollector (will release in global merge)",
-				zap.Int64("partitionID", e.tableID.PartitionID),
-				zap.Int64("kept", rootCollectorMemSize))
 		}
 	}()
 	if err != nil {
@@ -460,9 +435,6 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 				totalSampleCollectorSize += sampleCollector.MemSize
 			}
 		}
-		logutil.BgLogger().Info("DEBUGMEM release all sampleCollectors",
-			zap.Int64("partitionID", e.tableID.PartitionID),
-			zap.Int64("releasing", totalSampleCollectorSize))
 		e.memTracker.Release(totalSampleCollectorSize)
 	}()
 	if err != nil {
@@ -691,9 +663,6 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		}
 		// Consume the memory of the data.
 		colRespSize := int64(colResp.Size())
-		logutil.BgLogger().Info("DEBUGMEM subMergeWorker consume colResp",
-			zap.Int64("partitionID", e.tableID.PartitionID), zap.Int("worker", index),
-			zap.Int64("consume", colRespSize))
 		e.memTracker.Consume(colRespSize)
 
 		// Update processed rows.
@@ -714,11 +683,6 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
 		mergeDelta := newRetCollectorSize - oldRetCollectorSize - subCollectorSize
-		logutil.BgLogger().Info("DEBUGMEM subMergeWorker merge+release",
-			zap.Int64("partitionID", e.tableID.PartitionID), zap.Int("worker", index),
-			zap.Int64("consume", mergeDelta),
-			zap.Int64("release", dataSize+colRespSize),
-			zap.Int("retSamples", retCollector.Base().Samples.Len()))
 		e.memTracker.Consume(mergeDelta)
 		e.memTracker.Release(dataSize + colRespSize)
 		subCollector.DestroyAndPutToPool()
@@ -779,10 +743,6 @@ workLoop:
 				// types.EmptyDatumSize means the empty datum size we shallow copied from row.Columns to SampleItem.Value.
 				// The real underlying byte slice of Datum in row.Columns has already be accounted FromProto().
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + types.EmptyDatumSize)
-				logutil.BgLogger().Info("DEBUGMEM subBuildWorker column init",
-					zap.Int64("partitionID", e.tableID.PartitionID),
-					zap.Int64("colID", task.id), zap.Int("sampleNum", sampleNum),
-					zap.Int64("consume", collectorMemSize))
 				e.memTracker.Consume(collectorMemSize)
 				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
@@ -830,10 +790,6 @@ workLoop:
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
 				// types.EmptyDatumSize: same meaning as above branch.
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8 + types.EmptyDatumSize)
-				logutil.BgLogger().Info("DEBUGMEM subBuildWorker index init",
-					zap.Int64("partitionID", e.tableID.PartitionID),
-					zap.Int64("idxID", task.id), zap.Int("sampleNum", sampleNum),
-					zap.Int64("consume", collectorMemSize))
 				e.memTracker.Consume(collectorMemSize)
 				errCtx := e.ctx.GetSessionVars().StmtCtx.ErrCtx()
 			indexSampleCollectLoop:
@@ -890,9 +846,6 @@ workLoop:
 			}
 			releaseCollectorMemory := func() {
 				if !task.isColumn {
-					logutil.BgLogger().Info("DEBUGMEM subBuildWorker release index collector",
-						zap.Int64("partitionID", e.tableID.PartitionID),
-						zap.Int64("idxID", task.id), zap.Int64("releasing", collector.MemSize))
 					e.memTracker.Release(collector.MemSize)
 				}
 			}
@@ -914,10 +867,6 @@ workLoop:
 				continue
 			}
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
-			logutil.BgLogger().Info("DEBUGMEM subBuildWorker hist+topn built",
-				zap.Int64("partitionID", e.tableID.PartitionID),
-				zap.Int64("id", task.id), zap.Bool("isColumn", task.isColumn),
-				zap.Int64("consume", finalMemSize))
 			e.memTracker.Consume(finalMemSize)
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
@@ -972,8 +921,6 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 			break
 		}
 
-		logutil.BgLogger().Info("DEBUGMEM readData consume raw response",
-			zap.Int64("consume", int64(cap(data))))
 		memTracker.Consume(int64(cap(data)))
 		mergeTaskCh <- data
 	}

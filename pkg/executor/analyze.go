@@ -168,7 +168,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		e.analyzedPartitions = make(map[int64]map[int64]struct{})
 		e.globalSampleColsInfo = make(map[int64][]*model.ColumnInfo)
 		e.globalSampleIndexes = make(map[int64][]*model.IndexInfo)
-		sessionVars.StmtCtx.MemTracker.EnableDebugLog("analyze-stmt")
 	}
 	statslogutil.StatsLogger().Info("analyze started",
 		zap.Int("tasks", len(tasks)),
@@ -705,12 +704,6 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 	rcMemSize := rc.Base().MemSize
 	tableID := results.TableID.TableID
 	partitionID := results.TableID.PartitionID
-	logutil.BgLogger().Info("DEBUGMEM mergePartitionSamples enter",
-		zap.Int64("partitionID", partitionID),
-		zap.Int64("rcMemSize", rcMemSize),
-		zap.Int("rcSamples", rc.Base().Samples.Len()),
-		zap.Int64("stmtTrackerBytes", e.Ctx().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()))
-
 	// Track the analyzed partition.
 	if e.analyzedPartitions[tableID] == nil {
 		e.analyzedPartitions[tableID] = make(map[int64]struct{})
@@ -752,8 +745,6 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 		}
 		global.MergeCollector(rc)
 		e.globalSampleCollectors[tableID] = global
-		logutil.BgLogger().Info("DEBUGMEM mergePartitionSamples release (first partition)",
-			zap.Int64("partitionID", partitionID), zap.Int64("releasing", rcMemSize))
 		if results.MemTracker != nil {
 			results.MemTracker.Release(rcMemSize)
 		} else {
@@ -764,9 +755,6 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 		return
 	}
 	globalCollector.MergeCollector(rc)
-	logutil.BgLogger().Info("DEBUGMEM mergePartitionSamples release",
-		zap.Int64("partitionID", partitionID), zap.Int64("releasing", rcMemSize),
-		zap.Int("globalSamples", globalCollector.Base().Samples.Len()))
 	if results.MemTracker != nil {
 		results.MemTracker.Release(rcMemSize)
 	} else {

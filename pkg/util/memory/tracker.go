@@ -26,10 +26,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
@@ -90,16 +88,14 @@ type Tracker struct {
 		children map[int][]*Tracker
 		sync.Mutex
 	}
-	debugLogTag string // debugLogTag identifies this tracker in log lines.
+	label int // Label of this "Tracker".
 	// following fields are used with atomic operations, so make them 64-byte aligned.
 	bytesReleased       int64             // Released bytes.
 	maxConsumed         atomicutil.Int64  // max number of bytes consumed during execution.
 	SessionID           atomicutil.Uint64 // SessionID indicates the sessionID the tracker is bound.
 	bytesConsumed       int64             // Consumed bytes.
-	label               int               // Label of this "Tracker".
 	IsRootTrackerOfSess bool              // IsRootTrackerOfSess indicates whether this tracker is bound for session
 	isGlobal            bool              // isGlobal indicates whether this tracker is global tracker
-	DebugLog            bool              // DebugLog enables DEBUGMEM logging for this tracker (temporary debug aid).
 }
 
 type actionMu struct {
@@ -448,25 +444,12 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	t.Consume(newConsumed)
 }
 
-// EnableDebugLog enables DEBUGMEM logging on this tracker with the given tag.
-func (t *Tracker) EnableDebugLog(tag string) {
-	t.DebugLog = true
-	t.debugLogTag = tag
-}
-
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesSoftLimit/bytesHardLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bs int64) {
 	if bs == 0 {
 		return
-	}
-	if t.DebugLog {
-		logutil.BgLogger().Info("DEBUGMEM tracker Consume",
-			zap.String("tag", t.debugLogTag), zap.Int("label", t.label),
-			zap.Int64("bytes", bs),
-			zap.Int64("beforeConsumed", atomic.LoadInt64(&t.bytesConsumed)),
-			zap.String("caller", debugCallerInfo()))
 	}
 	var rootExceed, rootExceedForSoftLimit, sessionRootTracker *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
@@ -589,12 +572,6 @@ func (t *Tracker) HandleKillSignal() {
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
 	if *bufferedMemSize >= int64(TrackMemWhenExceeds) {
-		if t.DebugLog {
-			logutil.BgLogger().Info("DEBUGMEM tracker BufferedConsume flush",
-				zap.String("tag", t.debugLogTag), zap.Int("label", t.label),
-				zap.Int64("flushing", *bufferedMemSize),
-				zap.String("caller", debugCallerInfo()))
-		}
 		t.Consume(*bufferedMemSize)
 		*bufferedMemSize = int64(0)
 	}
@@ -606,13 +583,6 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 func (t *Tracker) Release(bytes int64) {
 	if bytes == 0 {
 		return
-	}
-	if t.DebugLog {
-		logutil.BgLogger().Info("DEBUGMEM tracker Release",
-			zap.String("tag", t.debugLogTag), zap.Int("label", t.label),
-			zap.Int64("bytes", bytes),
-			zap.Int64("beforeConsumed", atomic.LoadInt64(&t.bytesConsumed)),
-			zap.String("caller", debugCallerInfo()))
 	}
 	defer t.Consume(-bytes)
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
@@ -636,12 +606,6 @@ func (t *Tracker) Release(bytes int64) {
 func (t *Tracker) BufferedRelease(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
 	if *bufferedMemSize >= int64(TrackMemWhenExceeds) {
-		if t.DebugLog {
-			logutil.BgLogger().Info("DEBUGMEM tracker BufferedRelease flush",
-				zap.String("tag", t.debugLogTag), zap.Int("label", t.label),
-				zap.Int64("flushing", *bufferedMemSize),
-				zap.String("caller", debugCallerInfo()))
-		}
 		t.Release(*bufferedMemSize)
 		*bufferedMemSize = int64(0)
 	}
@@ -667,27 +631,6 @@ func (t *Tracker) release(bytes int64) {
 			metrics.MemoryUsage.WithLabelValues(label[0], label[2]).Set(float64(bytesReleased))
 		}
 	}
-}
-
-// debugCallerInfo returns a short caller location for DEBUGMEM log lines.
-func debugCallerInfo() string {
-	_, file, line, ok := runtime.Caller(2)
-	if !ok {
-		return "unknown"
-	}
-	// Trim to just the last two path components for readability.
-	short := file
-	count := 0
-	for i := len(file) - 1; i >= 0; i-- {
-		if file[i] == '/' {
-			count++
-			if count == 2 {
-				short = file[i+1:]
-				break
-			}
-		}
-	}
-	return fmt.Sprintf("%s:%d", short, line)
 }
 
 // BytesConsumed returns the consumed memory usage value in bytes.

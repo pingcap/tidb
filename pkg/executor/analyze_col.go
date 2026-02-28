@@ -64,14 +64,6 @@ type AnalyzeColumnsExec struct {
 	memTracker *memory.Tracker
 }
 
-// memTrackerBytes returns the bytes consumed by the memTracker, or 0 if uninitialized.
-func (e *AnalyzeColumnsExec) memTrackerBytes() int64 {
-	if e.memTracker == nil {
-		return 0
-	}
-	return e.memTracker.BytesConsumed()
-}
-
 // isColumnCoveredBySingleColUniqueIndex returns true if there exists a public, non-prefix,
 // single-column unique index whose only column has the given offset.
 func isColumnCoveredBySingleColUniqueIndex(tblInfo *model.TableInfo, colOffset int) bool {
@@ -116,7 +108,6 @@ func (e *AnalyzeColumnsExec) toV2() *AnalyzeColumnsExecV2 {
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
-	e.memTracker.EnableDebugLog(fmt.Sprintf("analyze-t%d-p%d", e.tableID.TableID, e.tableID.PartitionID))
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
