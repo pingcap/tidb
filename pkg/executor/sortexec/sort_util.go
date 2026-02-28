@@ -16,6 +16,7 @@ package sortexec
 
 import (
 	"math/rand"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -33,6 +34,8 @@ var spillChunkSize = 1024
 
 // signalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
 const signalCheckpointForSort uint = 10240
+
+const aqsortPairSize = int64(unsafe.Sizeof([]byte{})) + chunk.RowSize
 
 const (
 	notSpilled = iota

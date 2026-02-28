@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -512,6 +513,11 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 }
 
 func TestIssue54206(t *testing.T) {
+	origEnableTmpStorageOnOOM := vardef.EnableTmpStorageOnOOM.Load()
+	t.Cleanup(func() {
+		vardef.EnableTmpStorageOnOOM.Store(origEnableTmpStorageOnOOM)
+	})
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
