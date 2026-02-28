@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -267,7 +268,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					var str string
 					switch val := val.(type) {
 					case string: // remove quotes
-						str = val
+						str = normalizeByteSizeUnit(val)
 					default:
 						tmp, err := json.Marshal(val)
 						if err != nil {
@@ -310,6 +311,24 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		finalRows = append(finalRows, result.rows...)
 	}
 	return finalRows, nil
+}
+
+// byteSizeIECRegex matches IEC binary unit byte sizes like "24MiB", "100GiB", etc.
+var byteSizeIECRegex = regexp.MustCompile(`^(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti|Pi|Ei)B$`)
+
+// normalizeByteSizeUnit normalizes IEC binary unit suffixes to SI decimal unit suffixes
+// for consistency with input format. For example, "24MiB" becomes "24MB".
+// This is needed because docker/go-units library parses both "MB" and "MiB" as binary units
+// but outputs using IEC notation ("MiB"), causing a display mismatch when users input "MB".
+func normalizeByteSizeUnit(val string) string {
+	if matches := byteSizeIECRegex.FindStringSubmatch(val); len(matches) == 3 {
+		// matches[1] is the numeric part, matches[2] is the prefix (Ki, Mi, etc.)
+		prefix := matches[2]
+		// Convert IEC prefix to SI prefix by removing the 'i'
+		siPrefix := strings.TrimSuffix(prefix, "i")
+		return matches[1] + siPrefix + "B"
+	}
+	return val
 }
 
 type clusterServerInfoRetriever struct {
