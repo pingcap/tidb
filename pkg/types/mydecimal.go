@@ -988,6 +988,63 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	return
 }
 
+// FromParquetArray sets the decimal value from Parquet byte array
+// representation. It assumes that the input buffer is disposable.
+func (d *MyDecimal) FromParquetArray(buf []byte, scale int) error {
+	d.negative = (buf[0] & 0x80) != 0
+	if d.negative {
+		for i := range buf {
+			buf[i] = ^buf[i]
+		}
+		for i := len(buf) - 1; i >= 0; i-- {
+			buf[i]++
+			if buf[i] != 0 {
+				break
+			}
+		}
+	}
+
+	var (
+		startIndex = 0
+		endIndex   = len(buf)
+	)
+
+	for startIndex < endIndex && buf[startIndex] == 0 {
+		startIndex++
+	}
+
+	wordIdx := 0
+	for startIndex < endIndex {
+		var rem uint64
+		for i := startIndex; i < endIndex; i++ {
+			v := (rem << 8) | uint64(buf[i])
+			q := v / ten9
+			rem = v % ten9
+			buf[i] = byte(q)
+			if q == 0 && i == startIndex {
+				startIndex++
+			}
+		}
+
+		d.wordBuf[wordIdx] = int32(rem)
+		wordIdx++
+	}
+
+	for idx := 0; idx < wordIdx/2; idx++ {
+		d.wordBuf[idx], d.wordBuf[wordIdx-idx-1] =
+			d.wordBuf[wordIdx-idx-1], d.wordBuf[idx]
+	}
+
+	d.digitsFrac = 0
+	d.resultFrac = 0
+	d.digitsInt = int8(wordIdx * digitsPerWord)
+	if err := d.Shift(-scale); err != nil {
+		return err
+	}
+
+	return d.Round(d, scale, ModeTruncate)
+}
+
 // FromInt sets the decimal value from int64.
 func (d *MyDecimal) FromInt(val int64) *MyDecimal {
 	var uVal uint64

@@ -16,9 +16,6 @@ package mydump
 
 import (
 	"encoding/binary"
-	"fmt"
-	"math/big"
-	"strings"
 	"time"
 
 	"github.com/apache/arrow-go/v18/parquet"
@@ -27,82 +24,66 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-type setter[T parquet.ColumnTypes] func(T, *types.Datum)
+type setter[T parquet.ColumnTypes] func(T, *types.Datum) error
 
-func binaryToDecimalStr(rawBytes []byte, scale int) string {
-	negative := rawBytes[0] > 127
-	if negative {
-		for i := range rawBytes {
-			rawBytes[i] = ^rawBytes[i]
-		}
-		for i := len(rawBytes) - 1; i >= 0; i-- {
-			rawBytes[i]++
-			if rawBytes[i] != 0 {
-				break
-			}
-		}
+var zeroDecimal types.MyDecimal
+
+func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
+	// reuse existing decimal
+	if d.Kind() == types.KindMysqlDecimal {
+		dec := d.GetMysqlDecimal()
+		*dec = zeroDecimal
+		return dec
 	}
 
-	intValue := big.NewInt(0)
-	intValue = intValue.SetBytes(rawBytes)
-	val := fmt.Sprintf("%0*d", scale, intValue)
-	dotIndex := len(val) - scale
-	var res strings.Builder
-	if negative {
-		res.WriteByte('-')
+	dec := new(types.MyDecimal)
+	d.SetMysqlDecimal(dec)
+	return dec
+}
+
+func setParquetDecimalFromInt64(
+	unscaled int64,
+	d *types.Datum,
+	decimalMeta schema.DecimalMetadata,
+) error {
+	dec := initializeMyDecimal(d)
+	dec.FromInt(unscaled)
+
+	scale := int(decimalMeta.Scale)
+	if err := dec.Shift(-scale); err != nil {
+		return err
 	}
-	if dotIndex == 0 {
-		res.WriteByte('0')
-	} else {
-		res.WriteString(val[:dotIndex])
-	}
-	if scale > 0 {
-		res.WriteByte('.')
-		res.WriteString(val[dotIndex:])
-	}
-	return res.String()
+
+	return dec.Round(dec, scale, types.ModeTruncate)
 }
 
 //nolint:all_revive
-func getBoolDataSetter(val bool, d *types.Datum) {
+func getBoolDataSetter(val bool, d *types.Datum) error {
 	if val {
 		d.SetUint64(1)
 	} else {
 		d.SetUint64(0)
 	}
-}
-
-func setDecimalFromIntImpl(val int64, d *types.Datum, converted *convertedType) {
-	decimal := converted.decimalMeta
-	if !decimal.IsSet || decimal.Scale == 0 {
-		d.SetInt64(val)
-	}
-
-	minLen := decimal.Scale + 1
-	if val < 0 {
-		minLen++
-	}
-	v := fmt.Sprintf("%0*d", minLen, val)
-	dotIndex := len(v) - int(decimal.Scale)
-	d.SetString(v[:dotIndex]+"."+v[dotIndex:], "utf8mb4_bin")
+	return nil
 }
 
 func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] {
 	switch converted.converted {
 	case schema.ConvertedTypes.Decimal:
-		return func(val int32, d *types.Datum) {
-			// TODO(joechenrh): don't convert to string here
-			setDecimalFromIntImpl(int64(val), d, converted)
+		return func(val int32, d *types.Datum) error {
+			setParquetDecimalFromInt64(int64(val), d, converted.decimalMeta)
+			return nil
 		}
 	case schema.ConvertedTypes.Date:
-		return func(val int32, d *types.Datum) {
+		return func(val int32, d *types.Datum) error {
 			// Convert days since Unix epoch to time.Time
 			t := time.Unix(int64(val)*86400, 0).In(time.UTC)
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeDate, 0)
 			d.SetMysqlTime(mysqlTime)
+			return nil
 		}
 	case schema.ConvertedTypes.TimeMillis:
-		return func(val int32, d *types.Datum) {
+		return func(val int32, d *types.Datum) error {
 			// Convert milliseconds to time.Time
 			t := time.UnixMilli(int64(val)).In(time.UTC)
 			if converted.IsAdjustedToUTC {
@@ -110,13 +91,15 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 			}
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 			d.SetMysqlTime(mysqlTime)
+			return nil
 		}
 	case schema.ConvertedTypes.Int32, schema.ConvertedTypes.Uint32,
 		schema.ConvertedTypes.Int16, schema.ConvertedTypes.Uint16,
 		schema.ConvertedTypes.Int8, schema.ConvertedTypes.Uint8,
 		schema.ConvertedTypes.None:
-		return func(val int32, d *types.Datum) {
+		return func(val int32, d *types.Datum) error {
 			d.SetInt64(int64(val))
+			return nil
 		}
 	}
 
@@ -129,15 +112,17 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 		schema.ConvertedTypes.Uint32, schema.ConvertedTypes.Int32,
 		schema.ConvertedTypes.Uint16, schema.ConvertedTypes.Int16,
 		schema.ConvertedTypes.Uint8, schema.ConvertedTypes.Int8:
-		return func(val int64, d *types.Datum) {
+		return func(val int64, d *types.Datum) error {
 			d.SetUint64(uint64(val))
+			return nil
 		}
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.Int64:
-		return func(val int64, d *types.Datum) {
+		return func(val int64, d *types.Datum) error {
 			d.SetInt64(val)
+			return nil
 		}
 	case schema.ConvertedTypes.TimeMicros:
-		return func(val int64, d *types.Datum) {
+		return func(val int64, d *types.Datum) error {
 			// Convert microseconds to time.Time
 			t := time.UnixMicro(val).In(time.UTC)
 			if converted.IsAdjustedToUTC {
@@ -145,9 +130,10 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 			}
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 			d.SetMysqlTime(mysqlTime)
+			return nil
 		}
 	case schema.ConvertedTypes.TimestampMillis:
-		return func(val int64, d *types.Datum) {
+		return func(val int64, d *types.Datum) error {
 			// Convert milliseconds to time.Time
 			t := time.UnixMilli(val).In(time.UTC)
 			if converted.IsAdjustedToUTC {
@@ -155,9 +141,10 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 			}
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 			d.SetMysqlTime(mysqlTime)
+			return nil
 		}
 	case schema.ConvertedTypes.TimestampMicros:
-		return func(val int64, d *types.Datum) {
+		return func(val int64, d *types.Datum) error {
 			// Convert microseconds to time.Time
 			t := time.UnixMicro(val).In(time.UTC)
 			if converted.IsAdjustedToUTC {
@@ -165,11 +152,12 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 			}
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 			d.SetMysqlTime(mysqlTime)
+			return nil
 		}
 	case schema.ConvertedTypes.Decimal:
-		return func(val int64, d *types.Datum) {
-			// TODO(joechenrh): don't convert to string here
-			setDecimalFromIntImpl(val, d, converted)
+		return func(val int64, d *types.Datum) error {
+			setParquetDecimalFromInt64(val, d, converted.decimalMeta)
+			return nil
 		}
 	}
 
@@ -211,30 +199,34 @@ func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustT
 }
 
 func getInt96Setter(converted *convertedType, loc *time.Location) setter[parquet.Int96] {
-	return func(val parquet.Int96, d *types.Datum) {
+	return func(val parquet.Int96, d *types.Datum) error {
 		setInt96Data(val, d, loc, converted.IsAdjustedToUTC)
+		return nil
 	}
 }
 
-func setFloat32Data(val float32, d *types.Datum) {
+func setFloat32Data(val float32, d *types.Datum) error {
 	d.SetFloat32(val)
+	return nil
 }
 
-func setFloat64Data(val float64, d *types.Datum) {
+func setFloat64Data(val float64, d *types.Datum) error {
 	d.SetFloat64(val)
+	return nil
 }
 
 func getByteArraySetter(converted *convertedType) setter[parquet.ByteArray] {
 	switch converted.converted {
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
-		return func(val parquet.ByteArray, d *types.Datum) {
+		return func(val parquet.ByteArray, d *types.Datum) error {
 			// length is unused here
 			d.SetBytesAsString(val, "utf8mb4_bin", 0)
+			return nil
 		}
 	case schema.ConvertedTypes.Decimal:
-		return func(val parquet.ByteArray, d *types.Datum) {
-			str := binaryToDecimalStr(val, int(converted.decimalMeta.Scale))
-			d.SetString(str, "utf8mb4_bin")
+		return func(val parquet.ByteArray, d *types.Datum) error {
+			dec := initializeMyDecimal(d)
+			return dec.FromParquetArray(val, int(converted.decimalMeta.Scale))
 		}
 	}
 
@@ -244,14 +236,15 @@ func getByteArraySetter(converted *convertedType) setter[parquet.ByteArray] {
 func getFixedLenByteArraySetter(converted *convertedType) setter[parquet.FixedLenByteArray] {
 	switch converted.converted {
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
-		return func(val parquet.FixedLenByteArray, d *types.Datum) {
+		return func(val parquet.FixedLenByteArray, d *types.Datum) error {
 			// length is unused here
 			d.SetBytesAsString(val, "utf8mb4_bin", 0)
+			return nil
 		}
 	case schema.ConvertedTypes.Decimal:
-		return func(val parquet.FixedLenByteArray, d *types.Datum) {
-			str := binaryToDecimalStr(val, int(converted.decimalMeta.Scale))
-			d.SetString(str, "utf8mb4_bin")
+		return func(val parquet.FixedLenByteArray, d *types.Datum) error {
+			dec := initializeMyDecimal(d)
+			return dec.FromParquetArray(val, int(converted.decimalMeta.Scale))
 		}
 	}
 
