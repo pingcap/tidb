@@ -71,8 +71,6 @@ const (
 	readerMemBudgetRatio = 0.3
 )
 
-var estimateParquetReaderMemory = mydump.EstimateParquetReaderMemory
-
 // importStepExecutor is a executor for import step.
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
@@ -206,14 +204,14 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, stor
 		return
 	}
 
-	var targetChunk importer.Chunk
-	for _, chunk := range chunks {
+	targetChunk := chunks[0]
+	for _, chunk := range chunks[1:] {
 		if chunk.FileSize > targetChunk.FileSize {
 			targetChunk = chunk
 		}
 	}
 
-	peakMem, err := estimateParquetReaderMemory(ctx, store, targetChunk.Path)
+	peakMem, err := mydump.EstimateParquetReaderMemory(ctx, store, targetChunk.Path)
 	if err != nil {
 		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
 			zap.Error(err))

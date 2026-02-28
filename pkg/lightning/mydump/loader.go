@@ -99,11 +99,6 @@ type ParquetFileMeta struct {
 	Loc       *time.Location
 }
 
-// NewParquetFileMetaWithAllocator creates a ParquetFileMeta with a custom allocator.
-func NewParquetFileMetaWithAllocator(alloc memory.Allocator) ParquetFileMeta {
-	return ParquetFileMeta{allocator: alloc}
-}
-
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
 type SourceFileMeta struct {
 	Path        string

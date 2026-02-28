@@ -782,7 +782,7 @@ func EstimateParquetReaderMemory(
 	}
 
 	allocator := &trackingAllocator{}
-	parser, err := NewParquetParser(ctx, store, r, path, NewParquetFileMetaWithAllocator(allocator))
+	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
 	if err != nil {
 		_ = r.Close()
 		return 0, err
