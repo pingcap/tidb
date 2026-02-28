@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "instanceplancache_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
         "concurrency_test.go",
         "concurrency_tpcc_test.go",
@@ -11,7 +11,12 @@ go_test(
         "others_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 19,
+=======
+    race = "on",
+    shard_count = 42,
+>>>>>>> 842b66e1b17 (planner: fix "invalid memory address or nil pointer dereference" when using Instance Plan Cache in some cases (#58407))
     deps = [
         "//pkg/parser/auth",
         "//pkg/testkit",
