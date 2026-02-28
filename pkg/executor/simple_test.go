@@ -213,6 +213,33 @@ func TestRefreshStatsWithRestoreAdmin(t *testing.T) {
 	tkUser.MustExec("refresh stats *.*")
 }
 
+// TestAlterUserClearAttributes verifies that ALTER USER ... ATTRIBUTE '{}'
+// clears the user_attributes JSON (sets it to NULL) when no other attribute-
+// modifying options are present.
+func TestAlterUserClearAttributes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use mysql")
+
+	// Create user and set a non-empty user_attributes value.
+	tk.MustExec("CREATE USER IF NOT EXISTS 'utest'@'localhost' IDENTIFIED BY 'pwd'")
+	tk.MustExec("UPDATE mysql.user SET user_attributes = '{\"metadata\": {\"comment\": \"old\"}}' WHERE User='utest' AND Host='localhost'")
+	tk.MustExec("FLUSH PRIVILEGES")
+
+	// Clear the attributes via ALTER USER ATTRIBUTE '{}'
+	tk.MustExec("ALTER USER 'utest'@'localhost' ATTRIBUTE '{}'")
+
+	rows := tk.MustQuery("SELECT user_attributes FROM mysql.user WHERE User='utest' AND Host='localhost'")
+	rows.Check(testkit.Rows("<nil>"))
+
+	// Now test a normal ALTER USER with valid attributes
+	tk.MustExec(`ALTER USER 'utest'@'localhost' ATTRIBUTE '{"comment": "new"}'`)
+
+	rows = tk.MustQuery("SELECT user_attributes FROM mysql.user WHERE User='utest' AND Host='localhost'")
+	rows.Check(testkit.Rows(`{"metadata": {"comment": "new"}}`))
+}
+
 // TestRefreshStatsWithFullMode verifies that running "refresh stats ... full" loads and updates
 // index statistics even when lite-init-stats is enabled, ensuring a full refresh keeps index
 // statistics resident in memory as users expect after explicitly requesting full mode.
