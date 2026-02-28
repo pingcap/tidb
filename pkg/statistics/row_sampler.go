@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -187,30 +186,30 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 				sizes = append(sizes, int64(len(datums[i].GetBytes())))
 			}
 
-			for i, val := range datums {
-				// For string values, we use the collation key instead of the original value.
-				if s.Collators[i] != nil && !val.IsNull() {
-					decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone())
-					if err != nil {
-						return nil, err
-					}
-					decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
-					encodedKey, err := tablecodec.EncodeValue(s.Sc.TimeZone(), nil, decodedVal)
-					err = s.Sc.HandleError(err)
-					if err != nil {
-						return nil, err
-					}
-					datums[i].SetBytes(encodedKey)
-				}
-			}
+			// for i, val := range datums {
+			// 	// For string values, we use the collation key instead of the original value.
+			// 	if s.Collators[i] != nil && !val.IsNull() {
+			// 		decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone())
+			// 		if err != nil {
+			// 			return nil, err
+			// 		}
+			// 		decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
+			// 		encodedKey, err := tablecodec.EncodeValue(s.Sc.TimeZone(), nil, decodedVal)
+			// 		err = s.Sc.HandleError(err)
+			// 		if err != nil {
+			// 			return nil, err
+			// 		}
+			// 		datums[i].SetBytes(encodedKey)
+			// 	}
+			// }
 			err := collector.Base().collectColumns(s.Sc, datums, sizes)
 			if err != nil {
 				return nil, err
 			}
-			err = collector.Base().collectColumnGroups(s.Sc, datums, s.ColGroups, sizes)
-			if err != nil {
-				return nil, err
-			}
+			// err = collector.Base().collectColumnGroups(s.Sc, datums, s.ColGroups, sizes)
+			// if err != nil {
+			// 	return nil, err
+			// }
 			collector.sampleRow(newCols, s.Rng)
 		}
 	}
@@ -244,10 +243,10 @@ func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []type
 		}
 		// Minus one is to remove the flag byte.
 		s.TotalSizes[i] += sizes[i] - 1
-		err := s.FMSketches[i].InsertValue(sc, col)
-		if err != nil {
-			return err
-		}
+		// err := s.FMSketches[i].InsertValue(sc, col)
+		// if err != nil {
+		// 	return err
+		// }
 	}
 	return nil
 }
