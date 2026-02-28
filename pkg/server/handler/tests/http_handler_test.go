@@ -847,6 +847,7 @@ func TestDeleteKeyHandler(t *testing.T) {
 		handle := kv.IntHandle(1)
 		encodedKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), handle)
 		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
 			_, err := txn.Get(ctx, encodedKey)
 			return err
 		})
@@ -858,6 +859,7 @@ func TestDeleteKeyHandler(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 
 		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
 			_, err := txn.Get(ctx, encodedKey)
 			return err
 		})

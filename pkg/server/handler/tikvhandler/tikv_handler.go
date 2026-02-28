@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -67,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
@@ -2112,6 +2114,11 @@ func (h *DeleteKeyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		if intest.InTest {
+			// since CheckResourceTagForTopSQLInGoTest is enabled in TestMain,
+			// this tagger is required.
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+		}
 		return txn.Delete(encodedKey)
 	})
 	if err != nil {
