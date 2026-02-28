@@ -719,6 +719,46 @@ func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 	return getOrDecodeArgs[*ModifyTableCommentArgs](&ModifyTableCommentArgs{}, job)
 }
 
+// AlterMaterializedViewRefreshArgs is the arguments for ActionAlterMaterializedViewRefresh ddl.
+type AlterMaterializedViewRefreshArgs struct {
+	RefreshMethod    string `json:"refresh_method,omitempty"`
+	RefreshStartWith string `json:"refresh_start_with,omitempty"`
+	RefreshNext      string `json:"refresh_next,omitempty"`
+}
+
+func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
+	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext}
+}
+
+func (a *AlterMaterializedViewRefreshArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.RefreshMethod, &a.RefreshStartWith, &a.RefreshNext))
+}
+
+// GetAlterMaterializedViewRefreshArgs gets the args for ActionAlterMaterializedViewRefresh.
+func GetAlterMaterializedViewRefreshArgs(job *Job) (*AlterMaterializedViewRefreshArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewRefreshArgs](&AlterMaterializedViewRefreshArgs{}, job)
+}
+
+// AlterMaterializedViewLogPurgeArgs is the arguments for ActionAlterMaterializedViewLogPurge ddl.
+type AlterMaterializedViewLogPurgeArgs struct {
+	PurgeMethod    string `json:"purge_method,omitempty"`
+	PurgeStartWith string `json:"purge_start_with,omitempty"`
+	PurgeNext      string `json:"purge_next,omitempty"`
+}
+
+func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
+	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext}
+}
+
+func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.PurgeMethod, &a.PurgeStartWith, &a.PurgeNext))
+}
+
+// GetAlterMaterializedViewLogPurgeArgs gets the args for ActionAlterMaterializedViewLogPurge.
+func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPurgeArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewLogPurgeArgs](&AlterMaterializedViewLogPurgeArgs{}, job)
+}
+
 // ModifyTableCharsetAndCollateArgs is the arguments for ActionModifyTableCharsetAndCollate ddl.
 type ModifyTableCharsetAndCollateArgs struct {
 	ToCharset          string `json:"to_charset,omitempty"`
