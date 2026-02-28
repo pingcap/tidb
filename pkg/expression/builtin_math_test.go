@@ -688,17 +688,20 @@ func TestDegrees(t *testing.T) {
 		expected   float64
 		isNil      bool
 		getWarning bool
+		errMsg     string
 	}{
-		{nil, 0, true, false},
-		{int64(0), float64(0), false, false},
-		{int64(1), float64(57.29577951308232), false, false},
-		{float64(1), float64(57.29577951308232), false, false},
-		{float64(math.Pi), float64(180), false, false},
-		{float64(-math.Pi / 2), float64(-90), false, false},
-		{"", float64(0), false, false},
-		{"-2", float64(-114.59155902616465), false, false},
-		{"abc", float64(0), false, true},
-		{"+1abc", 57.29577951308232, false, true},
+		{nil, 0, true, false, ""},
+		{int64(0), float64(0), false, false, ""},
+		{int64(1), float64(57.29577951308232), false, false, ""},
+		{float64(1), float64(57.29577951308232), false, false, ""},
+		{float64(math.Pi), float64(180), false, false, ""},
+		{float64(-math.Pi / 2), float64(-90), false, false, ""},
+		{"", float64(0), false, false, ""},
+		{"-2", float64(-114.59155902616465), false, false, ""},
+		{"abc", float64(0), false, true, ""},
+		{"+1abc", 57.29577951308232, false, true, ""},
+		{1.0e308, 0, false, false, "[types:1690]DOUBLE value is out of range in 'degrees(1e+308)'"},
+		{-1.0e308, 0, false, false, "[types:1690]DOUBLE value is out of range in 'degrees(-1e+308)'"},
 	}
 
 	for _, c := range cases {
@@ -706,7 +709,10 @@ func TestDegrees(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Degrees, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
-		if c.getWarning {
+		if c.errMsg != "" {
+			require.Error(t, err)
+			require.Equal(t, c.errMsg, err.Error())
+		} else if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
 		} else {
