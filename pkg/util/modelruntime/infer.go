@@ -187,7 +187,7 @@ func runInferenceBatch(session *sessionEntry, inputNames, outputNames []string, 
 	}
 
 	results := make([][]float32, batchSize)
-	for i := 0; i < batchSize; i++ {
+	for i := range batchSize {
 		results[i] = make([]float32, len(outputValues))
 	}
 	for outIdx, out := range outputValues {
@@ -202,7 +202,7 @@ func runInferenceBatch(session *sessionEntry, inputNames, outputNames []string, 
 		if len(data) != batchSize {
 			return nil, errors.New("onnx output batch size mismatch")
 		}
-		for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+		for rowIdx := range batchSize {
 			results[rowIdx][outIdx] = data[rowIdx]
 		}
 		if err := out.Destroy(); err != nil {
