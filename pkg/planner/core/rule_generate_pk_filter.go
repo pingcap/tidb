@@ -159,15 +159,9 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource, underLim
 	// reference the PK column. The new ge/le conditions reference it, so
 	// it must be present for resolveIndices during physical plan building.
 	schema := ds.Schema()
-	idx := schema.ColumnIndex(pkCol)
-	if idx == -1 {
+	if schema.ColumnIndex(pkCol) == -1 {
 		schema.Append(pkCol.Clone().(*expression.Column))
-		for _, colInfo := range ds.TableInfo.Columns {
-			if colInfo.ID == pkCol.ID {
-				ds.Columns = append(ds.Columns, colInfo)
-				break
-			}
-		}
+		ds.Columns = append(ds.Columns, findOrCreateColumnInfo(ds, pkCol))
 	}
 
 	// Push the constant PK range conditions to PushedDownConds and AllConds.
@@ -348,6 +342,17 @@ func matchesIndexColumn(colExpr, valExpr expression.Expression, idxCol *model.In
 	return false
 }
 
+// findOrCreateColumnInfo returns the ColumnInfo for pkCol from ds.TableInfo.Columns.
+// If the column is not found (e.g. ExtraHandle / _tidb_rowid which is synthetic
+// and not in TableInfo.Columns), it falls back to pkCol.ToInfo() to create a
+// temporary ColumnInfo, consistent with the pattern in physical_table_scan.go.
+func findOrCreateColumnInfo(ds *logicalop.DataSource, pkCol *expression.Column) *model.ColumnInfo {
+	if colInfo := model.FindColumnInfoByID(ds.TableInfo.Columns, pkCol.ID); colInfo != nil {
+		return colInfo
+	}
+	return pkCol.ToInfo()
+}
+
 // buildPKFilterConditions creates `pk_col >= MIN(pk_col)` and `pk_col <= MAX(pk_col)`
 // conditions by eagerly evaluating MIN/MAX subqueries during optimization.
 // Returns concrete constant conditions (e.g. `pk >= 5 AND pk <= 999995`) that
@@ -500,13 +505,7 @@ func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPa
 	// Ensure the PK column is in the schema (it may have been pruned)
 	if schema.ColumnIndex(pkCol) == -1 {
 		schema.Append(pkCol.Clone().(*expression.Column))
-		// Also add the corresponding ColumnInfo
-		for _, colInfo := range ds.TableInfo.Columns {
-			if colInfo.ID == pkCol.ID {
-				newDs.Columns = append(newDs.Columns, colInfo)
-				break
-			}
-		}
+		newDs.Columns = append(newDs.Columns, findOrCreateColumnInfo(ds, pkCol))
 	}
 	newDs.SetSchema(schema)
 

@@ -118,6 +118,9 @@ func (s *ScalarSubQueryExpr) Eval(_ expression.EvalContext, _ chunk.Row) (types.
 
 // EvalInt returns the int64 representation of expression.
 func (s *ScalarSubQueryExpr) EvalInt(ctx expression.EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
+	if s.evalErr != nil {
+		return 0, false, s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return 0, false, err
@@ -128,6 +131,9 @@ func (s *ScalarSubQueryExpr) EvalInt(ctx expression.EvalContext, row chunk.Row) 
 
 // EvalReal returns the float64 representation of expression.
 func (s *ScalarSubQueryExpr) EvalReal(ctx expression.EvalContext, row chunk.Row) (val float64, isNull bool, err error) {
+	if s.evalErr != nil {
+		return 0, false, s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return 0, false, err
@@ -138,6 +144,9 @@ func (s *ScalarSubQueryExpr) EvalReal(ctx expression.EvalContext, row chunk.Row)
 
 // EvalString returns the string representation of expression.
 func (s *ScalarSubQueryExpr) EvalString(ctx expression.EvalContext, row chunk.Row) (val string, isNull bool, err error) {
+	if s.evalErr != nil {
+		return "", false, s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return "", false, err
@@ -148,6 +157,9 @@ func (s *ScalarSubQueryExpr) EvalString(ctx expression.EvalContext, row chunk.Ro
 
 // EvalDecimal returns the decimal representation of expression.
 func (s *ScalarSubQueryExpr) EvalDecimal(ctx expression.EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
+	if s.evalErr != nil {
+		return nil, false, s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return nil, false, err
@@ -158,6 +170,9 @@ func (s *ScalarSubQueryExpr) EvalDecimal(ctx expression.EvalContext, row chunk.R
 
 // EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
 func (s *ScalarSubQueryExpr) EvalTime(ctx expression.EvalContext, row chunk.Row) (val types.Time, isNull bool, err error) {
+	if s.evalErr != nil {
+		return types.ZeroTime, false, s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return types.ZeroTime, false, err
@@ -168,6 +183,9 @@ func (s *ScalarSubQueryExpr) EvalTime(ctx expression.EvalContext, row chunk.Row)
 
 // EvalDuration returns the duration representation of expression.
 func (s *ScalarSubQueryExpr) EvalDuration(ctx expression.EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error) {
+	if s.evalErr != nil {
+		return types.ZeroDuration, false, s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return types.ZeroDuration, false, err
@@ -178,6 +196,9 @@ func (s *ScalarSubQueryExpr) EvalDuration(ctx expression.EvalContext, row chunk.
 
 // EvalJSON returns the JSON representation of expression.
 func (s *ScalarSubQueryExpr) EvalJSON(ctx expression.EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
+	if s.evalErr != nil {
+		return types.BinaryJSON{}, false, s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return types.BinaryJSON{}, false, err
@@ -305,6 +326,9 @@ func (s *ScalarSubQueryExpr) String() string {
 
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (s *ScalarSubQueryExpr) VecEvalInt(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if s.evalErr != nil {
+		return s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return err
@@ -315,6 +339,9 @@ func (s *ScalarSubQueryExpr) VecEvalInt(ctx expression.EvalContext, input *chunk
 
 // VecEvalReal evaluates this expression in a vectorized manner.
 func (s *ScalarSubQueryExpr) VecEvalReal(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if s.evalErr != nil {
+		return s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return err
@@ -325,6 +352,9 @@ func (s *ScalarSubQueryExpr) VecEvalReal(ctx expression.EvalContext, input *chun
 
 // VecEvalString evaluates this expression in a vectorized manner.
 func (s *ScalarSubQueryExpr) VecEvalString(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if s.evalErr != nil {
+		return s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return err
@@ -335,6 +365,9 @@ func (s *ScalarSubQueryExpr) VecEvalString(ctx expression.EvalContext, input *ch
 
 // VecEvalDecimal evaluates this expression in a vectorized manner.
 func (s *ScalarSubQueryExpr) VecEvalDecimal(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if s.evalErr != nil {
+		return s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return err
@@ -345,6 +378,9 @@ func (s *ScalarSubQueryExpr) VecEvalDecimal(ctx expression.EvalContext, input *c
 
 // VecEvalTime evaluates this expression in a vectorized manner.
 func (s *ScalarSubQueryExpr) VecEvalTime(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if s.evalErr != nil {
+		return s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return err
@@ -355,6 +391,9 @@ func (s *ScalarSubQueryExpr) VecEvalTime(ctx expression.EvalContext, input *chun
 
 // VecEvalDuration evaluates this expression in a vectorized manner.
 func (s *ScalarSubQueryExpr) VecEvalDuration(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if s.evalErr != nil {
+		return s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return err
@@ -365,6 +404,9 @@ func (s *ScalarSubQueryExpr) VecEvalDuration(ctx expression.EvalContext, input *
 
 // VecEvalJSON evaluates this expression in a vectorized manner.
 func (s *ScalarSubQueryExpr) VecEvalJSON(ctx expression.EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if s.evalErr != nil {
+		return s.evalErr
+	}
 	if !s.evaled {
 		if err := s.selfEvaluate(); err != nil {
 			return err

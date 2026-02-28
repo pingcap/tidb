@@ -4591,11 +4591,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	// extract the PkFilterHint
-	// Match on either the alias (tblName) or the actual table name (tn.Name)
 	var pkFilterHints []h.HintedIndex
 	if hints := b.TableHints(); hints != nil {
 		for i, hint := range hints.PkFilterHintList {
-			if hint.Match(dbName, tblName) || hint.Match(dbName, tn.Name) {
+			if hint.Match(dbName, tblName) {
 				hints.PkFilterHintList[i].Matched = true
 				// check whether the index names in PkFilterHint are valid.
 				invalidIdxNames := make([]string, 0, len(hint.IndexHint.IndexNames))
