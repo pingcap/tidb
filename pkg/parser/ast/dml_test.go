@@ -14,7 +14,10 @@
 package ast_test
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -661,4 +664,35 @@ func TestImportIntoFromSelectInvalidStmt(t *testing.T) {
 	require.ErrorContains(t, err, "Cannot use user variable(b) in IMPORT INTO FROM SELECT statement")
 	_, err = p.ParseOneStmt("IMPORT INTO t1(a) set a=1 FROM select a from t2;", "", "")
 	require.ErrorContains(t, err, "Cannot use SET clause in IMPORT INTO FROM SELECT statement.")
+}
+
+type fakeWhereRestoreErr struct {
+	ValueExpr
+}
+
+func (fakeWhereRestoreErr) Restore(ctx *format.RestoreCtx) error {
+	return errors.New("fake error")
+}
+
+func TestShowStmtRestoreError(t *testing.T) {
+	testCases := []struct {
+		t ShowStmtType
+	}{
+		{t: ShowImportJobs},
+		{t: ShowImportGroups},
+		{t: ShowDistributionJobs},
+	}
+
+	for _, tc := range testCases {
+		t.Run(strconv.Itoa(int(tc.t)), func(t *testing.T) {
+			s := ShowStmt{
+				Tp:    tc.t,
+				Where: fakeWhereRestoreErr{},
+			}
+			var sb strings.Builder
+			ctx := format.NewRestoreCtx(0, &sb)
+			err := s.Restore(ctx)
+			require.Error(t, err)
+		})
+	}
 }
