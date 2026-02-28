@@ -115,7 +115,7 @@ func normalizeDirLocation(raw string) (string, error) {
 
 func listFiles(ctx context.Context, storage storeapi.Storage) ([]string, error) {
 	var paths []string
-	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, _ int64) error {
 		paths = append(paths, path)
 		return nil
 	})
@@ -152,7 +152,7 @@ func materializeDir(ctx context.Context, storage storeapi.Storage, paths []strin
 			return "", errors.Annotate(err, "read model file")
 		}
 		outPath := filepath.Join(root, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o750); err != nil {
 			return "", errors.Trace(err)
 		}
 		if err := os.WriteFile(outPath, data, 0o644); err != nil {

@@ -106,7 +106,7 @@ func parseSHA256Checksum(checksum string) ([]byte, error) {
 	return decoded, nil
 }
 
-func splitLocation(raw string) (string, string, error) {
+func splitLocation(raw string) (base string, name string, err error) {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "", "", errors.Trace(err)
