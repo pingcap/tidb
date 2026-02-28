@@ -116,7 +116,6 @@ type Executor interface {
 	DropMaterializedViewLog(ctx sessionctx.Context, stmt *ast.DropMaterializedViewLogStmt) error
 	AlterMaterializedView(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewStmt) error
 	AlterMaterializedViewLog(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewLogStmt) error
-	RefreshMaterializedView(ctx sessionctx.Context, stmt *ast.RefreshMaterializedViewStmt) error
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
 	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
@@ -1123,8 +1122,9 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	}
 
 	createTableStmt := &ast.CreateTableStmt{
-		Table: &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
-		Cols:  colDefs,
+		Table:   &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
+		Cols:    colDefs,
+		Options: s.Options,
 	}
 	mlogTableInfo, err := BuildTableInfoWithStmt(
 		NewMetaBuildContextWithSctx(ctx),

@@ -14,12 +14,10 @@
 package ast_test
 
 import (
-	"strings"
 	"testing"
 
 	. "github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,8 +51,6 @@ func TestDDLVisitorCover(t *testing.T) {
 		{&AlterMaterializedViewLogStmt{Table: &TableName{}, Actions: []*AlterMaterializedViewLogAction{{Tp: AlterMaterializedViewLogActionPurge, Purge: &MLogPurgeClause{Immediate: true}}}}, 0, 0},
 		{&DropMaterializedViewStmt{ViewName: &TableName{}}, 0, 0},
 		{&DropMaterializedViewLogStmt{Table: &TableName{}}, 0, 0},
-		{&RefreshMaterializedViewStmt{ViewName: &TableName{}}, 0, 0},
-		{&RefreshMaterializedViewImplementStmt{RefreshStmt: &RefreshMaterializedViewStmt{ViewName: &TableName{}}, LastSuccessfulRefreshReadTSO: 1}, 0, 0},
 		{&AlterTableSpec{}, 0, 0},
 		{&ColumnDef{Name: &ColumnName{}, Options: []*ColumnOption{{Expr: ce}}}, 1, 1},
 		{&ColumnOption{Expr: ce}, 1, 1},
@@ -73,24 +69,6 @@ func TestDDLVisitorCover(t *testing.T) {
 		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
 		v.node.Accept(visitor1{})
 	}
-}
-
-func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
-	stmt := &RefreshMaterializedViewImplementStmt{
-		RefreshStmt: &RefreshMaterializedViewStmt{
-			ViewName: &TableName{
-				Schema: model.NewCIStr("test"),
-				Name:   model.NewCIStr("mv"),
-			},
-			Type: RefreshMaterializedViewTypeFast,
-		},
-		LastSuccessfulRefreshReadTSO: 4242,
-	}
-
-	var sb strings.Builder
-	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	require.NoError(t, stmt.Restore(rctx))
-	require.Equal(t, "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242", sb.String())
 }
 
 func TestDDLIndexColNameRestore(t *testing.T) {

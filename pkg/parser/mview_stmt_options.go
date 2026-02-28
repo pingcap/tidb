@@ -21,4 +21,14 @@ type mviewCreateOptions struct {
 
 	hasRefresh bool
 	refresh    *ast.MViewRefreshClause
+
+	hasShardRowIDBits bool
+	hasPreSplitRegion bool
+	options           []*ast.TableOption
+}
+
+type mlogCreateOptions struct {
+	hasShardRowIDBits bool
+	hasPreSplitRegion bool
+	options           []*ast.TableOption
 }

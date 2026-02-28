@@ -581,22 +581,24 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 	return len(rows) > 0, nil
 }
 
-func createMaterializedViewBuildSQLMode(sqlMode mysql.SQLMode) mysql.SQLMode {
-	return mysql.DelSQLMode(sqlMode, mysql.ModeStrictTransTables|mysql.ModeStrictAllTables)
-}
-
 func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) (func(), error) {
-	restore := restoreSessCtx(sessCtx)
 	if reorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
-	buildReorgMeta := *reorgMeta
-	buildReorgMeta.SQLMode = createMaterializedViewBuildSQLMode(buildReorgMeta.SQLMode)
-	if err := initSessCtx(sessCtx, &buildReorgMeta); err != nil {
+	restore := restoreSessCtx(sessCtx)
+	origInMaterializedViewMaintenance := sessCtx.GetSessionVars().InMaterializedViewMaintenance
+	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
+		// initSessCtx may mutate session vars before returning error (for example invalid timezone).
+		// Restore immediately to avoid leaking partial state into the pooled session.
+		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	// MV init build should follow the same TiFlash strict-mode bypass path as MV refresh.
+	// Also marks the session as MV maintenance context so writes bypass the explicit-DML guard.
+	sessCtx.GetSessionVars().InMaterializedViewMaintenance = true
 	return func() {
 		restore(sessCtx)
+		sessCtx.GetSessionVars().InMaterializedViewMaintenance = origInMaterializedViewMaintenance
 	}, nil
 }
 

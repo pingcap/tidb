@@ -18,8 +18,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -75,6 +77,38 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 
 	// Duplicated MV LOG should fail (same derived table name).
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
+}
+
+func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	originSplit := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, originSplit)
+	tk.MustExec("set @@session.tidb_scatter_region='table'")
+	tk.MustExec("create table t_mlog_presplit (a int, b int)")
+
+	tk.MustExec("create materialized view log on t_mlog_presplit (a) shard_row_id_bits = 2 pre_split_regions = 2 purge immediate")
+
+	showCreate := tk.MustQuery("show create table `$mlog$t_mlog_presplit`").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS=2")
+	require.Contains(t, showCreate, "PRE_SPLIT_REGIONS=2")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_mlog_presplit"))
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), mlogTable.Meta().ShardRowIDBits)
+	require.Equal(t, uint64(2), mlogTable.Meta().PreSplitRegions)
+
+	regions := tk.MustQuery("show table `$mlog$t_mlog_presplit` regions").Rows()
+	regionNames := make([]string, 0, len(regions))
+	for _, row := range regions {
+		regionNames = append(regionNames, fmt.Sprint(row[1]))
+	}
+	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_2305843009213693952", mlogTable.Meta().ID))
+	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_4611686018427387904", mlogTable.Meta().ID))
+	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_6917529027641081856", mlogTable.Meta().ID))
 }
 
 func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
