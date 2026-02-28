@@ -157,7 +157,7 @@ func (p *HandParser) parseSubquery() ast.ResultSetNode {
 			// Set text on the inner result to match yacc SubSelect behavior.
 			innerEndOff := p.peek().Offset // offset of ')'
 			if innerEndOff > innerStartOff {
-				res.(ast.Node).SetText(nil, p.src[innerStartOff:innerEndOff])
+				res.(ast.Node).SetText(p.connectionEncoding, p.src[innerStartOff:innerEndOff])
 			}
 		}
 		p.expect(')')
@@ -223,7 +223,7 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 		// Set text on the inner statement to match yacc SubSelect behavior.
 		subEndOff := p.peek().Offset
 		if subEndOff > subStartOff {
-			subNode.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
+			subNode.(ast.Node).SetText(p.connectionEncoding, p.src[subStartOff:subEndOff])
 		}
 		// CTE Definition is always a SubqueryExpr wrapping the ResultSetNode
 		subExpr := p.arena.AllocSubqueryExpr()

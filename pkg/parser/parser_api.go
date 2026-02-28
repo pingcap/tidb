@@ -162,6 +162,11 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 	parser.handParser.Init(&parser.lexer, sql)
 	parser.handParser.SetCharsetCollation(parser.charset, parser.collation)
 
+	// Sync the client encoding from the scanner. CharsetClient may have
+	// changed lexer.client after SetCharsetCollation was called.
+	// The yacc parser used parser.lexer.client for all SetText calls.
+	parser.handParser.connectionEncoding = parser.lexer.client
+
 	// Sync parser state to hand parser AFTER reset.
 	parser.handParser.SetStrictDoubleFieldTypeCheck(parser.strictDoubleFieldType)
 

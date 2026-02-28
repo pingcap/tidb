@@ -72,7 +72,7 @@ func (p *HandParser) ParseSQL() ([]ast.StmtNode, []error, error) {
 			endOff = p.peek().Offset
 		}
 		if endOff > startOff {
-			stmt.SetText(nil, p.src[startOff:endOff])
+			stmt.SetText(p.connectionEncoding, p.src[startOff:endOff])
 		}
 		stmtStartPos = endOff
 		p.result = append(p.result, stmt)

@@ -432,7 +432,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			// The yacc parser always calls SetText with the text between parens.
 			innerEndOff := p.peek().Offset
 			if innerEndOff > innerStartOff {
-				inner.(ast.Node).SetText(nil, p.src[innerStartOff:innerEndOff])
+				inner.(ast.Node).SetText(p.connectionEncoding, p.src[innerStartOff:innerEndOff])
 			}
 			res = inner
 			p.expect(')')

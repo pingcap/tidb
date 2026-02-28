@@ -128,7 +128,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			// Set text on the inner statement to match yacc SubSelect behavior.
 			subEndOff := p.peek().Offset
 			if sub != nil && subEndOff > subStartOff {
-				sub.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
+				sub.(ast.Node).SetText(p.connectionEncoding, p.src[subStartOff:subEndOff])
 			}
 			p.expect(')')
 			// Mark the select as "in braces" so Restore() preserves the parens.
@@ -180,7 +180,7 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			// Set text on the inner statement to match yacc SubSelect behavior.
 			subEndOff := p.peek().Offset
 			if sub != nil && subEndOff > subStartOff {
-				sub.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
+				sub.(ast.Node).SetText(p.connectionEncoding, p.src[subStartOff:subEndOff])
 			}
 			p.expect(')')
 			if sub != nil {

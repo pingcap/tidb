@@ -108,7 +108,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 			// find and replace the INTERVAL syntactic sugar in the query.
 			intervalEndOff := p.peek().Offset
 			if intervalEndOff > intervalStartOff && intervalEndOff <= len(p.src) {
-				pi.SetText(nil, p.src[intervalStartOff:intervalEndOff])
+				pi.SetText(p.connectionEncoding, p.src[intervalStartOff:intervalEndOff])
 			}
 			pi.SetOriginTextPosition(intervalStartOff)
 

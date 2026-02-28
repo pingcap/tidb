@@ -987,7 +987,7 @@ func (p *HandParser) parseCompareSubquery(left ast.ExprNode, opCode opcode.Op, a
 	// Set text on the inner statement to match yacc SubSelect behavior.
 	subEndOff := p.peek().Offset
 	if sub != nil && subEndOff > subStartOff {
-		sub.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
+		sub.(ast.Node).SetText(p.connectionEncoding, p.src[subStartOff:subEndOff])
 	}
 	p.expect(')')
 

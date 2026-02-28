@@ -53,7 +53,7 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 		endOffset := p.peek().Offset // ')' token
 		// Set subquery text from the original SQL (matching the behavior).
 		if endOffset > startOffset && endOffset <= len(p.src) {
-			query.SetText(nil, p.src[startOffset:endOffset])
+			query.SetText(p.connectionEncoding, p.src[startOffset:endOffset])
 		}
 		p.expect(')')
 		sub := p.arena.AllocSubqueryExpr()
@@ -75,7 +75,7 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 			p.errs = p.errs[:savedErrs]
 			endOffset := p.peek().Offset
 			if endOffset > startOffset && endOffset <= len(p.src) {
-				query.SetText(nil, p.src[startOffset:endOffset])
+				query.SetText(p.connectionEncoding, p.src[startOffset:endOffset])
 			}
 			p.expect(')')
 			sub := p.arena.AllocSubqueryExpr()
@@ -134,7 +134,7 @@ func (p *HandParser) parseExistsSubquery() ast.ExprNode {
 	// Set text on the inner statement to match yacc SubSelect behavior.
 	endOff := p.peek().Offset
 	if endOff > startOff {
-		query.(ast.Node).SetText(nil, p.src[startOff:endOff])
+		query.(ast.Node).SetText(p.connectionEncoding, p.src[startOff:endOff])
 	}
 	// Clear IsInBraces since EXISTS's own parens provide the wrapping.
 	if s, ok := query.(*ast.SelectStmt); ok {
@@ -261,7 +261,7 @@ func (p *HandParser) parseInExpr(left ast.ExprNode, not bool) ast.ExprNode {
 		// Set text on the inner statement to match yacc SubSelect behavior.
 		subEndOff := p.peek().Offset
 		if subEndOff > subStartOff {
-			query.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
+			query.(ast.Node).SetText(p.connectionEncoding, p.src[subStartOff:subEndOff])
 		}
 		sub := p.arena.AllocSubqueryExpr()
 		sub.Query = query
