@@ -1261,8 +1261,11 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
 	tblInfo.TableCacheStatusType = model.TableCacheStatusDisable
-	// Ignore TiFlash replicas for temporary tables.
 	if s.TemporaryKeyword != ast.TemporaryNone {
+		// Ignore TiFlash replicas, shard_row_id_bits and pre_split_regions for temporary tables.
+		tblInfo.ShardRowIDBits = 0
+		tblInfo.MaxShardRowIDBits = 0
+		tblInfo.PreSplitRegions = 0
 		tblInfo.TiFlashReplica = nil
 	} else if tblInfo.TiFlashReplica != nil {
 		replica := *tblInfo.TiFlashReplica
