@@ -117,8 +117,8 @@ type MVServiceSettingsResponse struct {
 	BackpressureCPUThreshold float64 `json:"backpressure_cpu_threshold"`
 	BackpressureMemThreshold float64 `json:"backpressure_mem_threshold"`
 	BackpressureDelay        string  `json:"backpressure_delay"`
-	RetryBaseDelay           string  `json:"retry_base_delay"`
-	RetryMaxDelay            string  `json:"retry_max_delay"`
+	TaskFailRetryBaseDelay   string  `json:"task_fail_retry_base_delay"`
+	TaskFailRetryMaxDelay    string  `json:"task_fail_retry_max_delay"`
 	HistoryGCInterval        string  `json:"history_gc_interval"`
 	HistoryGCRetention       string  `json:"history_gc_retention"`
 }
@@ -212,8 +212,8 @@ func writeMVServiceSettingsResponse(w http.ResponseWriter, settings mvServiceRun
 		BackpressureCPUThreshold: settings.backpressureCfg.CPUThreshold,
 		BackpressureMemThreshold: settings.backpressureCfg.MemThreshold,
 		BackpressureDelay:        settings.backpressureCfg.Delay.String(),
-		RetryBaseDelay:           settings.retryBase.String(),
-		RetryMaxDelay:            settings.retryMax.String(),
+		TaskFailRetryBaseDelay:   settings.retryBase.String(),
+		TaskFailRetryMaxDelay:    settings.retryMax.String(),
 		HistoryGCInterval:        settings.historyGCInterval.String(),
 		HistoryGCRetention:       settings.historyGCRetention.String(),
 	})
