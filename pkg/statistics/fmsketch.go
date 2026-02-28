@@ -33,7 +33,6 @@ var murmur3Pool = sync.Pool{
 	},
 }
 
-
 // MaxSketchSize is the maximum size of the hashset in the FM sketch.
 // TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
 const MaxSketchSize = 10000
