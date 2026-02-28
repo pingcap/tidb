@@ -842,8 +842,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		lockedReadTSO,
 		lockedReadTSONull,
 		refreshReadTSO,
-                nextTime,
-                shouldUpdateNextTime,
+		nextTime,
+		shouldUpdateNextTime,
 	); err != nil {
 		return finalizeFailure(err)
 	}
@@ -1273,7 +1273,7 @@ func persistRefreshSuccess(
 		}
 		args = append(args, nextTimeArg)
 	}
-        var lockedReadTSOArg any = lockedReadTSO
+	var lockedReadTSOArg any = lockedReadTSO
 	if lockedReadTSONull {
 		lockedReadTSOArg = nil
 	}
