@@ -1916,10 +1916,10 @@ func TestTiDBModelSessionCacheConfig(t *testing.T) {
 
 func TestTiDBModelGovernanceSysvars(t *testing.T) {
 	const (
-		modelMaxBatchVar         = "tidb_model_max_batch_size"
-		modelTimeoutVar          = "tidb_model_timeout"
-		modelAllowNondetVar      = "tidb_model_allow_nondeterministic"
-		modelEnableCustomOpsVar  = "tidb_enable_model_custom_ops"
+		modelMaxBatchVar        = "tidb_model_max_batch_size"
+		modelTimeoutVar         = "tidb_model_timeout"
+		modelAllowNondetVar     = "tidb_model_allow_nondeterministic"
+		modelEnableCustomOpsVar = "tidb_enable_model_custom_ops"
 	)
 
 	ctx := context.Background()

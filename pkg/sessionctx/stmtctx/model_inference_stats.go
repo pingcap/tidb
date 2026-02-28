@@ -37,13 +37,13 @@ type modelInferenceKey struct {
 }
 
 type modelInferenceEntry struct {
-	calls             int64
-	errors            int64
-	totalInferTime    time.Duration
-	totalBatchSize    int64
-	maxBatchSize      int64
-	totalLoadTime     time.Duration
-	loadErrors        int64
+	calls          int64
+	errors         int64
+	totalInferTime time.Duration
+	totalBatchSize int64
+	maxBatchSize   int64
+	totalLoadTime  time.Duration
+	loadErrors     int64
 }
 
 // ModelInferenceSummary exposes aggregated model inference stats for a statement.
