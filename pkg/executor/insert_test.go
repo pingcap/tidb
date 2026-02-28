@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -32,11 +31,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
+func TestInsertOnDuplicateKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/table/tblsession/forceWriteBinlog", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/table/tblsession/forceWriteBinlog")
 	testInsertOnDuplicateKey(t, tk)
 }
 

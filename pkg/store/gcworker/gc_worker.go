@@ -1688,6 +1688,7 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 		return
 	}
 
+	failpoint.Inject("gcDeletePlacementRuleCounter", func(_ failpoint.Value) {})
 	if err := infosync.DeleteTiFlashPlacementRules(context.Background(), physicalTableIDs); err != nil {
 		logutil.BgLogger().Error("delete placement rules failed", zap.Error(err), zap.Int64s("tableIDs", physicalTableIDs))
 	}
