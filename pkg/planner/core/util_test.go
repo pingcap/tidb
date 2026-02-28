@@ -152,6 +152,73 @@ func TestExtractTableList(t *testing.T) {
 			},
 		},
 		{
+			sql: "SELECT * FROM (SELECT a FROM t1 UNION ALL SELECT b FROM t2) AS u",
+			expect: []*ast.TableName{
+				{Name: ast.NewCIStr("t1")},
+				{Name: ast.NewCIStr("t2")},
+			},
+		},
+		{
+			sql: "SELECT * FROM (SELECT a FROM t1 UNION SELECT b FROM t2) AS u",
+			expect: []*ast.TableName{
+				{Name: ast.NewCIStr("t1")},
+				{Name: ast.NewCIStr("t2")},
+			},
+		},
+		{
+			sql:    "SELECT * FROM (SELECT a FROM t1 UNION ALL SELECT b FROM t2) AS u",
+			asName: true,
+			expect: []*ast.TableName{
+				{Name: ast.NewCIStr("u")},
+			},
+		},
+		{
+			sql: "SELECT * FROM (SELECT a FROM t1 UNION ALL SELECT b FROM t2 UNION ALL SELECT c FROM t3) AS u",
+			expect: []*ast.TableName{
+				{Name: ast.NewCIStr("t1")},
+				{Name: ast.NewCIStr("t2")},
+				{Name: ast.NewCIStr("t3")},
+			},
+		},
+		{
+			sql: "SELECT * FROM (SELECT a FROM t1 UNION ALL (SELECT b FROM t2 UNION ALL SELECT c FROM t3)) AS u",
+			expect: []*ast.TableName{
+				{Name: ast.NewCIStr("t1")},
+				{Name: ast.NewCIStr("t2")},
+				{Name: ast.NewCIStr("t3")},
+			},
+		},
+		{
+			sql: "SELECT * FROM (SELECT a FROM db1.t1 UNION ALL SELECT b FROM db2.t2) AS u",
+			expect: []*ast.TableName{
+				{Name: ast.NewCIStr("t1"), Schema: ast.NewCIStr("db1")},
+				{Name: ast.NewCIStr("t2"), Schema: ast.NewCIStr("db2")},
+			},
+		},
+		{
+			sql: "SELECT * FROM (SELECT t1.a, t2.b FROM t1 JOIN t2 ON t1.id = t2.id UNION ALL SELECT t3.a, t4.b FROM t3 JOIN t4 ON t3.id = t4.id) AS u",
+			expect: []*ast.TableName{
+				{Name: ast.NewCIStr("t1")},
+				{Name: ast.NewCIStr("t2")},
+				{Name: ast.NewCIStr("t3")},
+				{Name: ast.NewCIStr("t4")},
+			},
+		},
+		{
+			sql: "SELECT * FROM (SELECT a FROM t1 INTERSECT SELECT b FROM t2) AS u",
+			expect: []*ast.TableName{
+				{Name: ast.NewCIStr("t1")},
+				{Name: ast.NewCIStr("t2")},
+			},
+		},
+		{
+			sql: "SELECT * FROM (SELECT a FROM t1 EXCEPT SELECT b FROM t2) AS u",
+			expect: []*ast.TableName{
+				{Name: ast.NewCIStr("t1")},
+				{Name: ast.NewCIStr("t2")},
+			},
+		},
+		{
 			sql: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
 			expect: []*ast.TableName{
 				{Name: ast.NewCIStr("t")},
