@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mvhandler",
+    srcs = ["mv_service_handler.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/handler/mvhandler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/mvservice",
+        "//pkg/server/handler",
+        "//pkg/session",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
