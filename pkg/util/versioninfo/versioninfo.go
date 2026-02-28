@@ -19,7 +19,7 @@ const (
 	CommunityEdition = "Community"
 )
 
-// Version information.
+// Version information (build metadata).
 var (
 	TiDBBuildTS                    = "None"
 	TiDBGitHash                    = "None"
