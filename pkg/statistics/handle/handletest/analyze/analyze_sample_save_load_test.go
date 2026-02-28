@@ -26,7 +26,7 @@ import (
 )
 
 // TestSampleBasedGlobalStatsSaveAndLoad verifies that:
-//  1. ANALYZE TABLE t (all partitions) persists pruned samples in stats_global_merge_data.
+//  1. ANALYZE TABLE t (all partitions) persists pruned samples in stats_table_data.
 //  2. ANALYZE TABLE t PARTITION pN loads saved samples for other partitions and rebuilds global stats.
 //  3. Global stats row count reflects all partitions, not just the re-analyzed one.
 func TestSampleBasedGlobalStatsSaveAndLoad(t *testing.T) {
@@ -60,14 +60,14 @@ func TestSampleBasedGlobalStatsSaveAndLoad(t *testing.T) {
 	// Step 1: Analyze entire table — should save 4 sample rows (one per partition).
 	tk.MustExec("analyze table t_sample_save")
 
-	// Debug: check all rows in stats_global_merge_data.
-	allMergeRows := tk.MustQuery("select table_id, type, hist_id from mysql.stats_global_merge_data").Rows()
-	t.Logf("stats_global_merge_data has %d rows after full analyze", len(allMergeRows))
+	// Debug: check all rows in stats_table_data.
+	allMergeRows := tk.MustQuery("select table_id, type, hist_id from mysql.stats_table_data").Rows()
+	t.Logf("stats_table_data has %d rows after full analyze", len(allMergeRows))
 	for _, r := range allMergeRows {
 		t.Logf("  table_id=%v type=%v hist_id=%v", r[0], r[1], r[2])
 	}
 
-	rows := tk.MustQuery("select count(*) from mysql.stats_global_merge_data where type = 2").Rows()
+	rows := tk.MustQuery("select count(*) from mysql.stats_table_data where type = 2").Rows()
 	require.Equal(t, "4", rows[0][0].(string), "expected 4 saved partition samples after full analyze")
 
 	// Record the global stats row count after full analyze.
@@ -82,7 +82,7 @@ func TestSampleBasedGlobalStatsSaveAndLoad(t *testing.T) {
 	tk.MustExec("analyze table t_sample_save partition p0")
 
 	// The saved sample for p0 should be updated; other 3 stay. Still 4 rows total.
-	rows = tk.MustQuery("select count(*) from mysql.stats_global_merge_data where type = 2").Rows()
+	rows = tk.MustQuery("select count(*) from mysql.stats_table_data where type = 2").Rows()
 	require.Equal(t, "4", rows[0][0].(string), "expected 4 saved samples after single-partition analyze")
 
 	// Global stats should still reflect all partitions (loaded from saved samples).
@@ -119,7 +119,7 @@ func TestSampleSaveSchemaChange(t *testing.T) {
 
 	// Full analyze → saves samples for both partitions.
 	tk.MustExec("analyze table t_schema_change")
-	rows := tk.MustQuery("select count(*) from mysql.stats_global_merge_data where type = 2").Rows()
+	rows := tk.MustQuery("select count(*) from mysql.stats_table_data where type = 2").Rows()
 	require.Equal(t, "2", rows[0][0].(string))
 
 	// Add a column → schema changes. The saved samples have a different FM sketch count.
@@ -152,7 +152,7 @@ func TestSampleSaveDisabledByDefault(t *testing.T) {
 	tk.MustExec("insert into t_no_save values (1), (2), (3), (1001), (1002)")
 	tk.MustExec("analyze table t_no_save")
 
-	rows := tk.MustQuery("select count(*) from mysql.stats_global_merge_data where type = 2").Rows()
+	rows := tk.MustQuery("select count(*) from mysql.stats_table_data where type = 2").Rows()
 	require.Equal(t, "0", rows[0][0].(string), "no samples should be saved when feature is disabled")
 }
 
@@ -173,14 +173,14 @@ func TestSampleSaveGCOnDrop(t *testing.T) {
 	tk.MustExec("insert into t_gc values (1), (2), (1001), (1002)")
 	tk.MustExec("analyze table t_gc")
 
-	rows := tk.MustQuery("select count(*) from mysql.stats_global_merge_data where type = 2").Rows()
+	rows := tk.MustQuery("select count(*) from mysql.stats_table_data where type = 2").Rows()
 	require.Equal(t, "2", rows[0][0].(string))
 
 	// Drop the table — GC should clean up all saved samples.
 	tk.MustExec("drop table t_gc")
 	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
 
-	rows = tk.MustQuery("select count(*) from mysql.stats_global_merge_data where type = 2").Rows()
+	rows = tk.MustQuery("select count(*) from mysql.stats_table_data where type = 2").Rows()
 	require.Equal(t, "0", rows[0][0].(string), "samples should be cleaned up after table drop")
 }
 

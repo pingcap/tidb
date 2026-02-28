@@ -22,26 +22,26 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// MergeDataTypeSample is the type value used in stats_global_merge_data for
+// MergeDataTypeSample is the type value used in stats_table_data for
 // persisted per-partition sample collectors.
 const MergeDataTypeSample = 2
 
 // SavePartitionSampleData persists pre-serialized (proto-marshalled) sample data
-// into mysql.stats_global_merge_data with type=2 and hist_id=0.
+// into mysql.stats_table_data with type=2 and hist_id=0.
 func SavePartitionSampleData(sctx sessionctx.Context, partitionID int64, data []byte) error {
 	_, _, err := util.ExecRows(sctx,
-		"REPLACE INTO mysql.stats_global_merge_data (table_id, type, hist_id, value) VALUES (%?, %?, 0, %?)",
+		"REPLACE INTO mysql.stats_table_data (table_id, type, hist_id, value) VALUES (%?, %?, 0, %?)",
 		partitionID, MergeDataTypeSample, data,
 	)
 	return err
 }
 
 // LoadPartitionSample reads a persisted sample collector from
-// mysql.stats_global_merge_data for the given partition.
+// mysql.stats_table_data for the given partition.
 // Returns (nil, nil) if no row is found.
 func LoadPartitionSample(sctx sessionctx.Context, partitionID int64) (*statistics.ReservoirRowSampleCollector, error) {
 	rows, _, err := util.ExecRows(sctx,
-		"SELECT value FROM mysql.stats_global_merge_data WHERE table_id = %? AND type = %? AND hist_id = 0",
+		"SELECT value FROM mysql.stats_table_data WHERE table_id = %? AND type = %? AND hist_id = 0",
 		partitionID, MergeDataTypeSample,
 	)
 	if err != nil {
@@ -62,10 +62,10 @@ func LoadPartitionSample(sctx sessionctx.Context, partitionID int64) (*statistic
 }
 
 // DeletePartitionSamples removes all persisted sample data for a partition
-// from mysql.stats_global_merge_data.
+// from mysql.stats_table_data.
 func DeletePartitionSamples(sctx sessionctx.Context, partitionID int64) error {
 	_, _, err := util.ExecRows(sctx,
-		"DELETE FROM mysql.stats_global_merge_data WHERE table_id = %? AND type = %?",
+		"DELETE FROM mysql.stats_table_data WHERE table_id = %? AND type = %?",
 		partitionID, MergeDataTypeSample,
 	)
 	return err
