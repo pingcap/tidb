@@ -112,7 +112,6 @@ func TestScalarFunction(t *testing.T) {
 	require.NotSame(t, oldSf.RetType, newSf.RetType)
 	require.Equal(t, "values", newSf.FuncName.O)
 	require.Equal(t, mysql.TypeLonglong, newSf.RetType.GetType())
-	require.Same(t, newSf.RetType, newSf.Function.getRetTp())
 	require.Equal(t, sf.Coercibility(), newSf.Coercibility())
 	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
 	_, ok = newSf.Function.(*builtinValuesIntSig)

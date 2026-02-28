@@ -351,7 +351,10 @@ func (sf *ScalarFunction) Clone() Expression {
 	clonedBuiltinFunc := sf.Function.Clone()
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  clonedBuiltinFunc.getRetTp(),
+		// Preserve the original scalar return type shape during clone.
+		// This breaks shared mutable state without canonicalizing RetType
+		// against the cloned builtin function's internal return type.
+		RetType:  sf.RetType.DeepCopy(),
 		Function: clonedBuiltinFunc,
 	}
 	if sf.canonicalhashcode != nil {
