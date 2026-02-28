@@ -1246,6 +1246,26 @@ func (lp *ForListColumnPruning) genKey(tc types.Context, ec errctx.Context, v ty
 	return valByte, err
 }
 
+func (lp *ForListColumnPruning) needConvert(d types.Datum) bool {
+	switch d.Kind() {
+	case types.KindBytes, types.KindMinNotNull, types.KindNull, types.KindMaxValue:
+		return false
+	}
+	return true
+}
+
+func (lp *ForListColumnPruning) getKey(tc types.Context, ec errctx.Context, d types.Datum) ([]byte, error) {
+	if lp.needConvert(d) {
+		return lp.genKey(tc, ec, d)
+	}
+	k, err := codec.EncodeKey(tc.Location(), nil, d)
+	err = ec.HandleError(err)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return k, nil
+}
+
 // LocatePartition locates partition by the column value
 func (lp *ForListColumnPruning) LocatePartition(tc types.Context, ec errctx.Context, v types.Datum) (ListPartitionLocation, error) {
 	key, err := lp.genKey(tc, ec, v)
@@ -1261,35 +1281,13 @@ func (lp *ForListColumnPruning) LocatePartition(tc types.Context, ec errctx.Cont
 
 // LocateRanges locates partition ranges by the column range
 func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context, r *ranger.Range, defaultPartIdx int) ([]ListPartitionLocation, error) {
-	var lowKey, highKey []byte
-	var err error
-	lowVal := r.LowVal[0]
-	if r.LowVal[0].Kind() == types.KindMinNotNull {
-		lowVal = types.GetMinValue(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
+	lowKey, err := lp.getKey(tc, ec, r.LowVal[0])
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	highVal := r.HighVal[0]
-	if r.HighVal[0].Kind() == types.KindMaxValue {
-		highVal = types.GetMaxValue(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
-	}
-
-	// For string type, values returned by GetMinValue and GetMaxValue are already encoded,
-	// so it's unnecessary to invoke genKey to encode them.
-	if lp.ExprCol.GetType(lp.ctx.GetEvalCtx()).EvalType() == types.ETString && r.LowVal[0].Kind() == types.KindMinNotNull {
-		lowKey = (&lowVal).GetBytes()
-	} else {
-		lowKey, err = lp.genKey(tc, ec, lowVal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
-	if lp.ExprCol.GetType(lp.ctx.GetEvalCtx()).EvalType() == types.ETString && r.HighVal[0].Kind() == types.KindMaxValue {
-		highKey = (&highVal).GetBytes()
-	} else {
-		highKey, err = lp.genKey(tc, ec, highVal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	highKey, err := lp.getKey(tc, ec, r.HighVal[0])
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if r.LowExclude {
