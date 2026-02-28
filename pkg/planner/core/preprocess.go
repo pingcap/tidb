@@ -542,8 +542,8 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	sName := pmodel.NewCIStr(currentDB)
 	is := p.ensureInfoSchema()
 
-	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
-	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
+	// for 'SHOW CREATE VIEW/MATERIALIZED VIEW/SEQUENCE ...' statement, ignore local temporary tables.
+	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateMaterializedView || p.showTp == ast.ShowCreateSequence) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
