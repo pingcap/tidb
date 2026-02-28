@@ -2686,10 +2686,13 @@ func resolveRedundantColumnFromNaturalUsingJoinPlan(p base.LogicalPlan, col *exp
 		// These nodes preserve child's column identity; continue tracing down.
 		return resolveRedundantColumnFromNaturalUsingJoinPlan(p.Children()[0], col)
 	case *logicalop.LogicalJoin:
-		// If the column belongs to this join's full schema, this is the owning join.
-		// Stop searching deeper to avoid remapping by child joins with different semantics.
-		if x.FullSchema != nil && x.FullSchema.Contains(col) {
-			return x.ResolveRedundantColumn(col)
+		// Remapping is only defined for inner JOIN ... USING/NATURAL semantics.
+		// When an ancestor join contains this column but has no mapping, continue
+		// descending so child joins can provide the canonical output mapping.
+		if x.JoinType == base.InnerJoin && x.FullSchema != nil && x.FullSchema.Contains(col) {
+			if mappedCol, mappedName := x.ResolveRedundantColumn(col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
 		}
 		for _, child := range x.Children() {
 			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(child, col); mappedCol != nil {

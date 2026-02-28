@@ -917,8 +917,13 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.SetOutputNames(names)
-	for _, pair := range redundantColMappings {
-		p.RegisterRedundantColumnMapping(pair[0], pair[1])
+	// UPDATE/DELETE paths restore schema/names to merged child outputs after
+	// coalescing. Skip index-based redundant mapping registration here to avoid
+	// stale output-index mappings.
+	if !b.inUpdateStmt && !b.inDeleteStmt {
+		for _, pair := range redundantColMappings {
+			p.RegisterRedundantColumnMapping(pair[0], pair[1])
+		}
 	}
 
 	p.OtherConditions = append(conds, p.OtherConditions...)

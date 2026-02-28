@@ -24,24 +24,23 @@ import (
 func TestSchemaCannotFindColumnRegression(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
-		tk.MustExec(`drop table if exists t1, t3`)
-		tk.MustExec(`CREATE TABLE t1 (
-  id BIGINT NOT NULL,
-  k0 BIGINT NOT NULL,
-  d0 DATE NOT NULL,
-  d1 FLOAT NOT NULL,
-  PRIMARY KEY (id)
+		tk.MustExec(`drop table if exists t1, t3, t4`)
+		tk.MustExec(`create table t1 (
+  id bigint primary key,
+  left_v bigint not null
 )`)
-		tk.MustExec(`CREATE TABLE t3 (
-  id BIGINT NOT NULL,
-  k2 VARCHAR(64) NOT NULL,
-  k0 BIGINT NOT NULL,
-  d0 DOUBLE NOT NULL,
-  d1 DATE NOT NULL,
-  PRIMARY KEY (id)
+		tk.MustExec(`create table t3 (
+  id bigint primary key,
+  right_v bigint not null
 )`)
-		tk.MustExec("INSERT INTO t1 (id, k0, d0, d1) VALUES (10, 93, '2024-04-14', 14.19)")
-		tk.MustExec("INSERT INTO t3 (id, k2, k0, d0, d1) VALUES (10, 's356', 749, 89.26, '2024-04-29')")
+		tk.MustExec(`create table t4 (
+  id bigint primary key,
+  right_v bigint not null,
+  flag tinyint not null
+)`)
+		tk.MustExec("insert into t1 values (10, 93)")
+		tk.MustExec("insert into t3 values (10, 749), (20, 749), (30, 1000)")
+		tk.MustExec("insert into t4 values (10, 749, 1), (20, 749, 0), (30, 1000, 1)")
 
 		var input []string
 		var output []struct {
@@ -64,5 +63,54 @@ func TestSchemaCannotFindColumnRegression(t *testing.T) {
 			tk.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 		}
+		tk.MustQuery("SELECT /* issue:66272-nested */ t1.id FROM t1 JOIN t3 USING(id) JOIN t4 ON t4.id = t1.id WHERE t3.id >= 10 AND t3.id <= 20 AND t1.left_v = 93 AND t4.flag = 1").Check(testkit.Rows(
+			"10",
+		))
+
+		tk.MustExec("drop table if exists t_up_l, t_up_r")
+		tk.MustExec("create table t_up_l (id int primary key, a int not null)")
+		tk.MustExec("create table t_up_r (id int primary key)")
+		tk.MustExec("insert into t_up_l values (1, 2), (2, 100), (3, 300)")
+		tk.MustExec("insert into t_up_r values (2), (3)")
+		tk.MustExec("update t_up_l join t_up_r using(id) set t_up_l.a = t_up_l.a + 1000 where t_up_r.id = 2")
+		tk.MustQuery("select id, a from t_up_l order by id").Check(testkit.Rows(
+			"1 2",
+			"2 1100",
+			"3 300",
+		))
+
+		tk.MustExec("drop table if exists t_del_l, t_del_r")
+		tk.MustExec("create table t_del_l (id int primary key, a int not null)")
+		tk.MustExec("create table t_del_r (id int primary key)")
+		tk.MustExec("insert into t_del_l values (1, 2), (2, 9), (3, 2)")
+		tk.MustExec("insert into t_del_r values (2), (3)")
+		tk.MustExec("delete t_del_l from t_del_l join t_del_r using(id) where t_del_r.id = 2")
+		tk.MustQuery("select id, a from t_del_l order by id").Check(testkit.Rows(
+			"1 2",
+			"3 2",
+		))
+
+		tk.MustExec("drop table if exists t_ru_l, t_ru_r")
+		tk.MustExec("create table t_ru_l (id int primary key, a int not null)")
+		tk.MustExec("create table t_ru_r (id int primary key)")
+		tk.MustExec("insert into t_ru_l values (1, 2), (2, 100), (3, 300)")
+		tk.MustExec("insert into t_ru_r values (2), (4)")
+		tk.MustExec("update t_ru_l right join t_ru_r using(id) set t_ru_l.a = t_ru_l.a + 1000 where t_ru_r.id = 2")
+		tk.MustQuery("select id, a from t_ru_l order by id").Check(testkit.Rows(
+			"1 2",
+			"2 1100",
+			"3 300",
+		))
+
+		tk.MustExec("drop table if exists t_rd_l, t_rd_r")
+		tk.MustExec("create table t_rd_l (id int primary key, a int not null)")
+		tk.MustExec("create table t_rd_r (id int primary key)")
+		tk.MustExec("insert into t_rd_l values (1, 2), (2, 9), (3, 2)")
+		tk.MustExec("insert into t_rd_r values (2), (4)")
+		tk.MustExec("delete t_rd_l from t_rd_l right join t_rd_r using(id) where t_rd_r.id = 2")
+		tk.MustQuery("select id, a from t_rd_l order by id").Check(testkit.Rows(
+			"1 2",
+			"3 2",
+		))
 	})
 }
