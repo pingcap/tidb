@@ -937,10 +937,16 @@ func (p *HandParser) parseCompareSubquery(left ast.ExprNode, opCode opcode.Op, a
 	// an arbitrary expression, because (SELECT a) UNION (SELECT b) is valid
 	// here but would fail in the expression parser.
 	p.expect('(')
+	subStartOff := p.peek().Offset
 	sub := p.parseSubquery()
 	// After parsing the first subquery, check for UNION/EXCEPT/INTERSECT.
 	// This handles: > ALL((SELECT a) UNION (SELECT b))
 	sub = p.maybeParseUnion(sub)
+	// Set text on the inner statement to match yacc SubSelect behavior.
+	subEndOff := p.peek().Offset
+	if sub != nil && subEndOff > subStartOff {
+		sub.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
+	}
 	p.expect(')')
 
 	subExpr := p.arena.AllocSubqueryExpr()

@@ -122,6 +122,7 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 func (p *HandParser) parseExistsSubquery() ast.ExprNode {
 	p.next() // consume EXISTS
 	p.expect('(')
+	startOff := p.peek().Offset
 	// Use parseSubquery which handles nested parens, WITH, TABLE, VALUES, and UNIONs.
 	query := p.parseSubquery()
 	if query == nil {
@@ -130,6 +131,11 @@ func (p *HandParser) parseExistsSubquery() ast.ExprNode {
 	// After parseSubquery, there may be set operators (UNION/EXCEPT/INTERSECT)
 	// at this level, e.g. EXISTS ( (SELECT ...) UNION (SELECT ...) ).
 	query = p.maybeParseUnion(query)
+	// Set text on the inner statement to match yacc SubSelect behavior.
+	endOff := p.peek().Offset
+	if endOff > startOff {
+		query.(ast.Node).SetText(nil, p.src[startOff:endOff])
+	}
 	// Clear IsInBraces since EXISTS's own parens provide the wrapping.
 	if s, ok := query.(*ast.SelectStmt); ok {
 		s.IsInBraces = false
@@ -243,9 +249,15 @@ func (p *HandParser) parseInExpr(left ast.ExprNode, not bool) ast.ExprNode {
 
 	// Check for subquery (SELECT, WITH, TABLE, VALUES).
 	if tp := p.peek().Tp; tp == selectKwd || tp == with || tp == tableKwd || tp == values {
+		subStartOff := p.peek().Offset
 		query := p.parseSubquery()
 		if query == nil {
 			return nil
+		}
+		// Set text on the inner statement to match yacc SubSelect behavior.
+		subEndOff := p.peek().Offset
+		if subEndOff > subStartOff {
+			query.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
 		}
 		sub := p.arena.AllocSubqueryExpr()
 		sub.Query = query

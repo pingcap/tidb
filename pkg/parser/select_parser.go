@@ -211,6 +211,7 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 
 		p.expect(as)
 		p.expect('(')
+		subStartOff := p.peek().Offset
 
 		// Parse subquery
 		// Use parseSubquery to support SELECT/TABLE/VALUES/WITH/UNION/Parens
@@ -219,6 +220,11 @@ func (p *HandParser) parseWithStmt() ast.StmtNode {
 			return nil
 		}
 		subNode = p.maybeParseUnion(subNode)
+		// Set text on the inner statement to match yacc SubSelect behavior.
+		subEndOff := p.peek().Offset
+		if subEndOff > subStartOff {
+			subNode.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
+		}
 		// CTE Definition is always a SubqueryExpr wrapping the ResultSetNode
 		subExpr := p.arena.AllocSubqueryExpr()
 		subExpr.Query = subNode

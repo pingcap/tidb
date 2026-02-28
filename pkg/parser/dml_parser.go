@@ -120,9 +120,15 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			stmt.Columns = make([]*ast.ColumnName, 0)
 		} else if p.peek().Tp == selectKwd || p.peek().Tp == with {
 			// Subquery in parens: INSERT INTO t1 (SELECT ...) or (WITH cte AS (...) SELECT ...).
+			subStartOff := p.peek().Offset
 			sub := p.parseSubquery()
 			if sub != nil {
 				sub = p.maybeParseUnion(sub)
+			}
+			// Set text on the inner statement to match yacc SubSelect behavior.
+			subEndOff := p.peek().Offset
+			if sub != nil && subEndOff > subStartOff {
+				sub.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
 			}
 			p.expect(')')
 			// Mark the select as "in braces" so Restore() preserves the parens.
@@ -165,10 +171,16 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		}
 	case '(': // (SELECT ...) or (VALUES ...) or (WITH ...) or ((SELECT ...))
 		p.next()
+		subStartOff := p.peek().Offset
 		if p.peek().Tp == selectKwd || p.peek().Tp == with || p.peek().Tp == tableKwd || p.peek().Tp == '(' {
 			sub := p.parseSubquery()
 			if sub != nil {
 				sub = p.maybeParseUnion(sub)
+			}
+			// Set text on the inner statement to match yacc SubSelect behavior.
+			subEndOff := p.peek().Offset
+			if sub != nil && subEndOff > subStartOff {
+				sub.(ast.Node).SetText(nil, p.src[subStartOff:subEndOff])
 			}
 			p.expect(')')
 			if sub != nil {

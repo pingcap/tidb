@@ -421,11 +421,18 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		return nil
 	case '(':
 		p.next()
+		innerStartOff := p.peek().Offset
 		if p.peek().Tp == selectKwd || p.peek().Tp == with || p.peek().Tp == tableKwd || p.peek().Tp == values {
 			// Unambiguous derived table: subquery with optional UNION.
 			inner := p.parseSubquery()
 			if inner == nil {
 				return nil
+			}
+			// Set text on the inner statement to match yacc SubSelect behavior.
+			// The yacc parser always calls SetText with the text between parens.
+			innerEndOff := p.peek().Offset
+			if innerEndOff > innerStartOff {
+				inner.(ast.Node).SetText(nil, p.src[innerStartOff:innerEndOff])
 			}
 			res = inner
 			p.expect(')')
