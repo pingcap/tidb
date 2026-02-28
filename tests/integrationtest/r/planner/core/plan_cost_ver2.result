@@ -24,7 +24,6 @@ set @@tidb_distsql_scan_concurrency=1;
 set @@tidb_executor_concurrency=1;
 set @@tidb_opt_tiflash_concurrency_factor=1;
 set @@tidb_index_lookup_concurrency=1;
-set @@tidb_cost_model_version=2;
 explain format='verbose' select /*+ use_index(t, primary) */ a from t where a<1;
 id	estRows	estCost	task	access object	operator info
 TableReader_7	2.00	581.34	root		data:TableRangeScan_6
@@ -203,7 +202,6 @@ set @@tidb_distsql_scan_concurrency=DEFAULT;
 set @@tidb_executor_concurrency=DEFAULT;
 set @@tidb_opt_tiflash_concurrency_factor=DEFAULT;
 set @@tidb_index_lookup_concurrency=DEFAULT;
-set @@tidb_cost_model_version=DEFAULT;
 drop table if exists t1, t2;
 create table t1 (a int, key(a));
 create table t2 (a int, key(a));
@@ -247,7 +245,6 @@ Limit_9	1.00	root		offset:0, count:100000
       └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int);
-set @@tidb_cost_model_version=2;
 explain format='true_card_cost' select * from t;
 Error 1105 (HY000): 'explain format=true_card_cost' cannot work without 'analyze', please use 'explain analyze format=true_card_cost'
 explain analyze format='true_card_cost' select * from t where a<3;
@@ -255,4 +252,3 @@ id	estRows	estCost	costFormula	actRows	task	access object	execution info	operato
 TableReader_8	3323.33	13580.23	((((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00)) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
 └─Selection_7	3323.33	203703.50	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00)	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
   └─TableFullScan_6	10000.00	203703.50	((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
-set @@tidb_cost_model_version=DEFAULT;
