@@ -1163,3 +1163,139 @@ NULL	xUhXa6=s%j7h~!G,yKuo#WH)4F30	yKuo#WH)4F30	NULL
 NULL	xUhXa6=s%j7h~!G,zybQlXsQiqNIXAl5p!#	zybQlXsQiqNIXAl5p!#	NULL
 rollback;
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
+<<<<<<< HEAD
+=======
+CREATE TABLE `td89f296a` (
+`col_64` tinyint DEFAULT NULL,
+`col_65` json NOT NULL,
+`col_66` json DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+CREATE TABLE `tac9d3b07` (
+`col_60` binary(67) DEFAULT '\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0',
+`col_61` decimal(27,16) NOT NULL,
+`col_62` time NOT NULL,
+UNIQUE KEY `idx_19` (`col_60`,`col_61`,`col_62`),
+UNIQUE KEY `idx_20` (`col_60`(2),`col_62`,`col_61`),
+KEY `idx_21` (`col_60`(1),`col_61`),
+UNIQUE KEY `idx_22` (`col_61`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+explain format='plan_tree' select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
+id	task	access object	operator info
+Sort	root		planner__core__indexjoin.td89f296a.col_64, Column, Column, Column
+└─Projection	root		planner__core__indexjoin.td89f296a.col_64, substr(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)), 2)->Column, ord(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)))->Column, mid(cast(Column, var_string(20)), 0, 6)->Column
+  └─IndexJoin	root		inner join, inner:Projection, outer key:Column, inner key:planner__core__indexjoin.tac9d3b07.col_61, equal cond:eq(Column, planner__core__indexjoin.tac9d3b07.col_61)
+    ├─Projection(Build)	root		planner__core__indexjoin.td89f296a.col_64, cast(planner__core__indexjoin.td89f296a.col_64, decimal(3,0) BINARY)->Column
+    │ └─TableReader	root		data:TableFullScan
+    │   └─TableFullScan	cop[tikv]	table:td89f296a	keep order:false, stats:pseudo
+    └─Projection(Probe)	root		planner__core__indexjoin.tac9d3b07.col_61, ifnull(cast(cast(planner__core__indexjoin.tac9d3b07.col_61, bigint BINARY), bigint UNSIGNED BINARY), 18446744073709551615)->Column
+      └─IndexLookUp	root		
+        ├─IndexRangeScan(Build)	cop[tikv]	table:tac9d3b07, index:idx_22(col_61)	range: decided by [eq(planner__core__indexjoin.tac9d3b07.col_61, Column#16)], keep order:false, stats:pseudo
+        └─TableRowIDScan(Probe)	cop[tikv]	table:tac9d3b07	keep order:false, stats:pseudo
+select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
+r0	r1	r2	r3
+CREATE TABLE `t5602f14e` (
+`col_51` json NOT NULL,
+`col_52` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT 'Vn',
+`col_53` mediumint NOT NULL DEFAULT '-3927549',
+`col_54` date DEFAULT NULL,
+`col_55` date NOT NULL DEFAULT '1978-05-20',
+`col_56` bigint unsigned NOT NULL DEFAULT '12818995484625953384',
+PRIMARY KEY (`col_55`) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY `idx_16` (`col_55`,`col_54`) /*T![global_index] GLOBAL */,
+KEY `idx_17` (`col_55`,`col_52`,`col_53`),
+KEY `idx_18` (`col_55`) /*T![global_index] GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY RANGE COLUMNS(`col_55`)
+(PARTITION `p0` VALUES LESS THAN ('1980-09-26'),
+PARTITION `p1` VALUES LESS THAN ('2023-02-26'),
+PARTITION `p2` VALUES LESS THAN ('2034-03-19'),
+PARTITION `p3` VALUES LESS THAN (MAXVALUE));
+CREATE TABLE `t8e1f515f` (
+`col_39` decimal(64,22) NOT NULL,
+`col_40` json DEFAULT NULL,
+`col_41` date NOT NULL DEFAULT '2022-05-10',
+`col_42` smallint unsigned NOT NULL DEFAULT '54999',
+`col_43` double DEFAULT NULL,
+`col_44` blob DEFAULT NULL,
+`col_45` varchar(365) COLLATE utf8_bin DEFAULT 'GUNcVb8m',
+`col_46` smallint NOT NULL,
+`col_47` binary(149) NOT NULL,
+`col_48` varchar(437) COLLATE utf8_unicode_ci NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+explain select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
+id	estRows	task	access object	operator info
+Sort_13	8000.00	root		Column#20, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
+└─Projection_15	8000.00	root		concat(Column#18, Column#18)->Column#20, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
+  └─Projection_17	8000.00	root		planner__core__indexjoin.t8e1f515f.col_44, planner__core__indexjoin.t5602f14e.col_55, Column#18
+    └─HashJoin_32	8000.00	root		inner join, equal:[eq(Column#22, planner__core__indexjoin.t5602f14e.col_55)]
+      ├─StreamAgg_72(Build)	6400.00	root		group by:Column#26, funcs:group_concat(Column#24 order by Column#25 separator ",")->Column#18, funcs:firstrow(Column#26)->planner__core__indexjoin.t5602f14e.col_55
+      │ └─Projection_91	8000.00	root		cast(planner__core__indexjoin.t5602f14e.col_56, var_string(20))->Column#24, planner__core__indexjoin.t5602f14e.col_56->Column#25, planner__core__indexjoin.t5602f14e.col_55->Column#26
+      │   └─Selection_82	8000.00	root		not(isnull(json_overlaps(cast("[15114205522559919477,7224822526648750310]", json BINARY), planner__core__indexjoin.t5602f14e.col_51)))
+      │     └─TableReader_84	10000.00	root	partition:all	data:TableFullScan_83
+      │       └─TableFullScan_83	10000.00	cop[tikv]	table:t5602f14e	keep order:true, stats:pseudo
+      └─Projection_35(Probe)	10000.00	root		planner__core__indexjoin.t8e1f515f.col_44, cast(planner__core__indexjoin.t8e1f515f.col_48, datetime(6) BINARY)->Column#22
+        └─TableReader_38	10000.00	root		data:TableFullScan_37
+          └─TableFullScan_37	10000.00	cop[tikv]	table:t8e1f515f	keep order:false, stats:pseudo
+select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
+r0	r1	r2
+drop table if exists t_inner_pk;
+drop table if exists t_outer_pk;
+create table t_inner_pk (
+a int,
+b int,
+data char(100),
+primary key (a, b)
+);
+create table t_outer_pk (
+a int,
+val int,
+key(val)
+);
+insert into t_inner_pk select 1, n, 'padding' from (
+with recursive x as (
+select 1 as n
+union all
+select n + 1 from x where n < 100
+)
+select n from x
+) t;
+insert into t_outer_pk values (1, 100);
+analyze table t_inner_pk;
+analyze table t_outer_pk;
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	100.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─IndexLookUp(Probe)	100.00	root		
+  ├─IndexRangeScan(Build)	100.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a)], keep order:false
+  └─TableRowIDScan(Probe)	100.00	cop[tikv]	table:i	keep order:false
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a and i.b = 1
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	1.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─IndexLookUp(Probe)	1.00	root		
+  ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) eq(planner__core__indexjoin.t_inner_pk.b, 1)], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:i	keep order:false
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a and i.b > 50
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	51.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─IndexLookUp(Probe)	51.00	root		
+  ├─IndexRangeScan(Build)	51.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) gt(planner__core__indexjoin.t_inner_pk.b, 50)], keep order:false
+  └─TableRowIDScan(Probe)	51.00	cop[tikv]	table:i	keep order:false
+>>>>>>> f8627fd3ff2 (planner: fix the row count for index join use the PK in inner side (#65190))
