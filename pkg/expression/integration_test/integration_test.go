@@ -1998,30 +1998,79 @@ func TestIssue9710(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	getSAndMS := func(str string) (int, int) {
+	getSAndMS := func(str string) (string, string) {
 		results := strings.Split(str, ":")
 		SAndMS := strings.Split(results[len(results)-1], ".")
-		var s, ms int
-		s, _ = strconv.Atoi(SAndMS[0])
 		if len(SAndMS) > 1 {
-			ms, _ = strconv.Atoi(SAndMS[1])
+			return SAndMS[0], SAndMS[1]
 		}
-		return s, ms
+		return SAndMS[0], ""
 	}
 
 	for {
-		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now())")
-		s, ms := getSAndMS(rs.Rows()[0][1].(string))
-		if ms < 500000 {
-			time.Sleep(time.Second / 10)
-			continue
+		rs := tk.MustQuery("select now(), now(4), now(6), unix_timestamp(), unix_timestamp(now()), unix_timestamp(now(5)), unix_timestamp(now(6)), utc_timestamp(), utc_timestamp(3), utc_timestamp(6), sysdate(), sysdate(2), sysdate(6), curtime(), curtime(1), curtime(6), utc_time(), utc_time(5), utc_time(6)")
+		n0, nms0 := getSAndMS(rs.Rows()[0][0].(string))
+		n4, nms4 := getSAndMS(rs.Rows()[0][1].(string))
+		n6, nms6 := getSAndMS(rs.Rows()[0][2].(string))
+
+		unix0, unixms0 := getSAndMS(rs.Rows()[0][3].(string))
+		unixn0, unixnms0 := getSAndMS(rs.Rows()[0][4].(string))
+		unixn5, unixnms5 := getSAndMS(rs.Rows()[0][5].(string))
+		unixn6, unixnms6 := getSAndMS(rs.Rows()[0][6].(string))
+
+		utc0, utcms0 := getSAndMS(rs.Rows()[0][7].(string))
+		utc3, utcms3 := getSAndMS(rs.Rows()[0][8].(string))
+		utc6, utcms6 := getSAndMS(rs.Rows()[0][9].(string))
+
+		sysDate0, sysDatems0 := getSAndMS(rs.Rows()[0][10].(string))
+		sysDate2, sysDatems2 := getSAndMS(rs.Rows()[0][11].(string))
+		sysDate6, sysDatems6 := getSAndMS(rs.Rows()[0][12].(string))
+
+		curTime0, curTimems0 := getSAndMS(rs.Rows()[0][13].(string))
+		curTime1, curTimems1 := getSAndMS(rs.Rows()[0][14].(string))
+		curTime6, curTimems6 := getSAndMS(rs.Rows()[0][15].(string))
+
+		utcT0, utcTms0 := getSAndMS(rs.Rows()[0][16].(string))
+		utcT5, utcTms5 := getSAndMS(rs.Rows()[0][17].(string))
+		utcT6, utcTms6 := getSAndMS(rs.Rows()[0][18].(string))
+
+		require.Equal(t, n0, n4) // now() will truncate the result instead of rounding it
+		require.Equal(t, n0, n6) // now() will truncate the result instead of rounding it
+		require.Equal(t, nms0, "")
+		require.LessOrEqual(t, nms4, nms6)
+
+		require.Equal(t, unix0, unixn0)
+		require.Equal(t, unix0, unixn5)
+		require.Equal(t, unix0, unixn6)
+		require.Equal(t, unixms0, "")
+		require.Equal(t, unixnms0, "")
+		require.LessOrEqual(t, unixnms5, unixnms6)
+
+		require.Equal(t, utc0, utc3)
+		require.Equal(t, utc0, utc6)
+		require.Equal(t, utcms0, "")
+		require.LessOrEqual(t, utcms3, utcms6)
+
+		require.Equal(t, sysDate0, sysDate2)
+		require.Equal(t, sysDate0, sysDate6)
+		require.Equal(t, sysDatems0, "")
+		require.LessOrEqual(t, sysDatems2, sysDatems6)
+
+		require.Equal(t, curTime0, curTime1)
+		require.Equal(t, curTime0, curTime6)
+		require.Equal(t, curTimems0, "")
+		require.LessOrEqual(t, curTimems1, curTimems6)
+
+		require.Equal(t, utcT0, utcT5)
+		require.Equal(t, utcT0, utcT6)
+		require.Equal(t, utcTms0, "")
+		require.LessOrEqual(t, utcTms5, utcTms6)
+
+		// We really want to test truncate when fsp >= .5
+		if nms6 >= "500000" {
+			break
 		}
-
-		s1, _ := getSAndMS(rs.Rows()[0][0].(string))
-		require.Equal(t, s, s1) // now() will truncate the result instead of rounding it
-
-		require.Equal(t, rs.Rows()[0][2], rs.Rows()[0][3]) // unix_timestamp() will truncate the result
-		break
+		time.Sleep(time.Second / 10)
 	}
 }
 

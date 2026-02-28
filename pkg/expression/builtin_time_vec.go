@@ -180,7 +180,7 @@ func (b *builtinSysDateWithoutFspSig) vecEvalTime(ctx EvalContext, input *chunk.
 
 	result.ResizeTime(n, false)
 	times := result.Times()
-	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfUp)
+	t, err := convertTimeToMysqlTime(now, 0, types.ModeTruncate)
 	if err != nil {
 		return err
 	}
@@ -420,7 +420,7 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(ctx EvalContext, input *chunk
 		if fsp > int64(types.MaxFsp) {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_time", types.MaxFsp)
 		}
-		res, _, err := types.ParseDuration(tc, utc, int(fsp))
+		res, _, err := types.ParseDurationTruncateFsp(tc, utc, int(fsp))
 		if err != nil {
 			return err
 		}
@@ -777,7 +777,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(ctx EvalContext, input *chunk.Chu
 		if result.IsNull(i) {
 			continue
 		}
-		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeHalfUp)
+		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeTruncate)
 		if err != nil {
 			return err
 		}
@@ -1971,7 +1971,7 @@ func (b *builtinUTCTimeWithoutArgSig) vecEvalDuration(ctx EvalContext, input *ch
 	if err != nil {
 		return err
 	}
-	res, _, err := types.ParseDuration(typeCtx(ctx), nowTs.UTC().Format(types.TimeFormat), types.DefaultFsp)
+	res, _, err := types.ParseDurationTruncateFsp(typeCtx(ctx), nowTs.UTC().Format(types.TimeFormat), types.DefaultFsp)
 	if err != nil {
 		return err
 	}
@@ -2374,7 +2374,7 @@ func (b *builtinCurrentTime0ArgSig) vecEvalDuration(ctx EvalContext, input *chun
 	}
 	tz := location(ctx)
 	dur := nowTs.In(tz).Format(types.TimeFormat)
-	res, _, err := types.ParseDuration(typeCtx(ctx), dur, types.MinFsp)
+	res, _, err := types.ParseDurationTruncateFsp(typeCtx(ctx), dur, types.MinFsp)
 	if err != nil {
 		return err
 	}
@@ -2568,7 +2568,7 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(ctx EvalContext, input *chun
 	result.ResizeGoDuration(n, false)
 	durations := result.GoDurations()
 	for i := range n {
-		res, _, err := types.ParseDuration(tc, dur, int(i64s[i]))
+		res, _, err := types.ParseDurationTruncateFsp(tc, dur, int(i64s[i]))
 		if err != nil {
 			return err
 		}
