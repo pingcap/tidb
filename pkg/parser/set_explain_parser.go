@@ -264,20 +264,12 @@ func (p *HandParser) parseSetExpr() ast.ExprNode {
 		p.next()
 		return p.newValueExpr("BINARY")
 	}
-	// ON/OFF are reserved keywords but valid SET values (e.g., SET @@var = ON).
-	// The parser treats them as string literals in this context.
+	// ON and BINARY are special-cased as string ValueExpr (matching yacc).
+	// OFF and ALL are NOT special-cased: they fall through to parseExpression
+	// which produces ColumnNameExpr, matching yacc's ExprOrDefault path.
 	if p.peek().Tp == on {
 		p.next()
 		return p.newValueExpr("ON")
-	}
-	if p.peek().IsKeyword("OFF") {
-		p.next()
-		return p.newValueExpr("OFF")
-	}
-	// ALL is valid for some SET variables (e.g., sql_mode)
-	if p.peek().Tp == all {
-		p.next()
-		return p.newValueExpr("ALL")
 	}
 	return p.parseExpression(precNone)
 }

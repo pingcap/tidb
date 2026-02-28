@@ -188,7 +188,7 @@ func (p *HandParser) parseSelectLock() *ast.SelectLockInfo {
 		// LOCK IN SHARE MODE
 		p.expect(in)
 		p.expect(share)
-		p.accept(mode) // MODE is optional in some dialects
+		p.expect(mode) // MODE is required (matching yacc)
 		lockNode.LockType = ast.SelectLockForShare
 		return lockNode
 	}

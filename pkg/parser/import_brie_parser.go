@@ -94,17 +94,20 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 			}
 		}
 	} else if p.peek().Tp == '(' {
-		// FROM (SELECT ...)
+		// FROM (SELECT ...) — yacc uses SubSelect which unwraps and sets IsInBraces.
 		p.next() // consume '('
 		sel := p.parseSelectStmt()
 		if sel == nil {
 			return nil
 		}
-		// Handle UNION inside parens and wrap in TableSource to preserve parens in Restore
 		unionSel := p.maybeParseUnion(sel)
-		ts := Alloc[ast.TableSource](p.arena)
-		ts.Source = unionSel
-		stmt.Select = ts
+		// Match yacc: set IsInBraces on the inner statement (no TableSource wrapper).
+		if s, ok := unionSel.(*ast.SelectStmt); ok {
+			s.IsInBraces = true
+		} else if s, ok := unionSel.(*ast.SetOprStmt); ok {
+			s.IsInBraces = true
+		}
+		stmt.Select = unionSel
 		p.expect(')')
 	} else if p.peek().Tp == selectKwd || p.peek().Tp == with {
 		// FROM SELECT ... or FROM WITH CTE SELECT ...
@@ -123,29 +126,15 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 		}
 
 		if p.peek().Tp == with {
-			// WITH CTE form: WITH name AS (SELECT ...) SELECT ...
-			// Consume the CTE clause, then parse the trailing SELECT.
-			withTok := p.next() // consume WITH
-			// Parse CTE name
-			cteName := p.next()
-			p.expect(as)
-			p.expect('(')
-			// Parse inner select
-			cteSelect := p.parseSelectStmt()
-			p.expect(')')
-			// Now parse the main SELECT
-			mainSelect := p.parseSelectStmt()
-			if mainSelect == nil {
+			// WITH CTE form: use standard parseWithStmt which handles
+			// multiple CTEs, column lists, RECURSIVE, etc.
+			withStmt := p.parseWithStmt()
+			if withStmt == nil {
 				return nil
 			}
-			// Attach CTE to the main select
-			cte := &ast.CommonTableExpression{
-				Name:  ast.NewCIStr(cteName.Lit),
-				Query: &ast.SubqueryExpr{Query: cteSelect},
+			if rs, ok := withStmt.(ast.ResultSetNode); ok {
+				stmt.Select = rs
 			}
-			mainSelect.With = &ast.WithClause{CTEs: []*ast.CommonTableExpression{cte}}
-			_ = withTok
-			stmt.Select = p.maybeParseUnion(mainSelect)
 		} else {
 			sel := p.parseSelectStmt()
 			if sel == nil {
