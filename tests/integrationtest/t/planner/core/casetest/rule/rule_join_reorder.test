@@ -1,5 +1,4 @@
 # TestStraightJoinHint
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -97,7 +96,6 @@ explain format='plan_tree' select /*+ inl_join(t1), no_index_merge_join(t1) */ *
 --disable_warnings
 
 # TestLeadingJoinHint
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -222,7 +220,6 @@ explain format='plan_tree' select /*+ leading(t2) INL_JOIN(t1) */ * from t, t1, 
 --disable_warnings
 
 # TestJoinOrderHint4StaticPartitionTable
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6;
 create table t(a int, b int) partition by hash(a) partitions 3;
 create table t1(a int, b int) partition by hash(a) partitions 4;
@@ -263,7 +260,6 @@ explain format='plan_tree' select /*+ leading(t3, t4, t5, t6) */ * from t2 right
 --disable_warnings
 
 # TestJoinOrderHint4DifferentJoinType
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -316,7 +312,6 @@ explain format='plan_tree' select /*+ leading(t1) */ * from t1 right join t2 on 
 --disable_warnings
 
 # TestJoinOrderHint4Subquery
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -421,7 +416,6 @@ explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min
 --disable_warnings
 
 # TestLeadingJoinHint4OuterJoin
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -521,7 +515,6 @@ explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min
 --disable_warnings
 
 # TestLeadingJoinHint4DerivedTable
-set tidb_cost_model_version=2;
 drop table if exists t1, t2, t3, t4, t5;
 create table t1(a int, b int, key(a));
 create table t2(a int, b int, key(a));

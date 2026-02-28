@@ -39,7 +39,6 @@ explain analyze format='brief' select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 j
 drop table if exists t;
 create table t (a int);
 insert into t values (1);
-set tidb_cost_model_version=2;
 explain format='cost_trace' select * from t;
 --replace_column 8 <execution_info> 9 <operator_info> 10 <memory> 11 <disk>
 explain analyze format='cost_trace' select * from t;
@@ -47,7 +46,6 @@ explain analyze format='cost_trace' select * from t;
 explain format='cost_trace' select * from t;
 --replace_column 8 <execution_info> 9 <operator_info> 10 <memory> 11 <disk>
 explain analyze format='cost_trace' select * from t;
-set tidb_cost_model_version=default;
 
 # TestExplainAnalyze
 drop table if exists t1, t2;

@@ -1,4 +1,3 @@
-set tidb_cost_model_version=2;
 drop table if exists t1, t2;
 set tidb_enable_clustered_index=int_only;
 create table t1(a int not null, c int not null);
@@ -198,7 +197,6 @@ Projection	root		planner__core__casetest__index__index.t3.a, planner__core__case
   └─TableReader(Probe)	root		data:Selection
     └─Selection	cop[tikv]		eq(planner__core__casetest__index__index.t4.a, 1)
       └─TableRangeScan	cop[tikv]	table:t4	range: decided by [eq(planner__core__casetest__index__index.t4.b, planner__core__casetest__index__index.t3.b) eq(planner__core__casetest__index__index.t4.a, 1)], keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null, c int not null);
 create table t2(a int not null, b int not null, c int not null, index idx1(a,b), index idx2(c));
@@ -213,7 +211,6 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 └─IndexLookUp(Probe)	root		
   ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx1(a, b)	range: decided by [eq(planner__core__casetest__index__index.t2.a, planner__core__casetest__index__index.t1.a) eq(planner__core__casetest__index__index.t2.b, planner__core__casetest__index__index.t1.b)], keep order:false
   └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false
-set tidb_cost_model_version=default;
 drop table if exists t;
 create table t (a int, b int, unique key(a), unique key(b));
 insert into t value (1, 5), (2, 4), (3, 3), (4, 2), (5, 1);
@@ -252,7 +249,6 @@ IndexMerge	root		type: union
   └─TableRowIDScan	cop[tikv]	table:t	keep order:false
 show warnings;
 Level	Code	Message
-set tidb_cost_model_version=2;
 set tidb_enable_clustered_index=on;
 drop table if exists t;
 create table t (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c));
@@ -335,8 +331,6 @@ NULL	NULL	NULL
 NULL	NULL	NULL
 NULL	NULL	NULL
 set tidb_enable_clustered_index=default;
-set tidb_cost_model_version=default;
-set tidb_cost_model_version=2;
 drop table if exists t1, t2;
 create table t1(c1 int, c2 int, c3 int, primary key(c1), key(c2));
 insert into t1 values(1, 1, 1);
@@ -454,7 +448,6 @@ c_int
 7
 8
 9
-set tidb_cost_model_version=default;
 drop table if exists t1, t2;
 create table t1(a int, b int, c varchar(10), d varchar(10), index idx_a_b_c_d(a, b, c(2), d(2)));
 create table t2(e int, f int, g varchar(10), h varchar(10));
@@ -573,7 +566,6 @@ show warnings;
 Level	Code	Message
 Warning	1105	Memory capacity of 300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
 set @@tidb_opt_range_max_size = default;
-set tidb_cost_model_version=2;
 drop table if exists t1, t2, t3, t4;
 create table t1(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g));
 create table t2(a int, b int, c int, d int, unique index idx_a (a), unique index idx_b_c (b, c), unique index idx_b_c_a_d (b, c, a, d));
@@ -654,8 +646,6 @@ Insert	N/A	root		N/A
 show warnings;
 Level	Code	Message
 set @@tidb_enable_chunk_rpc = default;
-set tidb_cost_model_version=default;
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int, b int, c int, d int, index idx(a,b,c));
 explain format='plan_tree' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10;
@@ -674,7 +664,6 @@ Limit	root		offset:0, count:10
     ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(a, b, c)	range:(1 2,1 10), keep order:true, desc, stats:pseudo
     └─Selection(Probe)	cop[tikv]		eq(planner__core__casetest__index__index.t.d, 10)
       └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-set tidb_cost_model_version=default;
 set tidb_enable_clustered_index=on;
 drop table if exists t1;
 create table t1 (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c));

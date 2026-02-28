@@ -1,4 +1,3 @@
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -799,7 +798,6 @@ IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest
 └─IndexReader(Probe)	root		index:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
     └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)], keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -2329,7 +2327,6 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__
           └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6;
 create table t(a int, b int) partition by hash(a) partitions 3;
 create table t1(a int, b int) partition by hash(a) partitions 4;
@@ -4046,7 +4043,6 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner_
                 └─TableFullScan	cop[tikv]	table:t1, partition:p3	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -4548,7 +4544,6 @@ HashJoin	root		CARTESIAN inner join
   │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -5917,7 +5912,6 @@ ScalarSubQuery	root		Output: ScalarQueryCol#18
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -7461,7 +7455,6 @@ ScalarSubQuery	root		Output: ScalarQueryCol#18
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
-set tidb_cost_model_version=2;
 drop table if exists t1, t2, t3, t4, t5;
 create table t1(a int, b int, key(a));
 create table t2(a int, b int, key(a));

@@ -548,7 +548,6 @@ select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefille
 id	pc
 drop table t1, t2;
 set @@tidb_partition_prune_mode=default;
-set tidb_cost_model_version=default;
 drop table if exists t1;
 drop table if exists t2;
 create table t1 (a enum('x','y'));
