@@ -15,39 +15,64 @@
 package ddl
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 )
 
-func TestExpectedIngestWorkerCnt(t *testing.T) {
+func TestExpectedIngestWorkerCntNextgen(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("only for nextgen")
+	}
 	tests := []struct {
-		concurrency   int
-		avgRowSize    int
-		useGlobalSort bool
-		expReader     int
-		expWriter     int
+		concurrency int
+		avgRowSize  int
+		expReader   int
+		expWriter   int
 	}{
-		// Global sort path
-		{10, 100, true, 10, 10},
-		{20, 500, true, 20, 20},
-
-		// Non-global sort path, avgRowSize = 0
-		{10, 0, false, 5, 7},
-		{40, 0, false, 16, 16},
-		{1, 0, false, 1, 2},
-
-		// Non-global sort path, various avgRowSize
-		{10, 100, false, 5, 10},
-		{10, 300, false, 10, 10},
-		{10, 600, false, 20, 10},
-		{10, 2000, false, 40, 10},
-		{10, 5000, false, 80, 10},
+		{10, 100, 10, 10},
+		{20, 500, 20, 20},
 	}
 
 	for _, tt := range tests {
-		reader, writer := expectedIngestWorkerCnt(tt.concurrency, tt.avgRowSize, tt.useGlobalSort)
-		require.Equal(t, tt.expReader, reader, "concurrency: %d, avgRowSize: %d, useGlobalSort: %v", tt.concurrency, tt.avgRowSize, tt.useGlobalSort)
-		require.Equal(t, tt.expWriter, writer, "concurrency: %d, avgRowSize: %d, useGlobalSort: %v", tt.concurrency, tt.avgRowSize, tt.useGlobalSort)
+		t.Run(fmt.Sprintf("concurrency%d_avgRowSize%d", tt.concurrency, tt.avgRowSize), func(t *testing.T) {
+			reader, writer := expectedIngestWorkerCnt(tt.concurrency, tt.avgRowSize)
+			require.Equal(t, tt.expReader, reader, "concurrency: %d, avgRowSize: %d", tt.concurrency, tt.avgRowSize)
+			require.Equal(t, tt.expWriter, writer, "concurrency: %d, avgRowSize: %d", tt.concurrency, tt.avgRowSize)
+		})
+	}
+}
+
+func TestExpectedIngestWorkerCntClassic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("only for classic")
+	}
+	tests := []struct {
+		concurrency int
+		avgRowSize  int
+		expReader   int
+		expWriter   int
+	}{
+		// Non-nextgen path, avgRowSize = 0
+		{10, 0, 5, 7},
+		{40, 0, 16, 16},
+		{1, 0, 1, 2},
+
+		// Non-nextgen path, various avgRowSize
+		{10, 100, 5, 10},
+		{10, 300, 10, 10},
+		{10, 600, 20, 10},
+		{10, 2000, 40, 10},
+		{10, 5000, 80, 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("concurrency%d_avgRowSize%d", tt.concurrency, tt.avgRowSize), func(t *testing.T) {
+			reader, writer := expectedIngestWorkerCnt(tt.concurrency, tt.avgRowSize)
+			require.Equal(t, tt.expReader, reader, "concurrency: %d, avgRowSize: %d", tt.concurrency, tt.avgRowSize)
+			require.Equal(t, tt.expWriter, writer, "concurrency: %d, avgRowSize: %d", tt.concurrency, tt.avgRowSize)
+		})
 	}
 }
