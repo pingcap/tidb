@@ -583,8 +583,9 @@ func (w *encodeWorker) parserData2TableData(
 		}
 		w.handleWarning(err)
 		logutil.Logger(ctx).Error("failed to get row", zap.Error(err))
-		// TODO: should not return nil! caller will panic when lookup index
-		return nil, nil
+		// Return error instead of nil to prevent panic in getKeysNeedCheckOneRow
+		// The error will be handled appropriately by the caller
+		return nil, err
 	}
 
 	return newRow, nil
