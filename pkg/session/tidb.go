@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -60,6 +61,18 @@ type domainMap struct {
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithFilter(store, nil)
+}
+
+// GetOrCreateWithFilter gets or creates the domain for store with a schema filter.
+//
+// Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
+// the actual schema filter of the returned `Domain` is the one when the domain was created.
+func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
+	return dm.getWithFilter(store, filter)
+}
+
+func (dm *domainMap) getWithFilter(store kv.Storage, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -88,7 +101,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory, schemaFilter)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
