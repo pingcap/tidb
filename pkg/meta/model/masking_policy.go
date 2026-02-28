@@ -48,10 +48,13 @@ const (
 
 // MaskingPolicyInfo is the struct to store the masking policy.
 type MaskingPolicyInfo struct {
-	ID          int64                        `json:"id"`
-	Name        ast.CIStr                    `json:"name"`
-	SchemaName  ast.CIStr                    `json:"schema_name"`
-	TableName   ast.CIStr                    `json:"table_name"`
+	ID   int64     `json:"id"`
+	Name ast.CIStr `json:"name"`
+	// SchemaName/TableName/ColumnName are denormalized snapshots used by metadata
+	// lookup and observation surfaces.
+	SchemaName ast.CIStr `json:"schema_name"`
+	TableName  ast.CIStr `json:"table_name"`
+	// TableID/ColumnID are the stable bindings and should be treated as source of truth.
 	TableID     int64                        `json:"table_id"`
 	ColumnID    int64                        `json:"column_id"`
 	ColumnName  ast.CIStr                    `json:"column_name"`
