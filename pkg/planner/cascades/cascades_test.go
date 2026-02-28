@@ -33,9 +33,9 @@ func TestCascadesDrive(t *testing.T) {
 
 	// simple select for quick debug of memo, the normal test case is in tests/planner/cascades/integration.test.
 	tk.MustQuery("select 1").Check(testkit.Rows("1"))
-	tk.MustQuery("explain format = 'plan_tree' select 1").Check(testkit.Rows(""+
-		"Projection root  1->Column",
-		"└─TableDual root  rows:1"))
+	tk.MustQuery("explain format = 'brief' select 1").Check(testkit.Rows(""+
+		"Projection 1.00 root  1->Column#1",
+		"└─TableDual 1.00 root  rows:1"))
 }
 
 func TestXFormedOperatorShouldDeriveTheirStatsOwn(t *testing.T) {
