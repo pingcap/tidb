@@ -590,6 +590,9 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 					}
 					constraints = append(constraints, constraint)
 				}
+			case ast.ColumnOptionSrid:
+				col.AddFlag(mysql.SridFlag)
+				col.Srid = v.Srid
 			}
 		}
 	}
