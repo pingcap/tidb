@@ -546,8 +546,7 @@ insert into ta
 values ('"json string1"', 623.8);
 insert into ta
 values (NULL, 1337.0);
--- error 1815
-select count(*)from ta where not ( ta.a1 in ( select b2 from tb where not ( ta.a1 in ( select c1 from tc where ta.a2 in ( select b2 from tb where IsNull(ta.a1) ) ) ) ) );
+select count(*) from ta where not ( ta.a1 in ( select b2 from tb where not ( ta.a1 in ( select c1 from tc where ta.a2 in ( select b2 from tb where IsNull(ta.a1) ) ) ) ) );
 
 # TestIssue15662
 drop table if exists V, F;
@@ -798,3 +797,12 @@ DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
 CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
 -- error 3146 
 ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;
+
+# TestIssue63753
+DROP TABLE IF EXISTS tb2;
+DROP TABLE IF EXISTS tb5;
+CREATE TABLE tb2 (c0 FLOAT NOT NULL);
+CREATE TABLE tb5 (c4 JSON NOT NULL);
+INSERT INTO tb5 (c4) VALUES ('{"name": "aeEl9", "data": {"id": 199}}');
+explain format='brief' SELECT 1 FROM tb5 AS t3 WHERE (EXISTS (SELECT 1 FROM tb2 AS t0 WHERE (t3.c4 IN (SELECT t0.c0 FROM tb2 AS t0))));
+SELECT 1 FROM tb5 AS t3 WHERE (EXISTS (SELECT 1 FROM tb2 AS t0 WHERE (t3.c4 IN (SELECT t0.c0 FROM tb2 AS t0))));
