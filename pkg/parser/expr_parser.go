@@ -531,6 +531,21 @@ func (p *HandParser) parseColumnRef(first Token) ast.ExprNode {
 // parseParamMarker parses a ? parameter marker.
 func (p *HandParser) parseParamMarker() ast.ExprNode {
 	tok := p.next()
+	// Reject ?FROM-style tokens where '?' is immediately followed by an identifier
+	// character without whitespace. MySQL's lexer treats '?' as a standalone token
+	// and rejects such sequences as syntax errors.
+	nextTok := p.peek()
+	if nextTok.Offset == tok.EndOffset && nextTok.Tp != 0 {
+		// No whitespace between '?' and the next token — check if next token
+		// is a keyword or identifier (i.e., starts with a letter or underscore).
+		if len(p.src) > tok.EndOffset {
+			ch := p.src[tok.EndOffset]
+			if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_' {
+				p.syntaxErrorAt(nextTok)
+				return nil
+			}
+		}
+	}
 	return ast.NewParamMarkerExpr(tok.Offset)
 }
 

@@ -391,6 +391,24 @@ func (p *HandParser) parseFieldList() *ast.FieldList {
 			if endOffset > field.Offset && endOffset <= len(p.src) {
 				field.SetText(p.connectionEncoding, strings.TrimSpace(p.src[field.Offset:endOffset]))
 			}
+			// For ODBC date/time/timestamp literals like { date "1997-10-20" },
+			// the field text should be just the inner string value (e.g. "1997-10-20"),
+			// not the full ODBC escape syntax. This matches yacc behavior where the
+			// FieldList rule's setLastSelectFieldText uses the expression's own text.
+			if field.AsName.L == "" {
+				if fn, ok := field.Expr.(*ast.FuncCallExpr); ok {
+					switch fn.FnName.L {
+					case ast.DateLiteral, ast.TimeLiteral, ast.TimestampLiteral:
+						if len(fn.Args) > 0 {
+							if ve, ok2 := fn.Args[0].(ast.ValueExpr); ok2 {
+								if s, ok3 := ve.GetValue().(string); ok3 {
+									field.SetText(nil, s)
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 		fl.Fields = append(fl.Fields, field)
 		if _, ok := p.accept(','); !ok {

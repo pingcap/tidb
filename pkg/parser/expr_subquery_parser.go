@@ -70,17 +70,22 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 		savedErrs := len(p.errs)
 		startOffset := p.peek().Offset
 		query := p.parseSubquery()
-		if query != nil && p.peek().Tp == ')' {
-			// Successfully parsed as subquery.
-			p.errs = p.errs[:savedErrs]
-			endOffset := p.peek().Offset
-			if endOffset > startOffset && endOffset <= len(p.src) {
-				query.SetText(p.connectionEncoding, p.src[startOffset:endOffset])
+		if query != nil {
+			// Also handle set operations (UNION/EXCEPT/INTERSECT) at this level.
+			// This covers patterns like ( (SELECT 1) UNION SELECT 2 ).
+			query = p.maybeParseUnion(query)
+			if p.peek().Tp == ')' {
+				// Successfully parsed as subquery.
+				p.errs = p.errs[:savedErrs]
+				endOffset := p.peek().Offset
+				if endOffset > startOffset && endOffset <= len(p.src) {
+					query.SetText(p.connectionEncoding, p.src[startOffset:endOffset])
+				}
+				p.expect(')')
+				sub := p.arena.AllocSubqueryExpr()
+				sub.Query = query
+				return sub
 			}
-			p.expect(')')
-			sub := p.arena.AllocSubqueryExpr()
-			sub.Query = query
-			return sub
 		}
 		// Not a subquery — restore and parse as expression.
 		p.errs = p.errs[:savedErrs]
@@ -91,6 +96,19 @@ func (p *HandParser) parseParenOrSubquery() ast.ExprNode {
 	expr := p.parseExpression(precNone)
 	if expr == nil {
 		return nil
+	}
+
+	// Handle set operations (UNION/EXCEPT/INTERSECT) after subquery expressions.
+	// When an inner subquery is followed by a set operator inside parentheses,
+	// e.g. ( (SELECT 1 UNION SELECT 1) UNION SELECT 1 ), we need to process
+	// the outer set operation here to match yacc's SubSelect production behavior.
+	// Without this, the error for a missing closing ')' would be reported at the
+	// UNION token instead of at the end of the input (matching yacc behavior).
+	if sub, ok := expr.(*ast.SubqueryExpr); ok && p.peekSetOprType() != nil {
+		query := p.maybeParseUnion(sub.Query)
+		if query != sub.Query {
+			sub.Query = query
+		}
 	}
 
 	// Check for row expression: (expr, expr, ...)
