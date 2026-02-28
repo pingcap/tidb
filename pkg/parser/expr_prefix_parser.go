@@ -197,11 +197,12 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 			if unit == nil {
 				return nil
 			}
-			// Expect '+' then date expression
+			// Expect '+' then date expression.
+			// yacc: INTERVAL Expression TimeUnit '+' BitExpr
 			if _, ok := p.expect('+'); !ok {
 				return nil
 			}
-			dateExpr := p.parseExpression(precNone)
+			dateExpr := p.parseExpression(precPredicate + 1) // BitExpr level
 			if dateExpr == nil {
 				return nil
 			}

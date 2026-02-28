@@ -125,7 +125,7 @@ func (p *HandParser) parseDropStatsStmt() ast.StmtNode {
 	} else if _, ok := p.accept(partition); ok {
 		for {
 			nameTok := p.peek()
-			if !isIdentLike(nameTok.Tp) && nameTok.Tp != stringLit {
+			if !isIdentLike(nameTok.Tp) || nameTok.Tp == stringLit {
 				p.syntaxErrorAt(nameTok)
 				return nil
 			}

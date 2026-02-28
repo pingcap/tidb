@@ -524,12 +524,14 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	// For simplicity, we only attach them to TableSource if it wraps a TableName.
 
 	// Check for PARTITION clause.
+	// yacc: PartitionNameList → Identifier (',' Identifier)*
+	// (no stringLit — partition names must be identifiers).
 	if _, ok := p.accept(partition); ok {
 		p.expect('(')
 		var names []ast.CIStr
 		for {
 			tok := p.peek()
-			if !isIdentLike(tok.Tp) && tok.Tp != stringLit {
+			if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
 				p.syntaxErrorAt(tok)
 				return nil
 			}
@@ -545,12 +547,6 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 		if tn, ok := res.(*ast.TableName); ok {
 			tn.PartitionNames = names
 		}
-	}
-
-	// Parse optional index hints: USE/IGNORE/FORCE INDEX/KEY [FOR ...] (names)
-	// MySQL grammar: table_name [AS alias] [index_hint_list]
-	if tn, ok := res.(*ast.TableName); ok {
-		p.parseIndexHintsInto(tn)
 	}
 
 	// Optional alias or AS OF TIMESTAMP clause.

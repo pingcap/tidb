@@ -245,10 +245,9 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 		return nil
 	}
 	pDef := &ast.PartitionDefinition{}
-	// Partition name — can be identifier, string literal, or unreserved keyword
-	// (e.g., PARTITION max VALUES LESS THAN (10))
+	// Partition name — yacc: Identifier (identifier or unreserved keyword).
 	tok := p.peek()
-	if !isIdentLike(tok.Tp) && tok.Tp != stringLit {
+	if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
 		p.syntaxErrorAt(tok)
 		return nil
 	}
@@ -434,7 +433,7 @@ func (p *HandParser) parseSplitRegionSpec(spec *ast.AlterTableSpec) *ast.AlterTa
 		// Let's implement parsing logic.
 		for {
 			tok := p.peek()
-			if !isIdentLike(tok.Tp) && tok.Tp != stringLit {
+			if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
 				break
 			}
 			p.next()

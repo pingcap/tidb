@@ -35,6 +35,11 @@ func (p *HandParser) parseExpression(minPrec int) ast.ExprNode {
 
 // parseInfixExpr continues parsing infix/postfix operators after a prefix expression.
 func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode {
+	// noMoreIS prevents IS from chaining after IS [NOT] TRUE/FALSE/UNKNOWN.
+	// In yacc, IS TRUE/FALSE/UNKNOWN is at Expression level (top of grammar)
+	// so it cannot be followed by another IS. IS NULL is at BoolPri level
+	// and chains freely (e.g. "a IS NULL IS NULL IS NOT NULL").
+	var noMoreIS bool
 	for {
 		tok := p.peek()
 		if tok.Tp == EOF {
@@ -117,7 +122,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			// IS [NOT] NULL chains left-to-right at boolean_primary level:
 			// "A IS NULL IS NULL IS NULL" parses as ((A IS NULL) IS NULL) IS NULL.
 			// IS [NOT] TRUE/FALSE/UNKNOWN is at expr level and does NOT chain.
-			if minPrec > precComparison {
+			if noMoreIS || minPrec > precComparison {
 				return left
 			}
 			var chainable bool
@@ -129,7 +134,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 				// IS [NOT] TRUE/FALSE/UNKNOWN doesn't chain with IS,
 				// but AND/OR/XOR should still bind. Continue the loop
 				// so expression-level operators can be parsed.
-				continue
+				noMoreIS = true
 			}
 			continue
 
@@ -571,10 +576,13 @@ func (p *HandParser) parseNotInfixExpr(left ast.ExprNode) ast.ExprNode {
 }
 
 // parseLikeExpr parses [NOT] LIKE/ILIKE pattern [ESCAPE escape_char].
+// yacc: BitExpr LikeOrNotOp SimpleExpr — pattern is SimpleExpr.
 func (p *HandParser) parseLikeExpr(left ast.ExprNode, isNot bool, isLike bool) ast.ExprNode {
 	p.next() // consume LIKE or ILIKE
 
-	pattern := p.parseExpression(precPredicate + 1)
+	// SimpleExpr = atoms + unary + COLLATE + pipes. In our Pratt model,
+	// precUnary excludes all binary arithmetic/bitwise operators.
+	pattern := p.parseExpression(precUnary)
 	if pattern == nil {
 		return nil
 	}
@@ -634,10 +642,11 @@ func (p *HandParser) parseBetweenExpr(left ast.ExprNode, isNot bool) ast.ExprNod
 }
 
 // parseRegexpExpr parses [NOT] REGEXP|RLIKE pattern.
+// yacc: BitExpr RegexpOrNotOp SimpleExpr — pattern is SimpleExpr.
 func (p *HandParser) parseRegexpExpr(left ast.ExprNode, isNot bool) ast.ExprNode {
 	p.next() // consume REGEXP or RLIKE
 
-	pattern := p.parseExpression(precPredicate + 1)
+	pattern := p.parseExpression(precUnary)
 	if pattern == nil {
 		return nil
 	}

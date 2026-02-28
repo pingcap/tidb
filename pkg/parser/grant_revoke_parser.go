@@ -62,22 +62,18 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 			stmt.AuthTokenOrTLSOptions = p.parseTLSOptions()
 		}
 
-		// Optional WITH GRANT OPTION (or WITH MAX_QUERIES_PER_HOUR etc. which are parsed but ignored)
+		// Optional WITH GRANT OPTION or WITH MAX_*_PER_HOUR NUM
+		// yacc allows exactly one MAX_* option (each is a separate alternative).
 		if _, ok := p.accept(with); ok {
 			if _, ok := p.accept(grant); ok {
 				p.expect(option)
 				stmt.WithGrant = true
 			} else {
-				// WITH MAX_QUERIES_PER_HOUR NUM, MAX_UPDATES_PER_HOUR NUM, etc.
-				// MySQL compatibility: parsed but ignored
-				for {
-					pk := p.peek()
-					if !pk.IsKeyword("MAX_QUERIES_PER_HOUR") && !pk.IsKeyword("MAX_UPDATES_PER_HOUR") &&
-						!pk.IsKeyword("MAX_CONNECTIONS_PER_HOUR") && !pk.IsKeyword("MAX_USER_CONNECTIONS") {
-						break
-					}
+				pk := p.peek()
+				if pk.IsKeyword("MAX_QUERIES_PER_HOUR") || pk.IsKeyword("MAX_UPDATES_PER_HOUR") ||
+					pk.IsKeyword("MAX_CONNECTIONS_PER_HOUR") || pk.IsKeyword("MAX_USER_CONNECTIONS") {
 					p.next()
-					p.expect(intLit) // consume the number (yacc: NUM = intLit)
+					p.expect(intLit)
 				}
 			}
 		}
@@ -262,9 +258,17 @@ func (p *HandParser) parseRevokeStmt() ast.StmtNode {
 		stmt.Level = Alloc[ast.GrantLevel](p.arena)
 		stmt.Level.Level = ast.GrantLevelGlobal
 		p.expect(from)
-		stmt.Users = p.parseUserSpecList()
-		if stmt.Users == nil {
-			return nil
+		// yacc: REVOKE ALL, GRANT OPTION FROM UsernameList
+		// UsernameList = simple user@host, no auth options (no IDENTIFIED BY).
+		for {
+			user := p.parseUserIdentity()
+			if user == nil {
+				return nil
+			}
+			stmt.Users = append(stmt.Users, &ast.UserSpec{User: user})
+			if _, ok := p.accept(','); !ok {
+				break
+			}
 		}
 		return stmt
 	}

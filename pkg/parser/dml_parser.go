@@ -87,12 +87,15 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 	}
 
 	// Optional PARTITION clause.
+	// yacc: PartitionNameList → Identifier (',' Identifier)*
+	// Identifier = identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
+	// (no stringLit — partition names must be identifiers).
 	if _, ok := p.accept(partition); ok {
 		p.expect('(')
 		var names []ast.CIStr
 		for {
 			tok := p.peek()
-			if !isIdentLike(tok.Tp) && tok.Tp != stringLit {
+			if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
 				p.syntaxErrorAt(tok)
 				return nil
 			}
