@@ -769,6 +769,9 @@ func TestGetIndexMVCC(t *testing.T) {
 }
 
 func TestDeleteKeyHandler(t *testing.T) {
+	// on CI env, the store_cache might mark the uni-store as unreachable, and
+	// cause the test to fail, so we enable the failpoint to make it always reachable.
+	testfailpoint.Enable(t, "tikvclient/injectLiveness", `return("reachable")`)
 	ts := createBasicHTTPHandlerTestSuite()
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/server/enableTestAPI", "return")
 	ts.startServer(t)
