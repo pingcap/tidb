@@ -109,12 +109,9 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
-<<<<<<< HEAD
-=======
         "//pkg/config/kerneltype",
         "//pkg/executor",
         "//pkg/executor/join/joinversion",
->>>>>>> 79d1306f621 (*: parse and match slow log trigger rules for multi-dimensional triggering (#63132))
         "//pkg/kv",
         "//pkg/parser",
         "//pkg/parser/auth",

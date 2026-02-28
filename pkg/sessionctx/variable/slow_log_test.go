@@ -163,7 +163,7 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 }
 
 func TestParseSingleSlowLogField(t *testing.T) {
-	require.Equal(t, len(variable.SlowLogRuleFieldAccessors), 37)
+	require.Equal(t, 29, len(variable.SlowLogRuleFieldAccessors))
 	accessor, ok := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPlanDigest)]
 	require.True(t, ok)
 	require.NotNil(t, accessor.Setter)

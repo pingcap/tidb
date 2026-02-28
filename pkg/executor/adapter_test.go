@@ -24,10 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 79d1306f621 (*: parse and match slow log trigger rules for multi-dimensional triggering (#63132))
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -99,7 +95,7 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 
 	copExec := execdetails.CopExecDetails{
 		BackoffTime: time.Millisecond,
-		ScanDetail: &util.ScanDetail{
+		ScanDetail: util.ScanDetail{
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},

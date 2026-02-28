@@ -1741,13 +1741,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
 		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
-<<<<<<< HEAD
 		ResultRows:        resultRows,
-		ExecRetryCount:    a.retryCount,
-=======
-		ResultRows:        stmtCtx.GetResultRowsCount(),
 		ExecRetryCount:    uint64(a.retryCount),
->>>>>>> 79d1306f621 (*: parse and match slow log trigger rules for multi-dimensional triggering (#63132))
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),

@@ -162,7 +162,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.PlanFromCache = sessVars.FoundInPlanCache
 	items.PlanFromBinding = sessVars.FoundInBinding
 	items.RewriteInfo = sessVars.RewritePhaseInfo
-	items.ResultRows = stmtCtx.GetResultRowsCount()
+	items.ResultRows = GetResultRowsCount(stmtCtx, a.Plan)
 	items.IsExplicitTxn = sessVars.TxnCtx.IsExplicit
 	items.IsWriteCacheTable = stmtCtx.WaitLockLeaseTime > 0
 	items.UsedStats = stmtCtx.GetUsedStatsInfo(false)

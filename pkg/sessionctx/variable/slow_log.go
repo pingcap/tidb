@@ -26,10 +26,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
+	"github.com/tikv/client-go/v2/util"
 )
 
 const (
@@ -173,27 +177,6 @@ const (
 	SlowLogKVTotal = "KV_total"
 	// SlowLogPDTotal is the total time waiting for pd.
 	SlowLogPDTotal = "PD_total"
-<<<<<<< HEAD
-	// SlowLogBackoffTotal is the total time doing backoff.
-	SlowLogBackoffTotal = "Backoff_total"
-=======
-	// SlowLogUnpackedBytesSentTiKVTotal is the total bytes sent by tikv.
-	SlowLogUnpackedBytesSentTiKVTotal = "Unpacked_bytes_sent_tikv_total"
-	// SlowLogUnpackedBytesReceivedTiKVTotal is the total bytes received by tikv.
-	SlowLogUnpackedBytesReceivedTiKVTotal = "Unpacked_bytes_received_tikv_total"
-	// SlowLogUnpackedBytesSentTiKVCrossZone is the cross zone bytes sent by tikv.
-	SlowLogUnpackedBytesSentTiKVCrossZone = "Unpacked_bytes_sent_tikv_cross_zone"
-	// SlowLogUnpackedBytesReceivedTiKVCrossZone is the cross zone bytes received by tikv.
-	SlowLogUnpackedBytesReceivedTiKVCrossZone = "Unpacked_bytes_received_tikv_cross_zone"
-	// SlowLogUnpackedBytesSentTiFlashTotal is the total bytes sent by tiflash.
-	SlowLogUnpackedBytesSentTiFlashTotal = "Unpacked_bytes_sent_tiflash_total"
-	// SlowLogUnpackedBytesReceivedTiFlashTotal is the total bytes received by tiflash.
-	SlowLogUnpackedBytesReceivedTiFlashTotal = "Unpacked_bytes_received_tiflash_total"
-	// SlowLogUnpackedBytesSentTiFlashCrossZone is the cross zone bytes sent by tiflash.
-	SlowLogUnpackedBytesSentTiFlashCrossZone = "Unpacked_bytes_sent_tiflash_cross_zone"
-	// SlowLogUnpackedBytesReceivedTiFlashCrossZone is the cross zone bytes received by tiflash.
-	SlowLogUnpackedBytesReceivedTiFlashCrossZone = "Unpacked_bytes_received_tiflash_cross_zone"
->>>>>>> 79d1306f621 (*: parse and match slow log trigger rules for multi-dimensional triggering (#63132))
 	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
 	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
@@ -215,6 +198,33 @@ type JSONSQLWarnForSlowLog struct {
 	IsExtra bool `json:",omitempty"`
 }
 
+func extractMsgFromSQLWarn(sqlWarn *contextutil.SQLWarn) string {
+	// CollectWarningsForSlowLog guarantees sqlWarn is not nil.
+	warn := errors.Cause(sqlWarn.Err)
+	if x, ok := warn.(*terror.Error); ok && x != nil {
+		sqlErr := terror.ToSQLError(x)
+		return sqlErr.Message
+	}
+	return warn.Error()
+}
+
+// CollectWarningsForSlowLog collects warnings from statement context for slow log output.
+func CollectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []JSONSQLWarnForSlowLog {
+	warnings := stmtCtx.GetWarnings()
+	extraWarnings := stmtCtx.GetExtraWarnings()
+	res := make([]JSONSQLWarnForSlowLog, len(warnings)+len(extraWarnings))
+	for i := range warnings {
+		res[i].Level = warnings[i].Level
+		res[i].Message = extractMsgFromSQLWarn(&warnings[i])
+	}
+	for i := range extraWarnings {
+		res[len(warnings)+i].Level = extraWarnings[i].Level
+		res[len(warnings)+i].Message = extractMsgFromSQLWarn(&extraWarnings[i])
+		res[len(warnings)+i].IsExtra = true
+	}
+	return res
+}
+
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
@@ -230,8 +240,7 @@ type SlowQueryLogItems struct {
 	TimeWaitTS        time.Duration
 	IndexNames        string
 	CopTasks          *execdetails.CopTasksDetails
-<<<<<<< HEAD
-	ExecDetail        execdetails.ExecDetails
+	ExecDetail        *execdetails.ExecDetails
 	MemMax            int64
 	DiskMax           int64
 	Succ              bool
@@ -248,14 +257,8 @@ type SlowQueryLogItems struct {
 	PDTotal           time.Duration
 	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
-	ExecRetryCount    uint
-=======
-	RewriteInfo       RewritePhaseInfo
-	WriteSQLRespTotal time.Duration
 	KVExecDetail      *util.ExecDetails
-	ExecDetail        *execdetails.ExecDetails
 	ExecRetryCount    uint64
->>>>>>> 79d1306f621 (*: parse and match slow log trigger rules for multi-dimensional triggering (#63132))
 	ExecRetryTime     time.Duration
 	ResultRows        int64
 	IsExplicitTxn     bool
@@ -264,6 +267,7 @@ type SlowQueryLogItems struct {
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
 	ResourceGroupName string
+	RUDetails         *util.RUDetails
 	RRU               float64
 	WRU               float64
 	WaitRUDuration    time.Duration
@@ -343,8 +347,10 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(logItems.TimeOptimize.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogWaitTSTimeStr, strconv.FormatFloat(logItems.TimeWaitTS.Seconds(), 'f', -1, 64))
 
-	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
+	if logItems.ExecDetail != nil {
+		if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
+			buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
+		}
 	}
 
 	if len(s.CurrentDB) > 0 {
@@ -437,9 +443,23 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogPlanFromBinding, strconv.FormatBool(logItems.PlanFromBinding))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
-	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
+	kvTotal := logItems.KVTotal
+	pdTotal := logItems.PDTotal
+	backoffTotal := logItems.BackoffTotal
+	if logItems.KVExecDetail != nil {
+		if kvTotal == 0 {
+			kvTotal = time.Duration(logItems.KVExecDetail.WaitKVRespDuration)
+		}
+		if pdTotal == 0 {
+			pdTotal = time.Duration(logItems.KVExecDetail.WaitPDRespDuration)
+		}
+		if backoffTotal == 0 {
+			backoffTotal = time.Duration(logItems.KVExecDetail.BackoffDuration)
+		}
+	}
+	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(kvTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(pdTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(backoffTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	if len(logItems.Warnings) > 0 {
@@ -471,14 +491,28 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.ResourceGroupName != "" {
 		writeSlowLogItem(&buf, SlowLogResourceGroup, logItems.ResourceGroupName)
 	}
-	if logItems.RRU > 0.0 {
-		writeSlowLogItem(&buf, SlowLogRRU, strconv.FormatFloat(logItems.RRU, 'f', -1, 64))
+	rru := logItems.RRU
+	wru := logItems.WRU
+	waitRUDuration := logItems.WaitRUDuration
+	if logItems.RUDetails != nil {
+		if rru == 0.0 {
+			rru = logItems.RUDetails.RRU()
+		}
+		if wru == 0.0 {
+			wru = logItems.RUDetails.WRU()
+		}
+		if waitRUDuration == 0 {
+			waitRUDuration = logItems.RUDetails.RUWaitDuration()
+		}
 	}
-	if logItems.WRU > 0.0 {
-		writeSlowLogItem(&buf, SlowLogWRU, strconv.FormatFloat(logItems.WRU, 'f', -1, 64))
+	if rru > 0.0 {
+		writeSlowLogItem(&buf, SlowLogRRU, strconv.FormatFloat(rru, 'f', -1, 64))
 	}
-	if logItems.WaitRUDuration > time.Duration(0) {
-		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
+	if wru > 0.0 {
+		writeSlowLogItem(&buf, SlowLogWRU, strconv.FormatFloat(wru, 'f', -1, 64))
+	}
+	if waitRUDuration > 0 {
+		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(waitRUDuration.Seconds(), 'f', -1, 64))
 	}
 	if logItems.CPUUsages.TidbCPUTime > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogTidbCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TidbCPUTime.Seconds(), 'f', -1, 64))
@@ -628,7 +662,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 	strings.ToLower(SlowLogExecRetryCount): {
 		Parse: parseUint64,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
-			items.ExecRetryCount = seVars.StmtCtx.ExecRetryCount
+			items.ExecRetryCount = uint64(seVars.StmtCtx.ExecRetryCount)
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
 			return matchGE(threshold, items.ExecRetryCount)
@@ -753,54 +787,6 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 		parseFloat64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, time.Duration(d.WaitPDRespDuration).Seconds())
-		},
-	),
-	strings.ToLower(SlowLogUnpackedBytesSentTiKVTotal): makeKVExecDetailAccessor(
-		parseInt64,
-		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesSentKVTotal)
-		},
-	),
-	strings.ToLower(SlowLogUnpackedBytesReceivedTiKVTotal): makeKVExecDetailAccessor(
-		parseInt64,
-		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesReceivedKVTotal)
-		},
-	),
-	strings.ToLower(SlowLogUnpackedBytesSentTiKVCrossZone): makeKVExecDetailAccessor(
-		parseInt64,
-		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesSentKVCrossZone)
-		},
-	),
-	strings.ToLower(SlowLogUnpackedBytesReceivedTiKVCrossZone): makeKVExecDetailAccessor(
-		parseInt64,
-		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesReceivedKVCrossZone)
-		},
-	),
-	strings.ToLower(SlowLogUnpackedBytesSentTiFlashTotal): makeKVExecDetailAccessor(
-		parseInt64,
-		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesSentMPPTotal)
-		},
-	),
-	strings.ToLower(SlowLogUnpackedBytesReceivedTiFlashTotal): makeKVExecDetailAccessor(
-		parseInt64,
-		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesReceivedMPPTotal)
-		},
-	),
-	strings.ToLower(SlowLogUnpackedBytesSentTiFlashCrossZone): makeKVExecDetailAccessor(
-		parseInt64,
-		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesSentMPPCrossZone)
-		},
-	),
-	strings.ToLower(SlowLogUnpackedBytesReceivedTiFlashCrossZone): makeKVExecDetailAccessor(
-		parseInt64,
-		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesReceivedMPPCrossZone)
 		},
 	),
 	// The following fields are related to execdetails.ExecDetails.
