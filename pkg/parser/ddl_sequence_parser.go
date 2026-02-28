@@ -260,10 +260,13 @@ func (p *HandParser) parseAlterSequenceOption() *ast.SequenceOption {
 }
 
 // Helper to parse signed integer literal for sequence options
+// Yacc SignedNum: Int64Num | '+' Int64Num | '-' NUM
 func (p *HandParser) parseIntLit() int64 {
 	negative := false
 	if _, ok := p.accept('-'); ok {
 		negative = true
+	} else {
+		p.accept('+') // optional positive sign (yacc SignedNum)
 	}
 	if tok, ok := p.expectAny(intLit); ok {
 		var val uint64

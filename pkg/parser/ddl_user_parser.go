@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
-// parseCreateUserStmt parses CREATE USER statements.
+// parseCreateUserStmt parses CREATE USER and CREATE ROLE statements.
 func (p *HandParser) parseCreateUserStmt() ast.StmtNode {
 	stmt := Alloc[ast.CreateUserStmt](p.arena)
 	p.expect(create)
@@ -31,6 +31,21 @@ func (p *HandParser) parseCreateUserStmt() ast.StmtNode {
 	}
 
 	stmt.IfNotExists = p.acceptIfNotExists()
+
+	if stmt.IsCreateRole {
+		// CREATE ROLE: yacc RoleSpecList — only role names, no auth options
+		for {
+			spec := p.parseRoleSpec()
+			if spec == nil {
+				return nil
+			}
+			stmt.Specs = append(stmt.Specs, spec)
+			if _, ok := p.accept(','); !ok {
+				break
+			}
+		}
+		return stmt
+	}
 
 	for {
 		spec := p.parseUserSpec()
@@ -424,6 +439,17 @@ func (p *HandParser) parseRenameUserStmt() ast.StmtNode {
 		}
 	}
 	return stmt
+}
+
+// parseRoleSpec parses a role name (no auth options). Yacc RoleSpec.
+func (p *HandParser) parseRoleSpec() *ast.UserSpec {
+	spec := Alloc[ast.UserSpec](p.arena)
+	spec.User = p.parseUserIdentity()
+	if spec.User == nil {
+		return nil
+	}
+	spec.IsRole = true
+	return spec
 }
 
 // parseUserSpec parses 'user'@'host' [IDENTIFIED BY 'password']

@@ -57,12 +57,13 @@ func (p *HandParser) parseAlterAdd(spec *ast.AlterTableSpec) {
 		}
 	} else if _, ok := p.accept(partition); ok {
 		spec.Tp = ast.AlterTableAddPartitions
+		// ADD PARTITION [IF NOT EXISTS] [NO_WRITE_TO_BINLOG] ...
+		// Yacc order: IfNotExists first, then NoWriteToBinLogAliasOpt
+		spec.IfNotExists = p.acceptIfNotExists()
 		spec.NoWriteToBinlog = p.acceptNoWriteToBinlog()
 		if spec.NoWriteToBinlog {
 			p.warnNear(p.peek().Offset, "The NO_WRITE_TO_BINLOG option is parsed but ignored for now.")
 		}
-		// ADD PARTITION [IF NOT EXISTS] [( PARTITION defs )]
-		spec.IfNotExists = p.acceptIfNotExists()
 		if _, ok := p.accept(partitions); ok {
 			spec.Num = p.parseUint64()
 		} else if _, ok := p.accept('('); ok {
@@ -86,13 +87,15 @@ func (p *HandParser) parseAlterAdd(spec *ast.AlterTableSpec) {
 		spec.IfNotExists = p.acceptIfNotExists()
 		if tok, ok := p.expectIdentLike(); ok {
 			spec.Statistics = &ast.StatisticsSpec{StatsName: tok.Lit}
-			// Parse stats type: CARDINALITY | CORRELATION | DEPENDENCY
+			// StatsType is required in yacc: CARDINALITY | DEPENDENCY | CORRELATION
 			if _, ok := p.accept(cardinality); ok {
 				spec.Statistics.StatsType = ast.StatsTypeCardinality
 			} else if _, ok := p.accept(correlation); ok {
 				spec.Statistics.StatsType = ast.StatsTypeCorrelation
 			} else if _, ok := p.accept(dependency); ok {
 				spec.Statistics.StatsType = ast.StatsTypeDependency
+			} else {
+				p.syntaxErrorAt(p.peek())
 			}
 			// Parse column list: (col1, col2, ...)
 			if _, ok := p.accept('('); ok {
@@ -180,6 +183,8 @@ func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 		p.next() // consume FIRST
 		spec.Tp = ast.AlterTableDropFirstPartition
 		p.parsePartitionLessThanExprFrom(spec, firstOff)
+		// Yacc: FIRST PARTITION LESS THAN (expr) IfExists
+		spec.IfExists = p.acceptIfExists()
 		if p.peek().Tp == first || (p.peek().Tp == identifier && strings.EqualFold(p.peek().Lit, "FIRST")) {
 			mergeOff := p.peek().Offset
 			p.next() // consume second FIRST
@@ -432,10 +437,9 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 		return true
 
 	case truncate:
-		// TRUNCATE PARTITION {name|ALL}
+		// TRUNCATE PARTITION {name|ALL} — yacc has no NoWriteToBinLog
 		p.next()
 		p.expect(partition)
-		spec.NoWriteToBinlog = p.acceptNoWriteToBinlog()
 		spec.Tp = ast.AlterTableTruncatePartition
 		if _, ok := p.accept(all); ok {
 			spec.OnAllPartitions = true
@@ -471,8 +475,7 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 		}
 		return true
 
-	case rebuild, optimize, repair, check:
-		isCheck := tok.Tp == check
+	case rebuild, optimize, repair:
 		p.next()
 		switch tok.Tp {
 		case rebuild:
@@ -481,13 +484,23 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 			spec.Tp = ast.AlterTableOptimizePartition
 		case repair:
 			spec.Tp = ast.AlterTableRepairPartition
-		case check:
-			spec.Tp = ast.AlterTableCheckPartitions
 		}
+		// Yacc: REBUILD/OPTIMIZE/REPAIR PARTITION NoWriteToBinLogAliasOpt AllOrPartitionNameList
+		p.expect(partition)
+		spec.NoWriteToBinlog = p.acceptNoWriteToBinlog()
+		if _, ok := p.accept(all); ok {
+			spec.OnAllPartitions = true
+		} else {
+			spec.PartitionNames = p.parseIdentList()
+		}
+		return true
+
+	case check:
+		p.next()
+		spec.Tp = ast.AlterTableCheckPartitions
+		// Yacc: CHECK PARTITION AllOrPartitionNameList (no NoWriteToBinLog)
 		p.parseAlterTablePartitionOptions(spec)
-		if isCheck {
-			p.warnNear(p.peek().Offset, "The CHECK PARTITIONING clause is parsed but not implement yet.")
-		}
+		p.warnNear(p.peek().Offset, "The CHECK PARTITIONING clause is parsed but not implement yet.")
 		return true
 
 	case importKwd, discard:
@@ -527,10 +540,14 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 		}
 		p.parsePartitionLessThanExprFrom(spec, startOff)
 		if isLast {
+			// Yacc: LAST PARTITION LESS THAN (expr) NoWriteToBinLogAliasOpt
 			spec.NoWriteToBinlog = p.acceptNoWriteToBinlog()
 			if spec.NoWriteToBinlog {
 				p.warnNear(p.peek().Offset, "The NO_WRITE_TO_BINLOG option is parsed but ignored for now.")
 			}
+		} else {
+			// Yacc: FIRST PARTITION LESS THAN (expr) IfExists
+			spec.IfExists = p.acceptIfExists()
 		}
 		return true
 

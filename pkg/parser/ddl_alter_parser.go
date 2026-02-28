@@ -484,8 +484,6 @@ func (p *HandParser) parseSplitRegionSpec(spec *ast.AlterTableSpec) *ast.AlterTa
 
 func (p *HandParser) parseAlterTablePartitionOptions(spec *ast.AlterTableSpec) *ast.AlterTableSpec {
 	p.expect(partition)
-	// NO_WRITE_TO_BINLOG or LOCAL (alias)
-	spec.NoWriteToBinlog = p.acceptNoWriteToBinlog()
 
 	if _, ok := p.accept(all); ok {
 		spec.OnAllPartitions = true

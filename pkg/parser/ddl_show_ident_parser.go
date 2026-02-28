@@ -275,6 +275,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		if p.peekKeyword(status, "STATUS") {
 			p.next()
 			stmt.Tp = ast.ShowBindingCacheStatus
+			p.parseShowLikeOrWhere(stmt)
 			return stmt
 		}
 		return nil

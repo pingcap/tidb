@@ -206,9 +206,7 @@ func (p *HandParser) parseShowImportStmt() ast.StmtNode {
 	case jobs:
 		p.next()
 		stmt := &ast.ShowStmt{Tp: ast.ShowImportJobs}
-		if _, ok := p.accept(where); ok {
-			stmt.Where = p.parseExpression(precNone)
-		}
+		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case job:
 		p.next()
@@ -218,13 +216,16 @@ func (p *HandParser) parseShowImportStmt() ast.StmtNode {
 		return stmt
 	case groups:
 		p.next()
-		return &ast.ShowStmt{Tp: ast.ShowImportGroups}
+		stmt := &ast.ShowStmt{Tp: ast.ShowImportGroups}
+		p.parseShowLikeOrWhere(stmt)
+		return stmt
 	case group:
 		p.next()
 		stmt := &ast.ShowStmt{Tp: ast.ShowImportGroups}
 		if tok, ok := p.expect(stringLit); ok {
 			stmt.ShowGroupKey = tok.Lit
 		}
+		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	}
 

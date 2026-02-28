@@ -137,6 +137,7 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		} else {
 			return p.showSyntaxError()
 		}
+		p.parseShowLikeOrWhere(stmt)
 		return stmt
 
 	case variables, status, warnings:
