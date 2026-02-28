@@ -123,7 +123,7 @@ func BenchmarkSelectivity(b *testing.B) {
 
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for i := range b.N {
 			_, err := cardinality.Selectivity(sctx.GetPlanCtx(), &statsTbl.HistColl, p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection).Conditions, nil)
 			require.NoError(b, err)
 		}
@@ -567,7 +567,7 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 	}
 	// Index histogram must store encoded key bytes (same as getIndexRowCountForStatsV2 uses for l/r).
 	idxValues := make([]types.Datum, 51)
-	for i := 0; i < 51; i++ {
+	for i := range 51 {
 		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
 		require.NoError(t, err)
 		idxValues[i].SetBytes(enc)
@@ -2337,7 +2337,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	// Values 1-10 each appear 100 times (1000 rows)
 	// Value 11 appears only once (to be in last bucket with low count)
 	for i := 1; i <= 10; i++ {
-		for j := 0; j < 100; j++ {
+		for j := range 100 {
 			testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		}
 	}
@@ -2365,7 +2365,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	// Test Case 1: Insufficient new rows (should NOT trigger heuristic)
 	// avgBucketSize = 1001/10 = 100.1, threshold = 100.1 * 0.5 = 50.05
 	// So 10 new rows should be insufficient
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		testKit.MustExec("insert into t values (11)")
 	}
 
@@ -2385,7 +2385,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 
 	// Test Case 2: Sufficient new rows (should trigger heuristic)
 	// Insert more rows to reach threshold (need 50+ total new rows)
-	for i := 0; i < 90; i++ { // 10 + 90 = 100 total
+	for i := range 90 { // 10 + 90 = 100 total
 		testKit.MustExec("insert into t values (11)")
 	}
 

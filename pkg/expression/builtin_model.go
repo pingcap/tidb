@@ -258,7 +258,7 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 	}
 	argCount := len(b.getArgs()) - 2
 	argCols := make([]*chunk.Column, argCount)
-	for i := 0; i < argCount; i++ {
+	for i := range argCount {
 		col, err := b.bufAllocator.get()
 		if err != nil {
 			return err
@@ -273,7 +273,7 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 	inputs := make([][]float32, 0, n)
 	rowIndex := make([]int, 0, n)
 	nullRows := make([]bool, n)
-	for rowIdx := 0; rowIdx < n; rowIdx++ {
+	for rowIdx := range n {
 		rowInputs := make([]float32, argCount)
 		rowHasNull := false
 		for i, col := range argCols {
@@ -401,17 +401,17 @@ func (b *builtinModelPredictOutputSig) init(ctx EvalContext, inputOffset int) er
 }
 
 type modelPredictMeta struct {
-	modelID      int64
-	version      int64
-	modelName    string
-	inputNames   []string
-	outputNames  []string
-	outputIndex  map[string]int
-	artifact     modelruntime.Artifact
-	backend      modelruntime.Backend
-	batchable    bool
-	inferOpts    modelruntime.InferenceOptions
-	allowCustom  bool
+	modelID     int64
+	version     int64
+	modelName   string
+	inputNames  []string
+	outputNames []string
+	outputIndex map[string]int
+	artifact    modelruntime.Artifact
+	backend     modelruntime.Backend
+	batchable   bool
+	inferOpts   modelruntime.InferenceOptions
+	allowCustom bool
 }
 
 type modelSchemaColumn struct {
@@ -586,15 +586,15 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 		}
 	}
 	return &modelPredictMeta{
-		modelID:      modelID,
-		version:      version,
-		modelName:    modelIdent,
-		inputNames:   inputNames,
-		outputNames:  outputNames,
-		outputIndex:  outputIndex,
-		artifact:     runtimeArtifact,
-		backend:      backend,
-		batchable:    batchable,
+		modelID:     modelID,
+		version:     version,
+		modelName:   modelIdent,
+		inputNames:  inputNames,
+		outputNames: outputNames,
+		outputIndex: outputIndex,
+		artifact:    runtimeArtifact,
+		backend:     backend,
+		batchable:   batchable,
 		inferOpts: modelruntime.InferenceOptions{
 			MaxBatchSize: int(vardef.ModelMaxBatchSize.Load()),
 			Timeout:      vardef.ModelTimeout.Load(),

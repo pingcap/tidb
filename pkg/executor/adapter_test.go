@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -486,7 +486,7 @@ func BenchmarkCheckSlowThreshold(b *testing.B) {
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
@@ -524,7 +524,7 @@ func BenchmarkCheckSlowLogRulesLazy(b *testing.B) {
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
@@ -561,7 +561,7 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
