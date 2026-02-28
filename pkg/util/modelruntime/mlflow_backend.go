@@ -29,7 +29,7 @@ type mlflowBackend struct {
 	client *mlflow.Client
 }
 
-func (b *mlflowBackend) InspectIO(ctx context.Context, artifact Artifact) (ModelIOInfo, error) {
+func (_ *mlflowBackend) InspectIO(_ context.Context, artifact Artifact) (ModelIOInfo, error) {
 	if artifact.LocalPath == "" {
 		return ModelIOInfo{}, errors.New("mlflow model directory is required")
 	}
@@ -75,7 +75,7 @@ func (b *mlflowBackend) Infer(ctx context.Context, artifact Artifact, inputNames
 	return outputs[0], nil
 }
 
-func (b *mlflowBackend) InferBatch(ctx context.Context, artifact Artifact, inputNames, outputNames []string, inputs [][]float32, opts InferenceOptions) ([][]float32, error) {
+func (b *mlflowBackend) InferBatch(ctx context.Context, artifact Artifact, _ []string, _ []string, inputs [][]float32, opts InferenceOptions) ([][]float32, error) {
 	if artifact.LocalPath == "" {
 		return nil, errors.New("mlflow model directory is required")
 	}

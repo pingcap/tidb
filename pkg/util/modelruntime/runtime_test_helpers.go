@@ -46,7 +46,7 @@ func swapExecutable(fn func() (string, error)) func() {
 }
 
 func writeFile(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	return os.WriteFile(path, []byte(""), 0o600)

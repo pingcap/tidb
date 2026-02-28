@@ -18,7 +18,7 @@ import "context"
 
 type onnxBackend struct{}
 
-func (b *onnxBackend) InspectIO(ctx context.Context, artifact Artifact) (ModelIOInfo, error) {
+func (_ *onnxBackend) InspectIO(_ context.Context, artifact Artifact) (ModelIOInfo, error) {
 	inputs, outputs, err := InspectModelIOInfo(artifact.Bytes)
 	if err != nil {
 		return ModelIOInfo{}, err
@@ -26,12 +26,12 @@ func (b *onnxBackend) InspectIO(ctx context.Context, artifact Artifact) (ModelIO
 	return ModelIOInfo{Inputs: inputs, Outputs: outputs}, nil
 }
 
-func (b *onnxBackend) Infer(ctx context.Context, artifact Artifact, inputNames, outputNames []string, inputs []float32, opts InferenceOptions) ([]float32, error) {
+func (_ *onnxBackend) Infer(_ context.Context, artifact Artifact, inputNames, outputNames []string, inputs []float32, opts InferenceOptions) ([]float32, error) {
 	key := SessionKeyFromParts(artifact.ModelID, artifact.Version, inputNames, outputNames)
 	return RunInferenceWithOptions(GetProcessSessionCache(), key, artifact.Bytes, inputNames, outputNames, inputs, opts)
 }
 
-func (b *onnxBackend) InferBatch(ctx context.Context, artifact Artifact, inputNames, outputNames []string, inputs [][]float32, opts InferenceOptions) ([][]float32, error) {
+func (_ *onnxBackend) InferBatch(_ context.Context, artifact Artifact, inputNames, outputNames []string, inputs [][]float32, opts InferenceOptions) ([][]float32, error) {
 	key := SessionKeyFromParts(artifact.ModelID, artifact.Version, inputNames, outputNames)
 	return RunInferenceBatchWithOptions(GetProcessSessionCache(), key, artifact.Bytes, inputNames, outputNames, inputs, opts)
 }

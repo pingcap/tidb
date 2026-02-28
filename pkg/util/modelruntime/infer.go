@@ -69,21 +69,32 @@ func RunInferenceWithOptions(cache *SessionCache, key SessionKey, onnxData []byt
 	return outputs, err
 }
 
-func runInferenceScalar(session *sessionEntry, inputNames, outputNames []string, inputs []float32, timeout time.Duration) ([]float32, error) {
+func runInferenceScalar(session *sessionEntry, _ []string, outputNames []string, inputs []float32, timeout time.Duration) (results []float32, err error) {
 	inputValues := make([]onnxruntime_go.Value, len(inputs))
+	defer func() {
+		if destroyErr := destroyValues(inputValues); destroyErr != nil && err == nil {
+			err = errors.Annotate(destroyErr, "destroy onnx inputs")
+			results = nil
+		}
+	}()
+	outputValues := make([]onnxruntime_go.Value, len(outputNames))
+	defer func() {
+		if destroyErr := destroyValues(outputValues); destroyErr != nil && err == nil {
+			err = errors.Annotate(destroyErr, "destroy onnx outputs")
+			results = nil
+		}
+	}()
 	for i, val := range inputs {
 		tensor, err := onnxruntime_go.NewTensor(onnxruntime_go.Shape{1}, []float32{val})
 		if err != nil {
 			return nil, errors.Annotate(err, "create input tensor")
 		}
 		inputValues[i] = tensor
-		defer tensor.Destroy()
 	}
-	outputValues := make([]onnxruntime_go.Value, len(outputNames))
 	if err := runWithTimeout(session, inputValues, outputValues, timeout); err != nil {
 		return nil, errors.Annotate(err, "run onnx session")
 	}
-	results := make([]float32, len(outputValues))
+	results = make([]float32, len(outputValues))
 	for i, out := range outputValues {
 		if out == nil {
 			return nil, errors.New("onnx output is nil")
@@ -97,9 +108,6 @@ func runInferenceScalar(session *sessionEntry, inputNames, outputNames []string,
 			return nil, errors.New("onnx output must be scalar")
 		}
 		results[i] = data[0]
-		if err := out.Destroy(); err != nil {
-			return nil, errors.Annotate(err, "destroy onnx output")
-		}
 	}
 	return results, nil
 }
@@ -165,9 +173,22 @@ func RunInferenceBatchWithOptions(cache *SessionCache, key SessionKey, onnxData 
 	return outputs, err
 }
 
-func runInferenceBatch(session *sessionEntry, inputNames, outputNames []string, inputs [][]float32, timeout time.Duration) ([][]float32, error) {
+func runInferenceBatch(session *sessionEntry, inputNames, outputNames []string, inputs [][]float32, timeout time.Duration) (results [][]float32, err error) {
 	batchSize := len(inputs)
 	inputValues := make([]onnxruntime_go.Value, len(inputNames))
+	defer func() {
+		if destroyErr := destroyValues(inputValues); destroyErr != nil && err == nil {
+			err = errors.Annotate(destroyErr, "destroy onnx inputs")
+			results = nil
+		}
+	}()
+	outputValues := make([]onnxruntime_go.Value, len(outputNames))
+	defer func() {
+		if destroyErr := destroyValues(outputValues); destroyErr != nil && err == nil {
+			err = errors.Annotate(destroyErr, "destroy onnx outputs")
+			results = nil
+		}
+	}()
 	for i := range inputNames {
 		data := make([]float32, batchSize)
 		for rowIdx, row := range inputs {
@@ -178,15 +199,13 @@ func runInferenceBatch(session *sessionEntry, inputNames, outputNames []string, 
 			return nil, errors.Annotate(err, "create input tensor")
 		}
 		inputValues[i] = tensor
-		defer tensor.Destroy()
 	}
 
-	outputValues := make([]onnxruntime_go.Value, len(outputNames))
 	if err := runWithTimeout(session, inputValues, outputValues, timeout); err != nil {
 		return nil, errors.Annotate(err, "run onnx session")
 	}
 
-	results := make([][]float32, batchSize)
+	results = make([][]float32, batchSize)
 	for i := range batchSize {
 		results[i] = make([]float32, len(outputValues))
 	}
@@ -205,14 +224,11 @@ func runInferenceBatch(session *sessionEntry, inputNames, outputNames []string, 
 		for rowIdx := range batchSize {
 			results[rowIdx][outIdx] = data[rowIdx]
 		}
-		if err := out.Destroy(); err != nil {
-			return nil, errors.Annotate(err, "destroy onnx output")
-		}
 	}
 	return results, nil
 }
 
-func runWithTimeout(session *sessionEntry, inputs, outputs []onnxruntime_go.Value, timeout time.Duration) error {
+func runWithTimeout(session *sessionEntry, inputs, outputs []onnxruntime_go.Value, timeout time.Duration) (err error) {
 	if timeout <= 0 {
 		return session.run(inputs, outputs, nil)
 	}
@@ -220,7 +236,11 @@ func runWithTimeout(session *sessionEntry, inputs, outputs []onnxruntime_go.Valu
 	if err != nil {
 		return errors.Annotate(err, "create onnx run options")
 	}
-	defer opts.Destroy()
+	defer func() {
+		if destroyErr := opts.Destroy(); destroyErr != nil && err == nil {
+			err = errors.Annotate(destroyErr, "destroy onnx run options")
+		}
+	}()
 	var timedOut atomic.Bool
 	timer := time.AfterFunc(timeout, func() {
 		timedOut.Store(true)
@@ -232,6 +252,18 @@ func runWithTimeout(session *sessionEntry, inputs, outputs []onnxruntime_go.Valu
 		return errors.Errorf("onnx inference timeout after %s", timeout)
 	}
 	return err
+}
+
+func destroyValues(values []onnxruntime_go.Value) error {
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		if err := value.Destroy(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func getSession(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string) (*sessionEntry, func(), error) {

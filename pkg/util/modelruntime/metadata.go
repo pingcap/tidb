@@ -41,16 +41,16 @@ type ModelMetadata interface {
 
 // InspectModelIOInfo returns ONNX model input/output metadata.
 // It validates tensor-only IO and enforces FP32 element types.
-func InspectModelIOInfo(onnxData []byte) ([]TensorInfo, []TensorInfo, error) {
-	inputs, outputs, err := getInputOutputInfoFn(onnxData)
+func InspectModelIOInfo(onnxData []byte) (inputs []TensorInfo, outputs []TensorInfo, err error) {
+	inputsInfo, outputsInfo, err := getInputOutputInfoFn(onnxData)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	parsedInputs, err := convertTensorInfo(inputs)
+	parsedInputs, err := convertTensorInfo(inputsInfo)
 	if err != nil {
 		return nil, nil, err
 	}
-	parsedOutputs, err := convertTensorInfo(outputs)
+	parsedOutputs, err := convertTensorInfo(outputsInfo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -59,12 +59,16 @@ func InspectModelIOInfo(onnxData []byte) ([]TensorInfo, []TensorInfo, error) {
 
 // ModelDeclaresNondeterministic checks model metadata for nondeterminism hints.
 // It returns false when metadata is unavailable to keep best-effort behavior.
-func ModelDeclaresNondeterministic(onnxData []byte) (bool, error) {
+func ModelDeclaresNondeterministic(onnxData []byte) (nondeterministic bool, err error) {
 	meta, err := getModelMetadataFn(onnxData)
 	if err != nil {
 		return false, nil
 	}
-	defer meta.Destroy()
+	defer func() {
+		if destroyErr := meta.Destroy(); destroyErr != nil && err == nil {
+			err = errors.Annotate(destroyErr, "destroy onnx metadata")
+		}
+	}()
 	val, ok, err := meta.LookupCustomMetadataMap("tidb_nondeterministic")
 	if err != nil || !ok {
 		return false, nil
