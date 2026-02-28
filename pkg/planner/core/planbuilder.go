@@ -2153,7 +2153,7 @@ func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *
 	virtualExprs := columnSelector(columns)
 	relatedCols := make([]*expression.Column, 0, len(tblInfo.Columns))
 	for len(virtualExprs) > 0 {
-		relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
+		relatedCols = expression.ExtractAllColumnsFromExpressionsInUsedSlices(relatedCols, nil, virtualExprs...)
 		virtualExprs = virtualExprs[:0]
 		for _, col := range relatedCols {
 			cols.data[col.ID] = struct{}{}

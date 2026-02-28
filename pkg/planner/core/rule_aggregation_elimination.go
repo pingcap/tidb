@@ -170,10 +170,10 @@ func CheckCanConvertAggToProj(agg *logicalop.LogicalAggregation) bool {
 		}
 		// once agg function args has intersection with mayNullSchema, return nil (means elimination fail)
 		for _, fun := range agg.AggFuncs {
-			mayNullCols := expression.ExtractColumnsFromExpressions(nil, fun.Args, func(column *expression.Column) bool {
+			mayNullCols := expression.ExtractColumnsMapFromExpressions(func(column *expression.Column) bool {
 				// collect may-null cols.
 				return mayNullSchema.Contains(column)
-			})
+			}, fun.Args...)
 			if len(mayNullCols) != 0 {
 				return false
 			}
