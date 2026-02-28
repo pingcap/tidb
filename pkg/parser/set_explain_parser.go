@@ -406,7 +406,7 @@ func (p *HandParser) parseSetConfig() ast.StmtNode {
 		stmt.Instance = tok.Lit
 		p.next()
 	} else if isIdentLike(tok.Tp) {
-		stmt.Type = p.parseVariableName() // Assuming Type is identifier-like (e.g. TIKV)
+		stmt.Type = strings.ToLower(p.parseVariableName())
 	} else {
 		p.syntaxErrorAt(tok)
 		return nil
@@ -421,8 +421,8 @@ func (p *HandParser) parseSetConfig() ast.StmtNode {
 
 	p.expectAny(eq, assignmentEq)
 
-	// Parse Value
-	stmt.Value = p.parseExpression(precNone)
+	// Parse Value — yacc uses SetExpr which handles ON/BINARY as string values.
+	stmt.Value = p.parseSetExpr()
 	if stmt.Value == nil {
 		return nil
 	}

@@ -25,7 +25,7 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 
 	if _, ok := p.accept(region); ok {
 		stmt.SplitSyntaxOpt.HasRegionFor = true
-		p.accept(forKwd)
+		p.expect(forKwd) // yacc: REGION FOR — FOR is required
 	}
 	if _, ok := p.accept(partition); ok {
 		stmt.SplitSyntaxOpt.HasPartition = true
