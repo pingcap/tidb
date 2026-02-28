@@ -62,6 +62,12 @@ const (
 	gcsCredentialsFile    = "gcs.credentials-file"
 )
 
+type globalSortGCSReadRetryConfig struct {
+	maxAttempts int
+}
+
+type globalSortGCSReadRetryKey struct{}
+
 // GCSBackendOptions are options for configuration the GCS storage.
 type GCSBackendOptions struct {
 	Endpoint        string `json:"endpoint" toml:"endpoint"`
@@ -276,6 +282,13 @@ func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) 
 func (s *GCSStorage) Open(ctx context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
 	object := s.objectName(path)
 	handle := s.GetBucketHandle().Object(object)
+	if cfg, ok := getGlobalSortGCSReadRetry(ctx); ok {
+		handle = handle.Retryer(
+			storage.WithErrorFunc(shouldRetry),
+			storage.WithPolicy(storage.RetryAlways),
+			storage.WithMaxAttempts(cfg.maxAttempts),
+		)
+	}
 
 	attrs, err := handle.Attrs(ctx)
 	if err != nil {
@@ -312,6 +325,37 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *storeapi.ReaderOp
 		prefetchSize: prefetchSize,
 		totalSize:    attrs.Size,
 	}, nil
+}
+
+// WithGlobalSortGCSReadRetry marks a GCS read context to use a bounded retry
+// budget for one object request on the global sort read path.
+func WithGlobalSortGCSReadRetry(ctx context.Context, maxAttempts int) context.Context {
+	if maxAttempts <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, globalSortGCSReadRetryKey{}, globalSortGCSReadRetryConfig{
+		maxAttempts: maxAttempts,
+	})
+}
+
+func getGlobalSortGCSReadRetry(ctx context.Context) (globalSortGCSReadRetryConfig, bool) {
+	if ctx == nil {
+		return globalSortGCSReadRetryConfig{}, false
+	}
+	cfg, ok := ctx.Value(globalSortGCSReadRetryKey{}).(globalSortGCSReadRetryConfig)
+	return cfg, ok
+}
+
+// IsRetryableGCSHTTP2InternalError reports whether err is the specific GCS
+// HTTP/2 internal stream error that we want to escalate to round-level retry.
+func IsRetryableGCSHTTP2InternalError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if e := (http2.StreamError{}); goerrors.As(err, &e) {
+		return e.Code == http2.ErrCodeInternal
+	}
+	return false
 }
 
 // WalkDir traverse all the files in a dir.
