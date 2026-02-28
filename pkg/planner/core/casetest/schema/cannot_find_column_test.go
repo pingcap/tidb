@@ -66,6 +66,12 @@ func TestSchemaCannotFindColumnRegression(t *testing.T) {
 		tk.MustQuery("SELECT /* issue:66272-nested */ t1.id FROM t1 JOIN t3 USING(id) JOIN t4 ON t4.id = t1.id WHERE t3.id >= 10 AND t3.id <= 20 AND t1.left_v = 93 AND t4.flag = 1").Check(testkit.Rows(
 			"10",
 		))
+		tk.MustQuery("SELECT /* issue:66272-having */ id FROM t1 JOIN t3 USING(id) GROUP BY id HAVING t3.id = 10").Check(testkit.Rows(
+			"10",
+		))
+		tk.MustQuery("SELECT /* issue:66272-orderby */ t1.id FROM t1 JOIN t3 USING(id) WHERE t3.id = 10 ORDER BY t3.id").Check(testkit.Rows(
+			"10",
+		))
 
 		tk.MustExec("drop table if exists t_up_l, t_up_r")
 		tk.MustExec("create table t_up_l (id int primary key, a int not null)")
@@ -111,6 +117,18 @@ func TestSchemaCannotFindColumnRegression(t *testing.T) {
 		tk.MustQuery("select id, a from t_rd_l order by id").Check(testkit.Rows(
 			"1 2",
 			"3 2",
+		))
+
+		tk.MustExec("drop table if exists t_outer_l, t_outer_r")
+		tk.MustExec("create table t_outer_l (id int primary key, a int not null)")
+		tk.MustExec("create table t_outer_r (id int primary key)")
+		tk.MustExec("insert into t_outer_l values (1, 10), (2, 20)")
+		tk.MustExec("insert into t_outer_r values (2), (3)")
+		tk.MustQuery("select count(*) from t_outer_l left join t_outer_r using(id) where t_outer_r.id is null").Check(testkit.Rows(
+			"1",
+		))
+		tk.MustQuery("select count(*) from t_outer_l right join t_outer_r using(id) where t_outer_l.id is null").Check(testkit.Rows(
+			"1",
 		))
 	})
 }
