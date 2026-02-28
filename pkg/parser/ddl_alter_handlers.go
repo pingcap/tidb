@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 )
 
 // parseAlterAdd handles ALTER TABLE ... ADD {COLUMN|PARTITION|CONSTRAINT|STATS_EXTENDED|(col_defs)}.
@@ -680,7 +681,12 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 			collOpt := p.arena.AllocTableOption()
 			collOpt.Tp = ast.TableOptionCollate
 			if tok, ok := p.acceptStringName(); ok {
-				collOpt.StrValue = strings.ToLower(tok.Lit)
+				coll, err := charset.GetCollationByName(tok.Lit)
+				if err != nil {
+					p.errs = append(p.errs, err)
+					return true
+				}
+				collOpt.StrValue = coll.Name
 			}
 			spec.Options = append(spec.Options, collOpt)
 		}

@@ -217,19 +217,21 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 		stmt.Lists = append(stmt.Lists, row)
 	}
 
-	// ON DUPLICATE KEY UPDATE
-	if _, ok := p.accept(on); ok {
-		p.expect(duplicate) // duplicate
-		p.expect(key)
-		p.expect(update)
-		for {
-			assign := p.parseAssignment()
-			if assign == nil {
-				return nil
-			}
-			stmt.OnDuplicate = append(stmt.OnDuplicate, assign)
-			if _, ok := p.accept(','); !ok {
-				break
+	// ON DUPLICATE KEY UPDATE (INSERT only, not REPLACE — matching MySQL grammar).
+	if !isReplace {
+		if _, ok := p.accept(on); ok {
+			p.expect(duplicate)
+			p.expect(key)
+			p.expect(update)
+			for {
+				assign := p.parseAssignment()
+				if assign == nil {
+					return nil
+				}
+				stmt.OnDuplicate = append(stmt.OnDuplicate, assign)
+				if _, ok := p.accept(','); !ok {
+					break
+				}
 			}
 		}
 	}
