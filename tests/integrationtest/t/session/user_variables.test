@@ -1,0 +1,23 @@
+# Test that a variable can be added to itself.
+select @i := 1;
+select @i := @i + 1;
+select @i;
+
+# Test that a variable can be added to another variable.
+set @k := 1;
+select @k := @i + 1;
+select @k;
+
+# Test that a variable can be added to itself when it is not defined, which results in null.
+select @l := @l + 1;
+select @l;
+
+# Test that variables can be set in readonly mode.
+set global tidb_super_read_only=1;
+select @i := @i + 1;
+select @i;
+select @i := 2;
+select @i;
+select @m := @m + 1;
+select @m;
+set global tidb_super_read_only=0;
