@@ -237,9 +237,9 @@ func TestExplainDotForExplainPlan(t *testing.T) {
 	rows := tk.MustQuery("select connection_id()").Rows()
 	require.Len(t, rows, 1)
 	connID := rows[0][0].(string)
-	tk.MustQuery("explain format = 'brief' select 1").Check(testkit.Rows(
-		"Projection 1.00 root  1->Column#1",
-		"└─TableDual 1.00 root  rows:1",
+	tk.MustQuery("explain format = 'plan_tree' select 1").Check(testkit.Rows(
+		"Projection root  1->Column",
+		"└─TableDual root  rows:1",
 	))
 
 	tkProcess := tk.Session().ShowProcess()
