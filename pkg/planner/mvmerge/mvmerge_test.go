@@ -124,7 +124,7 @@ func TestBuildCountSum(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		mvmerge.BuildOptions{FromTS: 10},
 		nil,
 	)
 	require.NoError(t, err)
@@ -225,7 +225,7 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		mvmerge.BuildOptions{FromTS: 10},
 		nil,
 	)
 	require.NoError(t, err)
@@ -324,7 +324,7 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		mvmerge.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.NoError(t, err)
@@ -421,7 +421,7 @@ func TestBuildSumWithoutCountExpr(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		mvmerge.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.ErrorContains(t, err, "requires matching COUNT(expr)")
@@ -481,7 +481,7 @@ func TestBuildMissingCountStar(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		mvmerge.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.ErrorContains(t, err, "must include COUNT(*)")
@@ -537,7 +537,7 @@ func TestBuildMissingOldNew(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		mvmerge.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.ErrorContains(t, err, model.MaterializedViewLogOldNewColumnName)

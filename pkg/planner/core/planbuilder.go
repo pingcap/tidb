@@ -3855,25 +3855,10 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return nil, errors.Errorf("table %s.%s is not a materialized view", dbName, viewName.Name.O)
 	}
 
-	txn, err := b.ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	if txn == nil || !txn.Valid() {
-		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction")
-	}
-	toTS := txn.StartTS()
-	if toTS == 0 {
-		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction start tso")
-	}
-
 	if stmt.LastSuccessfulRefreshReadTSO < 0 {
 		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: invalid LastSuccessfulRefreshReadTSO %d", stmt.LastSuccessfulRefreshReadTSO)
 	}
 	fromTS := uint64(stmt.LastSuccessfulRefreshReadTSO)
-	if fromTS > toTS {
-		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: invalid refresh tso window (%d, %d]", fromTS, toTS)
-	}
 
 	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, types.NameSlice, error) {
 		nodeW := resolve.NewNodeW(sel)
@@ -3911,7 +3896,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return nil, err
 	}
 
-	res, err := mvmerge.BuildFromLocal(local, mvmerge.BuildOptions{FromTS: fromTS, ToTS: toTS}, nil)
+	res, err := mvmerge.BuildFromLocal(local, mvmerge.BuildOptions{FromTS: fromTS}, nil)
 	if err != nil {
 		return nil, err
 	}
