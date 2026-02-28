@@ -29,7 +29,7 @@ type mlflowBackend struct {
 	client *mlflow.Client
 }
 
-func (_ *mlflowBackend) InspectIO(_ context.Context, artifact Artifact) (ModelIOInfo, error) {
+func (*mlflowBackend) InspectIO(_ context.Context, artifact Artifact) (ModelIOInfo, error) {
 	if artifact.LocalPath == "" {
 		return ModelIOInfo{}, errors.New("mlflow model directory is required")
 	}
