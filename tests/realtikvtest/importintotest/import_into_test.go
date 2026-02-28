@@ -489,18 +489,26 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 
 	content := `insert into tbl values (1, 'a'), (2, 'b');`
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load-parquet", Name: "p"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load-parquet", Name: "p.sql"},
 		Content:     []byte(content),
 	})
 	tempDir := s.T().TempDir()
 	s.NoError(os.WriteFile(path.Join(tempDir, "test.sql"), []byte(content), 0o644))
 
-	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
+	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p.sql?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t")
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p.sql?endpoint=%s';`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, path.Join(tempDir, "test.sql"))
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s';`, path.Join(tempDir, "test.sql"))
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 }
