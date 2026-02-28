@@ -25,7 +25,11 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 	// Optional CONSTRAINT [symbol]
 	if _, ok := p.accept(constraint); ok {
 		if isIdentLike(p.peek().Tp) {
-			cons.Name = p.next().Lit
+			tok := p.next()
+			cons.Name = tok.Lit
+			if tok.Lit == "" {
+				cons.IsEmptyIndex = true
+			}
 		}
 	}
 
@@ -48,7 +52,11 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		}
 		cons.Tp = ast.ConstraintUniq
 		if isIdentLike(p.peek().Tp) {
-			cons.Name = p.next().Lit
+			tok := p.next()
+			cons.Name = tok.Lit
+			if tok.Lit == "" {
+				cons.IsEmptyIndex = true
+			}
 		}
 		// Optional USING BTREE/HASH before column list
 		p.parseIndexDefinition(cons)
@@ -59,7 +67,11 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 		// IF NOT EXISTS
 		cons.IfNotExists = p.acceptIfNotExists()
 		if isIdentLike(p.peek().Tp) {
-			cons.Name = p.next().Lit
+			tok := p.next()
+			cons.Name = tok.Lit
+			if tok.Lit == "" {
+				cons.IsEmptyIndex = true
+			}
 		}
 		cons.Keys = p.parseIndexPartSpecifications()
 		cons.Refer = p.parseReferenceDef()
