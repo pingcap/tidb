@@ -89,6 +89,9 @@ func (p *HandParser) parseResourceGroupOption() *ast.ResourceGroupOption {
 			opt.UintValue = ast.MediumPriorityValue
 		} else if _, ok := p.accept(high); ok {
 			opt.UintValue = ast.HighPriorityValue
+		} else {
+			p.syntaxErrorAt(p.peek())
+			return nil
 		}
 		return opt
 	} else if _, ok := p.accept(burstable); ok {
