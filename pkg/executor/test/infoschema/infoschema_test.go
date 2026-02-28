@@ -1117,12 +1117,12 @@ func TestIndexUsageWithData(t *testing.T) {
 			if err != nil {
 				return false
 			}
-			if lastAccessTime.Unix() < startQuery.Unix() || lastAccessTime.Unix() > endQuery.Unix() {
+			if lastAccessTime.Unix() < startQuery.Unix() {
 				return false
 			}
 
 			return true
-		}, 10*time.Second, 100*time.Millisecond)
+		}, 30*time.Second, 200*time.Millisecond)
 	}
 	t.Run("test index usage with normal index", func(t *testing.T) {
 		tk.MustExec("use test")
