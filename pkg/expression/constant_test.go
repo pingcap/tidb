@@ -184,7 +184,11 @@ func TestConstantPropagation(t *testing.T) {
 			for _, cd := range tt.conditions {
 				conds = append(conds, FoldConstant(ctx, cd))
 			}
+<<<<<<< HEAD
 			newConds := solver.PropagateConstant(ctx, conds)
+=======
+			newConds := solver.PropagateConstant(ctx, false, nil, nil, nil, conds)
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 			var result []string
 			for _, v := range newConds {
 				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
