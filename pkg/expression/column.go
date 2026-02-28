@@ -56,13 +56,11 @@ func (col *CorrelatedColumn) SafeToShareAcrossSession() bool {
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
 	clonedCol := col.Column.Clone().(*Column)
-	var clonedData *types.Datum
-	if col.Data != nil {
-		clonedData = col.Data.Clone()
-	}
 	return &CorrelatedColumn{
 		Column: *clonedCol,
-		Data:   clonedData,
+		// correlated column's data should be always be a singleton,
+		// otherwise, apply execution will be wrong with data injection.
+		Data: col.Data,
 	}
 }
 
