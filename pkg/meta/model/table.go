@@ -737,6 +737,12 @@ type MaterializedViewInfo struct {
 
 	// RefreshNext is the expression string after "NEXT", stored in canonical SQL format.
 	RefreshNext string `json:"refresh_next,omitempty"`
+
+	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW session.
+	DefinitionSQLMode mysql.SQLMode `json:"definition_sql_mode"`
+
+	// DefinitionTimeZone is the timezone captured from CREATE MATERIALIZED VIEW session.
+	DefinitionTimeZone TimeZoneLocation `json:"definition_time_zone"`
 }
 
 // Clone clones MaterializedViewInfo.

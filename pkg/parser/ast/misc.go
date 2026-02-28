@@ -60,6 +60,8 @@ var (
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
+	_ StmtNode = &RefreshMaterializedViewStmt{}
+	_ StmtNode = &RefreshMaterializedViewImplementStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 
 	_ Node = &PrivElem{}
@@ -473,6 +475,110 @@ func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Table = node.(*TableName)
+	return v.Leave(n)
+}
+
+// RefreshMaterializedViewStmt is a statement to trigger a refresh on a materialized view.
+type RefreshMaterializedViewStmt struct {
+	stmtNode
+
+	ViewName     *TableName
+	WithSyncMode bool
+	Type         RefreshMaterializedViewType
+}
+
+// RefreshMaterializedViewImplementStmt is an internal-only statement that is constructed directly by the executor
+// (rather than parsed from SQL text) to execute a materialized view refresh implementation plan.
+//
+// It is mainly used to avoid string-concatenated SQL in refresh implementation (e.g. replacing `DELETE FROM` + `INSERT INTO`)
+// and to pass executor-only parameters (like `LAST_SUCCESS_READ_TSO`) through the normal
+// parse/preprocess/plan/execute pipeline.
+//
+// NOTE: This statement is not exposed by the parser grammar, so Restore() is primarily used for logging / toString.
+type RefreshMaterializedViewImplementStmt struct {
+	stmtNode
+
+	RefreshStmt                  *RefreshMaterializedViewStmt
+	LastSuccessfulRefreshReadTSO int64
+}
+
+// Restore implements Node interface.
+func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("IMPLEMENT FOR ")
+	if n.RefreshStmt == nil {
+		return errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt")
+	}
+	if err := n.RefreshStmt.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewImplementStmt.RefreshStmt")
+	}
+	ctx.WriteKeyWord(" USING TIMESTAMP ")
+	ctx.WritePlain(strconv.FormatInt(n.LastSuccessfulRefreshReadTSO, 10))
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RefreshMaterializedViewImplementStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshMaterializedViewImplementStmt)
+	if n.RefreshStmt != nil {
+		node, ok := n.RefreshStmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.RefreshStmt = node.(*RefreshMaterializedViewStmt)
+	}
+	return v.Leave(n)
+}
+
+type RefreshMaterializedViewType int
+
+const (
+	RefreshMaterializedViewTypeFast RefreshMaterializedViewType = iota
+	RefreshMaterializedViewTypeComplete
+)
+
+func (t RefreshMaterializedViewType) String() string {
+	switch t {
+	case RefreshMaterializedViewTypeFast:
+		return "FAST"
+	case RefreshMaterializedViewTypeComplete:
+		return "COMPLETE"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// Restore implements Node interface.
+func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("REFRESH MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewStmt.ViewName")
+	}
+	if n.WithSyncMode {
+		ctx.WriteKeyWord(" WITH SYNC MODE")
+	}
+	ctx.WritePlain(" ")
+	ctx.WriteKeyWord(n.Type.String())
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RefreshMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 
