@@ -156,7 +156,6 @@ func (p *HandParser) parseGrantProxyStmt() ast.StmtNode {
 	}
 }
 
-
 // parseGrantLevel parses the object level for GRANT: *.*, db.*, db.tbl, *, tbl
 func (p *HandParser) parseGrantLevel() *ast.GrantLevel {
 	level := Alloc[ast.GrantLevel](p.arena)
@@ -284,7 +283,6 @@ func (p *HandParser) parseRevokeStmt() ast.StmtNode {
 	return stmt
 }
 
-
 // parseRoleOrPrivElemList parses a comma-separated list of items that could be
 // either privilege elements or role identities. This matches yacc's RoleOrPrivElemList
 // which defers the decision until ON or TO/FROM is seen.
@@ -362,10 +360,10 @@ func (p *HandParser) parseRoleOrPrivElem() *ast.RoleOrPriv {
 }
 
 // parseSpecialPriv handles LOAD FROM S3 and SELECT INTO S3 special privileges.
-func (p *HandParser) parseSpecialPriv(firstKeyword string, middleTp int, lastKeyword string) *ast.RoleOrPriv {
-	p.next() // consume first keyword (LOAD or SELECT)
+func (p *HandParser) parseSpecialPriv(firstKeyword string, _ int, lastKeyword string) *ast.RoleOrPriv {
+	p.next()              // consume first keyword (LOAD or SELECT)
 	middleTok := p.next() // consume middle keyword (FROM or INTO)
-	tok := p.next() // consume last keyword (S3)
+	tok := p.next()       // consume last keyword (S3)
 	if !strings.EqualFold(tok.Lit, lastKeyword) {
 		p.syntaxErrorAt(tok)
 		return nil
@@ -533,8 +531,8 @@ func (p *HandParser) tryParsePrivilege() *ast.PrivElem {
 
 // convertToPriv converts a RoleOrPriv list to PrivElem list.
 // Matches yacc's convertToPriv function behavior.
-func (p *HandParser) convertToPriv(roleOrPrivs []*ast.RoleOrPriv) ([]*ast.PrivElem, error) {
-	var privs []*ast.PrivElem
+func (*HandParser) convertToPriv(roleOrPrivs []*ast.RoleOrPriv) ([]*ast.PrivElem, error) {
+	privs := make([]*ast.PrivElem, 0, len(roleOrPrivs))
 	for _, rp := range roleOrPrivs {
 		pe, err := rp.ToPriv()
 		if err != nil {
@@ -547,8 +545,8 @@ func (p *HandParser) convertToPriv(roleOrPrivs []*ast.RoleOrPriv) ([]*ast.PrivEl
 
 // convertToRole converts a RoleOrPriv list to RoleIdentity list.
 // Matches yacc's convertToRole function behavior.
-func (p *HandParser) convertToRole(roleOrPrivs []*ast.RoleOrPriv) ([]*auth.RoleIdentity, error) {
-	var roles []*auth.RoleIdentity
+func (*HandParser) convertToRole(roleOrPrivs []*ast.RoleOrPriv) ([]*auth.RoleIdentity, error) {
+	roles := make([]*auth.RoleIdentity, 0, len(roleOrPrivs))
 	for _, rp := range roleOrPrivs {
 		r, err := rp.ToRole()
 		if err != nil {

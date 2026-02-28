@@ -255,9 +255,10 @@ func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
 
 // parseRoleIdentity parses a role identifier.
 // Yacc grammar: Rolename = RoleNameString | RolenameComposed
-//   RoleNameString = stringLit | identifier  (bare names — strict)
-//   RolenameComposed = StringName '@' StringName | StringName singleAtIdentifier
-//   StringName = stringLit | Identifier  (includes unreserved keywords)
+//
+//	RoleNameString = stringLit | identifier  (bare names — strict)
+//	RolenameComposed = StringName '@' StringName | StringName singleAtIdentifier
+//	StringName = stringLit | Identifier  (includes unreserved keywords)
 func (p *HandParser) parseRoleIdentity() *auth.RoleIdentity {
 	role := Alloc[auth.RoleIdentity](p.arena)
 	tok := p.peek()
