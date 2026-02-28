@@ -251,6 +251,9 @@ func (p *HandParser) parseRunawayOption() *ast.ResourceGroupRunawayOption {
 			tok := p.next()
 			action.SwitchGroupName = ast.NewCIStr(tok.Lit)
 			p.expect(')')
+		} else {
+			p.syntaxErrorAt(p.peek())
+			return nil
 		}
 		return &ast.ResourceGroupRunawayOption{
 			Tp:           ast.RunawayAction,
@@ -266,6 +269,9 @@ func (p *HandParser) parseRunawayOption() *ast.ResourceGroupRunawayOption {
 		} else if p.peek().IsKeyword("PLAN") {
 			p.next()
 			watch.Type = ast.WatchPlan
+		} else {
+			p.syntaxErrorAt(p.peek())
+			return nil
 		}
 		// DURATION = '...' or DURATION = UNLIMITED
 		if _, ok := p.accept(timeDuration); ok {
