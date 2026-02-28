@@ -126,7 +126,10 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 				return nil
 			}
 			if !chainable {
-				return left
+				// IS [NOT] TRUE/FALSE/UNKNOWN doesn't chain with IS,
+				// but AND/OR/XOR should still bind. Continue the loop
+				// so expression-level operators can be parsed.
+				continue
 			}
 			continue
 
