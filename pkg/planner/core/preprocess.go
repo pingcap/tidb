@@ -1563,6 +1563,9 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	if tp.GetFlen() > math.MaxUint32 {
 		return types.ErrTooBigDisplayWidth.GenWithStack("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
 	}
+	if isInvalidSridOption(colDef) {
+		return plannererrors.ErrWrongUsage.GenWithStackByArgs("SRID", "non-geometry column")
+	}
 
 	switch tp.GetType() {
 	case mysql.TypeString:
@@ -1644,9 +1647,12 @@ func checkColumn(colDef *ast.ColumnDef) error {
 				return err
 			}
 		}
+	case mysql.TypeGeometry:
+		return errors.New("spatial data types are not supported")
 	default:
 		// TODO: Add more types.
 	}
+
 	return nil
 }
 
@@ -1671,6 +1677,17 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 				return true
 			}
 			break
+		}
+	}
+
+	return false
+}
+
+func isInvalidSridOption(colDef *ast.ColumnDef) bool {
+	for _, colOpt := range colDef.Options {
+		if colOpt.Tp == ast.ColumnOptionSrid &&
+			colDef.Tp.GetType() != mysql.TypeGeometry {
+			return true
 		}
 	}
 

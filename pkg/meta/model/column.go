@@ -110,6 +110,7 @@ type ColumnInfo struct {
 	// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
 	//              This will fix bug in version 0. For compatibility with version 0, we add version field in column info struct.
 	Version uint64 `json:"version"`
+	Srid    uint32 `json:"srid"`
 }
 
 // Clone clones ColumnInfo.
@@ -209,6 +210,16 @@ func (c *ColumnInfo) SetCollate(collate string) {
 // SetElems set the elements of enum column.
 func (c *ColumnInfo) SetElems(elems []string) {
 	c.FieldType.SetElems(elems)
+}
+
+// GetGeometryType returns the GeometryType
+func (c *ColumnInfo) GetGeometryType() types.GeometryType {
+	return c.FieldType.GetGeometryType()
+}
+
+// SetGeometryType sets the GeometryType
+func (c *ColumnInfo) SetGeometryType(geo types.GeometryType) {
+	c.FieldType.SetGeometryType(geo)
 }
 
 // IsGenerated checks if the column is a generated column.

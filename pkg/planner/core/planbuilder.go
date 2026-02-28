@@ -2512,7 +2512,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 			skipCol = append(skipCol, colInfo)
 			continue
 		}
-		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
+		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset(), colInfo.FieldType.GetGeometryType())]
 		// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
 		// into TiDB to build the index statistics.
 		_, keep := mustAnalyze[colInfo.ID]

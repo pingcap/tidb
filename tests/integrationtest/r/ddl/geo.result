@@ -1,0 +1,28 @@
+CREATE TABLE a (g GEOMETRY SRID 0);
+Error 1105 (HY000): spatial data types are not supported
+CREATE TABLE b (g GEOMETRY);
+Error 1105 (HY000): spatial data types are not supported
+CREATE TABLE c (g GEOMETRYCOLLECTION);
+Error 1105 (HY000): spatial data types are not supported
+CREATE TABLE d (g POINT);
+Error 1105 (HY000): spatial data types are not supported
+CREATE TABLE e (g MULTIPOINT);
+Error 1105 (HY000): spatial data types are not supported
+CREATE TABLE f (g POLYGON);
+Error 1105 (HY000): spatial data types are not supported
+CREATE TABLE g (g MULTIPOLYGON);
+Error 1105 (HY000): spatial data types are not supported
+CREATE TABLE h (g LINESTRING);
+Error 1105 (HY000): spatial data types are not supported
+CREATE TABLE i (g MULTILINESTRING);
+Error 1105 (HY000): spatial data types are not supported
+CREATE TABLE j (g INT SRID 0);
+Error 1221 (HY000): Incorrect usage of SRID and non-geometry column
+create table g2 (id int primary key, g point srid -1);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near "-1)" 
+create table g2 (id int primary key, g point srid 0);
+Error 1105 (HY000): spatial data types are not supported
+create table g2 (id int primary key, g point srid 4294967295);
+Error 1105 (HY000): spatial data types are not supported
+create table g2 (id int primary key, g point srid 4294967296);
+Error 1690 (22003): SRID value is out of range in 'SRID'

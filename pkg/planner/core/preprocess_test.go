@@ -340,6 +340,9 @@ func TestValidator(t *testing.T) {
 		{"CREATE VECTOR INDEX ident ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		// {"CREATE COLUMNAR INDEX ident USING VECTOR ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		{"CREATE FULLTEXT INDEX x ON ident (col_x)", false, errors.New(`[schema:1146]Table 'test.ident' doesn't exist`)},
+		{"CREATE TABLE t(g GEOMETRY)", false, errors.New("spatial data types are not supported")},
+		{"CREATE TABLE t(g GEOMETRY SRID 0)", false, errors.New("spatial data types are not supported")},
+		{"CREATE TABLE t(g VARBINARY(16) SRID 0)", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("SRID", "non-geometry column")},
 	}
 
 	store := testkit.CreateMockStore(t)
