@@ -447,6 +447,7 @@ func Utf8Len(b byte) int {
 	return length
 }
 
+// GetUtf8SubStringBytes returns the substring bytes
 func GetUtf8SubStringBytes(s string, n int) []byte {
 	if n <= 0 {
 		return []byte{}
