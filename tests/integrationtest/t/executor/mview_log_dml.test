@@ -11,15 +11,18 @@ create materialized view log on t (id, uk, v);
 insert into t values (1,10,100,1000);
 select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, uk, v);
 update t set v=101 where id=1;
 select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, uk, v);
 update t set extra=2000 where id=1;
 select count(*) from `$mlog$t`;
 
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, uk, v);
 delete from t where id=1;
 select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 
@@ -65,7 +68,8 @@ insert into t values (1, 10, 101) on duplicate key update v=values(v);
 select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 
 # IODKU with primary key change
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, uk, v);
 insert into t values (1, 10, 200) on duplicate key update id = 3, v = values(v);
 select id, uk, v from t order by id;
 select id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, uk, v, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
@@ -78,7 +82,8 @@ drop table if exists `$mlog$t`;
 create table t (id int primary key, tracked int, untracked int);
 create materialized view log on t (id, tracked);
 insert into t values (1, 10, 100);
-delete from `$mlog$t`;
+drop materialized view log on t;
+create materialized view log on t (id, tracked);
 
 alter table t add column c_new int default 0;
 update t set untracked = 101 where id = 1;
@@ -116,6 +121,99 @@ update t set a = a+1 where a = 1;
 insert into t values (2), (3);
 select _tidb_rowid, a from t;
 select _tidb_rowid, a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`;
+
+# Explicit DML on mlog table should be rejected
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int);
+create materialized view log on t (a, b);
+--error 1288
+insert into `$mlog$t` values (1, 2, 'I', 1);
+--error 1288
+replace into `$mlog$t` values (1, 2, 'I', 1);
+--error 1288
+update `$mlog$t` set a=1;
+--error 1288
+delete from `$mlog$t`;
+select * from `$mlog$t`;
+
+# Explicit DML on materialized view table should be rejected
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int not null);
+create materialized view log on t (a, b);
+create materialized view v (a, s, cnt) as select a, sum(b), count(1) from t group by a;
+--error 1288
+insert into v values (1, 10, 1);
+--error 1288
+replace into v values (1, 10, 1);
+--error 1288
+update v set s=1;
+--error 1288
+delete from v;
+drop materialized view v;
+
+# Prepared DML on mlog table should be rejected
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int);
+create materialized view log on t (a, b);
+--error 1288
+prepare stmt_ins from 'insert into `$mlog$t` values (?, ?, ?, ?)';
+--error 1288
+prepare stmt_upd from 'update `$mlog$t` set a=?';
+--error 1288
+prepare stmt_del from 'delete from `$mlog$t` where a=?';
+
+# Prepared DML on materialized view table should be rejected
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int not null);
+create materialized view log on t (a, b);
+create materialized view v (a, s, cnt) as select a, sum(b), count(1) from t group by a;
+--error 1288
+prepare stmt_ins from 'insert into v values (?, ?, ?)';
+--error 1288
+prepare stmt_upd from 'update v set s=? where a=?';
+--error 1288
+prepare stmt_del from 'delete from v where a=?';
+drop materialized view v;
+
+# LOAD DATA on mlog table should be rejected
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int);
+create materialized view log on t (a, b);
+--error 1288
+load data local infile '/nonexistent.csv' into table `$mlog$t` fields terminated by ',';
+
+# LOAD DATA on materialized view table should be rejected
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int not null);
+create materialized view log on t (a, b);
+create materialized view v (a, s, cnt) as select a, sum(b), count(1) from t group by a;
+--error 1288
+load data local infile '/nonexistent.csv' into table v fields terminated by ',';
+drop materialized view v;
+
+# IMPORT INTO on mlog table should be rejected
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int);
+create materialized view log on t (a, b);
+--error 1288
+import into `$mlog$t` from '/nonexistent.csv';
+
+# IMPORT INTO on materialized view table should be rejected
+drop table if exists t;
+drop table if exists `$mlog$t`;
+create table t (a int primary key, b int not null);
+create materialized view log on t (a, b);
+create materialized view v (a, s, cnt) as select a, sum(b), count(1) from t group by a;
+--error 1288
+import into v from '/nonexistent.csv';
+drop materialized view v;
 
 # clean up
 drop table if exists t, `$mlog$t`;
