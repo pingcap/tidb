@@ -43,10 +43,10 @@ const (
 	mvRowIDName      = "__mvmerge_mv_rowid"
 )
 
-// BuildOptions defines the commit-ts window (FromTS, ToTS] used to read incremental mv-log rows.
+// BuildOptions defines the commit-ts lower bound (FromTS, +inf) used to read incremental mv-log rows.
+// Upper bound is provided by statement snapshot ts (for_update_ts at execution time).
 type BuildOptions struct {
 	FromTS uint64
-	ToTS   uint64
 }
 
 // BuildResult is the merge source produced by Build.
@@ -1039,13 +1039,9 @@ func buildMLogDeltaSelect(
 		Source: &ast.TableName{Schema: dbName, Name: mlogTable.Name},
 	}}}
 
-	// Restrict mlog scan to the incremental window (FromTS, ToTS], then apply MV predicate.
+	// Restrict mlog scan to the incremental window (FromTS, +inf), then apply MV predicate.
 	tsCol := colExpr(model.ExtraCommitTSName.L)
-	tsRange := andExpr(
-		binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", "")),
-		binary(opcode.LE, tsCol, ast.NewValueExpr(opt.ToTS, "", "")),
-	)
-	where := tsRange
+	var where ast.ExprNode = binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", ""))
 	if mvSel.Where != nil {
 		where = andExpr(where, mvSel.Where)
 	}

@@ -236,7 +236,7 @@ func TestExplainRefreshMVFastPlanTree(t *testing.T) {
 		{"  ├─HashAgg(Build)", "6400.00", "root", "", "group by:test.$mlog$t.a, funcs:sum_int(Column#11)->Column#6, funcs:firstrow(test.$mlog$t.a)->test.$mlog$t.a"},
 		{"  │ └─TableReader", "6400.00", "root", "", "data:HashAgg"},
 		{"  │   └─HashAgg", "6400.00", "cop[tikv]", "", "group by:test.$mlog$t.a, funcs:sum_int(test.$mlog$t._mlog$_old_new)->Column#11"},
-		{"  │     └─Selection", "8000.00", "cop[tikv]", "", "gt(test.$mlog$t._tidb_commit_ts, 0), le(test.$mlog$t._tidb_commit_ts, 1)"},
+		{"  │     └─Selection", "8000.00", "cop[tikv]", "", "gt(test.$mlog$t._tidb_commit_ts, 0)"},
 		{"  │       └─TableFullScan", "10000.00", "cop[tikv]", "table:$mlog$t", "keep order:false, stats:pseudo"},
 		{"  └─TableReader(Probe)", "10000.00", "root", "", "data:TableFullScan"},
 		{"    └─TableFullScan", "10000.00", "cop[tikv]", "table:mv", "keep order:false, stats:pseudo"},
@@ -541,7 +541,7 @@ func buildMVMergeResultForHandleTest(
 		sctx.GetPlanCtx(),
 		is,
 		mvTbl,
-		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		mvmerge.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.NoError(t, err)
