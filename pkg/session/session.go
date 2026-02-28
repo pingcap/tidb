@@ -3723,6 +3723,11 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 
+	err = dom.StartMVService()
+	if err != nil {
+		return nil, err
+	}
+
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
 	if intest.InTest && failToLoadOrParseSQLFile {

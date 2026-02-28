@@ -1,0 +1,69 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mvservice",
+    srcs = [
+        "backpressure.go",
+        "consistenthash.go",
+        "executor.go",
+        "metrics_reporter.go",
+        "server_maintainer.go",
+        "service.go",
+        "service_helper.go",
+        "service_settings.go",
+        "task_handler.go",
+        "time_proxy.go",
+        "time_proxy_intest.go",  #keep
+        "utils.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/mvservice",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl/notifier",
+        "//pkg/domain/infosync",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/metrics",
+        "//pkg/sessionctx",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/cpu",
+        "//pkg/util/logutil",
+        "//pkg/util/memory",
+        "//pkg/util/sqlexec",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "mvservice_test",
+    timeout = "short",
+    srcs = [
+        "mvservice_test.go",
+        "server_maintainer_test.go",
+        "task_handler_test.go",
+        "time_proxy_test.go",  #keep
+        "utils_test.go",
+    ],
+    embed = [":mvservice"],
+    flaky = True,
+    gotags = ["intest"],
+    shard_count = 50,
+    deps = [
+        "//pkg/ddl/notifier",
+        "//pkg/infoschema",
+        "//pkg/infoschema/context",
+        "//pkg/meta/model",
+        "//pkg/parser/model",
+        "//pkg/planner/core/resolve",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/mock",
+        "//pkg/util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+    ],
+)
