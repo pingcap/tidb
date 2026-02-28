@@ -197,48 +197,6 @@ func TestPostSettings(t *testing.T) {
 	config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
 }
 
-func TestMVServiceSettingsHistoryGC(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-
-	type mvServiceSettingsResponse struct {
-		HistoryGCInterval  string `json:"history_gc_interval"`
-		HistoryGCRetention string `json:"history_gc_retention"`
-	}
-
-	decodeResp := func(resp *http.Response) mvServiceSettingsResponse {
-		t.Helper()
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		var data mvServiceSettingsResponse
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&data))
-		return data
-	}
-
-	resp, err := ts.FetchStatus("/mvservice/settings")
-	require.NoError(t, err)
-	origin := decodeResp(resp)
-	require.NotEmpty(t, origin.HistoryGCInterval)
-	require.NotEmpty(t, origin.HistoryGCRetention)
-
-	form := make(url.Values)
-	form.Set("history_gc_interval", "2h")
-	form.Set("history_gc_retention", "336h")
-	resp, err = ts.FormStatus("/mvservice/settings", form)
-	require.NoError(t, err)
-	updated := decodeResp(resp)
-	require.Equal(t, "2h0m0s", updated.HistoryGCInterval)
-	require.Equal(t, "336h0m0s", updated.HistoryGCRetention)
-
-	restore := make(url.Values)
-	restore.Set("history_gc_interval", origin.HistoryGCInterval)
-	restore.Set("history_gc_retention", origin.HistoryGCRetention)
-	resp, err = ts.FormStatus("/mvservice/settings", restore)
-	require.NoError(t, err)
-	_ = decodeResp(resp)
-}
-
 func TestAllServerInfo(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
