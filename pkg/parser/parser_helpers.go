@@ -383,9 +383,12 @@ func (p *HandParser) parseStatsTablesAndPartitions() []*ast.TableName {
 			break
 		}
 	}
-	// Optional PARTITION clause
+	// Optional PARTITION clause — yacc accepts with or without parentheses
 	if _, ok := p.accept(partition); ok {
-		p.expect('(')
+		hasParen := false
+		if _, ok := p.accept('('); ok {
+			hasParen = true
+		}
 		for {
 			partTok := p.next()
 			tbl := tables[len(tables)-1]
@@ -394,7 +397,9 @@ func (p *HandParser) parseStatsTablesAndPartitions() []*ast.TableName {
 				break
 			}
 		}
-		p.expect(')')
+		if hasParen {
+			p.expect(')')
+		}
 	}
 	return tables
 }

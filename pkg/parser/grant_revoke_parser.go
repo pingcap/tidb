@@ -82,6 +82,13 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 			}
 		}
 
+		// Check for trailing unconsumed tokens before convertToPriv (matching yacc,
+		// which produces syntax errors for unconsumed tokens before semantic actions).
+		if next := p.peek(); next.Tp != ';' && next.Tp != EOF {
+			p.syntaxErrorAt(next)
+			return nil
+		}
+
 		// Now convert roleOrPrivs to privileges (deferred to match yacc behavior).
 		privs, err := p.convertToPriv(roleOrPrivs)
 		if err != nil {
@@ -217,6 +224,12 @@ func (p *HandParser) parseRevokeStmt() ast.StmtNode {
 		p.expect(from)
 		stmt.Users = p.parseUserSpecList()
 		if stmt.Users == nil {
+			return nil
+		}
+
+		// Check for trailing unconsumed tokens before convertToPriv.
+		if next := p.peek(); next.Tp != ';' && next.Tp != EOF {
+			p.syntaxErrorAt(next)
 			return nil
 		}
 
