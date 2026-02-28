@@ -40,27 +40,16 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 
 	if _, ok := p.accept(on); ok {
 		// GRANT ... ON ... TO ... (privilege grant)
-		privs, err := p.convertToPriv(roleOrPrivs)
-		if err != nil {
-			p.errs = append(p.errs, err)
-			return nil
-		}
-
+		// Parse the full statement structure first (matching yacc, which validates
+		// syntax before running semantic actions like convertToPriv). This ensures
+		// syntax errors in the body take priority over conversion errors.
 		stmt := Alloc[ast.GrantStmt](p.arena)
-		stmt.Privs = privs
 
 		// Parse ObjectType: TABLE, FUNCTION, PROCEDURE
 		stmt.ObjectType = p.parseObjectType()
 
-		// Check for PROXY privilege
-		if level, handled := p.parseProxyLevel(stmt.Privs, "GRANT"); handled {
-			if level == nil {
-				return nil
-			}
-			stmt.Level = level
-		} else {
-			stmt.Level = p.parseGrantLevel()
-		}
+		// Parse grant level (PrivLevel)
+		stmt.Level = p.parseGrantLevel()
 
 		p.expect(to)
 		stmt.Users = p.parseUserSpecList()
@@ -88,9 +77,25 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 						break
 					}
 					p.next()
-					p.next() // consume the number
+					p.expect(intLit) // consume the number (yacc: NUM = intLit)
 				}
 			}
+		}
+
+		// Now convert roleOrPrivs to privileges (deferred to match yacc behavior).
+		privs, err := p.convertToPriv(roleOrPrivs)
+		if err != nil {
+			p.errs = append(p.errs, err)
+			return nil
+		}
+		stmt.Privs = privs
+
+		// Check for PROXY privilege (level fixup)
+		if level, handled := p.parseProxyLevel(stmt.Privs, "GRANT"); handled {
+			if level == nil {
+				return nil
+			}
+			stmt.Level = level
 		}
 
 		return stmt
@@ -200,34 +205,37 @@ func (p *HandParser) parseRevokeStmt() ast.StmtNode {
 
 	if _, ok := p.accept(on); ok {
 		// REVOKE ... ON ... FROM ... (privilege revoke)
-		privs, err := p.convertToPriv(roleOrPrivs)
-		if err != nil {
-			p.errs = append(p.errs, err)
-			return nil
-		}
-
+		// Parse full statement structure first, then convert (matching yacc).
 		stmt := Alloc[ast.RevokeStmt](p.arena)
-		stmt.ObjectType = ast.ObjectTypeNone
-		stmt.Privs = privs
 
 		// Parse ObjectType: TABLE, FUNCTION, PROCEDURE
 		stmt.ObjectType = p.parseObjectType()
 
-		// Check for PROXY privilege
-		if level, handled := p.parseProxyLevel(stmt.Privs, "REVOKE"); handled {
-			if level == nil {
-				return nil
-			}
-			stmt.Level = level
-		} else {
-			stmt.Level = p.parseGrantLevel()
-		}
+		// Parse grant level
+		stmt.Level = p.parseGrantLevel()
 
 		p.expect(from)
 		stmt.Users = p.parseUserSpecList()
 		if stmt.Users == nil {
 			return nil
 		}
+
+		// Now convert roleOrPrivs to privileges (deferred to match yacc behavior).
+		privs, err := p.convertToPriv(roleOrPrivs)
+		if err != nil {
+			p.errs = append(p.errs, err)
+			return nil
+		}
+		stmt.Privs = privs
+
+		// Check for PROXY privilege (level fixup)
+		if level, handled := p.parseProxyLevel(stmt.Privs, "REVOKE"); handled {
+			if level == nil {
+				return nil
+			}
+			stmt.Level = level
+		}
+
 		return stmt
 	}
 
