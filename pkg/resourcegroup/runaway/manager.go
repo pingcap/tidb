@@ -409,8 +409,6 @@ func (rm *Manager) Stop() {
 
 // UpdateNewAndDoneWatch is used to update new and done watch items.
 func (rm *Manager) UpdateNewAndDoneWatch() error {
-	rm.runawaySyncer.mu.Lock()
-	defer rm.runawaySyncer.mu.Unlock()
 	if !rm.runawaySyncer.checkWatchTableExist() {
 		return nil
 	}
