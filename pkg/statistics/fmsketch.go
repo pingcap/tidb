@@ -33,6 +33,15 @@ var murmur3Pool = sync.Pool{
 	},
 }
 
+var fmSketchPool = sync.Pool{
+	New: func() any {
+		return &FMSketch{
+			hashset: swiss.NewMap[uint64, bool](uint32(128)),
+			maxSize: 0,
+		}
+	},
+}
+
 // MaxSketchSize is the maximum size of the hashset in the FM sketch.
 // TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
 const MaxSketchSize = 10000
@@ -67,10 +76,9 @@ type FMSketch struct {
 
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
-	return &FMSketch{
-		hashset: swiss.NewMap[uint64, bool](128),
-		maxSize: maxSize,
-	}
+	result := fmSketchPool.Get().(*FMSketch)
+	result.maxSize = maxSize
+	return result
 }
 
 // Copy makes a copy for current FMSketch.
@@ -174,21 +182,17 @@ func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 	}
 	if s.mask < rs.mask {
 		s.mask = rs.mask
-		if s.hashset != nil {
-			s.hashset.Iter(func(key uint64, _ bool) bool {
-				if (key & s.mask) != 0 {
-					s.hashset.Delete(key)
-				}
-				return false
-			})
-		}
-	}
-	if rs.hashset != nil {
-		rs.hashset.Iter(func(key uint64, _ bool) bool {
-			s.insertHashValue(key)
+		s.hashset.Iter(func(key uint64, _ bool) bool {
+			if (key & s.mask) != 0 {
+				s.hashset.Delete(key)
+			}
 			return false
 		})
 	}
+	rs.hashset.Iter(func(key uint64, _ bool) bool {
+		s.insertHashValue(key)
+		return false
+	})
 }
 
 // FMSketchToProto converts FMSketch to its protobuf representation.
@@ -196,12 +200,10 @@ func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 	protoSketch := new(tipb.FMSketch)
 	if s != nil {
 		protoSketch.Mask = s.mask
-		if s.hashset != nil {
-			s.hashset.Iter(func(val uint64, _ bool) bool {
-				protoSketch.Hashset = append(protoSketch.Hashset, val)
-				return false
-			})
-		}
+		s.hashset.Iter(func(val uint64, _ bool) bool {
+			protoSketch.Hashset = append(protoSketch.Hashset, val)
+			return false
+		})
 	}
 	return protoSketch
 }
@@ -211,7 +213,7 @@ func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 	if protoSketch == nil {
 		return nil
 	}
-	sketch := NewFMSketch(0)
+	sketch := fmSketchPool.Get().(*FMSketch)
 	sketch.mask = protoSketch.Mask
 	for _, val := range protoSketch.Hashset {
 		sketch.hashset.Put(val, true)
@@ -252,17 +254,17 @@ func (s *FMSketch) MemoryUsage() (sum int64) {
 	return
 }
 
-// DestroyAndPutToPool releases the FMSketch's internal state for GC.
-// The sync.Pool was removed because swiss.Map.Clear() — called on every
-// pool return — is O(capacity) and was consuming 88% of CPU during
-// ANALYZE with many partitions. The 24-byte struct is not worth pooling
-// when the map (the real allocation) must be recreated on each reuse.
-// TODO: remove this method and have callers nil the *FMSketch directly.
+func (s *FMSketch) reset() {
+	s.hashset.Clear()
+	s.mask = 0
+	s.maxSize = 0
+}
+
+// DestroyAndPutToPool resets the FMSketch and puts it to the pool.
 func (s *FMSketch) DestroyAndPutToPool() {
 	if s == nil {
 		return
 	}
-	s.hashset = nil
-	s.mask = 0
-	s.maxSize = 0
+	s.reset()
+	fmSketchPool.Put(s)
 }
