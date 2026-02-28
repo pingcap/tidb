@@ -745,7 +745,7 @@ These APIs are only registered when the `enableTestAPI` failpoint is enabled.
 
 ### Enable
 
-Start `tidb-server` with the failpoint enabled:
+Build `tidb-server` with the failpoint enabled, then run with:
 
 ```shell
 GO_FAILPOINTS="github.com/pingcap/tidb/pkg/server/enableTestAPI=return" ./bin/tidb-server
