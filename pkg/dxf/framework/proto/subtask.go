@@ -169,5 +169,11 @@ func (s *StepResource) String() string {
 
 // MemoryPerCore returns the memory per core of the StepResource.
 func (s *StepResource) MemoryPerCore() int64 {
+	if s == nil || s.Mem == nil {
+		return 0
+	}
+	if s.CPU == nil || s.CPU.Capacity() <= 0 {
+		return s.Mem.Capacity()
+	}
 	return s.Mem.Capacity() / s.CPU.Capacity()
 }

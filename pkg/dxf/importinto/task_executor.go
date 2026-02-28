@@ -71,6 +71,8 @@ const (
 	readerMemBudgetRatio = 0.3
 )
 
+var estimateParquetReaderMemory = mydump.EstimateParquetReaderMemory
+
 // importStepExecutor is a executor for import step.
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
@@ -91,7 +93,8 @@ type importStepExecutor struct {
 	// concurrency is the number of workers to use for encode and sort.
 	// For parquet format, this is capped by memory to avoid OOM.
 	concurrency      int
-	estimateConcOnce sync.Once
+	estimateConcMu   sync.Mutex
+	estimateConcDone bool
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -197,25 +200,44 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 
 // estimateAndSetConcurrency estimates the memory usage for the data reader
 // and adjusts concurrency if needed. For parquet format, it reads the first
-// row group with a tracking allocator to measure peak memory. This should only
-// be called once.
-func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, store storeapi.Storage, chunks []importer.Chunk) {
+// row group with a tracking allocator to measure peak memory.
+// It returns whether this attempt reached a definitive outcome:
+// non-parquet input or successful estimation.
+func (s *importStepExecutor) estimateAndSetConcurrency(
+	ctx context.Context,
+	store storeapi.Storage,
+	chunks []importer.Chunk,
+) bool {
 	if len(chunks) == 0 || store == nil {
-		return
+		return false
 	}
-	// We assume all files in the same task have the same format.
-	if chunks[0].Type != mydump.SourceTypeParquet {
-		return
+	var (
+		targetChunk importer.Chunk
+		found       bool
+	)
+	// We assume all files in the same task have the same format. If there are
+	// multiple parquet chunks, sample the largest one in this subtask.
+	for _, chunk := range chunks {
+		if chunk.Type != mydump.SourceTypeParquet {
+			continue
+		}
+		if !found || chunk.FileSize > targetChunk.FileSize {
+			targetChunk = chunk
+			found = true
+		}
+	}
+	if !found {
+		return true
 	}
 
-	peakMem, err := mydump.EstimateParquetReaderMemory(ctx, store, chunks[0].Path)
+	peakMem, err := estimateParquetReaderMemory(ctx, store, targetChunk.Path)
 	if err != nil {
 		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
 			zap.Error(err))
-		return
+		return false
 	}
 	if peakMem <= 0 {
-		return
+		return true
 	}
 
 	totalMem := s.GetResource().Mem.Capacity()
@@ -232,6 +254,22 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, stor
 			zap.String("peak-mem-per-reader", units.BytesSize(float64(peakMem))),
 		)
 		s.concurrency = memBasedConcurrency
+	}
+	return true
+}
+
+func (s *importStepExecutor) maybeEstimateAndSetConcurrency(
+	ctx context.Context,
+	store storeapi.Storage,
+	chunks []importer.Chunk,
+) {
+	s.estimateConcMu.Lock()
+	defer s.estimateConcMu.Unlock()
+	if s.estimateConcDone {
+		return
+	}
+	if s.estimateAndSetConcurrency(ctx, store, chunks) {
+		s.estimateConcDone = true
 	}
 }
 
@@ -326,9 +364,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}()
 
 	// Estimate memory usage and adjust concurrency if needed (e.g. for parquet).
-	s.estimateConcOnce.Do(func() {
-		s.estimateAndSetConcurrency(ctx, s.tableImporter.GetDataStore(), subtaskMeta.Chunks)
-	})
+	s.maybeEstimateAndSetConcurrency(ctx, s.tableImporter.GetDataStore(), subtaskMeta.Chunks)
 
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))

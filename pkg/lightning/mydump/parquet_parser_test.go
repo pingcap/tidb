@@ -646,3 +646,19 @@ func TestParquetDecimalFromInt64(t *testing.T) {
 	raw := bytes.Repeat([]byte{0x7f}, 40)
 	require.ErrorIs(t, types.ErrOverflow, dec.FromParquetArray(raw, 0))
 }
+
+func TestTrackingAllocatorReallocatePreservesPrefix(t *testing.T) {
+	allocator := &trackingAllocator{}
+	buf := allocator.Allocate(8)
+	for i := range len(buf) {
+		buf[i] = byte(i + 1)
+	}
+
+	grown := allocator.Reallocate(16, buf)
+	require.Equal(t, 16, len(grown))
+	require.Equal(t, []byte{1, 2, 3, 4, 5, 6, 7, 8}, grown[:8])
+
+	shrunk := allocator.Reallocate(4, grown)
+	require.Equal(t, 4, len(shrunk))
+	require.Equal(t, []byte{1, 2, 3, 4}, shrunk)
+}

@@ -700,41 +700,69 @@ func addressOf(buf []byte) uintptr {
 // memory allocation. It's used to estimate the memory consumption of parquet
 // parser.
 type trackingAllocator struct {
+	baseAllocator     memory.Allocator
 	currentAllocation atomic.Int64
 	peakAllocation    atomic.Int64
 	allocMap          sync.Map // uintptr -> size
 }
 
-func (a *trackingAllocator) Allocate(n int) []byte {
-	b := make([]byte, n)
-	a.allocMap.Store(addressOf(b), n)
+func (a *trackingAllocator) getBaseAllocator() memory.Allocator {
+	if a.baseAllocator != nil {
+		return a.baseAllocator
+	}
+	return memory.NewGoAllocator()
+}
 
-	current := a.currentAllocation.Add(int64(n))
+func (a *trackingAllocator) updatePeak(current int64) {
 	for {
 		oldPeak := a.peakAllocation.Load()
 		if current <= oldPeak {
-			break
+			return
 		}
 		if a.peakAllocation.CompareAndSwap(oldPeak, current) {
-			break
+			return
 		}
+	}
+}
+
+func (a *trackingAllocator) Allocate(n int) []byte {
+	b := a.getBaseAllocator().Allocate(n)
+	if n > 0 {
+		a.allocMap.Store(addressOf(b), n)
+		current := a.currentAllocation.Add(int64(n))
+		a.updatePeak(current)
 	}
 	return b
 }
 
 func (a *trackingAllocator) Free(b []byte) {
+	a.getBaseAllocator().Free(b)
+
 	addr := addressOf(b)
-	v, ok := a.allocMap.Load(addr)
-	size, _ := v.(int)
-	if ok {
+	if v, ok := a.allocMap.LoadAndDelete(addr); ok {
+		size, _ := v.(int)
 		a.currentAllocation.Add(-int64(size))
-		a.allocMap.Delete(addr)
 	}
 }
 
 func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
-	a.Free(b)
-	return a.Allocate(size)
+	oldSize := len(b)
+	oldAddr := addressOf(b)
+	if oldAddr != 0 {
+		if v, ok := a.allocMap.LoadAndDelete(oldAddr); ok {
+			oldSize, _ = v.(int)
+		}
+	}
+
+	nb := a.getBaseAllocator().Reallocate(size, b)
+	if size > 0 {
+		a.allocMap.Store(addressOf(nb), size)
+	}
+	current := a.currentAllocation.Add(int64(size - oldSize))
+	if size > oldSize {
+		a.updatePeak(current)
+	}
+	return nb
 }
 
 // EstimateParquetReaderMemory estimates the peak memory usage for parsing a
@@ -750,7 +778,9 @@ func EstimateParquetReaderMemory(
 		return 0, err
 	}
 
-	allocator := &trackingAllocator{}
+	allocator := &trackingAllocator{
+		baseAllocator: memory.NewGoAllocator(),
+	}
 	parser, err := NewParquetParser(ctx, store, r, path, NewParquetFileMetaWithAllocator(allocator))
 	if err != nil {
 		_ = r.Close()
@@ -772,6 +802,7 @@ func EstimateParquetReaderMemory(
 			}
 			return 0, err
 		}
+		parser.RecycleRow(parser.LastRow())
 	}
 
 	peak := allocator.peakAllocation.Load()
