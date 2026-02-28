@@ -229,6 +229,94 @@ func TestCreateMaterializedViewLogPurgeInfoNextTimeUsesUTC(t *testing.T) {
 	)).Check(testkit.Rows("1 1 1 1"))
 }
 
+func TestAlterMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create materialized view log on t (a) purge immediate")
+
+	err := tk.ExecToErr("alter materialized view log on t purge start with 1 next now()")
+	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
+
+	err = tk.ExecToErr("alter materialized view log on t purge next 300")
+	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+
+	tk.MustExec("alter materialized view log on t purge start with now() next now()")
+}
+
+func TestAlterMaterializedViewLogPurgeUpdatesMetaAndNextTime(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 2 hour)")
+
+	getMLogMeta := func() (int64, string, string, string) {
+		is := dom.InfoSchema()
+		mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t"))
+		require.NoError(t, err)
+		require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+		return mlogTable.Meta().ID,
+			mlogTable.Meta().MaterializedViewLog.PurgeMethod,
+			mlogTable.Meta().MaterializedViewLog.PurgeStartWith,
+			mlogTable.Meta().MaterializedViewLog.PurgeNext
+	}
+
+	mlogID, purgeMethod, purgeStartWith, purgeNext := getMLogMeta()
+	require.Equal(t, "DEFERRED", purgeMethod)
+	require.Equal(t, "", purgeStartWith)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 2 HOUR)", purgeNext)
+
+	tk.MustExec("alter materialized view log on t purge start with date_add(now(), interval 40 minute) next date_add(now(), interval 20 minute)")
+	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
+	require.Equal(t, "DEFERRED", purgeMethod)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 40 MINUTE)", purgeStartWith)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 20 MINUTE)", purgeNext)
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 30 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows("1 1 1"))
+
+	tk.MustExec("alter materialized view log on t purge next date_add(now(), interval 25 minute)")
+	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
+	require.Equal(t, "DEFERRED", purgeMethod)
+	require.Equal(t, "", purgeStartWith)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", purgeNext)
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 15 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows("1 1 1"))
+
+	beforeRows := tk.MustQuery(fmt.Sprintf(
+		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Rows()
+	tk.MustExec("alter materialized view log on t purge")
+	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
+	require.Equal(t, "DEFERRED", purgeMethod)
+	require.Equal(t, "", purgeStartWith)
+	require.Equal(t, "", purgeNext)
+	afterRows := tk.MustQuery(fmt.Sprintf(
+		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Rows()
+	require.Equal(t, beforeRows, afterRows)
+
+	tk.MustExec("alter materialized view log on t purge immediate")
+	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
+	require.Equal(t, "IMMEDIATE", purgeMethod)
+	require.Equal(t, "", purgeStartWith)
+	require.Equal(t, "", purgeNext)
+	afterImmediateRows := tk.MustQuery(fmt.Sprintf(
+		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Rows()
+	require.Equal(t, afterRows, afterImmediateRows)
+
+	tk.MustExec("drop materialized view log on t")
+}
+
 func TestCreateMaterializedViewLogMetaColumnNameConflict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

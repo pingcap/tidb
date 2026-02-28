@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -35,6 +37,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"go.uber.org/zap"
 )
 
 func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateMaterializedViewStmt) error {
@@ -286,16 +289,6 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 }
 
 func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMaterializedViewStmt) error {
-	for _, action := range s.Actions {
-		switch action.Tp {
-		case ast.AlterMaterializedViewActionComment:
-		case ast.AlterMaterializedViewActionRefresh:
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW ... REFRESH is not supported")
-		default:
-			return errors.Errorf("unknown alter materialized view action type: %d", action.Tp)
-		}
-	}
-
 	is := e.infoCache.GetLatest()
 	schemaName := s.ViewName.Schema
 	if schemaName.O == "" {
@@ -305,7 +298,8 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
 		s.ViewName.Schema = schemaName
 	}
-	if _, ok := is.SchemaByName(schemaName); !ok {
+	schema, ok := is.SchemaByName(schemaName)
+	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
 	tbl, err := is.TableByName(e.ctx, schemaName, s.ViewName.Name)
@@ -314,6 +308,18 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 	}
 	if tbl.Meta().MaterializedView == nil {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name, "MATERIALIZED VIEW")
+	}
+
+	for _, action := range s.Actions {
+		switch action.Tp {
+		case ast.AlterMaterializedViewActionComment:
+		case ast.AlterMaterializedViewActionRefresh:
+			if _, _, _, err := buildMViewRefreshMeta(ctx, action.Refresh); err != nil {
+				return err
+			}
+		default:
+			return errors.Errorf("unknown alter materialized view action type: %d", action.Tp)
+		}
 	}
 
 	for _, action := range s.Actions {
@@ -332,6 +338,17 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 			if err := e.alterTable(e.ctx, ctx, alterStmt, true); err != nil {
 				return err
 			}
+		case ast.AlterMaterializedViewActionRefresh:
+			if err := e.alterMaterializedViewRefresh(
+				ctx,
+				schema.ID,
+				schemaName,
+				s.ViewName.Name,
+				tbl.Meta().ID,
+				action.Refresh,
+			); err != nil {
+				return err
+			}
 		default:
 			return errors.Errorf("unknown alter materialized view action type: %d", action.Tp)
 		}
@@ -339,8 +356,321 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 	return nil
 }
 
-func (*executor) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterializedViewLogStmt) error {
-	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG ... PURGE is not supported")
+func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.AlterMaterializedViewLogStmt) error {
+	is := e.infoCache.GetLatest()
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if ctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		s.Table.Schema = schemaName
+	}
+	schema, ok := is.SchemaByName(schemaName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+	baseTable, err := is.TableByName(e.ctx, schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+	baseTableID := baseTable.Meta().ID
+
+	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
+	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
+	if err != nil {
+		return err
+	}
+	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
+	}
+
+	for _, action := range s.Actions {
+		switch action.Tp {
+		case ast.AlterMaterializedViewLogActionPurge:
+			if _, _, _, err := buildMLogPurgeMeta(ctx, action.Purge); err != nil {
+				return err
+			}
+		default:
+			return errors.Errorf("unknown alter materialized view log action type: %d", action.Tp)
+		}
+	}
+
+	for _, action := range s.Actions {
+		switch action.Tp {
+		case ast.AlterMaterializedViewLogActionPurge:
+			if err := e.alterMaterializedViewLogPurge(
+				ctx,
+				schema.ID,
+				schemaName,
+				mlogName,
+				mlogTable.Meta().ID,
+				action.Purge,
+			); err != nil {
+				return err
+			}
+		default:
+			return errors.Errorf("unknown alter materialized view log action type: %d", action.Tp)
+		}
+	}
+	return nil
+}
+
+func (e *executor) alterMaterializedViewLogPurge(
+	ctx sessionctx.Context,
+	schemaID int64,
+	schemaName pmodel.CIStr,
+	mlogName pmodel.CIStr,
+	mlogID int64,
+	purge *ast.MLogPurgeClause,
+) error {
+	purgeMethod, purgeStartWith, purgeNext, err := buildMLogPurgeMeta(ctx, purge)
+	if err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schemaID,
+		TableID:        mlogID,
+		SchemaName:     schemaName.L,
+		TableName:      mlogName.L,
+		Type:           model.ActionAlterMaterializedViewLogPurge,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.AlterMaterializedViewLogPurgeArgs{
+		PurgeMethod:    purgeMethod,
+		PurgeStartWith: purgeStartWith,
+		PurgeNext:      purgeNext,
+	}
+	if err := e.doDDLJob2(ctx, job, args); err != nil {
+		return errors.Trace(err)
+	}
+
+	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, ctx.GetSessionVars().SQLMode)
+	defer restoreEvalSession()
+
+	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
+	ddlSess := sess.NewSession(ctx)
+	nextTime, shouldUpdateNextTime, err := deriveCreateMaterializedScheduleNextTime(
+		kctx,
+		ddlSess,
+		schemaName.O,
+		mlogName.O,
+		purgeStartWith,
+		purgeNext,
+		logAlterMaterializedViewLogPurgeNextTimeUpdateNull,
+	)
+	if err != nil {
+		return err
+	}
+	if !shouldUpdateNextTime {
+		return nil
+	}
+	return errors.Trace(e.updateMaterializedViewLogPurgeInfoNextTime(ctx, mlogID, nextTime))
+}
+
+func (e *executor) alterMaterializedViewRefresh(
+	ctx sessionctx.Context,
+	schemaID int64,
+	schemaName pmodel.CIStr,
+	viewName pmodel.CIStr,
+	mviewID int64,
+	refresh *ast.MViewRefreshClause,
+) error {
+	refreshMethod, refreshStartWith, refreshNext, err := buildMViewRefreshMeta(ctx, refresh)
+	if err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schemaID,
+		TableID:        mviewID,
+		SchemaName:     schemaName.L,
+		TableName:      viewName.L,
+		Type:           model.ActionAlterMaterializedViewRefresh,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.AlterMaterializedViewRefreshArgs{
+		RefreshMethod:    refreshMethod,
+		RefreshStartWith: refreshStartWith,
+		RefreshNext:      refreshNext,
+	}
+	if err := e.doDDLJob2(ctx, job, args); err != nil {
+		return errors.Trace(err)
+	}
+
+	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, ctx.GetSessionVars().SQLMode)
+	defer restoreEvalSession()
+
+	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
+	ddlSess := sess.NewSession(ctx)
+	nextTime, shouldUpdateNextTime, err := deriveCreateMaterializedScheduleNextTime(
+		kctx,
+		ddlSess,
+		schemaName.O,
+		viewName.O,
+		refreshStartWith,
+		refreshNext,
+		logAlterMaterializedViewRefreshNextTimeUpdateNull,
+	)
+	if err != nil {
+		return err
+	}
+	if !shouldUpdateNextTime {
+		return nil
+	}
+	return errors.Trace(e.updateMaterializedViewRefreshInfoNextTime(ctx, mviewID, nextTime))
+}
+
+func (e *executor) updateMaterializedViewRefreshInfoNextTime(
+	ctx sessionctx.Context,
+	mviewID int64,
+	nextTime *string,
+) error {
+	exec := ctx.GetRestrictedSQLExecutor()
+	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
+	rows, _, err := exec.ExecRestrictedSQL(
+		kctx,
+		nil,
+		"SELECT 1 FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? LIMIT 1",
+		mviewID,
+	)
+	if err != nil {
+		return errors.Trace(convertAlterMaterializedViewRefreshInfoTableNotExistsErr(err))
+	}
+	if len(rows) == 0 {
+		return errors.New("alter materialized view refresh: refresh info row missing in mysql.tidb_mview_refresh_info")
+	}
+
+	var nextTimeArg any
+	if nextTime != nil {
+		nextTimeArg = *nextTime
+	}
+	_, _, err = exec.ExecRestrictedSQL(
+		kctx,
+		nil,
+		"UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?",
+		nextTimeArg,
+		mviewID,
+	)
+	return errors.Trace(convertAlterMaterializedViewRefreshInfoTableNotExistsErr(err))
+}
+
+func convertAlterMaterializedViewRefreshInfoTableNotExistsErr(err error) error {
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return errors.New("alter materialized view refresh: required system table mysql.tidb_mview_refresh_info does not exist")
+	}
+	return err
+}
+
+func logAlterMaterializedViewRefreshNextTimeUpdateNull(
+	mvSchemaName string,
+	mvTableName string,
+	nullExprClause string,
+	startExpr string,
+	nextExpr string,
+) {
+	logutil.DDLLogger().Warn(
+		"alter materialized view refresh: schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", mvSchemaName),
+		zap.String("tableName", mvTableName),
+		zap.String("nullExprClause", nullExprClause),
+		zap.String("refreshStartWith", startExpr),
+		zap.String("refreshNext", nextExpr),
+	)
+}
+
+func (e *executor) updateMaterializedViewLogPurgeInfoNextTime(
+	ctx sessionctx.Context,
+	mlogID int64,
+	nextTime *string,
+) error {
+	exec := ctx.GetRestrictedSQLExecutor()
+	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
+	rows, _, err := exec.ExecRestrictedSQL(
+		kctx,
+		nil,
+		"SELECT 1 FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? LIMIT 1",
+		mlogID,
+	)
+	if err != nil {
+		return errors.Trace(convertAlterMaterializedViewLogPurgeInfoTableNotExistsErr(err))
+	}
+	if len(rows) == 0 {
+		return errors.New("alter materialized view log purge: purge info row missing in mysql.tidb_mlog_purge_info")
+	}
+
+	var nextTimeArg any
+	if nextTime != nil {
+		nextTimeArg = *nextTime
+	}
+	_, _, err = exec.ExecRestrictedSQL(
+		kctx,
+		nil,
+		"UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?",
+		nextTimeArg,
+		mlogID,
+	)
+	return errors.Trace(convertAlterMaterializedViewLogPurgeInfoTableNotExistsErr(err))
+}
+
+func convertAlterMaterializedViewLogPurgeInfoTableNotExistsErr(err error) error {
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return errors.New("alter materialized view log purge: required system table mysql.tidb_mlog_purge_info does not exist")
+	}
+	return err
+}
+
+func logAlterMaterializedViewLogPurgeNextTimeUpdateNull(
+	mlogSchemaName string,
+	mlogTableName string,
+	nullExprClause string,
+	startExpr string,
+	nextExpr string,
+) {
+	logutil.DDLLogger().Warn(
+		"alter materialized view log purge: schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+		zap.String("schemaName", mlogSchemaName),
+		zap.String("tableName", mlogTableName),
+		zap.String("nullExprClause", nullExprClause),
+		zap.String("purgeStartWith", startExpr),
+		zap.String("purgeNext", nextExpr),
+	)
+}
+
+func buildMLogPurgeMeta(sctx sessionctx.Context, purge *ast.MLogPurgeClause) (method, startWith, next string, _ error) {
+	if purge == nil {
+		return "", "", "", nil
+	}
+	if purge.Immediate {
+		return "IMMEDIATE", "", "", nil
+	}
+
+	method = "DEFERRED"
+	if purge.StartWith != nil {
+		s, err := BuildAndValidateMViewScheduleExpr(sctx, purge.StartWith, "PURGE START WITH")
+		if err != nil {
+			return "", "", "", err
+		}
+		startWith = s
+	}
+	if purge.Next != nil {
+		s, err := BuildAndValidateMViewScheduleExpr(sctx, purge.Next, "PURGE NEXT")
+		if err != nil {
+			return "", "", "", err
+		}
+		next = s
+	}
+	return method, startWith, next, nil
 }
 
 func buildMViewRefreshMeta(sctx sessionctx.Context, refresh *ast.MViewRefreshClause) (method, startWith, next string, _ error) {
