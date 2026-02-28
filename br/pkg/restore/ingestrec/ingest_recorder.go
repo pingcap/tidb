@@ -247,3 +247,71 @@ func (i *IngestRecorder) IterateForeignKeys(f func(*ForeignKeyRecord) error) err
 	}
 	return nil
 }
+
+// RecorderState is a serializable snapshot of ingest recorder data.
+type RecorderState struct {
+	Items map[int64]map[int64]IndexState `json:"items,omitempty"`
+}
+
+// IndexState is a minimal representation of an ingested index.
+type IndexState struct {
+	IsPrimary bool `json:"is_primary,omitempty"`
+}
+
+// ExportState returns a snapshot of the ingest recorder state.
+func (i *IngestRecorder) ExportState() *RecorderState {
+	if i == nil || len(i.items) == 0 {
+		return nil
+	}
+	state := &RecorderState{
+		Items: make(map[int64]map[int64]IndexState, len(i.items)),
+	}
+	for tableID, indexes := range i.items {
+		if len(indexes) == 0 {
+			continue
+		}
+		tableIndexes := make(map[int64]IndexState, len(indexes))
+		for indexID, info := range indexes {
+			if info == nil {
+				continue
+			}
+			tableIndexes[indexID] = IndexState{IsPrimary: info.IsPrimary}
+		}
+		if len(tableIndexes) > 0 {
+			state.Items[tableID] = tableIndexes
+		}
+	}
+	if len(state.Items) == 0 {
+		return nil
+	}
+	return state
+}
+
+// MergeState merges a snapshot into the ingest recorder.
+func (i *IngestRecorder) MergeState(state *RecorderState) {
+	if i == nil || state == nil || len(state.Items) == 0 {
+		return
+	}
+	if i.items == nil {
+		i.items = make(map[int64]map[int64]*IngestIndexInfo)
+	}
+	for tableID, indexes := range state.Items {
+		if len(indexes) == 0 {
+			continue
+		}
+		tableIndexes, exists := i.items[tableID]
+		if !exists {
+			tableIndexes = make(map[int64]*IngestIndexInfo, len(indexes))
+			i.items[tableID] = tableIndexes
+		}
+		for indexID, info := range indexes {
+			if _, ok := tableIndexes[indexID]; ok {
+				continue
+			}
+			tableIndexes[indexID] = &IngestIndexInfo{
+				IsPrimary: info.IsPrimary,
+				Updated:   false,
+			}
+		}
+	}
+}

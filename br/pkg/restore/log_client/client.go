@@ -1008,14 +1008,6 @@ type FullBackupStorageConfig struct {
 	Opts    *storeapi.Options
 }
 
-type GetIDMapConfig struct {
-	// required
-	LoadSavedIDMap bool
-
-	// optional
-	TableMappingManager *stream.TableMappingManager
-}
-
 // GetBaseIDMapAndMerge get the id map from following ways
 // 1. from previously saved id map if the same task has been running and built/saved id map already but failed later
 // 2. from previous different task. A PiTR job might be split into multiple runs/tasks and each task only restores
@@ -1025,20 +1017,22 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	hasFullBackupStorageConfig,
 	loadSavedIDMap bool,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-	tableMappingManager *stream.TableMappingManager,
-) error {
+) (*SegmentedPiTRState, error) {
 	var (
-		err        error
-		dbMaps     []*backuppb.PitrDBMap
-		dbReplaces map[stream.UpstreamID]*stream.DBReplace
+		err    error
+		state  *SegmentedPiTRState
+		dbMaps []*backuppb.PitrDBMap
 	)
 
 	// this is a retry, id map saved last time, load it from external storage
 	if loadSavedIDMap {
 		log.Info("try to load previously saved pitr id maps")
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.restoreTS, logCheckpointMetaManager)
+		state, err = rc.loadSegmentedPiTRState(ctx, rc.restoreTS, logCheckpointMetaManager, true)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
+		}
+		if state != nil {
+			dbMaps = state.DbMaps
 		}
 	}
 
@@ -1046,28 +1040,25 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
+		state, err = rc.loadSegmentedPiTRState(ctx, rc.startTS, logCheckpointMetaManager, false)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		err := rc.validateNoTiFlashReplica()
-		if err != nil {
-			return errors.Trace(err)
+		if state != nil {
+			dbMaps = state.DbMaps
+		}
+		if len(dbMaps) > 0 {
+			if err := rc.validateNoTiFlashReplica(); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 
 	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Error("no id maps found")
-		return errors.New("no base id map found from saved id or last restored PiTR")
+		return nil, errors.New("no base id map found from saved id or last restored PiTR")
 	}
-	dbReplaces = stream.FromDBMapProto(dbMaps)
-
-	stream.LogDBReplaceMap("base db replace info", dbReplaces)
-	if len(dbReplaces) != 0 {
-		tableMappingManager.SetFromPiTRIDMap()
-		tableMappingManager.MergeBaseDBReplace(dbReplaces)
-	}
-	return nil
+	return state, nil
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
@@ -1979,14 +1970,14 @@ func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
 
 func (rc *LogClient) SaveIdMapWithFailPoints(
 	ctx context.Context,
-	manager *stream.TableMappingManager,
+	state *SegmentedPiTRState,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
 	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
 	})
 
-	if err := rc.saveIDMap(ctx, manager, logCheckpointMetaManager); err != nil {
+	if err := rc.SaveSegmentedPiTRState(ctx, state, logCheckpointMetaManager); err != nil {
 		return errors.Trace(err)
 	}
 
