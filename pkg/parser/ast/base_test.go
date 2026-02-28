@@ -33,6 +33,7 @@ func TestNodeSetText(t *testing.T) {
 		{"你好", nil, "你好", "你好"},
 		{"\xd2\xbb", charset.EncodingGBKImpl, "一", "\xd2\xbb"},
 		{"\xc1\xd0", charset.EncodingGBKImpl, "列", "\xc1\xd0"},
+		{"\xd2\xe4\xa6\xb8\xc1\xf3\xe5\xd7", charset.EncodingUTF8Impl, `\xd2䦸\xc1\xf3\xe5\xd7`, "\xd2\xe4\xa6\xb8\xc1\xf3\xe5\xd7"},
 	}
 	for _, tt := range tests {
 		n.SetText(tt.enc, tt.text)

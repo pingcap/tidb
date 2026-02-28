@@ -370,6 +370,31 @@ func TestStmtSummaryPreparedStatements(t *testing.T) {
 		where digest_text like "select ?"`).Check(testkit.Rows("1"))
 }
 
+func TestStmtSummaryBinaryValues(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 binary(16) not null primary key)")
+	tk.MustExec("insert into t1 values (0xd2e4a6b8c1f3e5d7a9b2c4d6e8f1a3b5)")
+
+	tk.MustQuery("select * from t1 where c1 = '\xd2\xe4\xa6\xb8\xc1\xf3\xe5\xd7\xa9\xb2\xc4\xd6\xe8\xf1\xa3\xb5'")
+
+	rows := tk.MustQuery("select query_sample_text from information_schema.statements_summary " +
+		"where digest_text like 'select * from `t1` where%'").Rows()
+	require.Len(t, rows, 1)
+	sampleText := rows[0][0].(string)
+	// Verify the invalid UTF-8 bytes are preserved as \xNN hex escapes rather
+	// than being replaced by '?'.
+	require.NotContains(t, sampleText, "?")
+}
+
 func TestStmtSummarySensitiveQuery(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
