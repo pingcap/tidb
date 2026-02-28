@@ -574,18 +574,18 @@ func (m *Mutator) checkPolicyNotExists(policyKey []byte) error {
 	return errors.Trace(err)
 }
 
-func (m *Mutator) checkMaskingPolicyExists(policyKey []byte) error {
+func (m *Mutator) checkMaskingPolicyExists(policyID int64, policyKey []byte) error {
 	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
 	if err == nil && v == nil {
-		err = ErrMaskingPolicyNotExists
+		err = ErrMaskingPolicyNotExists.GenWithStack("masking policy id : %d doesn't exist", policyID)
 	}
 	return errors.Trace(err)
 }
 
-func (m *Mutator) checkMaskingPolicyNotExists(policyKey []byte) error {
+func (m *Mutator) checkMaskingPolicyNotExists(policyID int64, policyKey []byte) error {
 	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
 	if err == nil && v != nil {
-		err = ErrMaskingPolicyExists
+		err = ErrMaskingPolicyExists.GenWithStack("masking policy id : %d already exists", policyID)
 	}
 	return errors.Trace(err)
 }
@@ -663,7 +663,7 @@ func (m *Mutator) CreateMaskingPolicy(policy *model.MaskingPolicyInfo) error {
 	}
 
 	policyKey := m.maskingPolicyKey(policy.ID)
-	if err := m.checkMaskingPolicyNotExists(policyKey); err != nil {
+	if err := m.checkMaskingPolicyNotExists(policy.ID, policyKey); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -693,7 +693,7 @@ func (m *Mutator) UpdatePolicy(policy *model.PolicyInfo) error {
 func (m *Mutator) UpdateMaskingPolicy(policy *model.MaskingPolicyInfo) error {
 	policyKey := m.maskingPolicyKey(policy.ID)
 
-	if err := m.checkMaskingPolicyExists(policyKey); err != nil {
+	if err := m.checkMaskingPolicyExists(policy.ID, policyKey); err != nil {
 		return errors.Trace(err)
 	}
 
