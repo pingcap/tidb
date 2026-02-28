@@ -716,16 +716,14 @@ func (hp *hintParser) parseQueryTypeHint(name string) []*ast.TableOptimizerHint 
 	}
 	qb := hp.parseQBName()
 	tok := hp.next()
-	var qtName string
 	switch tok.tp {
-	case hintOLAP:
-		qtName = "OLAP"
-	case hintOLTP:
-		qtName = "OLTP"
+	case hintOLAP, hintOLTP:
+		// use original case from input (yacc $1 preserves ident)
 	default:
 		hp.skipToCloseParen()
 		return nil
 	}
+	qtName := tok.ident
 	if _, ok := hp.expect(')'); !ok {
 		hp.skipToCloseParen()
 		return nil
@@ -906,16 +904,14 @@ func (hp *hintParser) parseStorageHint(name string) []*ast.TableOptimizerHint {
 	var results []*ast.TableOptimizerHint
 	for {
 		storeTok := hp.next()
-		var storeName string
 		switch storeTok.tp {
-		case hintTiKV:
-			storeName = "TIKV"
-		case hintTiFlash:
-			storeName = "TIFLASH"
+		case hintTiKV, hintTiFlash:
+			// use original case from input (yacc $1 preserves ident)
 		default:
 			hp.skipToCloseParen()
 			return results
 		}
+		storeName := storeTok.ident
 
 		h := &ast.TableOptimizerHint{
 			HintName: ast.NewCIStr(name),
