@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -29,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/stretchr/testify/require"
@@ -858,4 +861,27 @@ func TestSelectWhereInvalidDSTTime(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'"))
+}
+
+func TestSysSessionTxnIsolationNotPollutedByAlterUserAndSetPassword(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create user 'u1'@'%' identified by 'p1'")
+	// Ensure the global default isolation is different from the hard-coded RC used by the buggy code path,
+	// so this test can reliably fail before the fix.
+	tk.MustExec("set global tx_isolation = 'REPEATABLE-READ'")
+
+	expected := tk.MustQuery("select @@global.tx_isolation").Rows()[0][0].(string)
+	var callCount int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/checkUserMgmtSysSessionTxnIsolationBeforePut", func(ctx context.Context, sctx sessionctx.Context) {
+		atomic.AddInt32(&callCount, 1)
+		actual, err := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, vardef.TxnIsolation)
+		require.NoError(t, err)
+		require.Equal(t, expected, actual)
+	})
+
+	tk.MustExec("alter user 'u1'@'%' identified by 'p2'")
+	tk.MustExec("set password for 'u1'@'%' = 'p3'")
+	require.Equal(t, int32(2), atomic.LoadInt32(&callCount))
 }
