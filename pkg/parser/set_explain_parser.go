@@ -427,7 +427,7 @@ func (p *HandParser) parseSetConfig() ast.StmtNode {
 		return nil
 	}
 
-	p.expect(eq)
+	p.expectAny(eq, assignmentEq)
 
 	// Parse Value
 	stmt.Value = p.parseExpression(precNone)

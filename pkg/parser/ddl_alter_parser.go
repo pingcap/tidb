@@ -277,11 +277,7 @@ func (p *HandParser) parsePartitionDef(partType ast.PartitionType) *ast.Partitio
 							p.error(p.peek().Offset, "invalid expression in partition value")
 							return nil
 						}
-						// Check for NULL explicitly
-						if v, ok := expr.(ast.ValueExpr); ok && v.GetValue() == nil {
-							p.errs = append(p.errs, ErrNullInValuesLessThan.GenWithStackByArgs())
-							return nil
-						}
+						// NULL in VALUES LESS THAN is validated by DDL layer, not parser.
 					}
 					clause.Exprs = append(clause.Exprs, expr)
 					if _, ok := p.accept(','); !ok {

@@ -156,8 +156,8 @@ func (p *HandParser) parseWindowSpec() ast.WindowSpec {
 
 	p.expect('(') // consume '('
 
-	// Optional window reference name
-	if p.peek().Tp == identifier && p.peekN(1).Tp != by {
+	// Optional window reference name (yacc: OptExistingWindowName)
+	if isIdentLike(p.peek().Tp) && p.peekN(1).Tp != by && p.peek().Tp != partition && p.peek().Tp != order && p.peek().Tp != rangeKwd && p.peek().Tp != rows && p.peek().Tp != groups {
 		spec.Ref = ast.NewCIStr(p.next().Lit)
 	}
 

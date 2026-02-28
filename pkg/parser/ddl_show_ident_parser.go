@@ -35,6 +35,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	case "ENGINES":
 		p.next()
 		stmt.Tp = ast.ShowEngines
+		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case "COLLATION":
 		p.next()
@@ -119,6 +120,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	case "SESSION_STATES":
 		p.next()
 		stmt.Tp = ast.ShowSessionStates
+		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case "BINDINGS":
 		p.next()
@@ -261,6 +263,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 	case "HISTOGRAMS_IN_FLIGHT":
 		p.next()
 		stmt.Tp = ast.ShowHistogramsInFlight
+		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case "COLUMN_STATS_USAGE":
 		p.next()
@@ -295,6 +298,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		// parser.y: ShowTargetFilterable → "AFFINITY" → ShowStmt{Tp: ShowAffinity}
 		p.next()
 		stmt.Tp = ast.ShowAffinity
+		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case "IMPORTS":
 		// SHOW IMPORTS — ShowImports is the correct AST constant for this path
