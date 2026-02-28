@@ -1851,7 +1851,11 @@ func evalFromUnixTime(ctx EvalContext, fsp int, unixTimeStamp *types.MyDecimal) 
 
 	tc := typeCtx(ctx)
 	tmp := time.Unix(integralPart, fractionalPart).In(tc.Location())
-	t, err := convertTimeToMysqlTime(tmp, fsp, types.ModeHalfUp)
+	truncateMode := types.ModeHalfUp
+	if ctx.SQLMode().HasTimeTruncateFractional() {
+		truncateMode = types.ModeTruncate
+	}
+	t, err := convertTimeToMysqlTime(tmp, fsp, truncateMode)
 	if err != nil {
 		return res, true, err
 	}
