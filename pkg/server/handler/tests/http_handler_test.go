@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -810,6 +811,7 @@ func TestDeleteKeyHandler(t *testing.T) {
 		require.NoError(t, err)
 
 		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
 			_, err := txn.Get(ctx, encodedKey)
 			return err
 		})
@@ -821,6 +823,7 @@ func TestDeleteKeyHandler(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 
 		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
 			_, err := txn.Get(ctx, encodedKey)
 			return err
 		})
