@@ -99,6 +99,31 @@ func TestEncoding(t *testing.T) {
 	}
 }
 
+func TestEncodingHexReplace(t *testing.T) {
+	enc := charset.FindEncoding(charset.CharsetUTF8MB4)
+
+	// Test that OpDecodeHexReplace preserves invalid bytes as \xNN hex
+	// escapes while OpDecodeReplace replaces them with '?'.
+	hexReplaceCases := []struct {
+		input            string
+		replaceResult    string // OpDecodeReplace: invalid bytes become '?'
+		hexReplaceResult string // OpDecodeHexReplace: invalid bytes become \xNN
+	}{
+		{"\xd2\xe4\xa6\xb8", "?䦸", `\xd2䦸`},
+		{"\xa9\xb2\xc4\xd6", "????", `\xa9\xb2\xc4\xd6`},
+		{"\x41\xd2\x42\xa6", "A?B?", `A\xd2B\xa6`},
+		{"\xd2\xe4\xa6\xb8\xc1\xf3\xe5\xd7", "?䦸????", `\xd2䦸\xc1\xf3\xe5\xd7`},
+	}
+	for _, tc := range hexReplaceCases {
+		cmt := fmt.Sprintf("input=%x", tc.input)
+		replaceResult, _ := enc.Transform(nil, []byte(tc.input), charset.OpDecodeReplace)
+		hexReplaceResult, _ := enc.Transform(nil, []byte(tc.input), charset.OpDecodeHexReplace)
+
+		require.Equal(t, tc.replaceResult, string(replaceResult), cmt)
+		require.Equal(t, tc.hexReplaceResult, string(hexReplaceResult), cmt)
+	}
+}
+
 func TestEncodingValidate(t *testing.T) {
 	oxfffefd := string([]byte{0xff, 0xfe, 0xfd})
 	testCases := []struct {
