@@ -164,7 +164,11 @@ func (p *HandParser) parseCaseExpr() ast.ExprNode {
 		node.Value = p.parseExpression(precNone)
 	}
 
-	// WHEN clauses.
+	// WHEN clauses — yacc WhenClauseList requires at least one.
+	if p.peek().Tp != when {
+		p.syntaxErrorAt(p.peek())
+		return nil
+	}
 	for {
 		if _, ok := p.accept(when); !ok {
 			break

@@ -109,7 +109,17 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.parseTableOptionUint(opt, ast.TableOptionAutoIncrement)
 	case autoRandomBase:
 		p.parseTableOptionUint(opt, ast.TableOptionAutoRandomBase)
-	case comment, connection, password, encryption, engine_attribute, secondaryEngineAttribute:
+	case engine_attribute:
+		// Yacc: ENGINE_ATTRIBUTE = StringName (accepts stringLit | Identifier)
+		p.next()
+		p.accept(eq)
+		opt.Tp = ast.TableOptionEngineAttribute
+		if tok, ok := p.accept(stringLit); ok {
+			opt.StrValue = tok.Lit
+		} else if tok, ok := p.expectIdentLike(); ok {
+			opt.StrValue = tok.Lit
+		}
+	case comment, connection, password, encryption, secondaryEngineAttribute:
 		isEncryption := p.peek().Tp == encryption
 		var optTp ast.TableOptionType
 		switch p.peek().Tp {
@@ -121,8 +131,6 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			optTp = ast.TableOptionPassword
 		case encryption:
 			optTp = ast.TableOptionEncryption
-		case engine_attribute:
-			optTp = ast.TableOptionEngineAttribute
 		default:
 			optTp = ast.TableOptionSecondaryEngineAttribute
 		}
@@ -357,25 +365,15 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.next()
 		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsBuckets
-		if _, ok := p.accept(defaultKwd); ok {
-			opt.Default = true
-		} else if tok, ok := p.expect(intLit); ok {
+		if tok, ok := p.expect(intLit); ok {
 			opt.UintValue = tokenItemToUint64(tok.Item)
-		} else {
-			p.error(tok.Offset, "STATS_BUCKETS requires an integer value")
-			return nil
 		}
 	case statsTopN:
 		p.next()
 		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsTopN
-		if _, ok := p.accept(defaultKwd); ok {
-			opt.Default = true
-		} else if tok, ok := p.expect(intLit); ok {
+		if tok, ok := p.expect(intLit); ok {
 			opt.UintValue = tokenItemToUint64(tok.Item)
-		} else {
-			p.error(tok.Offset, "STATS_TOPN requires an integer value")
-			return nil
 		}
 	case statsSampleRate:
 		p.next()
