@@ -61,8 +61,10 @@ const (
 	// Notice that for V1 the partition id is still in the value part as well,
 	// for decreasing the risk of issues changing the read code path for various index reads.
 	GlobalIndexVersionV1 uint8 = 1
-	// GlobalIndexVersionV2 is the next, not yet implemented format (version 2) where partition ID
-	// is encoded in the key ONLY!
+	// GlobalIndexVersionV2 is the format (version 2) where partition ID is encoded in the key ONLY
+	// for non-unique global indexes on non-clustered tables. The partition ID is NOT stored in the
+	// value, reducing storage overhead since the partition ID can be extracted from the key when
+	// needed. This is the preferred format for new global indexes.
 	GlobalIndexVersionV2 uint8 = 2
 )
 
@@ -261,7 +263,7 @@ type IndexInfo struct {
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
 	// 0=legacy, or unique with all NOT NULL columns, or clustered.
 	// 1=v1 with partition ID in key and value.
-	// 2=v2 with partition ID in key only (TODO).
+	// 2=v2 with partition ID in key only.
 	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
 }
 

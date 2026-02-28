@@ -344,7 +344,7 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int, columnarIndexType m
 }
 
 // Set global index version for new global indexes.
-// Version 1 is needed for non-clustered tables to prevent collisions after
+// Version 2 is needed for non-clustered tables to prevent collisions after
 // EXCHANGE PARTITION due to duplicate _tidb_rowid values.
 // For non-unique indexes, the handle is always encoded in the key.
 // For unique indexes with NULL values, the handle is also encoded in the key
@@ -363,7 +363,7 @@ func setGlobalIndexVersion(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 			}
 		}
 		if needPartitionInKey {
-			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
+			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV2
 			failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
 				if valInt, ok := val.(int); ok {
 					idxInfo.GlobalIndexVersion = uint8(valInt)

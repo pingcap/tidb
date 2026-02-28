@@ -1331,6 +1331,9 @@ func BuildTableInfo(
 
 	// This pre-scan is necessary because index building in the main loop may need to check
 	// tbInfo.HasClusteredIndex() before the PRIMARY KEY constraint is fully processed.
+	// It intentionally duplicates the clustered-index detection in the main loop below
+	// (which also handles additional PK validation) so that GlobalIndexVersion can be
+	// determined correctly for indexes processed before the PK constraint is reached.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintPrimaryKey {
 			isSingleIntPK := isSingleIntPKFromTableInfo(constr, tbInfo)
