@@ -1048,6 +1048,72 @@ func onModifyTableComment(jobCtx *jobContext, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
+func onAlterMaterializedViewRefresh(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetAlterMaterializedViewRefreshArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if tblInfo.MaterializedView == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, job.TableName, "MATERIALIZED VIEW")
+	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return ver, nil
+	}
+
+	tblInfo.MaterializedView.RefreshMethod = args.RefreshMethod
+	tblInfo.MaterializedView.RefreshStartWith = args.RefreshStartWith
+	tblInfo.MaterializedView.RefreshNext = args.RefreshNext
+
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onAlterMaterializedViewLogPurge(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetAlterMaterializedViewLogPurgeArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if tblInfo.MaterializedViewLog == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, job.TableName, "MATERIALIZED VIEW LOG")
+	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return ver, nil
+	}
+
+	tblInfo.MaterializedViewLog.PurgeMethod = args.PurgeMethod
+	tblInfo.MaterializedViewLog.PurgeStartWith = args.PurgeStartWith
+	tblInfo.MaterializedViewLog.PurgeNext = args.PurgeNext
+
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func onModifyTableCharsetAndCollate(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyTableCharsetAndCollateArgs(job)
 	if err != nil {

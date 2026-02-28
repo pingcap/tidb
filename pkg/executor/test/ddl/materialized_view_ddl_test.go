@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -265,6 +266,87 @@ func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 
 	tk.MustExec("create materialized view mv_ok (a, s, cnt) refresh fast start with now() next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustExec("drop materialized view mv_ok")
+	tk.MustExec("drop materialized view log on t")
+}
+
+func TestAlterMaterializedViewRefreshExprTypeValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view mv_ok (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+
+	err := tk.ExecToErr("alter materialized view mv_ok refresh next 300")
+	require.ErrorContains(t, err, "REFRESH NEXT expression must return DATETIME/TIMESTAMP")
+
+	err = tk.ExecToErr("alter materialized view mv_ok refresh start with 1 next now()")
+	require.ErrorContains(t, err, "REFRESH START WITH expression must return DATETIME/TIMESTAMP")
+
+	tk.MustExec("alter materialized view mv_ok refresh start with now() next now()")
+	tk.MustExec("drop materialized view mv_ok")
+	tk.MustExec("drop materialized view log on t")
+}
+
+func TestAlterMaterializedViewRefreshUpdatesMetaAndNextTime(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 2 hour) as select a, sum(b), count(1) from t group by a")
+
+	getMViewMeta := func() (int64, *model.MaterializedViewInfo) {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+		require.NoError(t, err)
+		require.NotNil(t, mvTable.Meta().MaterializedView)
+		return mvTable.Meta().ID, mvTable.Meta().MaterializedView
+	}
+
+	mviewID, mvInfo := getMViewMeta()
+	require.Equal(t, "FAST", mvInfo.RefreshMethod)
+	require.Equal(t, "", mvInfo.RefreshStartWith)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 2 HOUR)", mvInfo.RefreshNext)
+
+	tk.MustExec("alter materialized view mv refresh start with date_add(now(), interval 40 minute) next date_add(now(), interval 20 minute)")
+	_, mvInfo = getMViewMeta()
+	require.Equal(t, "FAST", mvInfo.RefreshMethod)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 40 MINUTE)", mvInfo.RefreshStartWith)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 20 MINUTE)", mvInfo.RefreshNext)
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 30 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mviewID,
+	)).Check(testkit.Rows("1 1 1"))
+
+	tk.MustExec("alter materialized view mv refresh next date_add(now(), interval 25 minute)")
+	_, mvInfo = getMViewMeta()
+	require.Equal(t, "FAST", mvInfo.RefreshMethod)
+	require.Equal(t, "", mvInfo.RefreshStartWith)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", mvInfo.RefreshNext)
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 15 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mviewID,
+	)).Check(testkit.Rows("1 1 1"))
+
+	beforeRows := tk.MustQuery(fmt.Sprintf(
+		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mviewID,
+	)).Rows()
+	tk.MustExec("alter materialized view mv refresh")
+	_, mvInfo = getMViewMeta()
+	require.Equal(t, "FAST", mvInfo.RefreshMethod)
+	require.Equal(t, "", mvInfo.RefreshStartWith)
+	require.Equal(t, "", mvInfo.RefreshNext)
+	afterRows := tk.MustQuery(fmt.Sprintf(
+		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		mviewID,
+	)).Rows()
+	require.Equal(t, beforeRows, afterRows)
+
+	tk.MustExec("drop materialized view mv")
 	tk.MustExec("drop materialized view log on t")
 }
 
