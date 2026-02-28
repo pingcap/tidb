@@ -595,7 +595,7 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 		if !ok {
 			continue
 		}
-		switch agg.F {
+		switch strings.ToLower(agg.F) {
 		case ast.AggFuncCount:
 			if len(agg.Args) != 1 {
 				return nil, false, errors.New("COUNT must have exactly one argument for mvmerge stage-1")
