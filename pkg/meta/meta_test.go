@@ -131,18 +131,19 @@ func TestMaskingPolicy(t *testing.T) {
 
 	m := meta.NewMutator(txn)
 	policy := &model.MaskingPolicyInfo{
-		ID:           1,
-		Name:         ast.NewCIStr("mp1"),
-		DBName:       ast.NewCIStr("test"),
-		TableName:    ast.NewCIStr("t"),
-		TableID:      10,
-		ColumnName:   ast.NewCIStr("c"),
-		ColumnID:     11,
-		Expression:   "mask_full(c)",
-		Status:       model.MaskingPolicyStatusEnable,
-		FunctionType: model.MaskingPolicyFuncTypeFull,
-		CreatedBy:    "root@%",
-		State:        model.StatePublic,
+		ID:          1,
+		Name:        ast.NewCIStr("mp1"),
+		SchemaName:  ast.NewCIStr("test"),
+		TableName:   ast.NewCIStr("t"),
+		TableID:     10,
+		ColumnName:  ast.NewCIStr("c"),
+		ColumnID:    11,
+		MaskingType: model.MaskingPolicyTypeMaskFull,
+		Expression:  "mask_full(c)",
+		Status:      model.MaskingPolicyStatusEnabled,
+		CreatedBy:   "root@%",
+		UpdatedBy:   "root@%",
+		State:       model.StatePublic,
 	}
 	err = m.CreateMaskingPolicy(policy)
 	require.NoError(t, err)
@@ -157,7 +158,7 @@ func TestMaskingPolicy(t *testing.T) {
 	require.Equal(t, policy, val)
 
 	policy.Expression = "mask_partial(c, 0, 2, '*')"
-	policy.Status = model.MaskingPolicyStatusDisable
+	policy.Status = model.MaskingPolicyStatusDisabled
 	err = m.UpdateMaskingPolicy(policy)
 	require.NoError(t, err)
 
