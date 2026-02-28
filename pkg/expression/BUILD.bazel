@@ -195,7 +195,6 @@ go_test(
         "collation_test.go",
         "column_test.go",
         "constant_test.go",
-        "deep_copy_test.go",
         "distsql_builtin_test.go",
         "evaluator_test.go",
         "expr_to_pb_test.go",
