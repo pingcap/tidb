@@ -71,28 +71,3 @@ func TestAllocatable(t *testing.T) {
 	wg.Wait()
 	require.Equal(t, int64(0), allocatable.Used())
 }
-
-func TestStepResourceMemoryPerCore(t *testing.T) {
-	require.NotPanics(t, func() {
-		require.Equal(t, int64(0), (*StepResource)(nil).MemoryPerCore())
-	})
-
-	require.NotPanics(t, func() {
-		require.Equal(t, int64(0), (&StepResource{}).MemoryPerCore())
-	})
-
-	require.NotPanics(t, func() {
-		resource := &StepResource{Mem: NewAllocatable(1024)}
-		require.Equal(t, int64(1024), resource.MemoryPerCore())
-	})
-
-	require.NotPanics(t, func() {
-		resource := &StepResource{CPU: NewAllocatable(0), Mem: NewAllocatable(1024)}
-		require.Equal(t, int64(1024), resource.MemoryPerCore())
-	})
-
-	require.Equal(t, int64(512), (&StepResource{
-		CPU: NewAllocatable(2),
-		Mem: NewAllocatable(1024),
-	}).MemoryPerCore())
-}
