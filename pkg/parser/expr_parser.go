@@ -413,6 +413,43 @@ func (p *HandParser) parseLiteral() ast.ExprNode {
 	}
 }
 
+// parseSignedLiteral parses the yacc SignedLiteral production:
+//
+//	SignedLiteral: Literal | '+' NumLiteral | '-' NumLiteral
+//
+// Literal includes: FALSE, NULL, TRUE, intLit, floatLit, decLit, stringLit,
+// UNDERSCORE_CHARSET stringLit, hexLit, bitLit.
+// NumLiteral includes: intLit, floatLit, decLit.
+func (p *HandParser) parseSignedLiteral() ast.ExprNode {
+	tok := p.peek()
+	switch tok.Tp {
+	case '+', '-':
+		p.next()
+		numTok := p.peek()
+		if numTok.Tp != intLit && numTok.Tp != floatLit && numTok.Tp != decLit {
+			p.syntaxErrorAt(numTok)
+			return nil
+		}
+		val := p.newValueExpr(p.next().Item)
+		if tok.Tp == '+' {
+			return &ast.UnaryOperationExpr{Op: opcode.Plus, V: val}
+		}
+		return &ast.UnaryOperationExpr{Op: opcode.Minus, V: val}
+	case null:
+		p.next()
+		return p.newValueExpr(nil)
+	case trueKwd, falseKwd:
+		return p.newValueExpr(p.next().Tp == trueKwd)
+	case underscoreCS:
+		return p.parseCharsetIntroducer()
+	case intLit, floatLit, decLit, stringLit, hexLit, bitLit:
+		return p.parseLiteral()
+	default:
+		p.syntaxErrorAt(tok)
+		return nil
+	}
+}
+
 // parseIdentOrFuncCall parses an identifier, which may be a column name
 // or a function call (if followed by '(').
 func (p *HandParser) parseIdentOrFuncCall() ast.ExprNode {

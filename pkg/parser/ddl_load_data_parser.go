@@ -92,13 +92,13 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 		}
 	}
 
-	// IGNORE n LINES
+	// IGNORE n LINES — yacc requires LINES keyword
 	if p.peekKeyword(ignore, "IGNORE") {
 		m := p.mark()
 		p.next()
 		if p.peek().Tp == intLit {
 			stmt.IgnoreLines = uptr(p.parseUint64())
-			p.accept(lines)
+			p.expect(lines)
 		} else {
 			p.restore(m)
 		}

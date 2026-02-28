@@ -624,7 +624,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 				var opt ast.AlterJobOption
 				opt.Name = strings.ToLower(p.next().Lit)
 				p.expectAny(eq, assignmentEq)
-				opt.Value = p.parseExpression(precNone)
+				opt.Value = p.parseSignedLiteral()
 				if opt.Value == nil {
 					return nil
 				}
