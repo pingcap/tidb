@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -27,9 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,7 +55,14 @@ func TestAlterThreadRightAfterJobFinish(t *testing.T) {
 		if !updated && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
 			updated = true
 			tk2 := testkit.NewTestKit(t, store)
-			tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 1", job.ID))
+			rs, err := tk2.Exec(fmt.Sprintf("admin alter ddl jobs %d thread = 1", job.ID))
+			if rs != nil {
+				closeErr := rs.Close()
+				if err == nil {
+					err = closeErr
+				}
+			}
+			assert.NoError(t, err)
 		}
 	})
 	var pipeClosed atomic.Bool
@@ -106,13 +116,20 @@ func TestAlterJobOnDXF(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
 		reader, writer := pipe.GetReaderAndWriter()
-		require.EqualValues(t, 4, reader.GetWorkerPoolSize())
-		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
+		readerPoolSize, writerPoolSize := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
+		assert.Truef(t,
+			(readerPoolSize == 4 && writerPoolSize == 6) || // avgRowSize not available
+				(readerPoolSize == 4 && writerPoolSize == 8) || // small avgRowSize
+				(readerPoolSize == 8 && writerPoolSize == 8), // medium avgRowSize
+			"unexpected pipeline worker pool size: reader=%d writer=%d",
+			readerPoolSize,
+			writerPoolSize,
+		)
 	})
 	var finishedSubtasks int
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(be *local.Backend) {
 		finishedSubtasks++
-		require.EqualValues(t, 1024, be.GetWriteSpeedLimit())
+		assert.EqualValues(t, 1024, be.GetWriteSpeedLimit())
 	})
 	var modified atomic.Bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterDetectAndHandleParamModify", func(_ proto.Step) {
@@ -121,14 +138,44 @@ func TestAlterJobOnDXF(t *testing.T) {
 	var once sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(reorgMeta *model.DDLReorgMeta) {
 		once.Do(func() {
+			execSQL := func(tk *testkit.TestKit, sql string, args ...any) error {
+				rs, err := tk.Exec(sql, args...)
+				if rs != nil {
+					closeErr := rs.Close()
+					if err == nil {
+						err = closeErr
+					}
+				}
+				return err
+			}
+			queryRows := func(tk *testkit.TestKit, sql string, args ...any) ([][]string, error) {
+				rs, err := tk.Exec(sql, args...)
+				if err != nil {
+					if rs != nil {
+						_ = rs.Close()
+					}
+					return nil, err
+				}
+				return session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+			}
+
 			tk1 := testkit.NewTestKit(t, store)
-			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
-			require.Len(t, rows, 1)
-			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256, max_write_speed=1024", rows[0][0]))
-			require.Eventually(t, func() bool {
+			rows, err := queryRows(tk1, "select job_id from mysql.tidb_ddl_job")
+			if !assert.NoError(t, err) {
+				return
+			}
+			if !assert.Len(t, rows, 1) {
+				return
+			}
+			if !assert.NoError(t, execSQL(tk1, fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256, max_write_speed=1024", rows[0][0]))) {
+				return
+			}
+			if !assert.Eventually(t, func() bool {
 				return modified.Load()
-			}, 20*time.Second, 100*time.Millisecond)
-			require.Equal(t, 256, reorgMeta.GetBatchSize())
+			}, 20*time.Second, 100*time.Millisecond) {
+				return
+			}
+			assert.Equal(t, 256, reorgMeta.GetBatchSize())
 		})
 	})
 	tk.MustExec("alter table t1 add index idx(a);")
