@@ -1399,9 +1399,8 @@ func (b *executorBuilder) buildMVDeltaMerge(v *plannercore.MVDeltaMerge) exec.Ex
 		return nil
 	}
 	targetInfo := mvTable.Meta()
-	targetHandleCols, err := buildMVDeltaMergeTargetHandleCols(targetInfo)
-	if err != nil {
-		b.err = err
+	if v.MVTablePKCols == nil {
+		b.err = errors.New("MVDeltaMerge target handle cols is nil")
 		return nil
 	}
 
@@ -1422,49 +1421,10 @@ func (b *executorBuilder) buildMVDeltaMerge(v *plannercore.MVDeltaMerge) exec.Ex
 		DeltaAggColCount:     deltaAggColCount,
 		TargetTable:          mvTable,
 		TargetInfo:           targetInfo,
-		TargetHandleCols:     targetHandleCols,
+		TargetHandleCols:     v.MVTablePKCols,
 		MinMaxRecompute:      nil,
 		TargetWritableColIDs: nil,
 	}
-}
-
-func buildMVDeltaMergeTargetHandleCols(targetInfo *model.TableInfo) (plannerutil.HandleCols, error) {
-	if targetInfo == nil {
-		return nil, errors.New("MVDeltaMerge target table info is nil")
-	}
-
-	if targetInfo.PKIsHandle {
-		pkCol := targetInfo.GetPkColInfo()
-		if pkCol == nil {
-			return nil, errors.New("MVDeltaMerge target table reports PKIsHandle but primary key column is nil")
-		}
-		return plannerutil.NewIntHandleCols(&expression.Column{
-			Index:   pkCol.Offset,
-			RetType: &pkCol.FieldType,
-			ID:      pkCol.ID,
-		}), nil
-	}
-
-	if targetInfo.IsCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(targetInfo)
-		if pkIdx == nil {
-			return nil, errors.New("MVDeltaMerge target table reports IsCommonHandle but primary index is nil")
-		}
-		tblCols := make([]*expression.Column, len(targetInfo.Columns))
-		for i := range targetInfo.Columns {
-			colInfo := targetInfo.Columns[i]
-			tblCols[i] = &expression.Column{
-				Index:   i,
-				RetType: &colInfo.FieldType,
-				ID:      colInfo.ID,
-			}
-		}
-		return plannerutil.NewCommonHandleCols(targetInfo, pkIdx, tblCols), nil
-	}
-
-	return nil, errors.New(
-		"MVDeltaMerge fast refresh requires target materialized view primary key to be table handle",
-	)
 }
 
 func buildMVDeltaMergeAggMappings(

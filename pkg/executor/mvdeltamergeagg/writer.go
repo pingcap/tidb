@@ -74,9 +74,9 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 		return nil, errors.Errorf("TargetWritableColIDs size %d does not match target writable columns %d", len(colIDs), len(writableCols))
 	}
 	for i := 0; i < e.TargetHandleCols.NumCols(); i++ {
-		handleDatumIdx := e.TargetHandleCols.GetCol(i).Index
-		if handleDatumIdx < 0 || handleDatumIdx >= len(writableCols) {
-			return nil, errors.Errorf("TargetHandleCols col index %d out of writable datum range [0,%d)", handleDatumIdx, len(writableCols))
+		handleInputIdx := e.TargetHandleCols.GetCol(i).Index
+		if handleInputIdx < 0 || handleInputIdx >= len(childTypes) {
+			return nil, errors.Errorf("TargetHandleCols col index %d out of input range [0,%d)", handleInputIdx, len(childTypes))
 		}
 	}
 
@@ -168,7 +168,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 			w.buildUpdateRows(result, op.RowIdx)
 			updateOrdinal := int(op.updateOrdinal)
 			w.buildTouchedFromBitmap(result.UpdateTouchedBitmap, result.UpdateTouchedStride, updateOrdinal)
-			handle, err := w.exec.TargetHandleCols.BuildHandleByDatums(stmtCtx, w.oldRow)
+			handle, err := w.exec.TargetHandleCols.BuildHandle(stmtCtx, result.Input.GetRow(op.RowIdx))
 			if err != nil {
 				return err
 			}
@@ -177,7 +177,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 			}
 		case RowOpDelete:
 			w.buildDeleteRow(result, op.RowIdx)
-			handle, err := w.exec.TargetHandleCols.BuildHandleByDatums(stmtCtx, w.oldRow)
+			handle, err := w.exec.TargetHandleCols.BuildHandle(stmtCtx, result.Input.GetRow(op.RowIdx))
 			if err != nil {
 				return err
 			}
