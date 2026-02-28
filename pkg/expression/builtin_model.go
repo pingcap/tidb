@@ -258,12 +258,18 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 	}
 	argCount := len(b.getArgs()) - 2
 	argCols := make([]*chunk.Column, argCount)
+	allocated := make([]*chunk.Column, 0, argCount)
+	defer func() {
+		for _, col := range allocated {
+			b.bufAllocator.put(col)
+		}
+	}()
 	for i := range argCount {
 		col, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(col)
+		allocated = append(allocated, col)
 		if err := b.getArgs()[i+2].VecEvalReal(ctx, input, col); err != nil {
 			return err
 		}
