@@ -59,14 +59,17 @@ type MVService struct {
 
 	mh Helper
 
-	fetchInterval         time.Duration
-	basicInterval         time.Duration
-	serverRefreshInterval time.Duration
+	fetchInterval            time.Duration
+	basicInterval            time.Duration
+	serverRefreshInterval    time.Duration
+	historyGCIntervalMillis  atomic.Int64
+	historyGCRetentionMillis atomic.Int64
+	lastHistoryGCMillis      atomic.Int64
 
-	retryBaseDelayNanos atomic.Int64
-	retryMaxDelayNanos  atomic.Int64
-	backpressureMu      sync.RWMutex
-	backpressureCfg     TaskBackpressureConfig
+	retryBaseDelayMillis atomic.Int64
+	retryMaxDelayMillis  atomic.Int64
+	backpressureMu       sync.RWMutex
+	backpressureCfg      TaskBackpressureConfig
 
 	metrics struct {
 		mvCount                atomic.Int64
@@ -92,6 +95,8 @@ const (
 	defaultMVFetchInterval       = 30 * time.Second
 	defaultMVBasicInterval       = time.Second
 	defaultServerRefreshInterval = 5 * time.Second
+	defaultMVHistoryGCInterval   = time.Hour
+	defaultMVHistoryGCRetention  = 7 * 24 * time.Hour
 	defaultMVTaskRetryBase       = 10 * time.Second
 	defaultMVTaskRetryMax        = 120 * time.Second
 	maxNextScheduleTs            = 9e18
@@ -103,6 +108,8 @@ const (
 
 	mvFetchTypeMLogPurge    = "fetch_mlog"
 	mvFetchTypeMViewRefresh = "fetch_mviews"
+
+	mvTaskDurationTypeHistoryGC = "history_gc"
 
 	mvDurationResultSuccess = "success"
 	mvDurationResultFailed  = "failed"
@@ -117,6 +124,9 @@ const (
 	mvRunEventFetchMLogErr       = "fetch_mlog_error"
 	mvRunEventFetchMViewOK       = "fetch_mviews_ok"
 	mvRunEventFetchMViewErr      = "fetch_mviews_error"
+	mvRunEventHistoryGCGetTSOErr = "history_gc_get_tso_error"
+
+	mvHistoryGCOwnerKey = "mv-history-gc"
 )
 
 type mv struct {
@@ -569,6 +579,47 @@ func resetTimer(timer *mvsTimer, delay time.Duration) {
 	timer.Reset(delay)
 }
 
+func (t *MVService) shouldRunMVHistoryGC(now time.Time) bool {
+	historyGCInterval, _ := t.GetHistoryGCConfig()
+	if historyGCInterval <= 0 {
+		return false
+	}
+	last := t.lastHistoryGCMillis.Load()
+	if last <= 0 {
+		return true
+	}
+	return now.Sub(mvsUnixMilli(last)) >= historyGCInterval
+}
+
+func (t *MVService) maybeGCMVHistory(now time.Time) {
+	if !t.shouldRunMVHistoryGC(now) {
+		return
+	}
+	if !t.sch.AvailableString(mvHistoryGCOwnerKey) {
+		return
+	}
+	// Throttle retries by interval even when GC fails.
+	t.lastHistoryGCMillis.Store(now.UnixMilli())
+	startAt := mvsNow()
+	result := mvDurationResultSuccess
+	defer func() {
+		t.mh.observeTaskDuration(mvTaskDurationTypeHistoryGC, result, mvsSince(startAt))
+	}()
+
+	currentTSO, err := t.mh.GetCurrentTSO(t.ctx, t.sysSessionPool)
+	if err != nil {
+		result = mvDurationResultFailed
+		t.mh.observeRunEvent(mvRunEventHistoryGCGetTSOErr)
+		return
+	}
+	_, historyGCRetention := t.GetHistoryGCConfig()
+	cutoffTSO := calcTSOBeforeDuration(currentTSO, historyGCRetention)
+	if err := t.mh.PurgeMVHistoryBeforeTSO(t.ctx, t.sysSessionPool, cutoffTSO); err != nil {
+		result = mvDurationResultFailed
+		return
+	}
+}
+
 // NotifyDDLChange marks MV metadata as dirty and wakes the service loop.
 func (t *MVService) NotifyDDLChange() {
 	t.ddlDirty.Store(true)
@@ -591,11 +642,11 @@ func (t *MVService) Run() {
 	}
 	t.executor.Run()
 	timer := mvsNewTimer(0)
-	metricTimer := mvsNewTimer(t.basicInterval)
+	maintenanceTimer := mvsNewTimer(t.basicInterval)
 
 	defer func() {
 		timer.Stop()
-		metricTimer.Stop()
+		maintenanceTimer.Stop()
 		t.executor.Close()
 		t.mh.reportMetrics(t)
 	}()
@@ -603,11 +654,11 @@ func (t *MVService) Run() {
 	lastSrvRefresh := time.Time{}
 	for {
 		ddlDirty := false
+		maintenanceTick := false
 		select {
 		case <-timer.C:
-		case <-metricTimer.C:
-			t.mh.reportMetrics(t)
-			resetTimer(metricTimer, t.basicInterval)
+		case <-maintenanceTimer.C:
+			maintenanceTick = true
 		case <-t.notifier.C:
 			t.notifier.clear()
 			ddlDirty = t.ddlDirty.Swap(false)
@@ -616,6 +667,11 @@ func (t *MVService) Run() {
 		}
 
 		now := mvsNow()
+		if maintenanceTick {
+			t.mh.reportMetrics(t)
+			t.maybeGCMVHistory(now)
+			resetTimer(maintenanceTimer, t.basicInterval)
+		}
 
 		if now.Sub(lastSrvRefresh) >= t.serverRefreshInterval {
 			if err := t.sch.refresh(); err != nil {

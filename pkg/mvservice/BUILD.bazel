@@ -14,6 +14,7 @@ go_library(
         "task_handler.go",
         "time_proxy.go",
         "time_proxy_intest.go",  #keep
+        "tso_utils.go",
         "utils.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/mvservice",
@@ -33,6 +34,7 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/sqlexec",
         "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -55,6 +57,7 @@ go_test(
         "//pkg/ddl/notifier",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/core/resolve",

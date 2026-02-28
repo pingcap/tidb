@@ -503,6 +503,26 @@ func TestMVServiceUpdateConfigs(t *testing.T) {
 		err = svc.SetRetryDelayConfig(10*time.Second, 2*time.Second)
 		require.Error(t, err)
 	})
+
+	t.Run("history_gc", func(t *testing.T) {
+		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+
+		interval, retention := svc.GetHistoryGCConfig()
+		require.Equal(t, defaultMVHistoryGCInterval, interval)
+		require.Equal(t, defaultMVHistoryGCRetention, retention)
+
+		err := svc.SetHistoryGCConfig(2*time.Hour, 14*24*time.Hour)
+		require.NoError(t, err)
+
+		interval, retention = svc.GetHistoryGCConfig()
+		require.Equal(t, 2*time.Hour, interval)
+		require.Equal(t, 14*24*time.Hour, retention)
+
+		err = svc.SetHistoryGCConfig(0, 7*24*time.Hour)
+		require.Error(t, err)
+		err = svc.SetHistoryGCConfig(time.Hour, 0)
+		require.Error(t, err)
+	})
 }
 
 func TestTaskQueueRingBufferFIFO(t *testing.T) {

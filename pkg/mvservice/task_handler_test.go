@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -39,12 +40,14 @@ import (
 )
 
 const (
-	testSQLFetchMVLogPurge   = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
-	testSQLFetchMVRefresh    = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
-	testSQLRefreshMV         = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
-	testSQLFindMVNextTime    = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
-	testSQLPurgeMVLog        = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
-	testSQLFindPurgeNextTime = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLFetchMVLogPurge               = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVRefresh                = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLRefreshMV                     = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
+	testSQLFindMVNextTime                = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLPurgeMVLog                    = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
+	testSQLFindPurgeNextTime             = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
+	testSQLDeleteMVRefreshHistBeforeTSO  = `DELETE FROM mysql.tidb_mview_refresh_hist WHERE REFRESH_JOB_ID < %?`
+	testSQLDeleteMVLogPurgeHistBeforeTSO = `DELETE FROM mysql.tidb_mlog_purge_hist WHERE PURGE_JOB_ID < %?`
 )
 
 var (
@@ -76,6 +79,19 @@ type recordingSessionContext struct {
 	executedRestrictedArg [][]any
 	restrictedRows        map[string][]chunk.Row
 	restrictedErrs        map[string]error
+}
+
+type mockCurrentVersionStore struct {
+	*mock.Store
+	version kv.Version
+	err     error
+}
+
+func (s *mockCurrentVersionStore) CurrentVersion(string) (kv.Version, error) {
+	if s.err != nil {
+		return kv.Version{}, s.err
+	}
+	return s.version, nil
 }
 
 func newRecordingSessionContext() *recordingSessionContext {
@@ -182,16 +198,21 @@ func (mockTaskHandlerServerHelper) getAllServerInfo(context.Context) (map[string
 
 type mockMVServiceHelper struct {
 	mockTaskHandlerServerHelper
-	refreshNext    time.Time
-	purgeNext      time.Time
-	refreshErr     error
-	purgeErr       error
-	fetchLogs      map[int64]*mvLog
-	fetchViews     map[int64]*mv
-	fetchLogsErr   error
-	fetchViewsErr  error
-	fetchLogsCalls atomic.Int32
-	fetchViewCalls atomic.Int32
+	refreshNext            time.Time
+	purgeNext              time.Time
+	refreshErr             error
+	purgeErr               error
+	currentTSO             uint64
+	currentTSOErr          error
+	historyGCErr           error
+	fetchLogs              map[int64]*mvLog
+	fetchViews             map[int64]*mv
+	fetchLogsErr           error
+	fetchViewsErr          error
+	fetchLogsCalls         atomic.Int32
+	fetchViewCalls         atomic.Int32
+	historyGCCalls         atomic.Int32
+	lastHistoryGCCutoffTSO atomic.Uint64
 
 	lastRefreshID int64
 	lastPurgeID   int64
@@ -226,6 +247,22 @@ func (m *mockMVServiceHelper) fetchAllTiDBMVRefresh(context.Context, basic.Sessi
 		return nil, m.fetchViewsErr
 	}
 	return m.fetchViews, nil
+}
+
+func (m *mockMVServiceHelper) GetCurrentTSO(context.Context, basic.SessionPool) (uint64, error) {
+	if m.currentTSOErr != nil {
+		return 0, m.currentTSOErr
+	}
+	if m.currentTSO == 0 {
+		return 1, nil
+	}
+	return m.currentTSO, nil
+}
+
+func (m *mockMVServiceHelper) PurgeMVHistoryBeforeTSO(_ context.Context, _ basic.SessionPool, cutoffTSO uint64) error {
+	m.historyGCCalls.Add(1)
+	m.lastHistoryGCCutoffTSO.Store(cutoffTSO)
+	return m.historyGCErr
 }
 
 func (*mockMVServiceHelper) reportMetrics(*MVService) {}
@@ -354,6 +391,140 @@ func TestMVServiceNotifyDDLChangeTriggersFetch(t *testing.T) {
 			helper.runEventCount(mvRunEventFetchMLogOK) > 0 &&
 			helper.runEventCount(mvRunEventFetchMViewOK) > 0
 	}, time.Second, 20*time.Millisecond)
+}
+
+func TestMVServiceMaintenanceTimerTriggersHistoryGC(t *testing.T) {
+	module := installMockTimeForTest(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	helper := &mockMVServiceHelper{
+		currentTSO: 1 << 40,
+		fetchLogs:  map[int64]*mvLog{},
+		fetchViews: map[int64]*mv{},
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.BasicInterval = time.Second
+	cfg.FetchInterval = 24 * time.Hour
+	svc := NewMVService(ctx, mockSessionPool{}, helper, cfg)
+	svc.lastRefresh.Store(mvsNow().UnixMilli())
+	svc.lastHistoryGCMillis.Store(mvsNow().UnixMilli())
+
+	done := make(chan struct{})
+	go func() {
+		svc.Run()
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	require.Equal(t, int32(0), helper.historyGCCalls.Load())
+	require.Eventually(t, func() bool {
+		return helper.runEventCount(mvRunEventServerRefreshOK) > 0
+	}, time.Second, 10*time.Millisecond)
+
+	module.Advance(defaultMVHistoryGCInterval + cfg.BasicInterval)
+	require.Eventually(t, func() bool {
+		return helper.historyGCCalls.Load() > 0
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, calcTSOBeforeDuration(helper.currentTSO, defaultMVHistoryGCRetention), helper.lastHistoryGCCutoffTSO.Load())
+	require.Eventually(t, func() bool {
+		return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess) > 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestMVServiceMaybeGCMVHistorySkipsWhenNotOwner(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		currentTSO: 1 << 40,
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.ServerConsistentHashReplicas = 1
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+	svc.lastHistoryGCMillis.Store(mvsNow().Add(-defaultMVHistoryGCInterval).UnixMilli())
+
+	svc.sch.mu.Lock()
+	svc.sch.ID = "nodeA"
+	svc.sch.chash.hashFunc = mustHash(map[string]uint32{
+		"nodeA#0":           10,
+		"nodeB#0":           30,
+		mvHistoryGCOwnerKey: 20,
+	})
+	svc.sch.servers = map[string]serverInfo{
+		"nodeA": {ID: "nodeA"},
+		"nodeB": {ID: "nodeB"},
+	}
+	svc.sch.chash.Rebuild(svc.sch.servers)
+	svc.sch.mu.Unlock()
+
+	svc.maybeGCMVHistory(mvsNow())
+	require.Equal(t, int32(0), helper.historyGCCalls.Load())
+	require.Equal(t, 0, helper.runEventCount(mvRunEventHistoryGCGetTSOErr))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed))
+}
+
+func TestMVServiceMaybeGCMVHistoryReportsMetrics(t *testing.T) {
+	installMockTimeForTest(t)
+
+	setupOwner := func(svc *MVService) {
+		svc.lastHistoryGCMillis.Store(mvsNow().Add(-defaultMVHistoryGCInterval).UnixMilli())
+		svc.sch.mu.Lock()
+		svc.sch.ID = "nodeA"
+		svc.sch.chash.hashFunc = mustHash(map[string]uint32{
+			"nodeA#0":           10,
+			"nodeB#0":           30,
+			mvHistoryGCOwnerKey: 5,
+		})
+		svc.sch.servers = map[string]serverInfo{
+			"nodeA": {ID: "nodeA"},
+			"nodeB": {ID: "nodeB"},
+		}
+		svc.sch.chash.Rebuild(svc.sch.servers)
+		svc.sch.mu.Unlock()
+	}
+
+	t.Run("success", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSO: 1 << 40}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setupOwner(svc)
+
+		svc.maybeGCMVHistory(mvsNow())
+		require.Equal(t, int32(1), helper.historyGCCalls.Load())
+		require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess))
+	})
+
+	t.Run("get_tso_error", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSOErr: errors.New("get tso failed")}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setupOwner(svc)
+
+		svc.maybeGCMVHistory(mvsNow())
+		require.Equal(t, int32(0), helper.historyGCCalls.Load())
+		require.Equal(t, 1, helper.runEventCount(mvRunEventHistoryGCGetTSOErr))
+		require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed))
+	})
+
+	t.Run("purge_error", func(t *testing.T) {
+		helper := &mockMVServiceHelper{
+			currentTSO:   1 << 40,
+			historyGCErr: errors.New("purge failed"),
+		}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setupOwner(svc)
+
+		svc.maybeGCMVHistory(mvsNow())
+		require.Equal(t, int32(1), helper.historyGCCalls.Load())
+		require.Equal(t, 1, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed))
+	})
 }
 
 func TestMVServiceMarkFetchFailureRetryCadence(t *testing.T) {
@@ -828,6 +999,51 @@ func TestServerHelperFetchAllTiDBMVRefresh(t *testing.T) {
 	require.Equal(t, expect102, m102.nextRefresh)
 	require.Equal(t, expect102.UnixMilli(), m102.orderTs)
 	require.Equal(t, int64(0), int64(m102.refreshInterval))
+}
+
+func TestServerHelperGetCurrentTSO(t *testing.T) {
+	installMockTimeForTest(t)
+	se := newRecordingSessionContext()
+	se.Store = &mockCurrentVersionStore{
+		Store:   &mock.Store{},
+		version: kv.NewVersion(123456),
+	}
+	pool := recordingSessionPool{se: se}
+
+	got, err := (&serviceHelper{}).GetCurrentTSO(context.Background(), pool)
+	require.NoError(t, err)
+	require.Equal(t, uint64(123456), got)
+}
+
+func TestServerHelperGetCurrentTSOInvalidVersion(t *testing.T) {
+	installMockTimeForTest(t)
+	se := newRecordingSessionContext()
+	se.Store = &mockCurrentVersionStore{
+		Store:   &mock.Store{},
+		version: kv.NewVersion(0),
+	}
+	pool := recordingSessionPool{se: se}
+
+	_, err := (&serviceHelper{}).GetCurrentTSO(context.Background(), pool)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid version")
+}
+
+func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
+	installMockTimeForTest(t)
+	se := newRecordingSessionContext()
+	pool := recordingSessionPool{se: se}
+	cutoff := uint64(987654321)
+
+	err := (&serviceHelper{}).PurgeMVHistoryBeforeTSO(context.Background(), pool, cutoff)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		testSQLDeleteMVRefreshHistBeforeTSO,
+		testSQLDeleteMVLogPurgeHistBeforeTSO,
+	}, se.executedRestrictedSQL)
+	require.Len(t, se.executedRestrictedArg, 2)
+	require.Equal(t, []any{cutoff}, se.executedRestrictedArg[0])
+	require.Equal(t, []any{cutoff}, se.executedRestrictedArg[1])
 }
 
 func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {

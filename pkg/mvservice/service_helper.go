@@ -152,7 +152,7 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 		return time.Time{}, err
 	}
 	defer sysSessionPool.Put(se)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	sctx := se.(sessionctx.Context)
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
@@ -226,7 +226,7 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	}
 	defer sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	if mvLogID <= 0 {
 		return time.Time{}, errors.New("materialized view log id is invalid")
@@ -277,6 +277,44 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	}
 	nextPurge = mvsUnix(rows[0].GetInt64(0), 0)
 	return nextPurge, nil
+}
+
+// GetCurrentTSO fetches current cluster TSO from TiDB.
+func (*serviceHelper) GetCurrentTSO(_ context.Context, sysSessionPool basic.SessionPool) (uint64, error) {
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return 0, err
+	}
+	defer sysSessionPool.Put(se)
+	sctx := se.(sessionctx.Context)
+	store := sctx.GetStore()
+	if store == nil {
+		return 0, errors.New("get current tso failed: store is nil")
+	}
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return 0, err
+	}
+	if ver.Ver == 0 {
+		return 0, errors.New("get current tso failed: invalid version")
+	}
+	return ver.Ver, nil
+}
+
+// PurgeMVHistoryBeforeTSO removes old records from MV history tables.
+func (*serviceHelper) PurgeMVHistoryBeforeTSO(ctx context.Context, sysSessionPool basic.SessionPool, cutoffTSO uint64) error {
+	const (
+		deleteMVRefreshHistSQL  = `DELETE FROM mysql.tidb_mview_refresh_hist WHERE REFRESH_JOB_ID < %?`
+		deleteMVLogPurgeHistSQL = `DELETE FROM mysql.tidb_mlog_purge_hist WHERE PURGE_JOB_ID < %?`
+	)
+	params := []any{cutoffTSO}
+	if _, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, deleteMVRefreshHistSQL, params); err != nil {
+		return err
+	}
+	if _, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, deleteMVLogPurgeHistSQL, params); err != nil {
+		return err
+	}
+	return nil
 }
 
 // fetchAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
@@ -349,7 +387,7 @@ func execRCRestrictedSQLWithSessionPool(ctx context.Context, sysSessionPool basi
 		return nil, err
 	}
 	defer sysSessionPool.Put(se)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	return execRCRestrictedSQL(ctx, se.(sessionctx.Context), sql, params)
 }
 

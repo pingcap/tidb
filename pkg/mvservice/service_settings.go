@@ -117,6 +117,8 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper Helper, cfg 
 		basicInterval:         cfg.BasicInterval,
 		serverRefreshInterval: cfg.ServerRefreshInterval,
 	}
+	mgr.historyGCIntervalMillis.Store(defaultMVHistoryGCInterval.Milliseconds())
+	mgr.historyGCRetentionMillis.Store(defaultMVHistoryGCRetention.Milliseconds())
 	def := DefaultMVServiceConfig()
 	if err := mgr.SetRetryDelayConfig(cfg.RetryBaseDelay, cfg.RetryMaxDelay); err != nil {
 		logutil.BgLogger().Warn("invalid MV service retry config, fallback to defaults",
@@ -154,11 +156,14 @@ func (t *MVService) SetRetryDelayConfig(baseDelay, maxDelay time.Duration) error
 	if baseDelay <= 0 || maxDelay <= 0 {
 		return fmt.Errorf("retry delay must be positive")
 	}
+	if baseDelay < time.Millisecond || maxDelay < time.Millisecond {
+		return fmt.Errorf("retry delay must be at least 1ms")
+	}
 	if baseDelay > maxDelay {
 		return fmt.Errorf("retry base delay must be less than or equal to max delay")
 	}
-	t.retryBaseDelayNanos.Store(int64(baseDelay))
-	t.retryMaxDelayNanos.Store(int64(maxDelay))
+	t.retryBaseDelayMillis.Store(baseDelay.Milliseconds())
+	t.retryMaxDelayMillis.Store(maxDelay.Milliseconds())
 	return nil
 }
 
@@ -167,8 +172,8 @@ func (t *MVService) GetRetryDelayConfig() (baseDelay, maxDelay time.Duration) {
 	if t == nil {
 		return defaultMVTaskRetryBase, defaultMVTaskRetryMax
 	}
-	baseDelay = time.Duration(t.retryBaseDelayNanos.Load())
-	maxDelay = time.Duration(t.retryMaxDelayNanos.Load())
+	baseDelay = time.Duration(t.retryBaseDelayMillis.Load()) * time.Millisecond
+	maxDelay = time.Duration(t.retryMaxDelayMillis.Load()) * time.Millisecond
 	if baseDelay <= 0 {
 		baseDelay = defaultMVTaskRetryBase
 	}
@@ -220,6 +225,44 @@ func (t *MVService) GetTaskBackpressureConfig() TaskBackpressureConfig {
 // SetTaskBackpressureController sets the task backpressure controller.
 func (t *MVService) SetTaskBackpressureController(controller TaskBackpressureController) {
 	t.executor.SetBackpressureController(controller)
+}
+
+// SetHistoryGCConfig sets history GC interval and retention config.
+func (t *MVService) SetHistoryGCConfig(interval, retention time.Duration) error {
+	if t == nil {
+		return fmt.Errorf("mv service is nil")
+	}
+	if interval <= 0 {
+		return fmt.Errorf("history gc interval must be positive")
+	}
+	if retention <= 0 {
+		return fmt.Errorf("history gc retention must be positive")
+	}
+	if interval < time.Millisecond {
+		return fmt.Errorf("history gc interval must be at least 1ms")
+	}
+	if retention < time.Millisecond {
+		return fmt.Errorf("history gc retention must be at least 1ms")
+	}
+	t.historyGCIntervalMillis.Store(interval.Milliseconds())
+	t.historyGCRetentionMillis.Store(retention.Milliseconds())
+	return nil
+}
+
+// GetHistoryGCConfig returns history GC interval and retention config.
+func (t *MVService) GetHistoryGCConfig() (interval, retention time.Duration) {
+	if t == nil {
+		return defaultMVHistoryGCInterval, defaultMVHistoryGCRetention
+	}
+	interval = time.Duration(t.historyGCIntervalMillis.Load()) * time.Millisecond
+	retention = time.Duration(t.historyGCRetentionMillis.Load()) * time.Millisecond
+	if interval <= 0 {
+		interval = defaultMVHistoryGCInterval
+	}
+	if retention <= 0 {
+		retention = defaultMVHistoryGCRetention
+	}
+	return interval, retention
 }
 
 // calcRetryDelay computes exponential backoff with an upper bound.

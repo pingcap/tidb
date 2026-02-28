@@ -36,6 +36,8 @@ const (
 
 	mvServiceTaskFailRetryBaseDelayFormField = "task_fail_retry_base_delay"
 	mvServiceTaskFailRetryMaxDelayFormField  = "task_fail_retry_max_delay"
+	mvServiceHistoryGCIntervalFormField      = "history_gc_interval"
+	mvServiceHistoryGCRetentionFormField     = "history_gc_retention"
 )
 
 // MVServiceSettingsHandler is the handler for runtime MV service settings.
@@ -57,6 +59,9 @@ type mvServiceRuntimeSettingsAccessor interface {
 
 	GetRetryDelayConfig() (baseDelay, maxDelay time.Duration)
 	SetRetryDelayConfig(baseDelay, maxDelay time.Duration) error
+
+	GetHistoryGCConfig() (interval, retention time.Duration)
+	SetHistoryGCConfig(interval, retention time.Duration) error
 }
 
 type mvServiceRuntimeSettings struct {
@@ -67,6 +72,9 @@ type mvServiceRuntimeSettings struct {
 
 	retryBase time.Duration
 	retryMax  time.Duration
+
+	historyGCInterval  time.Duration
+	historyGCRetention time.Duration
 }
 
 type settingsFieldUpdater func(form url.Values, settings *mvServiceRuntimeSettings) (changed bool, err error)
@@ -94,6 +102,12 @@ var mvServiceSettingsFieldUpdaters = []settingsFieldUpdater{
 	newDurationSettingsFieldUpdater(mvServiceTaskFailRetryMaxDelayFormField, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
 		settings.retryMax = v
 	}),
+	newDurationSettingsFieldUpdater(mvServiceHistoryGCIntervalFormField, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+		settings.historyGCInterval = v
+	}),
+	newDurationSettingsFieldUpdater(mvServiceHistoryGCRetentionFormField, nil, func(settings *mvServiceRuntimeSettings, v time.Duration) {
+		settings.historyGCRetention = v
+	}),
 }
 
 // MVServiceSettingsResponse is MV service runtime settings response.
@@ -105,6 +119,8 @@ type MVServiceSettingsResponse struct {
 	BackpressureDelay        string  `json:"backpressure_delay"`
 	RetryBaseDelay           string  `json:"retry_base_delay"`
 	RetryMaxDelay            string  `json:"retry_max_delay"`
+	HistoryGCInterval        string  `json:"history_gc_interval"`
+	HistoryGCRetention       string  `json:"history_gc_retention"`
 }
 
 // ServeHTTP handles request of get/update MV service settings.
@@ -176,12 +192,15 @@ func loadMVServiceRuntimeSettings(mvService mvServiceRuntimeSettingsAccessor) mv
 	maxConcurrency, timeout := mvService.GetTaskExecConfig()
 	backpressureCfg := mvService.GetTaskBackpressureConfig()
 	retryBase, retryMax := mvService.GetRetryDelayConfig()
+	historyGCInterval, historyGCRetention := mvService.GetHistoryGCConfig()
 	return mvServiceRuntimeSettings{
-		maxConcurrency:  maxConcurrency,
-		timeout:         timeout,
-		backpressureCfg: backpressureCfg,
-		retryBase:       retryBase,
-		retryMax:        retryMax,
+		maxConcurrency:     maxConcurrency,
+		timeout:            timeout,
+		backpressureCfg:    backpressureCfg,
+		retryBase:          retryBase,
+		retryMax:           retryMax,
+		historyGCInterval:  historyGCInterval,
+		historyGCRetention: historyGCRetention,
 	}
 }
 
@@ -195,6 +214,8 @@ func writeMVServiceSettingsResponse(w http.ResponseWriter, settings mvServiceRun
 		BackpressureDelay:        settings.backpressureCfg.Delay.String(),
 		RetryBaseDelay:           settings.retryBase.String(),
 		RetryMaxDelay:            settings.retryMax.String(),
+		HistoryGCInterval:        settings.historyGCInterval.String(),
+		HistoryGCRetention:       settings.historyGCRetention.String(),
 	})
 }
 
@@ -301,5 +322,8 @@ func applyMVServiceSettings(mvService mvServiceRuntimeSettingsAccessor, settings
 	if err := mvService.SetTaskBackpressureConfig(settings.backpressureCfg); err != nil {
 		return err
 	}
-	return mvService.SetRetryDelayConfig(settings.retryBase, settings.retryMax)
+	if err := mvService.SetRetryDelayConfig(settings.retryBase, settings.retryMax); err != nil {
+		return err
+	}
+	return mvService.SetHistoryGCConfig(settings.historyGCInterval, settings.historyGCRetention)
 }
