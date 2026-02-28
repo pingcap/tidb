@@ -266,14 +266,14 @@ create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
 insert into t1 value('测试'),('测试  '),('xxx ');
 explain format = brief select *,length(a) from t1 where a like '测试 %';
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
+Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#4
 └─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试!"), keep order:false, stats:pseudo
 explain format = brief select *,length(a) from t1 where a like '测试';
 id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
+Projection	10.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#4
 └─UnionScan	10.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
   └─IndexReader	10.00	root		index:Selection
     └─Selection	10.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
@@ -298,14 +298,14 @@ create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
 insert into t2 value('测试'),('测试  ');
 explain format = brief select *,length(a) from t2 where a like '测试 %';
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+Projection	250.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#4
 └─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%!"), keep order:false, stats:pseudo
 explain format = brief select *,length(a) from t2 where a like '测试';
 id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+Projection	10.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#4
 └─UnionScan	10.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
   └─IndexReader	10.00	root		index:Selection
     └─Selection	10.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
@@ -654,14 +654,14 @@ set tidb_executor_concurrency = 1;
 set tidb_window_concurrency = 100;
 explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
 id	estRows	task	access object	operator info
-Sort_15	20000.00	root		Column#8, Column#9, Column#10
+Sort_15	20000.00	root		Column#10, Column#11, Column#12
 └─Union_18	20000.00	root		
-  ├─Projection_20	10000.00	root		test.t2.cc2->Column#8, test.t2.cc2->Column#9, test.t2.cc1->Column#10
+  ├─Projection_20	10000.00	root		test.t2.cc2->Column#10, test.t2.cc2->Column#11, test.t2.cc1->Column#12
   │ └─TableReader_22	10000.00	root		data:TableFullScan_21
   │   └─TableFullScan_21	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─Projection_23	10000.00	root		cast(Column#7, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8, test.t1.cc2->Column#9, test.t1.cc1->Column#10
+  └─Projection_23	10000.00	root		cast(Column#9, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#10, test.t1.cc2->Column#11, test.t1.cc1->Column#12
     └─Shuffle_28	10000.00	root		execution info: concurrency:100, data sources:[TableReader_26]
-      └─Window_24	10000.00	root		count(1)->Column#7 over(partition by test.t1.cc1)
+      └─Window_24	10000.00	root		count(1)->Column#9 over(partition by test.t1.cc1)
         └─Sort_27	10000.00	root		test.t1.cc1
           └─ShuffleReceiver_30	10000.00	root		
             └─TableReader_26	10000.00	root		data:TableFullScan_25
@@ -710,12 +710,12 @@ JOIN tceb7972c ON tceb7972c.col_19 = t61a85298.col_71
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
 OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
 id	estRows	task	access object	operator info
-Projection_11	6.00	root		1->Column#18
-└─HashJoin_13	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
+Projection_11	6.00	root		1->Column#20
+└─HashJoin_13	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#21)]
   ├─TableReader_16(Build)	4.80	root	partition:all	data:Selection_15
   │ └─Selection_15	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
   │   └─TableFullScan_14	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
-  └─Projection_17(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
+  └─Projection_17(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#21
     └─TableReader_19	10000.00	root		data:TableFullScan_18
       └─TableFullScan_18	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
 drop table if exists t0, t1;
@@ -926,7 +926,7 @@ HashJoin	19472.71	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
 └─HashJoin(Probe)	15578.17	root		left outer join, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
   ├─Selection(Build)	7992.00	root		not(isnull(test.t4.c))
   │ └─Shuffle	9990.00	root		execution info: concurrency:100, data sources:[TableReader]
-  │   └─Window	9990.00	root		row_number()->Column#26 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
+  │   └─Window	9990.00	root		row_number()->Column#30 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
   │     └─Sort	9990.00	root		test.t4.b, test.t4.e
   │       └─ShuffleReceiver	9990.00	root		
   │         └─TableReader	9990.00	root		data:Selection
@@ -957,7 +957,7 @@ create table t4 like t1;
 set @@tidb_opt_join_reorder_threshold=5;
 explain format='brief' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
 id	estRows	task	access object	operator info
-Projection	155937656.25	root		1->Column#13
+Projection	155937656.25	root		1->Column#17
 └─HashJoin	155937656.25	root		CARTESIAN inner join
   ├─HashJoin(Build)	12487.50	root		inner join, equal:[eq(test.t3.b, test.t4.b)]
   │ ├─TableReader(Build)	9990.00	root		data:Selection

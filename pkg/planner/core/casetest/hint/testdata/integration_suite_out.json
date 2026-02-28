@@ -162,10 +162,10 @@
       {
         "SQL": "desc format = 'brief' select avg(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:avg(Column#5, Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
           "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#5, funcs:sum(Column#10)->Column#6",
-          "    └─Projection 10000.00 batchCop[tiflash]  test.t.a->Column#9, cast(test.t.a, decimal(10,0) BINARY)->Column#10",
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#10)->Column#6, funcs:sum(Column#11)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  test.t.a->Column#10, cast(test.t.a, decimal(10,0) BINARY)->Column#11",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -173,10 +173,10 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:avg(Column#5, Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
           "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#5, funcs:sum(Column#10)->Column#6",
-          "    └─Projection 10000.00 batchCop[tiflash]  test.t.a->Column#9, cast(test.t.a, decimal(10,0) BINARY)->Column#10",
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#10)->Column#6, funcs:sum(Column#11)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  test.t.a->Column#10, cast(test.t.a, decimal(10,0) BINARY)->Column#11",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -184,10 +184,10 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
+          "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
-          "    └─Projection 10000.00 batchCop[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#7",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#8)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#8",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -195,10 +195,10 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
+          "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
-          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.a, 1), decimal(20,0) BINARY)->Column#7",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#8)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.a, 1), decimal(20,0) BINARY)->Column#8",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -206,10 +206,10 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
+          "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
-          "    └─Projection 10000.00 batchCop[tiflash]  cast(isnull(test.t.a), decimal(20,0) BINARY)->Column#7",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#8)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(isnull(test.t.a), decimal(20,0) BINARY)->Column#8",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -597,8 +597,8 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v2, v2.@sel_2), hash_agg(@qb_v2) */ * from v2;",
         "Plan": [
-          "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, Column#19)]",
-          "├─HashAgg(Build) 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#19",
+          "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, Column#25)]",
+          "├─HashAgg(Build) 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#25",
           "│ └─HashJoin 24365.26 root  inner join, equal:[eq(test.t.a, test.t1.a)]",
           "│   ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│   │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
@@ -626,8 +626,8 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v2, v2.@sel_2), stream_agg(@qb_v2) */ * from v2;",
         "Plan": [
-          "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, Column#19)]",
-          "├─StreamAgg(Build) 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#19",
+          "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, Column#25)]",
+          "├─StreamAgg(Build) 7992.00 root  group by:test.t2.a, funcs:count(1)->Column#25",
           "│ └─Sort 24365.26 root  test.t2.a",
           "│   └─HashJoin 24365.26 root  inner join, equal:[eq(test.t.a, test.t1.a)]",
           "│     ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
@@ -763,13 +763,13 @@
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v6, v6.@sel_2), NO_DECORRELATE(@qb_v6) */ * from v6;",
         "Plan": [
           "Projection 10000.00 root  test.t1.a, test.t1.b",
-          "└─Apply 10000.00 root  CARTESIAN inner join, other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#7)",
+          "└─Apply 10000.00 root  CARTESIAN inner join, other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#9)",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 10000.00 root  ",
-          "    └─StreamAgg 10000.00 root  funcs:sum(Column#9)->Column#7",
+          "    └─StreamAgg 10000.00 root  funcs:sum(Column#11)->Column#9",
           "      └─TableReader 10000.00 root  data:StreamAgg",
-          "        └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test.t2.a)->Column#9",
+          "        └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test.t2.a)->Column#11",
           "          └─Selection 100000.00 cop[tikv]  eq(test.t2.b, test.t1.b)",
           "            └─TableFullScan 100000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
@@ -780,11 +780,11 @@
         "Plan": [
           "TableReader 3544.89 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 3544.89 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 3544.89 mpp[tiflash]  Column#14, Column#15",
-          "    └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, funcs:firstrow(Column#14)->Column#14, funcs:firstrow(Column#15)->Column#15",
+          "  └─Projection 3544.89 mpp[tiflash]  Column#17, Column#18",
+          "    └─HashAgg 3544.89 mpp[tiflash]  group by:Column#17, Column#18, funcs:firstrow(Column#17)->Column#17, funcs:firstrow(Column#18)->Column#18",
           "      └─ExchangeReceiver 3544.89 mpp[tiflash]  ",
-          "        └─ExchangeSender 3544.89 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary], [name: Column#15, collate: binary]",
-          "          └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, ",
+          "        └─ExchangeSender 3544.89 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#17, collate: binary], [name: Column#18, collate: binary]",
+          "          └─HashAgg 3544.89 mpp[tiflash]  group by:Column#17, Column#18, ",
           "            └─Union 4431.11 mpp[tiflash]  ",
           "              ├─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
           "              │ └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
@@ -796,7 +796,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v8, v8), merge(@qb_v8) */ * from v8;",
         "Plan": [
-          "HashAgg 16000.00 root  group by:Column#21, funcs:firstrow(Column#21)->Column#21",
+          "HashAgg 16000.00 root  group by:Column#26, funcs:firstrow(Column#26)->Column#26",
           "└─Union 1000000010000.00 root  ",
           "  ├─HashJoin 1000000000000.00 root  CARTESIAN inner join",
           "  │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -820,11 +820,11 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:sum(Column#7)->Column#5",
           "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#6",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#7",
+          "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#10",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -846,10 +846,10 @@
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#4",
-          "    └─Projection 8000.00 mpp[tiflash]  Column#4, test.t.a",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#6, funcs:sum(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.a",
-          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#5, test.t.a->Column#6",
+          "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#7, funcs:sum(Column#6)->Column#5, funcs:firstrow(Column#7)->test.t.a",
+          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#6, test.t.a->Column#7",
           "          └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -861,13 +861,13 @@
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#4",
-          "    └─Projection 8000.00 mpp[tiflash]  Column#4, test.t.a",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, funcs:sum(Column#7)->Column#4, funcs:firstrow(test.t.a)->test.t.a",
+          "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, funcs:sum(Column#8)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
           "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
           "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#10, funcs:sum(Column#9)->Column#7",
-          "              └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#9, test.t.a->Column#10",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#11, funcs:sum(Column#10)->Column#8",
+          "              └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#10, test.t.a->Column#11",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1562,10 +1562,10 @@
         "SQL": "explain format = 'brief' select /*+ leading(t2@sel_2) merge_join(t) */ * from t join t1 on t.a = t1.a where t1.a < (select sum(t2.a) from t2 where t2.b = t1.b);",
         "Plan": [
           "Projection 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
-          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)], other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
-          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#32)->Column#10, funcs:firstrow(test.t2.b)->test.t2.b",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)], other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#13)",
+          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#35)->Column#13, funcs:firstrow(test.t2.b)->test.t2.b",
           "  │ └─TableReader 7992.00 root  data:HashAgg",
-          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#32",
+          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#35",
           "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "  │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─MergeJoin(Probe) 12487.50 root  inner join, left key:test.t1.a, right key:test.t.a",
@@ -1585,10 +1585,10 @@
         "SQL": "explain format = 'brief' select /*+ leading(t1), inl_join(t1) */ * from t join t1 on t.a = t1.a where t1.a < (select sum(t2.a) from t2 where t2.b = t1.b);",
         "Plan": [
           "Projection 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
-          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)], other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
-          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#35)->Column#10, funcs:firstrow(test.t2.b)->test.t2.b",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)], other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#13)",
+          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#38)->Column#13, funcs:firstrow(test.t2.b)->test.t2.b",
           "  │ └─TableReader 7992.00 root  data:HashAgg",
-          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#35",
+          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#38",
           "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "  │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─IndexJoin(Probe) 12487.50 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)",
@@ -1605,7 +1605,7 @@
         "SQL": "explain format = 'brief' select /*+leading(t2@sel_2)  merge_join(t) */ * from t join t1 on t.a = t1.a where t1.a < (select /*+ NO_DECORRELATE() */ sum(t2.a) from t2 where t2.b = t1.b);",
         "Plan": [
           "Projection 12500.00 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
-          "└─Apply 12500.00 root  CARTESIAN inner join, other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
+          "└─Apply 12500.00 root  CARTESIAN inner join, other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#13)",
           "  ├─MergeJoin(Build) 12500.00 root  inner join, left key:test.t.a, right key:test.t1.a",
           "  │ ├─Sort(Build) 10000.00 root  test.t1.a",
           "  │ │ └─TableReader 10000.00 root  data:TableFullScan",
@@ -1614,8 +1614,8 @@
           "  │   └─TableReader 10000.00 root  data:TableFullScan",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 12500.00 root  ",
-          "    └─StreamAgg 12500.00 root  funcs:sum(Column#25)->Column#10",
-          "      └─Projection 125000.00 root  cast(test.t2.a, decimal(10,0) BINARY)->Column#25",
+          "    └─StreamAgg 12500.00 root  funcs:sum(Column#28)->Column#13",
+          "      └─Projection 125000.00 root  cast(test.t2.a, decimal(10,0) BINARY)->Column#28",
           "        └─IndexLookUp 125000.00 root  ",
           "          ├─IndexRangeScan(Build) 125000.00 cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t1.b)], keep order:false, stats:pseudo",
           "          └─TableRowIDScan(Probe) 125000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
@@ -1628,7 +1628,7 @@
         "SQL": "explain format = 'brief' select /*+ leading(t1), inl_join(t1) */ * from t join t1 on t.a = t1.a where t1.a < (select /*+ NO_DECORRELATE() */ sum(t2.a) from t2 where t2.b = t1.b);",
         "Plan": [
           "Projection 12500.00 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
-          "└─Apply 12500.00 root  CARTESIAN inner join, other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
+          "└─Apply 12500.00 root  CARTESIAN inner join, other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#13)",
           "  ├─Projection(Build) 12500.00 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
           "  │ └─IndexJoin 12500.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)",
           "  │   ├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -1637,8 +1637,8 @@
           "  │     ├─IndexRangeScan(Build) 12500.00 cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t1.a, test.t.a)], keep order:false, stats:pseudo",
           "  │     └─TableRowIDScan(Probe) 12500.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 12500.00 root  ",
-          "    └─StreamAgg 12500.00 root  funcs:sum(Column#23)->Column#10",
-          "      └─Projection 125000.00 root  cast(test.t2.a, decimal(10,0) BINARY)->Column#23",
+          "    └─StreamAgg 12500.00 root  funcs:sum(Column#26)->Column#13",
+          "      └─Projection 125000.00 root  cast(test.t2.a, decimal(10,0) BINARY)->Column#26",
           "        └─IndexLookUp 125000.00 root  ",
           "          ├─IndexRangeScan(Build) 125000.00 cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t1.b)], keep order:false, stats:pseudo",
           "          └─TableRowIDScan(Probe) 125000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
@@ -1770,9 +1770,9 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:avg(Column#5, Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#5, funcs:sum(test.t.a)->Column#6",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#6, funcs:sum(test.t.a)->Column#7",
           "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -1782,9 +1782,9 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:avg(Column#5, Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#5, funcs:sum(test.t.a)->Column#6",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#6, funcs:sum(test.t.a)->Column#7",
           "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1792,9 +1792,9 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:avg(Column#5, Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#5, funcs:sum(test.t.a)->Column#6",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(test.t.a)->Column#6, funcs:sum(test.t.a)->Column#7",
           "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -1849,13 +1849,13 @@
         "Plan": [
           "Projection 1.00 root  test.t.a",
           "└─Projection 1.00 root  test.t.a, test.t.vec",
-          "  └─TopN 1.00 root  Column#6, offset:0, count:1",
-          "    └─Projection 1.00 root  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#6",
+          "  └─TopN 1.00 root  Column#7, offset:0, count:1",
+          "    └─Projection 1.00 root  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#7",
           "      └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "          └─Projection 1.00 mpp[tiflash]  test.t.a, test.t.vec",
-          "            └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1",
-          "              └─Projection 1.00 mpp[tiflash]  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#5",
+          "            └─TopN 1.00 mpp[tiflash]  Column#6, offset:0, count:1",
+          "              └─Projection 1.00 mpp[tiflash]  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#6",
           "                └─TableFullScan 1.00 mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)"
         ],
         "Warn": null
@@ -1865,13 +1865,13 @@
         "Plan": [
           "Projection 1.00 root  test.t.a",
           "└─Projection 1.00 root  test.t.a, test.t.vec",
-          "  └─TopN 1.00 root  Column#6, offset:0, count:1",
-          "    └─Projection 1.00 root  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#6",
+          "  └─TopN 1.00 root  Column#7, offset:0, count:1",
+          "    └─Projection 1.00 root  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#7",
           "      └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "          └─Projection 1.00 mpp[tiflash]  test.t.a, test.t.vec",
-          "            └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1",
-          "              └─Projection 1.00 mpp[tiflash]  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#5",
+          "            └─TopN 1.00 mpp[tiflash]  Column#6, offset:0, count:1",
+          "              └─Projection 1.00 mpp[tiflash]  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#6",
           "                └─TableFullScan 1.00 mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)"
         ],
         "Warn": null
@@ -1881,13 +1881,13 @@
         "Plan": [
           "Projection 1.00 root  test.t.a",
           "└─Projection 1.00 root  test.t.a, test.t.vec",
-          "  └─TopN 1.00 root  Column#6, offset:0, count:1",
-          "    └─Projection 1.00 root  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#6",
+          "  └─TopN 1.00 root  Column#7, offset:0, count:1",
+          "    └─Projection 1.00 root  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#7",
           "      └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "          └─Projection 1.00 mpp[tiflash]  test.t.a, test.t.vec",
-          "            └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1",
-          "              └─Projection 10000.00 mpp[tiflash]  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#5",
+          "            └─TopN 1.00 mpp[tiflash]  Column#6, offset:0, count:1",
+          "              └─Projection 10000.00 mpp[tiflash]  test.t.a, test.t.vec, vec_cosine_distance(test.t.vec, [1,2,3])->Column#6",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1909,7 +1909,7 @@
           "│   │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "│   └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "├─Projection 1000000000000.00 root  test.t1.a->Column#19, test.t2.a->Column#20, test.t3.a->Column#21",
+          "├─Projection 1000000000000.00 root  test.t1.a->Column#28, test.t2.a->Column#29, test.t3.a->Column#30",
           "│ └─HashJoin 1000000000000.00 root  CARTESIAN inner join",
           "│   ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│   │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",

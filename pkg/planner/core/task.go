@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2463,7 +2465,14 @@ func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.Physi
 
 func collectRowSizeFromMPPPlan(mppPlan base.PhysicalPlan) (rowSize float64) {
 	if mppPlan != nil && mppPlan.StatsInfo() != nil && mppPlan.StatsInfo().HistColl != nil {
-		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, mppPlan.Schema().Columns, false, false)
+		schemaCols := mppPlan.Schema().Columns
+		for i, col := range schemaCols {
+			if col.ID == model.ExtraCommitTSID {
+				schemaCols = slices.Delete(slices.Clone(schemaCols), i, i+1)
+				break
+			}
+		}
+		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, schemaCols, false, false)
 	}
 	return 1 // use 1 as lower-bound for safety
 }

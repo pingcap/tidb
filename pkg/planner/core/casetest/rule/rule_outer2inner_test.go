@@ -107,16 +107,16 @@ from t
 )
 select 'ok' from dual
 where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
-		`Projection 8000.00 root  ok->Column#13`,
+		`Projection 8000.00 root  ok->Column#15`,
 		`└─HashJoin 8000.00 root  CARTESIAN inner join`,
 		`  ├─TableDual(Build) 1.00 root  rows:1`,
-		`  └─HashAgg(Probe) 8000.00 root  group by:Column#11, Column#12, funcs:firstrow(1)->Column#18`,
-		`    └─Selection 8000.00 root  eq("1", Column#11), eq(1, Column#12)`,
-		`      └─Window 10000.00 root  row_number()->Column#12 over(rows between current row and current row)`,
+		`  └─HashAgg(Probe) 8000.00 root  group by:Column#13, Column#14, funcs:firstrow(1)->Column#20`,
+		`    └─Selection 8000.00 root  eq("1", Column#13), eq(1, Column#14)`,
+		`      └─Window 10000.00 root  row_number()->Column#14 over(rows between current row and current row)`,
 		`        └─Apply 10000.00 root  CARTESIAN left outer join`,
 		`          ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`          │ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
-		`          └─Projection(Probe) 8000.00 root  1->Column#11`,
+		`          └─Projection(Probe) 8000.00 root  1->Column#13`,
 		`            └─Selection 8000.00 root  eq(test.t.id, 2)`,
 		`              └─TableDual 10000.00 root  rows:1`))
 	// https://github.com/pingcap/tidb/issues/61327
@@ -134,14 +134,14 @@ FROM t0
                                    WHEN subQuery1.col_2 THEN t3.c0
                                    ELSE NULL END)) AND (((t0.c0))))) < 1);`).
 		Check(testkit.Rows(
-			`Projection 1000000000000.00 root  test.t0.c0, Column#5, test.t3.c0`,
-			`└─HashJoin 1000000000000.00 root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column#5, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)`,
+			`Projection 1000000000000.00 root  test.t0.c0, Column#7, test.t3.c0`,
+			`└─HashJoin 1000000000000.00 root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column#7, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)`,
 			`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 			`  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`,
 			`  └─HashJoin(Probe) 100000000.00 root  CARTESIAN left outer join`,
 			`    ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 			`    │ └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`,
-			`    └─Projection(Probe) 10000.00 root  <nil>->Column#5`,
+			`    └─Projection(Probe) 10000.00 root  <nil>->Column#7`,
 			`      └─TableReader 10000.00 root  data:TableFullScan`,
 			`        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`))
 	tk.MustQuery(`SELECT *
@@ -163,9 +163,9 @@ FROM t0
 	tk.MustQuery(`explain format='brief' select 1 from chqin where  '2008-05-28' NOT IN
 		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
 		Check(testkit.Rows(
-			`Projection 8000.00 root  1->Column#14`,
-			`└─HashJoin 8000.00 root  Null-aware anti semi join, equal:[eq(Column#16, Column#13)]`,
-			`  ├─HashAgg(Build) 2672.00 root  group by:Column#13, funcs:firstrow(Column#13)->Column#13`,
+			`Projection 8000.00 root  1->Column#18`,
+			`└─HashJoin 8000.00 root  Null-aware anti semi join, equal:[eq(Column#20, Column#17)]`,
+			`  ├─HashAgg(Build) 2672.00 root  group by:Column#17, funcs:firstrow(Column#17)->Column#17`,
 			`  │ └─Union 4172.50 root  `,
 			`  │   ├─HashJoin 4162.50 root  right outer join, equal:[eq(test.chqin.id, test.chqin2.id) eq(test.chqin.f1, test.chqin2.f1)]`,
 			`  │   │ ├─TableReader(Build) 3330.00 root  data:Selection`,
@@ -175,10 +175,10 @@ FROM t0
 			`  │   │   └─Selection 3333.33 cop[tikv]  ge(test.chqin2.f1, 1990-11-27 00:00:00.000000)`,
 			`  │   │     └─TableFullScan 10000.00 cop[tikv] table:a2 keep order:false, stats:pseudo`,
 			`  │   └─TableReader 10.00 root  data:Projection`,
-			`  │     └─Projection 10.00 cop[tikv]  test.chqin.f1->Column#13`,
+			`  │     └─Projection 10.00 cop[tikv]  test.chqin.f1->Column#17`,
 			`  │       └─Selection 10.00 cop[tikv]  eq(test.chqin.id, 5)`,
 			`  │         └─TableFullScan 10000.00 cop[tikv] table:chqin keep order:false, stats:pseudo`,
-			`  └─Projection(Probe) 10000.00 root  2008-05-28 00:00:00.000000->Column#16`,
+			`  └─Projection(Probe) 10000.00 root  2008-05-28 00:00:00.000000->Column#20`,
 			`    └─TableReader 10000.00 root  data:TableFullScan`,
 			`      └─TableFullScan 10000.00 cop[tikv] table:chqin keep order:false, stats:pseudo`))
 	tk.MustQuery(`select 1 from chqin where  '2008-05-28' NOT IN
