@@ -388,7 +388,7 @@ select * from golang1;
 fcbpdt	fcbpsq	procst	cipstx	cipsst	dyngtg	blncdt
 20230925	12023092502158016	1	CI010000	ACSC	EAYT	20230925
 EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1);
-Error 1051 (42S02): Unknown table ''
+Error 3942 (HY000): Each row of a VALUES clause must have at least one column, unless when used as source in an INSERT statement.
 drop table if exists p, t;
 create table p (id int, c int, key i_id(id), key i_c(c));
 create table t (id int);
