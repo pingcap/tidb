@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"maps"
+	"math"
 	"slices"
 
 	"github.com/pingcap/failpoint"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -486,13 +488,52 @@ func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []b
 	return joinGroup, nil
 }
 
-// baseNodeCumCost calculate the cumulative cost of the node in the join group.
+const (
+	capFactor = 1000.0    // cap = max(absMinCap, capFactor*out)
+	absMinCap = 1_000_000 // hard floor; not a knob
+)
+
+// baseNodeCumCost calculates the cumulative cost of the node in the join group.
+//
+// Heuristic (operator-split):
+// - Default: treat node as leaf (cost = output rows) to avoid subtree inflation (SQL-1).
+// - Limit/TopN: cost bounded by (offset+count).
+// - Agg/Sort/Window: add bounded input penalty to reflect blocking startup cost (TPCH-17/Q17).
 func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalPlan) float64 {
 	cost := groupNode.StatsInfo().RowCount
-	for _, child := range groupNode.Children() {
-		cost += s.baseNodeCumCost(child)
+	switch x := groupNode.(type) {
+	case *logicalop.LogicalLimit:
+		need := float64(x.Count) + float64(x.Offset)
+		if need > cost {
+			return need
+		}
+		return cost
+
+	case *logicalop.LogicalTopN:
+		need := float64(x.Count) + float64(x.Offset)
+		if need > cost {
+			return need
+		}
+		return cost
+
+	case *logicalop.LogicalAggregation, *logicalop.LogicalSort, *logicalop.LogicalWindow:
+		ratio := s.ctx.GetSessionVars().OptJoinReorderBlockingPenaltyRatio
+		s.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
+		in := inputRowsOneLevel(groupNode)
+		maxCap := math.Max(absMinCap, capFactor*cost)
+		return cost + ratio*math.Min(in, maxCap)
+
+	default:
+		return cost
 	}
-	return cost
+}
+
+func inputRowsOneLevel(p base.LogicalPlan) float64 {
+	sum := 0.0
+	for _, c := range p.Children() {
+		sum += c.StatsInfo().RowCount
+	}
+	return sum
 }
 
 // checkConnection used to check whether two nodes have equal conditions or not.

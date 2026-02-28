@@ -84,13 +84,12 @@ KEY f (f)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 explain format='plan_tree' select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;
 id	task	access object	operator info
-Projection	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f
-└─HashJoin	root		inner join, equal:[eq(executor__explain.tt123.e, Column)]
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─Projection(Probe)	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, cast(executor__explain.tt123.b, json BINARY)->Column
-    └─TableReader	root		data:TableFullScan
-      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(Column, executor__explain.tt123.e)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection(Probe)	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, cast(executor__explain.tt123.b, json BINARY)->Column
+  └─TableReader	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int primary key);
 insert into t values (2);

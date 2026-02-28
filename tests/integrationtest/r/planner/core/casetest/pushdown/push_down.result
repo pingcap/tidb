@@ -180,14 +180,15 @@ HashJoin	root		inner join, equal:[eq(Column, Column)]
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t join (select id-2 as b from t) A on A.b=t.id;
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column)]
-├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column
-│ └─TableReader	root		data:Selection
-│   └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
-│     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-└─TableReader(Probe)	root		data:Selection
-  └─Selection	cop[tikv]		not(isnull(planner__core__casetest__pushdown__push_down.t.id))
-    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	root		planner__core__casetest__pushdown__push_down.t.a, planner__core__casetest__pushdown__push_down.t.b, planner__core__casetest__pushdown__push_down.t.i, planner__core__casetest__pushdown__push_down.t.id, planner__core__casetest__pushdown__push_down.t.value, planner__core__casetest__pushdown__push_down.t.name, planner__core__casetest__pushdown__push_down.t.d, planner__core__casetest__pushdown__push_down.t.s, planner__core__casetest__pushdown__push_down.t.t, planner__core__casetest__pushdown__push_down.t.c, planner__core__casetest__pushdown__push_down.t.e, Column
+└─HashJoin	root		inner join, equal:[eq(Column, planner__core__casetest__pushdown__push_down.t.id)]
+  ├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column
+  │ └─TableReader	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
+  │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__pushdown__push_down.t.id))
+      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t left join (select id-2 as b from t) A on A.b=t.id;
 id	task	access object	operator info
 HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column)]
