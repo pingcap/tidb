@@ -16,13 +16,16 @@ package session
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,4 +85,71 @@ func TestMemArbitratorSession(t *testing.T) {
 	require.Equal(t, int64(9), approxCompilePlanTokenCnt("select * from `a_1`.`b_2` where c1 = ? and c2 = ?", true))
 	require.Equal(t, int64(0), approxCompilePlanTokenCnt("select @@version @a", true))
 	require.Equal(t, int64(3), approxCompilePlanTokenCnt("select @@version @a", false))
+}
+
+func TestAdvisoryLockRestoresInnodbLockWaitTimeout(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	pool := dom.SysSessionPool()
+	ctx := context.Background()
+
+	t.Run("get_lock", func(t *testing.T) {
+		res, err := pool.Get()
+		require.NoError(t, err)
+		se := res.(*session)
+
+		orig, err := se.sessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.InnodbLockWaitTimeout)
+		require.NoError(t, err)
+		origSec, err := strconv.ParseInt(orig, 10, 64)
+		require.NoError(t, err)
+
+		// Ensure we set a different value from the original.
+		newTimeout := origSec + 23
+		lock := &advisoryLock{
+			session: se,
+			ctx:     ctx,
+			clean: func() {
+				defer pool.Destroy(res)
+
+				got, err := se.sessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.InnodbLockWaitTimeout)
+				require.NoError(t, err)
+				require.Equal(t, orig, got)
+				require.Equal(t, origSec*1000, se.sessionVars.LockWaitTimeout)
+			},
+		}
+
+		err = lock.GetLock("tidb_test_restore_lock_wait_timeout_get_lock", newTimeout)
+		require.NoError(t, err)
+		gotAfterSet, err := se.sessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.InnodbLockWaitTimeout)
+		require.NoError(t, err)
+		require.Equal(t, strconv.FormatInt(newTimeout, 10), gotAfterSet)
+		lock.Close()
+	})
+
+	t.Run("is_used_lock", func(t *testing.T) {
+		res, err := pool.Get()
+		require.NoError(t, err)
+		se := res.(*session)
+
+		require.NoError(t, se.sessionVars.SetSystemVar(vardef.InnodbLockWaitTimeout, "2"))
+		orig, err := se.sessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.InnodbLockWaitTimeout)
+		require.NoError(t, err)
+		require.Equal(t, "2", orig)
+
+		lock := &advisoryLock{
+			session: se,
+			ctx:     ctx,
+			clean: func() {
+				defer pool.Destroy(res)
+
+				got, err := se.sessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.InnodbLockWaitTimeout)
+				require.NoError(t, err)
+				require.Equal(t, "2", got)
+				require.Equal(t, int64(2000), se.sessionVars.LockWaitTimeout)
+			},
+		}
+		require.NoError(t, lock.IsUsedLock("tidb_test_restore_lock_wait_timeout_is_used_lock"))
+	})
 }
