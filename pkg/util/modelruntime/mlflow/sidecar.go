@@ -107,7 +107,7 @@ func (p *SidecarPool) ensureStarted(ctx context.Context) error {
 	}
 	sockets := make([]string, 0, cfg.Workers)
 	cmds := make([]*exec.Cmd, 0, cfg.Workers)
-	for i := 0; i < cfg.Workers; i++ {
+	for i := range cfg.Workers {
 		socketPath := filepath.Join(socketDir, fmt.Sprintf("mlflow-%d.sock", i))
 		cmd := exec.CommandContext(context.Background(), cfg.Python, scriptPath,
 			"--socket", socketPath,
