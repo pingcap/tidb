@@ -165,17 +165,17 @@ func (d *SchemaTracker) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatab
 }
 
 // CreateModel implements the DDL interface. SchemaTracker ignores model metadata.
-func (d *SchemaTracker) CreateModel(_ sessionctx.Context, _ *ast.CreateModelStmt) error {
+func (*SchemaTracker) CreateModel(_ sessionctx.Context, _ *ast.CreateModelStmt) error {
 	return nil
 }
 
 // AlterModel implements the DDL interface. SchemaTracker ignores model metadata.
-func (d *SchemaTracker) AlterModel(_ sessionctx.Context, _ *ast.AlterModelStmt) error {
+func (*SchemaTracker) AlterModel(_ sessionctx.Context, _ *ast.AlterModelStmt) error {
 	return nil
 }
 
 // DropModel implements the DDL interface. SchemaTracker ignores model metadata.
-func (d *SchemaTracker) DropModel(_ sessionctx.Context, _ *ast.DropModelStmt) error {
+func (*SchemaTracker) DropModel(_ sessionctx.Context, _ *ast.DropModelStmt) error {
 	return nil
 }
 

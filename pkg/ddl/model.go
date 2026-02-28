@@ -32,7 +32,7 @@ import (
 func (e *executor) CreateModel(ctx sessionctx.Context, stmt *ast.CreateModelStmt) error {
 	schema := stmt.Name.Schema
 	if schema.L == "" {
-		schema = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		schema = ast.NewCIStr(ctx.GetExprCtx().GetEvalCtx().CurrentDB())
 	}
 	if schema.L == "" {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema.O)
@@ -44,7 +44,7 @@ func (e *executor) CreateModel(ctx sessionctx.Context, stmt *ast.CreateModelStmt
 	modelName := stmt.Name.Name
 	exec := ctx.GetRestrictedSQLExecutor()
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, exists, err := getModelID(exec, internalCtx, schema.L, modelName.L, true)
+	_, exists, err := getModelID(internalCtx, exec, schema.L, modelName.L, true)
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func (e *executor) CreateModel(ctx sessionctx.Context, stmt *ast.CreateModelStmt
 		return errors.Trace(err)
 	}
 
-	modelID, _, err := getModelID(exec, internalCtx, schema.L, modelName.L, true)
+	modelID, _, err := getModelID(internalCtx, exec, schema.L, modelName.L, true)
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func (e *executor) CreateModel(ctx sessionctx.Context, stmt *ast.CreateModelStmt
 func (e *executor) AlterModel(ctx sessionctx.Context, stmt *ast.AlterModelStmt) error {
 	schema := stmt.Name.Schema
 	if schema.L == "" {
-		schema = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		schema = ast.NewCIStr(ctx.GetExprCtx().GetEvalCtx().CurrentDB())
 	}
 	if schema.L == "" {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema.O)
@@ -110,7 +110,7 @@ func (e *executor) AlterModel(ctx sessionctx.Context, stmt *ast.AlterModelStmt) 
 	modelName := stmt.Name.Name
 	exec := ctx.GetRestrictedSQLExecutor()
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	modelID, exists, err := getModelID(exec, internalCtx, schema.L, modelName.L, false)
+	modelID, exists, err := getModelID(internalCtx, exec, schema.L, modelName.L, false)
 	if err != nil {
 		return err
 	}
@@ -169,7 +169,7 @@ func (e *executor) AlterModel(ctx sessionctx.Context, stmt *ast.AlterModelStmt) 
 func (e *executor) DropModel(ctx sessionctx.Context, stmt *ast.DropModelStmt) error {
 	schema := stmt.Name.Schema
 	if schema.L == "" {
-		schema = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		schema = ast.NewCIStr(ctx.GetExprCtx().GetEvalCtx().CurrentDB())
 	}
 	if schema.L == "" {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema.O)
@@ -181,7 +181,7 @@ func (e *executor) DropModel(ctx sessionctx.Context, stmt *ast.DropModelStmt) er
 	modelName := stmt.Name.Name
 	exec := ctx.GetRestrictedSQLExecutor()
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	modelID, exists, err := getModelID(exec, internalCtx, schema.L, modelName.L, false)
+	modelID, exists, err := getModelID(internalCtx, exec, schema.L, modelName.L, false)
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func (e *executor) DropModel(ctx sessionctx.Context, stmt *ast.DropModelStmt) er
 	return errors.Trace(err)
 }
 
-func getModelID(exec sqlexec.RestrictedSQLExecutor, ctx context.Context, schema, name string, includeDeleted bool) (int64, bool, error) {
+func getModelID(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, schema, name string, includeDeleted bool) (int64, bool, error) {
 	query := "SELECT id FROM mysql.tidb_model WHERE db_name = %? AND model_name = %?"
 	if !includeDeleted {
 		query += " AND deleted_at IS NULL"
@@ -240,6 +240,7 @@ func currentUserString(ctx sessionctx.Context) string {
 	if ctx == nil {
 		return ""
 	}
+	//nolint:forbidigo // User is stored in session vars; no alternate accessor on sessionctx.Context.
 	user := ctx.GetSessionVars().User
 	if user == nil {
 		return ""

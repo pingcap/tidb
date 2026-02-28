@@ -245,7 +245,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTiDBModelVersions:
 			err = e.setDataForModelVersions(ctx, sctx)
 		case infoschema.TableTiDBModelCache:
-			err = e.setDataForModelCache(sctx)
+			err = e.setDataForModelCache()
 		case infoschema.TableKeyspaceMeta:
 			err = e.setDataForKeyspaceMeta(sctx)
 		}
@@ -4164,7 +4164,7 @@ func (e *memtableRetriever) setDataForModelVersions(ctx context.Context, sctx se
 	return nil
 }
 
-func (e *memtableRetriever) setDataForModelCache(sctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForModelCache() error {
 	cache := modelruntime.GetProcessSessionCache()
 	if cache == nil {
 		return nil
