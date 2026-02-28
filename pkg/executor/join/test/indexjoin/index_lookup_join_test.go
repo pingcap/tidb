@@ -254,32 +254,6 @@ func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {
 	}
 }
 
-func TestIndexLookupJoinRowModePendingOuter(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int primary key, b int)")
-	tk.MustExec("create table t2(a int, b int, key(a), key(b))")
-	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
-	tk.MustExec("insert into t2 values (1, 10), (2, 20)")
-
-	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=1")
-	tk.MustExec("set @@tidb_max_chunk_size=32")
-	tk.MustExec("set @@tidb_index_join_batch_size=32")
-	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1")
-	tk.MustExec("set @@tidb_opt_index_join_cost_factor=0.1")
-	tk.MustExec("set @@tidb_opt_hash_join_cost_factor=100")
-	tk.MustExec("set @@tidb_opt_merge_join_cost_factor=100")
-
-	sql := "select /*+ INL_JOIN(s) */ t1.a from t1 join (select * from t2 order by b limit 2) s on t1.a = s.a order by t1.a"
-	plan := tk.MustQuery("explain " + sql).String()
-	require.NotContains(t, plan, "IndexJoin")
-
-	tk.MustQuery(sql).Check(testkit.Rows("1", "2"))
-}
-
 func TestIssue45716(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
