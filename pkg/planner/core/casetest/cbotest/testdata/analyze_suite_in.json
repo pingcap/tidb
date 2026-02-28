@@ -272,7 +272,7 @@
   {
     "name": "TestIssue61792",
     "cases": [
-      "explain select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';"
+      "explain format = 'brief' select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';"
     ]
   },
   {

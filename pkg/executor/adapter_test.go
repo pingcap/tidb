@@ -142,8 +142,8 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogSucc)].Match(ctx.GetSessionVars(), items, true))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessTimeStr)].Match(ctx.GetSessionVars(), items, copExec.TimeDetail.ProcessTime.Seconds()))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.BackoffTimeStr)].Match(ctx.GetSessionVars(), items, copExec.BackoffTime.Seconds()))
-	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.ProcessedKeys))
-	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.TotalKeys))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, uint64(copExec.ScanDetail.ProcessedKeys)))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, uint64(copExec.ScanDetail.TotalKeys)))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.49))
 	require.False(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.5))
 
