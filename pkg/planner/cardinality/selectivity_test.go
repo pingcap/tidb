@@ -734,7 +734,7 @@ func TestNewIndexWithColumnStats(t *testing.T) {
 
 	// Two row estimates should differ, even though both indexes have no statistics because t uses column statistics
 	// Estimation from table t should be very close to true row count
-	rows := testKit.MustQuery("explain analyze select * from t use index(idxa) where a > 5 and a < 25").Rows()
+	rows := testKit.MustQuery("explain analyze format = 'brief' select * from t use index(idxa) where a > 5 and a < 25").Rows()
 	rows2 := testKit.MustQuery("explain format = 'brief' select * from t2 use index(idxa) where a > 5 and a < 25").Rows()
 	rowCnt1, _ := strconv.ParseFloat(rows[0][1].(string), 64)
 	trueRowCnt, _ := strconv.ParseFloat(rows[0][2].(string), 64)
@@ -2422,7 +2422,7 @@ func TestUninitializedStats(t *testing.T) {
 	tk.MustExec(`insert into t1 values(1, 1, '{"foo": "bar"}'), (2, 1, '{"foo": "bar"}');`)
 	tk.MustExec("analyze table t1;")
 	// Trigger load stats of idx_expr.
-	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';")
+	tk.MustQuery("explain analyze format = 'brief' select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';")
 	tk.MustQuery("show stats_histograms").CheckNotContain("allEvicted")
-	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
+	tk.MustQuery("explain analyze format = 'brief' select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
 }
