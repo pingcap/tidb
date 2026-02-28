@@ -242,4 +242,3 @@ func (s *FMSketch) MemoryUsage() (sum int64) {
 	sum = int64(16 + 8*len(s.hashset))
 	return
 }
-
