@@ -795,20 +795,22 @@ const (
 	// CreateTiDBMaskingPolicyTable is a table to store masking policy metadata.
 	CreateTiDBMaskingPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_masking_policy (
 		policy_id BIGINT PRIMARY KEY,
-		policy_name VARCHAR(64) NOT NULL,
-		db_name VARCHAR(64) NOT NULL,
+		schema_name VARCHAR(64) NOT NULL,
 		table_name VARCHAR(64) NOT NULL,
 		table_id BIGINT NOT NULL,
-		column_name VARCHAR(64) NOT NULL,
 		column_id BIGINT NOT NULL,
+		column_name VARCHAR(64) NOT NULL,
+		policy_name VARCHAR(64) NOT NULL,
+		masking_type VARCHAR(32) NOT NULL DEFAULT 'CUSTOM',
 		expression TEXT NOT NULL,
-		status ENUM('ENABLE','DISABLE') DEFAULT 'ENABLE',
-		function_type VARCHAR(32),
+		status ENUM('ENABLED', 'DISABLED') DEFAULT 'ENABLED',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		created_by VARCHAR(128),
-		UNIQUE KEY db_name_policy_name (db_name, policy_name),
-		KEY idx_table_column (table_id, column_id));`
+		updated_by VARCHAR(128),
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		UNIQUE KEY uk_table_policy (table_id, policy_name),
+		UNIQUE KEY uk_table_column (table_id, column_id),
+		KEY idx_schema_table (schema_name, table_name));`
 )
 
 // all below are related to DDL or DXF tables
