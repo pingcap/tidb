@@ -1150,8 +1150,10 @@ const (
 	ErrGlobalIndexNotExplicitlySet = 8264
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
-
-	ErrInvalidAffinityOption = 8266
+	ErrInvalidAffinityOption              = 8266
+	ErrForbiddenDDL                       = 8267
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
