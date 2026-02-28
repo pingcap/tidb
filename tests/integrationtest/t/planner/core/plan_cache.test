@@ -1658,3 +1658,172 @@ CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL);
 INSERT INTO t VALUES (1, current_date());
 PREPARE stmt FROM 'SELECT a FROM t WHERE b=current_date()';
 EXECUTE stmt;
+
+# TestPlanCacheMaxDecimalParamNums
+set @@tidb_enable_prepared_plan_cache=1;
+set @@session.tidb_plan_cache_max_decimal_param_nums = 2;
+drop table if exists t1;
+create table t1 (a int, b1 decimal(10,2), b2 decimal(10,2), b3 decimal(10,2), b4 decimal(10,2), c varchar(10));
+
+# Test case 1: Decimal params <= default limit (2) should be cached
+# 0 decimal params - should cache
+prepare stmt from 'select * from t1 where a=? and c=?';
+set @p0 = 1, @p1 = 'test';
+execute stmt using @p0, @p1;
+select @@last_plan_from_cache;
+execute stmt using @p0, @p1;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# 1 decimal param - should cache
+prepare stmt from 'select * from t1 where b1=?';
+set @p0 = 1.5;
+execute stmt using @p0;
+select @@last_plan_from_cache;
+execute stmt using @p0;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# 1 decimal param mixed - should cache
+prepare stmt from 'select * from t1 where a=? and b1=? and c=?';
+set @p0 = 1, @p1 = 2.5, @p2 = 'test';
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# 2 decimal params - should cache (default limit)
+prepare stmt from 'select * from t1 where b1=? and b2=?';
+set @p0 = 1.5, @p1 = 2.5;
+execute stmt using @p0, @p1;
+select @@last_plan_from_cache;
+execute stmt using @p0, @p1;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# 2 decimal params mixed - should cache
+prepare stmt from 'select * from t1 where a=? and b1=? and b2=? and c=?';
+set @p0 = 1, @p1 = 2.5, @p2 = 3.5, @p3 = 'test';
+execute stmt using @p0, @p1, @p2, @p3;
+select @@last_plan_from_cache;
+execute stmt using @p0, @p1, @p2, @p3;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# 3 decimal params - should not cache (exceeds default limit of 2)
+prepare stmt from 'select * from t1 where b1=? and b2=? and b3=?';
+set @p0 = 1.5, @p1 = 2.5, @p2 = 3.5;
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# 3 decimal params mixed - should not cache
+prepare stmt from 'select * from t1 where b1=? and b2=? and b3=? and a=? and c=?';
+set @p0 = 1.5, @p1 = 2.5, @p2 = 3.5, @p3 = 1, @p4 = 'test';
+execute stmt using @p0, @p1, @p2, @p3, @p4;
+select @@last_plan_from_cache;
+execute stmt using @p0, @p1, @p2, @p3, @p4;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# 4 decimal params - should not cache
+prepare stmt from 'select * from t1 where b1=? and b2=? and b3=? and b4=?';
+set @p0 = 1.5, @p1 = 2.5, @p2 = 3.5, @p3 = 4.5;
+execute stmt using @p0, @p1, @p2, @p3;
+select @@last_plan_from_cache;
+execute stmt using @p0, @p1, @p2, @p3;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# TestPlanCacheMaxDecimalParamNumsWithDifferentLimits
+drop table if exists t2;
+create table t2 (a int, b1 decimal(10,2), b2 decimal(10,2), b3 decimal(10,2), b4 decimal(10,2), c varchar(10));
+
+# Test with limit = 0 (no decimal params allowed)
+set @@session.tidb_plan_cache_max_decimal_param_nums = 0;
+prepare stmt from 'select * from t2 where a=? and c=?';
+set @p0 = 1, @p1 = 'test';
+execute stmt using @p0, @p1;
+execute stmt using @p0, @p1;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# Test with limit = 0, one decimal not allowed
+prepare stmt from 'select * from t2 where b1=?';
+set @p0 = 1.5;
+execute stmt using @p0;
+execute stmt using @p0;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# Test with limit = -1 (disable check, always allow)
+set @@session.tidb_plan_cache_max_decimal_param_nums = -1;
+prepare stmt from 'select * from t2 where b1=? and b2=? and b3=? and b4=? and a=?';
+set @p0 = 1.5, @p1 = 2.5, @p2 = 3.5, @p3 = 4.5, @p4 = 100;
+execute stmt using @p0, @p1, @p2, @p3, @p4;
+execute stmt using @p0, @p1, @p2, @p3, @p4;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# TestPlanCacheMaxDecimalParamNumsBoundaryCases
+drop table if exists t3;
+create table t3 (a int, b1 decimal(10,2), b2 decimal(10,2), b3 decimal(10,2), c varchar(10), d decimal(5,2));
+
+# Total params = 3, decimal params = 2 (within limit)
+prepare stmt from 'select * from t3 where a=? and b1=? and c=?';
+set @p0 = 1, @p1 = 2.5, @p2 = 'test';
+execute stmt using @p0, @p1, @p2;
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# Total params = 3, decimal params = 3 (exceeds limit)
+prepare stmt from 'select * from t3 where b1=? and b2=? and b3=?';
+set @p0 = 1.5, @p1 = 2.5, @p2 = 3.5;
+execute stmt using @p0, @p1, @p2;
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# Total params = 4, decimal params = 2 (within limit)
+prepare stmt from 'select * from t3 where a=? and b1=? and c=? and d=?';
+set @p0 = 1, @p1 = 2.5, @p2 = 'test', @p3 = 4.5;
+execute stmt using @p0, @p1, @p2, @p3;
+execute stmt using @p0, @p1, @p2, @p3;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# Total params = 4, decimal params = 3 (exceeds limit)
+prepare stmt from 'select * from t3 where a=? and b1=? and b2=? and b3=?';
+set @p0 = 1, @p1 = 2.5, @p2 = 3.5, @p3 = 4.5;
+execute stmt using @p0, @p1, @p2, @p3;
+execute stmt using @p0, @p1, @p2, @p3;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+# TestPlanCacheMaxDecimalParamNumsResetSessionVar
+drop table if exists t5;
+create table t5 (a int, b1 decimal(10,2), b2 decimal(10,2), b3 decimal(10,2));
+
+# Test that changing session variable affects caching behavior
+set @@session.tidb_plan_cache_max_decimal_param_nums = 3;
+prepare stmt from 'select * from t5 where b1=? and b2=? and b3=?';
+set @p0 = 1.5, @p1 = 2.5, @p2 = 3.5;
+execute stmt using @p0, @p1, @p2;
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+
+# Change limit to 2, should not cache anymore
+set @@session.tidb_plan_cache_max_decimal_param_nums = 2;
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+
+set @@session.tidb_plan_cache_max_decimal_param_nums = default;
+select @@session.tidb_plan_cache_max_decimal_param_nums;
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+
+deallocate prepare stmt;

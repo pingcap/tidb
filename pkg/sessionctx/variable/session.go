@@ -1828,6 +1828,9 @@ type SessionVars struct {
 		QueryReserved int64
 	}
 
+	// PlanCacheMaxDecimalParamNums indicates the max number of decimal parameters which can use the plan cache
+	PlanCacheMaxDecimalParamNums int
+
 	// InPacketBytes records the total incoming packet bytes from clients for current session.
 	InPacketBytes atomic.Uint64
 
