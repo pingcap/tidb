@@ -729,7 +729,11 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 		e.globalSampleCollectors[tableID] = global
 		logutil.BgLogger().Info("DEBUGMEM mergePartitionSamples release (first partition)",
 			zap.Int64("partitionID", partitionID), zap.Int64("releasing", rcMemSize))
-		e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
+		if results.MemTracker != nil {
+			results.MemTracker.Release(rcMemSize)
+		} else {
+			e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
+		}
 		rc.DestroyAndPutToPool()
 		results.RowCollector = nil
 		return
@@ -738,7 +742,11 @@ func (e *AnalyzeExec) mergePartitionSamplesForGlobal(results *statistics.Analyze
 	logutil.BgLogger().Info("DEBUGMEM mergePartitionSamples release",
 		zap.Int64("partitionID", partitionID), zap.Int64("releasing", rcMemSize),
 		zap.Int("globalSamples", globalCollector.Base().Samples.Len()))
-	e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
+	if results.MemTracker != nil {
+		results.MemTracker.Release(rcMemSize)
+	} else {
+		e.Ctx().GetSessionVars().StmtCtx.MemTracker.Release(rcMemSize)
+	}
 	rc.DestroyAndPutToPool()
 	results.RowCollector = nil
 }

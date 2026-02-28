@@ -174,17 +174,21 @@ func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 	}
 	if s.mask < rs.mask {
 		s.mask = rs.mask
-		s.hashset.Iter(func(key uint64, _ bool) bool {
-			if (key & s.mask) != 0 {
-				s.hashset.Delete(key)
-			}
+		if s.hashset != nil {
+			s.hashset.Iter(func(key uint64, _ bool) bool {
+				if (key & s.mask) != 0 {
+					s.hashset.Delete(key)
+				}
+				return false
+			})
+		}
+	}
+	if rs.hashset != nil {
+		rs.hashset.Iter(func(key uint64, _ bool) bool {
+			s.insertHashValue(key)
 			return false
 		})
 	}
-	rs.hashset.Iter(func(key uint64, _ bool) bool {
-		s.insertHashValue(key)
-		return false
-	})
 }
 
 // FMSketchToProto converts FMSketch to its protobuf representation.
@@ -192,10 +196,12 @@ func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 	protoSketch := new(tipb.FMSketch)
 	if s != nil {
 		protoSketch.Mask = s.mask
-		s.hashset.Iter(func(val uint64, _ bool) bool {
-			protoSketch.Hashset = append(protoSketch.Hashset, val)
-			return false
-		})
+		if s.hashset != nil {
+			s.hashset.Iter(func(val uint64, _ bool) bool {
+				protoSketch.Hashset = append(protoSketch.Hashset, val)
+				return false
+			})
+		}
 	}
 	return protoSketch
 }

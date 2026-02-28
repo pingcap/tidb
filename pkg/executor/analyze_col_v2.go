@@ -148,6 +148,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 		BaseCount:     e.baseCount,
 		BaseModifyCnt: e.baseModifyCnt,
 		RowCollector:  rootCollector,
+		MemTracker:    e.memTracker,
 	}
 }
 

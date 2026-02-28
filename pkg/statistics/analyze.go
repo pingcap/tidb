@@ -16,6 +16,8 @@ package statistics
 
 import (
 	"fmt"
+
+	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
 // NonPartitionTableID is the partition id for non-partition table.
@@ -89,8 +91,13 @@ type AnalyzeResults struct {
 	// Only populated when tidb_enable_sample_based_global_stats is enabled and the
 	// analyze version is 2. Nil otherwise to avoid memory overhead.
 	RowCollector RowSampleCollector
-	ExtStats     *ExtendedStatsColl
-	Job          *AnalyzeJob
+	// MemTracker is the per-partition memory tracker that originally tracked
+	// RowCollector's memory. When the RowCollector is consumed and destroyed
+	// during global stats merge, memory must be released through this tracker
+	// (not the parent stmt tracker) to keep the accounting consistent.
+	MemTracker *memory.Tracker
+	ExtStats   *ExtendedStatsColl
+	Job        *AnalyzeJob
 	// Ars: combine the analyze result of all columns and the analyze result of indexes.
 	// (In stats version2)
 	// For example:
