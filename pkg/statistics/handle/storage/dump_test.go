@@ -627,6 +627,8 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 
+	// Old dumped stats may still contain the removed ext_stats field.
+	// Loading them should remain backward-compatible.
 	statsJSONFromOldVersion := `{
  "database_name": "test",
  "table_name": "t",
@@ -664,6 +666,19 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
    "correlation": 0
   }
  },
+
+ "ext_stats": [
+  {
+   "stats_name": "s1",
+   "string_vals": "",
+   "cols": [
+    1,
+    2
+   ],
+   "scalar_vals": 1,
+   "type": 1
+  }
+ ],
  "count": 256,
  "modify_count": 256,
  "partitions": null
