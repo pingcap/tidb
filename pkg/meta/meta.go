@@ -1607,7 +1607,7 @@ func (m *Mutator) GetMaskingPolicy(policyID int64) (*model.MaskingPolicyInfo, er
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
-		return nil, ErrMaskingPolicyNotExists
+		return nil, errors.WithMessage(ErrMaskingPolicyNotExists, fmt.Sprintf("masking policy id : %d doesn't exist", policyID))
 	}
 
 	value, err = detachMagicByte(value)

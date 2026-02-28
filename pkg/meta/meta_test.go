@@ -153,6 +153,11 @@ func TestMaskingPolicy(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, meta.ErrMaskingPolicyExists.Equal(err))
 
+	_, err = m.GetMaskingPolicy(2)
+	require.Error(t, err)
+	require.True(t, meta.ErrMaskingPolicyNotExists.Equal(err))
+	require.ErrorContains(t, err, "masking policy id : 2 doesn't exist")
+
 	val, err := m.GetMaskingPolicy(1)
 	require.NoError(t, err)
 	require.Equal(t, policy, val)
