@@ -1328,7 +1328,7 @@ func (e *aggExec) open() error {
 
 func (e *aggExec) getGroupKey(row chunk.Row) (*chunk.MutRow, []byte, error) {
 	length := len(e.groupByExprs)
-	if length == 0 {
+	if length == 0 { // if no group items, nothing returned.
 		return nil, nil, nil
 	}
 	key := make([]byte, 0, DefaultBatchSize)
@@ -1398,24 +1398,44 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 
 	chk := chunk.NewChunkWithCapacity(e.fieldTypes, 0)
 
-	for i, gk := range e.groupKeys {
+	fetchNewRow := func(idx int, groupKey []byte) error {
+		// empty set, no data in agg OP.
+		// fill a mock Contexts here, to let agg get default aggregated result.
+		// like count(empty-set) = 0, sum(empty-set) = null
 		newRow := chunk.MutRowFromTypes(e.fieldTypes)
-		aggCtxs := e.getContexts(gk)
+		// empty context key
+		aggCtxs := e.getContexts(groupKey)
 		for i, agg := range e.aggExprs {
 			result := agg.GetResult(aggCtxs[i])
 			if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
 				var err error
 				result, err = result.ConvertTo(e.sctx.GetSessionVars().StmtCtx.TypeCtx(), e.fieldTypes[i])
 				if err != nil {
-					return nil, errors.Trace(err)
+					return errors.Trace(err)
 				}
 			}
 			newRow.SetDatum(i, result)
 		}
 		if len(e.groupByRows) > 0 {
-			newRow.ShallowCopyPartialRow(len(e.aggExprs), e.groupByRows[i])
+			newRow.ShallowCopyPartialRow(len(e.aggExprs), e.groupByRows[idx])
 		}
 		chk.AppendRow(newRow.ToRow())
+		return nil
+	}
+
+	// where len(e.groupKeys) equals to 0, that means there is no data in the below child source.
+	// even without group by items, the whole data(not empty) will be seen as one group, and classified
+	// into that group with key built as "".
+	if len(e.groupKeys) == 0 {
+		if err := fetchNewRow(0, []byte{}); err != nil {
+			return nil, err
+		}
+	} else {
+		for i, gk := range e.groupKeys {
+			if err := fetchNewRow(i, gk); err != nil {
+				return nil, err
+			}
+		}
 	}
 	e.execSummary.updateOnlyRows(chk.NumRows())
 	return chk, nil
