@@ -253,7 +253,7 @@ StreamAgg	root		funcs:min(collation_agg_func.tt.d)->Column
 └─TopN	root		collation_agg_func.tt.d, offset:0, count:1
   └─TableReader	root		data:TopN
     └─TopN	cop[tikv]		collation_agg_func.tt.d, offset:0, count:1
-      └─Selection	cop[tikv]		not(isnull(cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)))
+      └─Selection	cop[tikv]		not(isnull(cast(collation_agg_func.tt.d, var_string(4294967295))))
         └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(d) from tt;
 min(d)
@@ -278,7 +278,7 @@ StreamAgg	root		funcs:max(collation_agg_func.tt.d)->Column
 └─TopN	root		collation_agg_func.tt.d:desc, offset:0, count:1
   └─TableReader	root		data:TopN
     └─TopN	cop[tikv]		collation_agg_func.tt.d:desc, offset:0, count:1
-      └─Selection	cop[tikv]		not(isnull(cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)))
+      └─Selection	cop[tikv]		not(isnull(cast(collation_agg_func.tt.d, var_string(4294967295))))
         └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select max(d) from tt;
 max(d)
