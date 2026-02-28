@@ -84,6 +84,7 @@ func tokenPrecedence(tok int, sqlMode mysql.SQLMode) int {
 		if sqlMode.HasPipesAsConcatMode() {
 			return precConcat
 		}
+		return precOr
 	}
 	return precNone
 }

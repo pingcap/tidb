@@ -961,16 +961,25 @@ func (p *HandParser) parseCompareSubquery(left ast.ExprNode, opCode opcode.Op, a
 }
 
 func (p *HandParser) parseDateArith(left ast.ExprNode, opCode opcode.Op) ast.ExprNode {
-	if (opCode != opcode.Plus && opCode != opcode.Minus) || p.peek().Tp != interval || p.peekN(1).Tp == '(' {
+	if (opCode != opcode.Plus && opCode != opcode.Minus) || p.peek().Tp != interval {
 		return nil
 	}
+	// Use mark/restore to speculatively try date arithmetic.
+	// In yacc, BitExpr '+' INTERVAL Expression TimeUnit is committed once INTERVAL
+	// is consumed, but we need to handle INTERVAL(...) function calls that start with '('.
+	saved := p.mark()
+	savedErrs := len(p.errs)
 	p.next() // consume INTERVAL
 	intervalExpr := p.parseExpression(precNone)
 	if intervalExpr == nil {
+		p.errs = p.errs[:savedErrs]
+		p.restore(saved)
 		return nil
 	}
 	unit := p.parseTimeUnit()
 	if unit == nil {
+		p.errs = p.errs[:savedErrs]
+		p.restore(saved)
 		return nil
 	}
 	fnName := "DATE_ADD"

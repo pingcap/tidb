@@ -25,104 +25,358 @@ import (
 )
 
 // parseGrantStmt parses GRANT statements (both GRANT privilege and GRANT role).
+// Uses the same RoleOrPrivElemList approach as yacc to handle ambiguous cases
+// like GRANT 'rolename'@host ON ... which could look like either a role or privilege.
 func (p *HandParser) parseGrantStmt() ast.StmtNode {
 	p.expect(grant)
 
-	// Detect GRANT ROLE vs GRANT PRIVILEGE.
-	// GRANT ROLE: GRANT 'role1', 'role2' TO ...
-	// GRANT PRIVILEGE: GRANT priv1, priv2 ON ...
-	// Look ahead for TO vs ON to distinguish role vs privilege grants.
-	if p.peek().Tp == stringLit || p.peek().Tp == identifier {
-		if p.isRoleStatement(to) {
-			return p.parseGrantRoleStmt()
-		}
+	// GRANT PROXY ON ... is a special case
+	if p.peek().Tp == proxy {
+		return p.parseGrantProxyStmt()
 	}
 
-	stmt := Alloc[ast.GrantStmt](p.arena)
+	// Parse a unified RoleOrPriv list (matching yacc's RoleOrPrivElemList).
+	roleOrPrivs := p.parseRoleOrPrivElemList()
 
-	// Parse privilege list
-	stmt.Privs = p.parsePrivileges()
-
-	p.expect(on)
-
-	// Parse ObjectType: TABLE, FUNCTION, PROCEDURE
-	stmt.ObjectType = p.parseObjectType()
-
-	// Check for PROXY privilege
-	if level, handled := p.parseProxyLevel(stmt.Privs, "GRANT"); handled {
-		if level == nil {
+	if _, ok := p.accept(on); ok {
+		// GRANT ... ON ... TO ... (privilege grant)
+		privs, err := p.convertToPriv(roleOrPrivs)
+		if err != nil {
+			p.errs = append(p.errs, err)
 			return nil
 		}
-		stmt.Level = level
-	} else {
-		stmt.Level = p.parseGrantLevel()
-	}
 
-	p.expect(to)
-	stmt.Users = p.parseUserSpecList()
-	if stmt.Users == nil {
-		return nil
-	}
+		stmt := Alloc[ast.GrantStmt](p.arena)
+		stmt.Privs = privs
 
-	// Optional REQUIRE clause
-	if _, ok := p.accept(require); ok {
-		stmt.AuthTokenOrTLSOptions = p.parseTLSOptions()
-	}
+		// Parse ObjectType: TABLE, FUNCTION, PROCEDURE
+		stmt.ObjectType = p.parseObjectType()
 
-	// Optional WITH GRANT OPTION (or WITH MAX_QUERIES_PER_HOUR etc. which are parsed but ignored)
-	if _, ok := p.accept(with); ok {
-		if _, ok := p.accept(grant); ok {
-			p.expect(option)
-			stmt.WithGrant = true
+		// Check for PROXY privilege
+		if level, handled := p.parseProxyLevel(stmt.Privs, "GRANT"); handled {
+			if level == nil {
+				return nil
+			}
+			stmt.Level = level
 		} else {
-			// WITH MAX_QUERIES_PER_HOUR NUM, MAX_UPDATES_PER_HOUR NUM, etc.
-			// MySQL compatibility: parsed but ignored
-			for {
-				pk := p.peek()
-				if !pk.IsKeyword("MAX_QUERIES_PER_HOUR") && !pk.IsKeyword("MAX_UPDATES_PER_HOUR") &&
-					!pk.IsKeyword("MAX_CONNECTIONS_PER_HOUR") && !pk.IsKeyword("MAX_USER_CONNECTIONS") {
-					break
+			stmt.Level = p.parseGrantLevel()
+		}
+
+		p.expect(to)
+		stmt.Users = p.parseUserSpecList()
+		if stmt.Users == nil {
+			return nil
+		}
+
+		// Optional REQUIRE clause
+		if _, ok := p.accept(require); ok {
+			stmt.AuthTokenOrTLSOptions = p.parseTLSOptions()
+		}
+
+		// Optional WITH GRANT OPTION (or WITH MAX_QUERIES_PER_HOUR etc. which are parsed but ignored)
+		if _, ok := p.accept(with); ok {
+			if _, ok := p.accept(grant); ok {
+				p.expect(option)
+				stmt.WithGrant = true
+			} else {
+				// WITH MAX_QUERIES_PER_HOUR NUM, MAX_UPDATES_PER_HOUR NUM, etc.
+				// MySQL compatibility: parsed but ignored
+				for {
+					pk := p.peek()
+					if !pk.IsKeyword("MAX_QUERIES_PER_HOUR") && !pk.IsKeyword("MAX_UPDATES_PER_HOUR") &&
+						!pk.IsKeyword("MAX_CONNECTIONS_PER_HOUR") && !pk.IsKeyword("MAX_USER_CONNECTIONS") {
+						break
+					}
+					p.next()
+					p.next() // consume the number
 				}
-				p.next()
-				p.next() // consume the number
 			}
 		}
+
+		return stmt
 	}
 
-	return stmt
-}
-
-// parseGrantRoleStmt parses GRANT 'role1', 'role2' TO 'user1'@'host', 'user2'@'host'
-func (p *HandParser) parseGrantRoleStmt() ast.StmtNode {
-	stmt := Alloc[ast.GrantRoleStmt](p.arena)
-
-	// Parse role list
-	stmt.Roles, stmt.Users = p.parseRoleListAndUserList(to)
-	if stmt.Roles == nil || stmt.Users == nil {
+	// GRANT ... TO ... (role grant)
+	roles, err := p.convertToRole(roleOrPrivs)
+	if err != nil {
+		p.errs = append(p.errs, err)
 		return nil
 	}
 
-	return stmt
-}
+	stmt := Alloc[ast.GrantRoleStmt](p.arena)
+	stmt.Roles = roles
 
-// parsePrivileges parses a list of privileges for GRANT/REVOKE.
-func (p *HandParser) parsePrivileges() []*ast.PrivElem {
-	var privs []*ast.PrivElem
+	p.expect(to)
+
+	// Parse user list
 	for {
-		priv := p.parsePrivilege()
-		if priv == nil {
-			return privs
+		user := p.parseUserIdentity()
+		if user == nil {
+			return nil
 		}
-		privs = append(privs, priv)
+		stmt.Users = append(stmt.Users, user)
 		if _, ok := p.accept(','); !ok {
 			break
 		}
 	}
-	return privs
+
+	return stmt
 }
 
-// parsePrivilege parses a single privilege keyword.
-func (p *HandParser) parsePrivilege() *ast.PrivElem {
+// parseGrantProxyStmt parses GRANT PROXY ON ... TO ...
+func (p *HandParser) parseGrantProxyStmt() ast.StmtNode {
+	p.next() // consume PROXY
+	p.expect(on)
+	localUser := p.parseUserIdentity()
+	if localUser == nil {
+		return nil
+	}
+	p.expect(to)
+	var users []*auth.UserIdentity
+	for {
+		user := p.parseUserIdentity()
+		if user == nil {
+			return nil
+		}
+		users = append(users, user)
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+	withGrant := false
+	if _, ok := p.accept(with); ok {
+		p.expect(grant)
+		p.expect(option)
+		withGrant = true
+	}
+	return &ast.GrantProxyStmt{
+		LocalUser:     localUser,
+		ExternalUsers: users,
+		WithGrant:     withGrant,
+	}
+}
+
+
+// parseGrantLevel parses the object level for GRANT: *.*, db.*, db.tbl, *, tbl
+func (p *HandParser) parseGrantLevel() *ast.GrantLevel {
+	level := Alloc[ast.GrantLevel](p.arena)
+
+	if _, ok := p.accept('*'); ok {
+		if _, ok := p.accept('.'); ok {
+			p.expect('*')
+			level.Level = ast.GrantLevelGlobal
+		} else {
+			level.Level = ast.GrantLevelDB
+		}
+		return level
+	}
+
+	// db.* or db.tbl or just tbl
+	tok := p.next()
+	name := tok.Lit
+	if _, ok := p.accept('.'); ok {
+		level.DBName = name
+		if _, ok := p.accept('*'); ok {
+			level.Level = ast.GrantLevelDB
+		} else {
+			tblTok := p.next()
+			level.TableName = tblTok.Lit
+			level.Level = ast.GrantLevelTable
+		}
+	} else {
+		level.TableName = name
+		level.Level = ast.GrantLevelTable
+	}
+
+	return level
+}
+
+// parseRevokeStmt parses REVOKE statements (both REVOKE privilege and REVOKE role).
+// Uses the same RoleOrPrivElemList approach as yacc.
+func (p *HandParser) parseRevokeStmt() ast.StmtNode {
+	p.expect(revoke)
+
+	// Parse a unified RoleOrPriv list (matching yacc's RoleOrPrivElemList).
+	roleOrPrivs := p.parseRoleOrPrivElemList()
+
+	if _, ok := p.accept(on); ok {
+		// REVOKE ... ON ... FROM ... (privilege revoke)
+		privs, err := p.convertToPriv(roleOrPrivs)
+		if err != nil {
+			p.errs = append(p.errs, err)
+			return nil
+		}
+
+		stmt := Alloc[ast.RevokeStmt](p.arena)
+		stmt.ObjectType = ast.ObjectTypeNone
+		stmt.Privs = privs
+
+		// Parse ObjectType: TABLE, FUNCTION, PROCEDURE
+		stmt.ObjectType = p.parseObjectType()
+
+		// Check for PROXY privilege
+		if level, handled := p.parseProxyLevel(stmt.Privs, "REVOKE"); handled {
+			if level == nil {
+				return nil
+			}
+			stmt.Level = level
+		} else {
+			stmt.Level = p.parseGrantLevel()
+		}
+
+		p.expect(from)
+		stmt.Users = p.parseUserSpecList()
+		if stmt.Users == nil {
+			return nil
+		}
+		return stmt
+	}
+
+	// REVOKE ... FROM ... (role revoke or REVOKE ALL ... FROM ...)
+	// Check for REVOKE ALL with no ON — e.g. REVOKE ALL, GRANT OPTION FROM ...
+	if len(roleOrPrivs) > 0 {
+		if rp := roleOrPrivs[0]; rp.Node != nil {
+			if pe, ok := rp.Node.(*ast.PrivElem); ok && pe.Priv == mysql.AllPriv {
+				// REVOKE ALL [PRIVILEGES], GRANT OPTION FROM ...
+				privs, err := p.convertToPriv(roleOrPrivs)
+				if err != nil {
+					p.errs = append(p.errs, err)
+					return nil
+				}
+				stmt := Alloc[ast.RevokeStmt](p.arena)
+				stmt.ObjectType = ast.ObjectTypeNone
+				stmt.Privs = privs
+				stmt.Level = Alloc[ast.GrantLevel](p.arena)
+				stmt.Level.Level = ast.GrantLevelGlobal
+				p.expect(from)
+				stmt.Users = p.parseUserSpecList()
+				if stmt.Users == nil {
+					return nil
+				}
+				return stmt
+			}
+		}
+	}
+
+	// REVOKE role1, role2 FROM user1, user2
+	roles, err := p.convertToRole(roleOrPrivs)
+	if err != nil {
+		p.errs = append(p.errs, err)
+		return nil
+	}
+
+	stmt := Alloc[ast.RevokeRoleStmt](p.arena)
+	stmt.Roles = roles
+
+	p.expect(from)
+
+	// Parse user list
+	for {
+		user := p.parseUserIdentity()
+		if user == nil {
+			return nil
+		}
+		stmt.Users = append(stmt.Users, user)
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+	return stmt
+}
+
+
+// parseRoleOrPrivElemList parses a comma-separated list of items that could be
+// either privilege elements or role identities. This matches yacc's RoleOrPrivElemList
+// which defers the decision until ON or TO/FROM is seen.
+func (p *HandParser) parseRoleOrPrivElemList() []*ast.RoleOrPriv {
+	var list []*ast.RoleOrPriv
+	for {
+		elem := p.parseRoleOrPrivElem()
+		if elem == nil {
+			break
+		}
+		list = append(list, elem)
+		if _, ok := p.accept(','); !ok {
+			break
+		}
+	}
+	return list
+}
+
+// parseRoleOrPrivElem parses a single element that is either a privilege or a role.
+// Yacc grammar: RoleOrPrivElem = PrivElem | RolenameWithoutIdent | ExtendedPriv | special
+func (p *HandParser) parseRoleOrPrivElem() *ast.RoleOrPriv {
+	tok := p.peek()
+
+	// Try as PrivElem first (known privilege keywords).
+	priv := p.tryParsePrivilege()
+	if priv != nil {
+		return &ast.RoleOrPriv{Node: priv}
+	}
+
+	// RolenameWithoutIdent: stringLit or RolenameComposed (stringLit/StringName + @host)
+	if tok.Tp == stringLit {
+		p.next()
+		if p.peek().Tp == singleAtIdentifier {
+			// stringLit @host → RolenameComposed
+			hostTok := p.next()
+			hostname := strings.TrimPrefix(hostTok.Lit, "@")
+			return &ast.RoleOrPriv{
+				Node: &auth.RoleIdentity{Username: tok.Lit, Hostname: strings.ToLower(hostname)},
+			}
+		}
+		// Bare stringLit → RolenameWithoutIdent
+		return &ast.RoleOrPriv{
+			Node: &auth.RoleIdentity{Username: tok.Lit, Hostname: "%"},
+		}
+	}
+
+	// ExtendedPriv or bare role name: one or more identifiers
+	if tok.Tp == identifier {
+		// Check if this looks like a role with @host
+		if p.peekN(1).Tp == singleAtIdentifier {
+			p.next() // consume identifier
+			hostTok := p.next()
+			hostname := strings.TrimPrefix(hostTok.Lit, "@")
+			return &ast.RoleOrPriv{
+				Node: &auth.RoleIdentity{Username: tok.Lit, Hostname: strings.ToLower(hostname)},
+			}
+		}
+		// Extended privilege (or bare role name): sequence of identifiers.
+		// Store as Symbols so both ToPriv() and ToRole() can convert it.
+		_, name := p.parseExtendedPrivName("")
+		if name != "" {
+			return &ast.RoleOrPriv{Symbols: name}
+		}
+	}
+
+	// LOAD FROM S3 / SELECT INTO S3
+	if tok.Tp == load && p.peekN(1).Tp == from {
+		return p.parseSpecialPriv("LOAD", from, "S3")
+	}
+	if tok.Tp == selectKwd && p.peekN(1).Tp == into {
+		return p.parseSpecialPriv("SELECT", into, "S3")
+	}
+
+	return nil
+}
+
+// parseSpecialPriv handles LOAD FROM S3 and SELECT INTO S3 special privileges.
+func (p *HandParser) parseSpecialPriv(firstKeyword string, middleTp int, lastKeyword string) *ast.RoleOrPriv {
+	p.next() // consume first keyword (LOAD or SELECT)
+	middleTok := p.next() // consume middle keyword (FROM or INTO)
+	tok := p.next() // consume last keyword (S3)
+	if !strings.EqualFold(tok.Lit, lastKeyword) {
+		p.syntaxErrorAt(tok)
+		return nil
+	}
+	name := firstKeyword + " " + strings.ToUpper(middleTok.Lit) + " " + strings.ToUpper(tok.Lit)
+	return &ast.RoleOrPriv{Symbols: name}
+}
+
+// tryParsePrivilege tries to parse a known privilege keyword.
+// Returns nil without consuming tokens if the next token is not a privilege keyword.
+func (p *HandParser) tryParsePrivilege() *ast.PrivElem {
 	priv := Alloc[ast.PrivElem](p.arena)
 	tok := p.peek()
 	switch tok.Tp {
@@ -131,16 +385,12 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		p.accept(privileges)
 		priv.Priv = mysql.AllPriv
 	case selectKwd:
-		// Check for dynamic privileges starting with SELECT, e.g., SELECT INTO S3
+		// Don't match SELECT INTO S3 as a regular SELECT privilege
 		if p.peekN(1).Tp == into {
-			priv.Priv, priv.Name = p.parseExtendedPrivName("SELECT")
-			if priv.Name == "" {
-				return nil
-			}
-		} else {
-			p.next()
-			priv.Priv = mysql.SelectPriv
+			return nil
 		}
+		p.next()
+		priv.Priv = mysql.SelectPriv
 	case insert:
 		p.next()
 		priv.Priv = mysql.InsertPriv
@@ -152,7 +402,6 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		priv.Priv = mysql.DeletePriv
 	case drop:
 		p.next()
-		// DROP ROLE compound privilege
 		if p.peek().Tp == role {
 			p.next()
 			priv.Priv = mysql.DropRolePriv
@@ -168,7 +417,6 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		priv.Priv = mysql.IndexPriv
 	case alter:
 		p.next()
-		// ALTER ROUTINE compound privilege
 		if p.peek().Tp == routine {
 			p.next()
 			priv.Priv = mysql.AlterRoutinePriv
@@ -210,7 +458,6 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		priv.Priv = mysql.ReloadPriv
 	case replication:
 		p.next()
-		// REPLICATION CLIENT or REPLICATION SLAVE
 		next := p.next()
 		if next.IsKeyword("CLIENT") {
 			priv.Priv = mysql.ReplicationClientPriv
@@ -219,8 +466,6 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		}
 	case create:
 		p.next()
-		// CREATE VIEW, CREATE ROUTINE, CREATE USER, CREATE ROLE,
-		// CREATE TEMPORARY TABLES, CREATE TABLESPACE
 		switch p.peek().Tp {
 		case view:
 			p.next()
@@ -233,13 +478,12 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 			priv.Priv = mysql.CreateRolePriv
 		case temporary:
 			p.next()
-			p.accept(tables) // TABLES
+			p.accept(tables)
 			priv.Priv = mysql.CreateTMPTablePriv
 		case tablespace:
 			p.next()
 			priv.Priv = mysql.CreateTablespacePriv
 		default:
-			// Check for 'CREATE ROUTINE'
 			if p.peek().Tp == routine {
 				p.next()
 				priv.Priv = mysql.CreateRoutinePriv
@@ -249,7 +493,6 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		}
 	case show:
 		p.next()
-		// SHOW DATABASES or SHOW VIEW
 		if p.peek().Tp == databases || p.peek().Tp == database {
 			p.next()
 			priv.Priv = mysql.ShowDBPriv
@@ -259,13 +502,14 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		}
 	case lock:
 		p.next()
-		p.accept(tables) // LOCK TABLES
+		p.accept(tables)
 		priv.Priv = mysql.LockTablesPriv
+	case proxy:
+		p.next()
+		priv.Priv = mysql.AllPriv // PROXY is handled specially
+		priv.Name = "PROXY"
 	default:
-		priv.Priv, priv.Name = p.parseExtendedPrivName("")
-		if priv.Name == "" {
-			return nil
-		}
+		return nil
 	}
 
 	// Optional column list: (col1, col2, ...)
@@ -273,8 +517,8 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 		p.next()
 		for {
 			col := &ast.ColumnName{}
-			if tok, ok := p.expectIdentLike(); ok {
-				col.Name = ast.NewCIStr(tok.Lit)
+			if colTok, ok := p.expectIdentLike(); ok {
+				col.Name = ast.NewCIStr(colTok.Lit)
 			}
 			priv.Cols = append(priv.Cols, col)
 			if _, ok := p.accept(','); !ok {
@@ -287,130 +531,37 @@ func (p *HandParser) parsePrivilege() *ast.PrivElem {
 	return priv
 }
 
-// parseGrantLevel parses the object level for GRANT: *.*, db.*, db.tbl, *, tbl
-func (p *HandParser) parseGrantLevel() *ast.GrantLevel {
-	level := Alloc[ast.GrantLevel](p.arena)
-
-	if _, ok := p.accept('*'); ok {
-		if _, ok := p.accept('.'); ok {
-			p.expect('*')
-			level.Level = ast.GrantLevelGlobal
-		} else {
-			level.Level = ast.GrantLevelDB
+// convertToPriv converts a RoleOrPriv list to PrivElem list.
+// Matches yacc's convertToPriv function behavior.
+func (p *HandParser) convertToPriv(roleOrPrivs []*ast.RoleOrPriv) ([]*ast.PrivElem, error) {
+	var privs []*ast.PrivElem
+	for _, rp := range roleOrPrivs {
+		pe, err := rp.ToPriv()
+		if err != nil {
+			return nil, err
 		}
-		return level
+		privs = append(privs, pe)
 	}
-
-	// db.* or db.tbl or just tbl
-	tok := p.next()
-	name := tok.Lit
-	if _, ok := p.accept('.'); ok {
-		level.DBName = name
-		if _, ok := p.accept('*'); ok {
-			level.Level = ast.GrantLevelDB
-		} else {
-			tblTok := p.next()
-			level.TableName = tblTok.Lit
-			level.Level = ast.GrantLevelTable
-		}
-	} else {
-		level.TableName = name
-		level.Level = ast.GrantLevelTable
-	}
-
-	return level
+	return privs, nil
 }
 
-// parseRevokeStmt parses REVOKE statements (both REVOKE privilege and REVOKE role).
-func (p *HandParser) parseRevokeStmt() ast.StmtNode {
-	p.expect(revoke)
-
-	// Detect REVOKE ROLE vs REVOKE PRIVILEGE.
-	// REVOKE ROLE: REVOKE 'role1', 'role2' FROM ...
-	// REVOKE PRIVILEGE: REVOKE priv1, priv2 ON ...
-	// Look ahead for FROM vs ON to distinguish role vs privilege revocation.
-	if p.peek().Tp == stringLit || p.peek().Tp == identifier {
-		if p.isRoleStatement(from) {
-			return p.parseRevokeRoleStmt()
+// convertToRole converts a RoleOrPriv list to RoleIdentity list.
+// Matches yacc's convertToRole function behavior.
+func (p *HandParser) convertToRole(roleOrPrivs []*ast.RoleOrPriv) ([]*auth.RoleIdentity, error) {
+	var roles []*auth.RoleIdentity
+	for _, rp := range roleOrPrivs {
+		r, err := rp.ToRole()
+		if err != nil {
+			return nil, err
 		}
+		roles = append(roles, r)
 	}
-
-	stmt := Alloc[ast.RevokeStmt](p.arena)
-	stmt.ObjectType = ast.ObjectTypeNone
-	stmt.Privs = p.parsePrivileges()
-
-	if _, ok := p.accept(on); ok {
-		// Parse ObjectType: TABLE, FUNCTION, PROCEDURE
-		stmt.ObjectType = p.parseObjectType()
-
-		// Check for PROXY privilege
-		if level, handled := p.parseProxyLevel(stmt.Privs, "REVOKE"); handled {
-			if level == nil {
-				return nil
-			}
-			stmt.Level = level
-		} else {
-			stmt.Level = p.parseGrantLevel()
-		}
-	} else {
-		// No ON clause: REVOKE ALL [PRIVILEGES], GRANT OPTION FROM ...
-		stmt.Level = Alloc[ast.GrantLevel](p.arena)
-		stmt.Level.Level = ast.GrantLevelGlobal
-	}
-
-	p.expect(from)
-	stmt.Users = p.parseUserSpecList()
-	if stmt.Users == nil {
-		return nil
-	}
-	return stmt
+	return roles, nil
 }
 
-// parseRevokeRoleStmt parses REVOKE 'role1', 'role2' FROM 'user1'@'host', 'user2'@'host'
-func (p *HandParser) parseRevokeRoleStmt() ast.StmtNode {
-	stmt := Alloc[ast.RevokeRoleStmt](p.arena)
-
-	// Parse role list
-	stmt.Roles, stmt.Users = p.parseRoleListAndUserList(from)
-	if stmt.Roles == nil || stmt.Users == nil {
-		return nil
-	}
-	return stmt
-}
-
-// parseRoleListAndUserList parses a role list followed by a connector keyword (TO/FROM)
-// and then a user list. Shared between GRANT ROLE and REVOKE ROLE.
-func (p *HandParser) parseRoleListAndUserList(connector int) (roles []*auth.RoleIdentity, users []*auth.UserIdentity) {
-	// Parse role list
-	for {
-		role := p.parseRoleIdentity()
-		if role == nil {
-			return nil, nil
-		}
-		roles = append(roles, role)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
-	}
-
-	p.expect(connector)
-
-	// Parse user list
-	for {
-		user := p.parseUserIdentity()
-		if user == nil {
-			return nil, nil
-		}
-		users = append(users, user)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
-	}
-	return roles, users
-}
-
-// parseExtendedPrivName consumes tokens forming a dynamic/extended privilege name
-// until a delimiter (,  ON  (  ;  EOF) is reached. If initPart is non-empty, it is
+// parseExtendedPrivName consumes tokens forming a dynamic/extended privilege name.
+// In yacc, ExtendedPriv is defined as: identifier { identifier }*
+// Only accepts identifier tokens (not keywords). If initPart is non-empty, it is
 // prepended (e.g. "SELECT" for "SELECT INTO S3"). The current token is consumed.
 // Returns (mysql.ExtendedPriv, name) on success, or (0, "") if no tokens match.
 func (p *HandParser) parseExtendedPrivName(initPart string) (mysql.PrivilegeType, string) {
@@ -421,21 +572,11 @@ func (p *HandParser) parseExtendedPrivName(initPart string) (mysql.PrivilegeType
 	}
 	for {
 		tok := p.peek()
-		if tok.Tp == ',' || tok.Tp == on || tok.Tp == '(' || tok.Tp == ';' || tok.Tp == 0 {
+		// Only accept identifier tokens — matching yacc's ExtendedPriv rule.
+		if tok.Tp != identifier {
 			break
 		}
-		// Extended privilege names consist of keywords and identifiers,
-		// not string literals or user/system variables (e.g. 'C' @host).
-		if tok.Tp == stringLit || tok.Tp == singleAtIdentifier || tok.Tp == doubleAtIdentifier {
-			break
-		}
-		if tok.Tp == identifier {
-			parts = append(parts, tok.Lit)
-		} else if tok.Lit != "" {
-			parts = append(parts, tok.Lit)
-		} else {
-			break
-		}
+		parts = append(parts, tok.Lit)
 		p.next()
 	}
 	if len(parts) == 0 {

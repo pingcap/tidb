@@ -253,11 +253,22 @@ func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
 	return authUser
 }
 
-// parseRoleIdentity parses a role identifier
+// parseRoleIdentity parses a role identifier.
+// Yacc grammar: Rolename = RoleNameString | RolenameComposed
+//   RoleNameString = stringLit | identifier  (bare names — strict)
+//   RolenameComposed = StringName '@' StringName | StringName singleAtIdentifier
+//   StringName = stringLit | Identifier  (includes unreserved keywords)
 func (p *HandParser) parseRoleIdentity() *auth.RoleIdentity {
 	role := Alloc[auth.RoleIdentity](p.arena)
-	tok, ok := p.expectAny(stringLit, identifier)
-	if !ok {
+	tok := p.peek()
+	if tok.Tp == identifier || tok.Tp == stringLit {
+		p.next()
+	} else if isIdentLike(tok.Tp) && p.peekN(1).Tp == singleAtIdentifier {
+		// Unreserved keyword followed by '@host' — accept as role name
+		// to match yacc RolenameComposed (StringName '@' StringName).
+		p.next()
+	} else {
+		p.syntaxErrorAt(tok)
 		return nil
 	}
 	role.Username = tok.Lit
@@ -430,22 +441,6 @@ func (p *HandParser) acceptFromOrIn() (string, bool) {
 		return p.next().Lit, true
 	}
 	return "", false
-}
-
-// isRoleStatement peeks ahead through a comma-separated identifier list to detect
-// whether this is a role statement (terminated by `terminator`, e.g. to/from)
-// vs a privilege statement (terminated by on).
-// Used to distinguish GRANT role vs GRANT privilege, and REVOKE role vs REVOKE privilege.
-func (p *HandParser) isRoleStatement(terminator int) bool {
-	for i := 0; ; i++ {
-		tok := p.peekN(i)
-		if tok.Tp == terminator {
-			return true
-		}
-		if tok.Tp == on || tok.Tp == 0 || tok.Tp == ';' {
-			return false
-		}
-	}
 }
 
 // parseObjectType parses an optional object type: TABLE | FUNCTION | PROCEDURE.
