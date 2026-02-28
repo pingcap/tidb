@@ -28,10 +28,6 @@ const (
 	// Final 60s report points: compact to 100x100.
 	ruReportTopNUsers       = 100
 	ruReportTopNSQLsPerUser = 100
-
-	// Merge may combine up to 4 compacted buckets, so keep a larger pre-cap.
-	ruReportMergePreTopNUsers       = int(ruReportWindowSeconds/ruBaseBucketSeconds) * maxTopUsers
-	ruReportMergePreTopNSQLsPerUser = int(ruReportWindowSeconds/ruBaseBucketSeconds) * maxTopSQLsPerUser
 )
 
 type ruPointBucket struct {
@@ -166,13 +162,21 @@ func (a *ruWindowAggregator) rotateBucketsBefore(boundaryStart uint64) {
 // It does not require a lock.
 func buildReportRecords(buckets map[uint64]*ruPointBucket, windowStart, windowEnd, itemInterval uint64, keyspaceName []byte) []tipb.TopRURecord {
 	singleBucket := windowEnd-windowStart <= itemInterval
+
+	bucketsPerInterval := int((itemInterval + ruBaseBucketSeconds - 1) / ruBaseBucketSeconds)
+	intervalPreCapUsers := bucketsPerInterval * maxTopUsers
+	intervalPreCapSQLsPerUser := bucketsPerInterval * maxTopSQLsPerUser
+
+	intervalsPerWindow := int((windowEnd - windowStart + itemInterval - 1) / itemInterval)
+	mergedPreCapUsers := intervalsPerWindow * ruReportTopNUsers
+	mergedPreCapSQLsPerUser := intervalsPerWindow * ruReportTopNSQLsPerUser
 	var mergedOutput *ruCollecting
 	if !singleBucket {
-		mergedOutput = newRUCollectingWithCaps(ruReportMergePreTopNUsers, ruReportMergePreTopNSQLsPerUser)
+		mergedOutput = newRUCollectingWithCaps(mergedPreCapUsers, mergedPreCapSQLsPerUser)
 	}
 
 	for intervalStart := windowStart; intervalStart < windowEnd; intervalStart += itemInterval {
-		intervalCollecting := newRUCollectingWithCaps(ruReportMergePreTopNUsers, ruReportMergePreTopNSQLsPerUser)
+		intervalCollecting := newRUCollectingWithCaps(intervalPreCapUsers, intervalPreCapSQLsPerUser)
 		for bucketStart := intervalStart; bucketStart < intervalStart+itemInterval; bucketStart += ruBaseBucketSeconds {
 			bucket, ok := buckets[bucketStart]
 			if !ok || bucket.compactedCollecting == nil {

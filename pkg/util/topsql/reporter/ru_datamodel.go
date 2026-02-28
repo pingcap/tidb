@@ -53,8 +53,8 @@ type ruItem struct {
 }
 
 // toProto converts ruItem to protobuf.
-func (i *ruItem) toProto() *tipb.TopRURecordItem {
-	return &tipb.TopRURecordItem{
+func (i *ruItem) toProto() tipb.TopRURecordItem {
+	return tipb.TopRURecordItem{
 		TimestampSec: i.timestamp,
 		TotalRu:      i.totalRU,
 		ExecCount:    i.execCount,
@@ -74,9 +74,11 @@ func (rs ruItems) toProto() []*tipb.TopRURecordItem {
 	if len(rs) == 0 {
 		return nil
 	}
-	items := make([]*tipb.TopRURecordItem, 0, len(rs))
-	for _, item := range rs {
-		items = append(items, item.toProto())
+	vals := make([]tipb.TopRURecordItem, len(rs))
+	items := make([]*tipb.TopRURecordItem, len(rs))
+	for i := range rs {
+		vals[i] = rs[i].toProto()
+		items[i] = &vals[i]
 	}
 	return items
 }
@@ -103,8 +105,7 @@ type ruRecord struct {
 	sqlDigest  stmtstats.BinaryDigest
 	planDigest stmtstats.BinaryDigest
 	items      ruItems
-	tsIndex    map[uint64]int // timestamp => index in items
-	totalRU    float64        // cumulative RU for TopN sorting
+	totalRU    float64 // cumulative RU for TopN sorting
 }
 
 func newRURecord(sqlDigest, planDigest stmtstats.BinaryDigest) *ruRecord {
@@ -112,7 +113,6 @@ func newRURecord(sqlDigest, planDigest stmtstats.BinaryDigest) *ruRecord {
 		sqlDigest:  sqlDigest,
 		planDigest: planDigest,
 		items:      make(ruItems, 0, 4),
-		tsIndex:    make(map[uint64]int, 4),
 	}
 }
 
@@ -122,19 +122,22 @@ func newOthersRURecord() *ruRecord {
 
 // add appends an RU increment for a timestamp.
 func (r *ruRecord) add(timestamp uint64, totalRU float64, execCount, execDuration uint64) {
-	if idx, ok := r.tsIndex[timestamp]; ok {
-		r.items[idx].totalRU += totalRU
-		r.items[idx].execCount += execCount
-		r.items[idx].execDuration += execDuration
-	} else {
-		r.tsIndex[timestamp] = len(r.items)
-		r.items = append(r.items, ruItem{
-			timestamp:    timestamp,
-			totalRU:      totalRU,
-			execCount:    execCount,
-			execDuration: execDuration,
-		})
+	for idx := range r.items {
+		if r.items[idx].timestamp == timestamp {
+			r.items[idx].totalRU += totalRU
+			r.items[idx].execCount += execCount
+			r.items[idx].execDuration += execDuration
+			r.totalRU += totalRU
+			return
+		}
 	}
+
+	r.items = append(r.items, ruItem{
+		timestamp:    timestamp,
+		totalRU:      totalRU,
+		execCount:    execCount,
+		execDuration: execDuration,
+	})
 	r.totalRU += totalRU
 }
 
