@@ -106,6 +106,22 @@ type memKVsAndBuffers struct {
 	droppedSizePerFile []int
 }
 
+func (b *memKVsAndBuffers) reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, buf := range b.memKVBuffers {
+		if buf != nil {
+			buf.Destroy()
+		}
+	}
+	b.kvs = nil
+	b.memKVBuffers = nil
+	b.size = 0
+	b.droppedSize = 0
+	b.kvsPerFile = nil
+	b.droppedSizePerFile = nil
+}
+
 func (b *memKVsAndBuffers) build(ctx context.Context) {
 	sumKVCnt := 0
 	for _, keys := range b.kvsPerFile {

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -623,6 +624,29 @@ func TestGCSShouldRetry(t *testing.T) {
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: server sent GOAWAY and closed the connectiont"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: client connection lost"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 	require.True(t, shouldRetry(&url.Error{Err: io.EOF, Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+}
+
+func TestGlobalSortGCSReadRetryContext(t *testing.T) {
+	ctx := context.Background()
+	_, ok := getGlobalSortGCSReadRetry(ctx)
+	require.False(t, ok)
+
+	ctx = WithGlobalSortGCSReadRetry(ctx, 32)
+	cfg, ok := getGlobalSortGCSReadRetry(ctx)
+	require.True(t, ok)
+	require.Equal(t, 32, cfg.maxAttempts)
+
+	ctx = WithGlobalSortGCSReadRetry(ctx, 0)
+	cfg, ok = getGlobalSortGCSReadRetry(ctx)
+	require.True(t, ok)
+	require.Equal(t, 32, cfg.maxAttempts)
+}
+
+func TestIsRetryableGCSHTTP2InternalError(t *testing.T) {
+	require.True(t, IsRetryableGCSHTTP2InternalError(http2.StreamError{Code: http2.ErrCodeInternal}))
+	require.True(t, IsRetryableGCSHTTP2InternalError(fmt.Errorf("wrapped: %w", http2.StreamError{Code: http2.ErrCodeInternal})))
+	require.False(t, IsRetryableGCSHTTP2InternalError(http2.StreamError{Code: http2.ErrCodeCancel}))
+	require.False(t, IsRetryableGCSHTTP2InternalError(io.EOF))
 }
 
 func TestCtxUsage(t *testing.T) {
