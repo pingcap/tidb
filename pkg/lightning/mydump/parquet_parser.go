@@ -822,12 +822,12 @@ func EstimateParquetReaderMemory(
 	//nolint: errcheck
 	defer parser.Close()
 
-	reader := parser.readers[0]
-	if len(reader.MetaData().RowGroups) == 0 {
+	meta := parser.fileMeta
+	if meta.NumRowGroups() == 0 {
 		return 0, nil
 	}
 
-	for range reader.MetaData().RowGroups[0].NumRows {
+	for range meta.RowGroups[0].NumRows {
 		if err = parser.ReadRow(); err != nil {
 			if errors.Cause(err) == io.EOF {
 				break
