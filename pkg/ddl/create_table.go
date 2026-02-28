@@ -594,6 +594,7 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMet
 		return nil, errors.Trace(err)
 	}
 	// MV init build should follow the same TiFlash strict-mode bypass path as MV refresh.
+	// Also marks the session as MV maintenance context so writes bypass the explicit-DML guard.
 	sessCtx.GetSessionVars().InMaterializedViewMaintenance = true
 	return func() {
 		restore(sessCtx)
