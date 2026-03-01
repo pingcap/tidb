@@ -157,6 +157,11 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 		ds.Columns = append(ds.Columns, findOrCreateColumnInfo(ds, pkCol))
 	}
 
+	// The PK filter conditions contain eagerly-evaluated constants from
+	// MIN/MAX subqueries. These constants are specific to the current
+	// parameter values and must not be reused via plan cache.
+	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("PK filter conditions contain eagerly-evaluated MIN/MAX constants")
+
 	// Store the PK filter conditions separately from PushedDownConds.
 	// They will be injected into table path stats derivation later.
 	ds.PKFilterConds = pkFilterConds
