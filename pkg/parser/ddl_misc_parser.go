@@ -403,7 +403,7 @@ func (p *HandParser) parseFlashbackStmt() ast.StmtNode {
 		tsStmt := p.parseFlashbackWithTS()
 		if tsStmt == nil {
 			if len(p.errs) == 0 {
-				p.syntaxError(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 			}
 			return nil
 		}
@@ -463,7 +463,7 @@ func (p *HandParser) parseFlashbackStmt() ast.StmtNode {
 		}
 		return stmt
 	default:
-		p.syntaxError(p.peek().Offset)
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 }

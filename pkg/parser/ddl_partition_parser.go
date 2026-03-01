@@ -229,7 +229,7 @@ func (p *HandParser) parsePartitionOptions() *ast.PartitionOptions {
 		for {
 			tok := p.next()
 			if !isIdentLike(tok.Tp) {
-				p.syntaxError(tok.Offset)
+				p.syntaxErrorAt(tok)
 				return nil
 			}
 			c := p.arena.AllocConstraint()

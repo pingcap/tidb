@@ -211,7 +211,13 @@ func (p *HandParser) syntaxErrorAt(tok Token) {
 var errSyntax = terror.ClassParser.NewStd(mysql.ErrSyntax)
 
 // syntaxError records a MySQL-standard syntax error with code 1149.
-// This produces the [parser:1149] prefix expected by test assertions.
+// Use this ONLY where the yacc grammar explicitly does:
+//
+//	yylex.AppendError(ErrSyntax)
+//
+// For grammar-level rejections (where yacc would call Errorf("")),
+// use syntaxErrorAt(tok) or errorNear() instead — those produce plain
+// positional errors that the session layer wraps into ErrParse (1064).
 func (p *HandParser) syntaxError(_ int) {
 	p.errs = append(p.errs, errSyntax)
 }

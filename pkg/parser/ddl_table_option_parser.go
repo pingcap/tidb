@@ -106,7 +106,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 	case force:
 		p.next()
 		if !p.parseForceAutoOption(opt) {
-			p.syntaxError(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 	case autoIncrement:
@@ -209,7 +209,7 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		} else {
 			opt.UintValue = p.parseUint64()
 			if optTp == ast.TableOptionStatsAutoRecalc && opt.UintValue != 0 && opt.UintValue != 1 {
-				p.syntaxError(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 		}

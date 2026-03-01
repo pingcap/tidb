@@ -581,7 +581,7 @@ func (p *HandParser) parseAlterAnalyzePartition(table *ast.TableName) *ast.Analy
 			var opt ast.AnalyzeOpt
 			tok, ok := p.expectAny(intLit, decLit, floatLit)
 			if !ok {
-				p.syntaxError(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			opt.Value = ast.NewValueExpr(tok.Item, "", "")
@@ -599,11 +599,11 @@ func (p *HandParser) parseAlterAnalyzePartition(table *ast.TableName) *ast.Analy
 				} else if _, ok := p.accept(width); ok {
 					opt.Type = ast.AnalyzeOptCMSketchWidth
 				} else {
-					p.syntaxError(p.peek().Offset)
+					p.syntaxErrorAt(p.peek())
 					return nil
 				}
 			} else {
-				p.syntaxError(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return nil
 			}
 			stmt.AnalyzeOpts = append(stmt.AnalyzeOpts, opt)

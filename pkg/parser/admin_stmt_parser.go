@@ -72,7 +72,7 @@ func (p *HandParser) parseBeginStmt() ast.StmtNode {
 					p.expect(timestampType)
 					ts := p.parseExpression(precNone)
 					if ts == nil {
-						p.syntaxError(p.peek().Offset)
+						p.syntaxErrorAt(p.peek())
 						return nil
 					}
 					asOf := Alloc[ast.AsOfClause](p.arena)

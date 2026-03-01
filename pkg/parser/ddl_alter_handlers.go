@@ -257,7 +257,7 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 		} else if _, ok := p.accept(invisible); ok {
 			spec.Visibility = ast.IndexVisibilityInvisible
 		} else {
-			p.syntaxError(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		return spec
@@ -276,7 +276,7 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 			p.expect(enforced)
 			spec.Constraint.Enforced = false
 		} else {
-			p.syntaxError(p.peek().Offset)
+			p.syntaxErrorAt(p.peek())
 			return nil
 		}
 		return spec
@@ -451,7 +451,7 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 
 		tok := p.peek()
 		if !isIdentLike(tok.Tp) {
-			p.syntaxError(tok.Offset)
+			p.syntaxErrorAt(tok)
 			return true // Syntactic error handled, return true to stop switch
 		}
 		p.next()
@@ -608,7 +608,7 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 		if p.peek().Tp == autoIncrement || p.peek().Tp == autoRandomBase {
 			opt := p.arena.AllocTableOption()
 			if !p.parseForceAutoOption(opt) {
-				p.syntaxError(p.peek().Offset)
+				p.syntaxErrorAt(p.peek())
 				return true // Handled but error
 			}
 			spec.Tp = ast.AlterTableOption
