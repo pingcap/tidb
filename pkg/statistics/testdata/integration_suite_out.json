@@ -47,5 +47,9 @@
         "test t  idx 1 1 2 1 4 4 0"
       ]
     ]
+  },
+  {
+    "Name": "TestAnalyzeV2Chao3",
+    "Cases": []
   }
 ]

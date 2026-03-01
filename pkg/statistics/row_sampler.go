@@ -17,9 +17,11 @@ package statistics
 import (
 	"container/heap"
 	"context"
+	"hash"
 	"math/rand"
 	"unsafe"
 
+	"github.com/dolthub/swiss"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -41,12 +43,15 @@ type RowSampleCollector interface {
 }
 
 type baseCollector struct {
-	Samples    WeightedRowSampleHeap
-	NullCount  []int64
-	FMSketches []*FMSketch
-	TotalSizes []int64
-	Count      int64
-	MemSize    int64
+	Samples           WeightedRowSampleHeap
+	NullCount         []int64
+	FMSketches        []*FMSketch
+	F1Sketches        []*FMSketch
+	f1Builders        []*f1Sketch
+	TotalSizes        []int64
+	Count             int64
+	SketchSampleCount int64
+	MemSize           int64
 }
 
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
@@ -64,6 +69,75 @@ type ReservoirRowSampleCollector struct {
 	MaxSampleSize int
 }
 
+type f1Sketch struct {
+	mask    uint64
+	once    *swiss.Map[uint64, bool]
+	multi   *swiss.Map[uint64, bool]
+}
+
+func newF1Sketch() *f1Sketch {
+	return &f1Sketch{
+		mask:    0,
+		once:    swiss.NewMap[uint64, bool](0),
+		multi:   swiss.NewMap[uint64, bool](0),
+	}
+}
+
+func (s *f1Sketch) insertHashValue(hashVal uint64) {
+	if (hashVal & s.mask) != 0 {
+		return
+	}
+	if _, ok := s.multi.Get(hashVal); ok {
+		return
+	}
+	if _, ok := s.once.Get(hashVal); ok {
+		s.once.Delete(hashVal)
+		s.multi.Put(hashVal, true)
+	} else {
+		s.once.Put(hashVal, true)
+	}
+}
+
+func (s *f1Sketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) error {
+	hashVal, err := hashDatum(sc, value)
+	if err != nil {
+		return err
+	}
+	s.insertHashValue(hashVal)
+	return nil
+}
+
+func (s *f1Sketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.Datum) error {
+	hashVal, err := hashRow(sc, values)
+	if err != nil {
+		return err
+	}
+	s.insertHashValue(hashVal)
+	return nil
+}
+
+func (s *f1Sketch) toFMSketch(maxSketchSize int) *FMSketch {
+	if s == nil {
+		return nil
+	}
+	sketch := NewFMSketch(maxSketchSize)
+	sketch.mask = s.mask
+	s.once.Iter(func(k uint64, _ bool) (stop bool) {
+		sketch.hashset.Put(k, true)
+		return false
+	})
+	return sketch
+}
+
+func (s *f1Sketch) reset() {
+	if s == nil {
+		return
+	}
+	s.once.Clear()
+	s.multi.Clear()
+	s.mask = 0
+}
+
 // ReservoirRowSampleItem is the item for the ReservoirRowSampleCollector. The weight is needed for the sampling algorithm.
 type ReservoirRowSampleItem struct {
 	Handle  kv.Handle
@@ -73,6 +147,8 @@ type ReservoirRowSampleItem struct {
 
 // EmptyReservoirSampleItemSize = (24 + 16 + 8) now.
 const EmptyReservoirSampleItemSize = int64(unsafe.Sizeof(ReservoirRowSampleItem{}))
+
+const sketchSampleRate = 0.01
 
 // MemUsage returns the memory usage of sample item.
 func (i ReservoirRowSampleItem) MemUsage() (sum int64) {
@@ -148,6 +224,8 @@ func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirR
 		Samples:    make(WeightedRowSampleHeap, 0, maxSampleSize),
 		NullCount:  make([]int64, totalLen),
 		FMSketches: make([]*FMSketch, 0, totalLen),
+		F1Sketches: make([]*FMSketch, 0, totalLen),
+		f1Builders: make([]*f1Sketch, 0, totalLen),
 		TotalSizes: make([]int64, totalLen),
 	}
 	return &ReservoirRowSampleCollector{
@@ -163,6 +241,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 	collector := NewRowSampleCollector(s.MaxSampleSize, s.SampleRate, len(s.ColsFieldType)+len(s.ColGroups))
 	for range len(s.ColsFieldType) + len(s.ColGroups) {
 		collector.Base().FMSketches = append(collector.Base().FMSketches, NewFMSketch(s.MaxFMSketchSize))
+		collector.Base().f1Builders = append(collector.Base().f1Builders, newF1Sketch())
 	}
 	ctx := context.TODO()
 	chk := s.RecordSet.NewChunk(nil)
@@ -203,13 +282,17 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 					datums[i].SetBytes(encodedKey)
 				}
 			}
-			err := collector.Base().collectColumns(s.Sc, datums, sizes)
+			collectSketch := s.Rng.Float64() < sketchSampleRate
+			err := collector.Base().collectColumns(s.Sc, datums, sizes, collectSketch)
 			if err != nil {
 				return nil, err
 			}
-			err = collector.Base().collectColumnGroups(s.Sc, datums, s.ColGroups, sizes)
+			err = collector.Base().collectColumnGroups(s.Sc, datums, s.ColGroups, sizes, collectSketch)
 			if err != nil {
 				return nil, err
+			}
+			if collectSketch {
+				collector.Base().SketchSampleCount++
 			}
 			collector.sampleRow(newCols, s.Rng)
 		}
@@ -227,6 +310,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 		collector.Base().NullCount[colGroupIdx] = collector.Base().NullCount[colIdx]
 		collector.Base().TotalSizes[colGroupIdx] = collector.Base().TotalSizes[colIdx]
 	}
+	collector.Base().BuildF1Sketches(s.ColGroups, s.MaxFMSketchSize)
 	return collector, nil
 }
 
@@ -234,9 +318,15 @@ func (s *baseCollector) destroyAndPutToPool() {
 	for _, sketch := range s.FMSketches {
 		sketch.DestroyAndPutToPool()
 	}
+	for _, sketch := range s.F1Sketches {
+		sketch.DestroyAndPutToPool()
+	}
+	for _, builder := range s.f1Builders {
+		builder.reset()
+	}
 }
 
-func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
+func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64, collectSketch bool) error {
 	for i, col := range cols {
 		if col.IsNull() {
 			s.NullCount[i]++
@@ -244,15 +334,22 @@ func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []type
 		}
 		// Minus one is to remove the flag byte.
 		s.TotalSizes[i] += sizes[i] - 1
-		err := s.FMSketches[i].InsertValue(sc, col)
-		if err != nil {
-			return err
+		if collectSketch {
+			err := s.FMSketches[i].InsertValue(sc, col)
+			if err != nil {
+				return err
+			}
+			if i < len(s.f1Builders) && s.f1Builders[i] != nil {
+				if err := s.f1Builders[i].InsertValue(sc, col); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
 }
 
-func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64, sizes []int64) error {
+func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64, sizes []int64, collectSketch bool) error {
 	colLen := len(cols)
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
@@ -270,12 +367,95 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 				s.TotalSizes[colLen+i] += sizes[c] - 1
 			}
 		}
-		err := s.FMSketches[colLen+i].InsertRowValue(sc, datumBuffer)
-		if err != nil {
-			return err
+		if collectSketch {
+			err := s.FMSketches[colLen+i].InsertRowValue(sc, datumBuffer)
+			if err != nil {
+				return err
+			}
+			if colLen+i < len(s.f1Builders) && s.f1Builders[colLen+i] != nil {
+				if err := s.f1Builders[colLen+i].InsertRowValue(sc, datumBuffer); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
+}
+
+func hashDatum(sc *stmtctx.StatementContext, value types.Datum) (uint64, error) {
+	bytes, err := codec.EncodeValue(sc.TimeZone(), nil, value)
+	err = sc.HandleError(err)
+	if err != nil {
+		return 0, err
+	}
+	hashFunc := murmur3Pool.Get().(hash.Hash64)
+	hashFunc.Reset()
+	defer murmur3Pool.Put(hashFunc)
+	_, err = hashFunc.Write(bytes)
+	if err != nil {
+		return 0, err
+	}
+	return hashFunc.Sum64(), nil
+}
+
+func hashRow(sc *stmtctx.StatementContext, values []types.Datum) (uint64, error) {
+	hashFunc := murmur3Pool.Get().(hash.Hash64)
+	hashFunc.Reset()
+	defer murmur3Pool.Put(hashFunc)
+
+	errCtx := sc.ErrCtx()
+	b := make([]byte, 0, 8)
+	for _, v := range values {
+		b = b[:0]
+		b, err := codec.EncodeValue(sc.TimeZone(), b, v)
+		err = errCtx.HandleError(err)
+		if err != nil {
+			return 0, err
+		}
+		_, err = hashFunc.Write(b)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return hashFunc.Sum64(), nil
+}
+
+// BuildF1Sketches constructs F1 sketches from full data.
+// F1 sketch contains the values that appear exactly once in the whole data set.
+func (s *baseCollector) BuildF1Sketches(colGroups [][]int64, maxSketchSize int) {
+	totalLen := len(s.NullCount)
+	if totalLen == 0 {
+		return
+	}
+	colLen := totalLen - len(colGroups)
+	if colLen < 0 {
+		colLen = 0
+	}
+	s.F1Sketches = make([]*FMSketch, totalLen)
+	for i := 0; i < colLen; i++ {
+		if i < len(s.f1Builders) && s.f1Builders[i] != nil {
+			s.F1Sketches[i] = s.f1Builders[i].toFMSketch(maxSketchSize)
+		} else {
+			s.F1Sketches[i] = NewFMSketch(maxSketchSize)
+		}
+	}
+	for i, group := range colGroups {
+		idx := colLen + i
+		if len(group) == 1 {
+			colIdx := int(group[0])
+			if colIdx >= 0 && colIdx < colLen && s.F1Sketches[colIdx] != nil {
+				s.F1Sketches[idx] = s.F1Sketches[colIdx].Copy()
+			} else {
+				s.F1Sketches[idx] = NewFMSketch(maxSketchSize)
+			}
+			continue
+		}
+		if idx < len(s.f1Builders) && s.f1Builders[idx] != nil {
+			s.F1Sketches[idx] = s.f1Builders[idx].toFMSketch(maxSketchSize)
+		} else {
+			s.F1Sketches[idx] = NewFMSketch(maxSketchSize)
+		}
+	}
 }
 
 // ToProto converts the collector to pb struct.
@@ -284,12 +464,18 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	for _, sketch := range s.FMSketches {
 		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
 	}
+	pbF1Sketches := make([]*tipb.FMSketch, 0, len(s.F1Sketches))
+	for _, sketch := range s.F1Sketches {
+		pbF1Sketches = append(pbF1Sketches, FMSketchToProto(sketch))
+	}
 	collector := &tipb.RowSampleCollector{
-		Samples:    RowSamplesToProto(s.Samples),
-		NullCounts: s.NullCount,
-		Count:      s.Count,
-		FmSketch:   pbFMSketches,
-		TotalSize:  s.TotalSizes,
+		Samples:           RowSamplesToProto(s.Samples),
+		NullCounts:        s.NullCount,
+		Count:             s.Count,
+		FmSketch:          pbFMSketches,
+		F1Sketch:          pbF1Sketches,
+		TotalSize:         s.TotalSizes,
+		SketchSampleCount: s.SketchSampleCount,
 	}
 	return collector
 }
@@ -298,8 +484,14 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
+	s.f1Builders = nil
+	s.SketchSampleCount = pbCollector.SketchSampleCount
 	for _, pbSketch := range pbCollector.FmSketch {
 		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
+	}
+	s.F1Sketches = make([]*FMSketch, 0, len(pbCollector.F1Sketch))
+	for _, pbSketch := range pbCollector.F1Sketch {
+		s.F1Sketches = append(s.F1Sketches, FMSketchFromProto(pbSketch))
 	}
 	s.TotalSizes = pbCollector.TotalSize
 	sampleNum := len(pbCollector.Samples)
@@ -372,8 +564,24 @@ func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 // MergeCollector merges the collectors to a final one.
 func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
 	s.Count += subCollector.Base().Count
+	s.SketchSampleCount += subCollector.Base().SketchSampleCount
 	for i, fms := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(fms)
+	}
+	if len(subCollector.Base().F1Sketches) > 0 {
+		if len(s.F1Sketches) < len(subCollector.Base().F1Sketches) {
+			s.F1Sketches = append(s.F1Sketches, make([]*FMSketch, len(subCollector.Base().F1Sketches)-len(s.F1Sketches))...)
+		}
+		for i, f1 := range subCollector.Base().F1Sketches {
+			if f1 == nil {
+				continue
+			}
+			if s.F1Sketches[i] == nil {
+				s.F1Sketches[i] = f1.Copy()
+			} else {
+				s.F1Sketches[i].MergeFMSketch(f1)
+			}
+		}
 	}
 	for i, nullCount := range subCollector.Base().NullCount {
 		s.NullCount[i] += nullCount
@@ -445,6 +653,7 @@ func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *Bernoulli
 		Samples:    make(WeightedRowSampleHeap, 0, 8),
 		NullCount:  make([]int64, totalLen),
 		FMSketches: make([]*FMSketch, 0, totalLen),
+		f1Builders: make([]*f1Sketch, 0, totalLen),
 		TotalSizes: make([]int64, totalLen),
 	}
 	return &BernoulliRowSampleCollector{
@@ -466,8 +675,24 @@ func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 // MergeCollector merges the collectors to a final one.
 func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
 	s.Count += subCollector.Base().Count
+	s.SketchSampleCount += subCollector.Base().SketchSampleCount
 	for i := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i])
+	}
+	if len(subCollector.Base().F1Sketches) > 0 {
+		if len(s.F1Sketches) < len(subCollector.Base().F1Sketches) {
+			s.F1Sketches = append(s.F1Sketches, make([]*FMSketch, len(subCollector.Base().F1Sketches)-len(s.F1Sketches))...)
+		}
+		for i, f1 := range subCollector.Base().F1Sketches {
+			if f1 == nil {
+				continue
+			}
+			if s.F1Sketches[i] == nil {
+				s.F1Sketches[i] = f1.Copy()
+			} else {
+				s.F1Sketches[i].MergeFMSketch(f1)
+			}
+		}
 	}
 	for i := range subCollector.Base().NullCount {
 		s.NullCount[i] += subCollector.Base().NullCount[i]
