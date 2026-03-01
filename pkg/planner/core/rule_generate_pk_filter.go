@@ -296,6 +296,9 @@ func checkIndexQualifiesForPKFilter(ds *logicalop.DataSource, path *util.AccessP
 
 // matchesIndexColumn checks if colExpr is a column matching idxCol and valExpr is a constant.
 func matchesIndexColumn(colExpr, valExpr expression.Expression, idxCol *model.IndexColumn, tblInfo *model.TableInfo) bool {
+	if idxCol == nil || idxCol.Offset < 0 || idxCol.Offset >= len(tblInfo.Columns) {
+		return false
+	}
 	col, ok := colExpr.(*expression.Column)
 	if !ok {
 		return false
@@ -304,10 +307,7 @@ func matchesIndexColumn(colExpr, valExpr expression.Expression, idxCol *model.In
 	if !isConst {
 		return false
 	}
-	if int(col.ID) == int(tblInfo.Columns[idxCol.Offset].ID) {
-		return true
-	}
-	return false
+	return int(col.ID) == int(tblInfo.Columns[idxCol.Offset].ID)
 }
 
 // findOrCreateColumnInfo returns the ColumnInfo for pkCol from ds.TableInfo.Columns.
