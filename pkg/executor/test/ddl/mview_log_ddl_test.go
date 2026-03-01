@@ -103,7 +103,7 @@ func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
 	tk.MustExec("set @@session.tidb_scatter_region='table'")
 	tk.MustExec("create table t_mlog_presplit (a int, b int)")
 
-	tk.MustExec("create materialized view log on t_mlog_presplit (a) shard_row_id_bits = 2 pre_split_regions = 2 purge immediate")
+	tk.MustExec("create materialized view log on t_mlog_presplit (a) shard_row_id_bits = 2 pre_split_regions = 2 purge next date_add(now(), interval 1 hour)")
 
 	showCreate := tk.MustQuery("show create table `$mlog$t_mlog_presplit`").Rows()[0][1].(string)
 	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS=2")
@@ -131,7 +131,10 @@ func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int)")
 
-	err := tk.ExecToErr("create materialized view log on t (a) purge start with 1 next now()")
+	err := tk.ExecToErr("create materialized view log on t (a) purge immediate")
+	require.ErrorContains(t, err, "PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
+
+	err = tk.ExecToErr("create materialized view log on t (a) purge start with 1 next now()")
 	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
 
 	err = tk.ExecToErr("create materialized view log on t (a) purge next 600")
@@ -234,7 +237,7 @@ func TestAlterMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("create materialized view log on t (a) purge immediate")
+	tk.MustExec("create materialized view log on t (a) purge next date_add(now(), interval 1 hour)")
 
 	err := tk.ExecToErr("alter materialized view log on t purge start with 1 next now()")
 	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
@@ -472,7 +475,7 @@ func TestPurgeMaterializedViewLogPrivilege(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_purge_priv (a int)")
-	tk.MustExec("create materialized view log on t_purge_priv (a) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_priv (a) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create user 'u1'@'%'")
 	tk.MustExec("grant select on test.t_purge_priv to 'u1'@'%'")
 
@@ -492,7 +495,7 @@ func TestPurgeMaterializedViewLogLockRowMissing(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_purge_lock_row_missing (a int)")
-	tk.MustExec("create materialized view log on t_purge_lock_row_missing (a) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_lock_row_missing (a) purge next date_add(now(), interval 1 hour)")
 
 	is := dom.InfoSchema()
 	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_lock_row_missing"))
@@ -511,7 +514,7 @@ func TestPurgeMaterializedViewLogNowaitConflict(t *testing.T) {
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("create table t_purge_nowait_conflict (a int)")
-	tk1.MustExec("create materialized view log on t_purge_nowait_conflict (a) purge immediate")
+	tk1.MustExec("create materialized view log on t_purge_nowait_conflict (a) purge next date_add(now(), interval 1 hour)")
 
 	is := dom.InfoSchema()
 	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_nowait_conflict"))
@@ -542,7 +545,7 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_purge_batch_delete (id int primary key, v int)")
-	tk.MustExec("create materialized view log on t_purge_batch_delete (id, v) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_batch_delete (id, v) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("insert into t_purge_batch_delete values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
 
 	is := dom.InfoSchema()
@@ -569,7 +572,7 @@ func TestPurgeMaterializedViewLogLastPurgedTSOShortCircuit(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_purge_short_circuit (a int not null, b int)")
-	tk.MustExec("create materialized view log on t_purge_short_circuit (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_short_circuit (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_purge_short_circuit (a, cnt) refresh fast next now() as select a, count(1) from t_purge_short_circuit group by a")
 	tk.MustExec("insert into t_purge_short_circuit values (1, 10), (1, 20), (2, 30)")
 
@@ -611,7 +614,7 @@ func TestPurgeMaterializedViewLogDeleteErrorNoDirtyWrite(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_purge_delete_err (id int primary key, v int)")
-	tk.MustExec("create materialized view log on t_purge_delete_err (id, v) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_delete_err (id, v) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("insert into t_purge_delete_err values (1, 10), (2, 20), (3, 30)")
 
 	is := dom.InfoSchema()
@@ -638,7 +641,7 @@ func TestPurgeMaterializedViewLogLockConflictAfterPartialSuccess(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_purge_partial_conflict (id int primary key, v int)")
-	tk.MustExec("create materialized view log on t_purge_partial_conflict (id, v) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_partial_conflict (id, v) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("insert into t_purge_partial_conflict values (1, 10), (2, 20), (3, 30)")
 
 	is := dom.InfoSchema()
@@ -666,7 +669,7 @@ func TestPurgeMaterializedViewLogMissingPublicMViewRefreshRow(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_purge_missing_public_refresh (a int)")
-	tk.MustExec("create materialized view log on t_purge_missing_public_refresh (a) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_missing_public_refresh (a) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_purge_missing_public_refresh (a, cnt) refresh fast next now() as select a, count(1) from t_purge_missing_public_refresh group by a")
 
 	is := dom.InfoSchema()
@@ -692,7 +695,7 @@ func TestPurgeMaterializedViewLogWritesState(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_purge_state (id int primary key, v int)")
-	tk.MustExec("create materialized view log on t_purge_state (id, v) purge immediate")
+	tk.MustExec("create materialized view log on t_purge_state (id, v) purge next date_add(now(), interval 1 hour)")
 
 	is := dom.InfoSchema()
 	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_state"))

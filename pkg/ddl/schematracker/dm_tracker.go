@@ -327,22 +327,21 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	var purgeNext string
 	if s.Purge != nil {
 		if s.Purge.Immediate {
-			purgeMethod = "IMMEDIATE"
-		} else {
-			purgeMethod = "DEFERRED"
-			if s.Purge.StartWith != nil {
-				purgeStartWith, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
-				if err != nil {
-					return err
-				}
-			}
-			if s.Purge.Next == nil {
-				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
-			}
-			purgeNext, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
+			return errors.New("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
+		}
+		purgeMethod = "DEFERRED"
+		if s.Purge.StartWith != nil {
+			purgeStartWith, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
 			if err != nil {
 				return err
 			}
+		}
+		if s.Purge.Next == nil {
+			return errors.New("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+		}
+		purgeNext, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
+		if err != nil {
+			return err
 		}
 	}
 

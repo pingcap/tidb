@@ -44,7 +44,7 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
@@ -88,7 +88,7 @@ func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) 
 	tk.MustExec("use test")
 	tk.MustExec("create table t_internal_next (a int not null, b int not null)")
 	tk.MustExec("insert into t_internal_next values (1, 10), (2, 20)")
-	tk.MustExec("create materialized view log on t_internal_next (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t_internal_next (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_internal_next (a, s, cnt) refresh fast start with date_add(now(), interval 2 hour) next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t_internal_next group by a")
 
 	is := dom.InfoSchema()
@@ -125,7 +125,7 @@ func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *te
 	tk.MustExec("use test")
 	tk.MustExec("create table t_internal_start_only (a int not null, b int not null)")
 	tk.MustExec("insert into t_internal_start_only values (1, 10), (2, 20)")
-	tk.MustExec("create materialized view log on t_internal_start_only (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t_internal_start_only (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_internal_start_only (a, s, cnt) refresh fast start with date_add(now(), interval 2 hour) next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t_internal_start_only group by a")
 
 	is := dom.InfoSchema()
@@ -164,7 +164,7 @@ func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	tk.MustExec("insert into t values (2, 3), (3, 4)")
@@ -188,7 +188,7 @@ func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testin
 	tk.MustExec("set @@session.time_zone = '+00:00'")
 	tk.MustExec("create table t (a int not null, b int not null, ts timestamp not null)")
 	tk.MustExec("insert into t values (1, 10, '2020-01-01 00:30:00'), (2, 20, '2019-12-31 23:30:00')")
-	tk.MustExec("create materialized view log on t (a, b, ts) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b, ts) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec(`create materialized view mv (a, s, cnt) refresh fast next now() as
 select a, sum(b), count(1) from t
 where ts >= '2020-01-01 00:00:00'
@@ -220,7 +220,7 @@ func TestMaterializedViewRefreshCompleteFinalizeHistoryRetry(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	is := dom.InfoSchema()
@@ -250,7 +250,7 @@ func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	is := dom.InfoSchema()
@@ -324,7 +324,7 @@ UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointVal
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2"))
 
@@ -402,7 +402,7 @@ func TestMaterializedViewRefreshCompleteRefreshInfoCASUpdateAfterConcurrentPreUp
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
@@ -491,7 +491,7 @@ func TestMaterializedViewRefreshCompleteConcurrentNowait(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	is := dom.InfoSchema()
@@ -522,7 +522,7 @@ func TestMaterializedViewRefreshCompleteMissingRefreshInfoRow(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	is := dom.InfoSchema()
@@ -542,7 +542,7 @@ func TestMaterializedViewRefreshWithSyncModeComplete(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	tk.MustExec("insert into t values (2, 3), (3, 4)")
@@ -556,7 +556,7 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
@@ -607,7 +607,7 @@ func TestMaterializedViewRefreshCompleteWithConstraintCheckInPlacePessimisticOff
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 
 	// Turn off in-place constraint check for pessimistic txn.
@@ -625,7 +625,7 @@ func TestMaterializedViewRefreshRequiresAlterPrivilege(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
 	tk.MustExec("create user 'mv_refresh_u'@'%' identified by ''")
 	defer tk.MustExec("drop user 'mv_refresh_u'@'%'")

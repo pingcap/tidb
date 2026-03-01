@@ -1,7 +1,7 @@
 use test;
 create table t_mv_txn_66385 (a int not null, b int not null);
 insert into t_mv_txn_66385 values (1, 10), (1, 5), (2, 7);
-create materialized view log on t_mv_txn_66385 (a, b) purge immediate;
+create materialized view log on t_mv_txn_66385 (a, b) purge next date_add(now(), interval 1 hour);
 create materialized view mv_txn_66385 (a, s, cnt) refresh fast next now() as
 select a, sum(b), count(1) from t_mv_txn_66385 group by a;
 begin;
