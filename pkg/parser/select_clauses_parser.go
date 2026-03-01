@@ -383,6 +383,19 @@ func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode 
 		}
 	}
 
+	// In yacc, when the last element of a UNION chain is a bare (unparenthesized)
+	// SELECT, its ORDER BY/LIMIT are "stolen" and placed on the SetOprStmt
+	// (SetOprStmtWoutLimitOrderBy rule). No trailing ORDER BY/LIMIT is allowed.
+	// Trailing clauses are only valid when the last element is parenthesized
+	// (SetOprStmtWithLimitOrderBy rule). If the SetOprStmt already has stolen
+	// ORDER BY/LIMIT, skip trailing clause parsing to reject e.g.
+	// "SELECT 1 UNION SELECT 1 LIMIT 1 ORDER BY 1".
+	if s, ok := res.(*ast.SetOprStmt); ok && !s.IsInBraces {
+		if s.OrderBy != nil || s.Limit != nil {
+			return res
+		}
+	}
+
 	hasOuterOrderBy := p.peek().Tp == order
 	pt := p.peek().Tp
 	hasOuterLimit := pt == limit || pt == offset || pt == fetch
