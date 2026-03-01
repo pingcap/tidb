@@ -965,7 +965,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 						return nil, errors.Trace(err)
 					}
 					if needSkipCache {
-						b.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache("constant predicate elimination on parameter marker")
+						b.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache("constant predicate elimination on mutable constant")
 					}
 					if ret {
 						continue
