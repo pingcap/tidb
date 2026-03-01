@@ -241,12 +241,11 @@ func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
 	// The yacc parser's Username rule uses StringName (which includes Identifier =
 	// unreserved keywords) for ALL alternatives, including bare names without @host.
 	tok := p.peek()
-	if isIdentLike(tok.Tp) {
-		p.next()
-	} else {
+	if !isIdentLike(tok.Tp) {
 		p.syntaxErrorAt(tok)
 		return nil
 	}
+	p.next()
 	authUser.Username = tok.Lit
 
 	authUser.Hostname = p.parseHostname()

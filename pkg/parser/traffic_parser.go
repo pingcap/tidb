@@ -14,7 +14,6 @@
 package parser
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -117,12 +116,10 @@ func (p *HandParser) parseTrafficStmt() ast.StmtNode {
 				opt.OptionType = ast.TrafficOptionSpeed
 				val := p.next()
 				opt.StrValue = val.Lit
-				if f, err := strconv.ParseFloat(val.Lit, 64); err == nil {
-					if ast.NewValueExpr != nil {
-						opt.FloatValue = ast.NewValueExpr(f, "", "")
-					}
-				} else {
-					p.error(val.Offset, "invalid float value for SPEED: %s", val.Lit)
+				// Use the token's Item directly (the lexer sets it to *types.MyDecimal
+				// for decLit, int64 for intLit, etc.), matching yacc NumLiteral behavior.
+				if ast.NewValueExpr != nil {
+					opt.FloatValue = ast.NewValueExpr(val.Item, p.charset, p.collation)
 				}
 			case "READ_ONLY", "READONLY":
 				opt.OptionType = ast.TrafficOptionReadOnly
