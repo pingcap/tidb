@@ -400,6 +400,58 @@ func (s *ReservoirRowSampleCollector) DestroyAndPutToPool() {
 	s.baseCollector.destroyAndPutToPool()
 }
 
+// PruneTo returns a new collector with at most targetSize samples by feeding all
+// current samples through sampleZippedRow with a smaller MaxSampleSize. This is
+// correct A-Res sub-sampling: the highest-weight items survive.
+func (s *ReservoirRowSampleCollector) PruneTo(targetSize int) *ReservoirRowSampleCollector {
+	if targetSize <= 0 {
+		totalLen := 0
+		if len(s.FMSketches) > 0 {
+			totalLen = len(s.FMSketches)
+		} else if len(s.NullCount) > 0 {
+			totalLen = len(s.NullCount)
+		}
+		empty := NewReservoirRowSampleCollector(0, totalLen)
+		empty.Count = s.Count
+		empty.NullCount = s.NullCount
+		empty.FMSketches = s.FMSketches
+		empty.TotalSizes = s.TotalSizes
+		return empty
+	}
+	if targetSize >= len(s.Samples) {
+		// No pruning needed; shallow-clone with a copy of the sample slice.
+		cloned := &ReservoirRowSampleCollector{
+			baseCollector: &baseCollector{
+				Samples:    make(WeightedRowSampleHeap, len(s.Samples)),
+				NullCount:  s.NullCount,
+				FMSketches: s.FMSketches,
+				TotalSizes: s.TotalSizes,
+				Count:      s.Count,
+				MemSize:    s.MemSize,
+			},
+			MaxSampleSize: s.MaxSampleSize,
+		}
+		copy(cloned.Samples, s.Samples)
+		return cloned
+	}
+
+	totalLen := 0
+	if len(s.FMSketches) > 0 {
+		totalLen = len(s.FMSketches)
+	} else if len(s.NullCount) > 0 {
+		totalLen = len(s.NullCount)
+	}
+	pruned := NewReservoirRowSampleCollector(targetSize, totalLen)
+	pruned.Count = s.Count
+	pruned.NullCount = s.NullCount
+	pruned.FMSketches = s.FMSketches
+	pruned.TotalSizes = s.TotalSizes
+	for _, sample := range s.Samples {
+		pruned.sampleZippedRow(sample)
+	}
+	return pruned
+}
+
 // RowSamplesToProto converts the samp slice to the pb struct.
 func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 	if len(samples) == 0 {
@@ -487,4 +539,56 @@ func (s *BernoulliRowSampleCollector) Base() *baseCollector {
 // DestroyAndPutToPool implements the interface RowSampleCollector.
 func (s *BernoulliRowSampleCollector) DestroyAndPutToPool() {
 	s.baseCollector.destroyAndPutToPool()
+}
+
+const (
+	// MinSampleFloor is the minimum number of samples kept per partition
+	// after progressive pruning, to guarantee a reasonable estimate.
+	MinSampleFloor = 500
+	// DefaultSampleBudget is the total number of samples persisted across all
+	// partitions of a table.
+	DefaultSampleBudget = 30000
+)
+
+// SamplePruner computes a target sample count for each partition using
+// progressive pruning: as partitions are observed, the average row count
+// is tracked and used to scale each partition's allocation relative to the
+// budget.
+type SamplePruner struct {
+	totalRowsSoFar  int64
+	partitionsSoFar int
+	totalPartitions int
+	totalBudget     int
+}
+
+// NewSamplePruner creates a pruner for the given total partition count and
+// sample budget.
+func NewSamplePruner(totalPartitions, totalBudget int) *SamplePruner {
+	return &SamplePruner{
+		totalPartitions: totalPartitions,
+		totalBudget:     totalBudget,
+	}
+}
+
+// PruneCount returns the target sample count for a partition with the given
+// row count. For the first partition the allocation is budget/N. For
+// subsequent partitions the allocation is scaled by
+// (partitionRows / avgRowsSoFar), clamped to [MinSampleFloor, MaxSampleSize].
+func (p *SamplePruner) PruneCount(partitionRows int64) int {
+	base := p.totalBudget / max(p.totalPartitions, 1)
+
+	if p.partitionsSoFar == 0 || p.totalRowsSoFar == 0 {
+		return max(base, MinSampleFloor)
+	}
+
+	avgRows := p.totalRowsSoFar / int64(p.partitionsSoFar)
+	scaled := int64(base) * partitionRows / avgRows
+	return int(max(min(scaled, int64(p.totalBudget)), int64(MinSampleFloor)))
+}
+
+// Observe records the row count for a processed partition so that
+// subsequent PruneCount calls can use the running average.
+func (p *SamplePruner) Observe(partitionRows int64) {
+	p.totalRowsSoFar += partitionRows
+	p.partitionsSoFar++
 }

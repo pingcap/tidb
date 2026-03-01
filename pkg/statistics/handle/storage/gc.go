@@ -173,6 +173,9 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, soft bool
 		if _, err = util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
 			return err
 		}
+		if _, err = util.Exec(sctx, "delete from mysql.stats_table_data where table_id = %?", statsID); err != nil {
+			return err
+		}
 		if _, err = util.Exec(sctx, "delete from mysql.column_stats_usage where table_id = %?", statsID); err != nil {
 			return err
 		}

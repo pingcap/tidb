@@ -16,6 +16,7 @@ package statistics
 
 import (
 	"math/rand"
+	"slices"
 	"testing"
 	"time"
 
@@ -27,6 +28,296 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
+
+// makeSampleItem creates a ReservoirRowSampleItem with a single int column and given weight.
+func makeSampleItem(val int64, weight int64) *ReservoirRowSampleItem {
+	return &ReservoirRowSampleItem{
+		Columns: []types.Datum{types.NewIntDatum(val)},
+		Weight:  weight,
+	}
+}
+
+// makeCollector builds a ReservoirRowSampleCollector populated with the given
+// samples. FMSketches and NullCount are initialised to the correct length so
+// that PruneTo can derive totalLen.
+func makeCollector(maxSize int, items []*ReservoirRowSampleItem) *ReservoirRowSampleCollector {
+	const cols = 1
+	c := NewReservoirRowSampleCollector(maxSize, cols)
+	c.FMSketches = append(c.FMSketches, NewFMSketch(100))
+	c.Count = int64(len(items))
+	for _, it := range items {
+		c.sampleZippedRow(it)
+	}
+	return c
+}
+
+// extractWeights returns the sorted weights in the collector's sample heap.
+func extractWeights(c *ReservoirRowSampleCollector) []int64 {
+	w := make([]int64, len(c.Samples))
+	for i, s := range c.Samples {
+		w[i] = s.Weight
+	}
+	slices.Sort(w)
+	return w
+}
+
+func TestPruneToNoOp(t *testing.T) {
+	// When targetSize >= len(Samples) we get a shallow clone.
+	items := []*ReservoirRowSampleItem{
+		makeSampleItem(1, 100),
+		makeSampleItem(2, 200),
+		makeSampleItem(3, 300),
+	}
+	orig := makeCollector(10, items)
+	orig.NullCount[0] = 42
+	orig.TotalSizes[0] = 999
+
+	pruned := orig.PruneTo(10) // targetSize > len(samples)=3
+	require.Len(t, pruned.Samples, 3)
+
+	// Metadata is shared.
+	require.Equal(t, orig.Count, pruned.Count)
+	require.Equal(t, orig.NullCount[0], pruned.NullCount[0])
+	require.Equal(t, orig.TotalSizes[0], pruned.TotalSizes[0])
+	require.Same(t, orig.FMSketches[0], pruned.FMSketches[0])
+
+	// MaxSampleSize preserved from original.
+	require.Equal(t, orig.MaxSampleSize, pruned.MaxSampleSize)
+
+	// Sample slice is independent — mutating pruned does not affect original.
+	pruned.Samples[0] = makeSampleItem(99, 9999)
+	require.NotEqual(t, int64(99), orig.Samples[0].Columns[0].GetInt64())
+}
+
+func TestPruneToExact(t *testing.T) {
+	// targetSize == len(Samples): clone path, not pruning path.
+	items := []*ReservoirRowSampleItem{
+		makeSampleItem(1, 10),
+		makeSampleItem(2, 20),
+	}
+	orig := makeCollector(5, items)
+	pruned := orig.PruneTo(2)
+	require.Len(t, pruned.Samples, 2)
+	require.Equal(t, extractWeights(orig), extractWeights(pruned))
+}
+
+func TestPruneToActualPruning(t *testing.T) {
+	// Build a collector with 10 samples (weights 1..10), prune to 3.
+	// The 3 highest-weight items (8, 9, 10) must survive.
+	items := make([]*ReservoirRowSampleItem, 10)
+	for i := range 10 {
+		items[i] = makeSampleItem(int64(i), int64(i+1))
+	}
+	orig := makeCollector(10, items)
+	require.Len(t, orig.Samples, 10)
+
+	pruned := orig.PruneTo(3)
+	require.Len(t, pruned.Samples, 3)
+	require.Equal(t, 3, pruned.MaxSampleSize)
+
+	// The surviving weights must be the top-3.
+	weights := extractWeights(pruned)
+	require.Equal(t, []int64{8, 9, 10}, weights)
+
+	// Metadata is carried over.
+	require.Equal(t, orig.Count, pruned.Count)
+	require.Same(t, orig.FMSketches[0], pruned.FMSketches[0])
+}
+
+func TestPruneToSingleSample(t *testing.T) {
+	// Prune to 1: only the maximum weight survives.
+	items := make([]*ReservoirRowSampleItem, 5)
+	for i := range 5 {
+		items[i] = makeSampleItem(int64(i), int64((i+1)*100))
+	}
+	orig := makeCollector(5, items)
+
+	pruned := orig.PruneTo(1)
+	require.Len(t, pruned.Samples, 1)
+	require.Equal(t, int64(500), pruned.Samples[0].Weight)
+}
+
+func TestPruneToEmptyCollector(t *testing.T) {
+	// An empty collector should return an empty clone.
+	orig := makeCollector(10, nil)
+	pruned := orig.PruneTo(5)
+	require.Len(t, pruned.Samples, 0)
+	require.Equal(t, int64(0), pruned.Count)
+}
+
+func TestPruneToZeroTarget(t *testing.T) {
+	// targetSize=0 means no samples survive.
+	items := []*ReservoirRowSampleItem{
+		makeSampleItem(1, 100),
+		makeSampleItem(2, 200),
+	}
+	orig := makeCollector(5, items)
+	pruned := orig.PruneTo(0)
+	require.Len(t, pruned.Samples, 0)
+	require.Equal(t, 0, pruned.MaxSampleSize)
+	// Count/metadata still carried.
+	require.Equal(t, orig.Count, pruned.Count)
+}
+
+func TestPruneToDuplicateWeights(t *testing.T) {
+	// All samples have the same weight. Pruning should keep exactly targetSize items.
+	items := make([]*ReservoirRowSampleItem, 8)
+	for i := range 8 {
+		items[i] = makeSampleItem(int64(i), 42)
+	}
+	orig := makeCollector(8, items)
+	pruned := orig.PruneTo(3)
+	require.Len(t, pruned.Samples, 3)
+	for _, s := range pruned.Samples {
+		require.Equal(t, int64(42), s.Weight)
+	}
+}
+
+func TestPruneToPreservesColumnData(t *testing.T) {
+	// Verify that column data in surviving samples is correct, not corrupted.
+	items := []*ReservoirRowSampleItem{
+		{Columns: []types.Datum{types.NewIntDatum(100), types.NewStringDatum("hello")}, Weight: 1},
+		{Columns: []types.Datum{types.NewIntDatum(200), types.NewStringDatum("world")}, Weight: 10},
+		{Columns: []types.Datum{types.NewIntDatum(300), types.NewStringDatum("foo")}, Weight: 5},
+	}
+	c := NewReservoirRowSampleCollector(3, 2)
+	c.FMSketches = []*FMSketch{NewFMSketch(10), NewFMSketch(10)}
+	c.Count = 3
+	for _, it := range items {
+		c.sampleZippedRow(it)
+	}
+
+	pruned := c.PruneTo(1)
+	require.Len(t, pruned.Samples, 1)
+	// Weight 10 should survive.
+	require.Equal(t, int64(10), pruned.Samples[0].Weight)
+	require.Equal(t, int64(200), pruned.Samples[0].Columns[0].GetInt64())
+	require.Equal(t, "world", pruned.Samples[0].Columns[1].GetString())
+}
+
+func TestPruneToIdempotent(t *testing.T) {
+	// Pruning twice to the same size should produce equivalent results.
+	items := make([]*ReservoirRowSampleItem, 20)
+	for i := range 20 {
+		items[i] = makeSampleItem(int64(i), int64(i*7+3))
+	}
+	orig := makeCollector(20, items)
+
+	pruned1 := orig.PruneTo(5)
+	pruned2 := pruned1.PruneTo(5)
+	require.Equal(t, extractWeights(pruned1), extractWeights(pruned2))
+}
+
+func TestPruneToDoesNotMutateOriginal(t *testing.T) {
+	items := make([]*ReservoirRowSampleItem, 6)
+	for i := range 6 {
+		items[i] = makeSampleItem(int64(i), int64(i+1))
+	}
+	orig := makeCollector(6, items)
+	origWeights := extractWeights(orig)
+
+	_ = orig.PruneTo(2)
+
+	// Original must be unchanged.
+	require.Len(t, orig.Samples, 6)
+	require.Equal(t, origWeights, extractWeights(orig))
+}
+
+// --- SamplePruner tests ---
+
+func TestSamplePrunerFirstPartition(t *testing.T) {
+	// First partition: no observations yet, should return budget/N.
+	p := NewSamplePruner(10, 30000)
+	count := p.PruneCount(1000000)
+	require.Equal(t, 3000, count) // 30000/10 = 3000
+}
+
+func TestSamplePrunerFirstPartitionSmallBudget(t *testing.T) {
+	// If budget/N < MinSampleFloor, clamp to MinSampleFloor.
+	p := NewSamplePruner(100, 10000)
+	count := p.PruneCount(1000)
+	// 10000/100 = 100, but min floor is 500
+	require.Equal(t, MinSampleFloor, count)
+}
+
+func TestSamplePrunerScalesByRowCount(t *testing.T) {
+	p := NewSamplePruner(4, 4000) // base = 1000 per partition
+	// Observe a first partition with 1000 rows.
+	p.Observe(1000)
+
+	// Second partition has 2000 rows (2x average) => scaled = 1000 * 2000/1000 = 2000
+	count := p.PruneCount(2000)
+	require.Equal(t, 2000, count)
+
+	// Third partition has 500 rows (0.5x) => scaled = 1000 * 500/1000 = 500 = MinSampleFloor
+	count = p.PruneCount(500)
+	require.Equal(t, 500, count)
+}
+
+func TestSamplePrunerClampsToMinFloor(t *testing.T) {
+	p := NewSamplePruner(4, 4000)
+	p.Observe(10000) // avg = 10000
+
+	// Tiny partition: 1 row => scaled = 1000 * 1/10000 = 0, clamped to 500
+	count := p.PruneCount(1)
+	require.Equal(t, MinSampleFloor, count)
+}
+
+func TestSamplePrunerClampsToBudget(t *testing.T) {
+	p := NewSamplePruner(2, 2000)
+	p.Observe(1) // avg = 1
+
+	// Huge partition: scaled = 1000 * 1000000 / 1 = way over budget, clamped to 2000
+	count := p.PruneCount(1000000)
+	require.Equal(t, 2000, count)
+}
+
+func TestSamplePrunerSinglePartition(t *testing.T) {
+	p := NewSamplePruner(1, 5000)
+	count := p.PruneCount(100)
+	require.Equal(t, 5000, count) // budget/1 = 5000
+}
+
+func TestSamplePrunerZeroPartitions(t *testing.T) {
+	// Edge case: 0 partitions should not panic (max(0,1)=1).
+	p := NewSamplePruner(0, 5000)
+	count := p.PruneCount(100)
+	require.Equal(t, 5000, count) // budget/1 = 5000
+}
+
+func TestSamplePrunerZeroRowsObserved(t *testing.T) {
+	p := NewSamplePruner(4, 4000)
+	// Observe a partition with 0 rows.
+	p.Observe(0)
+	// Next call: partitionsSoFar=1 but totalRowsSoFar=0, should use base path.
+	count := p.PruneCount(1000)
+	require.Equal(t, 1000, count) // base = 4000/4 = 1000
+}
+
+func TestSamplePrunerProgressiveAccuracy(t *testing.T) {
+	// Verify that the running average converges.
+	p := NewSamplePruner(5, 10000) // base = 2000
+	// Process 5 partitions with rows: 1000, 2000, 3000, 4000, 5000
+	rows := []int64{1000, 2000, 3000, 4000, 5000}
+	for i, r := range rows {
+		count := p.PruneCount(r)
+		require.GreaterOrEqual(t, count, MinSampleFloor, "partition %d", i)
+		p.Observe(r)
+	}
+	// After observing all 5, average = 3000.
+	// A partition with 3000 rows should get exactly base (2000).
+	count := p.PruneCount(3000)
+	require.Equal(t, 2000, count)
+}
+
+func TestSamplePrunerObserveAccumulates(t *testing.T) {
+	p := NewSamplePruner(3, 9000) // base = 3000
+	p.Observe(100)
+	p.Observe(200)
+	// avg = 150, partition with 300 rows => scaled = 3000 * 300/150 = 6000
+	count := p.PruneCount(300)
+	require.Equal(t, 6000, count)
+}
 
 func recordSetForWeightSamplingTest(size int) *recordSet {
 	r := &recordSet{

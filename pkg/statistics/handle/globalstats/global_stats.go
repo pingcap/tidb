@@ -61,7 +61,12 @@ func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionct
 		}
 		return err
 	}
-	return WriteGlobalStatsToStorage(sg.statsHandler, globalStats, info, physicalID)
+	statslogutil.StatsLogger().Info("analyze global: merge entry built (partition-merge, internal)",
+		zap.Int64("tableID", physicalID))
+	writeErr := WriteGlobalStatsToStorage(sg.statsHandler, globalStats, info, physicalID)
+	statslogutil.StatsLogger().Info("analyze global: merge entry written",
+		zap.Int64("tableID", physicalID), zap.Error(writeErr))
+	return writeErr
 }
 
 // GlobalStats is used to store the statistics contained in the global-level stats
