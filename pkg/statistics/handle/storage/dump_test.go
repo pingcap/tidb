@@ -79,6 +79,7 @@ func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
+	tk.MustExec("delete from mysql.stats_table_data")
 	tk.MustExec("delete from mysql.column_stats_usage")
 	do.StatsHandle().Clear()
 }
