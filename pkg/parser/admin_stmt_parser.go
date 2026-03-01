@@ -542,7 +542,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 				scope = ast.StatementScopeGlobal
 			}
 			// yacc: PLAN_CACHE is mandatory after scope
-			p.expectKeyword(0, "PLAN_CACHE")
+			p.expectKeyword(planCache, "PLAN_CACHE")
 			stmt.Tp = ast.AdminFlushPlanCache
 			stmt.StatementScope = scope
 		}
@@ -556,7 +556,7 @@ func (p *HandParser) parseAdminKeywordBased(stmt *ast.AdminStmt) ast.StmtNode {
 		}
 		p.next()
 		// yacc: "ADMIN" "CAPTURE"/"EVOLVE" "BINDINGS" — BINDINGS is mandatory
-		p.expectKeyword(0, "BINDINGS")
+		p.expectKeyword(bindings, "BINDINGS")
 		return stmt
 	}
 	if p.peek().IsKeyword("PAUSE") {
