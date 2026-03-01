@@ -89,8 +89,8 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		return stmt
 	case "OPEN":
 		p.next()
-		// SHOW OPEN TABLES [FROM db] [LIKE ...]
-		p.accept(tables)
+		// SHOW OPEN TABLES [FROM db] [LIKE ...] — yacc requires TABLES keyword
+		p.expect(tables)
 		stmt.Tp = ast.ShowOpenTables
 		stmt.DBName = p.parseShowDatabaseNameOpt()
 		p.parseShowLikeOrWhere(stmt)

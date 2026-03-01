@@ -451,7 +451,8 @@ func (p *HandParser) parseShowScopedStmt(stmt *ast.ShowStmt, isGlobal bool) ast.
 func (p *HandParser) parseShowLikeOrWhere(stmt *ast.ShowStmt) {
 	if _, ok := p.accept(like); ok {
 		pattern := Alloc[ast.PatternLikeOrIlikeExpr](p.arena)
-		pattern.Pattern = p.parseExpression(precNone)
+		// yacc ShowLikeOrWhereOpt uses SimpleExpr, not full Expression.
+		pattern.Pattern = p.parseExpression(precUnary)
 		pattern.IsLike = true
 		pattern.Escape = '\\'
 		stmt.Pattern = pattern

@@ -634,10 +634,10 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 		stmt.Analyze = true
 	}
 
-	// [FORMAT = 'format']
+	// [FORMAT = 'format'] — yacc uses literal '=' only, not ':='
 	if p.peek().Tp == format {
 		p.next()
-		p.expectAny(eq, assignmentEq)
+		p.expect(eq)
 		fmt := p.next()
 		stmt.Format = fmt.Lit
 	}
