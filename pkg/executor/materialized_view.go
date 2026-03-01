@@ -703,8 +703,51 @@ func finalizeMLogPurgeHist(
 	return nil
 }
 
-func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) error {
+func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) (err error) {
+	const slowRefreshThreshold = 5 * time.Second
+	refreshStart := time.Now()
+	var (
+		lockRefreshInfoRowDur time.Duration
+		executeDataChangesDur time.Duration
+		txnCommitDur          time.Duration
+		mviewID               int64
+	)
+
 	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
+	defer func() {
+		total := time.Since(refreshStart)
+		if total < slowRefreshThreshold {
+			return
+		}
+
+		schemaName, mviewName, refreshType := "", "", ""
+		if s != nil {
+			refreshType = strings.ToLower(s.Type.String())
+			if s.ViewName != nil {
+				schemaName = s.ViewName.Schema.O
+				mviewName = s.ViewName.Name.O
+			}
+		}
+
+		fields := []zap.Field{
+			zap.Duration("total", total),
+			zap.Duration("slowThreshold", slowRefreshThreshold),
+			zap.String("schema", schemaName),
+			zap.String("mview", mviewName),
+			zap.Int64("mviewID", mviewID),
+			zap.String("refreshType", refreshType),
+			zap.Bool("internalSQL", isInternalSQL),
+			zap.Bool("success", err == nil),
+			zap.Duration("lockRefreshInfoRow", lockRefreshInfoRowDur),
+			zap.Duration("executeRefreshMaterializedViewDataChanges", executeDataChangesDur),
+			zap.Duration("transactionCommit", txnCommitDur),
+		}
+		if err != nil {
+			fields = append(fields, zap.String("error", err.Error()))
+		}
+		logutil.BgLogger().Info("refresh materialized view is slow", fields...)
+	}()
+
 	refreshMethod, err := validateRefreshMaterializedViewStmt(s, isInternalSQL)
 	if err != nil {
 		return err
@@ -723,6 +766,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	defer e.ReleaseSysSession(kctx, refreshSctx)
 	sqlExec := refreshSctx.GetSQLExecutor()
 	sessVars := refreshSctx.GetSessionVars()
+
 	restoreSessVars, err := initRefreshMaterializedViewSession(sessVars, tblInfo.MaterializedView)
 	if err != nil {
 		return err
@@ -741,24 +785,34 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 	txnStarted := false
 	txnFinished := false
+	txnCommitTimerStarted := false
+	var txnCommitStart time.Time
 	defer func() {
 		if !txnStarted || txnFinished {
 			return
 		}
 		_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
+		txnFinished = true
+		if txnCommitTimerStarted && txnCommitDur == 0 {
+			txnCommitDur = time.Since(txnCommitStart)
+		}
 	}()
 
 	// Use a pessimistic txn to ensure `FOR UPDATE NOWAIT` works as a mutex.
+	txnCommitStart = time.Now()
 	if _, err := sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
 		return errors.Trace(err)
 	}
 	txnStarted = true
+	txnCommitTimerStarted = true
 
 	failpoint.InjectCall("refreshMaterializedViewAfterBegin")
 	failpoint.Inject("pauseRefreshMaterializedViewAfterBegin", func() {})
 
-	mviewID := tblInfo.ID
+	mviewID = tblInfo.ID
+	lockRefreshInfoRowStart := time.Now()
 	lockedReadTSO, lockedReadTSONull, err := lockRefreshInfoRow(kctx, sqlExec, mviewID)
+	lockRefreshInfoRowDur = time.Since(lockRefreshInfoRowStart)
 	if err != nil {
 		return err
 	}
@@ -792,8 +846,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				refreshErrMsg = refreshErrMsg + "; rollback error: " + err.Error()
 			}
 			txnFinished = true
+			if txnCommitTimerStarted && txnCommitDur == 0 {
+				txnCommitDur = time.Since(txnCommitStart)
+			}
 		}
-		if histErr := finalizeRefreshHistWithRetry(
+		histErr := finalizeRefreshHistWithRetry(
 			finalizeCtx,
 			histSQLExec,
 			refreshJobID,
@@ -801,7 +858,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			refreshHistStatusFailed,
 			nil,
 			&refreshErrMsg,
-		); histErr != nil {
+		)
+		if histErr != nil {
 			if rollbackErr != nil {
 				return errors.Annotatef(histErr, "refresh materialized view: rollback failed (%v) and failed to finalize refresh history after error %v", rollbackErr, refreshErr)
 			}
@@ -825,6 +883,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		lastSuccessfulRefreshReadTSO = lockedReadTSO
 	}
 
+	executeDataChangesStart := time.Now()
 	if err := executeRefreshMaterializedViewDataChanges(
 		kctx,
 		sqlExec,
@@ -834,13 +893,16 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		tblInfo,
 		lastSuccessfulRefreshReadTSO,
 	); err != nil {
+		executeDataChangesDur = time.Since(executeDataChangesStart)
 		return finalizeFailure(err)
 	}
+	executeDataChangesDur = time.Since(executeDataChangesStart)
 
 	refreshReadTSO, err := getRefreshReadTSOForSuccess(sessVars)
 	if err != nil {
 		return finalizeFailure(err)
 	}
+
 	nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
 		kctx,
 		scheduleEvalSctx,
@@ -852,6 +914,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return finalizeFailure(err)
 	}
+
 	if err := persistRefreshSuccess(
 		kctx,
 		sqlExec,
@@ -864,10 +927,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	); err != nil {
 		return finalizeFailure(err)
 	}
+
 	if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
 		return finalizeFailure(err)
 	}
 	txnFinished = true
+	if txnCommitTimerStarted && txnCommitDur == 0 {
+		txnCommitDur = time.Since(txnCommitStart)
+	}
+
 	if err := finalizeRefreshHistWithRetry(
 		finalizeCtx,
 		histSQLExec,
