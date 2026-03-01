@@ -160,7 +160,10 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			continue
 
 		case jss, juss: // -> or ->> (JSON extract / unquote+extract)
-			if noMorePredicate || minPrec > precPredicate {
+			// -> and ->> are at SimpleExpr level in yacc (self-recursive),
+			// so they bind as tightly as COLLATE. Use precCollate to allow
+			// them inside MEMBER OF() which parses at precUnary.
+			if noMorePredicate || minPrec > precCollate {
 				return left
 			}
 			left = p.parseJSONExtract(left, tok.Tp == juss)
