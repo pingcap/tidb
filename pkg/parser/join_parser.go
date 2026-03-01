@@ -153,7 +153,8 @@ func (p *HandParser) parseJoin() ast.ResultSetNode {
 		} else {
 			// No ON/USING. LEFT/RIGHT JOIN require ON or USING.
 			if joinType == ast.LeftJoin || joinType == ast.RightJoin {
-				p.error(p.peek().Offset, "Outer join requires ON/USING clause")
+				tok := p.peek()
+				p.errorNear(tok.EndOffset, tok.Offset)
 				return nil
 			}
 			// Pure cross/straight join without ON.
@@ -252,7 +253,8 @@ func (p *HandParser) parseJoinRHS() ast.ResultSetNode {
 		} else {
 			// No ON/USING. LEFT/RIGHT JOIN require ON or USING.
 			if joinType == ast.LeftJoin || joinType == ast.RightJoin {
-				p.error(p.peek().Offset, "Outer join requires ON/USING clause")
+				tok := p.peek()
+				p.errorNear(tok.EndOffset, tok.Offset)
 				return nil
 			}
 			// Pure cross/straight join without ON.
@@ -739,7 +741,8 @@ func (p *HandParser) continueParsingJoinFrom(left ast.ResultSetNode) *ast.Join {
 			lhs = join
 		} else {
 			if joinType == ast.LeftJoin || joinType == ast.RightJoin {
-				p.error(p.peek().Offset, "Outer join requires ON/USING clause")
+				tok := p.peek()
+				p.errorNear(tok.EndOffset, tok.Offset)
 				return nil
 			}
 			if !straight {
