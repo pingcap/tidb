@@ -139,7 +139,7 @@ a	b
 3	3
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (2, 2));
 a	b
 1	1
@@ -2138,13 +2138,13 @@ c1
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 SELECT c1 FROM t1 WHERE TO_BASE64('哈');
 c1
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 SELECT c1 FROM t1 WHERE TO_BASE64('');
 c1
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
@@ -2160,7 +2160,7 @@ c1
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 drop table if exists t;
 create table t (a varchar(10), key(a(5)));
