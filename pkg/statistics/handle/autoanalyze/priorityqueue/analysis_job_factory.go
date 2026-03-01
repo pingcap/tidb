@@ -20,11 +20,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 const (
@@ -52,6 +54,27 @@ func NewAnalysisJobFactory(sctx sessionctx.Context, autoAnalyzeRatio float64, cu
 	}
 }
 
+func (f *AnalysisJobFactory) checkAnalyzeVersionAndForceV2WithLog(
+	tblInfo *model.TableInfo,
+	partitionID int64,
+	stats *statistics.Table,
+	statsVer *int,
+) {
+	if !statistics.CheckAnalyzeVersionAndForceV2(stats, statsVer) {
+		return
+	}
+	fields := []zap.Field{
+		zap.String("table", tblInfo.Name.O),
+		zap.Int64("tableID", tblInfo.ID),
+		zap.Int64("physicalTableID", stats.PhysicalID),
+		zap.Int("existingStatsVer", stats.StatsVer),
+	}
+	if partitionID != 0 {
+		fields = append(fields, zap.Int64("partitionID", partitionID))
+	}
+	statslogutil.StatsLogger().Warn("auto analyze forces analyze version 2 for incompatible existing statistics", fields...)
+}
+
 // CreateNonPartitionedTableAnalysisJob creates a job for non-partitioned tables.
 func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
 	tblInfo *model.TableInfo,
@@ -62,7 +85,7 @@ func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
 	}
 
 	tableStatsVer := f.sctx.GetSessionVars().AnalyzeVersion
-	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
+	f.checkAnalyzeVersionAndForceV2WithLog(tblInfo, 0, tblStats, &tableStatsVer)
 
 	changePercentage := f.CalculateChangePercentage(tblStats)
 	tableSize := f.CalculateTableSize(tblStats)
@@ -97,7 +120,7 @@ func (f *AnalysisJobFactory) CreateStaticPartitionAnalysisJob(
 	}
 
 	tableStatsVer := f.sctx.GetSessionVars().AnalyzeVersion
-	statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
+	f.checkAnalyzeVersionAndForceV2WithLog(globalTblInfo, partitionID, partitionStats, &tableStatsVer)
 
 	changePercentage := f.CalculateChangePercentage(partitionStats)
 	tableSize := f.CalculateTableSize(partitionStats)
@@ -134,7 +157,7 @@ func (f *AnalysisJobFactory) CreateDynamicPartitionedTableAnalysisJob(
 
 	// TODO: figure out how to check the table stats version correctly for partitioned tables.
 	tableStatsVer := f.sctx.GetSessionVars().AnalyzeVersion
-	statistics.CheckAnalyzeVerOnTable(globalTblStats, &tableStatsVer)
+	f.checkAnalyzeVersionAndForceV2WithLog(globalTblInfo, 0, globalTblStats, &tableStatsVer)
 
 	avgChange, avgSize, minLastAnalyzeDuration, partitionIDs := f.CalculateIndicatorsForPartitions(globalTblStats, partitionStats)
 	partitionIndexes := f.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(globalTblInfo, partitionStats)

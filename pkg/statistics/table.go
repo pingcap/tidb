@@ -1073,15 +1073,15 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	return t
 }
 
-// CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.
-// If not, it will return false and set the version to the tbl's.
-// We use this check to make sure all the statistics of the table are in the same version.
-func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
-	if IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != *version {
-		*version = tbl.StatsVer
-		return false
-	}
-	return true
+// CheckAnalyzeVersionAndForceV2 forces the analyze version to v2 and returns
+// whether existing table stats should be rewritten by v2 analyze.
+// Analyze v1 collection is removed, so this function always forces analyze jobs to use v2.
+func CheckAnalyzeVersionAndForceV2(tbl *Table, version *int) bool {
+	*version = Version2
+
+	// If existing analyzed stats are not v2, they are incompatible with the
+	// new analyze write path and should be rewritten by a v2 analyze.
+	return IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != Version2
 }
 
 // PrepareCols4MVIndex helps to identify the columns of an MV index. We need this information for estimation.

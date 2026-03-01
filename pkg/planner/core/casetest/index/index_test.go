@@ -330,7 +330,6 @@ func TestAnalyzeColumnarIndex(t *testing.T) {
 		testKit.MustUseIndex("select * from t order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
 		testKit.MustNoIndexUsed("select * from t ignore index(idx) order by vec_cosine_distance(b, '[1, 0]') limit 1")
 
-		testKit.MustExec("set tidb_analyze_version=2")
 		testKit.MustExec("analyze table t")
 		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
 			"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
@@ -357,7 +356,6 @@ func TestAnalyzeColumnarIndex(t *testing.T) {
 		// It doesn't have stats.
 		require.False(t, (col.Histogram.Len()+col.TopN.Num()) > 0)
 
-		testKit.MustExec("set tidb_analyze_version=1")
 		testKit.MustExec("analyze table t")
 		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
 			"Warning 1105 analyzing columnar index is not supported, skip idx",

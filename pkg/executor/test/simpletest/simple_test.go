@@ -543,7 +543,6 @@ partition by range (a) (
 	partition p1 values less than (20),
 	partition global values less than (30)
 )`)
-	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
 	tk.MustExec("flush stats_delta")

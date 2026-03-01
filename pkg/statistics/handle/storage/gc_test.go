@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -29,78 +28,120 @@ import (
 )
 
 func TestGCStats(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the next-gen kernel does not support analyze version 1")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a, b), index idx_a(a))")
 	testKit.MustExec("insert into t values (1,1),(2,2),(3,3)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn, 1 buckets")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	tblID := tblInfo.ID
+	var idxID, idxAID, colAID int64
+	for _, idx := range tblInfo.Indices {
+		switch idx.Name.L {
+		case "idx":
+			idxID = idx.ID
+		case "idx_a":
+			idxAID = idx.ID
+		}
+	}
+	for _, col := range tblInfo.Columns {
+		if col.Name.L == "a" {
+			colAID = col.ID
+			break
+		}
+	}
+	require.NotZero(t, idxID)
+	require.NotZero(t, idxAID)
+	require.NotZero(t, colAID)
 
 	testKit.MustExec("alter table t drop index idx")
-	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("12"))
+	testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and is_index = 1 and hist_id = ?", tblID, idxID).Check(testkit.Rows("1"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id = ? and is_index = 1 and hist_id = ?", tblID, idxID).Check(testkit.Rows("1"))
 	h := dom.StatsHandle()
 	ddlLease := time.Duration(0)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("3"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("9"))
+	require.NoError(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and is_index = 1 and hist_id = ?", tblID, idxID).Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id = ? and is_index = 1 and hist_id = ?", tblID, idxID).Check(testkit.Rows("0"))
 
 	testKit.MustExec("alter table t drop index idx_a")
 	testKit.MustExec("alter table t drop column a")
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("1"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("3"))
+	testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and is_index = 1 and hist_id = ?", tblID, idxAID).Check(testkit.Rows("1"))
+	testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and is_index = 0 and hist_id = ?", tblID, colAID).Check(testkit.Rows("1"))
+	require.NoError(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and is_index = 1 and hist_id = ?", tblID, idxAID).Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and is_index = 0 and hist_id = ?", tblID, colAID).Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id = ?", tblID).Check(testkit.Rows("1"))
 
 	testKit.MustExec("drop table t")
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
-	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
+	require.NoError(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	testKit.MustQuery("select count(*) from mysql.stats_meta where table_id = ?", tblID).Check(testkit.Rows("1"))
+	testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ?", tblID).Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id = ?", tblID).Check(testkit.Rows("0"))
+	require.NoError(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	testKit.MustQuery("select count(*) from mysql.stats_meta where table_id = ?", tblID).Check(testkit.Rows("0"))
 }
 
 func TestGCPartition(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the next-gen kernel does not support analyze version 1")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
-			    partition by range (a) (
-			    partition p0 values less than (3),
-			    partition p1 values less than (6))`)
+			partition by range (a) (
+			partition p0 values less than (3),
+			partition p1 values less than (6))`)
 		testKit.MustExec("insert into t values (1,2),(2,3),(3,4),(4,5),(5,6)")
-		testKit.MustExec("analyze table t")
+		testKit.MustExec("analyze table t with 0 topn, 1 buckets")
 
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		pi := tblInfo.GetPartitionInfo()
+		require.NotNil(t, pi)
+		require.Len(t, pi.Definitions, 2)
+		p0ID := pi.Definitions[0].ID
+		p1ID := pi.Definitions[1].ID
+		var idxID, colBID int64
+		for _, idx := range tblInfo.Indices {
+			if idx.Name.L == "idx" {
+				idxID = idx.ID
+				break
+			}
+		}
+		for _, col := range tblInfo.Columns {
+			if col.Name.L == "b" {
+				colBID = col.ID
+				break
+			}
+		}
+		require.NotZero(t, idxID)
+		require.NotZero(t, colBID)
+
 		h := dom.StatsHandle()
 		ddlLease := time.Duration(0)
 		testKit.MustExec("alter table t drop index idx")
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
+		testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id in (?, ?) and is_index = 1 and hist_id = ?", p0ID, p1ID, idxID).Check(testkit.Rows("2"))
+		require.NoError(t, h.GCStats(dom.InfoSchema(), ddlLease))
+		testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id in (?, ?) and is_index = 1 and hist_id = ?", p0ID, p1ID, idxID).Check(testkit.Rows("0"))
+		testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id in (?, ?) and is_index = 1 and hist_id = ?", p0ID, p1ID, idxID).Check(testkit.Rows("0"))
 
 		testKit.MustExec("alter table t drop column b")
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("5"))
+		testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id in (?, ?) and is_index = 0 and hist_id = ?", p0ID, p1ID, colBID).Check(testkit.Rows("2"))
+		require.NoError(t, h.GCStats(dom.InfoSchema(), ddlLease))
+		testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id in (?, ?) and is_index = 0 and hist_id = ?", p0ID, p1ID, colBID).Check(testkit.Rows("0"))
+		testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id in (?, ?)", p0ID, p1ID).Check(testkit.Rows("2"))
 
 		testKit.MustExec("drop table t")
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("2"))
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
+		require.NoError(t, h.GCStats(dom.InfoSchema(), ddlLease))
+		testKit.MustQuery("select count(*) from mysql.stats_meta where table_id in (?, ?)", p0ID, p1ID).Check(testkit.Rows("2"))
+		testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id in (?, ?)", p0ID, p1ID).Check(testkit.Rows("0"))
+		testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id in (?, ?)", p0ID, p1ID).Check(testkit.Rows("0"))
+		require.NoError(t, h.GCStats(dom.InfoSchema(), ddlLease))
+		testKit.MustQuery("select count(*) from mysql.stats_meta where table_id in (?, ?)", p0ID, p1ID).Check(testkit.Rows("0"))
 	})
 }
 

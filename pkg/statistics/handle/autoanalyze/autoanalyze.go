@@ -293,8 +293,9 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	return
 }
 
-// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
-func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool {
+// CheckAnalyzeVersionAndForceV2 forces analyze version to v2 and returns whether
+// existing table stats should be rewritten by v2 analyze.
+func (sa *statsAnalyze) CheckAnalyzeVersionAndForceV2(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool {
 	// We simply choose one physical id to get its stats.
 	var tbl *statistics.Table
 	for _, pid := range physicalIDs {
@@ -304,9 +305,10 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 		}
 	}
 	if tbl == nil || tbl.Pseudo {
-		return true
+		*version = statistics.Version2
+		return false
 	}
-	return statistics.CheckAnalyzeVerOnTable(tbl, version)
+	return statistics.CheckAnalyzeVersionAndForceV2(tbl, version)
 }
 
 // GetPriorityQueueSnapshot returns the stats priority queue snapshot.
@@ -394,6 +396,26 @@ func checkAutoAnalyzeWindow(parameters map[string]string) (_, _ time.Time, _ boo
 		return start, end, false
 	}
 	return start, end, true
+}
+
+func checkAnalyzeVersionAndForceV2WithLog(
+	tableStats *statistics.Table,
+	tableName string,
+	partitionName string,
+	tableStatsVer *int,
+) {
+	if !statistics.CheckAnalyzeVersionAndForceV2(tableStats, tableStatsVer) {
+		return
+	}
+	fields := []zap.Field{
+		zap.String("table", tableName),
+		zap.Int64("physicalTableID", tableStats.PhysicalID),
+		zap.Int("existingStatsVer", tableStats.StatsVer),
+	}
+	if partitionName != "" {
+		fields = append(fields, zap.String("partition", partitionName))
+	}
+	statslogutil.StatsLogger().Warn("auto analyze forces analyze version 2 for incompatible existing statistics", fields...)
 }
 
 // RandomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
@@ -567,7 +589,7 @@ func tryAutoAnalyzeTable(
 		)
 
 		tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
-		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+		checkAnalyzeVersionAndForceV2WithLog(statsTbl, tblInfo.Name.O, "", &tableStatsVer)
 		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 
 		return true
@@ -592,7 +614,7 @@ func tryAutoAnalyzeTable(
 				zap.String("sql", escaped),
 			)
 			tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
-			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			checkAnalyzeVersionAndForceV2WithLog(statsTbl, tblInfo.Name.O, "", &tableStatsVer)
 			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
@@ -663,7 +685,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("partition", def.Name.O),
 				zap.String("reason", reason),
 			)
-			statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
+			checkAnalyzeVersionAndForceV2WithLog(partitionStats, tblInfo.Name.O, def.Name.O, &tableStatsVer)
 		}
 	}
 
@@ -689,7 +711,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		)
 
 		statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+		checkAnalyzeVersionAndForceV2WithLog(statsTbl, tblInfo.Name.O, "", &tableStatsVer)
 		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 			start := i
 			end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
@@ -729,12 +751,12 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			// 2. If the index is not analyzed, we need to analyze it.
 			if !partitionStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
-				statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
+				checkAnalyzeVersionAndForceV2WithLog(partitionStats, tblInfo.Name.O, def.Name.O, &tableStatsVer)
 			}
 		}
 		if len(needAnalyzePartitionNames) > 0 {
 			statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			checkAnalyzeVersionAndForceV2WithLog(statsTbl, tblInfo.Name.O, "", &tableStatsVer)
 
 			for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 				start := i

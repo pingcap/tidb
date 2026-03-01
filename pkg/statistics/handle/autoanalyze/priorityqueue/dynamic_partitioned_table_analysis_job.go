@@ -297,9 +297,6 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	sysProcTracker sysproctrack.Tracker,
 ) (success bool) {
 	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
-	// For version 2, analyze one index will analyze all other indexes and columns.
-	// For version 1, analyze one index will only analyze the specified index.
-	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 
 	for indexName, partitionNames := range j.PartitionIndexNames {
 		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
@@ -318,13 +315,10 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 				return false
 			}
 		}
-		// For version 1, we need to analyze all indexes.
-		if analyzeVersion != 1 {
-			// Halt execution after analyzing one index.
-			// This is because analyzing a single index also analyzes all other indexes and columns.
-			// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
-			break
-		}
+		// Halt execution after analyzing one index.
+		// This is because analyzing a single index also analyzes all other indexes and columns.
+		// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
+		break
 	}
 	return
 }

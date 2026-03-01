@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -402,10 +401,7 @@ func testInitStatsMemTraceFunc(t *testing.T, liteInitStats bool) {
 	testInitStatsMemTrace(t)
 }
 
-func TestInitStatsWithAnalyzeVersion1(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
+func TestInitStatsWithAnalyze(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
@@ -414,7 +410,6 @@ func TestInitStatsWithAnalyzeVersion1(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
 	testKit.MustExec("analyze table t")
@@ -433,16 +428,10 @@ func TestInitStatsWithAnalyzeVersion1(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
-column:1 ndv:6 totColSize:0
+column:1 ndv:6 totColSize:6
 column:2 ndv:6 totColSize:6
 column:3 ndv:6 totColSize:6
-index:1 ndv:6
-num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
-num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
-num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
-num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
-num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
-num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
+index:1 ndv:6`, tbl.Meta().ID)
 	require.Equal(t, needed, table0.String())
 	h.SetLease(0)
 }
@@ -698,9 +687,6 @@ func TestInitStatsWithoutHandlingDDLEvent(t *testing.T) {
 }
 
 func TestInitStats51358(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
@@ -709,7 +695,6 @@ func TestInitStats51358(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
 	testKit.MustExec("analyze table t")
@@ -751,7 +736,6 @@ func initStatsVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a), index idxab(a, b))")
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
@@ -790,8 +774,6 @@ func TestInitStatsIssue41938(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_analyze_version=1")
-	tk.MustExec("set @@session.tidb_analyze_version=1")
 	tk.MustExec("create table t1 (a timestamp primary key)")
 	tk.MustExec("insert into t1 values ('2023-03-07 14:24:30'), ('2023-03-07 14:24:31'), ('2023-03-07 14:24:32'), ('2023-03-07 14:24:33')")
 	tk.MustExec("analyze table t1 with 0 topn")

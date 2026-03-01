@@ -73,7 +73,7 @@ var (
 	// It's public for test.
 	RandSeed = int64(1)
 
-	// MaxRegionSampleSize is the max sample size for one region when analyze v1 collects samples from table.
+	// MaxRegionSampleSize is the max sample size for one region when a coprocessor collects column samples.
 	// It's public for test.
 	MaxRegionSampleSize = int64(1000)
 )

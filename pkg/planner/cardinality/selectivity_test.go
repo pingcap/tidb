@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -73,7 +72,6 @@ func TestCollationColumnEstimate(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h := dom.StatsHandle()
 	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t all columns")
@@ -250,7 +248,6 @@ func TestRiskRangeSkewRatio(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, key idx(a))")
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 
 	// Insert data with values 1-10, each appearing multiple times
@@ -452,16 +449,12 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 }
 
 func TestEstimationForUnknownValues(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("next-gen kernel don't support the analyze version 1")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	for i := range 10 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
@@ -611,7 +604,6 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, key idx(a))")
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	for i := 1; i <= 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
@@ -667,7 +659,6 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, index idxa(a), index idxca(c,a))")
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")     // Disable auto analyze to control when stats are collected
 	testKit.MustExec("set @@tidb_opt_table_full_scan_cost_factor=1000") // Discourage full table scans - this is an index test
 	testKit.MustExec("insert into t values (1, 1, 1)")
@@ -697,7 +688,6 @@ func TestIssue57948(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int)")
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("insert into t values (1, 1, 1)")
 	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
@@ -1841,15 +1831,11 @@ func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
 }
 
 func TestCrossValidationSelectivity(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered)")
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
@@ -2153,7 +2139,6 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, key idx(a))")
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	for i := 1; i <= 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
@@ -2289,7 +2274,6 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, index idx(a))")
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 
 	// Insert initial data with a clear distribution

@@ -46,7 +46,6 @@ func testShowGlobalStats(t *testing.T, isAsync bool) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 0")
 	if isAsync {
 		tk.MustExec("set @@global.tidb_enable_async_merge_global_stats = 0")
 	} else {
@@ -57,17 +56,16 @@ func testShowGlobalStats(t *testing.T, isAsync bool) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t values (1), (2), (3), (4)")
-	tk.MustExec("analyze table t with 1 buckets")
+	tk.MustExec("analyze table t with 0 topn, 1 buckets")
 	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 2)
 	require.Len(t, tk.MustQuery("show stats_meta where partition_name='global'").Rows(), 0)
-	require.Len(t, tk.MustQuery("show stats_buckets").Rows(), 4) // 2 partitions * (1 for the column_a and 1 for the index_a)
+	require.Len(t, tk.MustQuery("show stats_buckets").Rows(), 4)
 	require.Len(t, tk.MustQuery("show stats_buckets where partition_name='global'").Rows(), 0)
 	require.Len(t, tk.MustQuery("show stats_histograms").Rows(), 4)
 	require.Len(t, tk.MustQuery("show stats_histograms where partition_name='global'").Rows(), 0)
 	require.Len(t, tk.MustQuery("show stats_healthy").Rows(), 2)
 	require.Len(t, tk.MustQuery("show stats_healthy where partition_name='global'").Rows(), 0)
 
-	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t with 0 topn, 1 buckets")
 	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 3)
@@ -148,7 +146,6 @@ func TestBuildGlobalLevelStats(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1;")
-	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("create table t(a int, b int, c int) PARTITION BY HASH(a) PARTITIONS 3;")
 	testKit.MustExec("create table t1(a int);")
@@ -237,7 +234,6 @@ partition by range (a) (
 			fmt.Sprintf("test t p1 %v", p1H)))
 	}
 
-	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("analyze table t")
 	checkModifyAndCount(0, 0, 0, 0, 0, 0)
@@ -280,7 +276,6 @@ partition by range (a) (
 	partition p0 values less than (10),
 	partition p1 values less than (20)
 )`)
-	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
 	tk.MustExec("flush stats_delta")
@@ -333,7 +328,6 @@ func TestGlobalStatsData3(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@tidb_analyze_version=2")
 
 	// index(int, int)
 	tk.MustExec("drop table if exists tintint")
@@ -506,82 +500,11 @@ func TestGlobalStatsData3(t *testing.T) {
 	require.Equal(t, "5", rs[2][6].(string))
 }
 
-func TestGlobalStatsVersion(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`
-create table t (
-	a int
-)
-partition by range (a) (
-	partition p0 values less than (10),
-	partition p1 values less than (20)
-)`)
-	err := statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
-	require.NoError(t, err)
-	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
-	tk.MustExec("flush stats_delta")
-
-	tk.MustExec("set @@tidb_partition_prune_mode='static'")
-	tk.MustExec("set @@session.tidb_analyze_version=1")
-	tk.MustExec("analyze table t") // both p0 and p1 are in ver1
-	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 2)
-
-	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@session.tidb_analyze_version=1")
-	err = tk.ExecToErr("analyze table t") // try to build global-stats on ver1
-	require.NoError(t, err)
-
-	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
-	err = tk.ExecToErr("analyze table t partition p1") // only analyze p1 to let it in ver2 while p0 is in ver1
-	require.NoError(t, err)
-
-	tk.MustExec("analyze table t") // both p0 and p1 are in ver2
-	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 3)
-
-	// If we already have global-stats, we can get the latest global-stats by analyzing the newly added partition.
-	tk.MustExec("alter table t add partition (partition p2 values less than (30))")
-	tk.MustExec("insert t values (13), (14), (22), (23)")
-	tk.MustExec("flush stats_delta")
-	tk.MustExec("analyze table t partition p2") // it will success since p0 and p1 are both in ver2
-	tk.MustExec("flush stats_delta")
-	do := dom
-	is := do.InfoSchema()
-	h := do.StatsHandle()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	globalStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	// global.count = p0.count(3) + p1.count(4) + p2.count(2)
-	// modify count is 2 because we didn't analyze p1 after the second insert
-	require.Equal(t, int64(9), globalStats.RealtimeCount)
-	require.Equal(t, int64(2), globalStats.ModifyCount)
-
-	tk.MustExec("analyze table t partition p1;")
-	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	// global.count = p0.count(3) + p1.count(4) + p2.count(4)
-	// The value of modify count is 0 now.
-	require.Equal(t, int64(9), globalStats.RealtimeCount)
-	require.Equal(t, int64(0), globalStats.ModifyCount)
-
-	tk.MustExec("alter table t drop partition p2;")
-	tk.MustExec("flush stats_delta")
-	tk.MustExec("analyze table t;")
-	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	// global.count = p0.count(3) + p1.count(4)
-	require.Equal(t, int64(7), globalStats.RealtimeCount)
-}
-
 func TestDDLPartition4GlobalStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec(`create table t (a int) partition by range (a) (
 		partition p0 values less than (10),
@@ -769,7 +692,6 @@ func TestGlobalStats(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_analyze_version = 2;")
 	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20),
@@ -867,7 +789,6 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	h.SetLease(time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
 
 	// analyze table t
 	tk.MustExec("drop table if exists t")
@@ -939,8 +860,6 @@ func TestIssues24349(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_analyze_version=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=1")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
 	testIssues24349(t, testKit, store)
 }
@@ -950,9 +869,7 @@ func TestIssues24349WithConcurrency(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("set global tidb_merge_partition_stats_concurrency=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=1")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
 	defer testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
 	testIssues24349(t, testKit, store)
@@ -972,26 +889,6 @@ func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_merge_partition_stats_concurrency=2")
 	testGlobalStatsAndSQLBinding(tk)
-}
-
-func TestMergeGlobalStatsForCMSketch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`
-		create table t (a int) partition by range (a) (
-			partition p0 values less than (10),
-			partition p1 values less than (20)
-		)`)
-	tk.MustExec("set @@tidb_analyze_version=1")
-	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(
-		testkit.Rows("TableReader 1.00 root partition:p0 data:Selection",
-			"└─Selection 1.00 cop[tikv]  eq(test.t.a, 1)",
-			"  └─TableFullScan 18.00 cop[tikv] table:t keep order:false"))
 }
 
 func TestEmptyHists(t *testing.T) {

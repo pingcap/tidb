@@ -30,7 +30,6 @@ import (
 func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@tidb_analyze_version=2")
 
 	// int + (column & index with 1 column)
 	tk.MustExec("drop table if exists tint")

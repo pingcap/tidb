@@ -30,6 +30,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -37,8 +38,6 @@ import (
 )
 
 var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
-	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
 	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
 }
 
@@ -86,8 +85,13 @@ func RunAnalyzeStmt(
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
 	autoAnalyzeProcID := statsHandle.AutoAnalyzeProcID()
+	analyzeVerOpt, ok := execOptionForAnalyze[statsVer]
+	intest.Assert(ok, "auto analyze should only use supported stats version", statsVer)
+	if !ok {
+		analyzeVerOpt = sqlexec.ExecOptionAnalyzeVer2
+	}
 	optFuncs := []sqlexec.OptionFuncAlias{
-		execOptionForAnalyze[statsVer],
+		analyzeVerOpt,
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
 		sqlexec.GetPartitionPruneModeOption(pruneMode),
 		sqlexec.ExecOptionUseCurSession,

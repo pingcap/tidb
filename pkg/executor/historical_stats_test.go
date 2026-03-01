@@ -38,7 +38,6 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -101,7 +100,6 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

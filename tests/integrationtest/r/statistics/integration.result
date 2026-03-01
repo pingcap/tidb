@@ -1,5 +1,4 @@
 drop table if exists t;
-set @@session.tidb_analyze_version = 2;
 create table t(a longtext);
 insert into t value(repeat("a",65536));
 insert into t value(repeat("b",65536));
@@ -50,7 +49,6 @@ Sort	root		statistics__integration.t1.a, statistics__integration.t2.a
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false
 drop table if exists t;
-set @@session.tidb_analyze_version = 2;
 create table t(a int, b int, index idx_a(a), unique index uidx_b(b));
 insert into t values (1,1),(1,2),(2,3);
 analyze table t with 5 topn;

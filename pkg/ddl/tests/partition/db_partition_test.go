@@ -1506,7 +1506,6 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1537,7 +1536,6 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by hash(a) partitions 4;`)
@@ -1595,7 +1593,6 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (

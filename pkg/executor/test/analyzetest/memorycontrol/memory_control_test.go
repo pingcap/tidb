@@ -234,7 +234,6 @@ func TestAnalyzeV2MemoryUsageMetricNeverNegative(t *testing.T) {
 	executor.GlobalAnalyzeMemoryTracker.ReplaceBytesUsed(0)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_build_sampling_stats_concurrency=1")
 	tk.MustExec("set @@tidb_analyze_skip_column_types = ''")
 	tk.MustExec("use test")

@@ -51,7 +51,6 @@ func TestPlanStatsLoad(t *testing.T) {
 		testKit.MustExec("use test")
 		ctx := testKit.Session().(sessionctx.Context)
 		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("set @@session.tidb_analyze_version=2")
 		testKit.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 		testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
 		testKit.MustExec("set tidb_opt_projection_push_down = 0")
@@ -281,7 +280,6 @@ func TestPlanStatsLoadForCTE(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("set @@session.tidb_analyze_version=2")
 		testKit.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 		testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
 		testKit.MustExec("set tidb_opt_projection_push_down = 0")
@@ -347,7 +345,6 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 
 		ctx := testKit.Session().(sessionctx.Context)
 		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("set @@session.tidb_analyze_version=2")
 		// since queue full, make sync-wait return as timeout as soon as possible
 		testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 1")
 		testKit.MustExec("create table t(a int, b int, c int, primary key(a))")

@@ -2621,8 +2621,13 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	var predicateCols, mustAnalyzedCols calcOnceMap
 	ver := version
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-	// If the statistics of the table is version 1, we must analyze all columns to overwrites all of old statistics.
-	mustAllColumns := !statsHandle.CheckAnalyzeVersion(tbl.TableInfo, physicalIDs, &ver)
+	// If existing stats are not version 2, analyze all columns to rewrite incompatible legacy stats.
+	mustAllColumns := statsHandle.CheckAnalyzeVersionAndForceV2(tbl.TableInfo, physicalIDs, &ver)
+	if mustAllColumns && !as.IndexFlag {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			"Analyze v1 has been removed. TiDB forces analyze version 2 and analyzes all columns to rewrite incompatible existing statistics",
+		))
+	}
 
 	astColsInfo, _, err := b.getFullAnalyzeColumnsInfo(tbl, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns, true)
 	if err != nil {
@@ -2990,9 +2995,9 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	if err != nil {
 		return nil, err
 	}
-	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
-	if !versionIsSame {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	needRewriteLegacyStats := statsHandle.CheckAnalyzeVersionAndForceV2(tblInfo, physicalIDs, &version)
+	if needRewriteLegacyStats {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Analyze v1 has been removed. TiDB forces analyze version 2 for incompatible existing statistics"))
 	}
 	if version == statistics.Version2 {
 		return b.buildAnalyzeTable(as, opts, version)
@@ -3046,9 +3051,9 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	if err != nil {
 		return nil, err
 	}
-	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
-	if !versionIsSame {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	needRewriteLegacyStats := statsHandle.CheckAnalyzeVersionAndForceV2(tblInfo, physicalIDs, &version)
+	if needRewriteLegacyStats {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Analyze v1 has been removed. TiDB forces analyze version 2 for incompatible existing statistics"))
 	}
 	if version == statistics.Version2 {
 		return b.buildAnalyzeTable(as, opts, version)
@@ -3153,8 +3158,7 @@ func GetAnalyzeOptionDefaultV2ForTest() map[ast.AnalyzeOptionType]uint64 {
 	return analyzeOptionDefaultV2
 }
 
-// This function very similar to handleAnalyzeOptions, but it's used for analyze version 2.
-// Remove this function after we remove the support of analyze version 1.
+// handleAnalyzeOptionsV2 processes per-column analyze options, applying v2 defaults.
 func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
 	sampleNum, sampleRate := uint64(0), 0.0
@@ -3209,13 +3213,9 @@ func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.Analy
 	return filledMap
 }
 
-func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-	if statsVer == statistics.Version1 {
-		maps.Copy(optMap, analyzeOptionDefault)
-	} else {
-		maps.Copy(optMap, analyzeOptionDefaultV2)
-	}
+func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefaultV2))
+	maps.Copy(optMap, analyzeOptionDefaultV2)
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
@@ -3231,9 +3231,6 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
 			if err != nil {
 				return nil, err
-			}
-			if fVal > 0 && statsVer == statistics.Version1 {
-				return nil, errors.Errorf("Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2")
 			}
 			limit := math.Float64frombits(analyzeOptionLimit[opt.Type])
 			if fVal <= 0 || fVal > limit {
@@ -3255,10 +3252,6 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 	if sampleNum > 0 && sampleRate > 0 {
 		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them")
 	}
-	// Only version 1 has cmsketch.
-	if statsVer == statistics.Version1 && optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > CMSketchSizeLimit {
-		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
-	}
 	return optMap, nil
 }
 
@@ -3273,7 +3266,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	// Require INSERT and SELECT privilege for tables.
 	b.requireInsertAndSelectPriv(as.TableNames)
 
-	opts, err := handleAnalyzeOptions(as.AnalyzeOpts, statsVersion)
+	opts, err := handleAnalyzeOptions(as.AnalyzeOpts)
 	if err != nil {
 		return nil, err
 	}

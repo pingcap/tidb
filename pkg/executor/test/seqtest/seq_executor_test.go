@@ -1366,7 +1366,6 @@ func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int, c varchar(32))")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockNextRawError", `return(true)`))
 	defer func() {

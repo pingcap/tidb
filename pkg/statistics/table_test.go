@@ -85,3 +85,54 @@ func TestCopyAs(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckAnalyzeVersionAndForceV2(t *testing.T) {
+	tests := []struct {
+		name            string
+		inputVer        int
+		tableStatsVer   int
+		wantNeedRewrite bool
+		wantVer         int
+	}{
+		{
+			name:            "force session version to v2",
+			inputVer:        Version1,
+			tableStatsVer:   Version0,
+			wantNeedRewrite: false,
+			wantVer:         Version2,
+		},
+		{
+			name:            "keep v2 when table unanalyzed",
+			inputVer:        Version2,
+			tableStatsVer:   Version0,
+			wantNeedRewrite: false,
+			wantVer:         Version2,
+		},
+		{
+			name:            "force v2 when table has legacy v1 stats",
+			inputVer:        Version2,
+			tableStatsVer:   Version1,
+			wantNeedRewrite: true,
+			wantVer:         Version2,
+		},
+		{
+			name:            "keep v2 when table already v2",
+			inputVer:        Version2,
+			tableStatsVer:   Version2,
+			wantNeedRewrite: false,
+			wantVer:         Version2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ver := tt.inputVer
+			tbl := &Table{
+				HistColl: HistColl{StatsVer: tt.tableStatsVer},
+			}
+			needRewrite := CheckAnalyzeVersionAndForceV2(tbl, &ver)
+			require.Equal(t, tt.wantNeedRewrite, needRewrite)
+			require.Equal(t, tt.wantVer, ver)
+		})
+	}
+}

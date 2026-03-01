@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -50,7 +49,6 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	statistics.AutoAnalyzeMinCnt = 0
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
@@ -139,7 +137,6 @@ func TestSavedPartitionAnalyzeOptions(t *testing.T) {
 	tk.MustExec("set global tidb_persist_analyze_options = true")
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
@@ -283,19 +280,7 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
-	if kerneltype.IsNextGen() {
-		t.Log("analyze V1 cannot support in the next gen")
-		return
-	}
-	// set analyze version back to 1, will not use persisted
-	tk.MustExec("set @@session.tidb_analyze_version = 1")
-	tk.MustExec("analyze table t partition p2")
-	pi = tableInfo.GetPartitionInfo()
-	p2 = h.GetPhysicalTableStats(pi.Definitions[2].ID, tableInfo)
-	require.NotEqual(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
-
 	// drop column
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("alter table t drop column b")
 	tk.MustExec("analyze table t")
 	colIDStrsA := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10)}, ",")
@@ -341,7 +326,6 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	tk.MustExec("set global tidb_persist_analyze_options = true")
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t1 values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
@@ -399,7 +383,6 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	}()
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("create table t(a int, b int, c int)")
 	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4)")
 

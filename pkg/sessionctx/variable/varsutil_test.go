@@ -425,6 +425,10 @@ func TestVarsutil(t *testing.T) {
 	require.Error(t, warn.Err)
 	require.Contains(t, warn.Err.Error(), "Truncated incorrect tidb_analyze_version value")
 
+	err = v.SetSystemVar(vardef.TiDBAnalyzeVersion, "1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tidb_analyze_version=1 is no longer supported")
+
 	err = v.SetSystemVar(vardef.TiDBTableCacheLease, "123")
 	require.Error(t, err)
 	require.Regexp(t, "'tidb_table_cache_lease' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())

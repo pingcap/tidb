@@ -544,7 +544,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 		idxExec.opts[ast.AnalyzeOptNumSamples] = 0
 		idxExec.opts[ast.AnalyzeOptNumBuckets] = 1
 		statsVersion := new(int32)
-		*statsVersion = statistics.Version1
+		*statsVersion = statistics.Version2
 		// No Top-N
 		topnSize := int32(0)
 		idxExec.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{

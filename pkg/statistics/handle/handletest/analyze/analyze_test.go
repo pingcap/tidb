@@ -100,7 +100,6 @@ func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testk
 	}
 	tk.MustExec(buf1.String())
 	tk.MustExec(buf2.String())
-	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("flush stats_delta")
 }
@@ -124,7 +123,6 @@ func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit
 	}
 	tk.MustExec(buf1.String())
 	tk.MustExec(buf2.String())
-	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("flush stats_delta")
 }
@@ -137,7 +135,6 @@ func TestAnalyzeVirtualCol(t *testing.T) {
 	tk.MustExec("create table t(a int, b int generated always as (-a) virtual, c int generated always as (-a) stored, index (c))")
 	tk.MustExec("insert into t(a) values(2),(1),(1),(3),(NULL)")
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c")
-	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("analyze table t")
 	require.Len(t, tk.MustQuery("show stats_histograms where table_name ='t'").Rows(), 3)
 }
@@ -215,7 +212,6 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
-	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
@@ -243,7 +239,6 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
-	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)

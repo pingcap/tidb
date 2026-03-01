@@ -16,6 +16,7 @@ package storage_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -34,7 +35,6 @@ func TestLoadStats(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
@@ -43,7 +43,7 @@ func TestLoadStats(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn")
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -53,6 +53,9 @@ func TestLoadStats(t *testing.T) {
 	colCID := tableInfo.Columns[2].ID
 	idxBID := tableInfo.Indices[0].ID
 	h := dom.StatsHandle()
+	// Keep v1 read compatibility coverage: force stats rows to version 1 and reload.
+	testKit.MustExec(fmt.Sprintf("update mysql.stats_histograms set stats_ver=1 where table_id=%d", tableInfo.ID))
+	require.NoError(t, h.Update(context.Background(), is))
 
 	// Index/column stats are not be loaded after analyze.
 	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -76,16 +79,14 @@ func TestLoadStats(t *testing.T) {
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, stat.GetCol(colAID).IsFullLoad())
-	hg := stat.GetCol(colAID).Histogram
-	require.Greater(t, hg.Len(), 0)
+	require.Equal(t, int64(statistics.Version1), stat.GetCol(colAID).StatsVer)
+	require.Greater(t, stat.GetCol(colAID).Histogram.Len(), 0)
 	// We don't maintain cmsketch for pk.
 	cms := stat.GetCol(colAID).CMSketch
 	require.Nil(t, cms)
 	require.True(t, stat.GetCol(colCID).IsFullLoad())
-	hg = stat.GetCol(colCID).Histogram
-	require.Greater(t, hg.Len(), 0)
-	cms = stat.GetCol(colCID).CMSketch
-	require.NotNil(t, cms)
+	require.Equal(t, int64(statistics.Version1), stat.GetCol(colCID).StatsVer)
+	require.Greater(t, stat.GetCol(colCID).Histogram.Len(), 0)
 
 	// Index stats are loaded after they are needed.
 	idx = stat.GetIdx(idxBID)
@@ -96,7 +97,7 @@ func TestLoadStats(t *testing.T) {
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	idx = stat.GetIdx(tableInfo.Indices[0].ID)
-	hg = idx.Histogram
+	hg := idx.Histogram
 	cms = idx.CMSketch
 	topN := idx.TopN
 	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))

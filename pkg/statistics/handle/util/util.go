@@ -119,16 +119,9 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	}
 	sctx.GetSessionVars().AnalyzePartitionConcurrency = int(c)
 
-	// analyzer version
-	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeVersion)
-	if err != nil {
-		return err
-	}
-	ver, err := strconv.ParseInt(verInString, 10, 64)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().AnalyzeVersion = int(ver)
+	// Analyze v1 is removed; stats jobs always run with analyze v2.
+	intest.Assert(vardef.DefTiDBAnalyzeVersion == 2)
+	sctx.GetSessionVars().AnalyzeVersion = vardef.DefTiDBAnalyzeVersion
 
 	// enable historical stats
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
@@ -164,11 +157,11 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
-	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBMergePartitionStatsConcurrency)
+	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBMergePartitionStatsConcurrency)
 	if err != nil {
 		return err
 	}
-	ver, err = strconv.ParseInt(verInString, 10, 64)
+	ver, err := strconv.ParseInt(verInString, 10, 64)
 	if err != nil {
 		return err
 	}

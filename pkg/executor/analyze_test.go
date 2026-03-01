@@ -77,7 +77,6 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a, b))")
 	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 2), (1, 2)")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
 
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
@@ -193,7 +192,6 @@ func TestAnalyzeSaveResultErrorDoesNotHang(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
-	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
@@ -218,7 +216,6 @@ func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
-	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("create table t (a int, b int, key idx_b(b)) partition by hash(a) partitions 4")
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))

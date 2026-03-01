@@ -464,7 +464,6 @@ func testAnalyzeTiFlashIndex(createTableSQL, createIndexSQL string, t *testing.T
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	tk.MustExec(createIndexSQL)
 
-	tk.MustExec("set tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
@@ -477,7 +476,6 @@ func testAnalyzeTiFlashIndex(createTableSQL, createIndexSQL string, t *testing.T
 		"Warning 1105 analyzing columnar index is not supported, skip idx",
 		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 
-	tk.MustExec("set tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Warning 1105 analyzing columnar index is not supported, skip idx",

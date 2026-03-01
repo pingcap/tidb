@@ -358,7 +358,6 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 		tk.MustExec(`create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signed array))));`)
 		tk.MustExec(`insert into t value(1,1,1, '{"b":[1,2,3,4]}');`)
 		tk.MustExec(`insert into t value(2,2,2, '{"b":[3,4,5,6]}');`)
-		tk.MustExec(`set tidb_analyze_version=2;`)
 		tk.MustExec(`analyze table t all columns;`)
 		tk.MustQuery("explain format = 'brief' select * from t use index (iad) where a = 1;").Check(testkit.Rows(
 			"TableReader 1.00 root  data:Selection",
