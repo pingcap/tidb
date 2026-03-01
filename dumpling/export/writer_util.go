@@ -215,6 +215,7 @@ func WriteInsert(
 
 	selectedField := meta.SelectedField()
 
+	// Always write INSERT prefix for each chunk to ensure complete statements
 	// if has generated column
 	if selectedField != "" && selectedField != "*" {
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
@@ -225,10 +226,14 @@ func WriteInsert(
 	}
 	insertStatementPrefixLen := uint64(len(insertStatementPrefix))
 
+	isFirstChunk := true
 	for fileRowIter.HasNext() {
-		wp.currentStatementSize = 0
-		bf.WriteString(insertStatementPrefix)
-		wp.AddFileSize(insertStatementPrefixLen)
+		if isFirstChunk {
+			wp.currentStatementSize = 0
+			bf.WriteString(insertStatementPrefix)
+			wp.AddFileSize(insertStatementPrefixLen)
+			isFirstChunk = false
+		}
 
 		for fileRowIter.HasNext() {
 			lastBfSize := bf.Len()
@@ -248,10 +253,17 @@ func WriteInsert(
 			failpoint.Inject("AtEveryRow", nil)
 
 			fileRowIter.Next()
+			// Check if we need to end current INSERT statement and start a new one
+			// This can happen due to file size limit or statement size limit
 			shouldSwitch := wp.ShouldSwitchStatement()
-			if fileRowIter.HasNext() && !shouldSwitch {
+
+			// Determine row terminator - always use comma for rows within a statement
+			hasMoreRows := fileRowIter.HasNext() && !shouldSwitch
+
+			if hasMoreRows {
 				bf.WriteString(",\n")
 			} else {
+				// Always end with semicolon to complete the INSERT statement
 				bf.WriteString(";\n")
 			}
 			if bf.Len() >= lengthLimit {
@@ -271,6 +283,10 @@ func WriteInsert(
 			}
 
 			if shouldSwitch {
+				// Need to end current INSERT statement due to size limits
+				wp.currentStatementSize = 0
+				// Always restart with INSERT prefix for complete statements
+				isFirstChunk = true
 				break
 			}
 		}

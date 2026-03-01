@@ -22,6 +22,7 @@ func TestWriteDatabaseMeta(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -41,6 +42,7 @@ func TestWritePolicyMeta(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -61,6 +63,7 @@ func TestWriteTableMeta(t *testing.T) {
 
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -83,6 +86,7 @@ func TestWriteViewMeta(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -111,6 +115,7 @@ func TestWriteTableData(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -155,6 +160,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 	config.FileSize = 50
 	specCmts := []string{
 		"/*!40101 SET NAMES binary*/;",
@@ -204,6 +210,7 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 	config.FileSize = 50
 	config.Rows = 4
 	specCmts := []string{
@@ -254,6 +261,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 	config.StatementSize = 50
 	config.StatementSize += uint64(len("INSERT INTO `employee` VALUES\n"))
 	var err error

@@ -1790,7 +1790,7 @@ func TestPickupPossibleField(t *testing.T) {
 			mock.ExpectQuery(query).WillReturnRows(rows)
 		}
 
-		field, err := pickupPossibleField(tctx, meta, baseConn)
+		field, _, err := pickupPossibleField(tctx, meta, baseConn)
 		if expectedErr != nil {
 			require.ErrorIs(t, err, expectedErr)
 		} else {
