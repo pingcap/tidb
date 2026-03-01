@@ -378,7 +378,6 @@ go_test(
         "memtable_reader_test.go",
         "metrics_reader_test.go",
         "model_ddl_test.go",
-        "model_predict_test.go",
         "parallel_apply_test.go",
         "partition_table_test.go",
         "pkg_test.go",

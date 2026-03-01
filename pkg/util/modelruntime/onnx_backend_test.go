@@ -24,4 +24,12 @@ func TestBackendRegistry(t *testing.T) {
 	backend, ok := BackendForEngine("onnx")
 	require.True(t, ok)
 	require.NotNil(t, backend)
+
+	mlflow1, ok := BackendForEngine("MLFLOW")
+	require.True(t, ok)
+	require.NotNil(t, mlflow1)
+
+	mlflow2, ok := BackendForEngine("mlflow")
+	require.True(t, ok)
+	require.Same(t, mlflow1, mlflow2)
 }

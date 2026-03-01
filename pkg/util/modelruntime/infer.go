@@ -27,6 +27,7 @@ var (
 	newDynamicSessionFn = func(onnxData []byte, inputNames, outputNames []string) (dynamicSession, error) {
 		return onnxruntime_go.NewDynamicAdvancedSessionWithONNXData(onnxData, inputNames, outputNames, nil)
 	}
+	initRuntimeFn        = Init
 	newRunOptionsFn      = onnxruntime_go.NewRunOptions
 	runInferenceScalarFn = runInferenceScalar
 	runInferenceBatchFn  = runInferenceBatch
@@ -242,12 +243,16 @@ func runWithTimeout(session *sessionEntry, inputs, outputs []onnxruntime_go.Valu
 		}
 	}()
 	var timedOut atomic.Bool
+	done := make(chan struct{})
 	timer := time.AfterFunc(timeout, func() {
 		timedOut.Store(true)
 		_ = opts.Terminate()
+		close(done)
 	})
 	err = session.run(inputs, outputs, opts)
-	timer.Stop()
+	if !timer.Stop() {
+		<-done
+	}
 	if timedOut.Load() {
 		return errors.Errorf("onnx inference timeout after %s", timeout)
 	}
@@ -267,16 +272,20 @@ func destroyValues(values []onnxruntime_go.Value) error {
 }
 
 func getSession(cache *SessionCache, key SessionKey, onnxData []byte, inputNames, outputNames []string) (*sessionEntry, func(), error) {
+	create := func() (dynamicSession, error) {
+		if _, err := initRuntimeFn(); err != nil {
+			return nil, errors.Annotate(err, "initialize onnxruntime")
+		}
+		return newDynamicSessionFn(onnxData, inputNames, outputNames)
+	}
 	if cache != nil {
-		entry, err := cache.GetOrCreate(key, func() (dynamicSession, error) {
-			return newDynamicSessionFn(onnxData, inputNames, outputNames)
-		})
+		entry, err := cache.GetOrCreate(key, create)
 		if err != nil {
 			return nil, func() {}, err
 		}
 		return entry, func() {}, nil
 	}
-	session, err := newDynamicSessionFn(onnxData, inputNames, outputNames)
+	session, err := create()
 	if err != nil {
 		return nil, func() {}, err
 	}

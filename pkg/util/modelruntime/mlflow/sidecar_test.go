@@ -15,6 +15,8 @@
 package mlflow
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,4 +26,28 @@ func TestSidecarConfigDefaults(t *testing.T) {
 	cfg := DefaultConfig()
 	require.NotEmpty(t, cfg.Python)
 	require.Greater(t, cfg.Workers, 0)
+}
+
+func TestWriteSidecarScript(t *testing.T) {
+	dir := t.TempDir()
+	path, err := writeSidecarScript(dir)
+	require.NoError(t, err)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotEmpty(t, data)
+}
+
+func TestSidecarPoolCloseCleansSocketDir(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "mlflow.sock"), []byte("x"), 0o644))
+
+	pool := &SidecarPool{
+		started:   true,
+		socketDir: dir,
+		sockets:   []string{filepath.Join(dir, "mlflow.sock")},
+	}
+	require.NoError(t, pool.Close())
+	_, err := os.Stat(dir)
+	require.True(t, os.IsNotExist(err))
+	require.NoError(t, pool.Close())
 }

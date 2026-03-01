@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
@@ -58,6 +59,11 @@ func (s *sleepSession) Destroy() error {
 }
 
 func TestRunInferenceBatchSplits(t *testing.T) {
+	restoreInit := swapInitRuntime(func() (RuntimeInfo, error) {
+		return RuntimeInfo{}, nil
+	})
+	defer restoreInit()
+
 	inputs := [][]float32{{1}, {2}, {3}, {4}, {5}}
 	opts := InferenceOptions{MaxBatchSize: 2}
 	runs := make([]int, 0, 3)
@@ -98,6 +104,11 @@ func TestRunInferenceTimeout(t *testing.T) {
 }
 
 func TestRunInferenceMetrics(t *testing.T) {
+	restoreInit := swapInitRuntime(func() (RuntimeInfo, error) {
+		return RuntimeInfo{}, nil
+	})
+	defer restoreInit()
+
 	metrics.ModelInferenceCounter.Reset()
 
 	restoreScalar := swapRunInferenceScalar(func(_ *sessionEntry, _ []string, _ []string, _ []float32, _ time.Duration) ([]float32, error) {
@@ -118,6 +129,11 @@ func TestRunInferenceMetrics(t *testing.T) {
 }
 
 func TestRunInferenceBatchMetrics(t *testing.T) {
+	restoreInit := swapInitRuntime(func() (RuntimeInfo, error) {
+		return RuntimeInfo{}, nil
+	})
+	defer restoreInit()
+
 	metrics.ModelBatchSize.Reset()
 	metrics.ModelBatchSize.WithLabelValues("batch", metrics.RetLabel(nil))
 
@@ -145,6 +161,17 @@ func TestRunInferenceBatchMetrics(t *testing.T) {
 	})
 	require.Equal(t, uint64(1), count)
 	require.InDelta(t, float64(len(inputs)), sum, 1e-9)
+}
+
+func TestRunInferenceInitFailure(t *testing.T) {
+	restoreInit := swapInitRuntime(func() (RuntimeInfo, error) {
+		return RuntimeInfo{}, errors.New("library missing")
+	})
+	defer restoreInit()
+
+	_, err := RunInferenceWithOptions(nil, "", []byte("dummy"), []string{"a"}, []string{"out"}, []float32{1}, InferenceOptions{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "initialize onnxruntime")
 }
 
 func swapNewDynamicSession(fn func([]byte, []string, []string) (dynamicSession, error)) func() {
@@ -176,6 +203,14 @@ func swapNewRunOptions(fn func() (*onnxruntime_go.RunOptions, error)) func() {
 	newRunOptionsFn = fn
 	return func() {
 		newRunOptionsFn = old
+	}
+}
+
+func swapInitRuntime(fn func() (RuntimeInfo, error)) func() {
+	old := initRuntimeFn
+	initRuntimeFn = fn
+	return func() {
+		initRuntimeFn = old
 	}
 }
 

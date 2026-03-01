@@ -17,6 +17,7 @@ package model
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -47,11 +48,17 @@ func NewArtifactCache(opts CacheOptions) *ArtifactCache {
 	if now == nil {
 		now = time.Now
 	}
-	return &ArtifactCache{
-		cache: kvcache.NewSimpleLRUCache(opts.Capacity, 0, 0),
+	cache := kvcache.NewSimpleLRUCache(opts.Capacity, 0, 0)
+	c := &ArtifactCache{
+		cache: cache,
 		ttl:   opts.TTL,
 		now:   now,
 	}
+	cache.SetOnEvict(func(_ kvcache.Key, value kvcache.Value) {
+		entry := value.(cacheEntry)
+		cleanupLocalArtifact(entry.artifact)
+	})
+	return c
 }
 
 // StatementCache is a statement-local cache for artifacts.
@@ -113,6 +120,7 @@ func (c *ArtifactCache) Get(meta ArtifactMeta) (Artifact, bool) {
 	entry := value.(cacheEntry)
 	if c.ttl > 0 && c.now().Sub(entry.cachedAt) > c.ttl {
 		c.cache.Delete(key)
+		cleanupLocalArtifact(entry.artifact)
 		return Artifact{}, false
 	}
 	return entry.artifact, true
@@ -126,6 +134,12 @@ func (c *ArtifactCache) Put(meta ArtifactMeta, artifact Artifact) {
 	key := newCacheKey(meta)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if oldValue, ok := c.cache.Get(key); ok {
+		oldEntry := oldValue.(cacheEntry)
+		if oldEntry.artifact.LocalPath != artifact.LocalPath {
+			cleanupLocalArtifact(oldEntry.artifact)
+		}
+	}
 	c.cache.Put(key, cacheEntry{artifact: artifact, cachedAt: c.now()})
 }
 
@@ -163,4 +177,11 @@ func (k cacheKey) Hash() []byte {
 type cacheEntry struct {
 	artifact Artifact
 	cachedAt time.Time
+}
+
+func cleanupLocalArtifact(artifact Artifact) {
+	if artifact.LocalPath == "" {
+		return
+	}
+	_ = os.RemoveAll(artifact.LocalPath)
 }

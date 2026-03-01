@@ -15,7 +15,9 @@
 package mlflow
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"net"
 	"path/filepath"
 	"testing"
@@ -41,4 +43,12 @@ func TestClientPredictBatch(t *testing.T) {
 	out, err := client.PredictBatch(context.Background(), PredictRequest{Inputs: [][]float32{{0.1}, {0.2}}})
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.5}, {1.0}}, out)
+}
+
+func TestReadResponseRejectsOversizedPayload(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, binary.Write(&buf, binary.BigEndian, uint32(maxResponseFrameSize+1)))
+	_, err := readResponse(&buf)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "payload too large")
 }

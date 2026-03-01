@@ -1,4 +1,5 @@
 import argparse
+from collections import OrderedDict
 import json
 import os
 import socket
@@ -7,7 +8,8 @@ import struct
 import mlflow
 import numpy as np
 
-model_cache = {}
+model_cache = OrderedDict()
+cache_entries = 64
 
 
 def recv_exact(conn, size):
@@ -57,8 +59,12 @@ def handle_conn(conn):
             if msg is None:
                 return
             path = msg["model_path"]
-            if path not in model_cache:
+            if path in model_cache:
+                model_cache.move_to_end(path)
+            else:
                 model_cache[path] = mlflow.pyfunc.load_model(path)
+                if cache_entries > 0 and len(model_cache) > cache_entries:
+                    model_cache.popitem(last=False)
             model = model_cache[path]
             inputs = np.array(msg["inputs"], dtype=np.float32)
             outputs = model.predict(inputs)
@@ -67,10 +73,12 @@ def handle_conn(conn):
 
 
 def main():
+    global cache_entries
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", required=True)
     parser.add_argument("--cache-entries", type=int, default=64)
     args = parser.parse_args()
+    cache_entries = max(args.cache_entries, 1)
 
     if os.path.exists(args.socket):
         os.remove(args.socket)

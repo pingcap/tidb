@@ -8,6 +8,7 @@ go_library(
         "protocol.go",
         "sidecar.go",
     ],
+    embedsrcs = ["sidecar.py"],
     importpath = "github.com/pingcap/tidb/pkg/util/modelruntime/mlflow",
     visibility = ["//visibility:public"],
     deps = [

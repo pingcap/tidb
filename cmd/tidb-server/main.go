@@ -343,12 +343,13 @@ func main() {
 
 	ortInfo, err := modelruntime.Init()
 	if err != nil {
-		logutil.BgLogger().Fatal("onnxruntime initialization failed", zap.Error(err))
+		logutil.BgLogger().Warn("onnxruntime initialization failed, model inference may be unavailable", zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("onnxruntime initialized",
+			zap.String("version", ortInfo.Version),
+			zap.String("library_path", ortInfo.LibraryPath),
+		)
 	}
-	logutil.BgLogger().Info("onnxruntime initialized",
-		zap.String("version", ortInfo.Version),
-		zap.String("library_path", ortInfo.LibraryPath),
-	)
 
 	err = memory.InitMemoryHook()
 	terror.MustNil(err)

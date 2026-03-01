@@ -17,6 +17,7 @@ package mlflow
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 )
 
@@ -29,6 +30,8 @@ type PredictRequest struct {
 type predictResponse struct {
 	Outputs [][]float32 `json:"outputs"`
 }
+
+const maxResponseFrameSize = 64 << 20 // 64 MiB
 
 func writeRequest(w io.Writer, req PredictRequest) error {
 	payload, err := json.Marshal(req)
@@ -46,6 +49,9 @@ func readResponse(r io.Reader) ([][]float32, error) {
 	var size uint32
 	if err := binary.Read(r, binary.BigEndian, &size); err != nil {
 		return nil, err
+	}
+	if size > maxResponseFrameSize {
+		return nil, fmt.Errorf("mlflow response payload too large: %d", size)
 	}
 	buf := make([]byte, size)
 	if _, err := io.ReadFull(r, buf); err != nil {

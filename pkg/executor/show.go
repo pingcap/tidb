@@ -82,6 +82,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/pd/client/errs"
@@ -1605,8 +1606,8 @@ func (e *ShowExec) fetchShowCreateModel() error {
 		strings.Join(inputCols, ","),
 		strings.Join(outputCols, ","),
 		strings.ToUpper(engine),
-		location,
-		checksum,
+		sqlescape.EscapeString(location),
+		sqlescape.EscapeString(checksum),
 	)
 	e.appendRow([]any{modelName.O, showCreate})
 	return nil

@@ -20,8 +20,10 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -147,17 +149,40 @@ func materializeDir(ctx context.Context, storage storeapi.Storage, paths []strin
 		return "", errors.Trace(err)
 	}
 	for _, p := range paths {
+		outPath, err := safeMaterializePath(root, p)
+		if err != nil {
+			_ = os.RemoveAll(root)
+			return "", err
+		}
 		data, err := storage.ReadFile(ctx, p)
 		if err != nil {
+			_ = os.RemoveAll(root)
 			return "", errors.Annotate(err, "read model file")
 		}
-		outPath := filepath.Join(root, filepath.FromSlash(p))
 		if err := os.MkdirAll(filepath.Dir(outPath), 0o750); err != nil {
+			_ = os.RemoveAll(root)
 			return "", errors.Trace(err)
 		}
 		if err := os.WriteFile(outPath, data, 0o644); err != nil {
+			_ = os.RemoveAll(root)
 			return "", errors.Trace(err)
 		}
 	}
 	return root, nil
+}
+
+func safeMaterializePath(root, pathInStore string) (string, error) {
+	clean := path.Clean(pathInStore)
+	if clean == "." || clean == "" || strings.HasPrefix(clean, "/") || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", errors.Errorf("invalid model path: %s", pathInStore)
+	}
+	outPath := filepath.Join(root, filepath.FromSlash(clean))
+	rel, err := filepath.Rel(root, outPath)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", errors.Errorf("invalid model path: %s", pathInStore)
+	}
+	return outPath, nil
 }

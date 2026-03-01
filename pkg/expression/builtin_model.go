@@ -47,8 +47,12 @@ var (
 )
 
 var (
-	modelPredictOutputHook func(modelName, outputName string, inputs []float32) (float64, error)
-	modelPredictBatchHook  func(modelName, outputName string, inputs [][]float32) ([]float64, error)
+	modelPredictOutputHook    func(modelName, outputName string, inputs []float32) (float64, error)
+	modelPredictBatchHook     func(modelName, outputName string, inputs [][]float32) ([]float64, error)
+	modelPredictHookMu        sync.RWMutex
+	processModelArtifactCache = model.NewArtifactCache(model.CacheOptions{
+		Capacity: 64,
+	})
 )
 
 type modelPredictFunctionClass struct {
@@ -145,6 +149,12 @@ func (b *builtinModelPredictSig) evalJSON(ctx EvalContext, row chunk.Row) (types
 	if err != nil {
 		return types.BinaryJSON{}, true, err
 	}
+	if len(outputs) != len(b.meta.outputNames) {
+		return types.BinaryJSON{}, true, errors.Errorf(
+			"model output count mismatch: expect %d, got %d",
+			len(b.meta.outputNames), len(outputs),
+		)
+	}
 	result := make(map[string]any, len(outputs))
 	for i, name := range b.meta.outputNames {
 		result[name] = float64(outputs[i])
@@ -219,7 +229,7 @@ func (b *builtinModelPredictOutputSig) evalReal(ctx EvalContext, row chunk.Row) 
 	if hasNull {
 		return 0, true, nil
 	}
-	if hook := modelPredictOutputHook; hook != nil {
+	if hook := getModelPredictOutputHook(); hook != nil {
 		start := time.Now()
 		out, err := hook(b.meta.modelName, b.outName, inputs)
 		recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, 1, time.Since(start), err)
@@ -305,7 +315,7 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 		result.ResizeFloat64(n, true)
 		return nil
 	}
-	if hook := modelPredictBatchHook; hook != nil {
+	if hook := getModelPredictBatchHook(); hook != nil {
 		start := time.Now()
 		out, err := hook(b.meta.modelName, b.outName, inputs)
 		recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, len(inputs), time.Since(start), err)
@@ -330,7 +340,7 @@ func (b *builtinModelPredictOutputSig) vecEvalReal(ctx EvalContext, input *chunk
 	} else {
 		outputs = make([]float64, len(inputs))
 		for i, rowInputs := range inputs {
-			if hook := modelPredictOutputHook; hook != nil {
+			if hook := getModelPredictOutputHook(); hook != nil {
 				start := time.Now()
 				out, err := hook(b.meta.modelName, b.outName, rowInputs)
 				recordModelInferenceStats(ctx, b.SessionVarsPropReader, &b.meta, 1, time.Since(start), err)
@@ -462,6 +472,18 @@ func (m *modelPredictMeta) wrapInferenceError(err error) error {
 	return err
 }
 
+func getModelPredictOutputHook() func(modelName, outputName string, inputs []float32) (float64, error) {
+	modelPredictHookMu.RLock()
+	defer modelPredictHookMu.RUnlock()
+	return modelPredictOutputHook
+}
+
+func getModelPredictBatchHook() func(modelName, outputName string, inputs [][]float32) ([]float64, error) {
+	modelPredictHookMu.RLock()
+	defer modelPredictHookMu.RUnlock()
+	return modelPredictBatchHook
+}
+
 func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expropt.SQLExecutor, modelName string, inputArgCount int) (*modelPredictMeta, error) {
 	schemaName, modelIdent, err := splitModelName(modelName, ctx.CurrentDB())
 	if err != nil {
@@ -534,13 +556,13 @@ func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expr
 		loader = model.NewArtifactLoader(model.LoaderOptions{})
 	}
 	loadStart := time.Now()
-	artifact, err := loader.Load(context.Background(), model.ArtifactMeta{
+	artifact, err := processModelArtifactCache.GetOrLoad(context.Background(), model.ArtifactMeta{
 		ModelID:  modelID,
 		Version:  version,
 		Engine:   engine,
 		Location: location,
 		Checksum: checksum,
-	})
+	}, loader)
 	recordModelLoadStats(ctx, vars, modelID, version, engine, time.Since(loadStart), err)
 	if err != nil {
 		return nil, err

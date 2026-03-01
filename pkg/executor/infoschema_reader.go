@@ -4107,6 +4107,9 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 }
 
 func (e *memtableRetriever) setDataForModelVersions(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	hasModelAdminPriv := checker == nil || checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "MODEL_ADMIN", false)
+
 	exec := sctx.GetRestrictedSQLExecutor()
 	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, `
@@ -4142,14 +4145,20 @@ func (e *memtableRetriever) setDataForModelVersions(ctx context.Context, sctx se
 		if !chunkRow.IsNull(12) {
 			deletedAt = chunkRow.GetTime(12)
 		}
+		var location any
+		var checksum any
+		if hasModelAdminPriv {
+			location = chunkRow.GetString(5)
+			checksum = chunkRow.GetString(6)
+		}
 		row := types.MakeDatums(
 			chunkRow.GetString(0),
 			chunkRow.GetString(1),
 			chunkRow.GetInt64(2),
 			chunkRow.GetInt64(3),
 			chunkRow.GetString(4),
-			chunkRow.GetString(5),
-			chunkRow.GetString(6),
+			location,
+			checksum,
 			inputSchema,
 			outputSchema,
 			options,

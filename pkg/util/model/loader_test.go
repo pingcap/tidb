@@ -196,3 +196,36 @@ func TestArtifactLoaderTimeout(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, fmt.Sprintf("%v", err), "load model")
 }
+
+func TestArtifactCacheEvictionCleansLocalPath(t *testing.T) {
+	cache := NewArtifactCache(CacheOptions{Capacity: 1})
+	dir1 := filepath.Join(t.TempDir(), "artifact-1")
+	require.NoError(t, os.MkdirAll(dir1, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir1, "MLmodel"), []byte("x"), 0o644))
+	cache.Put(ArtifactMeta{ModelID: 1, Version: 1}, Artifact{Meta: ArtifactMeta{ModelID: 1, Version: 1}, LocalPath: dir1})
+
+	dir2 := filepath.Join(t.TempDir(), "artifact-2")
+	require.NoError(t, os.MkdirAll(dir2, 0o755))
+	cache.Put(ArtifactMeta{ModelID: 2, Version: 1}, Artifact{Meta: ArtifactMeta{ModelID: 2, Version: 1}, LocalPath: dir2})
+
+	_, err := os.Stat(dir1)
+	require.True(t, os.IsNotExist(err))
+}
+
+func TestArtifactCacheTTLCleansLocalPath(t *testing.T) {
+	now := time.Date(2026, 2, 20, 0, 0, 0, 0, time.UTC)
+	cache := NewArtifactCache(CacheOptions{
+		Capacity: 1,
+		TTL:      time.Second,
+		Now:      func() time.Time { return now },
+	})
+	dir := filepath.Join(t.TempDir(), "artifact-ttl")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	cache.Put(ArtifactMeta{ModelID: 3, Version: 1}, Artifact{Meta: ArtifactMeta{ModelID: 3, Version: 1}, LocalPath: dir})
+
+	now = now.Add(2 * time.Second)
+	_, ok := cache.Get(ArtifactMeta{ModelID: 3, Version: 1})
+	require.False(t, ok)
+	_, err := os.Stat(dir)
+	require.True(t, os.IsNotExist(err))
+}

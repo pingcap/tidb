@@ -17,6 +17,7 @@ package modelruntime
 import (
 	"context"
 	"strings"
+	"sync"
 )
 
 // Backend executes model inference for a specific engine.
@@ -41,13 +42,23 @@ type Artifact struct {
 	LocalPath string
 }
 
-var backendRegistry = map[string]Backend{
-	"ONNX":   &onnxBackend{},
-	"MLFLOW": newMLflowBackend(),
-}
+var (
+	backendRegistry = map[string]Backend{
+		"ONNX": &onnxBackend{},
+	}
+	mlflowBackendOnce sync.Once
+	mlflowBackendInst Backend
+)
 
 // BackendForEngine returns the backend for a model engine.
 func BackendForEngine(engine string) (Backend, bool) {
-	backend, ok := backendRegistry[strings.ToUpper(engine)]
+	normalized := strings.ToUpper(engine)
+	if normalized == "MLFLOW" {
+		mlflowBackendOnce.Do(func() {
+			mlflowBackendInst = newMLflowBackend()
+		})
+		return mlflowBackendInst, true
+	}
+	backend, ok := backendRegistry[normalized]
 	return backend, ok
 }

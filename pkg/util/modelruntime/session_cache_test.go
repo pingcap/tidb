@@ -15,6 +15,8 @@
 package modelruntime
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -145,4 +147,50 @@ func TestSessionCacheSnapshotEntries(t *testing.T) {
 	now = now.Add(11 * time.Second)
 	entries = cache.SnapshotEntries()
 	require.Empty(t, entries)
+}
+
+func TestSessionCacheGetOrCreateConcurrentSingleEntry(t *testing.T) {
+	cache := NewSessionCache(SessionCacheOptions{Capacity: 1})
+	var sessionsMu sync.Mutex
+	sessions := make([]*stubSession, 0, 2)
+	var inCreate atomic.Int32
+	releaseCreate := make(chan struct{})
+
+	create := func() (dynamicSession, error) {
+		s := &stubSession{}
+		sessionsMu.Lock()
+		sessions = append(sessions, s)
+		sessionsMu.Unlock()
+		if inCreate.Add(1) == 2 {
+			close(releaseCreate)
+		}
+		<-releaseCreate
+		return s, nil
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for range 2 {
+		go func() {
+			defer wg.Done()
+			_, err := cache.GetOrCreate(SessionKey("m1"), create)
+			require.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+
+	require.Len(t, sessions, 2)
+	require.Equal(t, 1, sessions[0].destroyed+sessions[1].destroyed)
+}
+
+func TestSessionCachePutOverwriteDestroysOldSession(t *testing.T) {
+	cache := NewSessionCache(SessionCacheOptions{Capacity: 2})
+	oldEntry := &sessionEntry{session: &stubSession{}, cachedAt: time.Now()}
+	cache.Put(SessionKey("m1"), oldEntry)
+
+	newEntry := &sessionEntry{session: &stubSession{}, cachedAt: time.Now()}
+	cache.Put(SessionKey("m1"), newEntry)
+
+	oldSession := oldEntry.session.(*stubSession)
+	require.Equal(t, 1, oldSession.destroyed)
 }

@@ -44,3 +44,15 @@ func TestLoadDirectoryArtifact(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, artifact.LocalPath)
 }
+
+func TestSafeMaterializePathRejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	_, err := safeMaterializePath(root, "../outside")
+	require.Error(t, err)
+
+	_, err = safeMaterializePath(root, "a/../../outside")
+	require.Error(t, err)
+
+	_, err = safeMaterializePath(root, "/abs/path")
+	require.Error(t, err)
+}

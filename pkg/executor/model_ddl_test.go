@@ -59,6 +59,12 @@ func TestModelDDLPrivilegesAndShowCreate(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "m1", rows[0][0])
 	require.Contains(t, rows[0][1], "CREATE MODEL")
+
+	userTK.MustExec("create model test.m2 (input (a int) output (b int)) using onnx location 's3://models/o''reilly.onnx' checksum 'ab''cd'")
+	rows = userTK.MustQuery("show create model test.m2").Rows()
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0][1], "LOCATION 's3://models/o\\'reilly.onnx'")
+	require.Contains(t, rows[0][1], "CHECKSUM 'ab\\'cd'")
 }
 
 func TestShowCreateModelSnapshot(t *testing.T) {
@@ -88,4 +94,23 @@ func TestShowCreateModelSnapshot(t *testing.T) {
 	tk.MustExec("set @@tidb_snapshot = ''")
 	rows = tk.MustQuery("show create model m1").Rows()
 	require.Contains(t, rows[0][1], "m1-v2.onnx")
+}
+
+func TestModelVersionsInfoSchemaPrivilegeMasking(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	rootTK := testkit.NewTestKit(t, store)
+	rootTK.MustExec("use test")
+	rootTK.MustExec("set global tidb_enable_model_ddl = on")
+	rootTK.MustExec("create model m1 (input (a int) output (b int)) using onnx location 's3://models/private/path.onnx' checksum 'secret'")
+	rootTK.MustExec("create user u2")
+
+	userTK := testkit.NewTestKit(t, store)
+	require.NoError(t, userTK.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, nil, nil, nil))
+
+	userTK.MustQuery("select location, checksum from information_schema.tidb_model_versions where model_name='m1'").
+		Check(testkit.Rows("<nil> <nil>"))
+
+	rootTK.MustExec("grant MODEL_ADMIN on *.* to u2")
+	userTK.MustQuery("select location, checksum from information_schema.tidb_model_versions where model_name='m1'").
+		Check(testkit.Rows("s3://models/private/path.onnx secret"))
 }

@@ -41,6 +41,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/metrics",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_prometheus_client_model//go",

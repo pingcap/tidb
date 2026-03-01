@@ -18,18 +18,26 @@ package expression
 
 // SetModelPredictOutputHookForTest overrides model inference for tests.
 func SetModelPredictOutputHookForTest(fn func(modelName, outputName string, inputs []float32) (float64, error)) func() {
+	modelPredictHookMu.Lock()
 	old := modelPredictOutputHook
 	modelPredictOutputHook = fn
+	modelPredictHookMu.Unlock()
 	return func() {
+		modelPredictHookMu.Lock()
 		modelPredictOutputHook = old
+		modelPredictHookMu.Unlock()
 	}
 }
 
 // SetModelPredictBatchHookForTest overrides batch model inference for tests.
 func SetModelPredictBatchHookForTest(fn func(modelName, outputName string, inputs [][]float32) ([]float64, error)) func() {
+	modelPredictHookMu.Lock()
 	old := modelPredictBatchHook
 	modelPredictBatchHook = fn
+	modelPredictHookMu.Unlock()
 	return func() {
+		modelPredictHookMu.Lock()
 		modelPredictBatchHook = old
+		modelPredictHookMu.Unlock()
 	}
 }

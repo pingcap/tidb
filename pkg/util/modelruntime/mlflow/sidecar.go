@@ -16,12 +16,12 @@ package mlflow
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 
@@ -59,10 +59,14 @@ type SidecarPool struct {
 	cfg       Config
 	mu        sync.Mutex
 	started   bool
+	socketDir string
 	sockets   []string
 	cmds      []*exec.Cmd
 	nextIndex int
 }
+
+//go:embed sidecar.py
+var sidecarScript []byte
 
 // NewSidecarPool constructs a new pool with the provided config.
 func NewSidecarPool(cfg Config) *SidecarPool {
@@ -87,26 +91,35 @@ func (p *SidecarPool) Dial(ctx context.Context) (net.Conn, error) {
 
 func (p *SidecarPool) ensureStarted(ctx context.Context) error {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.started {
-		p.mu.Unlock()
 		return nil
 	}
 	cfg := p.cfg
-	p.mu.Unlock()
 
 	if cfg.Workers <= 0 {
 		return errors.New("mlflow sidecar workers must be positive")
-	}
-	scriptPath, err := sidecarScriptPath()
-	if err != nil {
-		return err
 	}
 	socketDir, err := os.MkdirTemp("", "tidb-mlflow-")
 	if err != nil {
 		return errors.Trace(err)
 	}
+	scriptPath, err := writeSidecarScript(socketDir)
+	if err != nil {
+		_ = os.RemoveAll(socketDir)
+		return err
+	}
 	sockets := make([]string, 0, cfg.Workers)
 	cmds := make([]*exec.Cmd, 0, cfg.Workers)
+	cleanup := func() {
+		for _, cmd := range cmds {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}
+		}
+		_ = os.RemoveAll(socketDir)
+	}
 	for i := range cfg.Workers {
 		socketPath := filepath.Join(socketDir, fmt.Sprintf("mlflow-%d.sock", i))
 		//nolint:gosec // cfg.Python is configured by operators, not user input.
@@ -118,21 +131,21 @@ func (p *SidecarPool) ensureStarted(ctx context.Context) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Start(); err != nil {
+			cleanup()
 			return errors.Annotate(err, "start mlflow sidecar")
 		}
 		if err := waitForSocket(ctx, socketPath); err != nil {
-			_ = cmd.Process.Kill()
+			cleanup()
 			return err
 		}
 		sockets = append(sockets, socketPath)
 		cmds = append(cmds, cmd)
 	}
 
-	p.mu.Lock()
 	p.started = true
+	p.socketDir = socketDir
 	p.sockets = sockets
 	p.cmds = cmds
-	p.mu.Unlock()
 	return nil
 }
 
@@ -152,12 +165,12 @@ func normalizeConfig(cfg Config) Config {
 	return cfg
 }
 
-func sidecarScriptPath() (string, error) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", errors.New("resolve sidecar path")
+func writeSidecarScript(dir string) (string, error) {
+	path := filepath.Join(dir, "sidecar.py")
+	if err := os.WriteFile(path, sidecarScript, 0o700); err != nil {
+		return "", errors.Trace(err)
 	}
-	return filepath.Join(filepath.Dir(file), "sidecar.py"), nil
+	return path, nil
 }
 
 func waitForSocket(ctx context.Context, socketPath string) error {
@@ -179,4 +192,28 @@ func waitForSocket(ctx context.Context, socketPath string) error {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// Close terminates workers and cleans up temporary socket/script files.
+func (p *SidecarPool) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.started {
+		return nil
+	}
+	for _, cmd := range p.cmds {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}
+	if p.socketDir != "" {
+		_ = os.RemoveAll(p.socketDir)
+	}
+	p.started = false
+	p.socketDir = ""
+	p.sockets = nil
+	p.cmds = nil
+	p.nextIndex = 0
+	return nil
 }

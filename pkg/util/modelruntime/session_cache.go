@@ -91,7 +91,7 @@ func NewSessionCache(opts SessionCacheOptions) *SessionCache {
 	}
 	cache.SetOnEvict(func(_ kvcache.Key, value kvcache.Value) {
 		entry := value.(*sessionEntry)
-		_ = entry.session.Destroy()
+		_ = entry.destroy()
 		metrics.ModelSessionCacheCounter.WithLabelValues("evict").Inc()
 	})
 	return sc
@@ -110,7 +110,15 @@ func (c *SessionCache) GetOrCreate(key SessionKey, create func() (dynamicSession
 		return nil, err
 	}
 	entry := &sessionEntry{session: session, cachedAt: c.now()}
-	c.Put(key, entry)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	value, ok := c.cache.Get(key)
+	if ok {
+		_ = session.Destroy()
+		return value.(*sessionEntry), nil
+	}
+	c.cache.Put(key, entry)
 	return entry, nil
 }
 
@@ -126,7 +134,7 @@ func (c *SessionCache) Get(key SessionKey) (*sessionEntry, bool) {
 	entry := value.(*sessionEntry)
 	if c.ttl > 0 && c.now().Sub(entry.cachedAt) > c.ttl {
 		c.cache.Delete(key)
-		_ = entry.session.Destroy()
+		_ = entry.destroy()
 		metrics.ModelSessionCacheCounter.WithLabelValues("miss").Inc()
 		metrics.ModelSessionCacheCounter.WithLabelValues("evict").Inc()
 		return nil, false
@@ -139,6 +147,12 @@ func (c *SessionCache) Get(key SessionKey) (*sessionEntry, bool) {
 func (c *SessionCache) Put(key SessionKey, entry *sessionEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if oldValue, ok := c.cache.Get(key); ok {
+		oldEntry := oldValue.(*sessionEntry)
+		if oldEntry != entry {
+			_ = oldEntry.destroy()
+		}
+	}
 	c.cache.Put(key, entry)
 }
 
@@ -239,4 +253,10 @@ func (s *sessionEntry) run(inputs, outputs []onnxruntime_go.Value, opts *onnxrun
 		return s.session.RunWithOptions(inputs, outputs, opts)
 	}
 	return s.session.Run(inputs, outputs)
+}
+
+func (s *sessionEntry) destroy() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.session.Destroy()
 }
