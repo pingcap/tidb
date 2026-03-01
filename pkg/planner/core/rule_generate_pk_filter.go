@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 )
 
 // GeneratePKFilterOptimizer generates PK range filter conditions from secondary
@@ -102,6 +103,23 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 		return ds, false, nil
 	}
 
+	// Skip when the table has uncommitted modifications in the current
+	// transaction. The MIN/MAX subqueries evaluate against the snapshot only
+	// (no LogicalUnionScan), so dirty rows in the mem-buffer are invisible.
+	// Using snapshot-only PK bounds would narrow the scan range and cause
+	// UnionScanExec to miss dirty rows outside that range, violating
+	// read-your-writes semantics.
+	if tableHasDirtyContent(ds.SCtx(), ds.TableInfo) {
+		return ds, false, nil
+	}
+
+	// Skip when fix-control 43817 is ON, which disables evaluating
+	// non-correlated subqueries during the optimization phase.
+	// EvalSubqueryFirstRow would hard-error, so bail out gracefully.
+	if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix43817, false) {
+		return ds, false, nil
+	}
+
 	// Must have pushed-down conditions
 	if len(ds.PushedDownConds) == 0 {
 		return ds, false, nil
@@ -136,9 +154,7 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 		}
 		for _, c := range conds {
 			pkFilterConds = append(pkFilterConds, util.PKFilterCondInfo{
-				Cond:            c,
-				SourceIndexID:   idxPath.Index.ID,
-				SourceIndexName: idxPath.Index.Name.O,
+				Cond: c,
 			})
 		}
 	}

@@ -597,38 +597,6 @@ func tableCondsWithPKFilter(ds *logicalop.DataSource) []expression.Expression {
 	return conds
 }
 
-// adjustIndexPathWithPKFilter adjusts the row count estimates for an index path
-// by considering PK filter conditions derived from OTHER secondary indexes.
-// It skips conditions whose source index matches the current path (to avoid
-// double-counting), and multiplies the estimated selectivity of the remaining
-// PK range conditions into CountAfterAccess and CountAfterIndex.
-func adjustIndexPathWithPKFilter(ds *logicalop.DataSource, path *util.AccessPath) {
-	if len(ds.PKFilterConds) == 0 || path.IsTablePath() || path.Index == nil {
-		return
-	}
-	// Collect PK filter conditions from OTHER indexes only.
-	otherConds := make([]expression.Expression, 0, len(ds.PKFilterConds))
-	for _, pkf := range ds.PKFilterConds {
-		if pkf.SourceIndexID == path.Index.ID {
-			continue
-		}
-		otherConds = append(otherConds, pkf.Cond)
-	}
-	if len(otherConds) == 0 {
-		return
-	}
-	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, otherConds, nil)
-	if err != nil {
-		logutil.BgLogger().Debug("adjustIndexPathWithPKFilter: selectivity estimation failed", zap.Error(err))
-		selectivity = cost.SelectionFactor
-	}
-	if selectivity >= 1.0 {
-		return
-	}
-	path.CountAfterAccess = math.Max(path.CountAfterAccess*selectivity, 1.0)
-	path.CountAfterIndex = math.Max(path.CountAfterIndex*selectivity, 1.0)
-}
-
 // We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
 // to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
 func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
@@ -664,7 +632,6 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
-			adjustIndexPathWithPKFilter(ds, path)
 			// Reevaluate path.IsSingleScan because it may have been set incorrectly
 			// in the pruning logic.
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)

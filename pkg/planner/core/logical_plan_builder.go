@@ -4597,15 +4597,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if hint.Match(dbName, tblName) {
 				hints.PkFilterHintList[i].Matched = true
 				// check whether the index names in PkFilterHint are valid.
+				// pk_filter derives PK bounds FROM secondary indexes,
+				// so "primary" is not a valid source index.
 				invalidIdxNames := make([]string, 0, len(hint.IndexHint.IndexNames))
 				for _, idxName := range hint.IndexHint.IndexNames {
+					if idxName.L == "primary" {
+						invalidIdxNames = append(invalidIdxNames, idxName.String())
+						continue
+					}
 					hasIdxName := false
 					for _, path := range possiblePaths {
-						if path.IsTablePath() {
-							if idxName.L == "primary" {
-								hasIdxName = true
-								break
-							}
+						if path.IsTablePath() || path.Index == nil {
 							continue
 						}
 						if idxName.L == path.Index.Name.L {
