@@ -93,6 +93,27 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
 }
 
+func TestShowCreateMaterializedViewLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_show_mlog (a int, b int)")
+	tk.MustExec("create materialized view log on t_show_mlog (a, b) shard_row_id_bits = 2 pre_split_regions = 2 purge start with cast('2026-01-02 03:04:05' as datetime) next date_add(now(), interval 1 hour)")
+
+	rows := tk.MustQuery("show create materialized view log on t_show_mlog").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "t_show_mlog", rows[0][0])
+	showCreate, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t_show_mlog` (`a`, `b`)")
+	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
+	require.Contains(t, showCreate, "PURGE START WITH CAST('2026-01-02 03:04:05' AS DATETIME) NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)")
+
+	tk.MustExec("create table t_no_mlog (a int)")
+	err := tk.QueryToErr("show create materialized view log on t_no_mlog")
+	require.ErrorContains(t, err, "materialized view log does not exist for base table test.t_no_mlog")
+}
+
 func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

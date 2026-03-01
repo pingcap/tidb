@@ -3557,7 +3557,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			p.Extractor = extractor
 			buildPattern = false
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowCreateMaterializedViewLog, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
@@ -6074,6 +6074,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateMaterializedView:
 		names = []string{"Materialized View", "Create Materialized View", "character_set_client", "collation_connection"}
+	case ast.ShowCreateMaterializedViewLog:
+		names = []string{"Materialized View Log", "Create Materialized View Log"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:

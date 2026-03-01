@@ -1285,6 +1285,9 @@ func TestDBAStmt(t *testing.T) {
 		// for show create materialized view
 		{"show create materialized view test.t", true, "SHOW CREATE MATERIALIZED VIEW `test`.`t`"},
 		{"show create materialized view t", true, "SHOW CREATE MATERIALIZED VIEW `t`"},
+		// for show create materialized view log
+		{"show create materialized view log on test.t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `test`.`t`"},
+		{"show create materialized view log on t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `t`"},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},
