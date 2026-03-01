@@ -284,16 +284,20 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 		case placement:
 			p.next()
 			p.accept(policy)
-			// Accept both '=' and SET as separator (MySQL supports both)
-			if _, ok := p.accept(eq); !ok {
-				p.accept(set)
-			}
 			opt.Tp = ast.DatabaseOptionPlacementPolicy
-			tok := p.next()
-			if tok.Tp == defaultKwd {
+			// yacc: PLACEMENT POLICY SET DEFAULT | PLACEMENT POLICY EqOpt (stringLit | PolicyName | DEFAULT)
+			if p.peek().Tp == set && p.peekN(1).Tp == defaultKwd {
+				p.next() // SET
+				p.next() // DEFAULT
 				opt.Value = "DEFAULT"
 			} else {
-				opt.Value = tok.Lit
+				p.accept(eq)
+				tok := p.next()
+				if tok.Tp == defaultKwd {
+					opt.Value = "DEFAULT"
+				} else {
+					opt.Value = tok.Lit
+				}
 			}
 		case encryption:
 			p.next()
@@ -339,9 +343,15 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			}
 			opt.TiFlashReplica = tiFlash
 		default:
-			// Check for DEFAULT keyword before option
-			if _, ok := p.accept(defaultKwd); ok {
-				continue // re-loop after consuming DEFAULT
+			// yacc DefaultKwdOpt: DEFAULT is only valid before CharsetKw, COLLATE,
+			// ENCRYPTION, or PLACEMENT POLICY in database options.
+			if p.peek().Tp == defaultKwd {
+				next := p.peekN(1).Tp
+				if next == charsetKwd || next == character || next == charType ||
+					next == collate || next == encryption || next == placement {
+					p.next() // consume DEFAULT
+					continue // re-loop
+				}
 			}
 			return opts
 		}
