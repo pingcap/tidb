@@ -41,12 +41,13 @@ type RowSampleCollector interface {
 }
 
 type baseCollector struct {
-	Samples    WeightedRowSampleHeap
-	NullCount  []int64
-	FMSketches []*FMSketch
-	TotalSizes []int64
-	Count      int64
-	MemSize    int64
+	Samples     WeightedRowSampleHeap
+	NullCount   []int64
+	FMSketches  []*FMSketch
+	HLLSketches []*HLLSketch
+	TotalSizes  []int64
+	Count       int64
+	MemSize     int64
 }
 
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
@@ -145,10 +146,11 @@ func NewRowSampleCollector(maxSampleSize int, sampleRate float64, totalLen int) 
 // NewReservoirRowSampleCollector creates the new collector by the given inputs.
 func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirRowSampleCollector {
 	base := &baseCollector{
-		Samples:    make(WeightedRowSampleHeap, 0, maxSampleSize),
-		NullCount:  make([]int64, totalLen),
-		FMSketches: make([]*FMSketch, 0, totalLen),
-		TotalSizes: make([]int64, totalLen),
+		Samples:     make(WeightedRowSampleHeap, 0, maxSampleSize),
+		NullCount:   make([]int64, totalLen),
+		FMSketches:  make([]*FMSketch, 0, totalLen),
+		HLLSketches: make([]*HLLSketch, 0, totalLen),
+		TotalSizes:  make([]int64, totalLen),
 	}
 	return &ReservoirRowSampleCollector{
 		baseCollector: base,
@@ -163,6 +165,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 	collector := NewRowSampleCollector(s.MaxSampleSize, s.SampleRate, len(s.ColsFieldType)+len(s.ColGroups))
 	for range len(s.ColsFieldType) + len(s.ColGroups) {
 		collector.Base().FMSketches = append(collector.Base().FMSketches, NewFMSketch(s.MaxFMSketchSize))
+		collector.Base().HLLSketches = append(collector.Base().HLLSketches, NewHLLSketch())
 	}
 	ctx := context.TODO()
 	chk := s.RecordSet.NewChunk(nil)
@@ -224,6 +227,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 		colIdx := group[0]
 		colGroupIdx := len(s.ColsFieldType) + i
 		collector.Base().FMSketches[colGroupIdx] = collector.Base().FMSketches[colIdx].Copy()
+		collector.Base().HLLSketches[colGroupIdx] = collector.Base().HLLSketches[colIdx].Copy()
 		collector.Base().NullCount[colGroupIdx] = collector.Base().NullCount[colIdx]
 		collector.Base().TotalSizes[colGroupIdx] = collector.Base().TotalSizes[colIdx]
 	}
@@ -233,6 +237,9 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 func (s *baseCollector) destroyAndPutToPool() {
 	for _, sketch := range s.FMSketches {
 		sketch.DestroyAndPutToPool()
+	}
+	for i := range s.HLLSketches {
+		s.HLLSketches[i] = nil
 	}
 }
 
@@ -247,6 +254,12 @@ func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []type
 		err := s.FMSketches[i].InsertValue(sc, col)
 		if err != nil {
 			return err
+		}
+		if s.HLLSketches[i] != nil {
+			err = s.HLLSketches[i].InsertValue(sc, col)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -274,6 +287,12 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 		if err != nil {
 			return err
 		}
+		if s.HLLSketches[colLen+i] != nil {
+			err = s.HLLSketches[colLen+i].InsertRowValue(sc, datumBuffer)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -284,11 +303,16 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	for _, sketch := range s.FMSketches {
 		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
 	}
+	pbHLLSketches := make([]*tipb.HllSketch, 0, len(s.HLLSketches))
+	for _, sketch := range s.HLLSketches {
+		pbHLLSketches = append(pbHLLSketches, HLLSketchToProto(sketch))
+	}
 	collector := &tipb.RowSampleCollector{
 		Samples:    RowSamplesToProto(s.Samples),
 		NullCounts: s.NullCount,
 		Count:      s.Count,
 		FmSketch:   pbFMSketches,
+		HllSketch:  pbHLLSketches,
 		TotalSize:  s.TotalSizes,
 	}
 	return collector
@@ -300,6 +324,13 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
 	for _, pbSketch := range pbCollector.FmSketch {
 		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
+	}
+	s.HLLSketches = make([]*HLLSketch, 0, len(pbCollector.HllSketch))
+	for _, pbSketch := range pbCollector.HllSketch {
+		s.HLLSketches = append(s.HLLSketches, HLLSketchFromProto(pbSketch))
+	}
+	for len(s.HLLSketches) < len(s.FMSketches) {
+		s.HLLSketches = append(s.HLLSketches, nil)
 	}
 	s.TotalSizes = pbCollector.TotalSize
 	sampleNum := len(pbCollector.Samples)
@@ -375,6 +406,16 @@ func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	for i, fms := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(fms)
 	}
+	for i, hll := range subCollector.Base().HLLSketches {
+		if hll == nil {
+			continue
+		}
+		if s.HLLSketches[i] == nil {
+			s.HLLSketches[i] = hll.Copy()
+			continue
+		}
+		s.HLLSketches[i].MergeHLLSketch(hll)
+	}
 	for i, nullCount := range subCollector.Base().NullCount {
 		s.NullCount[i] += nullCount
 	}
@@ -442,10 +483,11 @@ type BernoulliRowSampleCollector struct {
 // NewBernoulliRowSampleCollector creates the new collector by the given inputs.
 func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *BernoulliRowSampleCollector {
 	base := &baseCollector{
-		Samples:    make(WeightedRowSampleHeap, 0, 8),
-		NullCount:  make([]int64, totalLen),
-		FMSketches: make([]*FMSketch, 0, totalLen),
-		TotalSizes: make([]int64, totalLen),
+		Samples:     make(WeightedRowSampleHeap, 0, 8),
+		NullCount:   make([]int64, totalLen),
+		FMSketches:  make([]*FMSketch, 0, totalLen),
+		HLLSketches: make([]*HLLSketch, 0, totalLen),
+		TotalSizes:  make([]int64, totalLen),
 	}
 	return &BernoulliRowSampleCollector{
 		baseCollector: base,
@@ -468,6 +510,16 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	s.Count += subCollector.Base().Count
 	for i := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i])
+	}
+	for i, hll := range subCollector.Base().HLLSketches {
+		if hll == nil {
+			continue
+		}
+		if s.HLLSketches[i] == nil {
+			s.HLLSketches[i] = hll.Copy()
+			continue
+		}
+		s.HLLSketches[i].MergeHLLSketch(hll)
 	}
 	for i := range subCollector.Base().NullCount {
 		s.NullCount[i] += subCollector.Base().NullCount[i]
