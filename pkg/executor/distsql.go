@@ -953,6 +953,19 @@ func (e *IndexLookUpExecutor) calculateBatchSize(initBatchSize, maxBatchSize int
 		// If indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
 		return min(initBatchSize, maxBatchSize)
 	}
+	// When the parent executor passes a positive initBatchSize (from req.RequiredRows()),
+	// it indicates an expected row count hint (e.g., from LIMIT clause via order-preserving hash join).
+	// Use formula: MIN(maxChunkSize, MAX(expectedCnt, 100)) to:
+	// - Ensure minimum batch size of 100 to avoid excessive RPC overhead
+	// - Cap at maxChunkSize to limit memory usage
+	// - Still allow early termination by fetching in smaller batches
+	if initBatchSize > 0 {
+		const minBatchSize = 100
+		maxChunkSize := e.MaxChunkSize()
+		batchSize := max(initBatchSize, minBatchSize)
+		batchSize = min(batchSize, maxChunkSize)
+		return min(batchSize, maxBatchSize)
+	}
 	var estRows int
 	if len(e.idxPlans) > 0 {
 		estRows = int(e.idxPlans[0].StatsCount())
