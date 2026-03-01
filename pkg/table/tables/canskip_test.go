@@ -15,6 +15,7 @@
 package tables_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -219,35 +220,57 @@ func TestCanSkipNullColumnWithNonNilDefault(t *testing.T) {
 }
 
 // TestCanSkipEndToEndNotNullToNull is an integration test that verifies
-// the full DDL flow: create table with NOT NULL column, alter to NULL,
-// insert NULL value, and verify the row encoding includes the null column ID.
+// the CanSkip behavior through the full DDL + DML flow.
+// It tests scenarios that produce DefaultValue=nil and OriginDefaultValue=nil,
+// which is the exact trigger condition for the bug in issue #61709.
+// After the fix, inserting NULL must encode the null column ID in the row.
 func TestCanSkipEndToEndNotNullToNull(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// Step 1: Create table with NOT NULL column
-	tk.MustExec("CREATE TABLE t_canskip (id INT PRIMARY KEY, c INT NOT NULL DEFAULT 0)")
+	// Scenario 1: Column created as nullable with no explicit DEFAULT.
+	// This produces DefaultValue=nil, OriginDefaultValue=nil.
+	tk.MustExec("CREATE TABLE t_canskip1 (id INT PRIMARY KEY, c INT NULL)")
 
-	// Step 2: ALTER column from NOT NULL to NULL
-	tk.MustExec("ALTER TABLE t_canskip MODIFY COLUMN c INT NULL")
+	// Verify schema state: both defaults must be nil to hit the bug trigger.
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_canskip1"))
+	require.NoError(t, err)
+	colC := tbl1.Meta().Columns[1]
+	require.Equal(t, "c", colC.Name.L)
+	require.Nil(t, colC.DefaultValue, "DefaultValue should be nil for nullable column without DEFAULT")
+	require.Nil(t, colC.OriginDefaultValue, "OriginDefaultValue should be nil for nullable column without DEFAULT")
 
-	// Step 3: Insert a row with NULL value for column c
-	tk.MustExec("INSERT INTO t_canskip VALUES (1, NULL)")
-
-	// Step 4: Verify the NULL value is correctly stored and retrievable
-	tk.MustQuery("SELECT id, c FROM t_canskip WHERE id = 1").Check(
+	// Insert NULL — this is the exact path that triggered the bug.
+	tk.MustExec("INSERT INTO t_canskip1 VALUES (1, NULL)")
+	tk.MustQuery("SELECT id, c FROM t_canskip1 WHERE id = 1").Check(
 		testkit.Rows("1 <nil>"),
 	)
 
-	// Step 5: Insert another row with non-NULL value to verify normal operation
-	tk.MustExec("INSERT INTO t_canskip VALUES (2, 42)")
-	tk.MustQuery("SELECT id, c FROM t_canskip WHERE id = 2").Check(
-		testkit.Rows("2 42"),
+	// Scenario 2: ADD COLUMN as nullable with no explicit DEFAULT.
+	tk.MustExec("CREATE TABLE t_canskip2 (id INT PRIMARY KEY)")
+	tk.MustExec("ALTER TABLE t_canskip2 ADD COLUMN d INT NULL")
+
+	// Verify schema state after ADD COLUMN.
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_canskip2"))
+	require.NoError(t, err)
+	colD := tbl2.Meta().Columns[1]
+	require.Equal(t, "d", colD.Name.L)
+	require.Nil(t, colD.DefaultValue, "DefaultValue should be nil after ADD COLUMN nullable")
+	require.Nil(t, colD.OriginDefaultValue, "OriginDefaultValue should be nil after ADD COLUMN nullable")
+
+	tk.MustExec("INSERT INTO t_canskip2 VALUES (1, NULL)")
+	tk.MustQuery("SELECT id, d FROM t_canskip2 WHERE id = 1").Check(
+		testkit.Rows("1 <nil>"),
 	)
 
-	// Step 6: Verify both rows
-	tk.MustQuery("SELECT id, c FROM t_canskip ORDER BY id").Check(
+	// Verify non-NULL values still work correctly.
+	tk.MustExec("INSERT INTO t_canskip1 VALUES (2, 42)")
+	tk.MustExec("INSERT INTO t_canskip2 VALUES (2, 42)")
+	tk.MustQuery("SELECT id, c FROM t_canskip1 ORDER BY id").Check(
+		testkit.Rows("1 <nil>", "2 42"),
+	)
+	tk.MustQuery("SELECT id, d FROM t_canskip2 ORDER BY id").Check(
 		testkit.Rows("1 <nil>", "2 42"),
 	)
 }
