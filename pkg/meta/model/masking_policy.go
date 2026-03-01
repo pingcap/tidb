@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,57 +21,54 @@ import (
 )
 
 // MaskingPolicyStatus is the status of a masking policy.
-type MaskingPolicyStatus byte
+type MaskingPolicyStatus string
 
 // MaskingPolicyStatus values.
 const (
-	MaskingPolicyStatusDisable MaskingPolicyStatus = iota
-	MaskingPolicyStatusEnable
+	MaskingPolicyStatusEnabled  MaskingPolicyStatus = "ENABLED"
+	MaskingPolicyStatusDisabled MaskingPolicyStatus = "DISABLED"
 )
 
 // String implements fmt.Stringer interface.
 func (s MaskingPolicyStatus) String() string {
-	switch s {
-	case MaskingPolicyStatusDisable:
-		return "DISABLE"
-	case MaskingPolicyStatusEnable:
-		return "ENABLE"
-	default:
-		return ""
-	}
+	return string(s)
 }
 
-// MaskingPolicyFuncType describes the masking function type.
-type MaskingPolicyFuncType string
+// MaskingPolicyType describes the masking type.
+type MaskingPolicyType string
 
-// MaskingPolicyFuncType values.
+// MaskingPolicyType values.
 const (
-	MaskingPolicyFuncTypeFull    MaskingPolicyFuncType = "FULL"
-	MaskingPolicyFuncTypePartial MaskingPolicyFuncType = "PARTIAL"
-	MaskingPolicyFuncTypeNull    MaskingPolicyFuncType = "NULL"
-	MaskingPolicyFuncTypeCustom  MaskingPolicyFuncType = "CUSTOM"
+	MaskingPolicyTypeMaskFull    MaskingPolicyType = "MASK_FULL"
+	MaskingPolicyTypeMaskPartial MaskingPolicyType = "MASK_PARTIAL"
+	MaskingPolicyTypeMaskNull    MaskingPolicyType = "MASK_NULL"
+	MaskingPolicyTypeMaskDate    MaskingPolicyType = "MASK_DATE"
+	MaskingPolicyTypeCustom      MaskingPolicyType = "CUSTOM"
 )
 
 // MaskingPolicyInfo is the struct to store the masking policy.
 type MaskingPolicyInfo struct {
-	ID           int64                 `json:"id"`
-	Name         ast.CIStr             `json:"name"`
-	DBName       ast.CIStr             `json:"db_name"`
-	TableName    ast.CIStr             `json:"table_name"`
-	TableID      int64                 `json:"table_id"`
-	ColumnName   ast.CIStr             `json:"column_name"`
-	ColumnID     int64                 `json:"column_id"`
-	Expression   string                `json:"expression"`
-	Status       MaskingPolicyStatus   `json:"status"`
-	FunctionType MaskingPolicyFuncType `json:"function_type,omitempty"`
-	CreatedAt    time.Time             `json:"created_at,omitempty"`
-	UpdatedAt    time.Time             `json:"updated_at,omitempty"`
-	CreatedBy    string                `json:"created_by,omitempty"`
-	State        SchemaState           `json:"state"`
+	ID   int64     `json:"id"`
+	Name ast.CIStr `json:"name"`
+	// TableID/ColumnID are stable bindings and are the source of truth.
+	TableID     int64                        `json:"table_id"`
+	ColumnID    int64                        `json:"column_id"`
+	MaskingType MaskingPolicyType            `json:"masking_type,omitempty"`
+	Expression  string                       `json:"expression"`
+	RestrictOps ast.MaskingPolicyRestrictOps `json:"restrict_ops,omitempty"`
+	Status      MaskingPolicyStatus          `json:"status"`
+	CreatedAt   time.Time                    `json:"created_at,omitempty"`
+	CreatedBy   string                       `json:"created_by,omitempty"`
+	UpdatedBy   string                       `json:"updated_by,omitempty"`
+	UpdatedAt   time.Time                    `json:"updated_at,omitempty"`
+	State       SchemaState                  `json:"state"`
 }
 
 // Clone clones MaskingPolicyInfo.
 func (p *MaskingPolicyInfo) Clone() *MaskingPolicyInfo {
+	if p == nil {
+		return nil
+	}
 	cloned := *p
 	return &cloned
 }

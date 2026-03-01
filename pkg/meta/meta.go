@@ -155,9 +155,9 @@ var (
 	// ErrPolicyNotExists is the error for policy not exists.
 	ErrPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyNotExists)
 	// ErrMaskingPolicyExists is the error for masking policy exists.
-	ErrMaskingPolicyExists = errors.New("masking policy already exists")
+	ErrMaskingPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyExists)
 	// ErrMaskingPolicyNotExists is the error for masking policy not exists.
-	ErrMaskingPolicyNotExists = errors.New("masking policy doesn't exist")
+	ErrMaskingPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyNotExists)
 	// ErrResourceGroupExists is the error for resource group exists.
 	ErrResourceGroupExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists is the error for resource group not exists.
@@ -576,18 +576,18 @@ func (m *Mutator) checkPolicyNotExists(policyKey []byte) error {
 	return errors.Trace(err)
 }
 
-func (m *Mutator) checkMaskingPolicyExists(policyKey []byte) error {
+func (m *Mutator) checkMaskingPolicyExists(policyID int64, policyKey []byte) error {
 	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
 	if err == nil && v == nil {
-		err = ErrMaskingPolicyNotExists
+		err = errors.WithMessage(ErrMaskingPolicyNotExists, fmt.Sprintf("masking policy id : %d doesn't exist", policyID))
 	}
 	return errors.Trace(err)
 }
 
-func (m *Mutator) checkMaskingPolicyNotExists(policyKey []byte) error {
+func (m *Mutator) checkMaskingPolicyNotExists(policyID int64, policyKey []byte) error {
 	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
 	if err == nil && v != nil {
-		err = ErrMaskingPolicyExists
+		err = errors.WithMessage(ErrMaskingPolicyExists, fmt.Sprintf("masking policy id : %d already exists", policyID))
 	}
 	return errors.Trace(err)
 }
@@ -665,7 +665,7 @@ func (m *Mutator) CreateMaskingPolicy(policy *model.MaskingPolicyInfo) error {
 	}
 
 	policyKey := m.maskingPolicyKey(policy.ID)
-	if err := m.checkMaskingPolicyNotExists(policyKey); err != nil {
+	if err := m.checkMaskingPolicyNotExists(policy.ID, policyKey); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -695,7 +695,7 @@ func (m *Mutator) UpdatePolicy(policy *model.PolicyInfo) error {
 func (m *Mutator) UpdateMaskingPolicy(policy *model.MaskingPolicyInfo) error {
 	policyKey := m.maskingPolicyKey(policy.ID)
 
-	if err := m.checkMaskingPolicyExists(policyKey); err != nil {
+	if err := m.checkMaskingPolicyExists(policy.ID, policyKey); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1609,7 +1609,7 @@ func (m *Mutator) GetMaskingPolicy(policyID int64) (*model.MaskingPolicyInfo, er
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
-		return nil, ErrMaskingPolicyNotExists
+		return nil, errors.WithMessage(ErrMaskingPolicyNotExists, fmt.Sprintf("masking policy id : %d doesn't exist", policyID))
 	}
 
 	value, err = detachMagicByte(value)

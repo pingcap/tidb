@@ -128,6 +128,11 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 		return 0, err
 	}
 	version := txn.StartTS()
+	failpoint.Inject("saveAnalyzeResultToStorageErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(uint64(0), errors.New("mock save analyze result error"))
+		}
+	})
 	failpoint.InjectCall("saveAnalyzeResultToStorage")
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet

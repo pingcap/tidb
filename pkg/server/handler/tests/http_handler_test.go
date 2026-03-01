@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -69,9 +70,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -764,6 +767,108 @@ func TestGetIndexMVCC(t *testing.T) {
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
+}
+
+func TestDeleteKeyHandler(t *testing.T) {
+	// on CI env, the store_cache might mark the uni-store as unreachable, and
+	// cause the test to fail, so we enable the failpoint to make it always reachable.
+	testfailpoint.Enable(t, "tikvclient/injectLiveness", `return("reachable")`)
+	ts := createBasicHTTPHandlerTestSuite()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/server/enableTestAPI", "return")
+	ts.startServer(t)
+	ts.prepareData(t)
+	defer ts.stopServer(t)
+
+	ctx := context.Background()
+	store := ts.store
+
+	t.Run("index", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, ts.store)
+		tk.MustExec("use tidb")
+		tk.MustExec("drop table if exists delete_idx")
+		tk.MustExec("create table delete_idx (a int primary key, b int, key idx_ab(a, b))")
+		tk.MustExec("insert into delete_idx values (1, 2)")
+
+		tbl, err := ts.domain.InfoSchema().TableByName(ctx, ast.NewCIStr("tidb"), ast.NewCIStr("delete_idx"))
+		require.NoError(t, err)
+
+		var idx table.Index
+		for _, v := range tbl.Indices() {
+			if strings.EqualFold(v.Meta().Name.String(), "idx_ab") {
+				idx = v
+				break
+			}
+		}
+		require.NotNil(t, idx)
+
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+		idxRow := []types.Datum{
+			types.NewIntDatum(1),
+			types.NewIntDatum(2),
+		}
+		handle := kv.IntHandle(1)
+		encodedKey, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow, handle, nil)
+		require.NoError(t, err)
+
+		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+			_, err := txn.Get(ctx, encodedKey)
+			return err
+		})
+		require.NoError(t, err)
+
+		resp, err := ts.PostStatus("/test/delete/indexkey/tidb/delete_idx/idx_ab?handle=1&a=1&b=2", "application/x-www-form-urlencoded", nil)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+			_, err := txn.Get(ctx, encodedKey)
+			return err
+		})
+		require.True(t, kv.ErrNotExist.Equal(err))
+
+		err = tk.ExecToErr("admin check index tidb.delete_idx idx_ab")
+		require.Error(t, err)
+		require.ErrorContains(t, err, "data inconsistency")
+	})
+
+	t.Run("row", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, ts.store)
+		tk.MustExec("use tidb")
+		tk.MustExec("drop table if exists delete_row")
+		tk.MustExec("create table delete_row (a int primary key, b int, key idx_b(b))")
+		tk.MustExec("insert into delete_row values (1, 2)")
+
+		tbl, err := ts.domain.InfoSchema().TableByName(ctx, ast.NewCIStr("tidb"), ast.NewCIStr("delete_row"))
+		require.NoError(t, err)
+
+		handle := kv.IntHandle(1)
+		encodedKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), handle)
+		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+			_, err := txn.Get(ctx, encodedKey)
+			return err
+		})
+		require.NoError(t, err)
+
+		resp, err := ts.PostStatus("/test/delete/rowkey/tidb/delete_row?handle=1", "application/x-www-form-urlencoded", nil)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+			_, err := txn.Get(ctx, encodedKey)
+			return err
+		})
+		require.True(t, kv.ErrNotExist.Equal(err))
+
+		err = tk.ExecToErr("admin check table tidb.delete_row")
+		require.Error(t, err)
+		require.ErrorContains(t, err, "data inconsistency")
+	})
 }
 
 func TestGetSettings(t *testing.T) {

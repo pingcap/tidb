@@ -176,6 +176,11 @@ func (*TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values 
 	return data, nil
 }
 
+// FormValue2DatumRow converts URL query string to a Datum Row.
+func (t *TikvHandlerTool) FormValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+	return t.formValue2DatumRow(sc, values, idxCols)
+}
+
 // GetTableID gets the table ID by the database name and table name.
 func (t *TikvHandlerTool) GetTableID(dbName, tableName string) (int64, error) {
 	tbl, err := t.GetTable(dbName, tableName)

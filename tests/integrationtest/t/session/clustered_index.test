@@ -118,8 +118,8 @@ insert into t(name, b) values('aaaaa', 1), ('bbbbb', 2);
 admin check table t;
 -- error 1062
 insert into t(name, b) values('aaa', 3);
-explain select * from t use index(primary) where name = 'aaaaa';
-explain select * from t use index(primary) where name = 'aaaaa';
+explain format='brief' select * from t use index(primary) where name = 'aaaaa';
+explain format='brief' select * from t use index(primary) where name = 'aaaaa';
 select * from t use index(primary) where name = 'aaaaa';
 admin check table t;
 drop table if exists t;
