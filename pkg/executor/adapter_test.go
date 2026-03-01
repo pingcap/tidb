@@ -486,7 +486,7 @@ func BenchmarkCheckSlowThreshold(b *testing.B) {
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
-	for i := range b.N {
+	for range b.N {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
@@ -524,7 +524,7 @@ func BenchmarkCheckSlowLogRulesLazy(b *testing.B) {
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
-	for i := range b.N {
+	for range b.N {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
@@ -561,7 +561,7 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
-	for i := range b.N {
+	for range b.N {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
