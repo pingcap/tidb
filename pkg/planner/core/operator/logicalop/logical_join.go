@@ -90,6 +90,10 @@ type LogicalJoin struct {
 	// (*PlanBuilder).unfoldWildStar() handles the schema for such case.
 	FullSchema *expression.Schema
 	FullNames  types.NameSlice
+	// RedundantColsToOutputIdx maps a redundant column unique-id introduced by USING/NATURAL JOIN
+	// to the canonical visible output column index in Join.Schema()/OutputNames().
+	// It is built once during join construction and then treated as immutable.
+	RedundantColsToOutputIdx map[int64]int
 
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
@@ -843,6 +847,42 @@ func (p *LogicalJoin) IsNAAJ() bool {
 func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p
 	return join.Init(p.SCtx(), p.QueryBlockOffset())
+}
+
+// RegisterRedundantColumnMapping records a canonical mapping from a redundant USING/NATURAL JOIN
+// column to the visible output column.
+func (p *LogicalJoin) RegisterRedundantColumnMapping(redundantCol, visibleCol *expression.Column) {
+	if p == nil || redundantCol == nil || visibleCol == nil || p.Schema() == nil {
+		return
+	}
+	visibleIdx := p.Schema().ColumnIndex(visibleCol)
+	if visibleIdx < 0 {
+		return
+	}
+	if p.RedundantColsToOutputIdx == nil {
+		p.RedundantColsToOutputIdx = make(map[int64]int)
+	}
+	p.RedundantColsToOutputIdx[redundantCol.UniqueID] = visibleIdx
+}
+
+// ResolveRedundantColumn maps a redundant USING/NATURAL JOIN column to the canonical visible output.
+func (p *LogicalJoin) ResolveRedundantColumn(col *expression.Column) (*expression.Column, *types.FieldName) {
+	if p == nil || col == nil || len(p.RedundantColsToOutputIdx) == 0 || p.Schema() == nil {
+		return nil, nil
+	}
+	// Remapping redundant USING/NATURAL columns is only valid for inner join.
+	// For outer joins, preserving original side semantics is required.
+	if p.JoinType != base.InnerJoin {
+		return nil, nil
+	}
+	visibleIdx, ok := p.RedundantColsToOutputIdx[col.UniqueID]
+	if !ok {
+		return nil, nil
+	}
+	if visibleIdx < 0 || visibleIdx >= p.Schema().Len() || visibleIdx >= len(p.OutputNames()) {
+		return nil, nil
+	}
+	return p.Schema().Columns[visibleIdx], p.OutputNames()[visibleIdx]
 }
 
 // ExtractFDForSemiJoin extracts FD for semi join.
