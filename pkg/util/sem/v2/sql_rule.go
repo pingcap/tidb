@@ -92,7 +92,7 @@ var ImportWithExternalIDRule SQLRule = func(stmt ast.StmtNode) bool {
 		if err != nil {
 			return false
 		}
-		if objstore.IsS3(u) {
+		if objstore.IsS3Like(u) {
 			values := u.Query()
 			for k := range values {
 				lowerK := strings.ToLower(k)

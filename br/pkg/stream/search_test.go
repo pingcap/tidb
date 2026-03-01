@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package stream
+package stream_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -20,7 +21,7 @@ import (
 )
 
 func TestStartWithComparator(t *testing.T) {
-	comparator := NewStartWithComparator()
+	comparator := stream.NewStartWithComparator()
 	require.True(t, comparator.Compare([]byte("aa_key"), []byte("aa")))
 	require.False(t, comparator.Compare([]byte("aa_key"), []byte("aak")))
 	require.False(t, comparator.Compare([]byte("aa_key"), []byte("bb")))
@@ -115,7 +116,7 @@ func fakeDataFile(t *testing.T, s storeapi.Storage) (defaultCFDataFile, writeCFD
 	ctx := context.Background()
 	defaultCFBuf := bytes.NewBuffer([]byte{})
 	for _, defaultCF := range defaultCFs {
-		defaultCFBuf.Write(EncodeKVEntry(encodeKey(defaultCF.key, defaultCF.startTs), []byte(defaultCF.val)))
+		defaultCFBuf.Write(stream.EncodeKVEntry(encodeKey(defaultCF.key, defaultCF.startTs), []byte(defaultCF.val)))
 	}
 
 	err := s.WriteFile(ctx, defaultCFFile, defaultCFBuf.Bytes())
@@ -129,7 +130,7 @@ func fakeDataFile(t *testing.T, s storeapi.Storage) (defaultCFDataFile, writeCFD
 
 	writeCFBuf := bytes.NewBuffer([]byte{})
 	for _, writeCF := range writeCFs {
-		writeCFBuf.Write(EncodeKVEntry(encodeKey(writeCF.key, writeCF.commitTS), encodeShortValue(writeCF.val, writeCF.startTs)))
+		writeCFBuf.Write(stream.EncodeKVEntry(encodeKey(writeCF.key, writeCF.commitTS), encodeShortValue(writeCF.val, writeCF.startTs)))
 	}
 
 	err = s.WriteFile(ctx, writeCFFile, writeCFBuf.Bytes())
@@ -147,15 +148,15 @@ func fakeDataFile(t *testing.T, s storeapi.Storage) (defaultCFDataFile, writeCFD
 func TestSearchFromDataFile(t *testing.T) {
 	s := fakeStorage(t)
 	defaultCFDataFile, writeCFDataFile := fakeDataFile(t, s)
-	comparator := NewStartWithComparator()
+	comparator := stream.NewStartWithComparator()
 	searchKey := []byte("aa_big_key_1")
-	bs := NewStreamBackupSearch(s, comparator, searchKey)
-	ch := make(chan *StreamKVInfo, 16)
+	bs := stream.NewStreamBackupSearch(s, comparator, searchKey)
+	ch := make(chan *stream.StreamKVInfo, 16)
 	ctx := context.Background()
 
-	err := bs.searchFromDataFile(ctx, defaultCFDataFile, ch)
+	err := bs.SearchFromDataFileForTest(ctx, defaultCFDataFile, ch)
 	require.NoError(t, err)
-	err = bs.searchFromDataFile(ctx, writeCFDataFile, ch)
+	err = bs.SearchFromDataFileForTest(ctx, writeCFDataFile, ch)
 	require.NoError(t, err)
 	close(ch)
 
@@ -171,12 +172,12 @@ func TestSearchFromDataFile(t *testing.T) {
 
 func TestMergeCFEntries(t *testing.T) {
 	defaultCFs, writeCFs := fakeCFs()
-	defaultCFEntries := make(map[string]*StreamKVInfo, 8)
-	writeCFEntries := make(map[string]*StreamKVInfo, 8)
+	defaultCFEntries := make(map[string]*stream.StreamKVInfo, 8)
+	writeCFEntries := make(map[string]*stream.StreamKVInfo, 8)
 
 	for _, defaultCF := range defaultCFs {
 		encodedKey := hex.EncodeToString(encodeKey(defaultCF.key, defaultCF.startTs))
-		defaultCFEntries[encodedKey] = &StreamKVInfo{
+		defaultCFEntries[encodedKey] = &stream.StreamKVInfo{
 			Key:        hex.EncodeToString([]byte(defaultCF.key)),
 			EncodedKey: encodedKey,
 			StartTs:    uint64(defaultCF.startTs),
@@ -186,7 +187,7 @@ func TestMergeCFEntries(t *testing.T) {
 	}
 	for _, writeCF := range writeCFs {
 		encodedKey := hex.EncodeToString(encodeKey(writeCF.key, writeCF.commitTS))
-		writeCFEntries[encodedKey] = &StreamKVInfo{
+		writeCFEntries[encodedKey] = &stream.StreamKVInfo{
 			Key:        hex.EncodeToString([]byte(writeCF.key)),
 			EncodedKey: encodedKey,
 			StartTs:    uint64(writeCF.startTs),
@@ -197,8 +198,8 @@ func TestMergeCFEntries(t *testing.T) {
 	}
 
 	s := fakeStorage(t)
-	comparator := NewStartWithComparator()
-	bs := NewStreamBackupSearch(s, comparator, []byte{})
-	kvEntries := bs.mergeCFEntries(defaultCFEntries, writeCFEntries)
+	comparator := stream.NewStartWithComparator()
+	bs := stream.NewStreamBackupSearch(s, comparator, []byte{})
+	kvEntries := bs.MergeCFEntriesForTest(defaultCFEntries, writeCFEntries)
 	require.Equal(t, len(writeCFs)+1, len(kvEntries))
 }

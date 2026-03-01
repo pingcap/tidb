@@ -33,8 +33,26 @@ const (
 	cancelTimeout = time.Minute
 )
 
+// ErrFailoverCancel is the cancellation cause used by DM worker failover.
+// When the import context is canceled with this cause, import-into backend should
+// keep IMPORT INTO jobs running and let the next DM worker instance take over.
+var ErrFailoverCancel = errors.New("lightning: failover cancel")
+
+// ProgressUpdater is an interface for updating the progress of the import process.
+type ProgressUpdater interface {
+	UpdateTotalSize(size int64)
+	UpdateFinishedSize(size int64)
+}
+
 // ImporterOption is a function that configures the Importer.
 type ImporterOption func(*Importer)
+
+// WithProgressUpdater sets the ProgressUpdater for the Importer.
+func WithProgressUpdater(pu ProgressUpdater) ImporterOption {
+	return func(i *Importer) {
+		i.progressUpdater = pu
+	}
+}
 
 // WithCheckpointManager sets the CheckpointManager for the Importer.
 func WithCheckpointManager(cpMgr CheckpointManager) ImporterOption {
@@ -59,13 +77,14 @@ func WithOrchestrator(orchestrator JobOrchestrator) ImporterOption {
 
 // Importer is the implementation of LightningImporter for the 'import into' backend.
 type Importer struct {
-	cfg          *config.Config
-	db           *sql.DB
-	sdk          importsdk.SDK
-	logger       log.Logger
-	cpMgr        CheckpointManager
-	orchestrator JobOrchestrator
-	groupKey     string
+	cfg             *config.Config
+	db              *sql.DB
+	sdk             importsdk.SDK
+	logger          log.Logger
+	cpMgr           CheckpointManager
+	orchestrator    JobOrchestrator
+	groupKey        string
+	progressUpdater ProgressUpdater
 }
 
 // NewImporter creates a new Importer.
@@ -138,6 +157,7 @@ func (i *Importer) buildOrchestrator() JobOrchestrator {
 		PollInterval:      DefaultPollInterval,
 		LogInterval:       i.cfg.Cron.LogProgress.Duration,
 		Logger:            i.logger.With(zap.String("component", "orchestrator")),
+		ProgressUpdater:   i.progressUpdater,
 	})
 }
 
@@ -145,6 +165,11 @@ func (i *Importer) buildOrchestrator() JobOrchestrator {
 func (i *Importer) Run(ctx context.Context) error {
 	err := i.runOnce(ctx)
 	if common.IsContextCanceledError(err) {
+		if errors.Cause(context.Cause(ctx)) == ErrFailoverCancel {
+			i.logger.Info("context canceled by failover, skipping job cancellation")
+			return err
+		}
+
 		i.logger.Info("context canceled, cancelling import jobs...")
 		cancelCtx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
 		defer cancel()

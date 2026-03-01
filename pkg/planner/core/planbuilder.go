@@ -1483,16 +1483,17 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// If all available paths are Multi-Valued Index, Partial index or other index that need to check its usability in later phase,
+	// it's possible that all these path are inapplicable,
 	// so that the table paths are still added here to avoid failing to find any physical plan.
-	allMVIIndexPath := true
+	allUndeterminedPath := true
 	for _, availablePath := range available {
-		if !isMVIndexPath(availablePath) {
-			allMVIIndexPath = false
+		if !availablePath.IsUndetermined() {
+			allUndeterminedPath = false
 			break
 		}
 	}
-	if allMVIIndexPath {
+	if allUndeterminedPath {
 		available = append(available, tablePath)
 	}
 
@@ -2213,19 +2214,6 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 	if tblInfo.PKIsHandle {
 		pkCol := tblInfo.GetPkColInfo()
 		cols.data[pkCol.ID] = struct{}{}
-	}
-	if b.ctx.GetSessionVars().EnableExtendedStats {
-		// Add the columns related to extended stats.
-		// TODO: column_ids read from mysql.stats_extended in optimization phase may be different from that in execution phase((*Handle).BuildExtendedStats)
-		// if someone inserts data into mysql.stats_extended between the two time points, the new added extended stats may not be computed.
-		statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-		extendedStatsColIDs, err := statsHandle.CollectColumnsInExtendedStats(tblInfo.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, colID := range extendedStatsColIDs {
-			cols.data[colID] = struct{}{}
-		}
 	}
 	cols.calculated = true
 	return cols.data, nil
@@ -4802,7 +4790,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
-			if kerneltype.IsNextGen() && objstore.IsS3(u) {
+			if kerneltype.IsNextGen() && objstore.IsS3Like(u) {
 				if err := checkNextGenS3PathWithSem(u); err != nil {
 					return nil, err
 				}
@@ -4812,7 +4800,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// share the same AWS role to access import-into source data bucket, this
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
-		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3(u) {
+		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
 			values := u.Query()
 			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
@@ -6196,7 +6184,7 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 }
 
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
-	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
+	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 
 	if pc.HistoricalStatsInfo != nil {
@@ -6458,7 +6446,7 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	for k := range values {
 		lowerK := strings.ToLower(k)
 		if lowerK == s3like.S3ExternalID {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
+			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
 		}
 	}
 

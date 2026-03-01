@@ -194,6 +194,32 @@ func (e *Engine) Exist(dataDir string) error {
 	return nil
 }
 
+// finishWrite flushes all data and waits for the background routine to finish.
+// after calling this method, the engine cannot be written anymore. the underlying
+// pebble DB is still kept open for reading.
+func (e *Engine) finishWrite(ctx context.Context) error {
+	e.rLock()
+	if e.closed.Load() {
+		e.rUnlock()
+		return nil
+	}
+
+	err := e.flushEngineWithoutLock(ctx)
+	e.rUnlock()
+
+	// use mutex to make sure we won't close sstMetasChan while other routines
+	// trying to do flush.
+	e.lock(importMutexStateClose)
+	e.closed.Store(true)
+	close(e.sstMetasChan)
+	e.unlock()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.wg.Wait()
+	return e.ingestErr.Get()
+}
+
 func isStateLocked(state importMutexState) bool {
 	return state&(importMutexStateClose|importMutexStateImport) != 0
 }

@@ -23,8 +23,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
@@ -132,7 +132,7 @@ func (tc *TLS) WrapListener(l net.Listener) net.Listener {
 
 // GetJSON performs a GET request to the given path and unmarshals the response
 func (tc *TLS) GetJSON(ctx context.Context, path string, v any) error {
-	return GetJSON(ctx, tc.client, tc.url+path, v)
+	return httputil.GetJSON(ctx, tc.client, tc.url+path, v)
 }
 
 // ToPDSecurityOption converts the TLS configuration to a PD security option.

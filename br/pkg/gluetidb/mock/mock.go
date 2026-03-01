@@ -66,8 +66,8 @@ func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...a
 	return nil
 }
 
-// CreateDatabase implements glue.Session.
-func (*mockSession) CreateDatabase(_ context.Context, _ *model.DBInfo) error {
+// CreateDatabaseOnExistError implements glue.Session.
+func (*mockSession) CreateDatabaseOnExistError(_ context.Context, _ *model.DBInfo) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }

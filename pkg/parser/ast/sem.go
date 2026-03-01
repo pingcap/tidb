@@ -40,6 +40,8 @@ const (
 	CreateIndexCommand = "CREATE INDEX"
 	// CreatePlacementPolicyCommand represents CREATE PLACEMENT POLICY statement
 	CreatePlacementPolicyCommand = "CREATE PLACEMENT POLICY"
+	// CreateMaskingPolicyCommand represents CREATE MASKING POLICY statement
+	CreateMaskingPolicyCommand = "CREATE MASKING POLICY"
 	// CreateResourceGroupCommand represents CREATE RESOURCE GROUP statement
 	CreateResourceGroupCommand = "CREATE RESOURCE GROUP"
 	// CreateSequenceCommand represents CREATE SEQUENCE statement
@@ -134,6 +136,8 @@ const (
 	ShowCreateSequenceCommand = "SHOW CREATE SEQUENCE"
 	// ShowCreatePlacementPolicyCommand represents SHOW CREATE PLACEMENT POLICY statement
 	ShowCreatePlacementPolicyCommand = "SHOW CREATE PLACEMENT POLICY"
+	// ShowMaskingPoliciesCommand represents SHOW MASKING POLICIES statement
+	ShowMaskingPoliciesCommand = "SHOW MASKING POLICIES"
 	// ShowCreateResourceGroupCommand represents SHOW CREATE RESOURCE GROUP statement
 	ShowCreateResourceGroupCommand = "SHOW CREATE RESOURCE GROUP"
 	// ShowCreateProcedureCommand represents SHOW CREATE PROCEDURE statement
@@ -529,6 +533,11 @@ func (n *CreatePlacementPolicyStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *CreateMaskingPolicyStmt) SEMCommand() string {
+	return CreateMaskingPolicyCommand
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *CreateResourceGroupStmt) SEMCommand() string {
 	return CreateResourceGroupCommand
 }
@@ -711,6 +720,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowCreateSequenceCommand
 	case ShowCreatePlacementPolicy:
 		return ShowCreatePlacementPolicyCommand
+	case ShowMaskingPolicies:
+		return ShowMaskingPoliciesCommand
 	case ShowCreateResourceGroup:
 		return ShowCreateResourceGroupCommand
 	case ShowCreateProcedure:

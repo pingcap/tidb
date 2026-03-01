@@ -1,263 +1,184 @@
 # AGENTS.md
 
-This file provides guidance to agents when working with code in this repository.
+This file provides guidance to agents working in this repository.
 
-## Developing Environment Tips
+## Purpose and Precedence
 
-### Code Organization
+- MUST means required.
+- SHOULD means recommended unless there is a concrete reason to deviate.
+- MAY means optional.
+- Root `AGENTS.md` defines repository-wide defaults. If a deeper path later adds a more specific `AGENTS.md`, the deeper file SHOULD be treated as higher precedence for that subtree.
 
-**Package Structure:**
+## Non-negotiables
 
-- `/pkg/bindinfo/` - Handles all global SQL bind operations and caches SQL bind info from storage.
-- `/pkg/config/` - Configuration definitions.
-- `/pkg/ddl/` - Data Definition Language (DDL) execution logic.
-- `/pkg/distsql/` - Abstraction of distributed computing interfaces between executor and TiKV client.
-- `/pkg/domain/` - Storage space abstraction (domain/namespace), manages information schema and statistics.
-- `/pkg/errno/` - MySQL error code, message, and summary definitions.
-- `/pkg/executor/` - Execution logic for most SQL statements (operators).
-- `/pkg/expression/` - Expression-related code, including operators and built-in functions.
-- `/pkg/infoschema/` - Metadata management for SQL statements and information schema operations.
-- `/pkg/kv/` - Key-Value engine interface and public methods; storage engine adaptation layer.
-- `/pkg/lock/` - Implementation of LOCK/UNLOCK TABLES.
-- `/pkg/meta/` - SQL metadata management in storage engine; used by infoschema and DDL.
-- `/pkg/meta/autoid/` - Generates globally unique, monotonically increasing IDs for tables and databases.
-- `/pkg/metrics/` - Metrics information for all modules.
-- `/pkg/owner/` - Coordinates tasks that must be executed by a single instance in a TiDB cluster.
-- `/pkg/parser/` - MySQL-compatible SQL parser and AST/data structure definitions.
-- `/pkg/planner/` - Query optimization logic.
-- `/pkg/planner/core/base/` - interfaces for logical and physical plans.
-- `/pkg/planner/core/operator/logicalop` - Logical plan operators.
-- `/pkg/planner/core/operator/physicalop` - Physical plan operators.
-- `/pkg/plugin/` - TiDB plugin framework.
-- `/pkg/privilege/` - User privilege management interface.
-- `/pkg/server/` - MySQL protocol and connection management.
-- `/pkg/session/` - Session management code.
-- `/pkg/sessionctx/binloginfo/` - Binlog output information.
-- `/pkg/sessionctx/stmtctx/` - Runtime statement context for sessions.
-- `/pkg/sessionctx/variable/` - System variable management.
-- `/pkg/statistics/` - Table statistics code.
-- `/pkg/store/` - Storage engine drivers, wraps Key-Value client for TiDB.
-- `/pkg/structure/` - Structured API on transactional KV API (List, Queue, HashMap, etc.).
-- `/pkg/table/` - Table abstraction in SQL.
-- `/pkg/tablecodec/` - Encode/decode SQL data to/from Key-Value.
-- `/pkg/telemetry/` - Telemetry collection and reporting.
-- `/pkg/types/` - Type definitions and operations.
-- `/pkg/util/` - Utilities.
-- `/cmd/tidb-server/` - Main entry for TiDB service.
+1. Correctness first. TiDB is a distributed SQL database; seemingly small changes can alter SQL semantics, consistency, or cluster behavior.
+2. No speculative behavior. Do not invent APIs, defaults, protocol behavior, or test workflows.
+3. Keep diffs minimal. Avoid unrelated refactors, broad renames, or formatting-only churn unless explicitly requested.
+4. Leave verifiable evidence. Run targeted checks and report exact commands.
+5. Respect generated code artifacts. Do not hand-edit generated code outputs; regenerate from source inputs.
 
-### Source Files
+## Quick Decision Matrix
 
-- When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
+| Task | Required action |
+| --- | --- |
+| Added/moved/renamed/removed Go files, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | MUST run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
+| Running package unit tests | SHOULD run targeted tests (`go test -run <TestName> -tags=intest,deadlock`) and avoid full-package runs unless needed. |
+| Unit tests in a package that uses failpoints | MUST enable failpoints before tests and disable afterward (see `docs/agents/testing-flow.md`). |
+| Recording integration tests | MUST use `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd` (not `-record`; `-record` is for unit-test suites that explicitly support it). |
+| RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md`). |
+| Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
+| Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
+| Before finishing | MUST run `make bazel_lint_changed` if there are code changes. SHOULD self-review diff quality before finishing. |
 
-## Building
+### Skills
 
-### Bazel bootstrap (`make bazel_prepare`)
+- Repository-level Codex skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
+- Keep skill content and references together under each skill folder (for example: `.agents/skills/<skill>/SKILL.md` and `.agents/skills/<skill>/references/`).
+- `.github/skills` is kept only as a migration note path and should not be used as the primary location for new skill updates.
 
-Run `make bazel_prepare` **before building** when:
-- You just cloned the repo / set up a new workspace
-- You changed Bazel-related files (for example: `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`)
-- You added/removed/renamed/moved any Go source files (for example: `*.go`) in this PR; ALWAYS run `make bazel_prepare` and include any resulting `*.bazel/*.bzl` changes in the PR.
-- You changed Go module deps used by the build (for example: `go.mod`, `go.sum`), such as **adding a new third-party dependency**
-- You added new unit tests (UT) or RealTiKV tests and updated Bazel test targets accordingly (for example: adding new `_test.go` files to a `go_test` rule `srcs`, adjusting `shard_count`, or creating/updating `BUILD.bazel` under `tests/realtikvtest/`), which may require refreshing Bazel deps/toolchain
-- You hit Bazel dependency/toolchain errors locally
+## Pre-flight Checklist
+
+1. Restate the task goal and acceptance criteria.
+2. Locate the owning subsystem and the closest existing tests (`Repository Map`, `Task -> Validation Matrix`).
+3. Decide prerequisites before running tests/build (`docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`; `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`).
+4. Pick the smallest valid validation set and prepare final reporting items (`Agent Output Contract`).
+5. If `AGENTS.md` or docs under `docs/agents/` changed, follow the checklist in `docs/agents/agents-review-guide.md` before finishing.
+
+## Repository Map (Entry Points)
+
+- Detailed subsystem path mapping and test surfaces live in `docs/agents/architecture-index.md` (source of truth).
+- Update policy: when module/path mapping changes, update `docs/agents/architecture-index.md` first; update this section only when top-level entry points change.
+- `/pkg/planner/`: planner and optimization entrypoint.
+- `/pkg/executor/`, `/pkg/expression/`: SQL execution and expression evaluation.
+- `/pkg/session/`, `/pkg/sessionctx/`: session lifecycle and runtime statement context.
+- `/pkg/ddl/`, `/pkg/infoschema/`, `/pkg/meta/`: schema and metadata management.
+- `/pkg/store/`, `/pkg/kv/`: storage and distributed query interfaces.
+- `/pkg/statistics/`: statistics and estimation behavior entrypoint.
+- `/pkg/parser/`: SQL grammar and AST.
+- `/tests/integrationtest/`, `/tests/realtikvtest/`: SQL integration and real TiKV test surfaces.
+- `/cmd/tidb-server/`: TiDB server entrypoint.
+
+## Notes
+
+- Follow `docs/agents/notes-guide.md`.
+- DDL module-only rules (applies to changes under `pkg/ddl/` and `docs/agents/ddl/`):
+  - MUST: Before making/reviewing any DDL changes in the DDL module, read `docs/agents/ddl/README.md` first and use it as the default map of the execution framework.
+  - Debugging: You MAY reference `docs/agents/ddl/*`, but you MUST NOT treat it as authoritative. Treat it as hypotheses until verified in code/tests (avoid hallucination/outdated assumptions).
+  - Doc drift: If implementation and `docs/agents/ddl/*` differ, you MUST update the docs to match reality and call it out in the PR/issue. Do not defer.
+
+## Build Flow
+
+### When `make bazel_prepare` is required
+
+Run `make bazel_prepare` before building when any of the following is true:
+
+- New workspace or fresh clone.
+- Bazel-related files changed (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`).
+- Any Go source file is added/removed/renamed/moved in the PR.
+- Go module dependencies changed (for example `go.mod`, `go.sum`), including adding third-party dependencies.
+- UT or RealTiKV tests were added and Bazel test targets were updated (for example `_test.go` in `srcs`, `shard_count`, or `tests/realtikvtest/**/BUILD.bazel` updates).
+- Local Bazel dependency/toolchain errors occurred.
 
 Recommended local build flow:
 
 ```bash
-# one-time (or when bazel deps/toolchain change)
 make bazel_prepare
-
-# build
-make
-
-# optional: regenerate generated code if needed
-make gogenerate
-
-# optional: keep Go modules tidy if go.mod/go.sum changed
-go mod tidy
+make bazel_bin
+make gogenerate   # optional: regenerate generated code
+go mod tidy       # optional: if go.mod/go.sum changed
+git fetch origin --prune
+make bazel_lint_changed # Optional: skip this step if the resolved Bazel target is //:all.
 ```
 
-## Testing 
+## Task -> Validation Matrix
 
-### Unit Tests
+Use the smallest set that still proves correctness.
 
-Standard Go tests throughout `/pkg/` packages
+Typical package unit test command: `go test -run <TestName> -tags=intest,deadlock` (see `docs/agents/testing-flow.md`).
 
-#### How to run unit tests
+| Change scope | Minimum validation |
+| --- | --- |
+| `pkg/planner/**` rules or logical/physical plans | Targeted planner unit tests (`go test -run <TestName> -tags=intest,deadlock`) and update rule testdata when needed |
+| `pkg/executor/**` SQL behavior | Targeted unit test plus relevant integration test (`tests/integrationtest`) |
+| `pkg/expression/**` builtins or type inference | Targeted expression unit tests with edge-case coverage |
+| `pkg/session/**` / variables / protocol behavior | Targeted package tests plus SQL integration tests for user-visible behavior |
+| `pkg/ddl/**` schema changes | DDL-focused unit/integration tests and compatibility impact checks |
+| `pkg/store/**` / `pkg/kv/**` storage behavior | Targeted unit tests; use realtikv tests if behavior depends on real TiKV |
+| Parser files (`pkg/parser/**`) | Parser-specific Make targets and related unit tests |
+| `tests/integrationtest/t/**` changed | `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd` and verify regenerated result correctness |
+| `tests/realtikvtest/**` changed | Start playground, run scoped `go test -tags=intest,deadlock`, then mandatory cleanup |
 
-```bash
-# in the root directory of the repository
-pushd pkg/<package_name>
-go test -run  <TestName>  -record --tags=intest
-popd
-```
+## Testing Policy
 
-- If the execution is successful, please check whether the result set file has been modified. If it has been modified, 
-  Please verify that the modifications are correct and notify the developer.
-- If the execution fails, please check the error message and notify the developer.
+- Detailed command playbooks live in `docs/agents/testing-flow.md`.
+- Select required test surfaces first (`Task -> Validation Matrix`), then run scoped commands.
+- Prefer targeted runs (`-run <TestName>`). Avoid package-wide runs unless needed for broad refactors, CI reproduction, or shared golden/testdata updates.
+- If a package uses failpoints, MUST enable failpoints before tests and disable them afterward.
+- Failpoint decision MUST follow `docs/agents/testing-flow.md`: if failpoint search checks have no matches, run without failpoint enable/disable and state the evidence in the final report.
+- Bug fixes MUST add regression tests and verify fail-before-fix/pass-after-fix (or document why pre-fix reproduction is infeasible).
+- Integration test recording MUST use `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd`.
+- RealTiKV tests MUST start playground in background and perform mandatory cleanup.
 
-#### When to enable failpoint
+## Code Style Guide
 
-Before running unit tests, check if the target package uses failpoint:
+### Go and backend code
 
-```bash
-grep -R -n "failpoint\\." pkg/<package_name>
-grep -R -n "testfailpoint\\." pkg/<package_name>
-# Optional (Bazel): if BUILD.bazel exists, check failpoint dependency.
-test -f pkg/<package_name>/BUILD.bazel && grep -n "@com_github_pingcap_failpoint//:failpoint" pkg/<package_name>/BUILD.bazel
-```
+- Because TiDB is a complex system, code SHOULD remain maintainable for future readers with basic TiDB familiarity, including readers who are not experts in the specific subsystem/feature.
+- Follow existing package-local conventions first and keep style consistent with nearby files.
+- Code SHOULD be self-documenting through clear naming and structure.
+  - Example: when implementing a well-known algorithm, naming SHOULD be clear enough to make the approach recognizable; if naming alone may not make intent obvious, add a brief comment.
+- Keep changes focused; avoid unrelated refactors, renames, or moves in the same PR.
+- Keep error handling actionable and contextual; avoid silently swallowing errors.
+- For new source files (for example `*.go`), include the standard TiDB license header (copyright + Apache 2.0) by copying from a nearby file and updating year if needed.
+- Comments SHOULD explain non-obvious intent, constraints, invariants, concurrency guarantees, SQL/compatibility contracts, or important performance trade-offs, and SHOULD NOT restate what the code already makes clear.
+- Keep exported-symbol doc comments, and prefer semantic constraints over name restatement.
 
-**Rules:**
-- If grep returns matches → `make failpoint-enable` is required
-- If grep returns nothing → do NOT enable failpoint (unnecessary overhead)
+### Tests and testdata
 
-**Note:** `--tags=intest` is a separate build tag and does not enable failpoints. Enable/disable failpoints via `make failpoint-enable` / `make failpoint-disable` (or `make bazel-failpoint-enable` for Bazel).
+- Prefer extending existing test suites and fixtures over creating new scaffolding.
+- Unit test suite size in one package SHOULD stay around 50 or fewer as a practical target; use `shard_count` in package `BUILD.bazel` as a reference when splitting.
+- Keep test changes minimal and deterministic; avoid broad golden/testdata churn unless required.
+- For planner predicate pushdown cases, keep SQL-only statements in `predicate_pushdown_suite_in.json` and put DDL in setup.
+- When recording outputs, verify changed result files before reporting completion.
 
-**Ensure failpoint is always disabled** (use this pattern):
+### Docs and command snippets
 
-```bash
-make failpoint-enable && (
-  pushd pkg/<package_name>
-  go test -run <TestName> --tags=intest;
-  rc=$?;
-  popd;
-  make failpoint-disable;
-  exit $rc
-)
-```
+- Commands in docs SHOULD be copy-pasteable from repository root unless explicitly scoped.
+- Use explicit placeholders such as `<package_name>`, `<TestName>`, and `<dir>`.
+- Documentation updates SHOULD keep terminology, policy wording, and command conventions consistent across related docs.
+- Keep guidance executable and concrete; avoid ambiguous phrasing.
+- Issues and PRs MUST be written in English (title and description).
 
-**Bazel note:** If you run tests via Bazel, use `make bazel-failpoint-enable` before `bazel test` / `make bazel_test`. You can still run `make failpoint-disable` afterward to restore the workspace (Bazel currently doesn't provide `bazel-failpoint-disable`).
+## Issue and PR Rules
 
-#### Unit Tests Specification
+### Issue rules
 
-The following points must be achieved:
-1. Within the same package, there should not be more than 50 unit tests. The exact number can be referenced from the `shard_count` in the `BUILD.bazel` file under the test path.
-2. Existing tests should be reused as much as possible, and existing test data and table structures should be utilized. Modifications should be made on this basis to accommodate the new tests.
-3. Some tests use the JSON files in `testdata` as the test set (`xxxx_in.json`) and the validation set (`xxxx_out.json` and `xxxx_xut.json`). It is necessary to modify the test set before running the unit test.
+- Follow templates under `.github/ISSUE_TEMPLATE/` and fill all required fields.
+- Bug reports should include minimal reproduction, expected/actual behavior, and TiDB version (for example `SELECT tidb_version()` output).
+- Search existing issues/PRs first (for example `gh search issues --repo pingcap/tidb --include-prs "<keywords>"`), then add relevant logs/configuration/SQL plans.
+- Labeling requirements:
+  - `type/*` is usually applied by the issue template (GitHub UI); if creating issues via `gh issue create`, add it explicitly via `--label` (or follow up with `gh issue edit --add-label`).
+  - Add at least one `component/*` label.
+  - For bug/regression, include `severity/*` and affected-version labels (for example `affects-8.5`, or `may-affects-*` if unsure).
+  - If label permissions are missing, include `Suggested labels: ...` in issue body.
 
-### Integration Tests
+### PR requirements
 
-Integration tests are located in the `/tests/integrationtest` directory.
+- PR title MUST use one of:
+  - `pkg [, pkg2, pkg3]: what is changed`
+  - `*: what is changed`
+- PR description MUST follow `.github/pull_request_template.md`.
+- PR description MUST contain one line starting with `Issue Number:` and reference related issue(s) using `close #<id>` or `ref #<id>`.
+- If you create PRs via GitHub CLI, start from the template to avoid breaking required HTML comments: `gh pr create -T .github/pull_request_template.md` (then fill in the fields; do not delete/alter the HTML comment markers).
+- Keep HTML comments unchanged, including `Tests <!-- At least one of them must be included. -->`, because CI tooling depends on them.
+- Avoid force-push when possible; prefer follow-up commits and squash merge.
+- If force-push is unavoidable, use `--force-with-lease` and coordinate with reviewers.
 
-The test set is located at `/tests/integrationtest/t`, and the result set is in `tests/integrationtest/r`. The result set does not need to be modified, but it is necessary to verify its correctness after running the tests.
+## Agent Output Contract
 
-#### How to run integration tests
+When finishing a task, report:
 
-```bash
-# in the root directory of the repository
-pushd tests/integrationtest
-./run-tests.sh -r <TestName>
-popd
-```
-
-If you modify the test set `t/planner/core/binary_plan.test`, then the `TestName` will be `planner/core/binary_plan`.
-
-### RealTiKV Tests
-
-RealTiKV tests are located in the `/tests/realtikvtest` directory. These tests run against a real TiKV cluster (not mocktikv/unistore).
-
-#### When to use the RealTiKV Tests
-
-- Tests that require real TiKV / TiUP Playground / TiKV real environment
-- Tests located under `tests/realtikvtest/` directory tree
-
-#### 1. Start TiDB Playground
-
-Before running `realtikvtest`, start a minimal PD + TiKV cluster (`tikv-slim`). Most test cases use PD address `127.0.0.1:2379` by default.
-
-**Must run in background (do not omit `&`)**:
-
-```bash
-tiup playground --mode tikv-slim &
-```
-
-(Optional) Use `--tag` to distinguish different playgrounds:
-
-```bash
-tiup playground --mode tikv-slim --tag realtikvtest &
-```
-
-**Note:** Using `--tag` will keep the data dir after exit. Remember to remove `${HOME}/.tiup/data/<tag>` in the cleanup step.
-
-If `127.0.0.1:2379` is not available (for example: shared dev machine, port conflict, or multiple playgrounds on one host), you can change the PD address:
-- Use `--pd.port` to set PD port explicitly
-- Or use `--port-offset` to shift all default ports
-
-Examples:
-
-```bash
-tiup playground --mode tikv-slim --pd.port 12379 &
-# or
-tiup playground --mode tikv-slim --port-offset 10000 &
-```
-
-#### (Optional) Verify cluster is ready
-
-Recommended to avoid flaky failures caused by PD/TiKV not ready yet:
-
-```bash
-PD_ADDR=127.0.0.1:2379
-curl -f "http://${PD_ADDR}/pd/api/v1/version"
-until curl -sf "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; do sleep 1; done
-```
-
-#### 2. Run Tests
-
-```bash
-go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/...
-```
-
-If target test uses failpoints, enable them first (see the **When to enable failpoint** section above), and ensure they are disabled afterward.
-
-If you use a non-default PD address, pass it via `-args -tikv-path`:
-
-```bash
-go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/... -args \
-  -tikv-path "tikv://127.0.0.1:12379?disableGC=true"
-```
-
-**Note**: Do not add `-v` by default to avoid excessive log output. Only add `-v` when debugging.
-
-#### 3. Cleanup
-
-**Required**: If you started TiUP Playground, you must clean up after tests.
-
-```bash
-# 1) Stop playground (will also stop pd/tikv)
-pkill -f "tiup playground" || true
-
-# 2) If you used `--tag <tag>`, remove its data dir (TiUP will not auto-clean it)
-#    Example: rm -rf "${HOME}/.tiup/data/realtikvtest"
-rm -rf "${HOME}/.tiup/data/<tag>"
-
-# 3) (Optional) Clean component data directories
-tiup clean --all
-```
-
-Verify stopped (should fail to connect):
-
-```bash
-PD_ADDR=127.0.0.1:2379
-curl -f "http://${PD_ADDR}/pd/api/v1/version"
-```
-
-#### Key Tips
-
-- **Failpoints**: Use `failpoint` and `testfailpoint` to simulate abnormal behavior.
-- **Atomicity**: Use `atomic` variables to track logic in concurrent tests.
-- **Environment check**: Check for running playground processes before starting.
-- **Fmt-only changes**: If PR only involves code formatting (gofmt, indentation), do NOT run time-consuming `realtikvtest`. Just ensure local compilation passes.
-
-## Pull Request Instructions
-
-### PR title
-
-The PR title **must** strictly adhere to the following format. It uses the package name(s) affected or `*` if it's a non-package-specific change or too many packages involved:
-
-**Format 1 (Specific Packages):** `pkg [, pkg2, pkg3]: what is changed`
-
-**Format 2 (Repository-Wide):** `*: what is changed`
-
-### PR description
-
-The PR description **must** strictly follow the template located at @.github/pull_request_template.md and **must** keep the HTML comment elements like `Tests <!-- At least one of them must be included. -->` unchanged in the pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.
+1. Files changed.
+2. Risks: correctness, compatibility, performance.
+3. Exact commands run for validation.
+4. What was not verified locally.

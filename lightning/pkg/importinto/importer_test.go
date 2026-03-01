@@ -17,10 +17,10 @@ package importinto_test
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
 	mockimport "github.com/pingcap/tidb/lightning/pkg/importinto/mock"
 	"github.com/pingcap/tidb/pkg/importsdk"
@@ -47,9 +47,17 @@ func TestImporterRun(t *testing.T) {
 		{Database: "db", Table: "t1"},
 	}
 
+	canceledCtx := func(cause error) context.Context {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(cause)
+		return ctx
+	}
+	backgroundCtx := func() context.Context { return context.Background() }
+
 	tests := []struct {
 		name    string
 		setup   func()
+		runCtx  func() context.Context
 		wantErr error
 	}{
 		{
@@ -69,6 +77,7 @@ func TestImporterRun(t *testing.T) {
 				// Cleanup checkpoints
 				mockCPMgr.EXPECT().Remove(gomock.Any(), "all").Return(nil)
 			},
+			runCtx: backgroundCtx,
 		},
 		{
 			name: "create schemas error",
@@ -78,6 +87,7 @@ func TestImporterRun(t *testing.T) {
 
 				mockSDK.EXPECT().CreateSchemasAndTables(gomock.Any()).Return(errors.New("create schemas failed"))
 			},
+			runCtx:  backgroundCtx,
 			wantErr: errors.New("create schemas failed"),
 		},
 		{
@@ -89,6 +99,7 @@ func TestImporterRun(t *testing.T) {
 				mockSDK.EXPECT().CreateSchemasAndTables(gomock.Any()).Return(nil)
 				mockSDK.EXPECT().GetTableMetas(gomock.Any()).Return(nil, errors.New("get metas failed"))
 			},
+			runCtx:  backgroundCtx,
 			wantErr: errors.New("get metas failed"),
 		},
 		{
@@ -102,6 +113,7 @@ func TestImporterRun(t *testing.T) {
 				// Prechecks fail
 				mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, errors.New("precheck failed"))
 			},
+			runCtx:  backgroundCtx,
 			wantErr: errors.New("precheck failed"),
 		},
 		{
@@ -117,10 +129,11 @@ func TestImporterRun(t *testing.T) {
 				// Orchestrator fails
 				mockOrchestrator.EXPECT().SubmitAndWait(gomock.Any(), tables).Return(errors.New("orchestrator failed"))
 			},
+			runCtx:  backgroundCtx,
 			wantErr: errors.New("orchestrator failed"),
 		},
 		{
-			name: "cancel",
+			name: "cancel by user",
 			setup: func() {
 				mockCPMgr.EXPECT().Initialize(gomock.Any()).Return(nil)
 				mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
@@ -134,6 +147,24 @@ func TestImporterRun(t *testing.T) {
 				// Expect Cancel to be called
 				mockOrchestrator.EXPECT().Cancel(gomock.Any()).Return(nil)
 			},
+			runCtx:  func() context.Context { return canceledCtx(nil) },
+			wantErr: context.Canceled,
+		},
+		{
+			name: "cancel by failover",
+			setup: func() {
+				mockCPMgr.EXPECT().Initialize(gomock.Any()).Return(nil)
+				mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
+
+				mockSDK.EXPECT().CreateSchemasAndTables(gomock.Any()).Return(nil)
+				mockSDK.EXPECT().GetTableMetas(gomock.Any()).Return(tables, nil)
+				mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil) // Precheck
+
+				// Simulate context cancellation during SubmitAndWait
+				mockOrchestrator.EXPECT().SubmitAndWait(gomock.Any(), tables).Return(context.Canceled)
+				// Expect Cancel NOT to be called
+			},
+			runCtx:  func() context.Context { return canceledCtx(importinto.ErrFailoverCancel) },
 			wantErr: context.Canceled,
 		},
 	}
@@ -141,14 +172,17 @@ func TestImporterRun(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setup()
-			importer, err := importinto.NewImporter(context.Background(), cfg, nil,
+			opts := []importinto.ImporterOption{
 				importinto.WithBackendSDK(mockSDK),
 				importinto.WithCheckpointManager(mockCPMgr),
 				importinto.WithOrchestrator(mockOrchestrator),
-			)
+			}
+			importer, err := importinto.NewImporter(context.Background(), cfg, nil, opts...)
 			require.NoError(t, err)
 
-			err = importer.Run(context.Background())
+			runCtx := tt.runCtx()
+
+			err = importer.Run(runCtx)
 			if tt.wantErr != nil {
 				require.ErrorContains(t, err, tt.wantErr.Error())
 			} else {

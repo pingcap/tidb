@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -67,7 +66,6 @@ func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 		require.True(t, idx.TopN.Equal(b.GetIdx(i).TopN))
 		return false
 	})
-	require.True(t, internal.IsSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
 }
 
 func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
@@ -80,7 +78,6 @@ func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	tk.MustExec("delete from mysql.stats_extended")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
 	tk.MustExec("delete from mysql.column_stats_usage")
 	do.StatsHandle().Clear()
@@ -98,7 +95,7 @@ func TestConversion(t *testing.T) {
 	tk.MustExec("insert into t(a,b) values (1, 1),(3, 1),(5, 10)")
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.Nil(t, h.Update(context.Background(), is))
 
 	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -472,41 +469,6 @@ func TestDumpPseudoColumns(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestDumpExtendedStats(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,5),(2,4),(3,3),(4,2),(5,1)")
-	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("analyze table t")
-
-	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tbl := h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
-	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
-	require.NoError(t, err)
-	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
-	require.NoError(t, err)
-	requireTableEqual(t, loadTbl, tbl)
-
-	cleanStats(tk, dom)
-	wg := util.WaitGroupWrapper{}
-	wg.Run(func() {
-		require.Nil(t, h.Update(context.Background(), is))
-	})
-	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
-	wg.Wait()
-	require.NoError(t, err)
-	loadTblInStorage := h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
-	requireTableEqual(t, loadTblInStorage, tbl)
-}
-
 func TestDumpVer2Stats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -665,6 +627,8 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 
+	// Old dumped stats may still contain the removed ext_stats field.
+	// Loading them should remain backward-compatible.
 	statsJSONFromOldVersion := `{
  "database_name": "test",
  "table_name": "t",
@@ -702,6 +666,19 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
    "correlation": 0
   }
  },
+
+ "ext_stats": [
+  {
+   "stats_name": "s1",
+   "string_vals": "",
+   "cols": [
+    1,
+    2
+   ],
+   "scalar_vals": 1,
+   "type": 1
+  }
+ ],
  "count": 256,
  "modify_count": 256,
  "partitions": null

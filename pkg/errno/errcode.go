@@ -1089,6 +1089,7 @@ const (
 	ErrKeyTooLarge                         = 8178
 	ErrTimeStampInDSTTransition            = 8179
 	ErrQueryExecStopped                    = 8180
+	_                                      = 8181 // reserved for ErrPDTimestampLagsTooMuch
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1149,6 +1150,8 @@ const (
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 	ErrInvalidAffinityOption              = 8266
 	ErrForbiddenDDL                       = 8267
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
