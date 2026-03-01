@@ -233,6 +233,7 @@ go_test(
         "rule_generate_column_substitute_test.go",
         "rule_join_reorder_dp_test.go",
         "runtime_filter_generator_test.go",
+        "scalar_subq_expression_test.go",
         "stats_test.go",
         "stringer_test.go",
         "task_test.go",

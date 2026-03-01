@@ -28,10 +28,12 @@ import (
 )
 
 // GeneratePKFilterOptimizer generates PK range filter conditions from secondary
-// index lookups using MIN/MAX subqueries. When a query has LIMIT (with or without
-// ORDER BY) and multiple candidate indexes, this rule injects
-// `pk >= (SELECT MIN(pk) ...) AND pk <= (SELECT MAX(pk) ...)` conditions derived
-// from qualifying secondary indexes, narrowing the scan range on the chosen index.
+// index lookups using MIN/MAX subqueries. For any query with predicates
+// spanning secondary indexes on a clustered PK table, this rule derives
+// `pk >= (SELECT MIN(pk) ...) AND pk <= (SELECT MAX(pk) ...)` conditions,
+// narrowing the scan range on the table path. The conditions are stored in
+// PKFilterConds (not PushedDownConds) so the cost model can inject them
+// per-path without polluting index path estimation.
 //
 // Activation: hint `/*+ pk_filter(table_name, index_name, ...) */`
 // or session variable `tidb_opt_generate_pk_filter` (default OFF).
@@ -39,7 +41,7 @@ type GeneratePKFilterOptimizer struct{}
 
 // Optimize implements the base.LogicalOptRule interface.
 func (*GeneratePKFilterOptimizer) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
-	return generatePKFilterWalk(ctx, p, false)
+	return generatePKFilterWalk(ctx, p)
 }
 
 // Name implements the base.LogicalOptRule interface.
@@ -47,18 +49,12 @@ func (*GeneratePKFilterOptimizer) Name() string {
 	return "generate_pk_filter"
 }
 
-// generatePKFilterWalk walks the plan tree top-down, tracking whether a LIMIT
-// ancestor exists, and applies the PK filter optimization to qualifying DataSources.
-func generatePKFilterWalk(ctx context.Context, p base.LogicalPlan, underLimit bool) (base.LogicalPlan, bool, error) {
-	// Track whether we are under a LIMIT/TopN node
-	switch p.(type) {
-	case *logicalop.LogicalLimit, *logicalop.LogicalTopN:
-		underLimit = true
-	}
-
+// generatePKFilterWalk walks the plan tree top-down and applies the PK filter
+// optimization to qualifying DataSources.
+func generatePKFilterWalk(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	for i, child := range p.Children() {
-		newChild, changed, err := generatePKFilterWalk(ctx, child, underLimit)
+		newChild, changed, err := generatePKFilterWalk(ctx, child)
 		if err != nil {
 			return nil, false, err
 		}
@@ -73,7 +69,7 @@ func generatePKFilterWalk(ctx context.Context, p base.LogicalPlan, underLimit bo
 		return p, planChanged, nil
 	}
 
-	result, changed, err := tryGeneratePKFilter(ctx, ds, underLimit)
+	result, changed, err := tryGeneratePKFilter(ctx, ds)
 	if err != nil {
 		return nil, false, err
 	}
@@ -86,10 +82,12 @@ func generatePKFilterWalk(ctx context.Context, p base.LogicalPlan, underLimit bo
 // tryGeneratePKFilter checks whether the DataSource qualifies for PK filter
 // generation and generates the filter conditions if so. The rule evaluates
 // MIN/MAX subqueries eagerly during optimization, producing concrete constant
-// conditions like `pk >= 5 AND pk <= 999995`. These constants are pushed into
-// PushedDownConds and AllConds so the ranger can use them as access conditions
-// on the table path, bounding the clustered PK scan range.
-func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource, underLimit bool) (base.LogicalPlan, bool, error) {
+// conditions like `pk >= 5 AND pk <= 999995`. These are stored in
+// ds.PKFilterConds (not PushedDownConds) so the stats derivation phase can
+// inject them into table path conditions without polluting index path cost
+// estimation. The raw conditions are also added to AllConds to protect the PK
+// column from being pruned by ColumnPruner.
+func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.LogicalPlan, bool, error) {
 	// Check activation: either hint or session variable
 	hintMode := len(ds.PkFilterHints) > 0
 	sessionMode := ds.SCtx().GetSessionVars().AllowGeneratePKFilter
@@ -99,11 +97,6 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource, underLim
 
 	// Must have a clustered PK
 	if ds.HandleCols == nil {
-		return ds, false, nil
-	}
-
-	// Must have a LIMIT ancestor
-	if !underLimit {
 		return ds, false, nil
 	}
 
@@ -124,9 +117,8 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource, underLim
 		return ds, false, nil
 	}
 
-	// Generate PK filter conditions and track which indexes produced filters.
-	newConds := make([]expression.Expression, 0, len(qualifyingIndexes)*2)
-	usedIndexes := make([]*util.AccessPath, 0, len(qualifyingIndexes))
+	// Generate PK filter conditions and track source indexes.
+	var pkFilterConds []util.PKFilterCondInfo
 	for _, idxPath := range qualifyingIndexes {
 		eqConds := checkIndexQualifiesForPKFilter(ds, idxPath)
 		if eqConds == nil {
@@ -140,19 +132,18 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource, underLim
 			// Subquery returned no rows (NULL) — skip this index.
 			continue
 		}
-		newConds = append(newConds, conds...)
-		usedIndexes = append(usedIndexes, idxPath)
+		for _, c := range conds {
+			pkFilterConds = append(pkFilterConds, util.PKFilterCondInfo{
+				Cond:            c,
+				SourceIndexID:   idxPath.Index.ID,
+				SourceIndexName: idxPath.Index.Name.O,
+			})
+		}
 	}
 
-	if len(newConds) == 0 {
+	if len(pkFilterConds) == 0 {
 		return ds, false, nil
 	}
-
-	// Remove the indexes used for PK filter derivation from the main
-	// DataSource's access paths. Using the same index for both the main scan
-	// and the PK filter subquery is redundant — the PK range only helps when
-	// applied to a *different* access path (e.g. the clustered PK table scan).
-	removeUsedIndexesFromPaths(ds, usedIndexes)
 
 	// Ensure the PK column is in the DataSource's schema. It may have been
 	// pruned (ColumnPruner runs before this rule) if the query doesn't
@@ -164,13 +155,14 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource, underLim
 		ds.Columns = append(ds.Columns, findOrCreateColumnInfo(ds, pkCol))
 	}
 
-	// Push the constant PK range conditions to PushedDownConds and AllConds.
-	// Because the subqueries were evaluated eagerly, the conditions are simple
-	// constant comparisons (e.g. pk >= 5 AND pk <= 999995) that can be pushed
-	// to TiKV coprocessor. The ranger will use them as access conditions on
-	// the table path, bounding the clustered PK scan range.
-	ds.PushedDownConds = append(ds.PushedDownConds, newConds...)
-	ds.AllConds = append(ds.AllConds, newConds...)
+	// Store the PK filter conditions separately from PushedDownConds.
+	// They will be injected into table path stats derivation later.
+	ds.PKFilterConds = pkFilterConds
+	// Add the raw conditions to AllConds so PruneColumns doesn't prune
+	// the PK column (AllConds is used to determine which columns are needed).
+	for _, pkf := range pkFilterConds {
+		ds.AllConds = append(ds.AllConds, pkf.Cond)
+	}
 	return ds, true, nil
 }
 
@@ -241,37 +233,6 @@ func findHintedIndexPaths(ds *logicalop.DataSource) []*util.AccessPath {
 					break
 				}
 			}
-		}
-	}
-	return result
-}
-
-// removeUsedIndexesFromPaths removes the given index paths from the DataSource's
-// PossibleAccessPaths and AllPossibleAccessPaths. This prevents the optimizer
-// from choosing the same index for the main scan that was used for PK filter
-// derivation, which would make the PK filter redundant.
-func removeUsedIndexesFromPaths(ds *logicalop.DataSource, usedIndexes []*util.AccessPath) {
-	isUsed := func(path *util.AccessPath) bool {
-		if path.IsTablePath() || path.Index == nil {
-			return false
-		}
-		for _, used := range usedIndexes {
-			if path.Index.Name.L == used.Index.Name.L {
-				return true
-			}
-		}
-		return false
-	}
-	ds.PossibleAccessPaths = filterPaths(ds.PossibleAccessPaths, isUsed)
-	ds.AllPossibleAccessPaths = filterPaths(ds.AllPossibleAccessPaths, isUsed)
-}
-
-// filterPaths returns a new slice with paths for which exclude returns false.
-func filterPaths(paths []*util.AccessPath, exclude func(*util.AccessPath) bool) []*util.AccessPath {
-	result := make([]*util.AccessPath, 0, len(paths))
-	for _, p := range paths {
-		if !exclude(p) {
-			result = append(result, p)
 		}
 	}
 	return result
@@ -531,9 +492,10 @@ func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPa
 	newDs.PossibleAccessPaths = newPaths
 	newDs.AllPossibleAccessPaths = newPaths
 
-	// Clear hints to avoid recursive optimization
+	// Clear hints and PK filter state to avoid recursive optimization
 	newDs.PkFilterHints = nil
 	newDs.IndexMergeHints = nil
+	newDs.PKFilterConds = nil
 
 	return &newDs
 }

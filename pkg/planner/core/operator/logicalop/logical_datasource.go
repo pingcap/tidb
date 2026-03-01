@@ -66,6 +66,11 @@ type DataSource struct {
 	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
 	AllConds []expression.Expression `hash64-equals:"true"`
+	// PKFilterConds holds PK range conditions derived from secondary indexes
+	// by the GeneratePKFilter optimization. They are tracked separately from
+	// PushedDownConds so they can be injected into table path stats without
+	// polluting index path cost estimation.
+	PKFilterConds []util.PKFilterCondInfo
 
 	// The following property is used to cache the original statistic information of the table.
 	// It will be initialized by the function initStats(ds *logicalop.DataSource) in stats.go and never modified after that.

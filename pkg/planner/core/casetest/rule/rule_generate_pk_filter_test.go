@@ -26,19 +26,27 @@ func TestGeneratePKFilterHint(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t1")
-		tk.MustExec("create table t1(a int primary key clustered, b int, c int, key idx_b(b), key idx_c(c), key idx_bc(b,c))")
+		// Use a single secondary index so the optimizer can choose between it and the table path.
+		tk.MustExec("create table t1(a int primary key clustered, b int, c int, key idx_b(b))")
 		tk.MustExec("insert into t1 values(1,1,1),(2,2,2),(3,3,3),(4,1,4),(5,2,5)")
+		tk.MustExec("analyze table t1")
 
-		// Single-column secondary index with hint - should generate PK filter.
-		// b=1 matches rows with a=1 and a=4, so PK filter produces range:[1,4].
-		// The ge/le conditions are folded into the TableRangeScan range access
-		// condition by the ranger, so we verify the bounded range rather than
-		// looking for ge(...) in the Selection.
-		plan := tk.MustQuery("explain format='brief' select /*+ pk_filter(t1, idx_b) */ * from t1 where b = 1 order by a limit 10")
+		// pk_filter(t1, idx_b) generates PK range conditions from idx_b.
+		// b=1 matches rows with a=1 and a=4, so PK filter produces pk >= 1 AND pk <= 4.
+		// The optimizer may choose the table path (TableRangeScan range:[1,4]) or
+		// the index path depending on cost estimation. Verify correct results.
+		tk.MustQuery("select /*+ pk_filter(t1, idx_b) */ * from t1 where b = 1 order by a limit 10").Check(testkit.Rows("1 1 1", "4 1 4"))
+
+		// Verify the optimization is active: with session var + LIMIT, it should
+		// produce a Point_Get when PK range collapses to a single value.
+		tk.MustExec("drop table if exists t1b")
+		tk.MustExec("create table t1b(a int primary key clustered, b int, key idx_b(b))")
+		tk.MustExec("insert into t1b values(10,1),(20,2),(30,3)")
+		plan := tk.MustQuery("explain format='brief' select /*+ pk_filter(t1b, idx_b) */ * from t1b where b = 1 order by a limit 10")
 		planStr := planToString(plan.Rows())
-		t.Logf("Single-column idx_b plan:\n%s", planStr)
-		require.Contains(t, planStr, "TableRangeScan", "expected TableRangeScan with PK filter")
-		require.Contains(t, planStr, "range:[1,4]", "expected PK filter range from idx_b where b=1")
+		t.Logf("Point PK filter plan:\n%s", planStr)
+		// b=1 matches only a=10, so MIN=MAX=10, PK filter collapses to point.
+		require.Contains(t, planStr, "Point_Get", "expected Point_Get when PK filter collapses to single value")
 	})
 }
 
@@ -89,6 +97,160 @@ func TestGeneratePKFilterCompositePK(t *testing.T) {
 		plan = tk.MustQuery("explain format='brief' select /*+ pk_filter(t3, idx_c) */ * from t3 where a = 1 and b = 2 and c = 1 order by d limit 10")
 		planStr = planToString(plan.Rows())
 		require.Contains(t, planStr, "Point_Get", "expected Point_Get when all PK cols have EQ (no PK filter needed)")
+	})
+}
+
+func TestGeneratePKFilterNoPKTable(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_nopk")
+		tk.MustExec("create table t_nopk(a int, b int, key idx_b(b))")
+		tk.MustExec("insert into t_nopk values(1,1),(2,2),(3,3)")
+
+		// Table with no clustered PK — hint should be silently ignored.
+		plan := tk.MustQuery("explain format='brief' select /*+ pk_filter(t_nopk, idx_b) */ * from t_nopk where b = 1 order by a limit 10")
+		planStr := planToString(plan.Rows())
+		t.Logf("No-PK table plan:\n%s", planStr)
+		// Should NOT produce a TableRangeScan with PK filter bounds.
+		require.NotContains(t, planStr, "TableRangeScan", "should not generate PK filter on a table without clustered PK")
+
+		// Verify query returns correct results.
+		tk.MustQuery("select /*+ pk_filter(t_nopk, idx_b) */ * from t_nopk where b = 1 order by a limit 10").Check(testkit.Rows("1 1"))
+	})
+}
+
+func TestGeneratePKFilterNoWhere(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_nowhere")
+		tk.MustExec("create table t_nowhere(a int primary key clustered, b int, c int, key idx_b(b))")
+		tk.MustExec("insert into t_nowhere values(1,1,1),(2,2,2),(3,3,3)")
+
+		// No WHERE clause — PushedDownConds is empty, hint should be ignored.
+		plan := tk.MustQuery("explain format='brief' select /*+ pk_filter(t_nowhere, idx_b) */ * from t_nowhere order by a limit 10")
+		planStr := planToString(plan.Rows())
+		t.Logf("No WHERE plan:\n%s", planStr)
+		// Should use a simple TableFullScan or Limit+TableFullScan, not a PK filter bounded range.
+		require.NotContains(t, planStr, "ge(test.t_nowhere.a", "should not generate PK filter without WHERE clause")
+
+		// Verify query returns correct results.
+		tk.MustQuery("select /*+ pk_filter(t_nowhere, idx_b) */ * from t_nowhere order by a limit 10").Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
+	})
+}
+
+func TestGeneratePKFilterZeroRows(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_zero")
+		tk.MustExec("create table t_zero(a int primary key clustered, b int, c int, key idx_b(b))")
+		tk.MustExec("insert into t_zero values(1,1,1),(2,2,2),(3,3,3)")
+
+		// b=999 matches zero rows — MIN/MAX subquery returns NULL, PK filter should be skipped.
+		plan := tk.MustQuery("explain format='brief' select /*+ pk_filter(t_zero, idx_b) */ * from t_zero where b = 999 order by a limit 10")
+		planStr := planToString(plan.Rows())
+		t.Logf("Zero rows plan:\n%s", planStr)
+
+		// Verify query returns empty result (no crash).
+		tk.MustQuery("select /*+ pk_filter(t_zero, idx_b) */ * from t_zero where b = 999 order by a limit 10").Check(testkit.Rows())
+	})
+}
+
+func TestGeneratePKFilterPKNotInSelect(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_nosel")
+		tk.MustExec("create table t_nosel(a int primary key clustered, b int, c int, key idx_b(b))")
+		tk.MustExec("insert into t_nosel values(1,1,10),(2,2,20),(3,3,30),(4,1,40),(5,2,50)")
+
+		// SELECT b, c — PK column 'a' is not in the select list.
+		// The PK filter rule should re-add 'a' to the schema for the ge/le conditions.
+		// Verify query returns correct results (PK filter correctly handles pruned PK col).
+		tk.MustQuery("select /*+ pk_filter(t_nosel, idx_b) */ b, c from t_nosel where b = 1 order by a limit 10").Check(testkit.Rows("1 10", "1 40"))
+	})
+}
+
+func TestGeneratePKFilterInvalidIndex(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_inv")
+		tk.MustExec("create table t_inv(a int primary key clustered, b int, key idx_b(b))")
+		tk.MustExec("insert into t_inv values(1,1),(2,2),(3,3)")
+
+		// Invalid index name — should produce a warning.
+		tk.MustQuery("explain format='brief' select /*+ pk_filter(t_inv, idx_nonexistent) */ * from t_inv where b = 1 order by a limit 10")
+		tk.MustQuery("show warnings").CheckContain("pk_filter")
+		tk.MustQuery("show warnings").CheckContain("idx_nonexistent")
+	})
+}
+
+func TestGeneratePKFilterUnmatchedTable(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_unm")
+		tk.MustExec("create table t_unm(a int primary key clustered, b int, key idx_b(b))")
+		tk.MustExec("insert into t_unm values(1,1),(2,2),(3,3)")
+
+		// Hint references a non-existent table — should produce a warning.
+		tk.MustQuery("explain format='brief' select /*+ pk_filter(no_such_table, idx_b) */ * from t_unm where b = 1 order by a limit 10")
+		tk.MustQuery("show warnings").CheckContain("pk_filter")
+		tk.MustQuery("show warnings").CheckContain("no_such_table")
+	})
+}
+
+func TestGeneratePKFilterExplicitDB(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_edb")
+		tk.MustExec("create table t_edb(a int primary key clustered, b int, key idx_b(b))")
+		tk.MustExec("insert into t_edb values(1,1),(2,2),(3,3),(4,1),(5,2)")
+
+		// pk_filter with explicit database name — verify correct results.
+		tk.MustQuery("select /*+ pk_filter(test.t_edb, idx_b) */ * from t_edb where b = 1 order by a limit 10").Check(testkit.Rows("1 1", "4 1"))
+	})
+}
+
+func TestGeneratePKFilterWithoutLimit(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_nolimit")
+		tk.MustExec("create table t_nolimit(a int primary key clustered, b int, c int, key idx_b(b))")
+		tk.MustExec("insert into t_nolimit values(1,1,10),(2,2,20),(3,3,30),(4,1,40),(5,2,50)")
+
+		// PK filter without LIMIT — should still generate PK filter.
+		// b=1 matches rows with a=1 and a=4, so PK filter produces pk >= 1 AND pk <= 4.
+		// Verify correct results regardless of which path the optimizer picks.
+		tk.MustQuery("select /*+ pk_filter(t_nolimit, idx_b) */ * from t_nolimit where b = 1").Sort().Check(testkit.Rows("1 1 10", "4 1 40"))
+
+		// Verify the PK filter activates without LIMIT when MIN=MAX collapses to a point.
+		tk.MustExec("drop table if exists t_nolimit2")
+		tk.MustExec("create table t_nolimit2(a int primary key clustered, b int, key idx_b(b))")
+		tk.MustExec("insert into t_nolimit2 values(10,1),(20,2),(30,3)")
+		plan := tk.MustQuery("explain format='brief' select /*+ pk_filter(t_nolimit2, idx_b) */ * from t_nolimit2 where b = 1")
+		planStr := planToString(plan.Rows())
+		t.Logf("No LIMIT point PK filter plan:\n%s", planStr)
+		// b=1 matches only a=10, so MIN=MAX=10, PK range collapses to point → Point_Get.
+		require.Contains(t, planStr, "Point_Get", "expected Point_Get when PK filter collapses to single value without LIMIT")
+	})
+}
+
+func TestGeneratePKFilterSourceIndexPreserved(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_preserved")
+		tk.MustExec("create table t_preserved(a int primary key clustered, b int, c int, key idx_b(b), key idx_c(c))")
+		tk.MustExec("insert into t_preserved values(1,1,1),(2,2,2),(3,3,3),(4,1,4),(5,2,5)")
+
+		// The source index (idx_b) should still be present in access paths
+		// after PK filter generation — it should NOT be removed.
+		// Use use_index hint to force idx_b usage and verify it's still available.
+		plan := tk.MustQuery("explain format='brief' select /*+ pk_filter(t_preserved, idx_b), use_index(t_preserved, idx_b) */ * from t_preserved where b = 1")
+		planStr := planToString(plan.Rows())
+		t.Logf("Source index preserved plan:\n%s", planStr)
+		// idx_b should still be a valid access path.
+		require.Contains(t, planStr, "idx_b", "expected source index idx_b to still be in access paths")
+
+		// Verify query returns correct results.
+		tk.MustQuery("select /*+ pk_filter(t_preserved, idx_b), use_index(t_preserved, idx_b) */ * from t_preserved where b = 1").Sort().Check(testkit.Rows("1 1 1", "4 1 4"))
 	})
 }
 
