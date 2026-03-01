@@ -51,7 +51,6 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
 	github.com/docker/go-units v0.5.0
-	github.com/dolthub/swiss v0.2.1
 	github.com/emirpasic/gods v1.18.1
 	github.com/fatih/color v1.18.0
 	github.com/felixge/fgprof v0.9.3
@@ -247,7 +246,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
-	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/structtag v1.2.0
 	github.com/felixge/httpsnoop v1.0.4 // indirect
