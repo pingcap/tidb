@@ -359,6 +359,13 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
 }
 
+func TestShowStatsExtendedRemoved(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	err := tk.QueryToErr("SHOW STATS_EXTENDED")
+	require.EqualError(t, err, "Extended statistics feature has been removed")
+}
+
 func TestIssue18878(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
