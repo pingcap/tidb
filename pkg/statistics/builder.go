@@ -356,7 +356,7 @@ func calcCorrelation(sampleNum int64, corrXYSum float64) float64 {
 
 // BuildColumn builds histogram from samples for column.
 func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
-	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
+	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.EstimatedNDV(), collector.NullCount)
 }
 
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
@@ -397,7 +397,7 @@ func BuildHistAndTopN(
 		}
 	}
 	count := collector.Count
-	ndv := collector.FMSketch.NDV()
+	ndv := collector.EstimatedNDV()
 	nullCount := collector.NullCount
 	if ndv > count {
 		ndv = count

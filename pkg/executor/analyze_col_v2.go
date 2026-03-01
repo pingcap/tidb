@@ -224,6 +224,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for range l {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
+		rootRowCollector.Base().HLLSketches = append(rootRowCollector.Base().HLLSketches, statistics.NewHLLSketch())
 	}
 
 	sc := e.ctx.GetSessionVars().StmtCtx
@@ -613,6 +614,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for range l {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
+		retCollector.Base().HLLSketches = append(retCollector.Base().HLLSketches, statistics.NewHLLSketch())
 	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
@@ -744,6 +746,7 @@ workLoop:
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
 					Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
 					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+					HLLSketch: task.rootRowCollector.Base().HLLSketches[task.slicePos],
 					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 					MemSize:   collectorMemSize,
 				}
@@ -804,6 +807,7 @@ workLoop:
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
 					Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
 					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+					HLLSketch: task.rootRowCollector.Base().HLLSketches[task.slicePos],
 					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 					MemSize:   collectorMemSize,
 				}

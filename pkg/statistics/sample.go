@@ -92,6 +92,7 @@ func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
 type SampleCollector struct {
 	FMSketch      *FMSketch
+	HLLSketch     *HLLSketch
 	CMSketch      *CMSketch
 	TopN          *TopN
 	Samples       []*SampleItem
@@ -104,12 +105,34 @@ type SampleCollector struct {
 	IsMerger      bool
 }
 
+// EstimatedNDV returns NDV from HLL when available, otherwise falls back to FM sketch.
+func (c *SampleCollector) EstimatedNDV() int64 {
+	if c == nil {
+		return 0
+	}
+	if c.HLLSketch != nil {
+		ndv := c.HLLSketch.NDV()
+		if ndv > 0 {
+			return ndv
+		}
+	}
+	if c.FMSketch != nil {
+		return c.FMSketch.NDV()
+	}
+	return 0
+}
+
 // MergeSampleCollector merges two sample collectors.
 func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc *SampleCollector) {
 	c.NullCount += rc.NullCount
 	c.Count += rc.Count
 	c.TotalSize += rc.TotalSize
 	c.FMSketch.MergeFMSketch(rc.FMSketch)
+	if c.HLLSketch == nil {
+		c.HLLSketch = rc.HLLSketch.Copy()
+	} else {
+		c.HLLSketch.MergeHLLSketch(rc.HLLSketch)
+	}
 	if rc.CMSketch != nil {
 		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
 		terror.Log(errors.Trace(err))
@@ -130,6 +153,7 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 		NullCount: c.NullCount,
 		Count:     c.Count,
 		FmSketch:  FMSketchToProto(c.FMSketch),
+		HllSketch: HLLSketchToProto(c.HLLSketch),
 		TotalSize: &c.TotalSize,
 	}
 	if c.CMSketch != nil {
@@ -150,6 +174,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 		NullCount: collector.NullCount,
 		Count:     collector.Count,
 		FMSketch:  FMSketchFromProto(collector.FmSketch),
+		HLLSketch: HLLSketchFromProto(collector.HllSketch),
 	}
 	if collector.TotalSize != nil {
 		s.TotalSize = *collector.TotalSize
@@ -175,6 +200,11 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 		c.Count++
 		if err := c.FMSketch.InsertValue(sc, d); err != nil {
 			return errors.Trace(err)
+		}
+		if c.HLLSketch != nil {
+			if err := c.HLLSketch.InsertValue(sc, d); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		if c.CMSketch != nil {
 			c.CMSketch.InsertBytes(d.GetBytes())
@@ -239,6 +269,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		collectors[i] = &SampleCollector{
 			MaxSampleSize: s.MaxSampleSize,
 			FMSketch:      NewFMSketch(int(s.MaxFMSketchSize)),
+			HLLSketch:     NewHLLSketch(),
 		}
 	}
 	if s.CMSketchDepth > 0 && s.CMSketchWidth > 0 {
