@@ -48,21 +48,20 @@ const (
 
 // MaskingPolicyInfo is the struct to store the masking policy.
 type MaskingPolicyInfo struct {
-	ID          int64               `json:"id"`
-	Name        ast.CIStr           `json:"name"`
-	SchemaName  ast.CIStr           `json:"schema_name"`
-	TableName   ast.CIStr           `json:"table_name"`
-	TableID     int64               `json:"table_id"`
-	ColumnID    int64               `json:"column_id"`
-	ColumnName  ast.CIStr           `json:"column_name"`
-	MaskingType MaskingPolicyType   `json:"masking_type,omitempty"`
-	Expression  string              `json:"expression"`
-	Status      MaskingPolicyStatus `json:"status"`
-	CreatedAt   time.Time           `json:"created_at,omitempty"`
-	CreatedBy   string              `json:"created_by,omitempty"`
-	UpdatedBy   string              `json:"updated_by,omitempty"`
-	UpdatedAt   time.Time           `json:"updated_at,omitempty"`
-	State       SchemaState         `json:"state"`
+	ID   int64     `json:"id"`
+	Name ast.CIStr `json:"name"`
+	// TableID/ColumnID are stable bindings and are the source of truth.
+	TableID     int64                        `json:"table_id"`
+	ColumnID    int64                        `json:"column_id"`
+	MaskingType MaskingPolicyType            `json:"masking_type,omitempty"`
+	Expression  string                       `json:"expression"`
+	RestrictOps ast.MaskingPolicyRestrictOps `json:"restrict_ops,omitempty"`
+	Status      MaskingPolicyStatus          `json:"status"`
+	CreatedAt   time.Time                    `json:"created_at,omitempty"`
+	CreatedBy   string                       `json:"created_by,omitempty"`
+	UpdatedBy   string                       `json:"updated_by,omitempty"`
+	UpdatedAt   time.Time                    `json:"updated_at,omitempty"`
+	State       SchemaState                  `json:"state"`
 }
 
 // Clone clones MaskingPolicyInfo.

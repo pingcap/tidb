@@ -133,13 +133,11 @@ func TestMaskingPolicy(t *testing.T) {
 	policy := &model.MaskingPolicyInfo{
 		ID:          1,
 		Name:        ast.NewCIStr("mp1"),
-		SchemaName:  ast.NewCIStr("test"),
-		TableName:   ast.NewCIStr("t"),
 		TableID:     10,
-		ColumnName:  ast.NewCIStr("c"),
 		ColumnID:    11,
 		MaskingType: model.MaskingPolicyTypeMaskFull,
 		Expression:  "mask_full(c)",
+		RestrictOps: ast.MaskingPolicyRestrictOpInsertIntoSelect | ast.MaskingPolicyRestrictOpDeleteSelect,
 		Status:      model.MaskingPolicyStatusEnabled,
 		CreatedBy:   "root@%",
 		UpdatedBy:   "root@%",
@@ -150,12 +148,15 @@ func TestMaskingPolicy(t *testing.T) {
 	require.Equal(t, policy.ID, int64(1))
 
 	err = m.CreateMaskingPolicy(policy)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.True(t, meta.ErrMaskingPolicyExists.Equal(err))
+	require.ErrorContains(t, err, "masking policy already exists")
+	require.ErrorContains(t, err, "masking policy id : 1 already exists")
 
 	_, err = m.GetMaskingPolicy(2)
 	require.Error(t, err)
 	require.True(t, meta.ErrMaskingPolicyNotExists.Equal(err))
+	require.ErrorContains(t, err, "masking policy doesn't exist")
 	require.ErrorContains(t, err, "masking policy id : 2 doesn't exist")
 
 	val, err := m.GetMaskingPolicy(1)
