@@ -95,8 +95,10 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 		return ds, false, nil
 	}
 
-	// Must have a clustered PK
-	if ds.HandleCols == nil {
+	// Must have a clustered PK (not just a rowid handle).
+	// PKIsHandle covers single-integer clustered PKs; IsCommonHandle covers
+	// composite or non-integer clustered PKs.
+	if ds.HandleCols == nil || !ds.TableInfo.HasClusteredIndex() {
 		return ds, false, nil
 	}
 
@@ -124,7 +126,7 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 		if eqConds == nil {
 			continue
 		}
-		conds, err := buildPKFilterConditions(ctx, ds, idxPath, pkCol, eqConds)
+		conds, err := buildPKFilterConditions(ctx, ds, idxPath, pkCol)
 		if err != nil {
 			return nil, false, err
 		}
@@ -319,12 +321,12 @@ func findOrCreateColumnInfo(ds *logicalop.DataSource, pkCol *expression.Column) 
 // Returns concrete constant conditions (e.g. `pk >= 5 AND pk <= 999995`) that
 // the ranger can use as access conditions. Returns nil if the subquery yields
 // no rows (the equality conditions match nothing in the index).
-func buildPKFilterConditions(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, eqConds []expression.Expression) ([]expression.Expression, error) {
+func buildPKFilterConditions(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column) ([]expression.Expression, error) {
 	sctx := ds.SCtx()
 	evalCtx := sctx.GetExprCtx()
 
 	// Evaluate MIN eagerly
-	minConst, err := buildAndEvalMinMax(ctx, ds, idxPath, pkCol, eqConds, ast.AggFuncMin)
+	minConst, err := buildAndEvalMinMax(ctx, ds, idxPath, pkCol, ast.AggFuncMin)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +335,7 @@ func buildPKFilterConditions(ctx context.Context, ds *logicalop.DataSource, idxP
 	}
 
 	// Evaluate MAX eagerly
-	maxConst, err := buildAndEvalMinMax(ctx, ds, idxPath, pkCol, eqConds, ast.AggFuncMax)
+	maxConst, err := buildAndEvalMinMax(ctx, ds, idxPath, pkCol, ast.AggFuncMax)
 	if err != nil {
 		return nil, err
 	}
@@ -363,23 +365,25 @@ func buildPKFilterConditions(ctx context.Context, ds *logicalop.DataSource, idxP
 // buildAndEvalMinMax builds a MIN or MAX sub-plan, optimizes it, evaluates it
 // eagerly, and returns the result as an expression.Constant. Returns nil if the
 // subquery produces no rows (e.g. no data matches the equality conditions).
-func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, eqConds []expression.Expression, aggFuncName string) (*expression.Constant, error) {
+func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, aggFuncName string) (*expression.Constant, error) {
 	sctx := ds.SCtx()
 
-	// Clone the DataSource with the equality conditions on PushedDownConds
+	// Clone the DataSource with all PushedDownConds
 	// (needed by stats/ranger for access condition computation).
-	clonedDS := cloneDataSourceForPKFilter(ds, idxPath, pkCol, eqConds)
+	clonedDS := cloneDataSourceForPKFilter(ds, idxPath, pkCol)
 
-	// Also create a LogicalSelection carrying the equality conditions.
+	// Also create a LogicalSelection carrying ALL the original conditions.
 	// MaxMinEliminate's checkColCanUseIndex traverses LogicalSelection nodes
 	// to collect conditions — it does NOT look at DataSource.PushedDownConds.
 	// Without a Selection, MaxMinEliminate can't verify the index can provide
 	// ordering after the equality prefix, resulting in IndexFullScan instead
-	// of IndexRangeScan.
+	// of IndexRangeScan. Including all conditions (not just index eq conditions)
+	// lets the optimizer use the PK prefix and other filters to narrow the scan.
+	allConds := ds.PushedDownConds
 	sel := logicalop.LogicalSelection{
-		Conditions: make([]expression.Expression, len(eqConds)),
+		Conditions: make([]expression.Expression, len(allConds)),
 	}.Init(sctx, ds.QueryBlockOffset())
-	copy(sel.Conditions, eqConds)
+	copy(sel.Conditions, allConds)
 	sel.SetChildren(clonedDS)
 
 	// Build the aggregation function
@@ -452,11 +456,13 @@ func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *
 	return result, nil
 }
 
-// cloneDataSourceForPKFilter creates a clone of the DataSource with only the
-// qualifying equality conditions and a specific index path. It ensures the
-// PK column is present in the schema (it may have been pruned from the
-// original DataSource if the query doesn't reference it).
-func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, eqConds []expression.Expression) *logicalop.DataSource {
+// cloneDataSourceForPKFilter creates a clone of the DataSource with all the
+// original PushedDownConds and a specific index path. It ensures the PK column
+// is present in the schema (it may have been pruned from the original
+// DataSource if the query doesn't reference it). Including all conditions
+// (not just index equality conditions) lets the subquery optimizer use
+// additional filters like PK prefix conditions to narrow the MIN/MAX scan.
+func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column) *logicalop.DataSource {
 	newDs := *ds
 	newDs.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ds.SCtx(), ds.TP(), &newDs, ds.QueryBlockOffset())
 	schema := ds.Schema().Clone()
@@ -470,14 +476,16 @@ func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPa
 	}
 	newDs.SetSchema(schema)
 
-	// Use only the equality conditions for the index.
-	// Set both PushedDownConds and AllConds: PushedDownConds is used by stats
-	// derivation to compute access conditions; AllConds is used by PruneColumns
-	// to protect columns referenced by conditions from being pruned.
-	newConds := make([]expression.Expression, len(eqConds))
-	copy(newConds, eqConds)
+	// Include ALL PushedDownConds from the original DataSource, not just the
+	// index equality conditions. This ensures the subquery benefits from all
+	// available filters (e.g. a1='abc' AND c=5 instead of just c=5), making
+	// the MIN/MAX scan much cheaper when there are additional selective
+	// conditions beyond the qualifying index columns.
+	newConds := make([]expression.Expression, len(ds.PushedDownConds))
+	copy(newConds, ds.PushedDownConds)
 	newDs.PushedDownConds = newConds
-	newDs.AllConds = newConds
+	newDs.AllConds = make([]expression.Expression, len(ds.PushedDownConds))
+	copy(newDs.AllConds, ds.PushedDownConds)
 
 	// Keep the table path and the relevant index path
 	newPaths := make([]*util.AccessPath, 0, 2)
