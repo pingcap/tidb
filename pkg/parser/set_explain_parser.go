@@ -295,13 +295,12 @@ func (p *HandParser) parseSetNamesAssignment() []*ast.VariableAssignment {
 			if _, ok := p.accept(defaultKwd); !ok {
 				// yacc: COLLATE StringName where StringName = stringLit | Identifier
 				colTok := p.peek()
-				if colTok.Tp == stringLit || (isIdentLike(colTok.Tp) && colTok.Tp != stringLit) {
-					p.next()
-					va.ExtendValue = ast.NewValueExpr(colTok.Lit, "", "")
-				} else {
+				if colTok.Tp != stringLit && !isIdentLike(colTok.Tp) {
 					p.syntaxErrorAt(colTok)
 					return nil
 				}
+				p.next()
+				va.ExtendValue = ast.NewValueExpr(colTok.Lit, "", "")
 			}
 		}
 	}
