@@ -26,7 +26,7 @@ type ModelInferenceRole string
 
 const (
 	// ModelInferenceRolePredicate indicates model inference is used in a predicate.
-	ModelInferenceRolePredicate  ModelInferenceRole = "predicate"
+	ModelInferenceRolePredicate ModelInferenceRole = "predicate"
 	// ModelInferenceRoleProjection indicates model inference is used in a projection.
 	ModelInferenceRoleProjection ModelInferenceRole = "projection"
 )

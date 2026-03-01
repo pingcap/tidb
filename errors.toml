@@ -3021,6 +3021,26 @@ error = '''
 Invalid mode set from (or by default) %s to %s for table %s
 '''
 
+["schema:8274"]
+error = '''
+Model '%-.64s.%-.64s' already exists
+'''
+
+["schema:8275"]
+error = '''
+Model '%-.64s.%-.64s' doesn't exist
+'''
+
+["schema:8276"]
+error = '''
+Model DDL is disabled. Run `SET GLOBAL tidb_enable_model_ddl='ON'` to enable the feature
+'''
+
+["schema:8277"]
+error = '''
+Model inference is disabled. Run `SET GLOBAL tidb_enable_model_inference='ON'` to enable the feature
+'''
+
 ["server:1040"]
 error = '''
 Too many connections
