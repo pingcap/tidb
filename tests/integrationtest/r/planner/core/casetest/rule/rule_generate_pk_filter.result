@@ -3,11 +3,11 @@ create table t1(a int primary key clustered, b int, c int, d int, key idx_b(b), 
 insert into t1 values(1,1,1,1),(2,2,2,2),(3,3,3,3),(4,1,4,4),(5,2,5,5);
 explain format='brief' select /*+ pk_filter(t1, idx_b) */ * from t1 where b = 1 order by a limit 10;
 id	estRows	task	access object	operator info
-Limit	1.00	root		offset:0, count:10
-└─TableReader	1.00	root		data:Limit
-  └─Limit	1.00	cop[tikv]		offset:0, count:10
-    └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__rule__rule_generate_pk_filter.t1.b, 1)
-      └─TableRangeScan	3.00	cop[tikv]	table:t1	range:[1,4], keep order:true, stats:pseudo
+Limit	10.00	root		offset:0, count:10
+└─TableReader	10.00	root		data:Limit
+  └─Limit	10.00	cop[tikv]		offset:0, count:10
+    └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__rule__rule_generate_pk_filter.t1.b, 1)
+      └─TableRangeScan	12.50	cop[tikv]	table:t1	range:[1,4], keep order:true, stats:pseudo
 explain format='brief' select /*+ pk_filter(t1, idx_bc) */ * from t1 where b = 1 and c = 2 order by a limit 10;
 id	estRows	task	access object	operator info
 IndexLookUp	1.00	root		limit embedded(offset:0, count:10)
@@ -22,22 +22,23 @@ IndexLookUp	10.00	root		limit embedded(offset:0, count:10)
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='brief' select /*+ pk_filter(t1, idx_b, idx_c) */ * from t1 where b = 1 and c = 2 order by a limit 10;
 id	estRows	task	access object	operator info
-Limit	1.00	root		offset:0, count:10
-└─Selection	1.00	root		eq(planner__core__casetest__rule__rule_generate_pk_filter.t1.b, 1), eq(planner__core__casetest__rule__rule_generate_pk_filter.t1.c, 2)
-  └─Point_Get	1.00	root	table:t1	handle:2
+IndexLookUp	1.00	root		limit embedded(offset:0, count:10)
+├─Limit(Build)	1.25	cop[tikv]		offset:0, count:10
+│ └─IndexRangeScan	1.25	cop[tikv]	table:t1, index:idx_bc(b, c)	range:[1 2,1 2], keep order:true, stats:pseudo
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='brief' select /*+ pk_filter(t1, idx_b) */ * from t1 where b = 1;
 id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__rule__rule_generate_pk_filter.t1.b, 1)
+  └─TableRangeScan	12.50	cop[tikv]	table:t1	range:[1,4], keep order:false, stats:pseudo
 drop table if exists t2;
 create table t2(a int primary key clustered, b int, c int, key idx_b(b));
 insert into t2 values(1,1,1),(2,2,2),(3,3,3);
 set tidb_opt_generate_pk_filter = ON;
 explain format='brief' select * from t2 where b = 1 order by a limit 10;
 id	estRows	task	access object	operator info
-Limit	1.00	root		offset:0, count:10
-└─Selection	1.00	root		eq(planner__core__casetest__rule__rule_generate_pk_filter.t2.b, 1)
+Limit	10.00	root		offset:0, count:10
+└─Selection	10.00	root		eq(planner__core__casetest__rule__rule_generate_pk_filter.t2.b, 1)
   └─Point_Get	1.00	root	table:t2	handle:1
 set tidb_opt_generate_pk_filter = OFF;
 drop table if exists t3;
@@ -45,10 +46,10 @@ create table t3(a int, b int, c int, d int, primary key(a,b) clustered, key idx_
 insert into t3 values(1,1,1,1),(2,2,2,2),(3,3,3,3);
 explain format='brief' select /*+ pk_filter(t3, idx_c) */ * from t3 where c = 1 order by a, b limit 10;
 id	estRows	task	access object	operator info
-Limit	1.00	root		offset:0, count:10
-└─TableReader	1.00	root		data:Limit
-  └─Limit	1.00	cop[tikv]		offset:0, count:10
-    └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__rule__rule_generate_pk_filter.t3.c, 1)
+Limit	10.00	root		offset:0, count:10
+└─TableReader	10.00	root		data:Limit
+  └─Limit	10.00	cop[tikv]		offset:0, count:10
+    └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__rule__rule_generate_pk_filter.t3.c, 1)
       └─TableRangeScan	10.00	cop[tikv]	table:t3	range:[1,1], keep order:true, stats:pseudo
 explain format='brief' select /*+ pk_filter(t3, idx_c) */ * from t3 where a = 1 and c = 1 order by b limit 10;
 id	estRows	task	access object	operator info
@@ -65,11 +66,11 @@ create table t4(a int primary key clustered, b int, key idx_b(b));
 insert into t4 values(1,1),(2,2),(3,3);
 explain format='brief' select /*+ pk_filter(t4, idx_b) */ * from t4 where b = 1 order by a limit 5;
 id	estRows	task	access object	operator info
-Limit	1.00	root		offset:0, count:5
-└─Selection	1.00	root		eq(planner__core__casetest__rule__rule_generate_pk_filter.t4.b, 1)
+Limit	5.00	root		offset:0, count:5
+└─Selection	5.00	root		eq(planner__core__casetest__rule__rule_generate_pk_filter.t4.b, 1)
   └─Point_Get	1.00	root	table:t4	handle:1
 explain format='brief' select /*+ pk_filter(t4, idx_b) */ * from t4 where b = 1 limit 5;
 id	estRows	task	access object	operator info
-Limit	1.00	root		offset:0, count:5
-└─Selection	1.00	root		eq(planner__core__casetest__rule__rule_generate_pk_filter.t4.b, 1)
+Limit	5.00	root		offset:0, count:5
+└─Selection	5.00	root		eq(planner__core__casetest__rule__rule_generate_pk_filter.t4.b, 1)
   └─Point_Get	1.00	root	table:t4	handle:1

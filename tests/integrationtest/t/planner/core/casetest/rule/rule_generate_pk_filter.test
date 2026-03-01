@@ -15,7 +15,7 @@ explain format='brief' select /*+ pk_filter(t1, idx_bc) */ * from t1 where b = 1
 # Multiple qualifying indexes
 explain format='brief' select /*+ pk_filter(t1, idx_b, idx_c) */ * from t1 where b = 1 and c = 2 order by a limit 10;
 
-# No LIMIT in query - should NOT generate filter
+# No LIMIT in query - PK filter is generated but optimizer may choose index path
 explain format='brief' select /*+ pk_filter(t1, idx_b) */ * from t1 where b = 1;
 
 # TestGeneratePKFilterSessionVar
