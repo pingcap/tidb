@@ -619,29 +619,42 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 			stmt.SelectList = &ast.SetOprSelectList{Selects: selects}
 		}
 
-		// Move ORDER BY / LIMIT from RHS to SetOprStmt if RHS is unparenthesized
+		// Move ORDER BY / LIMIT from RHS to SetOprStmt if RHS is unparenthesized.
+		// In yacc, when the last bare SELECT has ORDER BY/LIMIT, those clauses are
+		// "stolen" (SetOprStmtWoutLimitOrderBy rule) and the production ends — no
+		// more UNION/EXCEPT/INTERSECT operators can follow. We must break the loop
+		// after stealing to reject SQL like:
+		//   SELECT a UNION SELECT a ORDER BY a UNION SELECT a
+		stolen := false
 		if sel, ok := rhs.(*ast.SelectStmt); ok && !sel.IsInBraces {
 			if sel.OrderBy != nil {
 				stmt.OrderBy = sel.OrderBy
 				sel.OrderBy = nil
+				stolen = true
 			}
 			if sel.Limit != nil {
 				stmt.Limit = sel.Limit
 				sel.Limit = nil
+				stolen = true
 			}
 		} else if set, ok := rhs.(*ast.SetOprStmt); ok && !set.IsInBraces {
 			// If RHS is a SetOprStmt (parsed by recursion), it might have accumulated ORDER BY
 			if set.OrderBy != nil {
 				stmt.OrderBy = set.OrderBy
 				set.OrderBy = nil
+				stolen = true
 			}
 			if set.Limit != nil {
 				stmt.Limit = set.Limit
 				set.Limit = nil
+				stolen = true
 			}
 		}
 
 		lhs = stmt
+		if stolen {
+			break
+		}
 	}
 
 	return lhs

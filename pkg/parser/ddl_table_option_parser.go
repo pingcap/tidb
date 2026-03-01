@@ -378,10 +378,11 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		}
 	case statsSampleRate:
 		// yacc: "STATS_SAMPLE_RATE" EqOpt NumLiteral — no DEFAULT alternative
+		// NumLiteral = intLit | floatLit | decLit
 		p.next()
 		p.accept(eq)
 		opt.Tp = ast.TableOptionStatsSampleRate
-		if tok, ok := p.expectAny(intLit, decLit); ok {
+		if tok, ok := p.expectAny(intLit, floatLit, decLit); ok {
 			opt.Value = ast.NewValueExpr(tok.Item, "", "")
 		}
 	case statsColChoice:
@@ -515,7 +516,8 @@ func (p *HandParser) parseTableOptionUint(opt *ast.TableOption, optTp ast.TableO
 	p.next()
 	p.accept(eq)
 	opt.Tp = optTp
-	if tok, ok := p.expectAny(intLit, decLit); ok {
+	// yacc: LengthNum = NUM = intLit (no decLit/floatLit)
+	if tok, ok := p.expect(intLit); ok {
 		opt.UintValue = tokenItemToUint64(tok.Item)
 	}
 }

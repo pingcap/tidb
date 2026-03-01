@@ -140,18 +140,9 @@ func (p *HandParser) parseSplitRegionStmt() ast.StmtNode {
 			p.syntaxErrorAt(p.peek())
 			return nil
 		}
-		// n (int)
-		numExpr := p.parseExpression(precNone)
-		// Extract Check it is int?
-		// We can just assign to Num? No, structure expects int64 Num.
-		// We need to evaluate numExpr?
-		// Use p.toUint64Value logic but for int64?
-		// Or parse literal explicitly?
-		// Test case "REGIONS 10".
-		if valExpr, ok := numExpr.(ast.ValueExpr); ok {
-			if val, ok := valExpr.GetValue().(int64); ok {
-				stmt.SplitOpt.Num = val
-			}
+		// yacc: "REGIONS" Int64Num — only bare intLit is accepted
+		if val, ok := p.parseInt64(); ok {
+			stmt.SplitOpt.Num = val
 		}
 
 		stmt.SplitOpt.Lower = lower

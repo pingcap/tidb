@@ -372,8 +372,10 @@ func (p *HandParser) parseAnalyzeWithOpts(stmt *ast.AnalyzeTableStmt) {
 		return
 	}
 	for {
-		// Parse value (integer or decimal)
-		valTok, ok := p.expectAny(intLit, decLit)
+		// Parse value: yacc uses NUM for most options but NumLiteral for SAMPLERATE.
+		// Since the value comes before the keyword, accept the full NumLiteral set
+		// (intLit | floatLit | decLit) and let downstream validation handle type mismatches.
+		valTok, ok := p.expectAny(intLit, floatLit, decLit)
 		if !ok {
 			return
 		}

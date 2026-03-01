@@ -435,8 +435,11 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 		if p.peek().IsKeyword("RECENT") {
 			p.next()
 			stmt.ShowSlow.Tp = ast.ShowSlowRecent
-			val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
-			stmt.ShowSlow.Count = uint64(val)
+			// yacc: "RECENT" NUM — NUM = intLit
+			if tok, ok := p.expect(intLit); ok {
+				val, _ := strconv.ParseInt(tok.Lit, 10, 64)
+				stmt.ShowSlow.Count = uint64(val)
+			}
 		} else if p.peek().IsKeyword("TOP") {
 			p.next()
 			stmt.ShowSlow.Tp = ast.ShowSlowTop
@@ -447,8 +450,11 @@ func (p *HandParser) parseAdminShow(stmt *ast.AdminStmt) ast.StmtNode {
 				p.next()
 				stmt.ShowSlow.Kind = ast.ShowSlowKindAll
 			}
-			val, _ := strconv.ParseInt(p.next().Lit, 10, 64)
-			stmt.ShowSlow.Count = uint64(val)
+			// yacc: "TOP" ["INTERNAL"|"ALL"] NUM — NUM = intLit
+			if tok, ok := p.expect(intLit); ok {
+				val, _ := strconv.ParseInt(tok.Lit, 10, 64)
+				stmt.ShowSlow.Count = uint64(val)
+			}
 		}
 		return stmt
 	}

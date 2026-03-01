@@ -368,7 +368,8 @@ func (p *HandParser) parseIndexOptions() *ast.IndexOption {
 		case keyBlockSize:
 			p.next()
 			p.accept(eq)
-			if tok, ok := p.expectAny(intLit, decLit); ok {
+			// yacc: "KEY_BLOCK_SIZE" EqOpt LengthNum — LengthNum = NUM = intLit
+			if tok, ok := p.expect(intLit); ok {
 				opt.KeyBlockSize = tokenItemToUint64(tok.Item)
 			}
 		case addColumnarReplicaOnDemand:
@@ -408,7 +409,8 @@ func (p *HandParser) parseIndexOptions() *ast.IndexOption {
 				opt.SplitOpt = p.parseSplitOption()
 				p.expect(')')
 			} else {
-				if tok, ok := p.expectAny(intLit, decLit); ok {
+				// yacc: "PRE_SPLIT_REGIONS" EqOpt LengthNum — LengthNum = NUM = intLit
+				if tok, ok := p.expect(intLit); ok {
 					opt.SplitOpt = Alloc[ast.SplitOption](p.arena)
 					if val, ok := tok.Item.(int64); ok {
 						opt.SplitOpt.Num = val

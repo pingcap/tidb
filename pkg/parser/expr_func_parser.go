@@ -557,16 +557,15 @@ func (p *HandParser) parseNextLastValFuncCall(node *ast.FuncCallExpr) ast.ExprNo
 }
 
 // parseSetValFuncCall parses SETVAL(seq, value).
+// yacc: "SETVAL" '(' TableName ',' SignedNum ')' — value is a signed integer literal, not a general expression.
 func (p *HandParser) parseSetValFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
 	seqArg := p.parseSequenceTableArg()
 	if seqArg == nil {
 		return nil
 	}
 	p.expect(',')
-	valExpr := p.parseExpression(precNone)
-	if valExpr == nil {
-		return nil
-	}
+	// yacc SignedNum: Int64Num | '+' Int64Num | '-' NUM
+	valExpr := ast.NewValueExpr(p.parseIntLit(), p.charset, p.collation)
 	p.expect(')')
 	node.Args = []ast.ExprNode{seqArg, valExpr}
 	return node
@@ -696,11 +695,11 @@ func (p *HandParser) parseWeightStringFuncCall(node *ast.FuncCallExpr) ast.ExprN
 			p.next()
 			typName = "BINARY"
 		}
-		p.expect('(')
-		lenExpr := p.parseExpression(precNone)
+		// yacc: FieldLen = '(' LengthNum ')' — LengthNum = intLit only
+		fieldLen := p.parseFieldLen()
+		lenExpr := ast.NewValueExpr(int64(fieldLen), p.charset, p.collation)
 		p.expect(')')
-		p.expect(')')
-		node.Args = []ast.ExprNode{expr, ast.NewValueExpr(typName, "", ""), lenExpr}
+		node.Args = []ast.ExprNode{expr, ast.NewValueExpr(typName, p.charset, p.collation), lenExpr}
 	} else {
 		p.expect(')')
 		node.Args = []ast.ExprNode{expr}

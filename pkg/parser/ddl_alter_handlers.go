@@ -299,24 +299,11 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 			}
 			p.expect(')')
 		} else {
-			expr := p.parseExpression(precNone)
-			if expr == nil {
+			// yacc: "ALTER" ColumnKeywordOpt ColumnName "SET" "DEFAULT" SignedLiteral
+			colOpt.Expr = p.parseSignedLiteral()
+			if colOpt.Expr == nil {
 				return nil
 			}
-			// Enforce constraints: SignedLiteral
-			isValid := false
-			if _, ok := expr.(ast.ValueExpr); ok {
-				isValid = true
-			} else if u, ok := expr.(*ast.UnaryOperationExpr); ok {
-				if _, ok := u.V.(ast.ValueExpr); ok {
-					isValid = true
-				}
-			}
-			if !isValid {
-				p.error(expr.OriginTextPosition(), "Invalid default value for ALTER COLUMN")
-				return nil
-			}
-			colOpt.Expr = expr
 		}
 		spec.NewColumns = []*ast.ColumnDef{{
 			Name:    spec.OldColumnName,

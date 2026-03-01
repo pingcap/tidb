@@ -289,8 +289,11 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 	case '{': // ODBC escape sequence
 		p.next() // consume '{'
 		tok := p.next()
-		// The ODBC type identifier can be 'd', 't', 'ts', 'fn', 'date', 'time', 'timestamp', etc.
+		// The ODBC type identifier can be 'd', 't', 'ts', 'fn', etc.
 		// These may be tokenized as keywords (e.g. DATE → dateType), so we match on Lit, not Tp.
+		// yacc grammar: '{' Identifier Expression '}' — the switch checks ONLY "d", "t", "ts"
+		// (single-letter shortcuts). Full words like "date", "time", "timestamp" do NOT match
+		// and fall through to default, returning just the inner expression.
 		typ := strings.ToLower(tok.Lit)
 
 		// Parse the inner expression (not just string literal).
@@ -302,27 +305,27 @@ func (p *HandParser) parsePrefixExpr(minPrec int) ast.ExprNode {
 		p.expect('}')
 
 		switch typ {
-		case "d", "date":
+		case "d":
 			// Clear charset on the inner expression to match expected behavior.
 			if ve, ok := innerExpr.(ast.ValueExpr); ok {
 				ve.GetType().SetCharset("")
 				ve.GetType().SetCollate("")
 			}
 			return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{innerExpr}}
-		case "t", "time":
+		case "t":
 			if ve, ok := innerExpr.(ast.ValueExpr); ok {
 				ve.GetType().SetCharset("")
 				ve.GetType().SetCollate("")
 			}
 			return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TimeLiteral), Args: []ast.ExprNode{innerExpr}}
-		case "ts", "timestamp":
+		case "ts":
 			if ve, ok := innerExpr.(ast.ValueExpr); ok {
 				ve.GetType().SetCharset("")
 				ve.GetType().SetCollate("")
 			}
 			return &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.TimestampLiteral), Args: []ast.ExprNode{innerExpr}}
 		default:
-			// Unknown ODBC identifier (e.g. fn): pass through inner expression.
+			// Unknown ODBC identifier (e.g. fn, date, time, timestamp): pass through inner expression.
 			return innerExpr
 		}
 
