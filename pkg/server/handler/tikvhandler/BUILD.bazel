@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
@@ -33,6 +34,7 @@ go_library(
         "//pkg/session/sessionapi",
         "//pkg/session/txninfo",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/store/gcworker",
@@ -45,6 +47,7 @@ go_library(
         "//pkg/util/deadlockhistory",
         "//pkg/util/gcutil",
         "//pkg/util/hack",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/naming",
         "//pkg/util/sqlexec",

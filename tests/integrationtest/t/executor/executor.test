@@ -2432,21 +2432,21 @@ set tidb_track_aggregate_memory_usage = off;
 
 --replace_column 5 <execution_info> 6 <operator_info>
 --replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+explain analyze format = 'brief' select /*+ HASH_AGG() */ sum(a) from t;
 
 --replace_column 5 <execution_info> 6 <operator_info>
 --replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+explain analyze format = 'brief' select /*+ STREAM_AGG() */ sum(a) from t;
 
 set tidb_track_aggregate_memory_usage = on;
 
 --replace_column 5 <execution_info> 6 <operator_info>
 --replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+explain analyze format = 'brief' select /*+ HASH_AGG() */ sum(a) from t;
 
 --replace_column 5 <execution_info> 6 <operator_info>
 --replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+explain analyze format = 'brief' select /*+ STREAM_AGG() */ sum(a) from t;
 
 set tidb_track_aggregate_memory_usage = default;
 
@@ -2469,7 +2469,7 @@ drop table if EXISTS t1;
 create table t1(id int primary key, a int, b int, c int, d int, index t1a(a), index t1b(b));
 insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
 --replace_regex /.*time:.*loops:.*cop_task:.*/.*time:.*loops:.*cop_task:.*/ /.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*/.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*/ /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
+explain analyze format = 'brief' select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
 set @@tidb_enable_collect_execution_info=0;
 select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a;
 set @@tidb_enable_collect_execution_info=default;
@@ -2479,14 +2479,14 @@ drop table if exists t1;
 create table t1 (a int, b int, index(a));
 insert into t1 values (1,2),(2,3),(3,4);
 --replace_regex /.*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*/.*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*/ /.*time:.*loops:.*cop_task:.*/.*time:.*loops:.*cop_task:.*/ /[.0-9]+ KB/<num> KB/ /[0-9]+ Bytes/<num> Bytes/
-explain analyze select * from t1 use index(a) where a > 1;
+explain analyze format = 'brief' select * from t1 use index(a) where a > 1;
 
 # TestHashAggRuntimeStats
 drop table if exists t1;
 create table t1 (a int, b int);
 insert into t1 values (1,2),(2,3),(3,4);
 --replace_regex /.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*/.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*/ /time:.*loops:.*cop_task.*/time.*loops.*cop_task.*/ /tikv_task:.*/tikv_task:.*/ /[.0-9]+ KB/<num> KB/ /[.0-9]+ Bytes/<num> Bytes/
-explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
+explain analyze format = 'brief' SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
 
 # TestSelectForUpdate
 set global tidb_txn_mode='';

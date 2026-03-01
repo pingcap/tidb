@@ -1150,6 +1150,8 @@ const (
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 	ErrInvalidAffinityOption              = 8266
 	ErrForbiddenDDL                       = 8267
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
 	ErrModelExists                        = 8274
 	ErrModelNotExists                     = 8275
 	ErrModelDDLDisabled                   = 8276
