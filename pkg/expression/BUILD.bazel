@@ -273,6 +273,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_yalue_onnxruntime_go//:onnxruntime_go",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
