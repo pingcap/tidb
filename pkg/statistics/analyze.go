@@ -74,7 +74,7 @@ type AnalyzeResult struct {
 
 // DestroyAndPutToPool destroys the result and put it to the pool.
 func (a *AnalyzeResult) DestroyAndPutToPool() {
-	a.Fms = nil
+	a.Fms = nil // Release for GC.
 	for _, h := range a.Hist {
 		h.DestroyAndPutToPool()
 	}

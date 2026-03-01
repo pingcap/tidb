@@ -231,7 +231,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 }
 
 func (s *baseCollector) destroyAndPutToPool() {
-	s.FMSketches = nil
+	s.FMSketches = nil // Release for GC.
 }
 
 func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {

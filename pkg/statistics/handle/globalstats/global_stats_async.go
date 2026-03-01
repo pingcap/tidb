@@ -278,7 +278,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 			// Update the global NDV.
 			globalStatsNDV := min(a.globalStats.Fms[i].NDV(), a.globalStats.Count)
 			a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
-			a.globalStats.Fms[i] = nil
+			a.globalStats.Fms[i] = nil // Release for GC.
 		}
 	}
 	err = a.dealCMSketch()
