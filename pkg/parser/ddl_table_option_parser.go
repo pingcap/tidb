@@ -272,7 +272,8 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		p.accept(eq)
 		if _, ok := p.accept(null); ok {
 			opt.Tp = ast.TableOptionSecondaryEngineNull
-		} else if tok, ok := p.expectAny(stringLit, identifier); ok {
+		} else if tok, ok := p.expectIdentLike(); ok {
+			// yacc: StringName = stringLit | Identifier (includes unreserved keywords)
 			opt.Tp = ast.TableOptionSecondaryEngine
 			opt.StrValue = tok.Lit
 		}

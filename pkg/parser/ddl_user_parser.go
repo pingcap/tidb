@@ -440,7 +440,9 @@ func (p *HandParser) parseUserSpec() *ast.UserSpec {
 		spec.AuthOpt = Alloc[ast.AuthOption](p.arena)
 		if _, ok := p.accept(with); ok {
 			// IDENTIFIED WITH 'auth_plugin' [BY 'password' | AS 'hash']
-			if tok, ok := p.expectAny(stringLit, identifier); ok {
+			// yacc: AuthPlugin = StringName = stringLit | Identifier
+			// Identifier includes unreserved keywords, so use expectIdentLike.
+			if tok, ok := p.expectIdentLike(); ok {
 				spec.AuthOpt.AuthPlugin = tok.Lit
 			}
 			if _, ok := p.accept(by); ok {
