@@ -23,13 +23,17 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 	cons := p.arena.AllocConstraint()
 
 	// Optional CONSTRAINT [symbol]
+	// In yacc, ConstraintKeywordOpt returns the constraint name (or nil if no name).
+	// The Constraint rule then overwrites ConstraintElem's Name if a name was provided.
+	var hasConstraintName bool
+	var constraintName string
+	var constraintIsEmpty bool
 	if _, ok := p.accept(constraint); ok {
 		if isIdentLike(p.peek().Tp) {
 			tok := p.next()
-			cons.Name = tok.Lit
-			if tok.Lit == "" {
-				cons.IsEmptyIndex = true
-			}
+			hasConstraintName = true
+			constraintName = tok.Lit
+			constraintIsEmpty = tok.Lit == ""
 		}
 	}
 
@@ -146,6 +150,14 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 	default:
 		return nil
 	}
+
+	// In yacc, the Constraint rule overwrites ConstraintElem's Name with the
+	// CONSTRAINT name if one was explicitly provided. Apply the same override.
+	if hasConstraintName {
+		cons.Name = constraintName
+		cons.IsEmptyIndex = constraintIsEmpty
+	}
+
 	return cons
 }
 
