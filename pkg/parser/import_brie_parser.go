@@ -555,7 +555,7 @@ func brieOptionNameToType(name string) ast.BRIEOptionType {
 		return ast.BRIEOptionGCTTL
 	case "ENCRYPTION_METHOD":
 		return ast.BRIEOptionEncryptionMethod
-	case "ENCRYPTION_KEY_FILE":
+	case "ENCRYPTION_KEYFILE":
 		return ast.BRIEOptionEncryptionKeyFile
 	case "IGNORE_STATS":
 		return ast.BRIEOptionIgnoreStats
