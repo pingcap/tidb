@@ -401,7 +401,7 @@ func TestMergeIdxHist(t *testing.T) {
 			partition p0 values less than (10),
 			partition p1 values less than (20))`)
 	tk.MustExec("set @@tidb_analyze_version=2")
-	defer tk.MustExec("set @@tidb_analyze_version=1")
+	defer tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
 
 	tk.MustExec("analyze table t with 2 topn, 2 buckets")
@@ -496,7 +496,7 @@ func TestIndexFMSketch(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c)) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
@@ -707,7 +707,7 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	dom.StatsHandle().SetLease(0)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")

@@ -2734,7 +2734,7 @@ var defaultSysVars = []*SysVar{
 		s.GuaranteeLinearizability = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeVersion, Value: strconv.Itoa(vardef.DefTiDBAnalyzeVersion), Type: vardef.TypeInt, MinValue: 1, MaxValue: 2, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeVersion, Value: strconv.Itoa(vardef.DefTiDBAnalyzeVersion), Type: vardef.TypeInt, MinValue: 2, MaxValue: 2, SetSession: func(s *SessionVars, val string) error {
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, vardef.DefTiDBAnalyzeVersion)
 		return nil
 	}},

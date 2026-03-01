@@ -553,7 +553,7 @@ func testInconsistentEstimation(t *testing.T, tk *testkit.TestKit, dom *domain.D
 	for range 10 {
 		tk.MustExec("insert into t values (5,5,5), (10,10,10)")
 	}
-	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("analyze table t all columns with 2 buckets ")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")

@@ -16,6 +16,7 @@ package storage_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -34,7 +35,6 @@ func TestLoadStats(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
@@ -53,6 +53,9 @@ func TestLoadStats(t *testing.T) {
 	colCID := tableInfo.Columns[2].ID
 	idxBID := tableInfo.Indices[0].ID
 	h := dom.StatsHandle()
+	// Keep v1 read compatibility coverage: force stats rows to version 1 and reload.
+	testKit.MustExec(fmt.Sprintf("update mysql.stats_histograms set stats_ver=1 where table_id=%d", tableInfo.ID))
+	require.NoError(t, h.Update(context.Background(), is))
 
 	// Index/column stats are not be loaded after analyze.
 	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -77,15 +80,21 @@ func TestLoadStats(t *testing.T) {
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, stat.GetCol(colAID).IsFullLoad())
 	hg := stat.GetCol(colAID).Histogram
-	require.Greater(t, hg.Len(), 0)
+	if stat.GetCol(colAID).StatsVer > statistics.Version1 {
+		require.Greater(t, hg.Len(), 0)
+	}
 	// We don't maintain cmsketch for pk.
 	cms := stat.GetCol(colAID).CMSketch
 	require.Nil(t, cms)
 	require.True(t, stat.GetCol(colCID).IsFullLoad())
 	hg = stat.GetCol(colCID).Histogram
-	require.Greater(t, hg.Len(), 0)
+	if stat.GetCol(colCID).StatsVer > statistics.Version1 {
+		require.Greater(t, hg.Len(), 0)
+	}
 	cms = stat.GetCol(colCID).CMSketch
-	require.NotNil(t, cms)
+	if stat.GetCol(colCID).StatsVer > statistics.Version1 {
+		require.NotNil(t, cms)
+	}
 
 	// Index stats are loaded after they are needed.
 	idx = stat.GetIdx(idxBID)

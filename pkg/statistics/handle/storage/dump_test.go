@@ -416,7 +416,6 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int)")
 	testKit.MustExec("insert into t values (1),(3),(4),(2),(5)")
-	testKit.MustExec("set @@tidb_analyze_version=1")
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()

@@ -25,20 +25,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -143,66 +138,6 @@ func TestAnalyzeRestrict(t *testing.T) {
 	require.Nil(t, rs)
 }
 
-func TestAnalyzeParameters(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	for i := range 20 {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
-	}
-	tk.MustExec("insert into t values (19), (19), (19)")
-
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("analyze table t with 30 samples")
-	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := table.Meta()
-	tbl := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	col := tbl.GetCol(1)
-	require.Equal(t, 20, col.Len())
-	require.Len(t, col.TopN.TopN, 1)
-	width, depth := col.CMSketch.GetWidthAndDepth()
-	require.Equal(t, int32(5), depth)
-	require.Equal(t, int32(2048), width)
-
-	tk.MustExec("analyze table t with 4 buckets, 0 topn, 4 cmsketch width, 4 cmsketch depth")
-	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	col = tbl.GetCol(1)
-	require.Equal(t, 4, col.Len())
-	require.Nil(t, col.TopN)
-	width, depth = col.CMSketch.GetWidthAndDepth()
-	require.Equal(t, int32(4), depth)
-	require.Equal(t, int32(4), width)
-
-	// Test very large cmsketch
-	tk.MustExec(fmt.Sprintf("analyze table t with %d cmsketch width, %d cmsketch depth", core.CMSketchSizeLimit, 1))
-	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	col = tbl.GetCol(1)
-	require.Equal(t, 20, col.Len())
-
-	require.Len(t, col.TopN.TopN, 1)
-	width, depth = col.CMSketch.GetWidthAndDepth()
-	require.Equal(t, int32(1), depth)
-	require.Equal(t, int32(core.CMSketchSizeLimit), width)
-
-	// Test very large cmsketch
-	tk.MustExec("analyze table t with 20480 cmsketch width, 50 cmsketch depth")
-	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	col = tbl.GetCol(1)
-	require.Equal(t, 20, col.Len())
-	require.Len(t, col.TopN.TopN, 1)
-	width, depth = col.CMSketch.GetWidthAndDepth()
-	require.Equal(t, int32(50), depth)
-	require.Equal(t, int32(20480), width)
-}
-
 func TestAnalyzeTooLongColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -225,24 +160,6 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	require.Equal(t, 0, col1.Len())
 	require.Equal(t, 0, col1.TopN.Num())
 	require.Equal(t, int64(65559), col1.TotColSize)
-}
-
-func TestFailedAnalyzeRequest(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/buildStatsFromResult", `return(true)`))
-	_, err := tk.Exec("analyze table t")
-	require.NotNil(t, err)
-	require.Equal(t, "mock buildStatsFromResult error", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/buildStatsFromResult"))
 }
 
 func TestExtractTopN(t *testing.T) {
@@ -296,111 +213,6 @@ func TestExtractTopN(t *testing.T) {
 		"test_extract_topn test_extract_topn  index_b 1 8 1",
 		"test_extract_topn test_extract_topn  index_b 1 9 1",
 	))
-}
-
-func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t3, t4")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
-	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
-	tk.MustExec("insert into t1 values(1,1), (2,2), (3,3)")
-	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
-	tk.MustExec("insert into t2 values(\"111\",1), (\"222\",2), (\"333\",3)")
-	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b), key(c))")
-	tk.MustExec("insert into t3 values(1,1,1), (2,2,2), (3,3,3)")
-
-	// Version2 is tested in TestStatsVer2.
-	tk.MustExec("set@@tidb_analyze_version=1")
-	tk.MustExec("analyze table t1, t2, t3")
-
-	tk.MustQuery(`show stats_buckets where table_name in ("t1", "t2", "t3")`).Sort().Check(testkit.Rows(
-		"test t1  a 0 0 1 1 1 1 0",
-		"test t1  a 0 1 2 1 2 2 0",
-		"test t1  a 0 2 3 1 3 3 0",
-		"test t1  b 0 0 1 1 1 1 0",
-		"test t1  b 0 1 2 1 2 2 0",
-		"test t1  b 0 2 3 1 3 3 0",
-		"test t2  PRIMARY 1 0 1 1 111 111 0",
-		"test t2  PRIMARY 1 1 2 1 222 222 0",
-		"test t2  PRIMARY 1 2 3 1 333 333 0",
-		"test t2  a 0 0 1 1 111 111 0",
-		"test t2  a 0 1 2 1 222 222 0",
-		"test t2  a 0 2 3 1 333 333 0",
-		"test t2  b 0 0 1 1 1 1 0",
-		"test t2  b 0 1 2 1 2 2 0",
-		"test t2  b 0 2 3 1 3 3 0",
-		"test t3  PRIMARY 1 0 1 1 (1, 1) (1, 1) 0",
-		"test t3  PRIMARY 1 1 2 1 (2, 2) (2, 2) 0",
-		"test t3  PRIMARY 1 2 3 1 (3, 3) (3, 3) 0",
-		"test t3  a 0 0 1 1 1 1 0",
-		"test t3  a 0 1 2 1 2 2 0",
-		"test t3  a 0 2 3 1 3 3 0",
-		"test t3  b 0 0 1 1 1 1 0",
-		"test t3  b 0 1 2 1 2 2 0",
-		"test t3  b 0 2 3 1 3 3 0",
-		"test t3  c 0 0 1 1 1 1 0",
-		"test t3  c 0 1 2 1 2 2 0",
-		"test t3  c 0 2 3 1 3 3 0",
-		"test t3  c 1 0 1 1 1 1 0",
-		"test t3  c 1 1 2 1 2 2 0",
-		"test t3  c 1 2 3 1 3 3 0"))
-}
-
-func TestDefaultValForAnalyze(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the next-gen kernel does not support analyze version 1")
-	}
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version=1")
-	defer tk.MustExec("set @@tidb_analyze_version=2")
-	originalSampleSize := executor.MaxRegionSampleSize
-	// Increase MaxRegionSampleSize to ensure all samples are collected for building histogram, otherwise the test will be unstable.
-	executor.MaxRegionSampleSize = 10000
-	defer func() {
-		executor.MaxRegionSampleSize = originalSampleSize
-	}()
-	tk.MustExec("drop database if exists test_default_val_for_analyze;")
-	tk.MustExec("create database test_default_val_for_analyze;")
-	tk.MustExec("use test_default_val_for_analyze")
-
-	tk.MustExec("create table t (a int, key(a));")
-	for range 256 {
-		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
-	}
-	for i := 1; i < 4; i++ {
-		tk.MustExec("insert into t values (?)", i)
-	}
-
-	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
-	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
-
-	tk.MustQuery("select @@tidb_enable_fast_analyze").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@session.tidb_enable_fast_analyze").Check(testkit.Rows("0"))
-	tk.MustExec("analyze table t with 0 topn, 2 buckets, 10000 samples")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 512.00 root  index:IndexRangeScan",
-		"└─IndexRangeScan 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
-	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 1.25 root  index:IndexRangeScan",
-		"└─IndexRangeScan 1.25 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
-
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (a int, key(a));")
-	for range 256 {
-		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
-	}
-	for i := 1; i < 2049; i += 8 {
-		vals := make([]string, 0, 8)
-		for j := i; j < i+8; j += 1 {
-			vals = append(vals, fmt.Sprintf("(%v)", j))
-		}
-		tk.MustExec("insert into t values " + strings.Join(vals, ","))
-	}
-	tk.MustExec("analyze table t with 0 topn;")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 1.00 root  index:IndexRangeScan",
-		"└─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }
 
 func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T) {
@@ -536,30 +348,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	))
 }
 
-func TestAnalyzeIndex(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the next-gen kernel does not support analyze version 1")
-	}
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (id int, v int, primary key(id), index k(v))")
-	tk.MustExec("insert into t1(id, v) values(1, 2), (2, 2), (3, 2), (4, 2), (5, 1), (6, 3), (7, 4)")
-	tk.MustExec("set @@tidb_analyze_version=1")
-	tk.MustExec("analyze table t1 index k")
-	require.Greater(t, len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 0)
-	tk.MustExec("set @@tidb_analyze_version=default")
-	tk.MustExec("analyze table t1")
-	require.Greater(t, len(tk.MustQuery("show stats_topn where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 0)
-
-	tk.MustExec("drop stats t1")
-	tk.MustExec("set @@tidb_analyze_version=1")
-	tk.MustExec("analyze table t1 index k")
-	require.Greater(t, len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 1)
-}
-
 func TestIssue20874(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -589,37 +377,6 @@ func TestIssue20874(t *testing.T) {
 		"1 1 3 0 6 2 0",
 		"1 2 2 0 6 2 0",
 	))
-}
-
-func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t0(a varchar(20), primary key(a) clustered)")
-	tk.MustExec("create table t1(a varchar(20), primary key(a))")
-	tk.MustExec("insert into t0 values('1111')")
-	tk.MustExec("insert into t1 values('1111')")
-	tk.MustExec("set @@session.tidb_analyze_version = 1")
-	tk.MustExec("analyze table t0 index primary")
-	tk.MustExec("analyze table t1 index primary")
-	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows(
-		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
-		"test t1  PRIMARY 1 0 1 1 1111 1111 0"))
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
-	tk.MustExec("analyze table t0")
-	tk.MustExec("analyze table t1")
-	// unique single column topN is not collected (max count = 1) #66221
-	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows())
-	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows(
-		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
-		"test t0  a 0 0 1 1 1111 1111 0",
-		"test t1  PRIMARY 1 0 1 1 1111 1111 0",
-		"test t1  a 0 0 1 1 1111 1111 0"))
 }
 
 func TestAnalyzeSamplingWorkPanic(t *testing.T) {
@@ -780,62 +537,6 @@ func TestAnalyzeSampleRateReason(t *testing.T) {
 		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"`))
 }
 
-func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int)")
-
-	// analyze version 1 doesn't support `ANALYZE COLUMNS c1, ..., cn`/`ANALYZE PREDICATE COLUMNS` currently
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	err := tk.ExecToErr("analyze table t columns a")
-	require.Equal(t, "Only the version 2 of analyze supports analyzing the specified columns", err.Error())
-	err = tk.ExecToErr("analyze table t predicate columns")
-	require.Equal(t, "Only the version 2 of analyze supports analyzing predicate columns", err.Error())
-
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	// invalid column
-	err = tk.ExecToErr("analyze table t columns c")
-	terr := errors.Cause(err).(*terror.Error)
-	require.Equal(t, errors.ErrCode(errno.ErrAnalyzeMissColumn), terr.Code())
-
-	// If no predicate column is collected, analyze predicate columns gives a warning and falls back to analyze all columns.
-	tk.MustExec("analyze table t predicate columns")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"`,
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
-	))
-
-	for _, val := range []ast.ColumnChoice{ast.ColumnList, ast.PredicateColumns} {
-		func(choice ast.ColumnChoice) {
-			tk.MustExec("set @@tidb_analyze_version = 1")
-			tk.MustExec("analyze table t")
-			tk.MustExec("set @@tidb_analyze_version = 2")
-			switch choice {
-			case ast.ColumnList:
-				tk.MustExec("analyze table t columns b")
-			case ast.PredicateColumns:
-				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
-				defer func() {
-					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
-				}()
-				tk.MustExec("select * from t where b > 1")
-				require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
-				tk.MustExec("analyze table t predicate columns")
-			}
-			tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-				`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"`,
-				"Warning 1105 Table test.t has version 1 statistics so all the columns must be analyzed to overwrite the current statistics",
-			))
-		}(val)
-	}
-}
-
 func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string, timeLimit int64) {
 	rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
 	require.Equal(t, 1, len(rows), comment)
@@ -931,79 +632,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 }
 
 func TestKillAutoAnalyze(t *testing.T) {
-	// version 1
-	testKillAutoAnalyze(t, 1)
-	// version 2
 	testKillAutoAnalyze(t, 2)
-}
-
-func TestKillAutoAnalyzeIndex(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
-	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	statistics.AutoAnalyzeMinCnt = 0
-	defer func() {
-		statistics.AutoAnalyzeMinCnt = 1000
-		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
-		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
-	}()
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("insert into t values (1,2), (3,4)")
-	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
-	is := dom.InfoSchema()
-	h := dom.StatsHandle()
-	tk.MustExec("flush stats_delta")
-	tk.MustExec("analyze table t")
-	tk.MustExec("alter table t add index idx(b)")
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	lastVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
-	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
-	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	const jobInfo = "auto analyze index idx"
-	// kill auto analyze when it is pending/running/finished
-	for _, status := range []string{"pending", "running", "finished"} {
-		func() {
-			comment := fmt.Sprintf("kill %v analyze job", status)
-			tk.MustExec("delete from mysql.analyze_jobs")
-			mockAnalyzeStatus := "github.com/pingcap/tidb/pkg/executor/mockKill" + strings.Title(status)
-			if status == "running" {
-				mockAnalyzeStatus += "AnalyzeIndexJob"
-			} else {
-				mockAnalyzeStatus += "AnalyzeJob"
-			}
-			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
-			defer func() {
-				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
-			}()
-			if status == "pending" || status == "running" {
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockSlowAnalyzeIndex", "return"))
-				defer func() {
-					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockSlowAnalyzeIndex"))
-				}()
-			}
-			require.True(t, h.HandleAutoAnalyze(), comment)
-			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
-			if status == "finished" {
-				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
-				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
-				require.Greater(t, currentVersion, lastVersion, comment)
-			} else {
-				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment, 10)
-				require.Equal(t, currentVersion, lastVersion, comment)
-			}
-		}()
-	}
 }
 
 func TestAnalyzeJob(t *testing.T) {
@@ -1521,100 +1150,6 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
-}
-
-func TestAnalyzePartitionUnderV1Dynamic(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
-	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
-	}()
-
-	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 1")
-	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
-PARTITION BY RANGE ( a ) (
-		PARTITION p0 VALUES LESS THAN (10),
-		PARTITION p1 VALUES LESS THAN (20)
-)`
-	tk.MustExec(createTable)
-	tk.MustExec("insert into t values (1,1,1,1),(2,1,2,2),(3,1,3,3),(4,1,4,4),(5,1,5,5),(6,1,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9)")
-	tk.MustExec("insert into t values (10,10,10,10),(11,11,11,11),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
-	h := dom.StatsHandle()
-	oriLease := h.Lease()
-	h.SetLease(1)
-	defer func() {
-		h.SetLease(oriLease)
-	}()
-	is := dom.InfoSchema()
-	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := table.Meta()
-	pi := tableInfo.GetPartitionInfo()
-	require.NotNil(t, pi)
-
-	// analyze partition with index and with options are allowed under dynamic V1
-	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
-	rows := tk.MustQuery("show warnings").Rows()
-	require.Len(t, rows, 0)
-	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
-	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	lastVersion := tbl.Version
-	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
-	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
-
-	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
-	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.Greater(t, tbl.Version, lastVersion)
-	require.Equal(t, 2, len(tbl.GetIdx(tableInfo.Indices[0].ID).Buckets))
-}
-
-func TestIssue35056(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
-	}
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 1")
-	createTable := `CREATE TABLE t (id int, a int, b varchar(10))
-PARTITION BY RANGE ( id ) (
-		PARTITION p0 VALUES LESS THAN (10),
-		PARTITION p1 VALUES LESS THAN (20)
-)`
-	tk.MustExec(createTable)
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
-	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(7,7,7),(9,9,9)")
-	tk.MustExec("insert into t values (11,11,11),(12,12,12),(14,14,14)")
-	h := dom.StatsHandle()
-	oriLease := h.Lease()
-	h.SetLease(1)
-	defer func() {
-		h.SetLease(oriLease)
-	}()
-	is := dom.InfoSchema()
-	h.HandleAutoAnalyze()
-	tk.MustExec("create index idxa on t (a)")
-	tk.MustExec("create index idxb on t (b)")
-	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := table.Meta()
-	pi := tableInfo.GetPartitionInfo()
-	require.NotNil(t, pi)
-	tk.MustExec("analyze table t partition p0 index idxa")
-	tk.MustExec("analyze table t partition p1 index idxb")
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("analyze table t partition p0") // no panic
 }
 
 func TestIssue35056Related(t *testing.T) {

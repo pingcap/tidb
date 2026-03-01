@@ -11,19 +11,22 @@ analyze table t index idx;
 Level	Code	Message
 Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"
 Warning	1105	The version 2 would collect all statistics not only the selected indexes
-set tidb_analyze_version=1;
+set tidb_analyze_version = 2;
 analyze table t;
 Level	Code	Message
-Warning	1105	analyzing multi-valued indexes is not supported, skip idx
-Warning	1105	analyzing multi-valued indexes is not supported, skip idx2
+Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"
 analyze table t index idx;
 Level	Code	Message
-Warning	1105	analyzing multi-valued indexes is not supported, skip idx
+Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"
+Warning	1105	The version 2 would collect all statistics not only the selected indexes
 analyze table t index a;
+Level	Code	Message
+Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"
+Warning	1105	The version 2 would collect all statistics not only the selected indexes
 analyze table t index a, idx, idx2;
 Level	Code	Message
-Warning	1105	analyzing multi-valued indexes is not supported, skip idx
-Warning	1105	analyzing multi-valued indexes is not supported, skip idx2
+Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"
+Warning	1105	The version 2 would collect all statistics not only the selected indexes
 drop table if exists t;
 create table t(
 a int, j0 json, j1 json,
@@ -694,8 +697,8 @@ alter table t add index ibb( (cast(b->'$.b' as signed array)) );
 explain format = 'brief' select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
 id	estRows	task	access object	operator info
 IndexMerge	1.00	root		type: union
-├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing]
-└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing]
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing, b:unInitialized]
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing, b:unInitialized]
 drop table if exists t, t1;
 create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as unsigned array))));
 insert into t values ('[1,2,3]', 1);

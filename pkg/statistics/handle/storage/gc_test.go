@@ -20,89 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
 )
-
-func TestGCStats(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the next-gen kernel does not support analyze version 1")
-	}
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set @@tidb_analyze_version = 1")
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t(a int, b int, index idx(a, b), index idx_a(a))")
-	testKit.MustExec("insert into t values (1,1),(2,2),(3,3)")
-	testKit.MustExec("analyze table t")
-
-	testKit.MustExec("alter table t drop index idx")
-	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("12"))
-	h := dom.StatsHandle()
-	ddlLease := time.Duration(0)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("3"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("9"))
-
-	testKit.MustExec("alter table t drop index idx_a")
-	testKit.MustExec("alter table t drop column a")
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("1"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("3"))
-
-	testKit.MustExec("drop table t")
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
-	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
-}
-
-func TestGCPartition(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the next-gen kernel does not support analyze version 1")
-	}
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set @@tidb_analyze_version = 1")
-	testkit.WithPruneMode(testKit, variable.Static, func() {
-		testKit.MustExec("use test")
-		testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
-			    partition by range (a) (
-			    partition p0 values less than (3),
-			    partition p1 values less than (6))`)
-		testKit.MustExec("insert into t values (1,2),(2,3),(3,4),(4,5),(5,6)")
-		testKit.MustExec("analyze table t")
-
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
-		h := dom.StatsHandle()
-		ddlLease := time.Duration(0)
-		testKit.MustExec("alter table t drop index idx")
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
-
-		testKit.MustExec("alter table t drop column b")
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("5"))
-
-		testKit.MustExec("drop table t")
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("2"))
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
-	})
-}
 
 func TestGCColumnStatsUsage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)

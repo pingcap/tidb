@@ -17,6 +17,7 @@ package bootstraptest
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -427,7 +428,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 
-	// We are now in version no lower than 5.x, tidb_enable_index_merge should be 1.
+	// We are now in version no lower than 5.x, tidb_analyze_version should be the default.
 	res = session.MustExecToRecodeSet(t, seCurVer, "select @@tidb_analyze_version")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
@@ -435,7 +436,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	row := chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, "1", row.GetString(0))
+	require.Equal(t, strconv.Itoa(vardef.DefTiDBAnalyzeVersion), row.GetString(0))
 }
 
 func TestIndexMergeUpgradeFrom300To540(t *testing.T) {

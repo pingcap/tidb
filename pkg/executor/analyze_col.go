@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -88,16 +87,7 @@ func isSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
 }
 
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
-	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownV2(gp)
-	}
-	return e.toV1().analyzeColumnsPushDownV1()
-}
-
-func (e *AnalyzeColumnsExec) toV1() *AnalyzeColumnsExecV1 {
-	return &AnalyzeColumnsExecV1{
-		AnalyzeColumnsExec: e,
-	}
+	return e.toV2().analyzeColumnsPushDownV2(gp)
 }
 
 func (e *AnalyzeColumnsExec) toV2() *AnalyzeColumnsExecV2 {
@@ -176,7 +166,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 	var handleCms *statistics.CMSketch
 	var handleFms *statistics.FMSketch
 	var handleTopn *statistics.TopN
-	statsVer := statistics.Version1
+	statsVer := statistics.Version2
 	if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
 		handleHist = &statistics.Histogram{}
 		handleCms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
@@ -184,6 +174,9 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		handleFms = statistics.NewFMSketch(statistics.MaxSketchSize)
 		if e.analyzePB.IdxReq.Version != nil {
 			statsVer = int(*e.analyzePB.IdxReq.Version)
+			if statsVer < statistics.Version2 {
+				statsVer = statistics.Version2
+			}
 		}
 	}
 	pkHist := &statistics.Histogram{}
@@ -241,7 +234,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		if hasPkHist(e.handleCols) {
 			respHist := statistics.HistogramFromProto(colResp.PkHist)
 			rowCount = int64(respHist.TotalRowCount())
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statsVer)
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
@@ -267,14 +260,6 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		fms = append(fms, nil)
 	}
 	for i, col := range e.colsInfo {
-		if e.StatsVersion < 2 {
-			// In analyze version 2, we don't collect TopN this way. We will collect TopN from samples in `BuildColumnHistAndTopN()` below.
-			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, nil, nil, err
-			}
-			topNs = append(topNs, collectors[i].TopN)
-		}
 		for j, s := range collectors[i].Samples {
 			s.Ordinal = j
 			tmp, err := tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
@@ -291,16 +276,12 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		var hg *statistics.Histogram
 		var err error
 		var topn *statistics.TopN
-		if e.StatsVersion < 2 {
-			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
-		} else {
-			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
-			if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, col.Offset) {
-				numTopN = 0
-			}
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, col.ID, collectors[i], &col.FieldType, true, nil)
-			topNs = append(topNs, topn)
+		numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
+		if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, col.Offset) {
+			numTopN = 0
 		}
+		hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, col.ID, collectors[i], &col.FieldType, true, nil)
+		topNs = append(topNs, topn)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -323,83 +304,6 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		topNs = append([]*statistics.TopN{handleTopn}, topNs...)
 	}
 	return hists, cms, topNs, fms, nil
-}
-
-// AnalyzeColumnsExecV1 is used to maintain v1 analyze process
-type AnalyzeColumnsExecV1 struct {
-	*AnalyzeColumnsExec
-}
-
-func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeResults {
-	var ranges []*ranger.Range
-	if hc := e.handleCols; hc != nil {
-		if hc.IsInt() {
-			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.GetFlag()))
-		} else {
-			ranges = ranger.FullNotNullRange()
-		}
-	} else {
-		ranges = ranger.FullIntRange(false)
-	}
-	hists, cms, topNs, fms, err := e.buildStats(ranges)
-	if err != nil {
-		return &statistics.AnalyzeResults{Err: err, Job: e.job}
-	}
-
-	if hasPkHist(e.handleCols) {
-		pkResult := &statistics.AnalyzeResult{
-			Hist:  hists[:1],
-			Cms:   cms[:1],
-			TopNs: topNs[:1],
-			Fms:   fms[:1],
-		}
-		restResult := &statistics.AnalyzeResult{
-			Hist:  hists[1:],
-			Cms:   cms[1:],
-			TopNs: topNs[1:],
-			Fms:   fms[1:],
-		}
-		return &statistics.AnalyzeResults{
-			TableID:  e.tableID,
-			Ars:      []*statistics.AnalyzeResult{pkResult, restResult},
-			Job:      e.job,
-			StatsVer: e.StatsVersion,
-			Count:    int64(pkResult.Hist[0].TotalRowCount()),
-			Snapshot: e.snapshot,
-		}
-	}
-	var ars []*statistics.AnalyzeResult
-	if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
-		ars = append(ars, &statistics.AnalyzeResult{
-			Hist:    []*statistics.Histogram{hists[0]},
-			Cms:     []*statistics.CMSketch{cms[0]},
-			TopNs:   []*statistics.TopN{topNs[0]},
-			Fms:     []*statistics.FMSketch{nil},
-			IsIndex: 1,
-		})
-		hists = hists[1:]
-		cms = cms[1:]
-		topNs = topNs[1:]
-	}
-	colResult := &statistics.AnalyzeResult{
-		Hist:  hists,
-		Cms:   cms,
-		TopNs: topNs,
-		Fms:   fms,
-	}
-	ars = append(ars, colResult)
-	cnt := int64(hists[0].TotalRowCount())
-	if e.StatsVersion >= statistics.Version2 {
-		cnt += int64(topNs[0].TotalCount())
-	}
-	return &statistics.AnalyzeResults{
-		TableID:  e.tableID,
-		Ars:      ars,
-		Job:      e.job,
-		StatsVer: e.StatsVersion,
-		Count:    cnt,
-		Snapshot: e.snapshot,
-	}
 }
 
 func hasPkHist(handleCols plannerutil.HandleCols) bool {
@@ -469,8 +373,7 @@ func prepareIndexes(e *AnalyzeColumnsExec, b *strings.Builder) {
 
 // prepareV2AnalyzeJobInfo prepares the job info for the analyze job.
 func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
-	// For v1, we analyze all columns in a single job, so we don't need to set the job info.
-	if e == nil || e.StatsVersion != statistics.Version2 {
+	if e == nil {
 		return
 	}
 

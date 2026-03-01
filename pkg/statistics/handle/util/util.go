@@ -128,6 +128,9 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
+	if ver < int64(vardef.DefTiDBAnalyzeVersion) {
+		ver = int64(vardef.DefTiDBAnalyzeVersion)
+	}
 	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
 	// enable historical stats

@@ -37,8 +37,6 @@ import (
 )
 
 var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
-	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
 	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
 }
 
@@ -86,8 +84,12 @@ func RunAnalyzeStmt(
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
 	autoAnalyzeProcID := statsHandle.AutoAnalyzeProcID()
+	analyzeVerOpt, ok := execOptionForAnalyze[statsVer]
+	if !ok {
+		analyzeVerOpt = sqlexec.ExecOptionAnalyzeVer2
+	}
 	optFuncs := []sqlexec.OptionFuncAlias{
-		execOptionForAnalyze[statsVer],
+		analyzeVerOpt,
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
 		sqlexec.GetPartitionPruneModeOption(pruneMode),
 		sqlexec.ExecOptionUseCurSession,
