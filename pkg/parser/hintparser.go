@@ -254,7 +254,7 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 	case hintAggToCop, hintReadConsistentReplica, hintIgnorePlanCache,
 		hintHashAgg, hintMpp1PhaseAgg, hintMpp2PhaseAgg,
 		hintStreamAgg,
-		hintLimitToCop:
+		hintLimitToCop, hintNoIndexMerge:
 		if hp.peek().tp == '(' {
 			return hp.parseNullaryWithParens(name)
 		}
@@ -268,8 +268,7 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 		hintInlJoin, hintInlHashJoin, hintInlMergeJoin,
 		hintIndexJoin, hintNoIndexJoin,
 		hintIndexHashJoin, hintNoIndexHashJoin,
-		hintIndexMergeJoin, hintNoIndexMergeJoin,
-		hintIndexMerge, hintNoIndexMerge:
+		hintIndexMergeJoin, hintNoIndexMergeJoin:
 		return hp.parseTableLevelHint(name)
 
 	// ---- Join-order hints: unsupported MySQL hints ----
@@ -347,7 +346,7 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 
 	// ---- Unsupported MySQL hints (just emit a warning) ----
 	case hintBKA, hintNoBKA, hintBNL, hintNoBNL,
-		hintNoMerge,
+		hintNoMerge, hintIndexMerge,
 		hintMRR, hintNoMRR, hintNoICP,
 		hintNoRangeOptimization, hintSkipScan, hintNoSkipScan,
 		hintSemijoin, hintNoSemijoin:

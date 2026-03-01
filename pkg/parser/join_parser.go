@@ -21,7 +21,7 @@ import (
 
 // parseTableRefs parses the FROM clause table references.
 func (p *HandParser) parseTableRefs() *ast.TableRefsClause {
-	res := p.parseCommaJoin()
+	res, _ := p.parseCommaJoin()
 	if res == nil {
 		return nil
 	}
@@ -32,10 +32,11 @@ func (p *HandParser) parseTableRefs() *ast.TableRefsClause {
 
 // parseCommaJoin parses table references separated by commas (lowest precedence).
 // Expected structure for `t, v`: Join{ Left: Join{Left:t, Right:nil}, Right: v, Tp: CrossJoin }
-func (p *HandParser) parseCommaJoin() *ast.Join {
+// Returns the parsed join and whether commas were found (multi-table reference).
+func (p *HandParser) parseCommaJoin() (*ast.Join, bool) {
 	res := p.parseJoin()
 	if res == nil {
-		return nil
+		return nil, false
 	}
 
 	// Base case: return as a Join.
@@ -47,13 +48,15 @@ func (p *HandParser) parseCommaJoin() *ast.Join {
 		innerJoin.Left = res
 	}
 
+	hasComma := false
 	for {
 		if _, ok := p.accept(','); !ok {
 			break
 		}
+		hasComma = true
 		right := p.parseJoin()
 		if right == nil {
-			return nil
+			return nil, false
 		}
 
 		// Comma join ALWAYS nests the previous ref (even if it's already a Join).
@@ -63,7 +66,7 @@ func (p *HandParser) parseCommaJoin() *ast.Join {
 		newJoin.Tp = ast.CrossJoin
 		innerJoin = newJoin
 	}
-	return innerJoin
+	return innerJoin, hasComma
 }
 
 // parseJoin parses table references with keyword joins (middle precedence).
@@ -488,7 +491,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			// In the yacc grammar, (table_refs) is a TableRef that is
 			// NOT followed by an alias clause (unlike derived tables).
 			// Return directly without falling through to alias parsing.
-			join := p.parseCommaJoin()
+			join, _ := p.parseCommaJoin()
 			if join == nil {
 				return nil
 			}

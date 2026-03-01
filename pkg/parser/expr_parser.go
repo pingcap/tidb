@@ -40,6 +40,12 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 	// so it cannot be followed by another IS. IS NULL is at BoolPri level
 	// and chains freely (e.g. "a IS NULL IS NULL IS NOT NULL").
 	var noMoreIS bool
+	// noMorePredicate prevents predicate chaining (e.g. "a LIKE 'b' LIKE 'c'").
+	// In yacc, PredicateExpr always has BitExpr on the left side, so the result
+	// of one predicate (a PredicateExpr) cannot be the left operand of another.
+	// JSON extract (-> / ->>) is exempt: it's at SimpleExpr level in yacc and
+	// its result can flow up to BitExpr, making "a->'$.x' LIKE '%y'" valid.
+	var noMorePredicate bool
 	for {
 		tok := p.peek()
 		if tok.Tp == EOF {
@@ -50,7 +56,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 		switch tok.Tp {
 		case not:
 			// "NOT IN", "NOT LIKE", "NOT BETWEEN", "NOT REGEXP/RLIKE"
-			if minPrec > precPredicate {
+			if noMorePredicate || minPrec > precPredicate {
 				return left
 			}
 			// Only treat NOT as infix if followed by IN/LIKE/ILIKE/BETWEEN/REGEXP/RLIKE
@@ -73,20 +79,22 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			if left == nil {
 				return nil
 			}
+			noMorePredicate = true
 			continue
 
 		case in:
-			if minPrec > precPredicate {
+			if noMorePredicate || minPrec > precPredicate {
 				return left
 			}
 			left = p.parseInExpr(left, false)
 			if left == nil {
 				return nil
 			}
+			noMorePredicate = true
 			continue
 
 		case like, ilike:
-			if minPrec > precPredicate {
+			if noMorePredicate || minPrec > precPredicate {
 				return left
 			}
 			isNotLike := (tok.Tp == like)
@@ -94,26 +102,29 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			if left == nil {
 				return nil
 			}
+			noMorePredicate = true
 			continue
 
 		case between:
-			if minPrec > precPredicate {
+			if noMorePredicate || minPrec > precPredicate {
 				return left
 			}
 			left = p.parseBetweenExpr(left, false)
 			if left == nil {
 				return nil
 			}
+			noMorePredicate = true
 			continue
 
 		case regexpKwd, rlike:
-			if minPrec > precPredicate {
+			if noMorePredicate || minPrec > precPredicate {
 				return left
 			}
 			left = p.parseRegexpExpr(left, false)
 			if left == nil {
 				return nil
 			}
+			noMorePredicate = true
 			continue
 
 		case is:
@@ -149,7 +160,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			continue
 
 		case jss, juss: // -> or ->> (JSON extract / unquote+extract)
-			if minPrec > precPredicate {
+			if noMorePredicate || minPrec > precPredicate {
 				return left
 			}
 			left = p.parseJSONExtract(left, tok.Tp == juss)
@@ -159,7 +170,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			continue
 
 		case memberof: // MEMBER OF (expr) - lexer merges MEMBER+OF into single token
-			if minPrec > precPredicate {
+			if noMorePredicate || minPrec > precPredicate {
 				return left
 			}
 			p.next() // consume MEMBEROF token
@@ -181,6 +192,7 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 				Args:   []ast.ExprNode{left, arg},
 			}
 			left = node
+			noMorePredicate = true
 			continue
 		}
 

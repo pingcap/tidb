@@ -323,8 +323,15 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 		stmt.IgnoreErr = true
 	}
 
-	// Table reference
-	stmt.TableRefs = p.parseTableRefs()
+	// Table reference — use parseCommaJoin directly to detect multi-table (comma-separated).
+	// In the yacc grammar, only comma-separated table references trigger the multi-table path
+	// (which disallows ORDER BY and LIMIT). JOINed tables go through the single-table path.
+	joinNode, hasComma := p.parseCommaJoin()
+	if joinNode != nil {
+		clause := Alloc[ast.TableRefsClause](p.arena)
+		clause.TableRefs = joinNode
+		stmt.TableRefs = clause
+	}
 
 	// SET
 	p.expect(set)
@@ -344,16 +351,10 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 		stmt.Where = p.parseExpression(precNone)
 	}
 
-	// [ORDER BY] and [LIMIT]. Multi-table UPDATE does not support them.
-	isMultiTable := false
-	if stmt.TableRefs != nil && stmt.TableRefs.TableRefs != nil {
-		if stmt.TableRefs.TableRefs.Right != nil {
-			isMultiTable = true
-		}
-	}
-	// Propagate multipleTable flag to the AST node so downstream consumers
-	// (planner, executor) can distinguish single-table vs multi-table updates.
-	stmt.MultipleTable = isMultiTable
+	// [ORDER BY] and [LIMIT]. Only comma-separated multi-table UPDATE rejects them.
+	// In the yacc grammar, the single-table path (TableRef, which includes JOINs)
+	// allows ORDER BY and LIMIT, while the multi-table path (TableRefs with commas) does not.
+	isMultiTable := hasComma
 
 	if p.peek().Tp == order {
 		if isMultiTable {
