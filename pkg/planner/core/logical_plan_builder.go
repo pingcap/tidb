@@ -955,7 +955,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 			if con, ok := item.(*expression.Constant); ok {
 				canEval := expression.ConstExprConsiderPlanCache(con, useCache)
 				needSkipCache := false
-				if !canEval && useCache && con.ConstLevel() == expression.ConstOnlyInContext {
+				if !canEval && useCache {
 					canEval = true
 					needSkipCache = true
 				}
