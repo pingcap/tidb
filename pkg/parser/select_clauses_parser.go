@@ -453,6 +453,7 @@ func (p *HandParser) maybeParseUnion(first ast.ResultSetNode) ast.ResultSetNode 
 // parseSetOprRest continues parsing set operators with precedence >= minPrec.
 // Precedence: UNION/EXCEPT = 1, INTERSECT = 2.
 func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.ResultSetNode {
+	var lastRhs ast.ResultSetNode
 	for {
 		opType := p.peekSetOprType()
 		if opType == nil {
@@ -619,41 +620,39 @@ func (p *HandParser) parseSetOprRest(lhs ast.ResultSetNode, minPrec int) ast.Res
 			stmt.SelectList = &ast.SetOprSelectList{Selects: selects}
 		}
 
-		// Move ORDER BY / LIMIT from RHS to SetOprStmt if RHS is unparenthesized.
-		// In yacc, when the last bare SELECT has ORDER BY/LIMIT, those clauses are
-		// "stolen" (SetOprStmtWoutLimitOrderBy rule) and the production ends — no
-		// more UNION/EXCEPT/INTERSECT operators can follow. We must break the loop
-		// after stealing to reject SQL like:
-		//   SELECT a UNION SELECT a ORDER BY a UNION SELECT a
-		stolen := false
-		if sel, ok := rhs.(*ast.SelectStmt); ok && !sel.IsInBraces {
+		lhs = stmt
+		lastRhs = rhs
+	}
+
+	// After the loop, steal ORDER BY / LIMIT from the LAST RHS only.
+	// In yacc, SetOprStmtWoutLimitOrderBy is:
+	//   SetOprClauseList SetOpr SelectStmt
+	// where only the final SelectStmt's ORDER BY/LIMIT are "stolen" to the SetOprStmt
+	// level. Intermediate SELECTs in SetOprClauseList keep their ORDER BY/LIMIT
+	// (the planner rejects them via checkSetOprSelectList → ErrWrongUsage).
+	//
+	// We steal from lastRhs (the original RHS node before flattening) rather than
+	// from the last element of Selects, because flattening may have decomposed a
+	// SetOprStmt into its children — the OrderBy/Limit stay on the original object.
+	if stmt, ok := lhs.(*ast.SetOprStmt); ok && lastRhs != nil {
+		if sel, ok := lastRhs.(*ast.SelectStmt); ok && !sel.IsInBraces {
 			if sel.OrderBy != nil {
 				stmt.OrderBy = sel.OrderBy
 				sel.OrderBy = nil
-				stolen = true
 			}
 			if sel.Limit != nil {
 				stmt.Limit = sel.Limit
 				sel.Limit = nil
-				stolen = true
 			}
-		} else if set, ok := rhs.(*ast.SetOprStmt); ok && !set.IsInBraces {
-			// If RHS is a SetOprStmt (parsed by recursion), it might have accumulated ORDER BY
+		} else if set, ok := lastRhs.(*ast.SetOprStmt); ok && !set.IsInBraces {
 			if set.OrderBy != nil {
 				stmt.OrderBy = set.OrderBy
 				set.OrderBy = nil
-				stolen = true
 			}
 			if set.Limit != nil {
 				stmt.Limit = set.Limit
 				set.Limit = nil
-				stolen = true
 			}
-		}
-
-		lhs = stmt
-		if stolen {
-			break
 		}
 	}
 
