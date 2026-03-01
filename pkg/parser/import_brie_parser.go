@@ -493,13 +493,13 @@ func (p *HandParser) parseShowBackupLogsStmt() ast.StmtNode {
 	return nil
 }
 
-// parseBRIEMetadataStmt parses: [FROM 'path'] for SHOW BACKUP [LOGS] METADATA.
+// parseBRIEMetadataStmt parses: FROM 'path' for SHOW BACKUP [LOGS] METADATA.
+// yacc: "SHOW" "BACKUP" ["LOGS"] "METADATA" "FROM" stringLit — FROM is required.
 func (p *HandParser) parseBRIEMetadataStmt(kind ast.BRIEKind) ast.StmtNode {
 	stmt := &ast.BRIEStmt{Kind: kind}
-	if _, ok := p.accept(from); ok {
-		if tok, ok := p.expect(stringLit); ok {
-			stmt.Storage = tok.Lit
-		}
+	p.expect(from)
+	if tok, ok := p.expect(stringLit); ok {
+		stmt.Storage = tok.Lit
 	}
 	return stmt
 }

@@ -146,24 +146,18 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeMemory)
 			case "BLOCK":
 				p.next()
-				if p.peek().IsKeyword("IO") {
-					p.next()
-				}
+				p.expect(io)
 				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeBlockIo)
 			case "CONTEXT":
 				p.next()
-				if p.peek().IsKeyword("SWITCHES") {
-					p.next()
-				}
+				p.expect(switchesSym)
 				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeContextSwitch)
 			case "IPC":
 				p.next()
 				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypeIpc)
 			case "PAGE":
 				p.next()
-				if p.peek().IsKeyword("FAULTS") {
-					p.next()
-				}
+				p.expect(faultsSym)
 				stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, ast.ProfileTypePageFaults)
 			case "SWAPS":
 				p.next()

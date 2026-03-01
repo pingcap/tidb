@@ -46,9 +46,13 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 			opt.StrValue = tok.Lit
 		}
 	case defaultKwd:
-		// DEFAULT [CHARACTER SET | CHARSET | COLLATE] = value
-		// The Restore for CHARACTER SET and COLLATE already emits "DEFAULT " prefix,
-		// so we just consume the DEFAULT keyword and delegate to the inner option.
+		// yacc DefaultKwdOpt: DEFAULT is only valid before CharsetKw, COLLATE,
+		// ENCRYPTION, or PLACEMENT POLICY.
+		next := p.peekN(1).Tp
+		if next != charsetKwd && next != character && next != charType &&
+			next != collate && next != encryption && next != placement {
+			return nil
+		}
 		p.next()
 		return p.parseTableOption()
 	case engine:
@@ -163,13 +167,19 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 	case placement:
 		p.next()
 		p.accept(policy)
-		p.accept(eq)
 		opt.Tp = ast.TableOptionPlacementPolicy
-		// Value can be identifier, string literal, or DEFAULT keyword
-		if tok, ok := p.acceptStringName(); ok {
-			opt.StrValue = tok.Lit
-		} else if _, ok := p.accept(defaultKwd); ok {
+		// yacc: PLACEMENT POLICY SET DEFAULT | PLACEMENT POLICY EqOpt (stringLit | PolicyName | DEFAULT)
+		if p.peek().Tp == set && p.peekN(1).Tp == defaultKwd {
+			p.next() // SET
+			p.next() // DEFAULT
 			opt.StrValue = "DEFAULT"
+		} else {
+			p.accept(eq)
+			if _, ok := p.accept(defaultKwd); ok {
+				opt.StrValue = "DEFAULT"
+			} else if tok, ok := p.acceptStringName(); ok {
+				opt.StrValue = tok.Lit
+			}
 		}
 
 	case checksum, tableChecksum:

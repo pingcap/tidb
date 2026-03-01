@@ -248,15 +248,16 @@ func (p *HandParser) parseValueList(isReplace, enforceRow bool) [][]ast.ExprNode
 
 	var lists [][]ast.ExprNode
 	for {
-		// (val1, val2, ...) || ROW(val1, val2, ...)
-		if _, ok := p.accept(row); ok { //revive:disable-line
-			// consume ROW
-		} else if enforceRow {
-			// Report error at the current position (before consuming),
-			// matching the yacc grammar's error offset.
-			tok := p.peek()
-			p.errorNear(tok.EndOffset, tok.Offset)
-			return nil
+		// yacc: INSERT VALUES uses RowValue = '(' ValuesOpt ')' — no ROW keyword.
+		// VALUES ROW(...) statement requires ROW keyword (enforceRow=true).
+		if enforceRow {
+			if _, ok := p.accept(row); !ok { //revive:disable-line
+				// Report error at the current position (before consuming),
+				// matching the yacc grammar's error offset.
+				tok := p.peek()
+				p.errorNear(tok.EndOffset, tok.Offset)
+				return nil
+			}
 		}
 		p.expect('(')
 		list := make([]ast.ExprNode, 0)

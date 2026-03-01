@@ -283,9 +283,11 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 	}
 
 	// ALTER [COLUMN] col_name {SET DEFAULT expr | DROP DEFAULT}
+	// yacc does NOT set OldColumnName for AlterTableAlterColumn — it only
+	// stores the column name in NewColumns[0].Name.
 	p.accept(column)
-	spec.OldColumnName = p.parseColumnName()
-	if spec.OldColumnName == nil {
+	colName := p.parseColumnName()
+	if colName == nil {
 		return nil
 	}
 	if _, ok := p.accept(set); ok {
@@ -306,7 +308,7 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 			}
 		}
 		spec.NewColumns = []*ast.ColumnDef{{
-			Name:    spec.OldColumnName,
+			Name:    colName,
 			Options: []*ast.ColumnOption{colOpt},
 		}}
 	} else if _, ok := p.accept(drop); ok {
@@ -314,7 +316,7 @@ func (p *HandParser) parseAlterAlter(spec *ast.AlterTableSpec) *ast.AlterTableSp
 		spec.Tp = ast.AlterTableAlterColumn
 		// No default value options = drop default
 		spec.NewColumns = []*ast.ColumnDef{{
-			Name: spec.OldColumnName,
+			Name: colName,
 		}}
 	}
 
