@@ -262,13 +262,16 @@ func (p *HandParser) parseFrameBound() ast.FrameBound {
 			bound.Unit = unit.Unit
 		}
 	} else {
-		// expr PRECEDING/FOLLOWING
-		// The yacc parser only accepts unsigned integers for frame bounds.
-		// Reject negative numbers (e.g., RANGE -1 PRECEDING).
-		exprTok := p.peek()
-		bound.Expr = p.parseExpression(precNone)
-		if ue, ok := bound.Expr.(*ast.UnaryOperationExpr); ok && ue.Op == opcode.Minus {
-			p.errorNear(exprTok.EndOffset, exprTok.Offset)
+		// NumLiteral PRECEDING/FOLLOWING or paramMarker PRECEDING/FOLLOWING
+		// The yacc parser only accepts NumLiteral (intLit, floatLit, decLit)
+		// or paramMarker for frame bounds — NOT arbitrary expressions.
+		switch p.peek().Tp {
+		case intLit, floatLit, decLit:
+			bound.Expr = ast.NewValueExpr(p.next().Item, p.charset, p.collation)
+		case paramMarker:
+			bound.Expr = ast.NewParamMarkerExpr(p.next().Offset)
+		default:
+			p.syntaxErrorAt(p.peek())
 			return bound
 		}
 	}
