@@ -141,6 +141,8 @@ const (
 	TypeSequence = "Sequence"
 	// TypeScalarSubQuery is the type of ScalarQuery
 	TypeScalarSubQuery = "ScalarSubQuery"
+	// TypeIndexOnlyJoin is the type of IndexOnlyJoin
+	TypeIndexOnlyJoin = "IndexOnlyJoin"
 )
 
 // plan id.
@@ -207,6 +209,7 @@ const (
 	typeImportIntoID          int = 59
 	TypeScalarSubQueryID      int = 60
 	typeLocalIndexLookUpID    int = 61
+	typeIndexOnlyJoinID       int = 62
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -334,6 +337,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeImportIntoID
 	case TypeScalarSubQuery:
 		return TypeScalarSubQueryID
+	case TypeIndexOnlyJoin:
+		return typeIndexOnlyJoinID
 	}
 	// Should never reach here.
 	return 0
@@ -464,6 +469,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeImportInto
 	case TypeScalarSubQueryID:
 		return TypeScalarSubQuery
+	case typeIndexOnlyJoinID:
+		return TypeIndexOnlyJoin
 	}
 
 	// Should never reach here.

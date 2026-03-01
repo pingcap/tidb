@@ -38,6 +38,7 @@ go_library(
         "grant.go",
         "import_into.go",
         "index_merge_reader.go",
+        "index_only_join.go",
         "infoschema_reader.go",
         "insert.go",
         "insert_common.go",
