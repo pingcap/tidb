@@ -90,6 +90,11 @@ func isIdentLike(tp int) bool {
 	if tp >= builtinApproxCountDistinct && tp <= builtinVarSamp {
 		return false
 	}
+	// The 'invalid' token (e.g. unterminated backtick) is a lexical error,
+	// not a valid identifier or keyword.
+	if tp == invalid {
+		return false
+	}
 	if tp == identifier || tp == stringLit {
 		return true
 	}

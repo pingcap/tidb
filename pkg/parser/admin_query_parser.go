@@ -186,14 +186,15 @@ func (p *HandParser) parsePlanReplayerDump(stmt *ast.PlanReplayerStmt) ast.StmtN
 	// Capture start offset for nested statement text
 	start := p.peek().Offset
 	nested := p.parseStatement()
+	if nested == nil {
+		p.syntaxErrorAt(p.peek())
+		return nil
+	}
 	// Capture end offset
 	end := p.peek().Offset
-	// If the parser didn't advance (nil stmt), start=end is fine.
 	// If a semicolon follows, it's not consumed yet, so offset points to it (or EOF).
 	// This covers the statement text.
-	if nested != nil {
-		nested.SetText(p.connectionEncoding, p.src[start:end])
-	}
+	nested.SetText(p.connectionEncoding, p.src[start:end])
 
 	if plan, ok := nested.(*ast.PlanReplayerStmt); ok {
 		// If the nested statement is a SLOW QUERY container (Stmt==nil, no Load/Capture/Remove),
