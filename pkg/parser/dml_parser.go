@@ -121,8 +121,8 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			// Empty column list: INSERT INTO foo () VALUES ()
 			p.next() // consume ')'
 			stmt.Columns = make([]*ast.ColumnName, 0)
-		} else if p.peek().Tp == selectKwd || p.peek().Tp == with {
-			// Subquery in parens: INSERT INTO t1 (SELECT ...) or (WITH cte AS (...) SELECT ...).
+		} else if p.peek().Tp == selectKwd || p.peek().Tp == with || p.peek().Tp == tableKwd || p.peek().Tp == values {
+			// Subquery in parens: INSERT INTO t1 (SELECT ...), (WITH ...), (TABLE t2), (VALUES ROW(...)).
 			subStartOff := p.peek().Offset
 			sub := p.parseSubquery()
 			if sub != nil {
@@ -363,13 +363,13 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 		stmt.Order = p.parseOrderByClause()
 	}
 
-	// [LIMIT]
+	// [LIMIT] — yacc LimitClause: simple LIMIT count only (no offset, no FETCH).
 	if p.peek().Tp == limit {
 		if isMultiTable {
 			p.errs = append(p.errs, ErrWrongUsage.GenWithStackByArgs("UPDATE", "LIMIT"))
 			return nil
 		}
-		stmt.Limit = p.parseLimitClause()
+		stmt.Limit = p.parseLimitClauseSimple()
 	}
 
 	return stmt
@@ -535,7 +535,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 		}
 
 		if p.peek().Tp == limit {
-			stmt.Limit = p.parseLimitClause()
+			stmt.Limit = p.parseLimitClauseSimple()
 		}
 	}
 

@@ -50,8 +50,8 @@ const (
 	precMulDiv     = 11 // *, /, DIV, MOD, %
 	precBitXor     = 12 // ^
 	precUnary      = 13 // - (unary), ~ (bit inversion), ! (not)
-	precCollate    = 14 // COLLATE
-	precConcat     = 15 // || (PIPES_AS_CONCAT)
+	precConcat     = 14 // || (PIPES_AS_CONCAT) — yacc: pipes is at low precedence
+	precCollate    = 15 // COLLATE — yacc: %right collate is above pipes
 )
 
 // tokenPrecedence returns the infix precedence for the given token.

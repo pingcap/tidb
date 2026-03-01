@@ -166,18 +166,12 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			if _, ok := p.expect('('); !ok {
 				return nil
 			}
-			// Parse the array argument as SimpleExpr: prefix + JSON extract chains.
-			// Do NOT use parseExpression — MySQL grammar restricts MEMBER OF arg to SimpleExpr.
-			arg := p.parsePrefixExpr(0)
+			// Parse the array argument at SimpleExpr level (precUnary matches yacc SimpleExpr).
+			// Do NOT use parseExpression(precNone) — MySQL grammar restricts MEMBER OF arg to SimpleExpr.
+			// parseExpression(precUnary) handles prefix, COLLATE, pipes-concat, and JSON extract chains.
+			arg := p.parseExpression(precUnary)
 			if arg == nil {
 				return nil
-			}
-			// Allow -> and ->> JSON extract chains on the simple expr.
-			for p.peek().Tp == jss || p.peek().Tp == juss {
-				arg = p.parseJSONExtract(arg, p.peek().Tp == juss)
-				if arg == nil {
-					return nil
-				}
 			}
 			if _, ok := p.expect(')'); !ok {
 				return nil
@@ -534,23 +528,10 @@ func (p *HandParser) parseColumnRef(first Token) ast.ExprNode {
 }
 
 // parseParamMarker parses a ? parameter marker.
+// The lexer already splits '?' into its own paramMarker token, so no adjacent
+// character check is needed here — matching yacc behavior which accepts `?FROM`.
 func (p *HandParser) parseParamMarker() ast.ExprNode {
 	tok := p.next()
-	// Reject ?FROM-style tokens where '?' is immediately followed by an identifier
-	// character without whitespace. MySQL's lexer treats '?' as a standalone token
-	// and rejects such sequences as syntax errors.
-	nextTok := p.peek()
-	if nextTok.Offset == tok.EndOffset && nextTok.Tp != 0 {
-		// No whitespace between '?' and the next token — check if next token
-		// is a keyword or identifier (i.e., starts with a letter or underscore).
-		if len(p.src) > tok.EndOffset {
-			ch := p.src[tok.EndOffset]
-			if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_' {
-				p.syntaxErrorAt(nextTok)
-				return nil
-			}
-		}
-	}
 	return ast.NewParamMarkerExpr(tok.Offset)
 }
 

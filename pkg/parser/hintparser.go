@@ -262,7 +262,7 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 
 	// ---- Table-level hints: NAME([qb] table, ...) ----
 	case hintHashJoin, hintHashJoinBuild, hintHashJoinProbe,
-		hintNoHashJoin, hintMerge, hintNoMerge,
+		hintNoHashJoin, hintMerge,
 		hintSMJoin, hintNoSMJoin, hintBCJoin, hintShuffleJoin,
 		hintSwapJoinInputs, hintNoSwapJoinInputs,
 		hintInlJoin, hintInlHashJoin, hintInlMergeJoin,
@@ -272,9 +272,9 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 		hintIndexMerge, hintNoIndexMerge:
 		return hp.parseTableLevelHint(name)
 
-	// ---- Join-order hints: NAME([qb] table, ...) — same parse as table-level ----
+	// ---- Join-order hints: unsupported MySQL hints ----
 	case hintJoinOrder, hintJoinPrefix, hintJoinSuffix:
-		return hp.parseTableLevelHint(name)
+		return hp.parseUnsupportedHint(name)
 
 	// ---- Index-level hints: NAME([qb] table [idx, ...]) ----
 	case hintUseIndex, hintForceIndex, hintIgnoreIndex,
@@ -337,10 +337,6 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 	case hintReadFromStorage:
 		return hp.parseStorageHint(name)
 
-	// ---- SEMIJOIN / NO_SEMIJOIN([qb] strategy, ...) ----
-	case hintSemijoin, hintNoSemijoin:
-		return hp.parseSemijoinHint(name)
-
 	// ---- SEMI_JOIN_REWRITE([qb]) ---- like nullary with parens
 	case hintSemiJoinRewrite, hintNoDecorrelate:
 		return hp.parseNullaryWithParens(name)
@@ -351,8 +347,10 @@ func (hp *hintParser) parseOneHint() []*ast.TableOptimizerHint {
 
 	// ---- Unsupported MySQL hints (just emit a warning) ----
 	case hintBKA, hintNoBKA, hintBNL, hintNoBNL,
+		hintNoMerge,
 		hintMRR, hintNoMRR, hintNoICP,
-		hintNoRangeOptimization, hintSkipScan, hintNoSkipScan:
+		hintNoRangeOptimization, hintSkipScan, hintNoSkipScan,
+		hintSemijoin, hintNoSemijoin:
 		return hp.parseUnsupportedHint(name)
 
 	default:

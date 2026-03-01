@@ -158,6 +158,17 @@ func (p *HandParser) parseLimitClause() *ast.Limit {
 	return limitNode
 }
 
+// parseLimitClauseSimple parses LIMIT count only (no offset, no FETCH).
+// This matches yacc's LimitClause used by DELETE and UPDATE, which only accepts
+// "LIMIT" LimitOption (where LimitOption = LengthNum | paramMarker).
+func (p *HandParser) parseLimitClauseSimple() *ast.Limit {
+	limitNode := Alloc[ast.Limit](p.arena)
+	p.expect(limit)
+	exprTok := p.peek()
+	limitNode.Count = p.toUint64Value(p.parseExpression(precNone), exprTok)
+	return limitNode
+}
+
 // parseSelectLock parses FOR UPDATE [NOWAIT|WAIT N|SKIP LOCKED],
 // FOR SHARE [NOWAIT|SKIP LOCKED], or LOCK IN SHARE MODE.
 func (p *HandParser) parseSelectLock() *ast.SelectLockInfo {

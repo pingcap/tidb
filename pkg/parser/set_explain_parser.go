@@ -293,8 +293,15 @@ func (p *HandParser) parseSetNamesAssignment() []*ast.VariableAssignment {
 		va.Value = ast.NewValueExpr(cs.Name, "", "")
 		if _, ok := p.accept(collate); ok {
 			if _, ok := p.accept(defaultKwd); !ok {
-				colTok := p.next()
-				va.ExtendValue = ast.NewValueExpr(colTok.Lit, "", "")
+				// yacc: COLLATE StringName where StringName = stringLit | Identifier
+				colTok := p.peek()
+				if colTok.Tp == stringLit || (isIdentLike(colTok.Tp) && colTok.Tp != stringLit) {
+					p.next()
+					va.ExtendValue = ast.NewValueExpr(colTok.Lit, "", "")
+				} else {
+					p.syntaxErrorAt(colTok)
+					return nil
+				}
 			}
 		}
 	}
@@ -402,12 +409,13 @@ func (p *HandParser) parseSetConfig() ast.StmtNode {
 	stmt := Alloc[ast.SetConfigStmt](p.arena)
 
 	// Parse Type or Instance
+	// yacc: ConfigItemName for Type is a single Identifier (no dotted names).
 	tok := p.peek()
 	if tok.Tp == stringLit {
 		stmt.Instance = tok.Lit
 		p.next()
 	} else if isIdentLike(tok.Tp) {
-		stmt.Type = strings.ToLower(p.parseVariableName())
+		stmt.Type = strings.ToLower(p.next().Lit)
 	} else {
 		p.syntaxErrorAt(tok)
 		return nil
@@ -438,10 +446,11 @@ func (p *HandParser) parseConfigName() string {
 	var sb strings.Builder
 	for {
 		tok := p.peek()
-		// Accept identifiers, unreserved keywords, and string literals.
+		// Accept identifiers and unreserved keywords only (not string literals).
+		// yacc ConfigItemName: Identifier ['.' Identifier | '-' Identifier]*
 		// Exclude operator tokens (assignmentEq=assignmentEq and above) which have
 		// Tp > 0xFF but are NOT identifiers/keywords.
-		if tok.Tp == stringLit || (tok.Tp >= identifier && tok.Tp < assignmentEq && tok.Lit != "") {
+		if tok.Tp >= identifier && tok.Tp < assignmentEq && tok.Lit != "" {
 			sb.WriteString(tok.Lit)
 			p.next()
 		} else if tok.Tp == '.' {
@@ -634,13 +643,16 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	}
 
 	// EXPLAIN [FORMAT = ...] FOR CONNECTION N
-	if _, ok := p.accept(forKwd); ok {
-		// FOR CONNECTION n
-		p.expect(connection)
-		forStmt := Alloc[ast.ExplainForStmt](p.arena)
-		forStmt.Format = stmt.Format
-		forStmt.ConnectionID = p.parseUint64()
-		return forStmt
+	// yacc: FOR CONNECTION is NOT valid with ANALYZE
+	if !stmt.Analyze {
+		if _, ok := p.accept(forKwd); ok {
+			// FOR CONNECTION n
+			p.expect(connection)
+			forStmt := Alloc[ast.ExplainForStmt](p.arena)
+			forStmt.Format = stmt.Format
+			forStmt.ConnectionID = p.parseUint64()
+			return forStmt
+		}
 	}
 
 	// EXPLAIN [ANALYZE] [FORMAT = ...] 'plan_digest' — string literal = plan digest
@@ -650,12 +662,14 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	}
 
 	// EXPLAIN SELECT|INSERT|UPDATE|DELETE|... → parse sub-statement
+	// yacc ExplainableStmt: SelectStmt, SetOprStmt, SubSelect,
+	// SelectStmtWithClause, InsertIntoStmt, ReplaceIntoStmt,
+	// UpdateStmt, DeleteFromStmt, AlterTableStmt, ImportIntoStmt
 	subStartOff := p.peek().Offset
 	var sub ast.StmtNode
 	switch p.peek().Tp {
 	case selectKwd, insert, replace, update, deleteKwd,
-		alter, create, drop, set, show, with, truncate,
-		rename, analyze, load, grant, revoke, tableKwd, values,
+		alter, with, tableKwd, values,
 		importKwd, '(':
 		sub = p.parseStatement()
 	default:

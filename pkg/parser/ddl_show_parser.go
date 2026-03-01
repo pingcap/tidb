@@ -339,7 +339,16 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 	}
 	stmt.Table = table
 
-	// Optional PARTITION (p1, p2, ...)
+	// SHOW TABLE tbl NEXT_ROW_ID — no PARTITION, no INDEX, no WHERE (yacc).
+	// Must be checked before PARTITION to match yacc grammar where NEXT_ROW_ID
+	// does not allow PartitionNameListOpt.
+	if p.peek().Tp == next_row_id {
+		p.next()
+		stmt.Tp = ast.ShowTableNextRowId
+		return stmt
+	}
+
+	// Optional PARTITION (p1, p2, ...) — only valid before REGIONS/INDEX REGIONS.
 	if _, ok := p.accept(partition); ok {
 		p.expect('(')
 		for {
@@ -356,13 +365,6 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 			}
 		}
 		p.expect(')')
-	}
-
-	// SHOW TABLE tbl NEXT_ROW_ID — no PARTITION, no INDEX, no WHERE (yacc).
-	if p.peek().Tp == next_row_id {
-		p.next()
-		stmt.Tp = ast.ShowTableNextRowId
-		return stmt
 	}
 
 	// Optional INDEX idx — only valid before REGIONS (yacc).
