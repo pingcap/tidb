@@ -952,25 +952,36 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
-			if con, ok := item.(*expression.Constant); ok && expression.ConstExprConsiderPlanCache(con, useCache) {
-				ret, _, err := expression.EvalBool(b.ctx.GetExprCtx().GetEvalCtx(), expression.CNFExprs{con}, chunk.Row{})
-				if err != nil {
-					return nil, errors.Trace(err)
+			if con, ok := item.(*expression.Constant); ok {
+				canEval := expression.ConstExprConsiderPlanCache(con, useCache)
+				needSkipCache := false
+				if !canEval && useCache && con.ConstLevel() == expression.ConstOnlyInContext {
+					canEval = true
+					needSkipCache = true
 				}
-				if ret {
-					continue
-				}
-				// If there is condition which is always false, return dual plan directly.
-				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-					dual.SetOutputNames(join.FullNames)
-					dual.SetSchema(join.FullSchema)
-				} else {
-					dual.SetOutputNames(p.OutputNames())
-					dual.SetSchema(p.Schema())
-				}
+				if canEval {
+					ret, _, err := expression.EvalBool(b.ctx.GetExprCtx().GetEvalCtx(), expression.CNFExprs{con}, chunk.Row{})
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					if needSkipCache {
+						b.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache("constant predicate elimination on parameter marker")
+					}
+					if ret {
+						continue
+					}
+					// If there is condition which is always false, return dual plan directly.
+					dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+					if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+						dual.SetOutputNames(join.FullNames)
+						dual.SetSchema(join.FullSchema)
+					} else {
+						dual.SetOutputNames(p.OutputNames())
+						dual.SetSchema(p.Schema())
+					}
 
-				return dual, nil
+					return dual, nil
+				}
 			}
 			cnfExpres = append(cnfExpres, item)
 		}
