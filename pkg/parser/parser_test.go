@@ -6909,6 +6909,21 @@ func TestQuotedSystemVariables(t *testing.T) {
 	}
 }
 
+func TestDottedSystemVariableInExpr(t *testing.T) {
+	p := parser.New()
+	// @@validate_password.length should keep the full dotted name,
+	// NOT split "validate_password" as scope and "length" as name.
+	st, err := p.ParseOneStmt("select @@validate_password.length", "", "")
+	require.NoError(t, err)
+	ss := st.(*ast.SelectStmt)
+	ve := ss.Fields.Fields[0].Expr.(*ast.VariableExpr)
+	require.Equal(t, "validate_password.length", ve.Name)
+	require.False(t, ve.IsGlobal)
+	require.False(t, ve.IsInstance)
+	require.True(t, ve.IsSystem)
+	require.False(t, ve.ExplicitScope)
+}
+
 // See https://github.com/pingcap/parser/issue/95
 func TestQuotedVariableColumnName(t *testing.T) {
 	p := parser.New()
