@@ -413,12 +413,17 @@ func (p *HandParser) parseRenameUserStmt() ast.StmtNode {
 }
 
 // parseRoleSpec parses a role name (no auth options). Yacc RoleSpec.
+// Uses parseRoleIdentity (strict: identifier | stringLit for bare names)
+// instead of parseUserIdentity (which accepts unreserved keywords bare).
 func (p *HandParser) parseRoleSpec() *ast.UserSpec {
 	spec := Alloc[ast.UserSpec](p.arena)
-	spec.User = p.parseUserIdentity()
-	if spec.User == nil {
+	role := p.parseRoleIdentity()
+	if role == nil {
 		return nil
 	}
+	spec.User = p.arena.AllocUserIdentity()
+	spec.User.Username = role.Username
+	spec.User.Hostname = role.Hostname
 	spec.IsRole = true
 	return spec
 }

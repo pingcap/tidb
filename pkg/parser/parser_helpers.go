@@ -238,15 +238,10 @@ func (p *HandParser) parseUserIdentity() *auth.UserIdentity {
 	}
 
 	// Username: identifier, string literal, or unreserved keyword.
-	// The yacc parser's Username rule uses StringName (which includes unreserved
-	// keywords) for names with @host, but RoleNameString (only identifier | stringLit)
-	// for bare names. We accept unreserved keywords when followed by '@' to match
-	// the yacc RolenameComposed/Username '@' StringName rules.
+	// The yacc parser's Username rule uses StringName (which includes Identifier =
+	// unreserved keywords) for ALL alternatives, including bare names without @host.
 	tok := p.peek()
-	if tok.Tp == identifier || tok.Tp == stringLit {
-		p.next()
-	} else if isIdentLike(tok.Tp) && p.peekN(1).Tp == singleAtIdentifier {
-		// Unreserved keyword followed by '@host' — accept as user name.
+	if isIdentLike(tok.Tp) {
 		p.next()
 	} else {
 		p.syntaxErrorAt(tok)
@@ -303,8 +298,8 @@ func (p *HandParser) parseLinesClause() *ast.LinesClause {
 
 // parseFieldsClause parses FIELDS/COLUMNS [TERMINATED BY ...] [[OPTIONALLY] ENCLOSED BY ...]
 // [ESCAPED BY ...] and, in loadDataMode, [DEFINED NULL BY ... [OPTIONALLY ENCLOSED]].
-// In loadDataMode, separator values are validated to be single-character (or "\\"),
-// producing a [parser:1083] error on violation.
+// ENCLOSED BY and ESCAPED BY values are validated to be single-character (or "\\"),
+// producing a [parser:1083] error on violation in both LOAD DATA and SELECT INTO OUTFILE.
 // Shared between LOAD DATA and SELECT INTO OUTFILE.
 func (p *HandParser) parseFieldsClause(loadDataMode bool) *ast.FieldsClause {
 	fields := Alloc[ast.FieldsClause](p.arena)
@@ -315,7 +310,7 @@ func (p *HandParser) parseFieldsClause(loadDataMode bool) *ast.FieldsClause {
 		} else if _, ok := p.accept(optionallyEnclosedBy); ok {
 			// Scanner fuses OPTIONALLY ENCLOSED BY into one token.
 			val := p.parseStringValue()
-			if loadDataMode && !p.isValidFieldSep(val) {
+			if !p.isValidFieldSep(val) {
 				return nil
 			}
 			fields.Enclosed = sptr(val)
@@ -324,7 +319,7 @@ func (p *HandParser) parseFieldsClause(loadDataMode bool) *ast.FieldsClause {
 			p.expect(enclosed)
 			p.expect(by)
 			val := p.parseStringValue()
-			if loadDataMode && !p.isValidFieldSep(val) {
+			if !p.isValidFieldSep(val) {
 				return nil
 			}
 			fields.Enclosed = sptr(val)
@@ -332,14 +327,14 @@ func (p *HandParser) parseFieldsClause(loadDataMode bool) *ast.FieldsClause {
 		} else if _, ok := p.accept(enclosed); ok {
 			p.expect(by)
 			val := p.parseStringValue()
-			if loadDataMode && !p.isValidFieldSep(val) {
+			if !p.isValidFieldSep(val) {
 				return nil
 			}
 			fields.Enclosed = sptr(val)
 		} else if _, ok := p.accept(escaped); ok {
 			p.expect(by)
 			val := p.parseStringValue()
-			if loadDataMode && !p.isValidFieldSep(val) {
+			if !p.isValidFieldSep(val) {
 				return nil
 			}
 			fields.Escaped = sptr(val)
@@ -364,8 +359,8 @@ func (p *HandParser) parseFieldsClause(loadDataMode bool) *ast.FieldsClause {
 	return fields
 }
 
-// isValidFieldSep validates a LOAD DATA field separator value.
-// Returns true if valid (single-char or "\\"), false and records [parser:1083] error otherwise.
+// isValidFieldSep validates ENCLOSED BY and ESCAPED BY values.
+// Returns true if valid (single-char, empty, or "\\"), false and records [parser:1083] error otherwise.
 func (p *HandParser) isValidFieldSep(val string) bool {
 	if val != "\\" && len(val) > 1 {
 		p.errs = append(p.errs, ErrWrongFieldTerminators.GenWithStackByArgs())
