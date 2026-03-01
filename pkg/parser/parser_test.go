@@ -6973,7 +6973,7 @@ func TestUnderscoreCharset(t *testing.T) {
 		if tt.parseFail {
 			require.EqualError(t, err, fmt.Sprintf("line 1 column %d near \"'3F')\" ", len(tt.cs)+17))
 		} else if tt.unSupport {
-			require.EqualError(t, err, ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", tt.cs).Error())
+			require.EqualError(t, err, parser.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", tt.cs).Error())
 		} else {
 			require.NoError(t, err)
 		}
@@ -7799,11 +7799,11 @@ func TestCharsetIntroducer(t *testing.T) {
 	defer charset.RemoveCharset("gbk")
 	// `_gbk` is treated as a character set.
 	_, _, err := p.Parse("select _gbk 'a';", "", "")
-	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	require.EqualError(t, err, "[parser:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
-	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	require.EqualError(t, err, "[parser:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
-	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	require.EqualError(t, err, "[parser:1115]Unsupported character introducer: 'gbk'")
 }
 
 func TestNonTransactionalDML(t *testing.T) {

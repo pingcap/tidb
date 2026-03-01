@@ -829,7 +829,7 @@ func (p *HandParser) parseCharsetIntroducer() ast.ExprNode {
 
 	co, err := charset.GetDefaultCollationLegacy(csName)
 	if err != nil {
-		p.errs = append(p.errs, ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", csName))
+		p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", csName))
 		return nil
 	}
 

@@ -287,7 +287,7 @@ func (p *HandParser) parseSetNamesAssignment() []*ast.VariableAssignment {
 		// Validate charset name at parse time (yacc CharsetName rule).
 		cs, err := charset.GetCharsetInfo(tok.Lit)
 		if err != nil {
-			p.errs = append(p.errs, ast.ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
+			p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
 			return nil
 		}
 		va.Value = ast.NewValueExpr(cs.Name, "", "")
@@ -320,7 +320,7 @@ func (p *HandParser) parseSetCharsetAssignment() []*ast.VariableAssignment {
 		// Validate charset name at parse time (yacc CharsetName rule).
 		cs, err := charset.GetCharsetInfo(tok.Lit)
 		if err != nil {
-			p.errs = append(p.errs, ast.ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
+			p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStackByArgs(tok.Lit))
 			return nil
 		}
 		va.Value = ast.NewValueExpr(cs.Name, "", "")
