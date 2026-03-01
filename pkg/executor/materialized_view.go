@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannercorebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -709,7 +711,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	var (
 		lockRefreshInfoRowDur time.Duration
 		executeDataChangesDur time.Duration
-		txnTotalDur          time.Duration
+		txnTotalDur           time.Duration
 		mviewID               int64
 	)
 
@@ -857,6 +859,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			mviewID,
 			refreshHistStatusFailed,
 			nil,
+			nil,
 			&refreshErrMsg,
 		)
 		if histErr != nil {
@@ -903,6 +906,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 
+	var refreshRows *int64
+	if s.Type == ast.RefreshMaterializedViewTypeFast {
+		refreshRows = collectFastRefreshMLogScanRows(sessVars)
+	}
+
 	nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
 		kctx,
 		scheduleEvalSctx,
@@ -943,6 +951,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		mviewID,
 		refreshHistStatusSuccess,
 		&refreshReadTSO,
+		refreshRows,
 		nil,
 	); err != nil {
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
@@ -1245,6 +1254,86 @@ func getRefreshReadTSOForSuccess(sessVars *variable.SessionVars) (uint64, error)
 	return refreshReadTSO, nil
 }
 
+func collectFastRefreshMLogScanRows(sessVars *variable.SessionVars) *int64 {
+	if sessVars == nil || sessVars.StmtCtx == nil || sessVars.StmtCtx.RuntimeStatsColl == nil {
+		return nil
+	}
+	mergePlan, ok := sessVars.StmtCtx.GetPlan().(*plannercore.MVDeltaMerge)
+	if !ok || mergePlan.Source == nil || mergePlan.MLogTableID == 0 {
+		return nil
+	}
+
+	scanPlanIDs := make(map[int]struct{})
+	collectMLogScanPlanIDs(mergePlan.Source, mergePlan.MLogTableID, scanPlanIDs)
+	if len(scanPlanIDs) != 1 {
+		return nil
+	}
+
+	runtimeStatsColl := sessVars.StmtCtx.RuntimeStatsColl
+	var totalRows int64
+	hasRuntimeStats := false
+	for scanPlanID := range scanPlanIDs {
+		hasCopStats := runtimeStatsColl.ExistsCopStats(scanPlanID)
+		if !hasCopStats && !runtimeStatsColl.ExistsRootStats(scanPlanID) {
+			continue
+		}
+		hasRuntimeStats = true
+		if hasCopStats {
+			_, copRows := runtimeStatsColl.GetCopCountAndRows(scanPlanID)
+			totalRows += copRows
+			continue
+		}
+		totalRows += runtimeStatsColl.GetPlanActRows(scanPlanID)
+	}
+	if !hasRuntimeStats {
+		return nil
+	}
+	return &totalRows
+}
+
+func collectMLogScanPlanIDs(plan plannercorebase.PhysicalPlan, mlogTableID int64, target map[int]struct{}) {
+	if plan == nil {
+		return
+	}
+	switch p := plan.(type) {
+	case *plannercore.PhysicalTableScan:
+		if p.Table != nil && p.Table.ID == mlogTableID {
+			target[p.ID()] = struct{}{}
+		}
+	case *plannercore.PhysicalIndexScan:
+		if p.Table != nil && p.Table.ID == mlogTableID {
+			target[p.ID()] = struct{}{}
+		}
+	case *plannercore.PhysicalTableReader:
+		for _, child := range p.TablePlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+	case *plannercore.PhysicalIndexReader:
+		for _, child := range p.IndexPlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+	case *plannercore.PhysicalIndexLookUpReader:
+		for _, child := range p.IndexPlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+		for _, child := range p.TablePlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+	case *plannercore.PhysicalIndexMergeReader:
+		for _, partialPlan := range p.PartialPlans {
+			for _, child := range partialPlan {
+				collectMLogScanPlanIDs(child, mlogTableID, target)
+			}
+		}
+		for _, child := range p.TablePlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+	}
+	for _, child := range plan.Children() {
+		collectMLogScanPlanIDs(child, mlogTableID, target)
+	}
+}
+
 func deriveRuntimeMaterializedScheduleNextTime(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
@@ -1435,6 +1524,7 @@ func finalizeRefreshHistWithRetry(
 	mviewID int64,
 	refreshStatus string,
 	refreshReadTSO *uint64,
+	refreshRows *int64,
 	refreshFailedReason *string,
 ) error {
 	firstErr := finalizeRefreshHist(
@@ -1444,6 +1534,7 @@ func finalizeRefreshHistWithRetry(
 		mviewID,
 		refreshStatus,
 		refreshReadTSO,
+		refreshRows,
 		refreshFailedReason,
 	)
 	if firstErr == nil {
@@ -1456,6 +1547,7 @@ func finalizeRefreshHistWithRetry(
 		mviewID,
 		refreshStatus,
 		refreshReadTSO,
+		refreshRows,
 		refreshFailedReason,
 	)
 	if retryErr == nil {
@@ -1478,6 +1570,7 @@ func finalizeRefreshHist(
 	mviewID int64,
 	refreshStatus string,
 	refreshReadTSO *uint64,
+	refreshRows *int64,
 	refreshFailedReason *string,
 ) error {
 	failpoint.Inject("mockFinalizeRefreshHistError", func(val failpoint.Value) {
@@ -1490,6 +1583,10 @@ func finalizeRefreshHist(
 	if refreshReadTSO != nil {
 		refreshReadTSOArg = *refreshReadTSO
 	}
+	var refreshRowsArg any
+	if refreshRows != nil {
+		refreshRowsArg = *refreshRows
+	}
 	var refreshFailedReasonArg any
 	if refreshFailedReason != nil {
 		refreshFailedReasonArg = *refreshFailedReason
@@ -1498,6 +1595,7 @@ func finalizeRefreshHist(
 SET
 	REFRESH_ENDTIME = NOW(6),
 	REFRESH_STATUS = %?,
+	REFRESH_ROWS = %?,
 	REFRESH_READ_TSO = %?,
 	REFRESH_FAILED_REASON = %?
 WHERE REFRESH_JOB_ID = %?
@@ -1506,6 +1604,7 @@ WHERE REFRESH_JOB_ID = %?
 		kctx,
 		updateSQL,
 		refreshStatus,
+		refreshRowsArg,
 		refreshReadTSOArg,
 		refreshFailedReasonArg,
 		refreshJobID,

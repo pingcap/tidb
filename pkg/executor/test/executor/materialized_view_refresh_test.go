@@ -78,8 +78,8 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
-	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
-		Check(testkit.Rows("success complete manually 1 1 1"))
+	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_ROWS is null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("success complete manually 1 1 1 1"))
 }
 
 func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) {
@@ -170,14 +170,14 @@ func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T)
 	tk.MustExec("insert into t values (2, 3), (3, 4)")
 	tk.MustExec("refresh materialized view mv fast")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
-	tk.MustQuery("select REFRESH_METHOD from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID desc limit 1").
-		Check(testkit.Rows("fast manually"))
+	tk.MustQuery("select REFRESH_METHOD, REFRESH_ROWS > 0 from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID desc limit 1").
+		Check(testkit.Rows("fast manually 1"))
 
 	tk.MustExec("insert into t values (4, 8)")
 	mustExecInternal(t, tk, "refresh materialized view mv fast")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1", "4 8 1"))
-	tk.MustQuery("select REFRESH_METHOD from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID desc limit 1").
-		Check(testkit.Rows("fast automatically"))
+	tk.MustQuery("select REFRESH_METHOD, REFRESH_ROWS > 0 from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID desc limit 1").
+		Check(testkit.Rows("fast automatically 1"))
 }
 
 func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testing.T) {
