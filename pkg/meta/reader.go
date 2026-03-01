@@ -48,6 +48,9 @@ type Reader interface {
 	GetPolicyID() (int64, error)
 	GetPolicy(policyID int64) (*model.PolicyInfo, error)
 	ListPolicies() ([]*model.PolicyInfo, error)
+	GetMaskingPolicyID() (int64, error)
+	GetMaskingPolicy(policyID int64) (*model.MaskingPolicyInfo, error)
+	ListMaskingPolicies() ([]*model.MaskingPolicyInfo, error)
 
 	GetRUStats() (*RUStats, error)
 	GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
