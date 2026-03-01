@@ -163,7 +163,13 @@ func (p *HandParser) parseInfixExpr(left ast.ExprNode, minPrec int) ast.ExprNode
 			// -> and ->> are at SimpleExpr level in yacc (self-recursive),
 			// so they bind as tightly as COLLATE. Use precCollate to allow
 			// them inside MEMBER OF() which parses at precUnary.
+			// In yacc, -> only applies to SimpleIdent (column reference), not
+			// arbitrary SimpleExpr. If left isn't a ColumnNameExpr, don't
+			// consume -> — return left and let the caller handle it.
 			if noMorePredicate || minPrec > precCollate {
+				return left
+			}
+			if _, ok := left.(*ast.ColumnNameExpr); !ok {
 				return left
 			}
 			left = p.parseJSONExtract(left, tok.Tp == juss)
@@ -661,10 +667,7 @@ func (p *HandParser) parseJSONExtract(left ast.ExprNode, unquote bool) ast.ExprN
 	if unquote {
 		opName = "->>"
 	}
-	if _, ok := left.(*ast.ColumnNameExpr); !ok {
-		p.error(p.peek().Offset, "%s requires a column reference on the left side", opName)
-		return nil
-	}
+	// Caller (parseInfixExpr) already verified left is ColumnNameExpr.
 	p.next() // consume -> or ->>
 	if p.peek().Tp != stringLit {
 		p.error(p.peek().Offset, "%s requires a string literal JSON path on the right side", opName)
