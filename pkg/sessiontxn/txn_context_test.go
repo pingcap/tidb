@@ -1141,3 +1141,161 @@ func TestStaleReadTxnWithAutocommitOff(t *testing.T) {
 	require.False(t, sessVars.InTxn(), "DDL should implicitly end the stale-read txn")
 	tk.MustExec("drop table t2")
 }
+
+func TestPrepareTSO(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD"))
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	// We need a unique key k(id) for the following reason:
+	// 1. for DML insert / update/ delete, it does not get a for-update-ts again inside an explicit txn if there is
+	//    no conflict, that can make the test stable for both pessimistic-RR and optimistic txn modes.
+	// 2. Unique key instead a clustered primary key can eliminate max-ts optimization for point-get in autocommit mode.
+	//    This can also make the test case simple and stable.
+	tk.MustExec("create table t1(id int, a int, unique key k(id))")
+	tk.MustExec("insert into t1 values (1, 10)")
+
+	assertTSOCnt := func(warmup, tsoReq int) {
+		require.Equal(t,
+			uint64(warmup),
+			se.Value(sessiontxn.WarmupTsoRequestCount).(uint64),
+		)
+		require.Equal(t,
+			uint64(tsoReq),
+			se.Value(sessiontxn.TsoRequestCount).(uint64),
+		)
+	}
+
+	checkExecWarmupPrepareCnt := func(cnt int, sql string) {
+		se.SetValue(sessiontxn.WarmupTsoRequestCount, uint64(0))
+		se.SetValue(sessiontxn.TsoRequestCount, uint64(0))
+		tk.MustExec(sql)
+		assertTSOCnt(cnt, cnt)
+	}
+
+	checkExecPrepareCntWithoutWarmup := func(cnt int, sql string) {
+		se.SetValue(sessiontxn.WarmupTsoRequestCount, uint64(0))
+		se.SetValue(sessiontxn.TsoRequestCount, uint64(0))
+		tk.MustExec(sql)
+		assertTSOCnt(0, cnt)
+	}
+
+	checkQueryWarmupPrepareCnt := func(cnt int, sql string) *testkit.Result {
+		se.SetValue(sessiontxn.WarmupTsoRequestCount, uint64(0))
+		se.SetValue(sessiontxn.TsoRequestCount, uint64(0))
+		se.SetValue(sessiontxn.WarmupTsoRequestCount, uint64(0))
+		r := tk.MustQuery(sql)
+		assertTSOCnt(cnt, cnt)
+		return r
+	}
+
+	cases := []struct {
+		name    string
+		execute func()
+	}{
+		{
+			name: "`USE` should not prepare TSO",
+			execute: func() {
+				checkExecWarmupPrepareCnt(0, "use test")
+			},
+		},
+		{
+			name: "`SET` should not prepare TSO future in warmup, and doesn't need it during execution.",
+			execute: func() {
+				checkExecWarmupPrepareCnt(0, "set @a=1")
+				checkQueryWarmupPrepareCnt(1, "select @a").Check(testkit.Rows("1"))
+			},
+		},
+		{
+			name: "`SELECT` should prepare TSO future in warmup.",
+			execute: func() {
+				checkQueryWarmupPrepareCnt(1, "select a from t1 where id=1").Check(testkit.Rows("10"))
+			},
+		},
+		{
+			name: "DML should prepare TSO future in warmup.",
+			execute: func() {
+				checkExecWarmupPrepareCnt(1, "insert into t1 values (2, 20)")
+				checkQueryWarmupPrepareCnt(1, "select a from t1 where id=2").Check(testkit.Rows("20"))
+				checkExecWarmupPrepareCnt(1, "update t1 set a=30 where id=2")
+				checkQueryWarmupPrepareCnt(1, "select a from t1 where id=2").Check(testkit.Rows("30"))
+				checkExecWarmupPrepareCnt(1, "delete from t1 where id=2")
+				checkQueryWarmupPrepareCnt(1, "select a from t1 where id=2").Check(testkit.Rows())
+			},
+		},
+		{
+			name: "`SET` with subquery should NOT prepare in warmup (stmt type is SET), but will still need TSO during execution.",
+			execute: func() {
+				checkExecPrepareCntWithoutWarmup(1, "set @a = (select a+100 from t1 where id=1)")
+				checkQueryWarmupPrepareCnt(1, "select @a").Check(testkit.Rows("110"))
+			},
+		},
+		{
+			name: "`BEGIN` should prepareTSO future in warmup, but in txn the statement not",
+			execute: func() {
+				checkExecWarmupPrepareCnt(1, "begin")
+				checkExecWarmupPrepareCnt(0, "insert into t1 values (3, 30)")
+				checkQueryWarmupPrepareCnt(0, "select a from t1 where id=3").Check(testkit.Rows("30"))
+				checkExecWarmupPrepareCnt(0, "commit")
+				checkQueryWarmupPrepareCnt(1, "select a from t1 where id=3").Check(testkit.Rows("30"))
+			},
+		},
+		{
+			name: "`START TRANSACTION` should prepare TSO future in warmup, but in txn the statement not",
+			execute: func() {
+				checkExecWarmupPrepareCnt(1, "start transaction")
+				checkExecWarmupPrepareCnt(0, "insert into t1 values (4, 40)")
+				checkQueryWarmupPrepareCnt(0, "select a from t1 where id=4").Check(testkit.Rows("40"))
+				checkExecWarmupPrepareCnt(0, "rollback")
+				checkQueryWarmupPrepareCnt(1, "select a from t1 where id=4").Check(testkit.Rows())
+			},
+		},
+		{
+			name: "RC isolation level",
+			execute: func() {
+				checkExecWarmupPrepareCnt(0, "set tx_isolation='READ-COMMITTED'")
+				checkExecWarmupPrepareCnt(1, "begin")
+				checkQueryWarmupPrepareCnt(1, "select a from t1 where id=1").Check(testkit.Rows("10"))
+				checkExecWarmupPrepareCnt(0, "set @b = 2")
+				checkExecWarmupPrepareCnt(0, "use test")
+				checkQueryWarmupPrepareCnt(1, "select 123").Check(testkit.Rows("123"))
+				checkExecWarmupPrepareCnt(0, "set tx_isolation=default")
+				checkExecWarmupPrepareCnt(1, "rollback")
+			},
+		},
+		{
+			name: "RC + autocommit",
+			execute: func() {
+				originConfig := config.GetGlobalConfig()
+				defer config.StoreGlobalConfig(originConfig)
+
+				// Enable pessimistic autocommit
+				newConfig := *originConfig
+				newConfig.PessimisticTxn.PessimisticAutoCommit.Store(true)
+				config.StoreGlobalConfig(&newConfig)
+
+				checkExecWarmupPrepareCnt(0, "set tx_isolation='READ-COMMITTED'")
+				checkQueryWarmupPrepareCnt(1, "select a from t1 where id=1").Check(testkit.Rows("10"))
+				checkExecWarmupPrepareCnt(0, "set @a=2")
+				checkExecWarmupPrepareCnt(0, "use test")
+				checkExecWarmupPrepareCnt(1, "insert into t1 values (5, 50)")
+				checkExecWarmupPrepareCnt(0, "set tx_isolation=default")
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tk.MustExec("rollback")
+			se.SetValue(sessiontxn.TsoRequestCount, uint64(0))
+			c.execute()
+		})
+	}
+}
