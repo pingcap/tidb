@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -85,4 +85,35 @@ func TestParamMarkerConstantPredicateElimination(t *testing.T) {
 	tk.MustQuery(`execute stmt3 using @v`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustExec(`deallocate prepare stmt3`)
+
+	// Case 5: JOIN with WHERE ?=false should produce TableDual and not cache.
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t2 values (1, 100)")
+	tk.MustExec(`prepare stmt5 from 'select * from t inner join t2 on t.a = t2.a where ?'`)
+	tk.MustExec(`set @v=false`)
+	tk.MustQuery(`execute stmt5 using @v`).Check(testkit.Rows()) // no rows (TableDual)
+	tk.MustQuery(`execute stmt5 using @v`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// Also verify the true case returns results and is not cached.
+	tk.MustExec(`set @v=true`)
+	tk.MustQuery(`execute stmt5 using @v`).Check(testkit.Rows("1 10 1 100"))
+	tk.MustQuery(`execute stmt5 using @v`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`deallocate prepare stmt5`)
+
+	// Case 6: JOIN USING with WHERE ?=false covers the FullSchema join path.
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3(a int, c int)")
+	tk.MustExec("insert into t3 values (1, 100)")
+	tk.MustExec(`prepare stmt6 from 'select * from t join t3 using (a) where ?'`)
+	tk.MustExec(`set @v=false`)
+	tk.MustQuery(`execute stmt6 using @v`).Check(testkit.Rows()) // no rows
+	tk.MustQuery(`execute stmt6 using @v`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @v=true`)
+	tk.MustQuery(`execute stmt6 using @v`).Check(testkit.Rows("1 10 100"))
+	tk.MustQuery(`execute stmt6 using @v`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`deallocate prepare stmt6`)
 }
