@@ -709,7 +709,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	var (
 		lockRefreshInfoRowDur time.Duration
 		executeDataChangesDur time.Duration
-		txnCommitDur          time.Duration
+		txnTotalDur          time.Duration
 		mviewID               int64
 	)
 
@@ -740,7 +740,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			zap.Bool("success", err == nil),
 			zap.Duration("lockRefreshInfoRow", lockRefreshInfoRowDur),
 			zap.Duration("executeRefreshMaterializedViewDataChanges", executeDataChangesDur),
-			zap.Duration("transactionCommit", txnCommitDur),
+			zap.Duration("transactionTotal", txnTotalDur),
 		}
 		if err != nil {
 			fields = append(fields, zap.String("error", err.Error()))
@@ -793,8 +793,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
 		txnFinished = true
-		if txnCommitTimerStarted && txnCommitDur == 0 {
-			txnCommitDur = time.Since(txnCommitStart)
+		if txnCommitTimerStarted && txnTotalDur == 0 {
+			txnTotalDur = time.Since(txnCommitStart)
 		}
 	}()
 
@@ -846,8 +846,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				refreshErrMsg = refreshErrMsg + "; rollback error: " + err.Error()
 			}
 			txnFinished = true
-			if txnCommitTimerStarted && txnCommitDur == 0 {
-				txnCommitDur = time.Since(txnCommitStart)
+			if txnCommitTimerStarted && txnTotalDur == 0 {
+				txnTotalDur = time.Since(txnCommitStart)
 			}
 		}
 		histErr := finalizeRefreshHistWithRetry(
@@ -932,8 +932,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 	txnFinished = true
-	if txnCommitTimerStarted && txnCommitDur == 0 {
-		txnCommitDur = time.Since(txnCommitStart)
+	if txnCommitTimerStarted && txnTotalDur == 0 {
+		txnTotalDur = time.Since(txnCommitStart)
 	}
 
 	if err := finalizeRefreshHistWithRetry(
