@@ -118,11 +118,13 @@ func TestSlowStatsSaving(t *testing.T) {
 	versionUint64, err := strconv.ParseUint(version, 10, 64)
 	require.NoError(t, err)
 	// Get stats version from mysql.stats_histograms.
+	// Only 2 rows: columns a and b. The single-column non-prefix index idx(a)
+	// is consolidated with column a and has no separate is_index=1 row.
 	rows = testKit.MustQuery(
 		"select version from mysql.stats_histograms where table_id = ?",
 		tableInfo.ID,
 	).Rows()
-	require.Equal(t, 3, len(rows))
+	require.Equal(t, 2, len(rows))
 	histVersion := rows[0][0].(string)
 	histVersionUint64, err := strconv.ParseUint(histVersion, 10, 64)
 	require.NoError(t, err)
@@ -179,11 +181,13 @@ func TestSlowStatsSavingForPartitionedTable(t *testing.T) {
 	versionUint64, err := strconv.ParseUint(version, 10, 64)
 	require.NoError(t, err)
 	// Get stats version from mysql.stats_histograms.
+	// Only 2 rows: columns a and b. The single-column non-prefix index idx(b)
+	// is consolidated with column b and has no separate is_index=1 row.
 	rows = testKit.MustQuery(
 		"select version from mysql.stats_histograms where table_id = ?",
 		tableInfo.ID,
 	).Rows()
-	require.Equal(t, 3, len(rows))
+	require.Equal(t, 2, len(rows))
 	for _, row := range rows {
 		histVersion := row[0].(string)
 		histVersionUint64, err := strconv.ParseUint(histVersion, 10, 64)

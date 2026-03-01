@@ -2467,7 +2467,7 @@ func getModifiedIndexesInfoForAnalyze(
 	tblInfo *model.TableInfo,
 	allColumns bool,
 	colsInfo []*model.ColumnInfo,
-) (idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo []*model.IndexInfo) {
+) (idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo []*model.IndexInfo, consolidatedIdxIDs []int64) {
 	idxsInfo = make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	independentIdxsInfo = make([]*model.IndexInfo, 0)
 	specialGlobalIdxsInfo = make([]*model.IndexInfo, 0)
@@ -2491,6 +2491,16 @@ func getModifiedIndexesInfoForAnalyze(
 			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
+		// In stats V2, single-column non-prefix index stats are identical to
+		// the underlying column stats. Skip collecting them separately and
+		// consolidate with column stats instead.
+		if sCtx.GetSessionVars().AnalyzeVersion == 2 && originIdx.IsSingleColumnNonPrefixIndex() {
+			colInfo := tblInfo.Columns[originIdx.Columns[0].Offset]
+			if !colInfo.IsVirtualGenerated() {
+				consolidatedIdxIDs = append(consolidatedIdxIDs, originIdx.ID)
+				continue
+			}
+		}
 		if allColumns {
 			// If all the columns need to be analyzed, we don't need to modify IndexColumn.Offset.
 			idxsInfo = append(idxsInfo, originIdx)
@@ -2504,7 +2514,7 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		idxsInfo = append(idxsInfo, idx)
 	}
-	return idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo
+	return idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo, consolidatedIdxIDs
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
@@ -2649,6 +2659,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	maps.Copy(analyzePlan.OptionsMap, optionsMap)
 
 	var indexes, independentIndexes, specialGlobalIndexes []*model.IndexInfo
+	var consolidatedIdxIDs []int64
 
 	needAnalyzeCols := !(as.IndexFlag && allSpecialGlobalIndex)
 
@@ -2679,15 +2690,16 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			var skipColsInfo []*model.ColumnInfo
 			execColsInfo, skipColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
+			indexes, independentIndexes, specialGlobalIndexes, consolidatedIdxIDs = getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			newTask := AnalyzeColumnsTask{
-				HandleCols:   handleCols,
-				ColsInfo:     execColsInfo,
-				AnalyzeInfo:  info,
-				TblInfo:      tbl.TableInfo,
-				Indexes:      indexes,
-				SkipColsInfo: skipColsInfo,
+				HandleCols:         handleCols,
+				ColsInfo:           execColsInfo,
+				AnalyzeInfo:        info,
+				TblInfo:            tbl.TableInfo,
+				Indexes:            indexes,
+				SkipColsInfo:       skipColsInfo,
+				ConsolidatedIdxIDs: consolidatedIdxIDs,
 			}
 			if newTask.HandleCols == nil {
 				extraCol := model.NewExtraHandleColInfo()

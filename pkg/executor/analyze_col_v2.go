@@ -122,15 +122,16 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 	}
 
 	return &statistics.AnalyzeResults{
-		TableID:       e.tableID,
-		Ars:           []*statistics.AnalyzeResult{colResult, colGroupResult},
-		Job:           e.job,
-		StatsVer:      e.StatsVersion,
-		Count:         count,
-		Snapshot:      e.snapshot,
-		ExtStats:      extStats,
-		BaseCount:     e.baseCount,
-		BaseModifyCnt: e.baseModifyCnt,
+		TableID:            e.tableID,
+		Ars:                []*statistics.AnalyzeResult{colResult, colGroupResult},
+		Job:                e.job,
+		StatsVer:           e.StatsVersion,
+		Count:              count,
+		Snapshot:           e.snapshot,
+		ExtStats:           extStats,
+		BaseCount:          e.baseCount,
+		BaseModifyCnt:      e.baseModifyCnt,
+		ConsolidatedIdxIDs: e.consolidatedIdxIDs,
 	}
 }
 

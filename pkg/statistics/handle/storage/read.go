@@ -554,17 +554,84 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	if len(rows) == 0 {
 		return table, nil
 	}
+	// Track column metadata from stats_histograms rows for use in index synthesis.
+	// When lease > 0, column stats may not be loaded into the table's column map,
+	// but we still need their metadata to create evicted index entries.
+	type colMeta struct {
+		distinct  int64
+		nullCount int64
+		histVer   uint64
+		statsVer  int64
+	}
+	colMetaMap := make(map[int64]colMeta)
+	storedIdxIDs := make(map[int64]bool) // track which index IDs have storage entries
 	for _, row := range rows {
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return nil, err
 		}
 		if row.GetInt64(1) > 0 {
+			storedIdxIDs[row.GetInt64(2)] = true
 			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)
 		} else {
+			histID := row.GetInt64(2)
+			colMetaMap[histID] = colMeta{
+				distinct:  row.GetInt64(3),
+				nullCount: row.GetInt64(5),
+				histVer:   row.GetUint64(4),
+				statsVer:  row.GetInt64(7),
+			}
 			err = columnStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)
 		}
 		if err != nil {
 			return nil, err
+		}
+	}
+	// Synthesize Index entries for consolidated single-column indexes from
+	// their underlying column stats.
+	for _, idx := range tableInfo.Indices {
+		if !idx.IsSingleColumnNonPrefixIndex() {
+			continue
+		}
+		if existingIdx := table.GetIdx(idx.ID); existingIdx != nil && statistics.IsAnalyzed(existingIdx.StatsVer) && storedIdxIDs[idx.ID] {
+			continue // already has analyzed stored index stats (backward compat)
+		}
+		colInfo := tableInfo.Columns[idx.Columns[0].Offset]
+		if colInfo.IsVirtualGenerated() {
+			continue
+		}
+		col := table.GetCol(colInfo.ID)
+		if col != nil {
+			// Column is loaded; synthesize full index stats from it.
+			synth := statistics.SynthesizeIndexFromColumn(col, idx, tableID)
+			if synth != nil {
+				table.SetIdx(idx.ID, synth)
+				table.ColAndIdxExistenceMap.InsertIndex(idx.ID, col.StatsVer != statistics.Version0)
+			}
+		} else if cm, ok := colMetaMap[colInfo.ID]; ok && statistics.IsAnalyzed(cm.statsVer) {
+			// Column not loaded (lease > 0 eviction), but metadata is available.
+			// Mirror the skip behavior of indexStatsFromStorage: when LiteInitStats
+			// is enabled and the index was never loaded, don't create an entry.
+			existingIdx := table.GetIdx(idx.ID)
+			notNeedLoad := lease > 0 &&
+				(existingIdx == nil || ((!existingIdx.IsStatsInitialized() || existingIdx.IsAllEvicted()) && existingIdx.LastUpdateVersion < cm.histVer)) &&
+				!loadAll &&
+				config.GetGlobalConfig().Performance.LiteInitStats
+			if notNeedLoad && existingIdx == nil {
+				table.ColAndIdxExistenceMap.InsertIndex(idx.ID, true)
+				continue
+			}
+			// Create an evicted Index entry to mirror what indexStatsFromStorage would do.
+			idxHist := statistics.NewHistogram(idx.ID, cm.distinct, cm.nullCount,
+				cm.histVer, types.NewFieldType(mysql.TypeBlob), 0, 0)
+			synth := &statistics.Index{
+				Histogram:         *idxHist,
+				Info:              idx,
+				StatsVer:          cm.statsVer,
+				PhysicalID:        tableID,
+				StatsLoadedStatus: statistics.NewStatsAllEvictedStatus(),
+			}
+			table.SetIdx(idx.ID, synth)
+			table.ColAndIdxExistenceMap.InsertIndex(idx.ID, true)
 		}
 	}
 	// If DROP STATS executes, we need to reset the stats version to 0.
@@ -823,21 +890,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		)
 		return nil
 	}
-	_, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
-	if !loadNeeded {
-		return nil
-	}
-	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
-	if hgMeta == nil || err != nil {
-		if hgMeta == nil {
-			statslogutil.StatsLogger().Warn(
-				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
-				zap.Int64("tableID", idx.TableID),
-				zap.Int64("indexID", idx.ID),
-			)
-		}
-		return err
-	}
 	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
@@ -857,6 +909,32 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("indexID", idx.ID),
 		)
 		return nil
+	}
+
+	// For single-column non-prefix indexes, load from the underlying column
+	// stats instead, since no separate index stats are stored.
+	if idxInfo.IsSingleColumnNonPrefixIndex() {
+		colInfo := tblInfo.Meta().Columns[idxInfo.Columns[0].Offset]
+		if !colInfo.IsVirtualGenerated() {
+			return loadConsolidatedIndexFromColumn(sctx, statsHandle, tbl, idx, idxInfo, colInfo)
+		}
+	}
+
+	_, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
+	if !loadNeeded {
+		return nil
+	}
+
+	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
+	if hgMeta == nil || err != nil {
+		if hgMeta == nil {
+			statslogutil.StatsLogger().Warn(
+				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
+				zap.Int64("tableID", idx.TableID),
+				zap.Int64("indexID", idx.ID),
+			)
+		}
+		return err
 	}
 	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
 	if err != nil {
@@ -901,6 +979,79 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("indexID", idxHist.Info.ID),
 			zap.String("indexName", idxHist.Info.Name.O))
 	}
+	return nil
+}
+
+// loadConsolidatedIndexFromColumn loads column stats from storage and
+// synthesizes a virtual Index entry for a single-column non-prefix index.
+func loadConsolidatedIndexFromColumn(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	tbl *statistics.Table,
+	idx model.TableItemID,
+	idxInfo *model.IndexInfo,
+	colInfo *model.ColumnInfo,
+) error {
+	colItem := model.TableItemID{
+		TableID: idx.TableID,
+		ID:      colInfo.ID,
+		IsIndex: false,
+	}
+	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &colItem, colInfo)
+	if hgMeta == nil || err != nil {
+		if hgMeta == nil {
+			statslogutil.StatsLogger().Warn(
+				"Column histogram not found for consolidated index",
+				zap.Int64("tableID", idx.TableID),
+				zap.Int64("indexID", idx.ID),
+				zap.Int64("columnID", colInfo.ID),
+			)
+		}
+		return err
+	}
+	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, colInfo.ID, &colInfo.FieldType, hgMeta.NDV, 0, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cms, topN, err := CMSketchAndTopNFromStorageWithHighPriority(sctx, idx.TableID, 0, colInfo.ID, statsVer)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	colHist := &statistics.Column{
+		PhysicalID: idx.TableID,
+		Histogram:  *hg,
+		Info:       colInfo,
+		CMSketch:   cms,
+		TopN:       topN,
+		IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+		StatsVer:   statsVer,
+	}
+	if colHist.StatsAvailable() {
+		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+	}
+
+	synth := statistics.SynthesizeIndexFromColumn(colHist, idxInfo, idx.TableID)
+	if synth == nil {
+		return nil
+	}
+
+	tbl, ok := statsHandle.Get(idx.TableID)
+	if !ok {
+		return nil
+	}
+	tbl = tbl.CopyAs(statistics.BothMapsWritable)
+	// Also set the column so it doesn't need to be loaded again.
+	tbl.SetCol(colInfo.ID, colHist)
+	tbl.SetIdx(idx.ID, synth)
+	tbl.ColAndIdxExistenceMap.InsertIndex(idx.ID, statsVer != statistics.Version0)
+	if statistics.IsAnalyzed(statsVer) {
+		tbl.StatsVer = int(statsVer)
+		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, hg.LastUpdateVersion)
+	}
+	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	return nil
 }
 

@@ -254,7 +254,8 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 	))
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	// Single-column index stats are consolidated with column stats; only column FM sketch is stored.
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
 }
 
 func TestAnalyzeMetricsCounters(t *testing.T) {

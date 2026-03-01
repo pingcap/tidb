@@ -92,10 +92,15 @@ type AnalyzeResults struct {
 	// For example:
 	// If the tableA (c1, c2, c3) has indexes (c1, c2), (c2, c3), the result will be:
 	// Ars: [AnalyzeResult1[c1, c2, c3], AnalyzeResult2[c1_c2, c2_c3]]
-	Ars      []*AnalyzeResult
-	TableID  AnalyzeTableID
-	Count    int64
-	StatsVer int
+	Ars []*AnalyzeResult
+	// ConsolidatedIdxIDs holds the index IDs of single-column non-prefix indexes whose
+	// statistics were consolidated with the corresponding column statistics. These indexes
+	// are skipped during ANALYZE (no separate index stats collected), and any old index
+	// stats rows in storage are cleaned up when saving results.
+	ConsolidatedIdxIDs []int64
+	TableID            AnalyzeTableID
+	Count              int64
+	StatsVer           int
 	// Snapshot is the snapshot timestamp when we start the analysis job.
 	Snapshot uint64
 	// BaseCount is the original count in mysql.stats_meta at the beginning of analyze.

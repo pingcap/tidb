@@ -20,14 +20,18 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -323,6 +327,73 @@ func (coll *HistColl) GetCol(id int64) *Column {
 // GetIdx gets the index with the given id.
 func (coll *HistColl) GetIdx(id int64) *Index {
 	return coll.indices[id]
+}
+
+// SynthesizeIndexFromColumn creates a synthetic Index from a Column for
+// single-column non-prefix indexes whose stats are identical to the
+// underlying column stats in stats version 2.
+// The histogram bounds need conversion from the column's native type to
+// codec-encoded key bytes (TypeBlob), since index histograms use a different
+// encoding than column histograms. TopN and CMSketch can be shared directly
+// because both use codec.EncodeKey encoding.
+func SynthesizeIndexFromColumn(col *Column, idxInfo *model.IndexInfo, physicalID int64) *Index {
+	if col == nil {
+		return nil
+	}
+	idxHist := convertColumnHistToIndexHist(&col.Histogram)
+	// The histogram ID must be the index ID, not the column ID.
+	// GenerateHistCollFromColumnInfo uses Histogram.ID as the map key,
+	// so mismatching the ID would make the index unreachable by the planner.
+	idxHist.ID = idxInfo.ID
+	return &Index{
+		Histogram:         *idxHist,
+		CMSketch:          col.CMSketch,
+		TopN:              col.TopN,
+		FMSketch:          col.FMSketch,
+		Info:              idxInfo,
+		StatsVer:          col.StatsVer,
+		StatsLoadedStatus: col.StatsLoadedStatus,
+		PhysicalID:        physicalID,
+	}
+}
+
+// convertColumnHistToIndexHist converts a column histogram to an index histogram
+// by re-encoding all bounds from the column's native field type to codec-encoded
+// key bytes (TypeBlob). This is necessary because index histograms store bounds
+// as codec.EncodeKey-encoded bytes, while column histograms store native-typed values.
+func convertColumnHistToIndexHist(colHist *Histogram) *Histogram {
+	blobTp := types.NewFieldType(mysql.TypeBlob)
+	numBuckets := colHist.Len()
+	// TotColSize is only meaningful for columns, not indices, so use 0.
+	idxHist := NewHistogram(colHist.ID, colHist.NDV, colHist.NullCount,
+		colHist.LastUpdateVersion, blobTp, numBuckets, 0)
+	// Index stats always have correlation=0 (correlation is only meaningful for columns).
+	idxHist.Correlation = 0
+
+	for i := range numBuckets {
+		lower := colHist.GetLower(i)
+		upper := colHist.GetUpper(i)
+		lowerBytes, err := codec.EncodeKey(time.UTC, nil, *lower)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to encode lower bound in convertColumnHistToIndexHist",
+				zap.Int64("histID", colHist.ID), zap.Int("bucket", i), zap.Error(err))
+			return NewHistogram(colHist.ID, colHist.NDV, colHist.NullCount,
+				colHist.LastUpdateVersion, blobTp, 0, 0)
+		}
+		upperBytes, err := codec.EncodeKey(time.UTC, nil, *upper)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to encode upper bound in convertColumnHistToIndexHist",
+				zap.Int64("histID", colHist.ID), zap.Int("bucket", i), zap.Error(err))
+			return NewHistogram(colHist.ID, colHist.NDV, colHist.NullCount,
+				colHist.LastUpdateVersion, blobTp, 0, 0)
+		}
+		lowerDatum := types.NewBytesDatum(lowerBytes)
+		upperDatum := types.NewBytesDatum(upperBytes)
+		bkt := colHist.Buckets[i]
+		idxHist.AppendBucketWithNDV(&lowerDatum, &upperDatum, bkt.Count, bkt.Repeat, bkt.NDV)
+	}
+	idxHist.PreCalculateScalar()
+	return idxHist
 }
 
 // ForEachColumnImmutable iterates all columns in the HistColl.
