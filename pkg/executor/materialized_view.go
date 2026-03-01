@@ -96,11 +96,15 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	kctx context.Context,
 	s *ast.PurgeMaterializedViewLogStmt,
 ) (err error) {
+	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
+	purgeMethod, err := validatePurgeMaterializedViewLogStmt(s, isInternalSQL)
+	if err != nil {
+		return err
+	}
 	schemaName, baseTableMeta, mlogName, mlogID, mlogInfo, err := e.resolvePurgeMaterializedViewLogMeta(s)
 	if err != nil {
 		return err
 	}
-	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
 	batchSize := int64(e.Ctx().GetSessionVars().MLogPurgeBatchSize)
 	if batchSize <= 0 {
 		batchSize = int64(variable.DefTiDBMLogPurgeBatchSize)
@@ -206,7 +210,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 
 			if !purgeHistRunningInserted {
 				purgeJobID = purgeStartTS
-				if err := insertMLogPurgeHistRunning(kctx, histSQLExec, purgeJobID, mlogID); err != nil {
+				if err := insertMLogPurgeHistRunning(kctx, histSQLExec, purgeJobID, mlogID, purgeMethod); err != nil {
 					_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 					return errors.Trace(err)
 				}
@@ -629,26 +633,39 @@ WHERE MLOG_ID = %%?`,
 	return nil
 }
 
+func validatePurgeMaterializedViewLogStmt(s *ast.PurgeMaterializedViewLogStmt, isInternalSQL bool) (string, error) {
+	if s == nil || s.Table == nil {
+		return "", errors.New("purge materialized view log: missing table name")
+	}
+	if isInternalSQL {
+		return "automatically", nil
+	}
+	return "manually", nil
+}
+
 func insertMLogPurgeHistRunning(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	purgeJobID uint64,
 	mlogID int64,
+	purgeMethod string,
 ) error {
 	insertSQL := `INSERT INTO mysql.tidb_mlog_purge_hist (
 		PURGE_JOB_ID,
 		MLOG_ID,
+		PURGE_METHOD,
 		PURGE_TIME,
 		PURGE_ROWS,
 		PURGE_STATUS
 	) VALUES (
 		%?,
 		%?,
+		%?,
 		NOW(6),
 		%?,
 		%?
 	)`
-	_, err := sqlExec.ExecuteInternal(kctx, insertSQL, purgeJobID, mlogID, int64(0), purgeHistStatusRunning)
+	_, err := sqlExec.ExecuteInternal(kctx, insertSQL, purgeJobID, mlogID, purgeMethod, int64(0), purgeHistStatusRunning)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return errors.New("required system table mysql.tidb_mlog_purge_hist does not exist")
@@ -687,11 +704,11 @@ func finalizeMLogPurgeHist(
 }
 
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) error {
-	refreshMethod, err := validateRefreshMaterializedViewStmt(s)
+	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
+	refreshMethod, err := validateRefreshMaterializedViewStmt(s, isInternalSQL)
 	if err != nil {
 		return err
 	}
-	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
 	finalizeCtx := context.WithoutCancel(kctx)
 
 	schemaName, tblInfo, err := e.resolveRefreshMaterializedViewTarget(s)
@@ -923,20 +940,26 @@ func refreshErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
 	}
 }
 
-func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt) (string, error) {
+func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isInternalSQL bool) (string, error) {
 	if s == nil || s.ViewName == nil {
 		return "", errors.New("refresh materialized view: missing view name")
 	}
+	methodType := ""
 	switch s.Type {
 	case ast.RefreshMaterializedViewTypeComplete:
-		// supported
+		methodType = "complete"
 	case ast.RefreshMaterializedViewTypeFast:
 		// Framework is supported; actual execution happens via RefreshMaterializedViewImplementStmt.
+		methodType = "fast"
 	default:
 		return "", errors.New("unknown REFRESH MATERIALIZED VIEW type")
 	}
+	methodOrigin := "manually"
+	if isInternalSQL {
+		methodOrigin = "automatically"
+	}
 	// In MVP, refresh is synchronous by nature. `WITH SYNC MODE` is accepted and behaves the same.
-	return strings.ToLower(s.Type.String()), nil
+	return methodType + " " + methodOrigin, nil
 }
 
 func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
