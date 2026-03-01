@@ -163,7 +163,8 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 	case keyBlockSize:
 		p.parseTableOptionUint(opt, ast.TableOptionKeyBlockSize)
 	case compression:
-		p.parseTableOptionString(opt, ast.TableOptionCompression)
+		// yacc: COMPRESSION EqOpt stringLit — only string literal, not identifier.
+		p.parseTableOptionStringLit(opt, ast.TableOptionCompression)
 	case placement:
 		p.next()
 		p.accept(policy)

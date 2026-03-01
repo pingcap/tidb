@@ -88,7 +88,9 @@ func (p *HandParser) parseConstraint() *ast.Constraint {
 			return nil
 		}
 		p.expect(')')
-		if _, ok := p.accept(not); ok {
+		// yacc: EnforcedOrNotOpt = ENFORCED | NotSym ENFORCED
+		// NotSym = not | not2 (!)
+		if _, ok := p.acceptAny(not, not2); ok {
 			p.expect(enforced)
 			cons.Enforced = false
 		} else {
