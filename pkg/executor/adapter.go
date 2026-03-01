@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1649,7 +1650,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
-	sql := FormatSQL(a.GetTextToLog(true))
+	sqlText := a.GetTextToLog(true)
+	if len(sqlText) == 0 {
+		sqlText = restoreStmtTextForSlowLogWhenEmptySQL(a.StmtNode)
+	}
+	sql := FormatSQL(sqlText)
 	_, digest := stmtCtx.SQLDigest()
 
 	var indexNames string
@@ -2131,6 +2136,21 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
 	return sql
+}
+
+func restoreStmtTextForSlowLogWhenEmptySQL(stmt ast.StmtNode) string {
+	implementStmt, ok := stmt.(*ast.RefreshMaterializedViewImplementStmt)
+	if !ok || implementStmt.RefreshStmt == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("IMPLEMENT FOR ")
+	if err := implementStmt.RefreshStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
+		logutil.BgLogger().Debug("restore refresh materialized view stmt for slow log failed", zap.Error(err))
+		return ""
+	}
+	sb.WriteString(" USING TIMESTAMP")
+	return sb.String()
 }
 
 // getLazyText is equivalent to `a.GetTextToLog(false)`. Note that the s.Params is a shallow copy of
