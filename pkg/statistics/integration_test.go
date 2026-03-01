@@ -333,6 +333,43 @@ func TestAnalyzeSnapshot(t *testing.T) {
 	require.True(t, s2 > s1)
 }
 
+func TestAnalyzeV2Chao3(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("drop table if exists t_chao3")
+	tk.MustExec("create table t_chao3(a int)")
+	tk.MustExec("insert into t_chao3 values (1), (1), (2), (3)")
+	tk.MustExec("analyze table t_chao3 with 1 samplerate, 0 topn")
+
+	res := tk.MustQuery("select distinct_count from mysql.stats_histograms where table_id = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't_chao3') and is_index = 0")
+	rows := res.Rows()
+	require.Len(t, rows, 1)
+	val, ok := rows[0][0].(string)
+	require.True(t, ok)
+	sqlNDV, err := strconv.ParseInt(val, 10, 64)
+	require.NoError(t, err)
+
+	is := dom.InfoSchema()
+	tblT, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_chao3"))
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(context.Background(), is))
+	statsTblT := h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
+	var statsNDV int64
+	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		if col.Info != nil && col.Info.Name.L == "a" {
+			statsNDV = col.Histogram.NDV
+			return true
+		}
+		return false
+	})
+	require.Equal(t, statsNDV, sqlNDV)
+	require.LessOrEqual(t, statsNDV, int64(4))
+	require.Equal(t, statsNDV, sqlNDV)
+}
+
 func TestOutdatedStatsCheck(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
