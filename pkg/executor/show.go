@@ -198,6 +198,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateView()
 	case ast.ShowCreateMaterializedView:
 		return e.fetchShowCreateMaterializedView()
+	case ast.ShowCreateMaterializedViewLog:
+		return e.fetchShowCreateMaterializedViewLog()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
 	case ast.ShowCreatePlacementPolicy:
@@ -1587,6 +1589,47 @@ func (e *ShowExec) fetchShowCreateMaterializedView() error {
 	return nil
 }
 
+func (e *ShowExec) fetchShowCreateMaterializedViewLog() error {
+	if _, ok := e.is.SchemaByName(e.DBName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	baseTable, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	baseMeta := baseTable.Meta()
+	if baseMeta.IsView() || baseMeta.IsSequence() || baseMeta.TempTableType != model.TempTableNone {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE")
+	}
+
+	if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
+		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+	mlogID := baseMeta.MaterializedViewBase.MLogID
+	mlogTable, ok := e.is.TableByID(context.Background(), mlogID)
+	if !ok {
+		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+	mlogName := mlogTable.Meta().Name
+
+	mlogInfo := mlogTable.Meta().MaterializedViewLog
+	if mlogInfo == nil || mlogInfo.BaseTableID != baseMeta.ID {
+		return errors.Errorf(
+			"table %s.%s is not a materialized view log for base table %s.%s",
+			e.DBName.O,
+			mlogName.O,
+			e.DBName.O,
+			baseMeta.Name.O,
+		)
+	}
+
+	var buf bytes.Buffer
+	fetchShowCreateTable4MaterializedViewLog(e.Ctx(), baseMeta, mlogTable.Meta(), &buf)
+	e.appendRow([]any{baseMeta.Name.O, buf.String()})
+	return nil
+}
+
 func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
@@ -1651,6 +1694,49 @@ func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.Tab
 		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", tb.PreSplitRegions)
 	}
 	fmt.Fprintf(buf, " AS %s", mvInfo.SQLContent)
+}
+
+func fetchShowCreateTable4MaterializedViewLog(
+	ctx sessionctx.Context,
+	baseTable *model.TableInfo,
+	mlogTable *model.TableInfo,
+	buf *bytes.Buffer,
+) {
+	if baseTable == nil || mlogTable == nil || mlogTable.MaterializedViewLog == nil {
+		return
+	}
+
+	sqlMode := ctx.GetSessionVars().SQLMode
+	mlogInfo := mlogTable.MaterializedViewLog
+	fmt.Fprintf(buf, "CREATE MATERIALIZED VIEW LOG ON %s (", stringutil.Escape(baseTable.Name.O, sqlMode))
+	for i, col := range mlogInfo.Columns {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(stringutil.Escape(col.O, sqlMode))
+	}
+	buf.WriteString(")")
+
+	if mlogTable.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", mlogTable.ShardRowIDBits)
+	}
+	if mlogTable.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", mlogTable.PreSplitRegions)
+	}
+
+	if mlogInfo.PurgeMethod != "" || mlogInfo.PurgeStartWith != "" || mlogInfo.PurgeNext != "" {
+		buf.WriteString(" PURGE")
+		if strings.EqualFold(mlogInfo.PurgeMethod, "IMMEDIATE") {
+			buf.WriteString(" IMMEDIATE")
+			return
+		}
+		if mlogInfo.PurgeStartWith != "" {
+			fmt.Fprintf(buf, " START WITH %s", mlogInfo.PurgeStartWith)
+		}
+		if mlogInfo.PurgeNext != "" {
+			fmt.Fprintf(buf, " NEXT %s", mlogInfo.PurgeNext)
+		}
+	}
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
