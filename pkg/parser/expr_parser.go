@@ -766,23 +766,24 @@ func (p *HandParser) parseVariableExpr() ast.ExprNode {
 	if tok.Tp == doubleAtIdentifier {
 		node.IsSystem = true
 		// tok.Lit contains the full literal, e.g. "@@global.max_connections"
-		// Strip leading "@@" and lowercase (matching the SystemVariable rule).
+		// Strip leading "@@" and lowercase (matching the SystemVariable rule in parser.y).
 		name := strings.ToLower(tok.Lit)
-		if len(name) >= 2 && name[0] == '@' && name[1] == '@' {
-			name = name[2:]
-		}
-		// Check for scope prefix: global., session., instance., local.
-		if idx := strings.IndexByte(name, '.'); idx >= 0 {
-			scope := name[:idx]
-			name = name[idx+1:]
+		if strings.HasPrefix(name, "@@global.") {
+			node.IsGlobal = true
 			node.ExplicitScope = true
-			switch scope {
-			case "global":
-				node.IsGlobal = true
-			case "instance":
-				node.IsInstance = true
-				// "session" and "local" are the default — IsGlobal=false, IsInstance=false.
-			}
+			name = strings.TrimPrefix(name, "@@global.")
+		} else if strings.HasPrefix(name, "@@instance.") {
+			node.IsInstance = true
+			node.ExplicitScope = true
+			name = strings.TrimPrefix(name, "@@instance.")
+		} else if strings.HasPrefix(name, "@@session.") {
+			node.ExplicitScope = true
+			name = strings.TrimPrefix(name, "@@session.")
+		} else if strings.HasPrefix(name, "@@local.") {
+			node.ExplicitScope = true
+			name = strings.TrimPrefix(name, "@@local.")
+		} else if strings.HasPrefix(name, "@@") {
+			name = strings.TrimPrefix(name, "@@")
 		}
 		node.Name = name
 	} else {
