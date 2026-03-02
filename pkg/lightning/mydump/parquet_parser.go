@@ -18,7 +18,10 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/arrow-go/v18/parquet"
@@ -599,7 +602,10 @@ func NewParquetParser(
 		_ = r.Close()
 	}()
 
-	allocator := memory.NewGoAllocator()
+	allocator := meta.allocator
+	if allocator == nil {
+		allocator = memory.NewGoAllocator()
+	}
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
@@ -709,4 +715,132 @@ func SampleStatisticsFromParquet(
 
 	avgRowSize = float64(rowSize) / float64(rowCount)
 	return totalReadRows, avgRowSize, err
+}
+
+// addressOf returns the address of a buffer, return 0 if the buffer is nil or
+// empty. It's used to create unique identifiers for tracking buffer allocations.
+func addressOf(buf []byte) uintptr {
+	if buf == nil || cap(buf) == 0 {
+		return 0
+	}
+	buf = buf[:1]
+	return uintptr(unsafe.Pointer(&buf[0]))
+}
+
+// trackingAllocator is a simple memory allocator that tracks current and peak
+// memory allocation. It's used to estimate the memory consumption of parquet
+// parser.
+type trackingAllocator struct {
+	currentAllocation atomic.Int64
+	peakAllocation    atomic.Int64
+	allocMap          sync.Map // uintptr -> allocated bytes
+}
+
+const allocatorAlignment = 64
+
+func roundUpToAlignment(addr uintptr) uintptr {
+	return (addr + allocatorAlignment - 1) &^ (allocatorAlignment - 1)
+}
+
+func (a *trackingAllocator) allocateAligned(size int) []byte {
+	if size <= 0 {
+		return make([]byte, 0)
+	}
+
+	// Allocate extra bytes to align returned slice to 64 bytes.
+	buf := make([]byte, size+allocatorAlignment)
+	addr := addressOf(buf)
+	next := roundUpToAlignment(addr)
+	shift := int(next - addr)
+
+	allocBytes := size + allocatorAlignment
+	a.updateAllocation(int64(allocBytes))
+	a.allocMap.Store(next, allocBytes)
+	return buf[shift : shift+size : shift+size]
+}
+
+func (a *trackingAllocator) updateAllocation(delta int64) {
+	current := a.currentAllocation.Add(delta)
+	if delta <= 0 {
+		return
+	}
+
+	for {
+		oldPeak := a.peakAllocation.Load()
+		if current <= oldPeak {
+			return
+		}
+		if a.peakAllocation.CompareAndSwap(oldPeak, current) {
+			return
+		}
+	}
+}
+
+func (a *trackingAllocator) Allocate(n int) []byte {
+	return a.allocateAligned(n)
+}
+
+func (a *trackingAllocator) Free(b []byte) {
+	addr := addressOf(b)
+	if v, ok := a.allocMap.LoadAndDelete(addr); ok {
+		bytes, _ := v.(int)
+		a.currentAllocation.Add(-int64(bytes))
+	}
+}
+
+func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
+	if cap(b) >= size {
+		return b[:size]
+	}
+
+	nb := a.allocateAligned(size)
+	copy(nb, b)
+	a.Free(b)
+	return nb
+}
+
+// EstimateParquetReaderMemory estimates the peak memory usage for parsing a
+// single parquet file by reading through the first row group with a tracking
+// allocator. Returns the peak memory in bytes.
+func EstimateParquetReaderMemory(
+	ctx context.Context,
+	store storeapi.Storage,
+	path string,
+) (int64, error) {
+	r, err := store.Open(ctx, path, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	allocator := &trackingAllocator{}
+	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
+	if err != nil {
+		_ = r.Close()
+		return 0, err
+	}
+
+	//nolint: errcheck
+	defer parser.Close()
+
+	meta := parser.fileMeta
+	if meta.NumRowGroups() == 0 {
+		return 0, nil
+	}
+
+	for range meta.RowGroups[0].NumRows {
+		if err = parser.ReadRow(); err != nil {
+			if errors.Cause(err) == io.EOF {
+				break
+			}
+			return 0, err
+		}
+		parser.RecycleRow(parser.LastRow())
+	}
+
+	peak := allocator.peakAllocation.Load()
+	logutil.Logger(ctx).Info("estimated parquet reader memory",
+		zap.String("path", path),
+		zap.Int64("peak-memory-bytes", peak),
+	)
+	return peak, nil
 }

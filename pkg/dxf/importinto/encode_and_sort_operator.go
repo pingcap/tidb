@@ -199,9 +199,9 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := importer.GetNumOfIndexGenKV(plan.DesiredTableInfo)
-	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
-	// we use half of the total available memory for data writer, and the other half
-	// for encoding and other stuffs, it's an experience value, might not optimal.
+	memPerCon := resource.MemoryPerCore()
+	// we use writerMemBudgetRatio of total available memory for data writer,
+	// and the remaining memory for encoding and other stuffs.
 	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer
 	// takes 3 shares, and each index KV writer takes 1 share.
 	// suppose we have memPerCon = 2G
@@ -211,6 +211,6 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	// 	| 1               | 768/256 MiB           |
 	// 	| 5               | 384/128 MiB           |
 	// 	| 13              | 192/64 MiB            |
-	memPerShare := float64(memPerCon) / 2 / float64(indexKVGroupCnt+3)
+	memPerShare := float64(memPerCon) * writerMemBudgetRatio / float64(indexKVGroupCnt+3)
 	return uint64(memPerShare * 3), uint64(memPerShare)
 }
