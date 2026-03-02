@@ -1,0 +1,164 @@
+=== FMSketch Benchmark ===
+Config: partitions=8000 columns=1 regions=50 entries=500 maxsize=10000 overlap=0.30 GOGC=100 destroy=true
+Go: go1.25.6 darwin/arm64
+
+--- Iteration 1/5 ---
+
+Phase 1: Region -> Partition merge (8000 partitions x 1 cols x 50 regions)
+  Wall time:       7.271s
+  Allocations:     968128 allocs, 4694.9 MB
+  Peak heap:       1558.4 MB
+  GC runs:         18
+  Total GC pause:  0.869ms
+  Max GC pause:    0.079ms
+
+Phase 2: Save/Load round-trip (8000 sketches)
+  Wall time:       2.416s
+  Allocations:     304041 allocs, 4707.9 MB
+  Peak heap:       1664.2 MB
+  GC runs:         3
+  Total GC pause:  0.175ms
+  Max GC pause:    0.066ms
+
+Phase 3: Partition -> Global merge (1 cols x 8000 partitions)
+  Wall time:       471ms
+  Allocations:     22 allocs, 0.5 MB
+  Peak heap:       1664.8 MB
+  GC runs:         0
+  Total GC pause:  0.000ms
+  Max GC pause:    0.000ms
+
+Overall:
+  Total wall time: 10.159s
+  Peak heap:       1664.8 MB (phase 3)
+  Total GC pause:  1.044ms
+  Max GC pause:    0.079ms (phase 1)
+
+--- Iteration 2/5 ---
+
+Phase 1: Region -> Partition merge (8000 partitions x 1 cols x 50 regions)
+  Wall time:       16.716s
+  Allocations:     828624 allocs, 1687.3 MB
+  Peak heap:       1643.1 MB
+  GC runs:         1
+  Total GC pause:  0.149ms
+  Max GC pause:    0.149ms
+
+Phase 2: Save/Load round-trip (8000 sketches)
+  Wall time:       2.74s
+  Allocations:     304036 allocs, 4707.9 MB
+  Peak heap:       1832.5 MB
+  GC runs:         3
+  Total GC pause:  0.165ms
+  Max GC pause:    0.064ms
+
+Phase 3: Partition -> Global merge (1 cols x 8000 partitions)
+  Wall time:       481ms
+  Allocations:     22 allocs, 0.5 MB
+  Peak heap:       1833.1 MB
+  GC runs:         0
+  Total GC pause:  0.000ms
+  Max GC pause:    0.000ms
+
+Overall:
+  Total wall time: 19.938s
+  Peak heap:       1833.1 MB (phase 3)
+  Total GC pause:  0.313ms
+  Max GC pause:    0.149ms (phase 1)
+
+--- Iteration 3/5 ---
+
+Phase 1: Region -> Partition merge (8000 partitions x 1 cols x 50 regions)
+  Wall time:       17.303s
+  Allocations:     828729 allocs, 1689.6 MB
+  Peak heap:       1645.3 MB
+  GC runs:         1
+  Total GC pause:  0.116ms
+  Max GC pause:    0.116ms
+
+Phase 2: Save/Load round-trip (8000 sketches)
+  Wall time:       2.53s
+  Allocations:     304040 allocs, 4707.9 MB
+  Peak heap:       1840.5 MB
+  GC runs:         3
+  Total GC pause:  0.788ms
+  Max GC pause:    0.555ms
+
+Phase 3: Partition -> Global merge (1 cols x 8000 partitions)
+  Wall time:       486ms
+  Allocations:     22 allocs, 0.5 MB
+  Peak heap:       1841.0 MB
+  GC runs:         0
+  Total GC pause:  0.000ms
+  Max GC pause:    0.000ms
+
+Overall:
+  Total wall time: 20.318s
+  Peak heap:       1841.0 MB (phase 3)
+  Total GC pause:  0.903ms
+  Max GC pause:    0.555ms (phase 2)
+
+--- Iteration 4/5 ---
+
+Phase 1: Region -> Partition merge (8000 partitions x 1 cols x 50 regions)
+  Wall time:       16.56s
+  Allocations:     828658 allocs, 1688.0 MB
+  Peak heap:       1643.8 MB
+  GC runs:         1
+  Total GC pause:  0.063ms
+  Max GC pause:    0.063ms
+
+Phase 2: Save/Load round-trip (8000 sketches)
+  Wall time:       2.418s
+  Allocations:     304055 allocs, 4708.3 MB
+  Peak heap:       1837.4 MB
+  GC runs:         3
+  Total GC pause:  0.180ms
+  Max GC pause:    0.069ms
+
+Phase 3: Partition -> Global merge (1 cols x 8000 partitions)
+  Wall time:       487ms
+  Allocations:     38 allocs, 0.5 MB
+  Peak heap:       1838.0 MB
+  GC runs:         0
+  Total GC pause:  0.000ms
+  Max GC pause:    0.000ms
+
+Overall:
+  Total wall time: 19.465s
+  Peak heap:       1838.0 MB (phase 3)
+  Total GC pause:  0.243ms
+  Max GC pause:    0.069ms (phase 2)
+
+--- Iteration 5/5 ---
+
+Phase 1: Region -> Partition merge (8000 partitions x 1 cols x 50 regions)
+  Wall time:       16.56s
+  Allocations:     828696 allocs, 1688.8 MB
+  Peak heap:       1644.7 MB
+  GC runs:         1
+  Total GC pause:  0.048ms
+  Max GC pause:    0.048ms
+
+Phase 2: Save/Load round-trip (8000 sketches)
+  Wall time:       2.369s
+  Allocations:     304054 allocs, 4708.3 MB
+  Peak heap:       1838.6 MB
+  GC runs:         3
+  Total GC pause:  0.157ms
+  Max GC pause:    0.060ms
+
+Phase 3: Partition -> Global merge (1 cols x 8000 partitions)
+  Wall time:       481ms
+  Allocations:     22 allocs, 0.5 MB
+  Peak heap:       1839.1 MB
+  GC runs:         0
+  Total GC pause:  0.000ms
+  Max GC pause:    0.000ms
+
+Overall:
+  Total wall time: 19.411s
+  Peak heap:       1839.1 MB (phase 3)
+  Total GC pause:  0.206ms
+  Max GC pause:    0.060ms (phase 2)
+
