@@ -1241,6 +1241,28 @@ const (
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBEnableModelDDL indicates whether model DDL statements are enabled
+	TiDBEnableModelDDL = "tidb_enable_model_ddl"
+	// TiDBEnableModelInference indicates whether model inference is enabled
+	TiDBEnableModelInference = "tidb_enable_model_inference"
+	// TiDBModelMaxBatchSize indicates the max batch size for model inference.
+	TiDBModelMaxBatchSize = "tidb_model_max_batch_size"
+	// TiDBModelTimeout indicates the timeout for model inference.
+	TiDBModelTimeout = "tidb_model_timeout"
+	// TiDBModelAllowNondeterministic indicates whether nondeterministic models are allowed.
+	TiDBModelAllowNondeterministic = "tidb_model_allow_nondeterministic"
+	// TiDBEnableModelCustomOps indicates whether custom ops are allowed.
+	TiDBEnableModelCustomOps = "tidb_enable_model_custom_ops"
+	// TiDBModelNullBehavior controls how NULL inputs are handled by model_predict.
+	TiDBModelNullBehavior = "tidb_model_null_behavior"
+	// ModelNullBehaviorError rejects NULL inputs.
+	ModelNullBehaviorError = "ERROR"
+	// ModelNullBehaviorReturnNull returns NULL when any input is NULL.
+	ModelNullBehaviorReturnNull = "RETURN_NULL"
+	// TiDBModelCacheCapacity indicates the process-level model session cache capacity.
+	TiDBModelCacheCapacity = "tidb_model_cache_capacity"
+	// TiDBModelCacheTTL indicates the process-level model session cache TTL.
+	TiDBModelCacheTTL = "tidb_model_cache_ttl"
 	// TiDBResourceControlStrictMode indicates whether resource control strict mode is enabled.
 	// When strict mode is enabled, user need certain privilege to change session or statement resource group.
 	TiDBResourceControlStrictMode = "tidb_resource_control_strict_mode"
@@ -1711,6 +1733,15 @@ const (
 	DefTiDBTTLDeleteWorkerCount                       = 4
 	DefaultExchangeCompressionMode                    = ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                      = true
+	DefTiDBEnableModelDDL                             = false
+	DefTiDBEnableModelInference                       = false
+	DefTiDBModelCacheCapacity                         = 64
+	DefTiDBModelCacheTTL                              = 0 * time.Second
+	DefTiDBModelMaxBatchSize                          = 256
+	DefTiDBModelTimeout                               = 200 * time.Millisecond
+	DefTiDBModelAllowNondeterministic                 = false
+	DefTiDBEnableModelCustomOps                       = false
+	DefTiDBModelNullBehavior                          = ModelNullBehaviorError
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
@@ -1890,6 +1921,15 @@ var (
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl           = atomic.NewBool(false)
 	EnableResourceControlStrictMode = atomic.NewBool(true)
+	EnableModelDDL                  = atomic.NewBool(DefTiDBEnableModelDDL)
+	EnableModelInference            = atomic.NewBool(DefTiDBEnableModelInference)
+	ModelCacheCapacity              = atomic.NewUint64(DefTiDBModelCacheCapacity)
+	ModelCacheTTL                   = atomic.NewDuration(DefTiDBModelCacheTTL)
+	ModelMaxBatchSize               = atomic.NewInt64(DefTiDBModelMaxBatchSize)
+	ModelTimeout                    = atomic.NewDuration(DefTiDBModelTimeout)
+	ModelAllowNondeterministic      = atomic.NewBool(DefTiDBModelAllowNondeterministic)
+	EnableModelCustomOps            = atomic.NewBool(DefTiDBEnableModelCustomOps)
+	ModelNullBehavior               = atomic.NewString(DefTiDBModelNullBehavior)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)

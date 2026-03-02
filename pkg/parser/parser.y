@@ -479,6 +479,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	increment                  "INCREMENT"
 	incremental                "INCREMENTAL"
 	indexes                    "INDEXES"
+	input                      "INPUT"
 	insertMethod               "INSERT_METHOD"
 	instance                   "INSTANCE"
 	invisible                  "INVISIBLE"
@@ -519,7 +520,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	minute                     "MINUTE"
 	minValue                   "MINVALUE"
 	minRows                    "MIN_ROWS"
+	mlflow                     "MLFLOW"
 	mode                       "MODE"
+	model                      "MODEL"
 	modify                     "MODIFY"
 	month                      "MONTH"
 	names                      "NAMES"
@@ -546,9 +549,11 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	oltpWriteOnly              "OLTP_WRITE_ONLY"
 	online                     "ONLINE"
 	only                       "ONLY"
+	onnx                       "ONNX"
 	onDuplicate                "ON_DUPLICATE"
 	open                       "OPEN"
 	optional                   "OPTIONAL"
+	output                     "OUTPUT"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
 	pageChecksum               "PAGE_CHECKSUM"
@@ -999,6 +1004,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 %type	<statement>
 	AdminStmt                  "Check table statement or show ddl statement"
 	AlterDatabaseStmt          "Alter database statement"
+	AlterModelStmt             "Alter model statement"
 	AlterTableStmt             "Alter table statement"
 	AlterUserStmt              "Alter user statement"
 	AlterInstanceStmt          "Alter instance statement"
@@ -1018,6 +1024,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	CreateUserStmt             "CREATE User statement"
 	CreateRoleStmt             "CREATE Role statement"
 	CreateDatabaseStmt         "Create Database Statement"
+	CreateModelStmt            "CREATE MODEL statement"
 	CreateIndexStmt            "CREATE INDEX statement"
 	CreateBindingStmt          "CREATE BINDING statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
@@ -1029,6 +1036,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
 	DropDatabaseStmt           "DROP DATABASE statement"
+	DropModelStmt              "DROP MODEL statement"
 	DropIndexStmt              "DROP INDEX statement"
 	DropProcedureStmt          "DROP PROCEDURE statement"
 	DropQueryWatchStmt         "DROP QUERY WATCH statement"
@@ -1164,6 +1172,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	Boolean                                "Boolean (0, 1, false, true)"
 	BDRRole                                "BDR role (primary, secondary)"
 	OptionalBraces                         "optional braces"
+	ModelSpec                              "model specification"
+	ModelColumnDefList                     "model column definition list"
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
 	ColumnDef                              "table column definition"
@@ -1599,6 +1609,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	KeyOrIndex        "{KEY|INDEX}"
 	ColumnKeywordOpt  "Column keyword or empty"
 	PrimaryOpt        "Optional primary keyword"
+	ModelEngine       "model engine type"
 	NowSym            "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP"
 	NowSymFunc        "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	CurdateSym        "CURDATE or CURRENT_DATE"
@@ -1719,6 +1730,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 %precedence lowerThanParenthese
 %right '('
 %left ')'
+%right '.'
 %precedence higherThanParenthese
 %left join straightJoin inner cross left right full natural
 %precedence lowerThanOn
@@ -7503,6 +7515,11 @@ UnReservedKeyword:
 |	"INSTANCE"
 |	"REPLICA"
 |	"LOCATION"
+|	"INPUT"
+|	"OUTPUT"
+|	"MODEL"
+|	"MLFLOW"
+|	"ONNX"
 |	"LABELS"
 |	"LOGS"
 |	"HOSTS"
@@ -8327,8 +8344,20 @@ SimpleIdent:
 SimpleExpr:
 	SimpleIdent
 |	FunctionCallKeyword
+|	FunctionCallKeyword '.' Identifier
+	{
+		$$ = &ast.FieldAccessExpr{Expr: $1, Name: ast.NewCIStr($3)}
+	}
 |	FunctionCallNonKeyword
+|	FunctionCallNonKeyword '.' Identifier
+	{
+		$$ = &ast.FieldAccessExpr{Expr: $1, Name: ast.NewCIStr($3)}
+	}
 |	FunctionCallGeneric
+|	FunctionCallGeneric '.' Identifier
+	{
+		$$ = &ast.FieldAccessExpr{Expr: $1, Name: ast.NewCIStr($3)}
+	}
 |	SimpleExpr "COLLATE" CollationName
 	{
 		$$ = &ast.SetCollationExpr{Expr: $1, Collate: $3}
@@ -9544,7 +9573,7 @@ PriorityOpt:
 |	Priority
 
 TableName:
-	Identifier
+	Identifier %prec '.'
 	{
 		$$ = &ast.TableName{Name: ast.NewCIStr($1)}
 	}
@@ -12041,6 +12070,13 @@ ShowStmt:
 			Table: $4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "CREATE" "MODEL" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowCreateModel,
+			Table: $4.(*ast.TableName),
+		}
+	}
 |	"SHOW" "CREATE" "DATABASE" IfNotExists DBName
 	{
 		$$ = &ast.ShowStmt{
@@ -12808,6 +12844,7 @@ Statement:
 	EmptyStmt
 |	AdminStmt
 |	AlterDatabaseStmt
+|	AlterModelStmt
 |	AlterTableStmt
 |	AlterUserStmt
 |	AlterInstanceStmt
@@ -12827,6 +12864,7 @@ Statement:
 |	CalibrateResourceStmt
 |	CancelDistributionJobStmt
 |	CreateDatabaseStmt
+|	CreateModelStmt
 |	CreateIndexStmt
 |	CreateTableStmt
 |	CreateViewStmt
@@ -12843,6 +12881,7 @@ Statement:
 |	DistributeTableStmt
 |	DoStmt
 |	DropDatabaseStmt
+|	DropModelStmt
 |	DropIndexStmt
 |	DropTableStmt
 |	DropProcedureStmt
@@ -16111,6 +16150,66 @@ DropResourceGroupStmt:
 			IfExists:          $4.(bool),
 			ResourceGroupName: ast.NewCIStr($5),
 		}
+	}
+
+CreateModelStmt:
+	"CREATE" "MODEL" IfNotExists TableName ModelSpec
+	{
+		stmt := $5.(*ast.CreateModelStmt)
+		stmt.Name = $4.(*ast.TableName)
+		stmt.IfNotExists = $3.(bool)
+		$$ = stmt
+	}
+
+AlterModelStmt:
+	"ALTER" "MODEL" TableName "SET" "LOCATION" stringLit "CHECKSUM" stringLit
+	{
+		$$ = &ast.AlterModelStmt{
+			Name:     $3.(*ast.TableName),
+			Location: $6,
+			Checksum: $8,
+		}
+	}
+
+DropModelStmt:
+	"DROP" "MODEL" IfExists TableName
+	{
+		$$ = &ast.DropModelStmt{
+			IfExists: $3.(bool),
+			Name:     $4.(*ast.TableName),
+		}
+	}
+
+ModelSpec:
+	'(' "INPUT" '(' ModelColumnDefList ')' "OUTPUT" '(' ModelColumnDefList ')' ')' "USING" ModelEngine "LOCATION" stringLit "CHECKSUM" stringLit
+	{
+		$$ = &ast.CreateModelStmt{
+			InputCols:  $4.([]*ast.ColumnDef),
+			OutputCols: $8.([]*ast.ColumnDef),
+			Engine:     $12,
+			Location:   $14,
+			Checksum:   $16,
+		}
+	}
+
+ModelEngine:
+	"ONNX"
+	{
+		$$ = "ONNX"
+	}
+|	"MLFLOW"
+	{
+		$$ = "MLFLOW"
+	}
+
+ModelColumnDefList:
+	ColumnDef
+	{
+		$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
+	}
+|	ModelColumnDefList ',' ColumnDef
+	{
+		$$ = append($1.([]*ast.ColumnDef), $3.(*ast.ColumnDef))
 	}
 
 CreatePolicyStmt:

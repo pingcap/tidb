@@ -1083,6 +1083,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrProtectedTableMode:               mysql.Message("Table %s is in mode %s", nil),
 	ErrInvalidTableModeSet:              mysql.Message("Invalid mode set from (or by default) %s to %s for table %s", nil),
 	ErrForbiddenDDL:                     mysql.Message("%s is forbidden", nil),
+	ErrModelExists:                      mysql.Message("Model '%-.64s.%-.64s' already exists", nil),
+	ErrModelNotExists:                   mysql.Message("Model '%-.64s.%-.64s' doesn't exist", nil),
+	ErrModelDDLDisabled:                 mysql.Message("Model DDL is disabled. Run `SET GLOBAL tidb_enable_model_ddl='ON'` to enable the feature", nil),
+	ErrModelInferenceDisabled:           mysql.Message("Model inference is disabled. Run `SET GLOBAL tidb_enable_model_inference='ON'` to enable the feature", nil),
 
 	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 

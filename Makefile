@@ -653,6 +653,10 @@ generate_grafana_scripts:
 	  rm tidb_summary.json.committed && \
 	  rm tidb_resource_control.json.committed
 
+.PHONY: onnxruntime_prepare
+onnxruntime_prepare: ## Download ONNX Runtime shared library for model serving.
+	./build/download_onnxruntime.sh
+
 
 .PHONY: bazel_ci_prepare
 bazel_ci_prepare:
