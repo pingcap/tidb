@@ -17,7 +17,6 @@ package metrics
 import (
 	"maps"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -259,37 +258,6 @@ const (
 	LblUpdateColRate      = "update_col_rate"
 	LblReorgPartitionRate = "reorg_partition_rate"
 )
-
-// generateReorgLabel returns the label with schema name, table name and optional column/index names.
-// Multiple columns/indexes can be concatenated with "+".
-func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) string {
-	var stringBuilder strings.Builder
-	if len(colOrIdxNames) == 0 {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
-	} else {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + len(colOrIdxNames) + 3)
-	}
-	stringBuilder.WriteString(label)
-	stringBuilder.WriteString("-")
-	stringBuilder.WriteString(schemaName)
-	stringBuilder.WriteString("-")
-	stringBuilder.WriteString(tableName)
-	if len(colOrIdxNames) > 0 {
-		stringBuilder.WriteString("-")
-		stringBuilder.WriteString(colOrIdxNames)
-	}
-	return stringBuilder.String()
-}
-
-// GetBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
-func GetBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
-	return BackfillTotalCounter.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
-}
-
-// GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
-	return BackfillProgressGauge.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
-}
 
 // RegisterLightningCommonMetricsForDDL returns the registered common metrics.
 func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
