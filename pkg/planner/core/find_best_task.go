@@ -909,6 +909,65 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 	}
 
+	// This rule is empirical but not always correct.
+	// If one path has significantly fewer seeks than the other, for example, 10 times, we think
+	// that path is better. See #63487 for why this is necessary.
+	lhsRangeCnt := float64(len(lhs.path.Ranges))
+	rhsRangeCnt := float64(len(rhs.path.Ranges))
+	if lhsRangeCnt > 50 || rhsRangeCnt > 50 {
+		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, 10))
+		sctx.GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix63487)
+		if threshold > 0 { // set it to 0 to disable this rule
+			seekCostDiff := math.Abs(lhsRangeCnt-rhsRangeCnt) * cost.SeekFactor
+
+			// Case 1: Consider pruning lhs (high seeks) in favor of rhs (low seeks).
+			// Prune lhs only if ALL of the following conditions are satisfied:
+			// 1. lhs has significantly more seeks than rhs (exceeds threshold, e.g., 10x)
+			// 2. Seek cost savings outweigh any sort penalty from choosing rhs:
+			//    - If rhs matches ORDER BY: no sort penalty (sortCost = 0)
+			//    - If rhs doesn't match ORDER BY: sortCost = rhs.MaxRows × SortFactor
+			// 3. We don't unintentionally favor non-covering index over a covering index (scanResult <= 0)
+			if lhsRangeCnt/rhsRangeCnt > threshold && scanResult <= 0 {
+				sortCost := 0.0
+				if matchResult > 0 {
+					// lhs matches ORDER BY, rhs doesn't - choosing rhs incurs sort cost
+					maxRows := rhs.path.MaxCountAfterAccess
+					if maxRows == 0 {
+						maxRows = rhs.path.CountAfterAccess
+					}
+					sortCost = maxRows * cost.SortFactor
+				}
+
+				if seekCostDiff > sortCost {
+					return -1, rhsPseudo
+				}
+			}
+
+			// Case 2: Consider pruning rhs (high seeks) in favor of lhs (low seeks).
+			// Prune rhs only if ALL of the following conditions are satisfied:
+			// 1. rhs has significantly more seeks than lhs (exceeds threshold, e.g., 10x)
+			// 2. Seek cost savings outweigh any sort penalty from choosing lhs:
+			//    - If lhs matches ORDER BY: no sort penalty (sortCost = 0)
+			//    - If lhs doesn't match ORDER BY: sortCost = lhs.MaxRows × SortFactor
+			// 3. We don't unintentionally favor a non-covering index over a covering index (scanResult >= 0)
+			if rhsRangeCnt/lhsRangeCnt > threshold && scanResult >= 0 {
+				sortCost := 0.0
+				if matchResult < 0 {
+					// rhs matches ORDER BY, lhs doesn't - choosing lhs incurs sort cost
+					maxRows := lhs.path.MaxCountAfterAccess
+					if maxRows == 0 {
+						maxRows = lhs.path.CountAfterAccess
+					}
+					sortCost = maxRows * cost.SortFactor
+				}
+
+				if seekCostDiff > sortCost {
+					return 1, lhsPseudo
+				}
+			}
+		}
+	}
+
 	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 || !comparable2 {

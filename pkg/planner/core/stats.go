@@ -399,7 +399,7 @@ func detachCondAndBuildRangeForPath(
 		path.TableFilters = conds
 		return nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
+	res, countAfterAccess, err := detachCondAndBuildOptimalRangeForIndex(sctx, histColl, conds, path.IdxCols, path.IdxColLens, path.Index.ID)
 	if err != nil {
 		return err
 	}
@@ -416,31 +416,116 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	indexCols := path.IdxCols
-	if len(indexCols) > len(path.Index.Columns) {
-		// Trim appended handle dimensions and keep only real index-definition columns for stats estimation.
-		indexCols = indexCols[0:len(path.Index.Columns)]
+	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = countAfterAccess.Est, countAfterAccess.MinEst, countAfterAccess.MaxEst
+	return nil
+}
+
+// detachCondAndBuildOptimalRangeForIndex attempts to build the optimal ranges for an index
+// by taking into account the seek cost associated with large IN lists. When the IN list
+// is sufficiently large, it may be more optimal to apply "IN-list match pruning" and apply
+// the IN list as a filter afterwards rather than using it to build the ranges. See
+// https://github.com/pingcap/tidb/issues/63487#issue-3409186280 for an example.
+func detachCondAndBuildOptimalRangeForIndex(
+	sctx base.PlanContext,
+	histColl *statistics.HistColl,
+	conds []expression.Expression,
+	cols []*expression.Column,
+	colLens []int,
+	indexID int64,
+) (*ranger.DetachRangeResult, statistics.RowEstimate, error) {
+	// Build ranges with all IN-lists first
+	res, err := ranger.DetachCondAndBuildRangeForIndex(
+		sctx.GetRangerCtx(), conds, cols, colLens,
+		sctx.GetSessionVars().RangeMaxSize)
+	if err != nil {
+		return nil, statistics.RowEstimate{}, err
 	}
-	needPruneEstimateRange := false
-	if len(indexCols) < len(path.IdxCols) {
-		for _, ran := range path.Ranges {
+
+	indexCols := cols
+	if idx := histColl.GetIdx(indexID); idx != nil && len(indexCols) > len(idx.Info.Columns) {
+		// Trim appended handle dimensions and keep only real index-definition columns for stats estimation.
+		indexCols = indexCols[:len(idx.Info.Columns)]
+	}
+
+	// Non-unique index paths may append handle columns in `cols` for execution ranges.
+	// Rebuild estimation ranges with the same column set used in row-count estimation.
+	estimateRanges := res.Ranges
+	if len(indexCols) < len(cols) {
+		for _, ran := range res.Ranges {
 			if len(ran.LowVal) > len(indexCols) || len(ran.HighVal) > len(indexCols) {
-				needPruneEstimateRange = true
+				estimateRanges = pruneEstimateRange(res.Ranges, len(indexCols))
 				break
 			}
 		}
 	}
-	var estimateRanges []*ranger.Range
-	if needPruneEstimateRange {
-		// Non-unique index paths may append handle columns in `path.IdxCols` for execution ranges.
-		// Rebuild estimation ranges with the same column set used in row-count estimation.
-		estimateRanges = pruneEstimateRange(path.Ranges, len(indexCols))
-	} else {
-		estimateRanges = path.Ranges
+
+	// Calculate estimated row count for this configuration
+	rowCount, err := cardinality.GetRowCountByIndexRanges(
+		sctx, histColl, indexID, estimateRanges, indexCols)
+	if err != nil {
+		return nil, statistics.RowEstimate{}, err
 	}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, estimateRanges, indexCols)
-	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
-	return err
+
+	// If there are no IN-lists to optimize (all are equality conditions), return early
+	if res.EqOrInCount <= res.EqCondCount {
+		return res, rowCount, nil
+	}
+	// If the number of ranges is small, skip optimizing for seek cost
+	if len(res.Ranges) <= 20 {
+		return res, rowCount, nil
+	}
+
+	// Save original ColumnValues to preserve full-length array with all column information
+	origColumnValues := res.ColumnValues
+
+	bestRes := res
+	bestRowCount := rowCount
+
+	bestSeekCost := cost.SeekFactor * float64(len(res.Ranges))
+	bestScanCost := rowCount.Est
+	bestCost := bestSeekCost + bestScanCost
+
+	// Note that after removing the clustered primary key if it has been added to cols,
+	// indexCols may be shorter than res.EqOrInCount. So we take the upper bound to be
+	// min(res.EqOrInCount, len(indexCols))
+	for cutoff := max(1, res.EqCondCount); cutoff < min(res.EqOrInCount, len(indexCols)); cutoff++ {
+		altIndexCols := indexCols[:cutoff]
+		altIndexColLens := colLens[:cutoff]
+
+		altRes, err := ranger.DetachCondAndBuildRangeForIndex(
+			sctx.GetRangerCtx(), conds, altIndexCols, altIndexColLens,
+			sctx.GetSessionVars().RangeMaxSize)
+		if err != nil {
+			continue
+		}
+
+		altRowCount, err := cardinality.GetRowCountByIndexRanges(
+			sctx, histColl, indexID, altRes.Ranges, altIndexCols)
+		if err != nil {
+			continue
+		}
+
+		// Total cost = seek cost + scan cost + sort cost
+		// Note that because we don't have access to PhysicalProperty, we can't determine
+		// whether performing IN-list match pruning would prevent scanning the
+		// the entries in the index in order to satisfy an ORDER BY. Instead, we assume
+		// the worst-case scenario, which would require us to sort all of the rows
+		// afterwards.
+		altSeekCost := cost.SeekFactor * float64(len(altRes.Ranges))
+		altScanCost := altRowCount.Est
+		altSortCost := altRowCount.MaxEst * cost.SortFactor
+		altCost := altSeekCost + altScanCost + altSortCost
+
+		if altCost < bestCost {
+			bestRes = altRes
+			bestRowCount = altRowCount
+			bestCost = altCost
+		}
+	}
+
+	// Restore original ColumnValues to maintain full-length array consistent with fallback pattern.
+	bestRes.ColumnValues = origColumnValues
+	return bestRes, bestRowCount, nil
 }
 
 func pruneEstimateRange(ranges []*ranger.Range, keepColCnt int) []*ranger.Range {
