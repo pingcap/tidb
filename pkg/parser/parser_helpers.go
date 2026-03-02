@@ -98,6 +98,15 @@ func isIdentLike(tp int) bool {
 	if tp == identifier || tp == stringLit {
 		return true
 	}
+	// Multi-char operator tokens (andnot=58200 through not2=58213, plus
+	// paramMarker=58211) have Tp > 0xFF but are NOT identifiers/keywords.
+	// Also exclude hintComment, andand (&&), and pipes (||).
+	if tp == hintComment || tp == andand || tp == pipes {
+		return false
+	}
+	if tp >= andnot {
+		return false
+	}
 	if tp > 0xFF {
 		return !IsReserved(tp)
 	}

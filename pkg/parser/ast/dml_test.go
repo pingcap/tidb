@@ -232,7 +232,7 @@ func TestJoinRestore(t *testing.T) {
 	}
 	testChangedCases := []NodeRestoreTestCase{
 		{"(a al left join b bl on al.a1 > bl.b1) join (a ar right join b br on ar.a1 > br.b1)", "(`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN (`a` AS `ar` RIGHT JOIN `b` AS `br` ON `ar`.`a1`>`br`.`b1`)"},
-		{"a al left join b bl on al.a1 > bl.b1, a ar right join b br on ar.a1 > br.b1", "(`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN (`a` AS `ar` RIGHT JOIN `b` AS `br` ON `ar`.`a1`>`br`.`b1`)"},
+		{"a al left join b bl on al.a1 > bl.b1, a ar right join b br on ar.a1 > br.b1", "((`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN `a` AS `ar`) RIGHT JOIN `b` AS `br` ON `ar`.`a1`>`br`.`b1`"},
 		{"t1 join (t2 right join t3 on t2.a > t3.a join (t4 right join t5 on t4.a > t5.a))", "`t1` JOIN ((`t2` RIGHT JOIN `t3` ON `t2`.`a`>`t3`.`a`) JOIN (`t4` RIGHT JOIN `t5` ON `t4`.`a`>`t5`.`a`))"},
 		{"t1 join t2 right join t3 on t2.a=t3.a", "(`t1` JOIN `t2`) RIGHT JOIN `t3` ON `t2`.`a`=`t3`.`a`"},
 		{"t1 join (t2 right join t3 on t2.a=t3.a)", "`t1` JOIN (`t2` RIGHT JOIN `t3` ON `t2`.`a`=`t3`.`a`)"},

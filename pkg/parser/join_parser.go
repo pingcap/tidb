@@ -59,12 +59,11 @@ func (p *HandParser) parseCommaJoin() (*ast.Join, bool) {
 			return nil, false
 		}
 
-		// Comma join ALWAYS nests the previous ref (even if it's already a Join).
-		newJoin := p.arena.AllocJoin()
-		newJoin.Left = innerJoin
-		newJoin.Right = right
-		newJoin.Tp = ast.CrossJoin
-		innerJoin = newJoin
+		// Use makeCrossJoin (matching yacc's NewCrossJoin) to perform tree rotation
+		// when the right side is a join tree with ON/USING. This ensures correct
+		// precedence: "t1, t2 JOIN t3 ON c" → "(t1, t2) JOIN t3 ON c", not
+		// "t1, (t2 JOIN t3 ON c)".
+		innerJoin = p.makeCrossJoin(innerJoin, right)
 	}
 	return innerJoin, hasComma
 }

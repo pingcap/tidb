@@ -302,8 +302,10 @@ func (p *HandParser) CanBeImplicitAlias(tok Token) bool {
 		lead, nthValue, ntile, percentRank, rank, rowNumber,
 		intLit, floatLit, decLit, hexLit, bitLit,
 		paramMarker,
-		// Operators cannot be aliases.
-		eq, assignmentEq:
+		// Operator tokens and special tokens cannot be aliases.
+		eq, assignmentEq, andnot, ge, le, jss, juss, lsh,
+		neq, neqSynonym, nulleq, rsh, not2,
+		andand, pipes, hintComment:
 		return false
 	}
 	// Any other keyword token with a literal can be used as an alias.
