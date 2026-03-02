@@ -20,6 +20,7 @@ go_library(
         "ddl_fieldtype_parser.go",
         "ddl_index_parser.go",
         "ddl_load_data_parser.go",
+        "ddl_masking_parser.go",
         "ddl_misc_parser.go",
         "ddl_partition_parser.go",
         "ddl_placement_parser.go",
