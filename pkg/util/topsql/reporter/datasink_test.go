@@ -132,9 +132,6 @@ func TestDefaultDataSinkRegistererTopRURefCountConcurrentRegisterDeregister(t *t
 		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S},
 		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S},
 		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_60S},
-		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S},
-		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S},
-		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_60S},
 	}
 
 	const (
