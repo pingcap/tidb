@@ -787,6 +787,13 @@ const (
 	// TiDBAnalyzeVersion indicates how tidb collects the analyzed statistics and how use to it.
 	TiDBAnalyzeVersion = "tidb_analyze_version"
 
+	// TiDBAnalyzeUseSSTMetadata indicates whether to use SST file metadata for ANALYZE instead of full table scan.
+	TiDBAnalyzeUseSSTMetadata = "tidb_analyze_use_sst_metadata"
+
+	// TiDBTiKVPredicatePushDown indicates whether to push filter predicates down to TiKV TableScan
+	// as PushedDownFilterConditions for block-level min/max filtering.
+	TiDBTiKVPredicatePushDown = "tidb_tikv_predicate_pushdown"
+
 	// TiDBAutoAnalyzePartitionBatchSize indicates the batch size for partition tables for auto analyze in dynamic mode
 	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBAutoAnalyzePartitionBatchSize = "tidb_auto_analyze_partition_batch_size"
@@ -1561,6 +1568,8 @@ const (
 	DefTiDBEnable1PC                        = false
 	DefTiDBGuaranteeLinearizability         = true
 	DefTiDBAnalyzeVersion                   = 2
+	DefTiDBAnalyzeUseSSTMetadata            = false
+	DefTiDBTiKVPredicatePushDown            = false
 	// Deprecated: This variable is deprecated, please do not use this variable.
 	DefTiDBAutoAnalyzePartitionBatchSize              = mysql.PartitionCountLimit
 	DefTiDBEnableIndexMergeJoin                       = false

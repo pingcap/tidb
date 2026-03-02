@@ -1426,6 +1426,13 @@ type SessionVars struct {
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
 
+	// AnalyzeUseSSTMetadata indicates whether to use SST file metadata for ANALYZE.
+	AnalyzeUseSSTMetadata bool
+
+	// TiKVPredicatePushDown indicates whether to push filter predicates down to TiKV TableScan
+	// as PushedDownFilterConditions for block-level min/max filtering.
+	TiKVPredicatePushDown bool
+
 	// DisableHashJoin indicates whether to disable hash join.
 	DisableHashJoin bool
 
@@ -2378,6 +2385,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable1PC:                     vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:      vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                vardef.DefTiDBAnalyzeVersion,
+		AnalyzeUseSSTMetadata:         vardef.DefTiDBAnalyzeUseSSTMetadata,
+		TiKVPredicatePushDown:         vardef.DefTiDBTiKVPredicatePushDown,
 		EnableIndexMergeJoin:          vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          vardef.DefCTEMaxRecursionDepth,

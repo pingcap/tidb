@@ -3165,12 +3165,16 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		SampleRateReason: sampleRateReason,
 	}
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
+	analyzeType := tipb.AnalyzeType_TypeFullSampling
+	if b.ctx.GetSessionVars().AnalyzeUseSSTMetadata {
+		analyzeType = tipb.AnalyzeType_TypeSSTMetadata
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
-			Tp:             tipb.AnalyzeType_TypeFullSampling,
+			Tp:             analyzeType,
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},

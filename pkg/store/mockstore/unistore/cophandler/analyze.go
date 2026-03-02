@@ -76,6 +76,9 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeMixed {
 		resp, err = handleAnalyzeMixedReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else {
+		// TypeFullSampling and TypeSSTMetadata both use the full sampling handler.
+		// TypeSSTMetadata produces the same response format; in the mock there are
+		// no real SST files, so we handle it identically.
 		resp, err = handleAnalyzeFullSamplingReq(dbReader, ranges, analyzeReq, req.StartTs)
 	}
 	if err != nil {
