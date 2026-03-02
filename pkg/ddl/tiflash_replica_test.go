@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -151,18 +152,33 @@ func TestSetTableFlashReplica(t *testing.T) {
 
 // setUpRPCService setup grpc server to handle cop request for test.
 func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm sessmgr.Manager) (*grpc.Server, string) {
+	t.Cleanup(config.RestoreFunc())
+
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
-	port := lis.Addr().(*net.TCPAddr).Port
-	addr = fmt.Sprintf("127.0.0.1:%d", port)
+	host, portStr, err := net.SplitHostPort(lis.Addr().String())
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+	addr = net.JoinHostPort(host, portStr)
 	go func() {
 		err = srv.Serve(lis)
 		require.NoError(t, err)
 	}()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
+		conf.AdvertiseAddress = host
 	})
+
+	require.Eventually(t, func() bool {
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		return conn.Close() == nil
+	}, 10*time.Second, 100*time.Millisecond)
+
 	return srv, addr
 }
 
