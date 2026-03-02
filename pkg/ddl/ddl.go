@@ -1073,7 +1073,20 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 }
 
 func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
-	ticker := time.NewTicker(1 * time.Minute)
+	interval := 1 * time.Minute
+	// Test-only knob: speed up the tmp_ddl cleanup loop so repro tests don't need
+	// to wait for a full minute.
+	//
+	// Value meaning:
+	//   - string: a Go duration string, e.g. "200ms", "3s", "1m".
+	failpoint.Inject("mockCleanUpTempDirLoopInterval", func(val failpoint.Value) {
+		//nolint: forcetypeassert
+		d, err := time.ParseDuration(val.(string))
+		if err == nil {
+			interval = d
+		}
+	})
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
