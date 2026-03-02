@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -302,11 +303,18 @@ func (*serviceHelper) GetCurrentTSO(_ context.Context, sysSessionPool basic.Sess
 }
 
 // PurgeMVHistoryBeforeTSO removes old records from MV history tables.
-func (*serviceHelper) PurgeMVHistoryBeforeTSO(ctx context.Context, sysSessionPool basic.SessionPool, cutoffTSO uint64) error {
+func (*serviceHelper) PurgeMVHistoryBeforeTSO(ctx context.Context, sysSessionPool basic.SessionPool, currentTSO uint64, retention time.Duration) error {
 	const (
 		deleteMVRefreshHistSQL  = `DELETE FROM mysql.tidb_mview_refresh_hist WHERE REFRESH_JOB_ID < %?`
 		deleteMVLogPurgeHistSQL = `DELETE FROM mysql.tidb_mlog_purge_hist WHERE PURGE_JOB_ID < %?`
 	)
+
+	cutoffTSO := currentTSO
+	if retention > 0 {
+		cutoffPhysical := max(oracle.ExtractPhysical(currentTSO)-int64(retention/time.Millisecond), 0)
+		cutoffTSO = oracle.ComposeTS(cutoffPhysical, 0)
+	}
+
 	params := []any{cutoffTSO}
 	if _, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, deleteMVRefreshHistSQL, params); err != nil {
 		return err
@@ -428,6 +436,11 @@ func RegisterMVService(
 	}
 
 	cfg := DefaultMVServiceConfig()
+	cfg.TaskBackpressure = TaskBackpressureConfig{
+		CPUThreshold: defaultBackpressureCPUThreshold,
+		MemThreshold: defaultBackpressureMemThreshold,
+		Delay:        defaultTaskBackpressureDelay,
+	}
 	mvService := NewMVService(ctx, se, newServiceHelper(), cfg)
 	mvService.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
 

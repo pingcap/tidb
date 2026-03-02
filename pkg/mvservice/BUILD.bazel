@@ -14,7 +14,6 @@ go_library(
         "task_handler.go",
         "time_proxy.go",
         "time_proxy_intest.go",  #keep
-        "tso_utils.go",
         "utils.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/mvservice",

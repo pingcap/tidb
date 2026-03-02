@@ -16,6 +16,7 @@ package mvservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -406,6 +407,8 @@ func TestNewMVServiceConfig(t *testing.T) {
 		cfg.ServerRefreshInterval = 9 * time.Second
 		cfg.RetryBaseDelay = 3 * time.Second
 		cfg.RetryMaxDelay = 21 * time.Second
+		cfg.HistoryGCInterval = 3 * time.Hour
+		cfg.HistoryGCRetention = 15 * 24 * time.Hour
 		cfg.ServerConsistentHashReplicas = 17
 		cfg.TaskBackpressure = TaskBackpressureConfig{
 			CPUThreshold: 0.7,
@@ -422,6 +425,10 @@ func TestNewMVServiceConfig(t *testing.T) {
 		require.Equal(t, cfg.RetryBaseDelay, baseDelay)
 		require.Equal(t, cfg.RetryMaxDelay, maxDelay)
 
+		historyGCInterval, historyGCRetention := svc.GetHistoryGCConfig()
+		require.Equal(t, cfg.HistoryGCInterval, historyGCInterval)
+		require.Equal(t, cfg.HistoryGCRetention, historyGCRetention)
+
 		backpressureCfg := svc.GetTaskBackpressureConfig()
 		require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
 		require.NotNil(t, svc.executor.backpressure.Load())
@@ -432,24 +439,44 @@ func TestNewMVServiceConfig(t *testing.T) {
 		require.Equal(t, cfg.ServerConsistentHashReplicas, svc.sch.chash.replicas)
 	})
 
-	t.Run("invalid_fallback", func(t *testing.T) {
+	t.Run("normalized_defaults", func(t *testing.T) {
 		cfg := DefaultMVServiceConfig()
-		cfg.RetryBaseDelay = 10 * time.Second
-		cfg.RetryMaxDelay = 2 * time.Second
-		cfg.TaskBackpressure = TaskBackpressureConfig{
-			CPUThreshold: -1,
-			MemThreshold: 0.8,
-		}
+		cfg.HistoryGCInterval = 0
+		cfg.HistoryGCRetention = -time.Hour
 
 		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
 
 		baseDelay, maxDelay := svc.GetRetryDelayConfig()
-		require.Equal(t, defaultMVTaskRetryBase, baseDelay)
-		require.Equal(t, defaultMVTaskRetryMax, maxDelay)
+		require.Equal(t, cfg.RetryBaseDelay, baseDelay)
+		require.Equal(t, cfg.RetryMaxDelay, maxDelay)
+
+		historyGCInterval, historyGCRetention := svc.GetHistoryGCConfig()
+		require.Equal(t, defaultMVHistoryGCInterval, historyGCInterval)
+		require.Equal(t, defaultMVHistoryGCRetention, historyGCRetention)
 
 		backpressureCfg := svc.GetTaskBackpressureConfig()
-		require.Equal(t, TaskBackpressureConfig{}, backpressureCfg)
+		require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
 		require.Nil(t, svc.executor.backpressure.Load())
+	})
+
+	t.Run("invalid_retry_panics", func(t *testing.T) {
+		cfg := DefaultMVServiceConfig()
+		cfg.RetryBaseDelay = 10 * time.Second
+		cfg.RetryMaxDelay = 2 * time.Second
+		require.Panics(t, func() {
+			_ = NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
+		})
+	})
+
+	t.Run("invalid_backpressure_panics", func(t *testing.T) {
+		cfg := DefaultMVServiceConfig()
+		cfg.TaskBackpressure = TaskBackpressureConfig{
+			CPUThreshold: -1,
+			MemThreshold: 0.8,
+		}
+		require.Panics(t, func() {
+			_ = NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
+		})
 	})
 }
 
@@ -587,10 +614,8 @@ type fullChainMVServiceHelper struct {
 	pendingLogs map[int64]time.Time
 	pendingMVs  map[int64]time.Time
 
-	fetchLogSignal  chan struct{}
-	fetchViewSignal chan struct{}
-	refreshSignal   chan int64
-	purgeSignal     chan int64
+	refreshSignal chan int64
+	purgeSignal   chan int64
 }
 
 func newFullChainMVServiceHelper() *fullChainMVServiceHelper {
@@ -599,18 +624,14 @@ func newFullChainMVServiceHelper() *fullChainMVServiceHelper {
 			refreshNext: mvsNow().Add(30 * time.Second),
 			purgeNext:   mvsNow().Add(30 * time.Second),
 		},
-		pendingLogs:     make(map[int64]time.Time),
-		pendingMVs:      make(map[int64]time.Time),
-		fetchLogSignal:  make(chan struct{}, 16),
-		fetchViewSignal: make(chan struct{}, 16),
-		refreshSignal:   make(chan int64, 16),
-		purgeSignal:     make(chan int64, 16),
+		pendingLogs:   make(map[int64]time.Time),
+		pendingMVs:    make(map[int64]time.Time),
+		refreshSignal: make(chan int64, 16),
+		purgeSignal:   make(chan int64, 16),
 	}
 }
 
 func (h *fullChainMVServiceHelper) drainSignals() {
-	drainStructChan(h.fetchLogSignal)
-	drainStructChan(h.fetchViewSignal)
 	drainInt64Chan(h.refreshSignal)
 	drainInt64Chan(h.purgeSignal)
 }
@@ -631,7 +652,6 @@ func (h *fullChainMVServiceHelper) setPending(logs map[int64]time.Time, mvs map[
 
 func (h *fullChainMVServiceHelper) fetchAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
 	h.fetchLogsCalls.Add(1)
-	emitStruct(h.fetchLogSignal)
 	if h.fetchLogsErr != nil {
 		return nil, h.fetchLogsErr
 	}
@@ -652,7 +672,6 @@ func (h *fullChainMVServiceHelper) fetchAllTiDBMVLogPurge(context.Context, basic
 
 func (h *fullChainMVServiceHelper) fetchAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
 	h.fetchViewCalls.Add(1)
-	emitStruct(h.fetchViewSignal)
 	if h.fetchViewsErr != nil {
 		return nil, h.fetchViewsErr
 	}
@@ -753,10 +772,16 @@ func (h *mvServiceTestHarness) triggerDDL() {
 	h.svc.NotifyDDLChange()
 }
 
-func (h *mvServiceTestHarness) waitFetchCycle() {
+func (h *mvServiceTestHarness) fetchCallCounts() (logCalls int32, viewCalls int32) {
 	h.t.Helper()
-	waitSignalReal(h.t, h.helper.fetchLogSignal, time.Second, "fetch mlog signal")
-	waitSignalReal(h.t, h.helper.fetchViewSignal, time.Second, "fetch mview signal")
+	return h.helper.fetchLogsCalls.Load(), h.helper.fetchViewCalls.Load()
+}
+
+func (h *mvServiceTestHarness) waitFetchCycleSince(logCalls, viewCalls int32) {
+	h.t.Helper()
+	require.Eventually(h.t, func() bool {
+		return h.helper.fetchLogsCalls.Load() > logCalls && h.helper.fetchViewCalls.Load() > viewCalls
+	}, time.Second, 10*time.Millisecond)
 }
 
 func (h *mvServiceTestHarness) waitRefreshTask(mvID int64) {
@@ -778,17 +803,19 @@ func (h *mvServiceTestHarness) assertNoPending() {
 }
 
 func TestMVServiceFullChainSimulation(t *testing.T) {
-	installMockTimeForTest(t)
+	module := installMockTimeForTest(t)
 
 	h := newMVServiceTestHarness(t)
+	startupLogCalls, startupViewCalls := h.fetchCallCounts()
 	h.start()
 	defer h.stop()
 
 	// Wait for startup fetch cycle.
-	h.waitFetchCycle()
+	h.waitFetchCycleSince(startupLogCalls, startupViewCalls)
 
 	t.Run("schedule_and_execute", func(t *testing.T) {
 		h.helper.drainSignals()
+		baseLogCalls, baseViewCalls := h.fetchCallCounts()
 
 		now := mvsNow()
 		h.setMeta(
@@ -797,7 +824,7 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 		)
 		h.triggerDDL()
 
-		h.waitFetchCycle()
+		h.waitFetchCycleSince(baseLogCalls, baseViewCalls)
 		h.waitPurgeTask(2001)
 		h.waitRefreshTask(1001)
 
@@ -809,23 +836,60 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
 	})
 
+	t.Run("retry_then_success", func(t *testing.T) {
+		h.helper.drainSignals()
+		h.helper.refreshErr = errors.New("refresh failed")
+		h.helper.purgeErr = errors.New("purge failed")
+
+		finishedBase := h.svc.executor.metrics.counters.finishedCount.Load()
+		failedBase := h.svc.executor.metrics.counters.failedCount.Load()
+		submittedBase := h.svc.executor.metrics.counters.submittedCount.Load()
+		baseLogCalls, baseViewCalls := h.fetchCallCounts()
+
+		now := mvsNow()
+		h.setMeta(
+			map[int64]time.Time{2002: now.Add(-time.Second)},
+			map[int64]time.Time{1002: now.Add(-time.Second)},
+		)
+		h.triggerDDL()
+
+		h.waitFetchCycleSince(baseLogCalls, baseViewCalls)
+		h.waitPurgeTask(2002)
+		h.waitRefreshTask(1002)
+		require.Eventually(t, func() bool {
+			return h.svc.executor.metrics.counters.finishedCount.Load() >= finishedBase+2 &&
+				h.svc.executor.metrics.counters.failedCount.Load() >= failedBase+2 &&
+				h.svc.executor.metrics.counters.submittedCount.Load() >= submittedBase+2
+		}, time.Second, 10*time.Millisecond)
+
+		h.helper.refreshErr = nil
+		h.helper.purgeErr = nil
+
+		module.Advance(defaultMVTaskRetryBase + time.Millisecond)
+
+		h.waitPurgeTask(2002)
+		h.waitRefreshTask(1002)
+		require.Eventually(t, func() bool {
+			return h.svc.executor.metrics.counters.finishedCount.Load() >= finishedBase+4 &&
+				h.svc.executor.metrics.counters.failedCount.Load() >= failedBase+2 &&
+				h.svc.executor.metrics.counters.submittedCount.Load() >= submittedBase+4
+		}, time.Second, 10*time.Millisecond)
+
+		require.Equal(t, 2, h.helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
+		require.Equal(t, 2, h.helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
+		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultFailed))
+		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultFailed))
+	})
+
 	t.Run("remove_after_meta_deleted", func(t *testing.T) {
 		h.helper.drainSignals()
+		baseLogCalls, baseViewCalls := h.fetchCallCounts()
 		h.setMeta(nil, nil)
 		h.triggerDDL()
 
-		h.waitFetchCycle()
+		h.waitFetchCycleSince(baseLogCalls, baseViewCalls)
 		h.assertNoPending()
 	})
-}
-
-func waitSignalReal(t *testing.T, ch <-chan struct{}, timeout time.Duration, hint string) {
-	t.Helper()
-	select {
-	case <-ch:
-	case <-time.After(timeout):
-		t.Fatalf("timeout waiting for %s", hint)
-	}
 }
 
 func waitInt64SignalReal(t *testing.T, ch <-chan int64, expected int64, timeout time.Duration, hint string) {
@@ -843,27 +907,10 @@ func waitInt64SignalReal(t *testing.T, ch <-chan int64, expected int64, timeout 
 	}
 }
 
-func emitStruct(ch chan struct{}) {
-	select {
-	case ch <- struct{}{}:
-	default:
-	}
-}
-
 func emitInt64(ch chan int64, v int64) {
 	select {
 	case ch <- v:
 	default:
-	}
-}
-
-func drainStructChan(ch chan struct{}) {
-	for {
-		select {
-		case <-ch:
-		default:
-			return
-		}
 	}
 }
 

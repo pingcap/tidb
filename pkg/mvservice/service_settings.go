@@ -21,8 +21,6 @@ import (
 	"time"
 
 	basic "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // Config is the config for constructing MVService.
@@ -36,6 +34,9 @@ type Config struct {
 
 	RetryBaseDelay time.Duration
 	RetryMaxDelay  time.Duration
+
+	HistoryGCInterval  time.Duration
+	HistoryGCRetention time.Duration
 
 	ServerConsistentHashReplicas int
 
@@ -52,12 +53,9 @@ func DefaultMVServiceConfig() Config {
 		ServerRefreshInterval:        defaultServerRefreshInterval,
 		RetryBaseDelay:               defaultMVTaskRetryBase,
 		RetryMaxDelay:                defaultMVTaskRetryMax,
+		HistoryGCInterval:            defaultMVHistoryGCInterval,
+		HistoryGCRetention:           defaultMVHistoryGCRetention,
 		ServerConsistentHashReplicas: defaultCHReplicas,
-		TaskBackpressure: TaskBackpressureConfig{
-			CPUThreshold: defaultBackpressureCPUThreshold,
-			MemThreshold: defaultBackpressureMemThreshold,
-			Delay:        defaultTaskBackpressureDelay,
-		},
 	}
 }
 
@@ -92,6 +90,12 @@ func normalizeMVServiceConfig(cfg Config) Config {
 	if cfg.RetryMaxDelay <= 0 {
 		cfg.RetryMaxDelay = def.RetryMaxDelay
 	}
+	if cfg.HistoryGCInterval <= 0 {
+		cfg.HistoryGCInterval = def.HistoryGCInterval
+	}
+	if cfg.HistoryGCRetention <= 0 {
+		cfg.HistoryGCRetention = def.HistoryGCRetention
+	}
 	if cfg.ServerConsistentHashReplicas <= 0 {
 		cfg.ServerConsistentHashReplicas = def.ServerConsistentHashReplicas
 	}
@@ -117,23 +121,17 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper Helper, cfg 
 		basicInterval:         cfg.BasicInterval,
 		serverRefreshInterval: cfg.ServerRefreshInterval,
 	}
-	mgr.historyGCIntervalMillis.Store(defaultMVHistoryGCInterval.Milliseconds())
-	mgr.historyGCRetentionMillis.Store(defaultMVHistoryGCRetention.Milliseconds())
-	def := DefaultMVServiceConfig()
+	if err := mgr.SetHistoryGCConfig(cfg.HistoryGCInterval, cfg.HistoryGCRetention); err != nil {
+		panic(fmt.Sprintf("invalid MV service history GC config: interval=%s retention=%s err=%v",
+			cfg.HistoryGCInterval, cfg.HistoryGCRetention, err))
+	}
 	if err := mgr.SetRetryDelayConfig(cfg.RetryBaseDelay, cfg.RetryMaxDelay); err != nil {
-		logutil.BgLogger().Warn("invalid MV service retry config, fallback to defaults",
-			zap.Error(err),
-			zap.Duration("retry_base", cfg.RetryBaseDelay),
-			zap.Duration("retry_max", cfg.RetryMaxDelay))
-		_ = mgr.SetRetryDelayConfig(def.RetryBaseDelay, def.RetryMaxDelay)
+		panic(fmt.Sprintf("invalid MV service retry config: base=%s max=%s err=%v",
+			cfg.RetryBaseDelay, cfg.RetryMaxDelay, err))
 	}
 	if err := mgr.SetTaskBackpressureConfig(cfg.TaskBackpressure); err != nil {
-		logutil.BgLogger().Warn("invalid MV service backpressure config, disable backpressure",
-			zap.Error(err),
-			zap.Float64("cpu_threshold", cfg.TaskBackpressure.CPUThreshold),
-			zap.Float64("mem_threshold", cfg.TaskBackpressure.MemThreshold),
-			zap.Duration("delay", cfg.TaskBackpressure.Delay))
-		_ = mgr.SetTaskBackpressureConfig(TaskBackpressureConfig{})
+		panic(fmt.Sprintf("invalid MV service backpressure config: cpu_threshold=%v mem_threshold=%v delay=%s err=%v",
+			cfg.TaskBackpressure.CPUThreshold, cfg.TaskBackpressure.MemThreshold, cfg.TaskBackpressure.Delay, err))
 	}
 	return mgr
 }
@@ -251,18 +249,8 @@ func (t *MVService) SetHistoryGCConfig(interval, retention time.Duration) error 
 
 // GetHistoryGCConfig returns history GC interval and retention config.
 func (t *MVService) GetHistoryGCConfig() (interval, retention time.Duration) {
-	if t == nil {
-		return defaultMVHistoryGCInterval, defaultMVHistoryGCRetention
-	}
-	interval = time.Duration(t.historyGCIntervalMillis.Load()) * time.Millisecond
-	retention = time.Duration(t.historyGCRetentionMillis.Load()) * time.Millisecond
-	if interval <= 0 {
-		interval = defaultMVHistoryGCInterval
-	}
-	if retention <= 0 {
-		retention = defaultMVHistoryGCRetention
-	}
-	return interval, retention
+	return time.Duration(t.historyGCIntervalMillis.Load()) * time.Millisecond,
+		time.Duration(t.historyGCRetentionMillis.Load()) * time.Millisecond
 }
 
 // calcRetryDelay computes exponential backoff with an upper bound.

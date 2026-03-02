@@ -48,7 +48,7 @@ type MVMetaFetchHandler interface {
 // MVHistoryGCHandler defines history cleanup contract for MV maintenance history tables.
 type MVHistoryGCHandler interface {
 	GetCurrentTSO(ctx context.Context, sysSessionPool basic.SessionPool) (uint64, error)
-	PurgeMVHistoryBeforeTSO(ctx context.Context, sysSessionPool basic.SessionPool, cutoffTSO uint64) error
+	PurgeMVHistoryBeforeTSO(ctx context.Context, sysSessionPool basic.SessionPool, currentTSO uint64, retention time.Duration) error
 }
 
 // MVTaskHandler is a convenience interface that implements both refresh and purge.
