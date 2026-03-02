@@ -8,16 +8,44 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 var memReaderBenchSink int64
+
+func TestMemRowsIterFastDecodeRowKey(t *testing.T) {
+	const tableID int64 = 1
+
+	intKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(-123))
+	fastHandle, err := decodeHandleFromRowKey(intKey, true)
+	require.NoError(t, err)
+	slowHandle, err := tablecodec.DecodeRowKey(intKey)
+	require.NoError(t, err)
+	require.True(t, fastHandle.IsInt())
+	require.Equal(t, int64(-123), fastHandle.IntValue())
+	require.True(t, fastHandle.Equal(slowHandle))
+
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, types.MakeDatums(int64(100), "abc")...)
+	require.NoError(t, err)
+	commonHandle, err := kv.NewCommonHandle(encoded)
+	require.NoError(t, err)
+	commonKey := tablecodec.EncodeRowKeyWithHandle(tableID, commonHandle)
+	fastHandle, err = decodeHandleFromRowKey(commonKey, false)
+	require.NoError(t, err)
+	slowHandle, err = tablecodec.DecodeRowKey(commonKey)
+	require.NoError(t, err)
+	require.False(t, fastHandle.IsInt())
+	require.True(t, fastHandle.Equal(slowHandle))
+}
 
 func BenchmarkMemRowsIterForTable(b *testing.B) {
 	b.ReportAllocs()
@@ -114,6 +142,7 @@ func BenchmarkMemRowsIterForTable(b *testing.B) {
 			cd:             cd,
 			chk:            chunk.New(retFieldTypes, 1, 1),
 			datumRow:       make([]types.Datum, len(retFieldTypes)),
+			intHandle:      true,
 			memTableReader: memTblReader,
 		}
 	}
@@ -132,6 +161,7 @@ func BenchmarkMemRowsIterForTable(b *testing.B) {
 			sel:            make([]int, 0, cachedTableBatchSize),
 			datumRow:       make([]types.Datum, len(retFieldTypes)),
 			retFieldTypes:  retFieldTypes,
+			intHandle:      true,
 			memTableReader: memTblReader,
 		}
 	}
