@@ -1,0 +1,237 @@
+[
+  {
+    "Name": "TestCorrelate",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where exists (select 1 from t2 where t2.a = t1.a)",
+        "Plan": [
+          "Apply 10000.00 root  CARTESIAN semi join, left side:TableReader",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Limit(Probe) 10000.00 root  offset:0, count:1",
+          "  └─IndexReader 10000.00 root  index:Limit",
+          "    └─Limit 10000.00 cop[tikv]  offset:0, count:1",
+          "      └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where not exists (select 1 from t2 where t2.a = t1.a)",
+        "Plan": [
+          "Apply 10000.00 root  CARTESIAN anti semi join, left side:TableReader",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Limit(Probe) 10000.00 root  offset:0, count:1",
+          "  └─IndexReader 10000.00 root  index:Limit",
+          "    └─Limit 10000.00 cop[tikv]  offset:0, count:1",
+          "      └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3 3"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (select a from t2)",
+        "Plan": [
+          "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where exists (select 1 from t2)",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery N/A root  Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12, ScalarQueryCol#13",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2",
+          "3 3"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a not in (select a from t2)",
+        "Plan": [
+          "HashJoin 8000.00 root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3 3"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where exists (select 1 from t2 where t2.a > t1.a)",
+        "Plan": [
+          "Apply 10000.00 root  CARTESIAN semi join, left side:TableReader",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Limit(Probe) 10000.00 root  offset:0, count:1",
+          "  └─IndexReader 10000.00 root  index:Limit",
+          "    └─Limit 10000.00 cop[tikv]  offset:0, count:1",
+          "      └─Selection 809900.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
+          "        └─IndexFullScan 1012375.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where exists (select 1 from t2 where t2.a = t1.a and t2.b > t1.b)",
+        "Plan": [
+          "Apply 10000.00 root  CARTESIAN semi join, left side:TableReader",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Limit(Probe) 10000.00 root  offset:0, count:1",
+          "  └─IndexLookUp 10000.00 root  ",
+          "    ├─IndexRangeScan(Build) 13375.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "    └─Limit(Probe) 10000.00 cop[tikv]  offset:0, count:1",
+          "      └─Selection 10000.00 cop[tikv]  gt(test.t2.b, test.t1.b)",
+          "        └─TableRowIDScan 13375.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t2 where t2.a = t1.a)",
+        "Plan": [
+          "Apply 10000.00 root  CARTESIAN semi join, left side:TableReader",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Limit(Probe) 10000.00 root  offset:0, count:1",
+          "  └─IndexReader 10000.00 root  index:Limit",
+          "    └─Limit 10000.00 cop[tikv]  offset:0, count:1",
+          "      └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (select t2.a from t2 inner join t3 on t3.a = t2.b where t3.b > 0)",
+        "Plan": [
+          "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─HashJoin(Build) 4162.50 root  inner join, equal:[eq(test.t3.a, test.t2.b)]",
+          "│ ├─TableReader(Build) 3330.00 root  data:Selection",
+          "│ │ └─Selection 3330.00 cop[tikv]  gt(test.t3.b, 0), not(isnull(test.t3.a))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─TableReader(Probe) 9980.01 root  data:Selection",
+          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (select a from t2) order by a limit 10",
+        "Plan": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─MergeJoin 10.00 root  semi join, left side:Projection, left key:test.t1.a, right key:test.t2.a",
+          "  ├─IndexReader(Build) 12.50 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 12.50 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "  └─Projection(Probe) 12.50 root  test.t1.a, test.t1.b",
+          "    └─IndexLookUp 12.50 root  ",
+          "      ├─IndexFullScan(Build) 12.50 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
+          "      └─TableRowIDScan(Probe) 12.50 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (select a from t2 where b > 1)",
+        "Plan": [
+          "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 3330.00 root  data:Selection",
+          "│ └─Selection 3330.00 cop[tikv]  gt(test.t2.b, 1), not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (select a from t2 group by a)",
+        "Plan": [
+          "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─StreamAgg(Build) 7992.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "│ └─IndexReader 7992.00 root  index:StreamAgg",
+          "│   └─StreamAgg 7992.00 cop[tikv]  group by:test.t2.a, ",
+          "│     └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (select a from t2 where b > 1 group by a)",
+        "Plan": [
+          "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─HashAgg(Build) 2664.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "│ └─TableReader 2664.00 root  data:HashAgg",
+          "│   └─HashAgg 2664.00 cop[tikv]  group by:test.t2.a, ",
+          "│     └─Selection 3330.00 cop[tikv]  gt(test.t2.b, 1), not(isnull(test.t2.a))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (select a from t2 limit 10)",
+        "Plan": [
+          "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─Selection(Build) 8.00 root  not(isnull(test.t2.a))",
+          "│ └─Limit 10.00 root  offset:0, count:10",
+          "│   └─IndexReader 10.00 root  index:Limit",
+          "│     └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "│       └─IndexFullScan 10.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2"
+        ]
+      }
+    ]
+  }
+]

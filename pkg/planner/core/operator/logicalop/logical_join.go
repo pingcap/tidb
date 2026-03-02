@@ -91,6 +91,15 @@ type LogicalJoin struct {
 	FullSchema *expression.Schema
 	FullNames  types.NameSlice
 
+	// PreferCorrelate is set to true when this SemiJoin originated from a non-correlated
+	// IN subquery with EnableCorrelateSubquery=ON, indicating that the CorrelateSolver
+	// should convert it back to a correlated Apply with index lookups.
+	PreferCorrelate bool
+
+	// CorrelateAlternative holds the LogicalApply alternative built by CorrelateSolver.
+	// When non-nil, findBestTask compares both Join and Apply paths and picks the cheaper one.
+	CorrelateAlternative *LogicalApply
+
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
 

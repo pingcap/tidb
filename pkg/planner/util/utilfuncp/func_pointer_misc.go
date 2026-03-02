@@ -42,6 +42,10 @@ var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan,
 var FindBestTask4LogicalDataSource func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) (t base.Task, err error)
 
+// FindBestTask4LogicalJoin handles LogicalJoin with a correlate alternative.
+var FindBestTask4LogicalJoin func(p base.LogicalPlan,
+	prop *property.PhysicalProperty) (bestTask base.Task, err error)
+
 // ExhaustPhysicalPlans4LogicalJoin will be called by LogicalJoin in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
