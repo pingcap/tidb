@@ -597,6 +597,22 @@ func tableCondsWithPKFilter(ds *logicalop.DataSource) []expression.Expression {
 	return conds
 }
 
+// appendPKFilterToIndexPath appends PK filter conditions to an index path's
+// TableFilters so that splitIndexFilterConditions (called by deriveIndexPathStats)
+// can promote them to IndexFilters. Conditions are skipped if they originated
+// from the same index to avoid self-application.
+func appendPKFilterToIndexPath(ds *logicalop.DataSource, path *util.AccessPath) {
+	if len(ds.PKFilterConds) == 0 || path.Index == nil {
+		return
+	}
+	for _, pkf := range ds.PKFilterConds {
+		if pkf.SourceIndexID == path.Index.ID {
+			continue // skip self-application
+		}
+		path.TableFilters = append(path.TableFilters, pkf.Cond)
+	}
+}
+
 // We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
 // to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
 func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
@@ -631,6 +647,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			}
 			path.IsSingleScan = true
 		} else {
+			appendPKFilterToIndexPath(ds, path)
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
 			// Reevaluate path.IsSingleScan because it may have been set incorrectly
 			// in the pruning logic.

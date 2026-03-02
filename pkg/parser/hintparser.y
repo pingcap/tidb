@@ -280,6 +280,19 @@ TableOptimizerHintOpt:
 		parser.warnUnsupportedHint($1)
 		$$ = nil
 	}
+|	"PK_FILTER" '(' QueryBlockOpt ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
+		}
+	}
+|	"PK_FILTER" '(' HintIndexList ')'
+	{
+		h := $3
+		h.HintName = ast.NewCIStr($1)
+		$$ = h
+	}
 |	SupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{
 		h := $3
@@ -727,7 +740,6 @@ SupportedIndexLevelOptimizerHintName:
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
 |	"NO_INDEX_LOOKUP_PUSHDOWN"
-|	"PK_FILTER"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"

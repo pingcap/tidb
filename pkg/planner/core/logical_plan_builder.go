@@ -4594,6 +4594,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var pkFilterHints []h.HintedIndex
 	if hints := b.TableHints(); hints != nil {
 		for i, hint := range hints.PkFilterHintList {
+			if hint.TblName.L == "" && hint.DBName.L == "" {
+				// Form 3: pk_filter() — matches all DataSources.
+				hints.PkFilterHintList[i].Matched = true
+				pkFilterHints = append(pkFilterHints, hint)
+				continue
+			}
 			if hint.Match(dbName, tblName) {
 				hints.PkFilterHintList[i].Matched = true
 				// check whether the index names in PkFilterHint are valid.

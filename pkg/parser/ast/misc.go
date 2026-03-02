@@ -4144,7 +4144,21 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown", "no_index_lookup_pushdown", "pk_filter":
+	case "pk_filter":
+		if len(n.Tables) == 0 {
+			// Form 3: pk_filter() — no tables or indexes.
+			ctx.WritePlain(")")
+			return nil
+		}
+		n.Tables[0].Restore(ctx)
+		ctx.WritePlain(" ")
+		for i, index := range n.Indexes {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(index.String())
+		}
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown", "no_index_lookup_pushdown":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {

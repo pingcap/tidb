@@ -795,7 +795,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintPKFilter, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -925,20 +925,30 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				},
 			})
 		case HintPKFilter:
-			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
-				dbName = ast.NewCIStr(currentDB)
+			if len(hint.Tables) == 0 {
+				// Form 3: pk_filter() — applies to all qualifying tables.
+				pkFilterHintList = append(pkFilterHintList, HintedIndex{
+					IndexHint: &ast.IndexHint{
+						HintType:  ast.HintUse,
+						HintScope: ast.HintForScan,
+					},
+				})
+			} else {
+				dbName := hint.Tables[0].DBName
+				if dbName.L == "" {
+					dbName = ast.NewCIStr(currentDB)
+				}
+				pkFilterHintList = append(pkFilterHintList, HintedIndex{
+					DBName:     dbName,
+					TblName:    hint.Tables[0].TableName,
+					Partitions: hint.Tables[0].PartitionList,
+					IndexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintUse,
+						HintScope:  ast.HintForScan,
+					},
+				})
 			}
-			pkFilterHintList = append(pkFilterHintList, HintedIndex{
-				DBName:     dbName,
-				TblName:    hint.Tables[0].TableName,
-				Partitions: hint.Tables[0].PartitionList,
-				IndexHint: &ast.IndexHint{
-					IndexNames: hint.Indexes,
-					HintType:   ast.HintUse,
-					HintScope:  ast.HintForScan,
-				},
-			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		case HintLimitToCop:

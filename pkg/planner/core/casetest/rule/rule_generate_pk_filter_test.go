@@ -254,6 +254,54 @@ func TestGeneratePKFilterSourceIndexPreserved(t *testing.T) {
 	})
 }
 
+func TestGeneratePKFilterIndexPath(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_idxpath")
+		tk.MustExec("create table t_idxpath(a int primary key clustered, b int, c int, key idx_b(b), key idx_c(c))")
+		tk.MustExec("insert into t_idxpath values(1,1,1),(2,2,2),(3,3,3),(4,1,4),(5,2,5)")
+
+		// PK filter from idx_c should be applied to idx_b path as IndexFilter.
+		// c=1 matches only a=1, so PK filter produces pk >= 1 AND pk <= 1.
+		// Verify correct results when using idx_b with PK filter from idx_c.
+		tk.MustQuery("select /*+ pk_filter(t_idxpath, idx_c) */ * from t_idxpath where b > 0 and c = 1 order by b limit 10").Check(testkit.Rows("1 1 1"))
+
+		// PK filter should NOT be self-applied to idx_c (source index).
+		// c=1 matches only a=1, so MIN=MAX=1 → PK filter collapses to a Point_Get.
+		plan := tk.MustQuery("explain format='brief' select /*+ pk_filter(t_idxpath, idx_c) */ * from t_idxpath where c = 1 order by a limit 10")
+		planStr := planToString(plan.Rows())
+		t.Logf("Self-application check plan:\n%s", planStr)
+		// Verify PK filter is active (Point_Get from range collapse).
+		require.Contains(t, planStr, "Point_Get", "expected Point_Get when PK filter collapses to single value")
+	})
+}
+
+func TestGeneratePKFilterTableOnlyHint(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_tblonly")
+		tk.MustExec("create table t_tblonly(a int primary key clustered, b int, c int, key idx_b(b), key idx_c(c))")
+		tk.MustExec("insert into t_tblonly values(1,1,1),(2,2,2),(3,3,3),(4,1,4),(5,2,5)")
+
+		// pk_filter(t_tblonly) without index names — should use all qualifying indexes.
+		// b=1 matches a=1 and a=4, so PK filter produces pk >= 1 AND pk <= 4.
+		tk.MustQuery("select /*+ pk_filter(t_tblonly) */ * from t_tblonly where b = 1 order by a limit 10").Check(testkit.Rows("1 1 1", "4 1 4"))
+	})
+}
+
+func TestGeneratePKFilterNoArgs(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_noargs")
+		tk.MustExec("create table t_noargs(a int primary key clustered, b int, c int, key idx_b(b), key idx_c(c))")
+		tk.MustExec("insert into t_noargs values(1,1,1),(2,2,2),(3,3,3),(4,1,4),(5,2,5)")
+
+		// pk_filter() with no arguments — should apply to all qualifying tables.
+		// b=1 matches a=1 and a=4, so PK filter produces pk >= 1 AND pk <= 4.
+		tk.MustQuery("select /*+ pk_filter() */ * from t_noargs where b = 1 order by a limit 10").Check(testkit.Rows("1 1 1", "4 1 4"))
+	})
+}
+
 func planToString(rows [][]any) string {
 	var sb strings.Builder
 	for _, row := range rows {

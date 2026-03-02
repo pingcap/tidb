@@ -472,7 +472,8 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 // PKFilterCondInfo represents a PK range condition (e.g. pk >= MIN(pk), pk <= MAX(pk))
 // derived from a secondary index during the GeneratePKFilter optimization.
 type PKFilterCondInfo struct {
-	Cond expression.Expression
+	Cond          expression.Expression
+	SourceIndexID int64 // index that generated this condition
 }
 
 // IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of

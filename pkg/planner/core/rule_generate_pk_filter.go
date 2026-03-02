@@ -154,7 +154,8 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 		}
 		for _, c := range conds {
 			pkFilterConds = append(pkFilterConds, util.PKFilterCondInfo{
-				Cond: c,
+				Cond:          c,
+				SourceIndexID: idxPath.Index.ID,
 			})
 		}
 	}
@@ -237,7 +238,19 @@ func hasEqCondForCol(conds []expression.Expression, col *expression.Column) bool
 // findQualifyingIndexPaths determines which index paths to generate PK filters from.
 func findQualifyingIndexPaths(ds *logicalop.DataSource, hintMode bool) []*util.AccessPath {
 	if hintMode {
-		return findHintedIndexPaths(ds)
+		// Check if any hint specifies explicit index names.
+		hasExplicitIndexes := false
+		for _, hint := range ds.PkFilterHints {
+			if len(hint.IndexHint.IndexNames) > 0 {
+				hasExplicitIndexes = true
+				break
+			}
+		}
+		if hasExplicitIndexes {
+			return findHintedIndexPaths(ds)
+		}
+		// Form 2 (table, no indexes) or Form 3 (no args): use all qualifying secondary indexes.
+		return findSecondaryIndexPaths(ds)
 	}
 	return findSecondaryIndexPaths(ds)
 }
