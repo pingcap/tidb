@@ -594,6 +594,26 @@ func compareGlobalPrivRecord(x, y globalPrivRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
+func compareTablesPrivRecord(x, y tablesPrivRecord) int {
+	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	if cmp != 0 {
+		return cmp
+	}
+	switch {
+	case x.DB > y.DB:
+		return 1
+	case x.DB < y.DB:
+		return -1
+	}
+	switch {
+	case x.TableName > y.TableName:
+		return 1
+	case x.TableName < y.TableName:
+		return -1
+	}
+	return 0
+}
+
 func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
 	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
 	if cmp != 0 {
@@ -736,11 +756,16 @@ func (p *MySQLPrivilege) buildDynamicMap() {
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
+<<<<<<< HEAD
 func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sqlexec.RestrictedSQLExecutor) error {
+=======
+func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sqlexec.SQLExecutor) error {
+>>>>>>> 376b6036ee0 (planner: adapt (Batch)PointGet to collect column-level visit info (#62024))
 	err := p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow)
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	p.buildTablesPrivMap()
 	return nil
 }
@@ -756,6 +781,26 @@ func (p *MySQLPrivilege) buildTablesPrivMap() {
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	return p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow)
+=======
+	p.tablesPriv.Ascend(func(itm itemTablesPriv) bool {
+		slices.SortFunc(itm.data, compareTablesPrivRecord)
+		return true
+	})
+	return nil
+}
+
+// LoadColumnsPrivTable loads the mysql.columns_priv table from database.
+func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sqlexec.SQLExecutor) error {
+	err := p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow)
+	if err != nil {
+		return err
+	}
+	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		slices.SortFunc(itm.data, compareColumnsPrivRecord)
+		return true
+	})
+	return nil
+>>>>>>> 376b6036ee0 (planner: adapt (Batch)PointGet to collect column-level visit info (#62024))
 }
 
 // LoadDefaultRoles loads the mysql.columns_priv table from database.
