@@ -84,9 +84,8 @@ func TestParamMarkerConstantPredicateElimination(t *testing.T) {
 	require.Greater(t, len(rows), 0, "EXPLAIN FOR CONNECTION should return rows")
 	for _, row := range rows {
 		op := row[0].(string)
-		if strings.Contains(op, "Selection") {
-			t.Fatalf("HAVING true should not produce a Selection node, got: %s", op)
-		}
+		require.False(t, strings.Contains(op, "Selection"),
+			"HAVING true should not produce a Selection node, got: %s", op)
 	}
 	tk.MustQuery(`execute stmt3 using @v`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -96,30 +95,30 @@ func TestParamMarkerConstantPredicateElimination(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b int)")
 	tk.MustExec("insert into t2 values (1, 100)")
-	tk.MustExec(`prepare stmt5 from 'select * from t inner join t2 on t.a = t2.a where ?'`)
+	tk.MustExec(`prepare stmt4 from 'select * from t inner join t2 on t.a = t2.a where ?'`)
 	tk.MustExec(`set @v=false`)
-	tk.MustQuery(`execute stmt5 using @v`).Check(testkit.Rows()) // no rows (TableDual)
-	tk.MustQuery(`execute stmt5 using @v`)
+	tk.MustQuery(`execute stmt4 using @v`).Check(testkit.Rows()) // no rows (TableDual)
+	tk.MustQuery(`execute stmt4 using @v`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	// Also verify the true case returns results and is not cached.
 	tk.MustExec(`set @v=true`)
-	tk.MustQuery(`execute stmt5 using @v`).Check(testkit.Rows("1 10 1 100"))
-	tk.MustQuery(`execute stmt5 using @v`)
+	tk.MustQuery(`execute stmt4 using @v`).Check(testkit.Rows("1 10 1 100"))
+	tk.MustQuery(`execute stmt4 using @v`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustExec(`deallocate prepare stmt5`)
+	tk.MustExec(`deallocate prepare stmt4`)
 
 	// Case 6: JOIN USING with WHERE ?=false covers the FullSchema join path.
 	tk.MustExec("drop table if exists t3")
 	tk.MustExec("create table t3(a int, c int)")
 	tk.MustExec("insert into t3 values (1, 100)")
-	tk.MustExec(`prepare stmt6 from 'select * from t join t3 using (a) where ?'`)
+	tk.MustExec(`prepare stmt5 from 'select * from t join t3 using (a) where ?'`)
 	tk.MustExec(`set @v=false`)
-	tk.MustQuery(`execute stmt6 using @v`).Check(testkit.Rows()) // no rows
-	tk.MustQuery(`execute stmt6 using @v`)
+	tk.MustQuery(`execute stmt5 using @v`).Check(testkit.Rows()) // no rows
+	tk.MustQuery(`execute stmt5 using @v`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustExec(`set @v=true`)
-	tk.MustQuery(`execute stmt6 using @v`).Check(testkit.Rows("1 10 100"))
-	tk.MustQuery(`execute stmt6 using @v`)
+	tk.MustQuery(`execute stmt5 using @v`).Check(testkit.Rows("1 10 100"))
+	tk.MustQuery(`execute stmt5 using @v`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustExec(`deallocate prepare stmt6`)
+	tk.MustExec(`deallocate prepare stmt5`)
 }
