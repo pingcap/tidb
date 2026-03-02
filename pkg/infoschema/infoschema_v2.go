@@ -414,7 +414,8 @@ func gcCollectReferredForeignKeyItem(bt *btree.BTreeG[*referredForeignKeyItem], 
 		if item.schemaVersion < cutVer &&
 			prev != nil &&
 			prev.dbName == item.dbName &&
-			prev.tableName == item.tableName {
+			prev.tableName == item.tableName &&
+			prev.schemaVersion < cutVer {
 			dels = append(dels, item)
 			if len(dels) >= maxItems {
 				return false
