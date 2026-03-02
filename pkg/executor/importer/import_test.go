@@ -173,6 +173,14 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql3)
 	require.Equal(t, "gs://bucket/path2", plan.CloudStorageURI, sql3)
+	// override with azure
+	sql3a := sql + ", " + cloudStorageURIOption + "='azure://container/path2'"
+	stmt, err = p.ParseOneStmt(sql3a, "", "")
+	require.NoError(t, err, sql3a)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql3a)
+	require.Equal(t, "azure://container/path2", plan.CloudStorageURI, sql3a)
 	// override with empty string, force use local sort
 	sql4 := sql + ", " + cloudStorageURIOption + "=''"
 	stmt, err = p.ParseOneStmt(sql4, "", "")

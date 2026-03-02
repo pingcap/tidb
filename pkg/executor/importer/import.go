@@ -876,8 +876,8 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			if err != nil {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
-			// only support s3 and gcs now.
-			if b.GetS3() == nil && b.GetGcs() == nil {
+			// only support s3, gcs and azure blob storage now.
+			if b.GetS3() == nil && b.GetGcs() == nil && b.GetAzureBlobStorage() == nil {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
 		}
