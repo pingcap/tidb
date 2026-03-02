@@ -518,8 +518,23 @@ func splitOwnerValues(val []byte) ([]byte, OpType) {
 	return vals[0], op
 }
 
+// SplitOwnerValues splits the value stored in an owner election key.
+//
+// The value format is "<ownerID>" or "<ownerID>_<opByte>".
+// It's exported so other packages can decode owner values consistently.
+func SplitOwnerValues(val []byte) ([]byte, OpType) {
+	return splitOwnerValues(val)
+}
+
 func joinOwnerValues(vals ...[]byte) []byte {
 	return bytes.Join(vals, []byte("_"))
+}
+
+// JoinOwnerValues joins parts into the value stored in an owner election key.
+//
+// It's exported so tests/tools can encode owner values consistently.
+func JoinOwnerValues(vals ...[]byte) []byte {
+	return joinOwnerValues(vals...)
 }
 
 // SetOwnerOpValue implements Manager.SetOwnerOpValue interface.
