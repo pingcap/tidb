@@ -1,3 +1,9 @@
-# Skills Usage
+# Skills Moved
 
-The skills in this directory are not only for Copilot. You can also use them with other AI agents. See the usage documentation of your AI agent for details.
+Repository-level Codex skills now live in `.agents/skills`.
+
+- New path: `.agents/skills`
+- Legacy path: `.github/skills` (this README is kept only as a migration note)
+
+For the migration details, see:
+- https://developers.openai.com/codex/skills

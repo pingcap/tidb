@@ -16,14 +16,14 @@ begin;
 insert into tpk2 values (2, 4, 2, 2);
 
 --echo ## for indexMerge union
-explain select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 where a=2 or b=4;
 
 --echo ## for indexMerge intersection
-explain select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
 --sorted_result
@@ -31,13 +31,13 @@ select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 where a > 0 and c 
 
 --echo ## for indexMerge union with specified PARTITION
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid1)/
-explain select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
 
 --echo ## for indexMerge intersection with specified PARTITION
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid1)/
-explain select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
 --sorted_result
@@ -65,14 +65,14 @@ begin;
 insert into tpk2 values (2, 4, 2, 2);
 
 --echo ## for indexMerge union
-explain select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 where a=2 or b=4;
 
 --echo ## for indexMerge intersection
-explain select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
 --sorted_result
@@ -80,30 +80,30 @@ select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 where a > 0 and c 
 
 --echo ## for indexMerge union with specified PARTITION
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid1)/
-explain select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
 
 --echo ## for indexMerge intersection with specified PARTITION
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid1)/
-explain select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_c) */ * from tpk2 partition(p1) where a > 0 and c > 0;
 
 --echo ## for indexMerge union in txn with order by limit
-explain select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
 select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
-explain select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
 select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
 
 commit;
 
 --echo ## for indexMerge union with order by limit
-explain select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
 select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
-explain select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
 select /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
 
 --echo ## Test IndexWorker + TableWorker
@@ -124,14 +124,14 @@ begin;
 insert into tpk2 values (2, 4, 2, 2);
 
 --echo ## for indexMerge union
-explain select /*+ use_index_merge(tpk2, idx_a, primary) */ * from tpk2 where a=1 or b=4;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, primary) */ * from tpk2 where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, primary) */ * from tpk2 where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, primary) */ * from tpk2 where a=2 or b=4;
 
 --echo ## for two global indexes
-explain select /*+ use_index_merge(tpk2, idx_a, idx_b) */ * from tpk2 where a=1 or b=4;
+explain format='brief' select /*+ use_index_merge(tpk2, idx_a, idx_b) */ * from tpk2 where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, idx_a, idx_b) */ * from tpk2 where a=1 or b=4;
 --sorted_result

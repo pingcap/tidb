@@ -37,14 +37,15 @@ go_test(
     name = "usage_test",
     timeout = "short",
     srcs = [
+        "export_test.go",
         "index_usage_integration_test.go",
         "predicate_column_test.go",
         "session_stats_collect_test.go",
     ],
+    embed = [":usage"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 15,
     deps = [
-        ":usage",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/statistics/handle/usage/indexusage",

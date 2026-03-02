@@ -1113,12 +1113,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return DefaultRowEst(0)
 	}
 
-	// oneValue assumes "one value qualifes", and is used as a lower bound.
-	oneValue := float64(0)
-	if histNDV > 0 {
-		oneValue = max(1, hg.NotNullCount()/max(float64(histNDV), outOfRangeBetweenRate)) // avoid inaccurate selectivity caused by small NDV
-	}
+	// Step 1: Calculate a default of "one value"
+	// oneValue assumes "one value qualifies", and is used as a lower bound.
+	histNDV = max(histNDV, 1)
+	oneValue := hg.NotNullCount() / float64(histNDV)
 
+	// Step 2: If modifications are not allowed, return the one value.
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
@@ -1126,8 +1126,18 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
 	}
 
+	// Step 3: Adjust oneValue if the NDV is low
+	// If NDV is low, it may no longer be representative of the data since ANALYZE
+	// was last run. Use a default value against realtimeRowCount.
+	// If NDV is not representitative, then hg.NotNullCount may not be either.
+	if float64(histNDV) < outOfRangeBetweenRate {
+		oneValue = max(min(oneValue, float64(realtimeRowCount)/outOfRangeBetweenRate), 1.0)
+	}
+	// Step 4: Calculate how much of the statistics share a common prefix.
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
 	// Here we calculate the length of common prefix.
+	// TODO: If the common prefix is large, we may underestimate the out-of-range
+	// portion because we can't distinguish the values with the same prefix.
 	commonPrefix := 0
 	if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString {
 		// Calculate the common prefix length among the lower and upper bound of histogram and the range we want to estimate.
@@ -1137,28 +1147,32 @@ func (hg *Histogram) OutOfRangeRowCount(
 			rDatum.GetBytes())
 	}
 
-	// Convert the range we want to estimate to scalar value(float64)
+	// Step 5:Convert the range we want to estimate to scalar value(float64)
 	l := convertDatumToScalar(lDatum, commonPrefix)
 	r := convertDatumToScalar(rDatum, commonPrefix)
 	unsigned := mysql.HasUnsignedFlag(hg.Tp.GetFlag())
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
 	// Maybe it's better to do this transformation in the ranger like the normal negative value.
+	// Track whether negative values were clamped to 0, to detect impossible ranges.
+	var leftClamped, rightClamped bool
 	if unsigned {
 		if l < 0 {
 			l = 0
+			leftClamped = true
 		}
 		if r < 0 {
 			r = 0
+			rightClamped = true
+		}
+		// If both bounds collapsed to 0 due to clamping negative values, this is
+		// an impossible range (e.g., unsigned_col < 0). Return 0 estimate.
+		if l == 0 && r == 0 && (leftClamped || rightClamped) {
+			return DefaultRowEst(0)
 		}
 	}
 
-	// make sure l < r
-	if l >= r {
-		return DefaultRowEst(0)
-	}
-
-	// Convert the lower and upper bound of the histogram to scalar value(float64)
+	// Step 6: Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
@@ -1173,25 +1187,58 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
+	// Step 7: Calculate the width of the predicate
+	// TODO: If predWidth == 0, it may be because the common prefix is too large.
+	// In future - out of range for equal predicates should also use this logic
+	// for consistency. We need to handle both "equal" and "large common prefix".
+	predWidth := r - l
+	if predWidth < 0 {
+		// This should never happen.
+		intest.Assert(false, "Right bound should not be less than left bound")
+
+		return DefaultRowEst(0)
+	} else if predWidth == 0 {
+		// Set histWidth to 0 so that we can still return a minimum of oneValue,
+		// and return the max as worst case.
+		histWidth = 0
+	}
+
+	// Step 8: Calculate the out of range percentages
 	// Calculate left overlap percentage if the range overlaps with (boundL, histL)
 	leftPercent := calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
-
 	// Calculate right overlap percentage if the range overlaps with (histR, boundR)
 	rightPercent := calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
 
+	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
+	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
+
+	// Step 9: Calculate the added rows
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
-	// percentInHist is the percentage of rows that were included in the histogram.
-	// This is used to scale back the out-of-range estimate.
-	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
-	addedOutOfRangePct := min(1.0-percentInHist, 0.5)
-	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	// Assume on average, half of newly added rows are within the histogram range, and the other
-	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount := (addedRows * addedOutOfRangePct) * totalPercent
+	maxAddedRows := addedRows
 
+	// Step 10: Calculate the estimated rows
+	estRows := oneValue
+	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
+	if totalPercent > 0 {
+		// Multiplying addedRows by 0.5 provides the assumption that 50% "addedRows" are inside
+		// the histogram range, and 50% (0.5) are out-of-range. Users can adjust this
+		// magic number by setting the session variable `tidb_opt_risk_range_skew_ratio`.
+		// When skewRatio > 0, estRows sets the starting point for the skew ratio calculation.
+		addedRowMultiplier := 0.5
+		// NOTE: Skew ratio is used twice in this function.
+		// This first usage allows a user to specify a ratio that is smaller or
+		// larger than the default 0.5.
+		if skewRatio > 0 {
+			addedRowMultiplier = skewRatio
+		}
+		estRows = (addedRows * addedRowMultiplier) * totalPercent
+	}
+
+	// Step 11: Calculate a potential worst case for use in final MaxEst
 	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
 	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
 	// account for at least 1% of the total row count as a worst case for "addedRows".
@@ -1202,30 +1249,27 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 		// Use outOfRangeBetweenRate as a divisor to get a small percentage of the approximate
 		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
-		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+	}
+	if maxTotalPercent > 0 {
+		// Always apply maxTotalPercent to maxAddedRows to limit scaling when the predicate has an upper bound
+		maxAddedRows *= maxTotalPercent
 	}
 
-	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
+	// Step 12: Calculate the final min/max/est rows including the skew ratio adjustment
+	result.MinEst = min(estRows, oneValue)
+	// NOTE: Skew ratio is used twice in this function.
+	// This second usage scales the estimate from the base estimate to the max estimate.
 	if skewRatio > 0 {
-		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
-		result := CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
-		result.Est = max(result.Est, oneValue)
-		result.MinEst = 1
-		result.MaxEst = max(result.Est, addedRows)
-		return result
+		result = CalculateSkewRatioCounts(estRows, maxAddedRows, skewRatio)
+	} else {
+		// Do not scale the estimate if skew ratio is not set.
+		result.Est = estRows
 	}
+	result.Est = max(result.Est, oneValue)
+	result.MaxEst = max(result.Est, maxAddedRows)
 
-	// Use oneValue as lower bound and provide meaningful min/max estimates
-	finalEst := max(avgRowCount, oneValue)
-	// Maximum could be as high as all added rows.
-	maxEst := max(finalEst, addedRows)
-
-	return RowEstimate{
-		Est:    finalEst,
-		MinEst: 1, // Assume a minimum of 1 row qualifies
-		MaxEst: maxEst,
-	}
+	return result
 }
 
 // Copy deep copies the histogram.

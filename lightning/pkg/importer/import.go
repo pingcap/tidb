@@ -406,7 +406,7 @@ func NewImportControllerWithPauser(
 			return nil, errors.Annotatef(err, "get system variable '%s' failed", vardef.TiDBExplicitRequestSourceType)
 		}
 		if taskType == "" {
-			taskType = kvutil.ExplicitTypeLightning
+			taskType = kvutil.ExplicitTypeImport
 		}
 		p.TaskType = taskType
 
