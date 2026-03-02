@@ -17,6 +17,7 @@ package mvdeltamergeagg
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1165,4 +1167,53 @@ func assertChangedMask(t *testing.T, chk *chunk.Chunk, ft *types.FieldType, expe
 	err := markChangedRowsByColumn(mask, chk.Column(0), chk.Column(1), ft)
 	require.NoError(t, err)
 	require.Equal(t, expected, mask)
+}
+
+func TestMVDeltaMergeAggRuntimeStatsString(t *testing.T) {
+	stats := newMVDeltaMergeAggRuntimeStats(3)
+	stats.fillFromPipelineStats(&mvDeltaMergeAggPipelineStats{
+		readerTime:      15 * time.Millisecond,
+		writerTime:      8 * time.Millisecond,
+		mergeWorkerTime: []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 0},
+	})
+	s := stats.String()
+	require.Contains(t, s, "mv_delta_merge_agg")
+	require.Contains(t, s, "total:3")
+	require.Contains(t, s, "active:2")
+	require.Contains(t, s, "min:10ms")
+	require.Contains(t, s, "max:20ms")
+	require.Contains(t, s, "avg:15ms")
+	require.Contains(t, s, "reader:15ms")
+	require.Contains(t, s, "writer:8ms")
+}
+
+func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
+	left := newMVDeltaMergeAggRuntimeStats(2)
+	left.fillFromPipelineStats(&mvDeltaMergeAggPipelineStats{
+		readerTime:      3 * time.Millisecond,
+		writerTime:      4 * time.Millisecond,
+		mergeWorkerTime: []time.Duration{5 * time.Millisecond, 7 * time.Millisecond},
+	})
+	right := newMVDeltaMergeAggRuntimeStats(3)
+	right.fillFromPipelineStats(&mvDeltaMergeAggPipelineStats{
+		readerTime:      2 * time.Millisecond,
+		writerTime:      1 * time.Millisecond,
+		mergeWorkerTime: []time.Duration{1 * time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond},
+	})
+
+	left.Merge(right)
+	require.Equal(t, 5*time.Millisecond, left.readerTime)
+	require.Equal(t, 5*time.Millisecond, left.writerTime)
+	require.Equal(t, []time.Duration{
+		6 * time.Millisecond,
+		9 * time.Millisecond,
+		9 * time.Millisecond,
+	}, left.mergeWorkerTime)
+
+	cloned, ok := left.Clone().(*mvDeltaMergeAggRuntimeStats)
+	require.True(t, ok)
+	require.Equal(t, left.readerTime, cloned.readerTime)
+	require.Equal(t, left.writerTime, cloned.writerTime)
+	require.Equal(t, left.mergeWorkerTime, cloned.mergeWorkerTime)
+	require.Equal(t, execdetails.TpMVDeltaMergeAggRuntimeStats, left.Tp())
 }

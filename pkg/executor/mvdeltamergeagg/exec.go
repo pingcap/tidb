@@ -17,6 +17,7 @@ package mvdeltamergeagg
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"golang.org/x/sync/errgroup"
 )
@@ -183,6 +185,7 @@ type Exec struct {
 	aggOutputColIDs      []int
 	prepared             bool
 	executed             bool
+	runtimeStats         *mvDeltaMergeAggRuntimeStats
 }
 
 type mvMergeAggWorkerData struct {
@@ -190,6 +193,132 @@ type mvMergeAggWorkerData struct {
 	updateOpIndexes              []int
 	updateChanged                []bool
 	minMaxRecomputeRowsByMapping [][]int
+}
+
+type mvDeltaMergeAggPipelineStats struct {
+	readerTime      time.Duration
+	writerTime      time.Duration
+	mergeWorkerTime []time.Duration
+}
+
+type mvDeltaMergeAggRuntimeStats struct {
+	readerTime      time.Duration
+	writerTime      time.Duration
+	mergeWorkerTime []time.Duration
+}
+
+func newMVDeltaMergeAggRuntimeStats(workerCnt int) *mvDeltaMergeAggRuntimeStats {
+	if workerCnt < 0 {
+		workerCnt = 0
+	}
+	return &mvDeltaMergeAggRuntimeStats{
+		mergeWorkerTime: make([]time.Duration, workerCnt),
+	}
+}
+
+func (s *mvDeltaMergeAggRuntimeStats) reset(workerCnt int) {
+	if workerCnt < 0 {
+		workerCnt = 0
+	}
+	s.readerTime = 0
+	s.writerTime = 0
+	if cap(s.mergeWorkerTime) < workerCnt {
+		s.mergeWorkerTime = make([]time.Duration, workerCnt)
+		return
+	}
+	s.mergeWorkerTime = s.mergeWorkerTime[:workerCnt]
+	clear(s.mergeWorkerTime)
+}
+
+func (s *mvDeltaMergeAggRuntimeStats) fillFromPipelineStats(stats *mvDeltaMergeAggPipelineStats) {
+	if s == nil || stats == nil {
+		return
+	}
+	s.readerTime = stats.readerTime
+	s.writerTime = stats.writerTime
+	if cap(s.mergeWorkerTime) < len(stats.mergeWorkerTime) {
+		s.mergeWorkerTime = make([]time.Duration, len(stats.mergeWorkerTime))
+	}
+	s.mergeWorkerTime = s.mergeWorkerTime[:len(stats.mergeWorkerTime)]
+	copy(s.mergeWorkerTime, stats.mergeWorkerTime)
+}
+
+func (s *mvDeltaMergeAggRuntimeStats) String() string {
+	if s == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	buf.WriteString("mv_delta_merge_agg:{merge_worker:{total:")
+	buf.WriteString(strconv.Itoa(len(s.mergeWorkerTime)))
+	active := 0
+	var minDur, maxDur, sumDur time.Duration
+	for _, d := range s.mergeWorkerTime {
+		if d <= 0 {
+			continue
+		}
+		if active == 0 || d < minDur {
+			minDur = d
+		}
+		if active == 0 || d > maxDur {
+			maxDur = d
+		}
+		sumDur += d
+		active++
+	}
+	buf.WriteString(", active:")
+	buf.WriteString(strconv.Itoa(active))
+	if active > 0 {
+		buf.WriteString(", min:")
+		buf.WriteString(execdetails.FormatDuration(minDur))
+		buf.WriteString(", max:")
+		buf.WriteString(execdetails.FormatDuration(maxDur))
+		buf.WriteString(", avg:")
+		buf.WriteString(execdetails.FormatDuration(sumDur / time.Duration(active)))
+	}
+	buf.WriteString("}")
+	buf.WriteString(", reader:")
+	buf.WriteString(execdetails.FormatDuration(s.readerTime))
+	buf.WriteString(", writer:")
+	buf.WriteString(execdetails.FormatDuration(s.writerTime))
+	buf.WriteString("}")
+	return buf.String()
+}
+
+func (s *mvDeltaMergeAggRuntimeStats) Clone() execdetails.RuntimeStats {
+	if s == nil {
+		return &mvDeltaMergeAggRuntimeStats{}
+	}
+	newStats := &mvDeltaMergeAggRuntimeStats{
+		readerTime:      s.readerTime,
+		writerTime:      s.writerTime,
+		mergeWorkerTime: make([]time.Duration, len(s.mergeWorkerTime)),
+	}
+	copy(newStats.mergeWorkerTime, s.mergeWorkerTime)
+	return newStats
+}
+
+func (s *mvDeltaMergeAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*mvDeltaMergeAggRuntimeStats)
+	if !ok || tmp == nil {
+		return
+	}
+	s.readerTime += tmp.readerTime
+	s.writerTime += tmp.writerTime
+	if len(tmp.mergeWorkerTime) == 0 {
+		return
+	}
+	if len(s.mergeWorkerTime) < len(tmp.mergeWorkerTime) {
+		ext := make([]time.Duration, len(tmp.mergeWorkerTime))
+		copy(ext, s.mergeWorkerTime)
+		s.mergeWorkerTime = ext
+	}
+	for idx, d := range tmp.mergeWorkerTime {
+		s.mergeWorkerTime[idx] += d
+	}
+}
+
+func (*mvDeltaMergeAggRuntimeStats) Tp() int {
+	return execdetails.TpMVDeltaMergeAggRuntimeStats
 }
 
 // Open implements the Executor interface.
@@ -233,6 +362,14 @@ func (e *Exec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.executed = true
+	if e.BaseExecutor.RuntimeStats() != nil {
+		if e.runtimeStats == nil {
+			e.runtimeStats = newMVDeltaMergeAggRuntimeStats(e.WorkerCnt)
+		} else {
+			e.runtimeStats.reset(e.WorkerCnt)
+		}
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.runtimeStats)
+	}
 	return e.runMergePipeline(ctx)
 }
 
@@ -241,6 +378,7 @@ func (e *Exec) Close() error {
 	e.compiledMergers = nil
 	e.compiledOutputColCnt = 0
 	e.aggOutputColIDs = nil
+	e.runtimeStats = nil
 	e.prepared = false
 	e.executed = false
 	return e.BaseExecutor.Close()
@@ -250,6 +388,13 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 	workerCnt := e.WorkerCnt
 	if workerCnt <= 0 {
 		workerCnt = 1
+	}
+	var pipelineStats *mvDeltaMergeAggPipelineStats
+	if e.runtimeStats != nil {
+		pipelineStats = &mvDeltaMergeAggPipelineStats{
+			mergeWorkerTime: make([]time.Duration, workerCnt),
+		}
+		defer e.runtimeStats.fillFromPipelineStats(pipelineStats)
 	}
 
 	inputBufSize := max(workerCnt*2, 2)
@@ -264,7 +409,7 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return e.runReader(gctx, inputCh, freeInputCh)
+		return e.runReader(gctx, inputCh, freeInputCh, pipelineStats)
 	})
 
 	workerWG := sync.WaitGroup{}
@@ -273,7 +418,7 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 		workerIdx := i
 		g.Go(func() error {
 			defer workerWG.Done()
-			return e.runWorker(gctx, inputCh, resultCh, workerIdx)
+			return e.runWorker(gctx, inputCh, resultCh, workerIdx, pipelineStats)
 		})
 	}
 
@@ -283,7 +428,7 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 	}()
 
 	g.Go(func() error {
-		return e.runWriter(gctx, resultCh, freeInputCh)
+		return e.runWriter(gctx, resultCh, freeInputCh, pipelineStats)
 	})
 
 	return g.Wait()
@@ -293,8 +438,15 @@ func (e *Exec) runReader(
 	ctx context.Context,
 	inputCh chan<- *chunk.Chunk,
 	freeInputCh <-chan *chunk.Chunk,
+	stats *mvDeltaMergeAggPipelineStats,
 ) error {
 	defer close(inputCh)
+	var total time.Duration
+	defer func() {
+		if stats != nil {
+			stats.readerTime = total
+		}
+	}()
 	child := e.Children(0)
 
 	for {
@@ -306,9 +458,11 @@ func (e *Exec) runReader(
 		}
 
 		chk.Reset()
+		start := time.Now()
 		if err := exec.Next(ctx, child, chk); err != nil {
 			return err
 		}
+		total += time.Since(start)
 		if chk.NumRows() == 0 {
 			return nil
 		}
@@ -326,8 +480,15 @@ func (e *Exec) runWorker(
 	inputCh <-chan *chunk.Chunk,
 	resultCh chan<- *ChunkResult,
 	workerIdx int,
+	stats *mvDeltaMergeAggPipelineStats,
 ) error {
 	var workerData mvMergeAggWorkerData
+	var total time.Duration
+	defer func() {
+		if stats != nil && workerIdx >= 0 && workerIdx < len(stats.mergeWorkerTime) {
+			stats.mergeWorkerTime[workerIdx] = total
+		}
+	}()
 	for {
 		var (
 			chk *chunk.Chunk
@@ -342,10 +503,12 @@ func (e *Exec) runWorker(
 			}
 		}
 
+		start := time.Now()
 		result, err := e.mergeOneChunk(ctx, chk, &workerData, workerIdx)
 		if err != nil {
 			return err
 		}
+		total += time.Since(start)
 
 		select {
 		case <-ctx.Done():
@@ -359,7 +522,14 @@ func (e *Exec) runWriter(
 	ctx context.Context,
 	resultCh <-chan *ChunkResult,
 	freeInputCh chan<- *chunk.Chunk,
+	stats *mvDeltaMergeAggPipelineStats,
 ) error {
+	var total time.Duration
+	defer func() {
+		if stats != nil {
+			stats.writerTime = total
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -368,9 +538,11 @@ func (e *Exec) runWriter(
 			if !ok {
 				return nil
 			}
+			start := time.Now()
 			if err := e.Writer.WriteChunk(ctx, result); err != nil {
 				return err
 			}
+			total += time.Since(start)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
