@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -1639,20 +1638,35 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
-	var costTime, threshold time.Duration
+	cfg := config.GetGlobalConfig()
+	var slowItems *variable.SlowQueryLogItems
+	var matchRules bool
 	if !stmtCtx.WriteSlowLog {
-		cfg := config.GetGlobalConfig()
-		level := log.GetLevel()
-		costTime = sessVars.GetTotalCostDuration()
-		threshold = time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
-		enable := cfg.Instance.EnableSlowLog.Load()
-		// if the level is Debug, or trace is enabled, print slow logs anyway
-		force := level <= zapcore.DebugLevel || trace.IsEnabled()
-		if (!enable || costTime < threshold) && !force {
+		// If the level is Debug, or trace is enabled, print slow logs anyway.
+		force := log.GetLevel() <= zapcore.DebugLevel || trace.IsEnabled()
+		if !cfg.Instance.EnableSlowLog.Load() && !force {
+			return
+		}
+
+		sessVars.StmtCtx.ExecSuccess = succ
+		sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
+		globalRules := vardef.GlobalSlowLogRules.Load()
+		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
+		// EffectiveFields is not empty (unique fields for this session including global rules),
+		// so we use these rules to decide whether to write the slow log.
+		if len(sessVars.SlowLogRules.EffectiveFields) != 0 {
+			matchRules = ShouldWriteSlowLog(globalRules, sessVars, slowItems)
+			defer putSlowLogItems(slowItems)
+		} else {
+			threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
+			matchRules = sessVars.GetTotalCostDuration() >= threshold
+		}
+		if !matchRules && !force {
 			return
 		}
 	}
 
+<<<<<<< HEAD
 	var indexNames string
 	if len(stmtCtx.IndexNames) > 0 {
 		// remove duplicate index.
@@ -1755,7 +1769,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
 		StorageKV:         stmtCtx.IsTiKV.Load(),
 		StorageMPP:        stmtCtx.IsTiFlash.Load(),
+=======
+	if slowItems == nil {
+		slowItems = &variable.SlowQueryLogItems{}
+>>>>>>> 1a9221eacbf (*: add a variable for dynamic slow log trigger rules with global (supporting ConnID-specific) and session scope (#63779))
 	}
+	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			if !slowItems.IsSyncStatsFailed {
@@ -1763,16 +1782,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			}
 		}
 	})
-	if a.retryCount > 0 {
-		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
-	}
-	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
-		slowItems.PrevStmt = sessVars.PrevStmt.String()
-	}
 	slowLog := sessVars.SlowLogFormat(slowItems)
+	logutil.SlowQueryLogger.Warn(slowLog)
+
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
+<<<<<<< HEAD
 	logutil.SlowQueryLogger.Warn(slowLog)
 	if costTime >= threshold {
 		if sessVars.InRestrictedSQL {
@@ -1809,6 +1825,53 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			DB:         sessVars.CurrentDB,
 			TableIDs:   tableIDs,
 			IndexNames: indexNames,
+			Internal:   sessVars.InRestrictedSQL,
+		})
+=======
+
+	if !matchRules {
+		return
+	}
+	costTime := slowItems.TimeTotal
+	execDetail := slowItems.ExecDetail
+	if sessVars.InRestrictedSQL {
+		executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
+		executor_metrics.TotalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+		executor_metrics.TotalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+	} else {
+		executor_metrics.TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
+		executor_metrics.TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+		executor_metrics.TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+		if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys != 0 {
+			executor_metrics.CopMVCCRatioHistogramGeneral.Observe(float64(execDetail.ScanDetail.TotalKeys) / float64(execDetail.ScanDetail.ProcessedKeys))
+		}
+>>>>>>> 1a9221eacbf (*: add a variable for dynamic slow log trigger rules with global (supporting ConnID-specific) and session scope (#63779))
+	}
+	var userString string
+	if sessVars.User != nil {
+		userString = sessVars.User.String()
+	}
+	var tableIDs string
+	if len(sessVars.StmtCtx.TableIDs) > 0 {
+		tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",")
+	}
+	// TODO log slow query for cross keyspace query?
+	dom := domain.GetDomain(a.Ctx)
+	if dom != nil {
+		dom.LogSlowQuery(&domain.SlowQueryInfo{
+			SQL:        slowItems.SQL,
+			Digest:     slowItems.Digest,
+			Start:      sessVars.StartTime,
+			Duration:   costTime,
+			Detail:     *execDetail,
+			Succ:       succ,
+			ConnID:     sessVars.ConnectionID,
+			SessAlias:  sessVars.SessionAlias,
+			TxnTS:      txnTS,
+			User:       userString,
+			DB:         sessVars.CurrentDB,
+			TableIDs:   tableIDs,
+			IndexNames: slowItems.IndexNames,
 			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
