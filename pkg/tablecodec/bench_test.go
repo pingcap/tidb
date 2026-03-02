@@ -115,7 +115,7 @@ func BenchmarkDecodeIndexKVGeneral(b *testing.B) {
 		var buf [9]byte
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			preAlloc = preAlloc[:colsLen:colsLen+1]
+			preAlloc = preAlloc[: colsLen : colsLen+1]
 			_, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, buf[:0], preAlloc)
 			if err != nil {
 				b.Fatal(err)
@@ -159,7 +159,7 @@ func BenchmarkDecodeIndexKVGeneralNonUnique(b *testing.B) {
 		var buf [9]byte
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			preAlloc = preAlloc[:colsLen:colsLen+1]
+			preAlloc = preAlloc[: colsLen : colsLen+1]
 			_, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, buf[:0], preAlloc)
 			if err != nil {
 				b.Fatal(err)
@@ -225,7 +225,7 @@ func BenchmarkDecodeRestoredValues(b *testing.B) {
 		preAlloc := make([][]byte, colsLen, colsLen+1)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			preAlloc = preAlloc[:colsLen:colsLen+1]
+			preAlloc = preAlloc[: colsLen : colsLen+1]
 			_, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc)
 			if err != nil {
 				b.Fatal(err)
@@ -238,7 +238,7 @@ func BenchmarkDecodeRestoredValues(b *testing.B) {
 		dec := NewIndexRestoredDecoder(columns[:colsLen])
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			preAlloc = preAlloc[:colsLen:colsLen+1]
+			preAlloc = preAlloc[: colsLen : colsLen+1]
 			_, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc, dec)
 			if err != nil {
 				b.Fatal(err)
