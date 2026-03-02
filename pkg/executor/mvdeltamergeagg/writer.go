@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -191,7 +192,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 			stats.buildInsertTime += time.Since(buildStart)
 
 			addStart := time.Now()
-			_, err = w.exec.TargetTable.AddRecord(tableCtx, txn, w.newRow)
+			_, err = w.exec.TargetTable.AddRecord(tableCtx, txn, w.newRow, table.DupKeyCheckLazy)
 			if err != nil {
 				return err
 			}
