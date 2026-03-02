@@ -386,12 +386,15 @@ func gcCollectTableItem(bt *btree.BTreeG[*tableItem], cutVer int64, maxItems int
 	//	db2 tbl2 v0    <- delete, because v0 < v4
 	//	db1 tbl3 v4
 	//	...
-	// So the rule can be simplify to "remove all items whose (version < schemaVersion && previous item is same table)"
+	// So the rule can be simplify to "remove all items whose (version < cutVer && previous item is same table && previous
+	// item is also < cutVer)". This keeps the pivot record (latest version < cutVer) for every table name, which is still
+	// needed to serve requests whose schemaVersion is in [cutVer, next_change_of_the_table).
 	bt.Descend(func(item *tableItem) bool {
 		if item.schemaVersion < cutVer &&
 			prev != nil &&
 			prev.dbName.L == item.dbName.L &&
-			prev.tableName.L == item.tableName.L {
+			prev.tableName.L == item.tableName.L &&
+			prev.schemaVersion < cutVer {
 			dels = append(dels, item)
 			if len(dels) >= maxItems {
 				return false
