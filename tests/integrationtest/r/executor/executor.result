@@ -3217,8 +3217,8 @@ RESTRICTED_PRIV_ADMIN	Server Admin
 RESTRICTED_SQL_ADMIN	Server Admin	
 RESOURCE_GROUP_ADMIN	Server Admin	
 RESOURCE_GROUP_USER	Server Admin	
-MODEL_ADMIN	Server Admin
-MODEL_EXECUTE	Server Admin
+MODEL_ADMIN	Server Admin	
+MODEL_EXECUTE	Server Admin	
 TRAFFIC_CAPTURE_ADMIN	Server Admin	
 TRAFFIC_REPLAY_ADMIN	Server Admin	
 show table status;
