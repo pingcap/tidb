@@ -16,17 +16,12 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
@@ -39,11 +34,6 @@ func UpdateStatsVersion(ctx context.Context, sctx sessionctx.Context) error {
 	}
 	if _, err = statsutil.ExecWithCtx(
 		ctx, sctx, "update mysql.stats_meta set version = %?", startTS,
-	); err != nil {
-		return err
-	}
-	if _, err = statsutil.ExecWithCtx(
-		ctx, sctx, "update mysql.stats_extended set version = %?", startTS,
 	); err != nil {
 		return err
 	}
@@ -159,113 +149,6 @@ func UpdateStatsMeta(
 	}
 
 	return nil
-}
-
-// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
-func InsertExtendedStats(sctx sessionctx.Context,
-	statsCache types.StatsCache,
-	statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (statsVer uint64, err error) {
-	slices.Sort(colIDs)
-	bytes, err := json.Marshal(colIDs)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	strColIDs := string(bytes)
-
-	// No need to use `exec.ExecuteInternal` since we have acquired the lock.
-	rows, _, err := statsutil.ExecRows(sctx, "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)", tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	for _, row := range rows {
-		currStatsName := row.GetString(0)
-		currTp := row.GetInt64(1)
-		currStrColIDs := row.GetString(2)
-		if currStatsName == statsName {
-			if ifNotExists {
-				return 0, nil
-			}
-			return 0, errors.Errorf("extended statistics '%s' for the specified table already exists", statsName)
-		}
-		if tp == int(currTp) && currStrColIDs == strColIDs {
-			return 0, errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
-		}
-	}
-	version, err := statsutil.GetStartTS(sctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
-	if _, err = statsutil.Exec(sctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
-		return 0, err
-	}
-	statsVer = version
-	// Remove the existing 'deleted' records.
-	if _, err = statsutil.Exec(sctx, "DELETE FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID); err != nil {
-		return 0, err
-	}
-	// Remove the cache item, which is necessary for cases like a cluster with 3 tidb instances, e.g, a, b and c.
-	// If tidb-a executes `alter table drop stats_extended` to mark the record as 'deleted', and before this operation
-	// is synchronized to other tidb instances, tidb-b executes `alter table add stats_extended`, which would delete
-	// the record from the table, tidb-b should delete the cached item synchronously. While for tidb-c, it has to wait for
-	// next `Update()` to remove the cached item then.
-	removeExtendedStatsItem(statsCache, tableID, statsName)
-	const sql = "INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES (%?, %?, %?, %?, %?, %?)"
-	if _, err = statsutil.Exec(sctx, sql, statsName, tp, tableID, strColIDs, version, statistics.ExtendedStatsInited); err != nil {
-		return 0, err
-	}
-	return
-}
-
-// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
-func SaveExtendedStatsToStorage(sctx sessionctx.Context,
-	tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (statsVer uint64, err error) {
-	if extStats == nil || len(extStats.Stats) == 0 {
-		return 0, nil
-	}
-
-	version, err := statsutil.GetStartTS(sctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	for name, item := range extStats.Stats {
-		bytes, err := json.Marshal(item.ColIDs)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		strColIDs := string(bytes)
-		var statsStr string
-		switch item.Tp {
-		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
-			statsStr = fmt.Sprintf("%f", item.ScalarVals)
-		case ast.StatsTypeDependency:
-			statsStr = item.StringVals
-		}
-		// If isLoad is true, it's INSERT; otherwise, it's UPDATE.
-		if _, err := statsutil.Exec(sctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, %?)", name, item.Tp, tableID, strColIDs, statsStr, version, statistics.ExtendedStatsAnalyzed); err != nil {
-			return 0, err
-		}
-	}
-	if !isLoad {
-		if _, err := statsutil.Exec(sctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
-			return 0, err
-		}
-		statsVer = version
-	}
-	return statsVer, nil
-}
-
-func removeExtendedStatsItem(statsCache types.StatsCache,
-	tableID int64, statsName string) {
-	tbl, ok := statsCache.Get(tableID)
-	if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
-		return
-	}
-	newTbl := tbl.CopyAs(statistics.ExtendedStatsWritable)
-	delete(newTbl.ExtendedStats.Stats, statsName)
-	statsCache.UpdateStatsCache(types.CacheUpdate{
-		Updated: []*statistics.Table{newTbl},
-	})
 }
 
 var changeGlobalStatsTables = []string{
