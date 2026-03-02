@@ -119,8 +119,11 @@ func TypeStr(tp byte) (r string) {
 //
 //	tp: type enum
 //	cs: charset
-func TypeToStr(tp byte, cs string) (r string) {
+func TypeToStr(tp byte, cs string, geo GeometryType) (r string) {
 	ts := type2Str[tp]
+	if tp == mysql.TypeGeometry {
+		ts = geo.String()
+	}
 	if cs != "binary" {
 		return ts
 	}

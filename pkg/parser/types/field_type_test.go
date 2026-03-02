@@ -329,3 +329,26 @@ func TestCompactStr(t *testing.T) {
 		require.Equal(t, cc.e2, ft.CompactStr())
 	}
 }
+
+func TestGeometryType(t *testing.T) {
+	ft1 := NewFieldType(mysql.TypeFloat)
+	require.Equal(t, GeomGeometry, ft1.GetGeometryType())
+
+	ft2 := NewFieldType(mysql.TypeGeometry)
+	require.Equal(t, GeomGeometry, ft2.GetGeometryType())
+
+	ft2.SetGeometryType(GeomPoint)
+	require.Equal(t, GeomPoint, ft2.GetGeometryType())
+
+	ft2.SetType(mysql.TypeDouble)
+	require.Equal(t, GeomGeometry, ft2.GetGeometryType())
+}
+
+func TestGeometryType_String(t *testing.T) {
+	p := GeomPoint
+	require.Equal(t, "point", p.String())
+	x := GeometryType(99)
+	require.Equal(t, "", x.String())
+	var n GeometryType
+	require.Equal(t, "geometry", n.String())
+}

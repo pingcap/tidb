@@ -193,3 +193,9 @@ truncate table test;
 insert into test values(0xffffff);
 select a from test where false not like convert(a, char);
 Error 1105 (HY000): Cannot convert string '\xFF\xFF\xFF' from binary to utf8mb4
+SELECT CAST(0x00000000010100000000000000000000000000000000000000 AS GEOMETRY);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 76 near "GEOMETRY)" 
+SELECT CAST(0x00000000010100000000000000000000000000000000000000 AS POINT);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 73 near "POINT)" 
+SELECT CAST(0x00000000010100000000000000000000000000000000000000 AS MULTIPOINT);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 78 near "MULTIPOINT)" 

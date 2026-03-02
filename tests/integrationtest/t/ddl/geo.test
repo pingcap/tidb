@@ -1,0 +1,36 @@
+# Valid type with SRID, but not supported
+-- error 1105
+CREATE TABLE a (g GEOMETRY SRID 0);
+
+# valid column types, but not supported.
+-- error 1105
+CREATE TABLE b (g GEOMETRY);
+-- error 1105
+CREATE TABLE c (g GEOMETRYCOLLECTION);
+-- error 1105
+CREATE TABLE d (g POINT);
+-- error 1105
+CREATE TABLE e (g MULTIPOINT);
+-- error 1105
+CREATE TABLE f (g POLYGON);
+-- error 1105
+CREATE TABLE g (g MULTIPOLYGON);
+-- error 1105
+CREATE TABLE h (g LINESTRING);
+-- error 1105
+CREATE TABLE i (g MULTILINESTRING);
+
+
+# Invalid combination of SRID and non-geo column type
+-- error 1221
+CREATE TABLE j (g INT SRID 0);
+
+# SRID range
+-- error 1064
+create table g2 (id int primary key, g point srid -1);
+-- error 1105
+create table g2 (id int primary key, g point srid 0);
+-- error 1105
+create table g2 (id int primary key, g point srid 4294967295);
+-- error 1690
+create table g2 (id int primary key, g point srid 4294967296);

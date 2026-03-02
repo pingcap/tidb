@@ -99,6 +99,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
+        "//pkg/parser/types",
         "//pkg/session",
         "//pkg/session/sessionapi",
         "//pkg/sessionctx",

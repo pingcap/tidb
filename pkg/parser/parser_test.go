@@ -8217,3 +8217,28 @@ func TestSplitPartition(t *testing.T) {
 	}
 	RunTest(t, cases, false)
 }
+
+func TestGeo(t *testing.T) {
+	cases := []testCase{
+		// Simple types
+		{`CREATE TABLE t (g GEOMETRY)`, true, "CREATE TABLE `t` (`g` GEOMETRY)"},
+		{`CREATE TABLE t (g POINT)`, true, "CREATE TABLE `t` (`g` POINT)"},
+		{`CREATE TABLE t (g LINESTRING)`, true, "CREATE TABLE `t` (`g` LINESTRING)"},
+		{`CREATE TABLE t (g POLYGON)`, true, "CREATE TABLE `t` (`g` POLYGON)"},
+
+		// Multi types
+		{`CREATE TABLE t (g GEOMETRYCOLLECTION)`, true, "CREATE TABLE `t` (`g` GEOMETRYCOLLECTION)"},
+		{`CREATE TABLE t (g MULTIPOINT)`, true, "CREATE TABLE `t` (`g` MULTIPOINT)"},
+		{`CREATE TABLE t (g MULTILINESTRING)`, true, "CREATE TABLE `t` (`g` MULTILINESTRING)"},
+		{`CREATE TABLE t (g MULTIPOLYGON)`, true, "CREATE TABLE `t` (`g` MULTIPOLYGON)"},
+
+		// SRID
+		{`CREATE TABLE t (g POINT SRID 0)`, true, "CREATE TABLE `t` (`g` POINT /*!80003 SRID 0 */)"},
+		{`CREATE TABLE t (g POINT SRID 4294967295)`, true, "CREATE TABLE `t` (`g` POINT /*!80003 SRID 4294967295 */)"},
+		{`CREATE TABLE t (g POINT SRID -1)`, false, ""},
+		{`CREATE TABLE t (g POINT SRID 4294967296)`, false, ""},
+		// Allowed by the parser, rejected later on in the server
+		{`CREATE TABLE t (g VARBINARY(16) SRID 0)`, true, "CREATE TABLE `t` (`g` VARBINARY(16) /*!80003 SRID 0 */)"},
+	}
+	RunTest(t, cases, false)
+}

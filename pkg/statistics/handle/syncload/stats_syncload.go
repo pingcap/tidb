@@ -387,7 +387,7 @@ func (s *statsSyncLoad) handleOneItemTaskWithSCtx(sctx sessionctx.Context, task 
 			wrapper.colInfo = tblInfo.GetColumnByID(item.ID)
 		}
 		if skipTypes != nil {
-			_, skip := skipTypes[types.TypeToStr(wrapper.colInfo.FieldType.GetType(), wrapper.colInfo.FieldType.GetCharset())]
+			_, skip := skipTypes[types.TypeToStr(wrapper.colInfo.FieldType.GetType(), wrapper.colInfo.FieldType.GetCharset(), wrapper.colInfo.FieldType.GetGeometryType())]
 			if skip {
 				return nil
 			}

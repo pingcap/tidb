@@ -40,6 +40,50 @@ var (
 	TiDBStrictIntegerDisplayWidth bool
 )
 
+// GeometryType is storing the geometry subtype for TypeGeometry
+type GeometryType uint8
+
+const (
+	// GeomGeometry is GEOMETRY
+	GeomGeometry GeometryType = iota
+
+	// GeomPoint is POINT
+	GeomPoint
+
+	// GeomLineString is LINESTRING
+	GeomLineString
+
+	// GeomPolygon is POLYGON
+	GeomPolygon
+
+	// GeomMultiPoint is MULTIPOINT
+	GeomMultiPoint
+
+	// GeomMultiLineString is MULTILINESTRING
+	GeomMultiLineString
+
+	// GeomMultiPolygon is MULTIPOLYGON
+	GeomMultiPolygon
+
+	// GeomGeometryCollection is GEOMETRYCOLLECTION
+	GeomGeometryCollection
+)
+
+var geo2Str = map[GeometryType]string{
+	GeomGeometry:           "geometry",
+	GeomPoint:              "point",
+	GeomLineString:         "linestring",
+	GeomPolygon:            "polygon",
+	GeomMultiPoint:         "multipoint",
+	GeomMultiLineString:    "multilinestring",
+	GeomMultiPolygon:       "multipolygon",
+	GeomGeometryCollection: "geometrycollection",
+}
+
+func (geo *GeometryType) String() string {
+	return geo2Str[*geo]
+}
+
 // FieldType records field type information.
 type FieldType struct {
 	// tp is type of the field
@@ -58,6 +102,7 @@ type FieldType struct {
 	elems            []string
 	elemsIsBinaryLit []bool
 	array            bool
+	geo              GeometryType
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
@@ -74,6 +119,7 @@ func (ft *FieldType) DeepCopy() *FieldType {
 		charset: ft.charset,
 		collate: ft.collate,
 		array:   ft.array,
+		geo:     ft.geo,
 	}
 	if len(ft.elems) > 0 {
 		ret.elems = make([]string, len(ft.elems))
@@ -103,6 +149,7 @@ func (ft *FieldType) Hash64(h util.IHasher) {
 		h.HashBool(elem)
 	}
 	h.HashBool(ft.array)
+	h.HashByte(byte(ft.geo))
 }
 
 // Equals implements the cascades/base.Hasher.<1th> interface.
@@ -123,7 +170,8 @@ func (ft *FieldType) Equals(other any) bool {
 		ft.decimal == ft2.decimal &&
 		ft.charset == ft2.charset &&
 		ft.collate == ft2.collate &&
-		ft.array == ft2.array
+		ft.array == ft2.array &&
+		ft.geo == ft2.geo
 	if !ok {
 		return false
 	}
@@ -167,7 +215,7 @@ func (ft *FieldType) IsDecimalValid() bool {
 // IsVarLengthType Determine whether the column type is a variable-length type
 func (ft *FieldType) IsVarLengthType() bool {
 	switch ft.GetType() {
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeTiDBVectorFloat32:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeTiDBVectorFloat32, mysql.TypeGeometry:
 		return true
 	default:
 		return false
@@ -216,6 +264,7 @@ func (ft *FieldType) GetElems() []string {
 func (ft *FieldType) SetType(tp byte) {
 	ft.tp = tp
 	ft.array = false
+	ft.geo = GeomGeometry
 }
 
 // SetFlag sets the flag of the FieldType.
@@ -329,6 +378,16 @@ func (ft *FieldType) ArrayType() *FieldType {
 	return clone
 }
 
+// SetGeometryType sets the GeometryType of the FieldType.
+func (ft *FieldType) SetGeometryType(geo GeometryType) {
+	ft.geo = geo
+}
+
+// GetGeometryType returns the GeometryType of the FieldType.
+func (ft *FieldType) GetGeometryType() GeometryType {
+	return ft.geo
+}
+
 // SetElemWithIsBinaryLit sets the element of the FieldType.
 func (ft *FieldType) SetElemWithIsBinaryLit(idx int, element string, isBinaryLit bool) {
 	ft.elems[idx] = element
@@ -381,6 +440,7 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 		(ignoreDecimal || ft.decimal == other.decimal) &&
 		ft.charset == other.charset &&
 		ft.collate == other.collate &&
+		ft.geo == other.geo &&
 		flenEqual &&
 		mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
 	if !partialEqual {
@@ -456,7 +516,7 @@ func (ft *FieldType) Init(tp byte) {
 // CompactStr only considers tp/CharsetBin/flen/Deimal.
 // This is used for showing column type in infoschema.
 func (ft *FieldType) CompactStr() string {
-	ts := TypeToStr(ft.GetType(), ft.charset)
+	ts := TypeToStr(ft.GetType(), ft.charset, ft.geo)
 	suffix := ""
 
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
@@ -564,7 +624,7 @@ func (ft *FieldType) String() string {
 
 // Restore implements Node interface.
 func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord(TypeToStr(ft.GetType(), ft.charset))
+	ctx.WriteKeyWord(TypeToStr(ft.GetType(), ft.charset, ft.geo))
 
 	precision := UnspecifiedLength
 	scale := UnspecifiedLength
@@ -737,6 +797,7 @@ type jsonFieldType struct {
 	Elems            []string
 	ElemsIsBinaryLit []bool
 	Array            bool
+	Geo              GeometryType
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
@@ -753,6 +814,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 		ft.elems = r.Elems
 		ft.elemsIsBinaryLit = r.ElemsIsBinaryLit
 		ft.array = r.Array
+		ft.geo = r.Geo
 	}
 	return err
 }
@@ -769,6 +831,7 @@ func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	r.Elems = ft.elems
 	r.ElemsIsBinaryLit = ft.elemsIsBinaryLit
 	r.Array = ft.array
+	r.Geo = ft.geo
 	return json.Marshal(r)
 }
 
