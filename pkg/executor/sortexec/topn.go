@@ -442,7 +442,6 @@ func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
 		} else {
 			key := row.GetString(e.truncateKeyColIdxs[i])
 			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.TruncateKeyPrefixCharCounts[i])))})
-
 		}
 	}
 	return prefixKeys, nil

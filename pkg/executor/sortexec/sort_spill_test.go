@@ -106,10 +106,6 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count i
 
 	if r.rowPtrs == nil {
 		r.initRowPtrs()
-		fieldTypes := make([]*types.FieldType, 0)
-		for _, col := range r.schema.Columns {
-			fieldTypes = append(fieldTypes, col.GetType(ctx))
-		}
 
 		sort.Slice(r.rowPtrs, r.keyColumnsLess)
 		if offset < 0 {
