@@ -107,6 +107,8 @@ const (
 	HintTiKV = "tikv"
 	// HintIndexMerge is a hint to enforce using some indexes at the same time.
 	HintIndexMerge = "use_index_merge"
+	// HintPKFilter is a hint to generate PK range filter conditions from secondary index MIN/MAX subqueries.
+	HintPKFilter = "pk_filter"
 	// HintTimeRange is a hint to specify the time range for metrics summary tables
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
@@ -556,6 +558,7 @@ type PlanHints struct {
 	ShuffleJoin           []HintedTable    // shuffle_join
 	IndexHintList         []HintedIndex    // use_index, ignore_index
 	IndexMergeHintList    []HintedIndex    // use_index_merge
+	PkFilterHintList      []HintedIndex    // pk_filter
 	TiFlashTables         []HintedTable    // isolation_read_engines(xx=tiflash)
 	TiKVTables            []HintedTable    // isolation_read_engines(xx=tikv)
 	LeadingJoinOrder      []HintedTable    // leading
@@ -774,7 +777,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []HintedTable
 		noHashJoinTables, noMergeJoinTables, noIndexLookUpPushDownTables                []HintedTable
 		shuffleJoinTables                                                               []HintedTable
-		indexHintList, indexMergeHintList                                               []HintedIndex
+		indexHintList, indexMergeHintList, pkFilterHintList                             []HintedIndex
 		tiflashTables, tikvTables                                                       []HintedTable
 		preferAggType                                                                   uint
 		preferAggToCop                                                                  bool
@@ -921,6 +924,31 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					HintScope:  ast.HintForScan,
 				},
 			})
+		case HintPKFilter:
+			if len(hint.Tables) == 0 {
+				// Form 3: pk_filter() — applies to all qualifying tables.
+				pkFilterHintList = append(pkFilterHintList, HintedIndex{
+					IndexHint: &ast.IndexHint{
+						HintType:  ast.HintUse,
+						HintScope: ast.HintForScan,
+					},
+				})
+			} else {
+				dbName := hint.Tables[0].DBName
+				if dbName.L == "" {
+					dbName = ast.NewCIStr(currentDB)
+				}
+				pkFilterHintList = append(pkFilterHintList, HintedIndex{
+					DBName:     dbName,
+					TblName:    hint.Tables[0].TableName,
+					Partitions: hint.Tables[0].PartitionList,
+					IndexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintUse,
+						HintScope:  ast.HintForScan,
+					},
+				})
+			}
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		case HintLimitToCop:
@@ -984,6 +1012,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		PreferAggToCop:        preferAggToCop,
 		PreferAggType:         preferAggType,
 		IndexMergeHintList:    indexMergeHintList,
+		PkFilterHintList:      pkFilterHintList,
 		TimeRangeHint:         timeRangeHint,
 		PreferLimitToCop:      preferLimitToCop,
 		CTEMerge:              cteMerge,
@@ -1142,6 +1171,7 @@ func ExtractUnmatchedTables(hintTables []HintedTable) []string {
 func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []string) {
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, false)...)
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, true)...)
+	warnings = append(warnings, collectUnmatchedPkFilterHintWarning(hintInfo.PkFilterHintList)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.IndexJoin.INLJTables)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.IndexJoin.INLHJTables)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.IndexJoin.INLMJTables)...)
@@ -1153,6 +1183,21 @@ func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []string) {
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintHashJoinProbe, "", hintInfo.HJProbe)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintLeading, "", hintInfo.LeadingJoinOrder)...)
 	warnings = append(warnings, collectUnmatchedStorageHintWarning(hintInfo.TiFlashTables, hintInfo.TiKVTables)...)
+	return warnings
+}
+
+func collectUnmatchedPkFilterHintWarning(indexHints []HintedIndex) (warnings []string) {
+	for _, hint := range indexHints {
+		if !hint.Matched {
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",
+				HintPKFilter,
+				hint.IndexString(),
+				hint.DBName,
+				hint.TblName,
+			)
+			warnings = append(warnings, errMsg)
+		}
+	}
 	return warnings
 }
 

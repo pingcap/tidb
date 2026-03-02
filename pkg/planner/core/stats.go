@@ -582,6 +582,37 @@ func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, fi
 	return ds.TableStats.Scale(ds.SCtx().GetSessionVars(), selectivity)
 }
 
+// tableCondsWithPKFilter returns PushedDownConds merged with PKFilterConds.
+// For table paths the PK filter conditions should be included so the ranger
+// picks them up as access conditions, narrowing the table scan range.
+func tableCondsWithPKFilter(ds *logicalop.DataSource) []expression.Expression {
+	if len(ds.PKFilterConds) == 0 {
+		return ds.PushedDownConds
+	}
+	conds := make([]expression.Expression, len(ds.PushedDownConds), len(ds.PushedDownConds)+len(ds.PKFilterConds))
+	copy(conds, ds.PushedDownConds)
+	for _, pkf := range ds.PKFilterConds {
+		conds = append(conds, pkf.Cond)
+	}
+	return conds
+}
+
+// appendPKFilterToIndexPath appends PK filter conditions to an index path's
+// TableFilters so that splitIndexFilterConditions (called by deriveIndexPathStats)
+// can promote them to IndexFilters. Conditions are skipped if they originated
+// from the same index to avoid self-application.
+func appendPKFilterToIndexPath(ds *logicalop.DataSource, path *util.AccessPath) {
+	if len(ds.PKFilterConds) == 0 || path.Index == nil {
+		return
+	}
+	for _, pkf := range ds.PKFilterConds {
+		if pkf.SourceIndexID == path.Index.ID {
+			continue // skip self-application
+		}
+		path.TableFilters = append(path.TableFilters, pkf.Cond)
+	}
+}
+
 // We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
 // to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
 func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
@@ -597,7 +628,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	if ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
-				err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
+				err := deriveTablePathStats(ds, path, tableCondsWithPKFilter(ds), false)
 				if err != nil {
 					return err
 				}
@@ -610,12 +641,13 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	// step2: kv path should follow the heuristic rules.
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
-			err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
+			err := deriveTablePathStats(ds, path, tableCondsWithPKFilter(ds), false)
 			if err != nil {
 				return err
 			}
 			path.IsSingleScan = true
 		} else {
+			appendPKFilterToIndexPath(ds, path)
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
 			// Reevaluate path.IsSingleScan because it may have been set incorrectly
 			// in the pruning logic.

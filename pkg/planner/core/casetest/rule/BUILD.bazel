@@ -10,6 +10,7 @@ go_test(
         "rule_derive_topn_from_window_test.go",
         "rule_eliminate_empty_selection_test.go",
         "rule_eliminate_projection_test.go",
+        "rule_generate_pk_filter_test.go",
         "rule_inject_extra_projection_test.go",
         "rule_join_reorder_test.go",
         "rule_outer2inner_test.go",
@@ -19,7 +20,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 20,
+    shard_count = 35,
     deps = [
         "//pkg/config",
         "//pkg/domain",

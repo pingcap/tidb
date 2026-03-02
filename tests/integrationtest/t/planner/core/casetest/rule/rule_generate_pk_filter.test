@@ -1,0 +1,91 @@
+# TestGeneratePKFilterHint
+drop table if exists t1;
+create table t1(a int primary key clustered, b int, c int, d int, key idx_b(b), key idx_c(c), key idx_bc(b,c));
+insert into t1 values(1,1,1,1),(2,2,2,2),(3,3,3,3),(4,1,4,4),(5,2,5,5);
+
+# Single-column secondary index with hint - all equality predicates present
+explain format='brief' select /*+ pk_filter(t1, idx_b) */ * from t1 where b = 1 order by a limit 10;
+
+# Multi-column secondary index with hint - all equality predicates present
+explain format='brief' select /*+ pk_filter(t1, idx_bc) */ * from t1 where b = 1 and c = 2 order by a limit 10;
+
+# Multi-column secondary index with hint - missing equality predicate (should NOT generate filter)
+explain format='brief' select /*+ pk_filter(t1, idx_bc) */ * from t1 where b = 1 order by a limit 10;
+
+# Multiple qualifying indexes
+explain format='brief' select /*+ pk_filter(t1, idx_b, idx_c) */ * from t1 where b = 1 and c = 2 order by a limit 10;
+
+# No LIMIT in query - PK filter is generated but optimizer may choose index path
+explain format='brief' select /*+ pk_filter(t1, idx_b) */ * from t1 where b = 1;
+
+# TestGeneratePKFilterSessionVar
+drop table if exists t2;
+create table t2(a int primary key clustered, b int, c int, key idx_b(b));
+insert into t2 values(1,1,1),(2,2,2),(3,3,3);
+
+# Session variable activation
+set tidb_opt_generate_pk_filter = ON;
+explain format='brief' select * from t2 where b = 1 order by a limit 10;
+set tidb_opt_generate_pk_filter = OFF;
+
+# TestGeneratePKFilterCompositePK
+drop table if exists t3;
+create table t3(a int, b int, c int, d int, primary key(a,b) clustered, key idx_c(c), key idx_d(d));
+insert into t3 values(1,1,1,1),(2,2,2,2),(3,3,3,3);
+
+# Composite PK, first PK col has no filter - should generate on first PK col
+explain format='brief' select /*+ pk_filter(t3, idx_c) */ * from t3 where c = 1 order by a, b limit 10;
+
+# Composite PK, first PK col has EQ filter - should generate on second PK col
+explain format='brief' select /*+ pk_filter(t3, idx_c) */ * from t3 where a = 1 and c = 1 order by b limit 10;
+
+# Composite PK, all PK cols have EQ filter - should NOT generate filter (no benefit)
+explain format='brief' select /*+ pk_filter(t3, idx_c) */ * from t3 where a = 1 and b = 2 and c = 1 order by d limit 10;
+
+# TestGeneratePKFilterTopN
+drop table if exists t4;
+create table t4(a int primary key clustered, b int, key idx_b(b));
+insert into t4 values(1,1),(2,2),(3,3);
+
+# ORDER BY + LIMIT (TopN) should trigger filter
+explain format='brief' select /*+ pk_filter(t4, idx_b) */ * from t4 where b = 1 order by a limit 5;
+
+# LIMIT without ORDER BY should also trigger filter
+explain format='brief' select /*+ pk_filter(t4, idx_b) */ * from t4 where b = 1 limit 5;
+
+# TestGeneratePKFilterIndexPath
+drop table if exists t5;
+create table t5(a int primary key clustered, b int, c int, key idx_b(b), key idx_c(c));
+insert into t5 values(1,1,1),(2,2,2),(3,3,3),(4,1,4),(5,2,5);
+
+# PK filter from idx_c applied to idx_b path (ORDER BY b + LIMIT)
+# idx_c with c=1 yields pk range [1,1]; this should appear as IndexFilter on idx_b path
+explain format='brief' select /*+ pk_filter(t5, idx_c) */ * from t5 where b > 0 and c = 1 order by b limit 10;
+
+# PK filter should NOT be self-applied to source index (idx_c)
+explain format='brief' select /*+ pk_filter(t5, idx_c) */ * from t5 where c = 1 order by a limit 10;
+
+# Verify correctness
+select /*+ pk_filter(t5, idx_c) */ * from t5 where b > 0 and c = 1 order by b limit 10;
+
+# TestGeneratePKFilterTableOnlyHint
+drop table if exists t6;
+create table t6(a int primary key clustered, b int, c int, key idx_b(b), key idx_c(c));
+insert into t6 values(1,1,1),(2,2,2),(3,3,3),(4,1,4),(5,2,5);
+
+# pk_filter(t6) without index names - should use all qualifying indexes
+explain format='brief' select /*+ pk_filter(t6) */ * from t6 where b = 1 order by a limit 10;
+
+# Verify correctness
+select /*+ pk_filter(t6) */ * from t6 where b = 1 order by a limit 10;
+
+# TestGeneratePKFilterNoArgs
+drop table if exists t7;
+create table t7(a int primary key clustered, b int, c int, key idx_b(b), key idx_c(c));
+insert into t7 values(1,1,1),(2,2,2),(3,3,3),(4,1,4),(5,2,5);
+
+# pk_filter() with no arguments - should apply to all qualifying tables
+explain format='brief' select /*+ pk_filter() */ * from t7 where b = 1 order by a limit 10;
+
+# Verify correctness
+select /*+ pk_filter() */ * from t7 where b = 1 order by a limit 10;

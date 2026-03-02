@@ -117,6 +117,7 @@ import (
 	hintNoOrderIndex          "NO_ORDER_INDEX"
 	hintIndexLookUpPushDown   "INDEX_LOOKUP_PUSHDOWN"
 	hintNoIndexLookUpPushDown "NO_INDEX_LOOKUP_PUSHDOWN"
+	hintPKFilter              "PK_FILTER"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -278,6 +279,19 @@ TableOptimizerHintOpt:
 	{
 		parser.warnUnsupportedHint($1)
 		$$ = nil
+	}
+|	"PK_FILTER" '(' QueryBlockOpt ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
+		}
+	}
+|	"PK_FILTER" '(' HintIndexList ')'
+	{
+		h := $3
+		h.HintName = ast.NewCIStr($1)
+		$$ = h
 	}
 |	SupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{
@@ -831,6 +845,7 @@ Identifier:
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
 |	"NO_INDEX_LOOKUP_PUSHDOWN"
+|	"PK_FILTER"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"

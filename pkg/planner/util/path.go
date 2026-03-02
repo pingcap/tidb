@@ -469,6 +469,13 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 }
 
+// PKFilterCondInfo represents a PK range condition (e.g. pk >= MIN(pk), pk <= MAX(pk))
+// derived from a secondary index during the GeneratePKFilter optimization.
+type PKFilterCondInfo struct {
+	Cond          expression.Expression
+	SourceIndexID int64 // index that generated this condition
+}
+
 // IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
 // the table scan.
 func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
