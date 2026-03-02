@@ -175,7 +175,7 @@ func waitExecutorFinishedCount(t *testing.T, svc *MVService, expected int64) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		return svc.executor.metrics.counters.finishedCount.Load() == expected
-	}, time.Second, 10*time.Millisecond)
+	}, time.Second, time.Millisecond)
 }
 
 func setupPurgeMVLogMetaForTest(t *testing.T, se *recordingSessionContext, nextTimeRows []chunk.Row) {
@@ -387,12 +387,12 @@ func TestMVServiceNotifyDDLChangeTriggersFetch(t *testing.T) {
 	svc.NotifyDDLChange()
 	require.Eventually(t, func() bool {
 		return helper.fetchLogsCalls.Load() > 0 && helper.fetchViewCalls.Load() > 0
-	}, time.Second, 20*time.Millisecond)
+	}, time.Second, time.Millisecond)
 	require.Eventually(t, func() bool {
 		return helper.runEventCount(mvRunEventFetchByDDL) > 0 &&
 			helper.runEventCount(mvRunEventFetchMLogOK) > 0 &&
 			helper.runEventCount(mvRunEventFetchMViewOK) > 0
-	}, time.Second, 20*time.Millisecond)
+	}, time.Second, time.Millisecond)
 }
 
 func TestMVServiceMaintenanceTimerTriggersHistoryGC(t *testing.T) {
@@ -425,17 +425,17 @@ func TestMVServiceMaintenanceTimerTriggersHistoryGC(t *testing.T) {
 	require.Equal(t, int32(0), helper.historyGCCalls.Load())
 	require.Eventually(t, func() bool {
 		return helper.runEventCount(mvRunEventServerRefreshOK) > 0
-	}, time.Second, 10*time.Millisecond)
+	}, time.Second, time.Millisecond)
 
 	module.Advance(defaultMVHistoryGCInterval + cfg.BasicInterval)
 	require.Eventually(t, func() bool {
 		return helper.historyGCCalls.Load() > 0
-	}, time.Second, 10*time.Millisecond)
+	}, time.Second, time.Millisecond)
 	require.Equal(t, helper.currentTSO, helper.lastHistoryGCCurrentTSO.Load())
 	require.Equal(t, int64(defaultMVHistoryGCRetention), helper.lastHistoryGCRetention.Load())
 	require.Eventually(t, func() bool {
 		return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess) > 0
-	}, time.Second, 10*time.Millisecond)
+	}, time.Second, time.Millisecond)
 }
 
 func TestMVServiceMaybeGCMVHistorySkipsWhenNotOwner(t *testing.T) {
@@ -653,7 +653,7 @@ func TestMVServicePurgeMVLogTaskResult(t *testing.T) {
 			_, ok := svc.mvLogPurgeMu.pending[l.ID]
 			svc.mvLogPurgeMu.Unlock()
 			return !ok
-		}, time.Second, 10*time.Millisecond)
+		}, time.Second, time.Millisecond)
 		require.Equal(t, int64(0), l.retryCount.Load())
 		require.Equal(t, int64(0), svc.metrics.mvLogCount.Load())
 	})
@@ -709,7 +709,7 @@ func TestMVServiceRefreshMVTaskResult(t *testing.T) {
 			_, ok := svc.mvRefreshMu.pending[m.ID]
 			svc.mvRefreshMu.Unlock()
 			return !ok
-		}, time.Second, 10*time.Millisecond)
+		}, time.Second, time.Millisecond)
 		require.Equal(t, int64(0), m.retryCount.Load())
 		require.Equal(t, int64(0), svc.metrics.mvCount.Load())
 	})

@@ -37,9 +37,11 @@ func (h *serviceHelper) reportMetrics(s *MVService) {
 	reportCounterDelta(tidbmetrics.MVTaskExecutorFailedCounter, &h.reportCache.failedCount, s.executor.metrics.counters.failedCount.Load())
 	reportCounterDelta(tidbmetrics.MVTaskExecutorTimeoutCounter, &h.reportCache.timeoutCount, s.executor.metrics.counters.timeoutCount.Load())
 	reportCounterDelta(tidbmetrics.MVTaskExecutorRejectedCounter, &h.reportCache.rejectedCount, s.executor.metrics.counters.rejectedCount.Load())
+	reportCounterDelta(tidbmetrics.MVTaskExecutorBackpressureCounter, &h.reportCache.backpressureCount, s.executor.metrics.counters.backpressureCount.Load())
 	tidbmetrics.MVTaskExecutorRunningTaskGauge.Set(float64(s.executor.metrics.gauges.runningCount.Load()))
 	tidbmetrics.MVTaskExecutorWaitingTaskGauge.Set(float64(s.executor.metrics.gauges.waitingCount.Load()))
 	tidbmetrics.MVTaskExecutorTimedOutRunningTaskGauge.Set(float64(s.executor.metrics.gauges.timedOutRunningCount.Load()))
+	tidbmetrics.MVTaskExecutorBackpressureBlockedGauge.Set(float64(s.executor.metrics.gauges.backpressureBlocked.Load()))
 
 	// MVService metrics
 	tidbmetrics.MVServiceMVRefreshTotalGauge.Set(float64(s.metrics.mvCount.Load()))
