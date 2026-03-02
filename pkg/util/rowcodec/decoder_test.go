@@ -1,6 +1,7 @@
 package rowcodec
 
 import (
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -231,5 +232,110 @@ func TestChunkDecoderCompiledColsCorrectness(t *testing.T) {
 			require.False(t, row.IsNull(4))
 			require.Equal(t, 0, row.GetTime(4).Compare(tc.expectTS))
 		})
+	}
+}
+
+func TestEncodeOldDatumArena(t *testing.T) {
+	// Verify encodeOldDatumToArena produces identical results to encodeOldDatum.
+	dec := &BytesDecoder{}
+
+	tests := []struct {
+		name string
+		tp   byte
+		val  []byte
+	}{
+		{"Int", IntFlag, func() []byte { var b [8]byte; binary.BigEndian.PutUint64(b[:], uint64(42)); return b[:] }()},
+		{"Uint", UintFlag, func() []byte { var b [8]byte; binary.BigEndian.PutUint64(b[:], 999); return b[:] }()},
+		{"Bytes", BytesFlag, []byte("hello world")},
+		{"Float", FloatFlag, func() []byte { var b [8]byte; binary.BigEndian.PutUint64(b[:], 0x4059000000000000); return b[:] }()},
+		{"EmptyBytes", BytesFlag, []byte{}},
+		{"NilFlag", NilFlag, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expected := dec.encodeOldDatum(tt.tp, tt.val)
+			arena := make([]byte, 0, 64)
+			result, newArena := encodeOldDatumToArena(tt.tp, tt.val, arena)
+			require.Equal(t, expected, []byte(result), "mismatch for %s", tt.name)
+			// Verify result is a sub-slice of arena.
+			require.Equal(t, len(result), len(newArena)-len(arena))
+		})
+	}
+
+	// Verify multiple sequential calls share the same arena.
+	arena := make([]byte, 0, 256)
+	var results [][]byte
+	for _, tt := range tests {
+		var result []byte
+		result, arena = encodeOldDatumToArena(tt.tp, tt.val, arena)
+		results = append(results, result)
+	}
+	// Verify each result matches original.
+	for i, tt := range tests {
+		expected := dec.encodeOldDatum(tt.tp, tt.val)
+		require.Equal(t, expected, []byte(results[i]), "arena sequential mismatch for %s", tt.name)
+	}
+}
+
+func TestDecodeToBytesNoHandleInto(t *testing.T) {
+	// Encode a row with multiple column types.
+	var encoder Encoder
+	colIDs := []int64{1, 2, 3}
+	datums := []types.Datum{
+		types.NewIntDatum(42),
+		types.NewBytesDatum([]byte("test")),
+		types.NewUintDatum(100),
+	}
+	rowData, err := encoder.Encode(time.UTC, colIDs, datums, nil, nil)
+	require.NoError(t, err)
+
+	uft := types.NewFieldType(mysql.TypeLonglong)
+	uft.SetFlag(uft.GetFlag() | mysql.UnsignedFlag)
+	columns := []ColInfo{
+		{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Ft: types.NewFieldType(mysql.TypeVarchar)},
+		{ID: 3, Ft: uft},
+	}
+	outputOffset := map[int64]int{1: 0, 2: 1, 3: 2}
+
+	dec := NewByteDecoder(columns, []int64{-1}, nil, nil)
+
+	// Original path.
+	origValues, err := dec.DecodeToBytesNoHandle(outputOffset, rowData)
+	require.NoError(t, err)
+
+	// Into path.
+	values := make([][]byte, len(columns))
+	arena := make([]byte, 0, 256)
+	intoValues, newArena, err := dec.DecodeToBytesNoHandleInto(outputOffset, rowData, values, arena)
+	require.NoError(t, err)
+
+	require.Equal(t, len(origValues), len(intoValues))
+	for i := range origValues {
+		require.Equal(t, origValues[i], intoValues[i], "mismatch at index %d", i)
+	}
+
+	// Arena should have grown.
+	require.Greater(t, len(newArena), 0)
+
+	// Second call should reuse the same values slice.
+	datums2 := []types.Datum{
+		types.NewIntDatum(100),
+		types.NewBytesDatum([]byte("another")),
+		types.NewUintDatum(200),
+	}
+	rowData2, err := encoder.Encode(time.UTC, colIDs, datums2, nil, nil)
+	require.NoError(t, err)
+
+	origValues2, err := dec.DecodeToBytesNoHandle(outputOffset, rowData2)
+	require.NoError(t, err)
+
+	arena = arena[:0]
+	intoValues2, _, err := dec.DecodeToBytesNoHandleInto(outputOffset, rowData2, values, arena)
+	require.NoError(t, err)
+
+	for i := range origValues2 {
+		require.Equal(t, origValues2[i], intoValues2[i], "second call mismatch at index %d", i)
 	}
 }

@@ -178,6 +178,75 @@ func BenchmarkDecodeIndexKVGeneralNonUnique(b *testing.B) {
 	})
 }
 
+func BenchmarkDecodeRestoredValues(b *testing.B) {
+	// Build restored values data using rowcodec.Encoder.
+	colIDs := []int64{1, 2, 3}
+	datums := []types.Datum{
+		types.NewIntDatum(42),
+		types.NewBytesDatum([]byte("hello world")),
+		types.NewUintDatum(999),
+	}
+	rd := rowcodec.Encoder{Enable: true}
+	restoredBytes, err := rd.Encode(time.UTC, colIDs, datums, nil, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	// Build version 0 value with restored data + int handle.
+	// restoredBytes starts with CodecVer (=RestoreDataFlag), so splitIndexValueForIndexValueVersion0
+	// will correctly detect it as restored values.
+	var value []byte
+	value = append(value, 8) // tailLen = 8
+	value = append(value, restoredBytes...)
+	var hBuf [8]byte
+	binary.BigEndian.PutUint64(hBuf[:], uint64(7))
+	value = append(value, hBuf[:]...)
+
+	uft := types.NewFieldType(mysql.TypeLonglong)
+	uft.AddFlag(mysql.UnsignedFlag)
+	columns := []rowcodec.ColInfo{
+		{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Ft: types.NewFieldType(mysql.TypeVarchar)},
+		{ID: 3, Ft: uft},
+		{ID: 4, Ft: types.NewFieldType(mysql.TypeLonglong)}, // handle
+	}
+
+	colValues := []types.Datum{
+		types.NewIntDatum(42),
+		types.NewBytesDatum([]byte("hello world")),
+		types.NewUintDatum(999),
+	}
+	encodedCols, _ := codec.EncodeKey(time.UTC, nil, colValues...)
+	key := EncodeIndexSeekKey(1, 1, encodedCols)
+
+	colsLen := 3
+
+	b.Run("Original", func(b *testing.B) {
+		preAlloc := make([][]byte, colsLen, colsLen+1)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			preAlloc = preAlloc[:colsLen:colsLen+1]
+			_, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("WithIndexRestoredDecoder", func(b *testing.B) {
+		preAlloc := make([][]byte, colsLen, colsLen+1)
+		dec := NewIndexRestoredDecoder(columns[:colsLen])
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			preAlloc = preAlloc[:colsLen:colsLen+1]
+			_, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc, dec)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkEncodeRowKeyWithHandle,
