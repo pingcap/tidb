@@ -193,14 +193,26 @@ func (p *HandParser) parseVariableAssignment() *ast.VariableAssignment {
 		return va
 
 	case global:
+		// yacc ambiguity: SET GLOBAL = DEFAULT treats GLOBAL as a variable
+		// name (VariableName → Identifier → UnReservedKeyword), not a scope.
+		if p.peekN(1).Tp == eq || p.peekN(1).Tp == assignmentEq {
+			return p.parseSystemVariableAssignment(false, false)
+		}
 		p.next()
 		return p.parseSystemVariableAssignment(true, false)
 
 	case session, local:
+		// Same ambiguity: SET LOCAL = DEFAULT / SET SESSION = DEFAULT
+		if p.peekN(1).Tp == eq || p.peekN(1).Tp == assignmentEq {
+			return p.parseSystemVariableAssignment(false, false)
+		}
 		p.next()
 		return p.parseSystemVariableAssignment(false, false)
 
 	case instance:
+		if p.peekN(1).Tp == eq || p.peekN(1).Tp == assignmentEq {
+			return p.parseSystemVariableAssignment(false, false)
+		}
 		p.next()
 		return p.parseSystemVariableAssignment(false, true)
 
