@@ -66,6 +66,8 @@ var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
 type DefaultDataSinkRegisterer struct {
 	ctx       context.Context
 	dataSinks map[DataSink]struct{}
+	// topSQLSinkCount tracks the number of sinks that require TopSQL enabled.
+	topSQLSinkCount int
 	sync.Mutex
 }
 
@@ -92,15 +94,19 @@ func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
 		if len(r.dataSinks) >= 10 {
 			return errors.New("too many datasinks")
 		}
-		r.dataSinks[dataSink] = struct{}{}
-		if len(r.dataSinks) > 0 {
-			topsqlstate.EnableTopSQL()
-		}
 
 		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopRU {
 			topsqlstate.EnableTopRU()
 			topsqlstate.SetTopRUItemInterval(ds.itemInterval)
 		}
+
+		r.dataSinks[dataSink] = struct{}{}
+
+		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopSQL {
+			topsqlstate.EnableTopSQL()
+			r.topSQLSinkCount++
+		}
+
 		return nil
 	}
 }
@@ -118,8 +124,13 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 		}
 
 		delete(r.dataSinks, dataSink)
-		if len(r.dataSinks) == 0 {
-			topsqlstate.DisableTopSQL()
+		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopSQL {
+			if r.topSQLSinkCount > 0 {
+				r.topSQLSinkCount--
+			}
+			if r.topSQLSinkCount == 0 {
+				topsqlstate.DisableTopSQL()
+			}
 		}
 
 		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopRU {

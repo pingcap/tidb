@@ -64,9 +64,31 @@ type pubSubDataSink struct {
 	// for deregister
 	registerer DataSinkRegisterer
 
+	// TopSQL subscription config
+	enableTopSQL bool
+
 	// TopRU subscription config
 	enableTopRU  bool
 	itemInterval tipb.ItemInterval
+}
+
+// parseTopSQLSubscription returns true when the request opts in to TopSQL.
+// Empty collectors default to TopSQL enabled for backward compatibility.
+func parseTopSQLSubscription(req *tipb.TopSQLSubRequest) bool {
+	if req == nil {
+		return true
+	}
+
+	collectors := req.GetCollectors()
+	if len(collectors) == 0 {
+		return true
+	}
+	for _, collector := range collectors {
+		if collector == tipb.CollectorType_COLLECTOR_TYPE_TOPSQL || collector == tipb.CollectorType_COLLECTOR_TYPE_UNSPECIFIED {
+			return true
+		}
+	}
+	return false
 }
 
 func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval) {
@@ -95,12 +117,13 @@ func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval
 
 // newPubSubDataSink creates a DataSink for PubSub subscription.
 //
-// It parses TopRU options from the request and stores them in the sink.
+// It parses TopSQL/TopRU options from the request and stores them in the sink.
 // Register enables TopRU when the sink has enableTopRU; Deregister disables it when the last such sink is removed.
 // item_interval_seconds controls TopRURecordItem.timestamp_sec (15s/30s/60s).
 // Requests without the TOPRU collector entry keep TopRU disabled for backward compatibility.
 func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer, registerer DataSinkRegisterer) *pubSubDataSink {
 	ctx, cancel := context.WithCancel(stream.Context())
+	enableTopSQL := parseTopSQLSubscription(req)
 	enableTopRU, itemInterval := parseTopRUSubscription(req)
 
 	ds := &pubSubDataSink{
@@ -112,6 +135,7 @@ func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_Subs
 
 		registerer: registerer,
 
+		enableTopSQL: enableTopSQL,
 		enableTopRU:  enableTopRU,
 		itemInterval: itemInterval,
 	}
@@ -211,6 +235,9 @@ func (ds *pubSubDataSink) doSend(ctx context.Context, data *ReportData) error {
 }
 
 func (ds *pubSubDataSink) sendTopSQLRecords(ctx context.Context, records []tipb.TopSQLRecord) (err error) {
+	if !ds.enableTopSQL {
+		return nil
+	}
 	if len(records) == 0 {
 		return
 	}
