@@ -22,6 +22,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util/collate",
         "//pkg/util/context",
+        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
