@@ -144,6 +144,13 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// the for-loop may exit without read one single row!
 	req.GrowAndReset(us.MaxChunkSize())
 
+	// For cached tables, getSnapshotRow() always returns nil, so the merge
+	// logic in getOneRow() is unnecessary. Use a dedicated fast path that
+	// reads directly from addedRowsIter.
+	if us.cacheTable != nil {
+		return us.nextForCacheTable(req)
+	}
+
 	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(us))
 	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
 		row, err := us.getOneRow(ctx)
@@ -169,6 +176,48 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 			// Handle the bad null error.
+			if (mysql.HasNotNullFlag(us.columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(us.columns[idx].GetFlag())) && castDatum.IsNull() {
+				castDatum = table.GetZeroValue(us.columns[idx])
+			}
+			mutableRow.SetDatum(idx, castDatum)
+		}
+
+		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
+		if err != nil {
+			return err
+		}
+		if matched {
+			req.AppendRow(mutableRow.ToRow())
+		}
+	}
+	return nil
+}
+
+// nextForCacheTable is a fast path for cached tables. Since cached tables have
+// no snapshot rows (getSnapshotRow always returns nil), we skip the merge logic
+// and read directly from addedRowsIter.
+func (us *UnionScanExec) nextForCacheTable(req *chunk.Chunk) error {
+	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(us))
+	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
+		row, err := us.addedRowsIter.Next()
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return nil
+		}
+		mutableRow.SetDatums(row...)
+
+		sctx := us.Ctx()
+		for _, idx := range us.virtualColumnIndex {
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
+			if err != nil {
+				return err
+			}
+			castDatum, err := table.CastValue(us.Ctx(), datum, us.columns[idx], false, true)
+			if err != nil {
+				return err
+			}
 			if (mysql.HasNotNullFlag(us.columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(us.columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(us.columns[idx])
 			}
