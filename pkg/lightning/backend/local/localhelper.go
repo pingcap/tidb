@@ -35,6 +35,21 @@ import (
 	"golang.org/x/time/rate"
 )
 
+<<<<<<< HEAD
+=======
+// 64 is chosen based on nextgen import shape: subtask size is ~100 GiB and each region is ~1 GiB,
+// so split key count is often around 100. A threshold of 100 may miss coarse split/scatter on boundary
+// cases, while 64 triggers early load spreading and still avoids this stage for smaller tasks.
+const coarseGrainedSplitKeysThreshold = 64
+
+var (
+
+	// the base exponential backoff time
+	// the variable is only changed in unit test for running test faster.
+	splitRegionBaseBackOffTime = time.Second
+)
+
+>>>>>>> 4ffecda589a (lightning: restore two-level split/scatter while keeping limiter behavior (#66312))
 // splitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
 func (local *Backend) splitAndScatterRegionInBatches(
@@ -50,6 +65,36 @@ func (local *Backend) splitAndScatterRegionInBatches(
 		limiter = rate.NewLimiter(rate.Limit(eventLimit), burstPerSec*ratePerSecMultiplier)
 		batchCnt = min(batchCnt, burstPerSec)
 	}
+	if len(splitKeys) > coarseGrainedSplitKeysThreshold {
+		// Split and scatter a coarse-grained set of keys first to spread regions
+		// before the fine-grained split stage.
+		coarseGrainedSplitKeys := getCoarseGrainedSplitKeys(splitKeys)
+		if err := local.splitAndScatterRegionInBatchesWithLimiter(ctx, coarseGrainedSplitKeys, batchCnt, limiter); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return local.splitAndScatterRegionInBatchesWithLimiter(ctx, splitKeys, batchCnt, limiter)
+}
+
+func getCoarseGrainedSplitKeys(splitKeys [][]byte) [][]byte {
+	sqrtCnt := int(math.Sqrt(float64(len(splitKeys))))
+	coarseGrainedSplitKeys := make([][]byte, 0, sqrtCnt+1)
+	i := 0
+	for ; i < len(splitKeys); i += sqrtCnt {
+		coarseGrainedSplitKeys = append(coarseGrainedSplitKeys, splitKeys[i])
+	}
+	if i-sqrtCnt != len(splitKeys)-1 {
+		coarseGrainedSplitKeys = append(coarseGrainedSplitKeys, splitKeys[len(splitKeys)-1])
+	}
+	return coarseGrainedSplitKeys
+}
+
+func (local *Backend) splitAndScatterRegionInBatchesWithLimiter(
+	ctx context.Context,
+	splitKeys [][]byte,
+	batchCnt int,
+	limiter *rate.Limiter,
+) error {
 	for i := 0; i < len(splitKeys); i += batchCnt {
 		batch := splitKeys[i:]
 		if len(batch) > batchCnt {
