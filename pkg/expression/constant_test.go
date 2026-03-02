@@ -527,6 +527,23 @@ func TestGetTypeThreadSafe(t *testing.T) {
 	require.NotSame(t, ft1, ft2)
 }
 
+func TestConstantCloneDeepCopy(t *testing.T) {
+	cst := &Constant{
+		Value:   types.NewBytesDatum([]byte("abc")),
+		RetType: newStringFieldType(),
+	}
+	cloned := cst.Clone().(*Constant)
+	require.NotSame(t, cst, cloned)
+	require.NotSame(t, cst.RetType, cloned.RetType)
+
+	cloned.RetType.SetType(mysql.TypeBlob)
+	require.Equal(t, mysql.TypeVarString, cst.RetType.GetType())
+
+	clonedBytes := cloned.Value.GetBytes()
+	clonedBytes[0] = 'z'
+	require.Equal(t, byte('a'), cst.Value.GetBytes()[0])
+}
+
 func TestSpecificConstant(t *testing.T) {
 	one := NewOne()
 	require.Equal(t, one.Value, types.NewDatum(1))

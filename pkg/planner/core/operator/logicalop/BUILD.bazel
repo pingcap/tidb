@@ -4,6 +4,8 @@ go_library(
     name = "logicalop",
     srcs = [
         "base_logical_plan.go",
+        "deep_clone_generated.go",
+        "deep_clone_utils.go",
         "expression_util.go",
         "hash64_equals_generated.go",
         "logical_aggregation.go",
@@ -82,6 +84,7 @@ go_library(
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
         "//pkg/util/size",
+        "//pkg/util/slice",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
@@ -92,6 +95,7 @@ go_library(
 filegroup(
     name = "generator_files",
     srcs = [
+        "deep_clone_generated.go",
         "hash64_equals_generated.go",
         "shallow_ref_generated.go",
     ],

@@ -173,6 +173,9 @@ type LogicalPlan interface {
 	Plan
 	base.HashEquals
 
+	// DeepClone deep clones the logical plan tree.
+	DeepClone() LogicalPlan
+
 	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
 	// We use a strict encode method here which ensures there is no conflict.
 	HashCode() []byte

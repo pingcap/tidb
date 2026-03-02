@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -159,8 +160,27 @@ func (s *ScalarSubQueryExpr) GetType(_ expression.EvalContext) *types.FieldType 
 // Clone copies an expression totally.
 func (s *ScalarSubQueryExpr) Clone() expression.Expression {
 	ret := *s
-	ret.RetType = s.RetType.Clone()
+	ret.Constant = *s.Constant.Clone().(*expression.Constant)
+	ret.evalCtx = cloneScalarSubqueryEvalCtx(s.evalCtx)
+	if s.hashcode != nil {
+		ret.hashcode = slices.Clone(s.hashcode)
+	}
 	return &ret
+}
+
+func cloneScalarSubqueryEvalCtx(ctx *ScalarSubqueryEvalCtx) *ScalarSubqueryEvalCtx {
+	if ctx == nil {
+		return nil
+	}
+	cloned := *ctx
+	cloned.outputColIDs = slices.Clone(ctx.outputColIDs)
+	if ctx.colsData != nil {
+		cloned.colsData = make([]types.Datum, len(ctx.colsData))
+		for i := range ctx.colsData {
+			ctx.colsData[i].Copy(&cloned.colsData[i])
+		}
+	}
+	return &cloned
 }
 
 // Equal implements the Expression interface.

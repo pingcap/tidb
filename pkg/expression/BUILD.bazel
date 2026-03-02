@@ -56,6 +56,7 @@ go_library(
         "constant_fold.go",
         "constant_propagation.go",
         "context.go",
+        "deep_copy.go",
         "distsql_builtin.go",
         "errors.go",
         "evaluator.go",

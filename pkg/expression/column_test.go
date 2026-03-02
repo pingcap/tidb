@@ -95,6 +95,47 @@ func TestColumn(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestCloneDeepCopy(t *testing.T) {
+	col := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	baseCol := &Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	virtualExpr := NewFunctionInternal(mock.NewContext(), ast.Abs, types.NewFieldType(mysql.TypeLonglong), baseCol)
+	col.VirtualExpr = virtualExpr
+	colHash := col.HashCode()
+	require.NotEmpty(t, colHash)
+
+	clonedCol := col.Clone().(*Column)
+	require.NotSame(t, col, clonedCol)
+	require.NotSame(t, col.RetType, clonedCol.RetType)
+	require.NotSame(t, col.VirtualExpr, clonedCol.VirtualExpr)
+	require.NotSame(t, &col.hashcode[0], &clonedCol.hashcode[0])
+
+	clonedCol.RetType.SetType(mysql.TypeDouble)
+	require.Equal(t, mysql.TypeLonglong, col.RetType.GetType())
+	clonedCol.hashcode[0]++
+	require.NotEqual(t, col.hashcode[0], clonedCol.hashcode[0])
+
+	data := types.NewBytesDatum([]byte("abc"))
+	corCol := &CorrelatedColumn{
+		Column: *col,
+		Data:   &data,
+	}
+	clonedCorCol := corCol.Clone().(*CorrelatedColumn)
+	require.NotSame(t, corCol, clonedCorCol)
+	// Correlated column deep clone is a special case, the data inside, should be the same.
+	require.Same(t, corCol.Data, clonedCorCol.Data)
+	require.NotSame(t, corCol.RetType, clonedCorCol.RetType)
+
+	clonedBytes := clonedCorCol.Data.GetBytes()
+	clonedBytes[0] = 'z'
+	require.Equal(t, byte('z'), corCol.Data.GetBytes()[0])
+}
+
 func TestColumnHashCode(t *testing.T) {
 	col1 := &Column{
 		UniqueID: 12,

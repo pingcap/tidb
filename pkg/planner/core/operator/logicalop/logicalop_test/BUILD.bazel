@@ -4,6 +4,7 @@ go_test(
     name = "logicalop_test_test",
     timeout = "short",
     srcs = [
+        "deep_clone_test.go",
         "hash64_equals_test.go",
         "logical_mem_table_predicate_extractor_test.go",
         "logical_operator_test.go",
@@ -12,7 +13,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 38,
+    shard_count = 41,
     deps = [
         "//pkg/domain",
         "//pkg/expression",

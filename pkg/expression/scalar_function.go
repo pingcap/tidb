@@ -348,12 +348,15 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
+	clonedBuiltinFunc := sf.Function.Clone()
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  sf.RetType,
-		Function: sf.Function.Clone(),
+		// Preserve the original scalar return type shape during clone.
+		// This breaks shared mutable state without canonicalizing RetType
+		// against the cloned builtin function's internal return type.
+		RetType:  sf.RetType.DeepCopy(),
+		Function: clonedBuiltinFunc,
 	}
-	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
 	}
