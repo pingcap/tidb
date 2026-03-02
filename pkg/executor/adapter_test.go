@@ -27,11 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/session"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 1a9221eacbf (*: add a variable for dynamic slow log trigger rules with global (supporting ConnID-specific) and session scope (#63779))
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -135,10 +131,10 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 			}})
 
 	sessVars.SlowLogRules.NeedUpdateEffectiveFields = false
-	items := executor.PrepareSlowLogItemsForRules(goCtx, vardef.GlobalSlowLogRules.Load(), sessVars)
+	items := executor.PrepareSlowLogItemsForRules(goCtx, variable.GlobalSlowLogRules.Load(), sessVars)
 	require.Nil(t, items)
 	sessVars.SlowLogRules.NeedUpdateEffectiveFields = true
-	items = executor.PrepareSlowLogItemsForRules(goCtx, vardef.GlobalSlowLogRules.Load(), sessVars)
+	items = executor.PrepareSlowLogItemsForRules(goCtx, variable.GlobalSlowLogRules.Load(), sessVars)
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogConnIDStr)].Match(ctx.GetSessionVars(), items, uint64(123)))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogDBStr)].Match(ctx.GetSessionVars(), items, "testdb"))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogSucc)].Match(ctx.GetSessionVars(), items, true))
@@ -190,7 +186,7 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		tk.MustExec(`set session tidb_slow_log_rules=""`)
 		tk.MustExec(`set global tidb_slow_log_rules=""`)
 		seVars := tk.Session().GetSessionVars()
-		require.False(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+		require.False(t, executor.ShouldWriteSlowLog(variable.GlobalSlowLogRules.Load(), seVars, baseItems))
 
 		// show
 		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
@@ -207,7 +203,7 @@ func TestShouldWriteSlowLog(t *testing.T) {
 	t.Run("session rules match", func(t *testing.T) {
 		tk.MustExec(`set session tidb_slow_log_rules="Resource_group:testRG"`)
 		seVars := tk.Session().GetSessionVars()
-		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+		require.True(t, executor.ShouldWriteSlowLog(variable.GlobalSlowLogRules.Load(), seVars, baseItems))
 
 		// show
 		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
@@ -227,7 +223,7 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		tk.MustExec(`set global tidb_slow_log_rules="Conn_id:` +
 			fmt.Sprintf("%d", connID) + `,Resource_group:testRG"`)
 		seVars := tk.Session().GetSessionVars()
-		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+		require.True(t, executor.ShouldWriteSlowLog(variable.GlobalSlowLogRules.Load(), seVars, baseItems))
 
 		// show
 		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
@@ -247,7 +243,7 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		tk.MustExec(`set global tidb_slow_log_rules="Conn_id:` +
 			fmt.Sprintf("%d", connID) + `,Resource_group:testRG"`)
 		seVars := tk.Session().GetSessionVars()
-		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+		require.True(t, executor.ShouldWriteSlowLog(variable.GlobalSlowLogRules.Load(), seVars, baseItems))
 
 		// show
 		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
@@ -265,7 +261,7 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		tk.MustExec(`set session tidb_slow_log_rules="Resource_group:otherRG"`)
 		tk.MustExec(`set global tidb_slow_log_rules="Resource_group:testRG"`)
 		seVars := tk.Session().GetSessionVars()
-		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+		require.True(t, executor.ShouldWriteSlowLog(variable.GlobalSlowLogRules.Load(), seVars, baseItems))
 
 		// show
 		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
@@ -283,7 +279,7 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		tk.MustExec(`set session tidb_slow_log_rules="Resource_group:otherRG2"`)
 		tk.MustExec(`set global tidb_slow_log_rules="Resource_group:notmatch"`)
 		seVars := tk.Session().GetSessionVars()
-		require.False(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+		require.False(t, executor.ShouldWriteSlowLog(variable.GlobalSlowLogRules.Load(), seVars, baseItems))
 
 		// show
 		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
@@ -303,7 +299,7 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		tk.MustExec(`set global tidb_slow_log_rules="Conn_id:` +
 			fmt.Sprintf("%d", connID) + `,Resource_group:testRG;Succ:false"`)
 		seVars := tk.Session().GetSessionVars()
-		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+		require.True(t, executor.ShouldWriteSlowLog(variable.GlobalSlowLogRules.Load(), seVars, baseItems))
 
 		// show
 		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
@@ -325,7 +321,7 @@ func TestShouldWriteSlowLog(t *testing.T) {
 			Exec_retry_count:8, Session_alias:sessA, PD_total:5.123, Succ:false, Resource_group:rg1;
 			Total_keys:54321, DB:dbA, PD_total:5.123, Is_internal:false, Resource_group:rg2"`, seVars.ConnectionID)
 		tk.MustExec(`set global tidb_slow_log_rules=` + gConditions)
-		require.False(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+		require.False(t, executor.ShouldWriteSlowLog(variable.GlobalSlowLogRules.Load(), seVars, baseItems))
 
 		tikvExecDetail := util.ExecDetails{
 			WaitPDRespDuration: (6 * time.Second).Nanoseconds(),
@@ -337,7 +333,7 @@ func TestShouldWriteSlowLog(t *testing.T) {
 			KVExecDetail:      &tikvExecDetail,
 		}
 		seVars.SessionAlias = "sessA"
-		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
+		require.True(t, executor.ShouldWriteSlowLog(variable.GlobalSlowLogRules.Load(), seVars, baseItems))
 	})
 }
 
@@ -405,7 +401,7 @@ func BenchmarkCheckSlowThreshold(b *testing.B) {
 
 	tk.MustExec("set tidb_slow_log_threshold=300000;")
 	se.GetSessionVars().SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{})
-	vardef.GlobalSlowLogRules.Store(&slowlogrule.GlobalSlowLogRules{RulesMap: make(map[int64]*slowlogrule.SlowLogRules)})
+	variable.GlobalSlowLogRules.Store(&slowlogrule.GlobalSlowLogRules{RulesMap: make(map[int64]*slowlogrule.SlowLogRules)})
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
@@ -443,7 +439,7 @@ func BenchmarkCheckSlowLogRulesLazy(b *testing.B) {
 	gRawRule = fmt.Sprintf("Conn_ID: %d, %s", se.GetSessionVars().ConnectionID, gRawRule)
 	gSLRules, err := variable.ParseGlobalSlowLogRules(gRawRule)
 	require.NoError(b, err)
-	vardef.GlobalSlowLogRules.Store(gSLRules)
+	variable.GlobalSlowLogRules.Store(gSLRules)
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()
@@ -480,7 +476,7 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 	gRawRule = fmt.Sprintf("Conn_ID: %d, %s", se.GetSessionVars().ConnectionID, gRawRule)
 	gSLRules, err := variable.ParseGlobalSlowLogRules(gRawRule)
 	require.NoError(b, err)
-	vardef.GlobalSlowLogRules.Store(gSLRules)
+	variable.GlobalSlowLogRules.Store(gSLRules)
 
 	ts := oracle.GoTimeToTS(time.Now())
 	b.StartTimer()

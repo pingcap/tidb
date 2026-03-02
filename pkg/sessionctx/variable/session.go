@@ -2319,14 +2319,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
 	vars.MemTracker.Killer = &vars.SQLKiller
-<<<<<<< HEAD
 	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
 	vars.LoadBindingTimeout = DefTiDBLoadBindingTimeout
-=======
-	vars.StatsLoadSyncWait.Store(vardef.StatsLoadSyncWait.Load())
-	vars.UseHashJoinV2 = joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion)
 	vars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(nil)
->>>>>>> 1a9221eacbf (*: add a variable for dynamic slow log trigger rules with global (supporting ConnID-specific) and session scope (#63779))
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {

@@ -177,6 +177,21 @@ func TestSlowLogFormat(t *testing.T) {
 			},
 		},
 	}
+	copExecDetail := execdetails.CopExecDetails{
+		BackoffTime:   execDetail.BackoffTime,
+		BackoffSleep:  execDetail.BackoffSleep,
+		BackoffTimes:  execDetail.BackoffTimes,
+		CalleeAddress: execDetail.CalleeAddress,
+		TimeDetail:    execDetail.TimeDetail,
+	}
+	if execDetail.ScanDetail != nil {
+		copExecDetail.ScanDetail = *execDetail.ScanDetail
+	}
+	tikvExecDetail := util.ExecDetails{
+		WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
+		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
+		BackoffDuration:    (12 * time.Second).Nanoseconds(),
+	}
 	usedStats1 := &stmtctx.UsedStatsInfoForTable{
 		Name:                  "t1",
 		TblInfo:               nil,
@@ -339,14 +354,14 @@ func TestSlowLogFormat(t *testing.T) {
 		},
 	})
 	seVar.StmtCtx.SyncExecDetails.Reset()
-	seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execDetail.CopExecDetails, 0)
+	seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&copExecDetail, 0)
 	// Make RequestCount to be 2.
 	seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execdetails.CopExecDetails{}, 0)
 	seVar.StmtCtx.ExecRetryCount = logItems.ExecRetryCount
 	seVar.StmtCtx.ResourceGroupName = logItems.ResourceGroupName
 	ctx := context.WithValue(context.Background(), execdetails.StmtExecDetailKey,
 		&execdetails.StmtExecDetails{WriteSQLRespDuration: logItems.WriteSQLRespTotal})
-	actual := executor.PrepareSlowLogItemsForRules(ctx, vardef.GlobalSlowLogRules.Load(), seVar)
+	actual := executor.PrepareSlowLogItemsForRules(ctx, variable.GlobalSlowLogRules.Load(), seVar)
 	childCtx := context.WithValue(ctx, util.ExecDetailsKey, &tikvExecDetail)
 	executor.CompleteSlowLogItemsForRules(childCtx, seVar, actual)
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")

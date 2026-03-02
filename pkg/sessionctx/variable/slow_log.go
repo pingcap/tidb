@@ -285,27 +285,11 @@ func kvExecDetailFormat(buf *bytes.Buffer, kvExecDetail *util.ExecDetails) {
 		writeSlowLogItem(buf, SlowLogKVTotal, zeroStr)
 		writeSlowLogItem(buf, SlowLogPDTotal, zeroStr)
 		writeSlowLogItem(buf, SlowLogBackoffTotal, zeroStr)
-		writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVTotal, zeroStr)
-		writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVTotal, zeroStr)
-		writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVCrossZone, zeroStr)
-		writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, zeroStr)
-		writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashTotal, zeroStr)
-		writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashTotal, zeroStr)
-		writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashCrossZone, zeroStr)
-		writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, zeroStr)
 		return
 	}
 	writeSlowLogItem(buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(kvExecDetail.WaitKVRespDuration).Seconds(), 'f', -1, 64))
 	writeSlowLogItem(buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(kvExecDetail.WaitPDRespDuration).Seconds(), 'f', -1, 64))
 	writeSlowLogItem(buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(kvExecDetail.BackoffDuration).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesSentKVTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedKVTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesSentKVCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedKVCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesSentMPPTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedMPPTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesSentMPPCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedMPPCrossZone, 10))
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -475,27 +459,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogPlanFromBinding, strconv.FormatBool(logItems.PlanFromBinding))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
-<<<<<<< HEAD
-	kvTotal := logItems.KVTotal
-	pdTotal := logItems.PDTotal
-	backoffTotal := logItems.BackoffTotal
-	if logItems.KVExecDetail != nil {
-		if kvTotal == 0 {
-			kvTotal = time.Duration(logItems.KVExecDetail.WaitKVRespDuration)
-		}
-		if pdTotal == 0 {
-			pdTotal = time.Duration(logItems.KVExecDetail.WaitPDRespDuration)
-		}
-		if backoffTotal == 0 {
-			backoffTotal = time.Duration(logItems.KVExecDetail.BackoffDuration)
-		}
-	}
-	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(kvTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(pdTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(backoffTotal.Seconds(), 'f', -1, 64))
-=======
 	kvExecDetailFormat(&buf, logItems.KVExecDetail)
->>>>>>> 1a9221eacbf (*: add a variable for dynamic slow log trigger rules with global (supporting ConnID-specific) and session scope (#63779))
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	if len(logItems.Warnings) > 0 {

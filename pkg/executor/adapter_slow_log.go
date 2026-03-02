@@ -260,6 +260,16 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	items.StorageKV = stmtCtx.IsTiKV.Load()
 	items.StorageMPP = stmtCtx.IsTiFlash.Load()
+	if items.KVExecDetail == nil {
+		if tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey); tikvExecDetailRaw != nil {
+			items.KVExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+		}
+	}
+	if items.KVExecDetail != nil {
+		items.KVTotal = time.Duration(items.KVExecDetail.WaitKVRespDuration)
+		items.PDTotal = time.Duration(items.KVExecDetail.WaitPDRespDuration)
+		items.BackoffTotal = time.Duration(items.KVExecDetail.BackoffDuration)
+	}
 
 	if a.retryCount > 0 {
 		items.ExecRetryTime = items.TimeTotal - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
