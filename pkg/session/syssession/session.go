@@ -63,6 +63,41 @@ func objectStr(obj any) string {
 	return fmt.Sprintf("%T(%p)", obj, obj)
 }
 
+// ObjectStrForLog exposes the internal object string formatter for packages that need to log
+// objects managed by the system session pool.
+func ObjectStrForLog(obj any) string {
+	return objectStr(obj)
+}
+
+func internalSessionStackField() zap.Field {
+	return zap.Stack("stack")
+}
+
+func requestSourceFieldsForLog(sctx sessionctx.Context) []zap.Field {
+	if sctx == nil {
+		return nil
+	}
+
+	vars := sctx.GetSessionVars()
+	if vars == nil {
+		return nil
+	}
+
+	fields := make([]zap.Field, 0, 2)
+	if vars.RequestSourceType != "" {
+		fields = append(fields, zap.String("requestSource", vars.RequestSourceType))
+	}
+	if vars.ExplicitRequestSourceType != "" {
+		fields = append(fields, zap.String("explicitRequestSource", vars.ExplicitRequestSourceType))
+	}
+	return fields
+}
+
+// RequestSourceFieldsForLog exposes request-source fields to help identify the caller of internal sessions in logs.
+func RequestSourceFieldsForLog(sctx sessionctx.Context) []zap.Field {
+	return requestSourceFieldsForLog(sctx)
+}
+
 // noopOwnerHook does nothing when the owner of the session is changed.
 type noopOwnerHook struct{}
 
@@ -155,6 +190,13 @@ func newInternalSession(sctx SessionContext, owner sessionOwner) (*session, erro
 	if err := owner.onBecameOwner(sctx); err != nil {
 		return nil, err
 	}
+	fields := []zap.Field{
+		zap.String("sctx", objectStr(sctx)),
+		zap.String("owner", objectStr(owner)),
+		internalSessionStackField(),
+	}
+	fields = append(fields, requestSourceFieldsForLog(sctx)...)
+	logutil.BgLogger().Info("internal session created", fields...)
 	return &session{sctx: sctx, owner: owner}, nil
 }
 
@@ -310,6 +352,17 @@ func (s *session) EnterOperation(caller sessionOwner, threadSafe bool) (SessionC
 		}
 	}
 	s.inUse++
+	fields := []zap.Field{
+		zap.Uint64("seqStart", seqStart),
+		zap.Uint64("inUse", s.inUse),
+		zap.Bool("threadSafe", threadSafe),
+		zap.String("sctx", objectStr(s.sctx)),
+		zap.String("caller", objectStr(caller)),
+		zap.String("owner", objectStr(s.owner)),
+		internalSessionStackField(),
+	}
+	fields = append(fields, requestSourceFieldsForLog(s.sctx)...)
+	logutil.BgLogger().Info("internal session enter operation", fields...)
 	exit := false
 	return s.sctx, func() {
 		var seqEnd uint64
@@ -389,6 +442,19 @@ func (s *session) EnterOperation(caller sessionOwner, threadSafe bool) (SessionC
 				zap.String("caller", objectStr(caller)),
 			)
 		}
+
+		fields := []zap.Field{
+			zap.Uint64("seqStart", seqStart),
+			zap.Uint64("seqEnd", seqEnd),
+			zap.Uint64("inUse", s.inUse),
+			zap.Bool("threadSafe", threadSafe),
+			zap.String("sctx", objectStr(s.sctx)),
+			zap.String("caller", objectStr(caller)),
+			zap.String("owner", objectStr(s.owner)),
+			internalSessionStackField(),
+		}
+		fields = append(fields, requestSourceFieldsForLog(s.sctx)...)
+		logutil.BgLogger().Info("internal session exit operation", fields...)
 	}, nil
 }
 
@@ -423,6 +489,16 @@ func (s *session) doCloseWithoutLock(seq uint64) {
 	defer func() {
 		s.owner = nil
 	}()
+
+	fields := []zap.Field{
+		zap.Uint64("seq", seq),
+		zap.Uint64("inUse", s.inUse),
+		zap.String("sctx", objectStr(s.sctx)),
+		zap.String("owner", objectStr(s.owner)),
+		internalSessionStackField(),
+	}
+	fields = append(fields, requestSourceFieldsForLog(s.sctx)...)
+	logutil.BgLogger().Info("internal session close", fields...)
 
 	if s.inUse > 0 {
 		// `s.inUse > 0` indicates some operation(s) are still ongoing on the session.
