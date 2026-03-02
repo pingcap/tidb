@@ -175,27 +175,27 @@
         "Warn": null
       },
       {
-        "SQL": "explain select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path",
+        "SQL": "explain format = 'brief' select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path",
         "Plan": [
-          "TableReader_17 1.00 root  MppVersion: 3, data:ExchangeSender_16",
-          "└─ExchangeSender_16 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_14 1.00 mpp[tiflash]  test.s.a",
-          "    └─Selection_11 1.00 mpp[tiflash]  isnull(test.s.b)",
-          "      └─TableFullScan_10 10.00 mpp[tiflash] table:s pushed down filter:eq(test.s.a, 10), keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  test.s.a",
+          "    └─Selection 1.00 mpp[tiflash]  eq(test.s.a, 10)",
+          "      └─TableFullScan 10.00 mpp[tiflash] table:s pushed down filter:isnull(test.s.b), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
+        "SQL": "explain format = 'brief' select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
         "Plan": [
-          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
+          "Point_Get 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get",
+        "SQL": "explain format = 'brief' select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get",
         "Plan": [
-          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
+          "Point_Get 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
         ],
         "Warn": null
       }
@@ -227,12 +227,12 @@
         "Warn": null
       },
       {
-        "SQL": "explain select count(*) from t where a=1 -- 2. replica not ready",
+        "SQL": "explain format = 'brief' select count(*) from t where a=1 -- 2. replica not ready",
         "Plan": [
-          "StreamAgg_19 1.00 root  funcs:count(Column#9)->Column#7",
-          "└─IndexReader_20 1.00 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#9",
-          "    └─IndexRangeScan_18 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#9)->Column#7",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#9",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because tiflash replicas of table `t` not ready."
@@ -249,12 +249,12 @@
         "Warn": null
       },
       {
-        "SQL": "explain select count(*) from t where a=1 -- 3. isolation_engine not match",
+        "SQL": "explain format = 'brief' select count(*) from t where a=1 -- 3. isolation_engine not match",
         "Plan": [
-          "StreamAgg_19 1.00 root  funcs:count(Column#9)->Column#7",
-          "└─IndexReader_20 1.00 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#9",
-          "    └─IndexRangeScan_18 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#9)->Column#7",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#9",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tikv') not match, need 'tiflash'."
@@ -405,13 +405,13 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN SELECT count(*) from t where a=1; -- 1. static partition prune",
+        "SQL": "EXPLAIN FORMAT = 'brief' SELECT count(*) from t where a=1; -- 1. static partition prune",
         "Plan": [
-          "StreamAgg_14 1.00 root  funcs:count(1)->Column#5",
-          "└─TableReader_43 10.00 root  MppVersion: 3, data:ExchangeSender_42",
-          "  └─ExchangeSender_42 10.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection_41 10.00 mpp[tiflash]  eq(test.t.a, 1)",
-          "      └─TableFullScan_40 10000.00 mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(1)->Column#5",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Selection 10.00 mpp[tiflash]  eq(test.t.a, 1)",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -778,226 +778,226 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct c) from t group by d;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c) from t group by d;",
         "Plan": [
-          "TableReader_56 8000.00 root  MppVersion: 3, data:ExchangeSender_55",
-          "└─ExchangeSender_55 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_51 8000.00 mpp[tiflash]  Column#8",
-          "    └─HashAgg_52 8000.00 mpp[tiflash]  group by:test.t.d, funcs:sum(Column#19)->Column#8",
-          "      └─ExchangeReceiver_54 8000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_53 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary]",
-          "          └─HashAgg_50 8000.00 mpp[tiflash]  group by:test.t.d, funcs:count(test.t.c)->Column#19",
-          "            └─Projection_37 8000.00 mpp[tiflash]  test.t.c, test.t.d",
-          "              └─HashAgg_38 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.d)->test.t.d",
-          "                └─ExchangeReceiver_40 8000.00 mpp[tiflash]  ",
-          "                  └─ExchangeSender_39 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary], [name: test.t.c, collate: binary]",
-          "                    └─HashAgg_36 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, ",
-          "                      └─TableFullScan_26 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.d, funcs:sum(Column#19)->Column#8",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary]",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.d, funcs:count(test.t.c)->Column#19",
+          "            └─Projection 8000.00 mpp[tiflash]  test.t.c, test.t.d",
+          "              └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.d)->test.t.d",
+          "                └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary], [name: test.t.c, collate: binary]",
+          "                    └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, ",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct c), count(a) from t group by d;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c), count(a) from t group by d;",
         "Plan": [
-          "TableReader_57 8000.00 root  MppVersion: 3, data:ExchangeSender_56",
-          "└─ExchangeSender_56 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_8 8000.00 mpp[tiflash]  Column#8, cast(Column#11, bigint(21) BINARY)->Column#9",
-          "    └─Projection_52 8000.00 mpp[tiflash]  Column#8, Column#11",
-          "      └─HashAgg_53 8000.00 mpp[tiflash]  group by:test.t.d, funcs:sum(Column#28)->Column#8, funcs:sum(Column#29)->Column#11",
-          "        └─ExchangeReceiver_55 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_54 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary]",
-          "            └─HashAgg_51 8000.00 mpp[tiflash]  group by:Column#32, funcs:count(Column#30)->Column#28, funcs:sum(Column#31)->Column#29",
-          "              └─Projection_58 8000.00 mpp[tiflash]  test.t.c->Column#30, cast(Column#10, decimal(20,0) BINARY)->Column#31, test.t.d->Column#32",
-          "                └─Projection_38 8000.00 mpp[tiflash]  test.t.c, Column#10, test.t.d",
-          "                  └─HashAgg_39 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, funcs:firstrow(test.t.c)->test.t.c, funcs:sum(Column#22)->Column#10, funcs:firstrow(test.t.d)->test.t.d",
-          "                    └─ExchangeReceiver_41 8000.00 mpp[tiflash]  ",
-          "                      └─ExchangeSender_40 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary], [name: test.t.c, collate: binary]",
-          "                        └─HashAgg_37 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, funcs:count(test.t.a)->Column#22",
-          "                          └─TableFullScan_27 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#8, cast(Column#11, bigint(21) BINARY)->Column#9",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#8, Column#11",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.d, funcs:sum(Column#28)->Column#8, funcs:sum(Column#29)->Column#11",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#32, funcs:count(Column#30)->Column#28, funcs:sum(Column#31)->Column#29",
+          "              └─Projection 8000.00 mpp[tiflash]  test.t.c->Column#30, cast(Column#10, decimal(20,0) BINARY)->Column#31, test.t.d->Column#32",
+          "                └─Projection 8000.00 mpp[tiflash]  test.t.c, Column#10, test.t.d",
+          "                  └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, funcs:firstrow(test.t.c)->test.t.c, funcs:sum(Column#22)->Column#10, funcs:firstrow(test.t.d)->test.t.d",
+          "                    └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                      └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary], [name: test.t.c, collate: binary]",
+          "                        └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, funcs:count(test.t.a)->Column#22",
+          "                          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct c) from t group by b+d;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c) from t group by b+d;",
         "Plan": [
-          "TableReader_56 8000.00 root  MppVersion: 3, data:ExchangeSender_55",
-          "└─ExchangeSender_55 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_51 8000.00 mpp[tiflash]  Column#8",
-          "    └─HashAgg_52 8000.00 mpp[tiflash]  group by:Column#30, funcs:sum(Column#31)->Column#8",
-          "      └─ExchangeReceiver_54 8000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_53 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#30, collate: binary]",
-          "          └─HashAgg_50 8000.00 mpp[tiflash]  group by:Column#37, funcs:count(Column#36)->Column#31",
-          "            └─Projection_58 8000.00 mpp[tiflash]  test.t.c->Column#36, plus(test.t.b, cast(test.t.d, bigint(10) BINARY))->Column#37",
-          "              └─Projection_37 8000.00 mpp[tiflash]  test.t.c, test.t.b, test.t.d",
-          "                └─HashAgg_38 8000.00 mpp[tiflash]  group by:Column#22, test.t.c, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(Column#24)->test.t.b, funcs:firstrow(Column#25)->test.t.d",
-          "                  └─ExchangeReceiver_40 8000.00 mpp[tiflash]  ",
-          "                    └─ExchangeSender_39 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                      └─HashAgg_36 8000.00 mpp[tiflash]  group by:Column#34, Column#35, funcs:firstrow(Column#32)->Column#24, funcs:firstrow(Column#33)->Column#25",
-          "                        └─Projection_57 10000.00 mpp[tiflash]  test.t.b->Column#32, test.t.d->Column#33, plus(test.t.b, cast(test.t.d, bigint(10) BINARY))->Column#34, test.t.c->Column#35",
-          "                          └─TableFullScan_26 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#30, funcs:sum(Column#31)->Column#8",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#30, collate: binary]",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:Column#37, funcs:count(Column#36)->Column#31",
+          "            └─Projection 8000.00 mpp[tiflash]  test.t.c->Column#36, plus(test.t.b, cast(test.t.d, bigint(10) BINARY))->Column#37",
+          "              └─Projection 8000.00 mpp[tiflash]  test.t.c, test.t.b, test.t.d",
+          "                └─HashAgg 8000.00 mpp[tiflash]  group by:Column#22, test.t.c, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(Column#24)->test.t.b, funcs:firstrow(Column#25)->test.t.d",
+          "                  └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                    └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#34, Column#35, funcs:firstrow(Column#32)->Column#24, funcs:firstrow(Column#33)->Column#25",
+          "                        └─Projection 10000.00 mpp[tiflash]  test.t.b->Column#32, test.t.d->Column#33, plus(test.t.b, cast(test.t.d, bigint(10) BINARY))->Column#34, test.t.c->Column#35",
+          "                          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct c) from t group by b+d, a+b;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c) from t group by b+d, a+b;",
         "Plan": [
-          "TableReader_56 8000.00 root  MppVersion: 3, data:ExchangeSender_55",
-          "└─ExchangeSender_55 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_51 8000.00 mpp[tiflash]  Column#8",
-          "    └─HashAgg_52 8000.00 mpp[tiflash]  group by:Column#45, Column#46, funcs:sum(Column#47)->Column#8",
-          "      └─ExchangeReceiver_54 8000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_53 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#45, collate: binary], [name: Column#46, collate: binary]",
-          "          └─HashAgg_50 8000.00 mpp[tiflash]  group by:Column#56, Column#57, funcs:count(Column#55)->Column#47",
-          "            └─Projection_58 8000.00 mpp[tiflash]  test.t.c->Column#55, plus(test.t.b, cast(test.t.d, bigint(10) BINARY))->Column#56, plus(test.t.a, test.t.b)->Column#57",
-          "              └─Projection_37 8000.00 mpp[tiflash]  test.t.c, test.t.b, test.t.d, test.t.a, test.t.b",
-          "                └─HashAgg_38 8000.00 mpp[tiflash]  group by:Column#32, Column#33, test.t.c, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(Column#35)->test.t.b, funcs:firstrow(Column#36)->test.t.d, funcs:firstrow(Column#37)->test.t.a, funcs:firstrow(Column#38)->test.t.b",
-          "                  └─ExchangeReceiver_40 8000.00 mpp[tiflash]  ",
-          "                    └─ExchangeSender_39 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                      └─HashAgg_36 8000.00 mpp[tiflash]  group by:Column#52, Column#53, Column#54, funcs:firstrow(Column#48)->Column#35, funcs:firstrow(Column#49)->Column#36, funcs:firstrow(Column#50)->Column#37, funcs:firstrow(Column#51)->Column#38",
-          "                        └─Projection_57 10000.00 mpp[tiflash]  test.t.b->Column#48, test.t.d->Column#49, test.t.a->Column#50, test.t.b->Column#51, plus(test.t.b, cast(test.t.d, bigint(10) BINARY))->Column#52, plus(test.t.a, test.t.b)->Column#53, test.t.c->Column#54",
-          "                          └─TableFullScan_26 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#45, Column#46, funcs:sum(Column#47)->Column#8",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#45, collate: binary], [name: Column#46, collate: binary]",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:Column#56, Column#57, funcs:count(Column#55)->Column#47",
+          "            └─Projection 8000.00 mpp[tiflash]  test.t.c->Column#55, plus(test.t.b, cast(test.t.d, bigint(10) BINARY))->Column#56, plus(test.t.a, test.t.b)->Column#57",
+          "              └─Projection 8000.00 mpp[tiflash]  test.t.c, test.t.b, test.t.d, test.t.a, test.t.b",
+          "                └─HashAgg 8000.00 mpp[tiflash]  group by:Column#32, Column#33, test.t.c, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(Column#35)->test.t.b, funcs:firstrow(Column#36)->test.t.d, funcs:firstrow(Column#37)->test.t.a, funcs:firstrow(Column#38)->test.t.b",
+          "                  └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                    └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#52, Column#53, Column#54, funcs:firstrow(Column#48)->Column#35, funcs:firstrow(Column#49)->Column#36, funcs:firstrow(Column#50)->Column#37, funcs:firstrow(Column#51)->Column#38",
+          "                        └─Projection 10000.00 mpp[tiflash]  test.t.b->Column#48, test.t.d->Column#49, test.t.a->Column#50, test.t.b->Column#51, plus(test.t.b, cast(test.t.d, bigint(10) BINARY))->Column#52, plus(test.t.a, test.t.b)->Column#53, test.t.c->Column#54",
+          "                          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct c), count(*) from t group by date_format(d,'%Y');",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c), count(*) from t group by date_format(d,'%Y');",
         "Plan": [
-          "TableReader_57 8000.00 root  MppVersion: 3, data:ExchangeSender_56",
-          "└─ExchangeSender_56 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_8 8000.00 mpp[tiflash]  Column#8, cast(Column#11, bigint(21) BINARY)->Column#9",
-          "    └─Projection_52 8000.00 mpp[tiflash]  Column#8, Column#11",
-          "      └─HashAgg_53 8000.00 mpp[tiflash]  group by:Column#35, funcs:sum(Column#36)->Column#8, funcs:sum(Column#37)->Column#11",
-          "        └─ExchangeReceiver_55 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_54 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#35, collate: utf8mb4_bin]",
-          "            └─HashAgg_51 8000.00 mpp[tiflash]  group by:Column#43, funcs:count(Column#41)->Column#36, funcs:sum(Column#42)->Column#37",
-          "              └─Projection_59 8000.00 mpp[tiflash]  test.t.c->Column#41, cast(Column#10, decimal(20,0) BINARY)->Column#42, date_format(test.t.d, %Y)->Column#43",
-          "                └─Projection_38 8000.00 mpp[tiflash]  test.t.c, Column#10, test.t.d",
-          "                  └─HashAgg_39 8000.00 mpp[tiflash]  group by:Column#25, test.t.c, funcs:firstrow(test.t.c)->test.t.c, funcs:sum(Column#27)->Column#10, funcs:firstrow(Column#28)->test.t.d",
-          "                    └─ExchangeReceiver_41 8000.00 mpp[tiflash]  ",
-          "                      └─ExchangeSender_40 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                        └─HashAgg_37 8000.00 mpp[tiflash]  group by:Column#39, Column#40, funcs:count(1)->Column#27, funcs:firstrow(Column#38)->Column#28",
-          "                          └─Projection_58 10000.00 mpp[tiflash]  test.t.d->Column#38, date_format(test.t.d, %Y)->Column#39, test.t.c->Column#40",
-          "                            └─TableFullScan_27 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#8, cast(Column#11, bigint(21) BINARY)->Column#9",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#8, Column#11",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#35, funcs:sum(Column#36)->Column#8, funcs:sum(Column#37)->Column#11",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#35, collate: utf8mb4_bin]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#43, funcs:count(Column#41)->Column#36, funcs:sum(Column#42)->Column#37",
+          "              └─Projection 8000.00 mpp[tiflash]  test.t.c->Column#41, cast(Column#10, decimal(20,0) BINARY)->Column#42, date_format(test.t.d, %Y)->Column#43",
+          "                └─Projection 8000.00 mpp[tiflash]  test.t.c, Column#10, test.t.d",
+          "                  └─HashAgg 8000.00 mpp[tiflash]  group by:Column#25, test.t.c, funcs:firstrow(test.t.c)->test.t.c, funcs:sum(Column#27)->Column#10, funcs:firstrow(Column#28)->test.t.d",
+          "                    └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                      └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                        └─HashAgg 8000.00 mpp[tiflash]  group by:Column#39, Column#40, funcs:count(1)->Column#27, funcs:firstrow(Column#38)->Column#28",
+          "                          └─Projection 10000.00 mpp[tiflash]  test.t.d->Column#38, date_format(test.t.d, %Y)->Column#39, test.t.c->Column#40",
+          "                            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y');",
+        "SQL": "EXPLAIN FORMAT = 'brief' select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y');",
         "Plan": [
-          "TableReader_57 8000.00 root  MppVersion: 3, data:ExchangeSender_56",
-          "└─ExchangeSender_56 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_8 8000.00 mpp[tiflash]  date_format(test.t.d, %Y)->Column#11, Column#8, cast(Column#15, bigint(21) BINARY)->Column#9, Column#10",
-          "    └─Projection_52 8000.00 mpp[tiflash]  Column#8, Column#15, Column#10, test.t.d",
-          "      └─HashAgg_53 8000.00 mpp[tiflash]  group by:Column#47, funcs:sum(Column#48)->Column#8, funcs:sum(Column#49)->Column#15, funcs:sum(Column#50)->Column#10, funcs:firstrow(Column#51)->test.t.d",
-          "        └─ExchangeReceiver_55 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_54 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#47, collate: utf8mb4_bin]",
-          "            └─HashAgg_51 8000.00 mpp[tiflash]  group by:Column#61, funcs:sum(Column#57)->Column#48, funcs:sum(Column#58)->Column#49, funcs:count(Column#59)->Column#50, funcs:firstrow(Column#60)->Column#51",
-          "              └─Projection_59 8000.00 mpp[tiflash]  Column#13->Column#57, cast(Column#14, decimal(20,0) BINARY)->Column#58, test.t.c->Column#59, test.t.d->Column#60, date_format(test.t.d, %Y)->Column#61",
-          "                └─Projection_38 8000.00 mpp[tiflash]  Column#13, Column#14, test.t.c, test.t.d",
-          "                  └─HashAgg_39 8000.00 mpp[tiflash]  group by:Column#32, test.t.c, funcs:sum(Column#33)->Column#13, funcs:sum(Column#34)->Column#14, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(Column#36)->test.t.d",
-          "                    └─ExchangeReceiver_41 8000.00 mpp[tiflash]  ",
-          "                      └─ExchangeSender_40 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                        └─HashAgg_37 8000.00 mpp[tiflash]  group by:Column#55, Column#56, funcs:sum(Column#52)->Column#33, funcs:count(Column#53)->Column#34, funcs:firstrow(Column#54)->Column#36",
-          "                          └─Projection_58 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#52, test.t.b->Column#53, test.t.d->Column#54, date_format(test.t.d, %Y)->Column#55, test.t.c->Column#56",
-          "                            └─TableFullScan_27 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  date_format(test.t.d, %Y)->Column#11, Column#8, cast(Column#15, bigint(21) BINARY)->Column#9, Column#10",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#8, Column#15, Column#10, test.t.d",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#47, funcs:sum(Column#48)->Column#8, funcs:sum(Column#49)->Column#15, funcs:sum(Column#50)->Column#10, funcs:firstrow(Column#51)->test.t.d",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#47, collate: utf8mb4_bin]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#61, funcs:sum(Column#57)->Column#48, funcs:sum(Column#58)->Column#49, funcs:count(Column#59)->Column#50, funcs:firstrow(Column#60)->Column#51",
+          "              └─Projection 8000.00 mpp[tiflash]  Column#13->Column#57, cast(Column#14, decimal(20,0) BINARY)->Column#58, test.t.c->Column#59, test.t.d->Column#60, date_format(test.t.d, %Y)->Column#61",
+          "                └─Projection 8000.00 mpp[tiflash]  Column#13, Column#14, test.t.c, test.t.d",
+          "                  └─HashAgg 8000.00 mpp[tiflash]  group by:Column#32, test.t.c, funcs:sum(Column#33)->Column#13, funcs:sum(Column#34)->Column#14, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(Column#36)->test.t.d",
+          "                    └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                      └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                        └─HashAgg 8000.00 mpp[tiflash]  group by:Column#55, Column#56, funcs:sum(Column#52)->Column#33, funcs:count(Column#53)->Column#34, funcs:firstrow(Column#54)->Column#36",
+          "                          └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#52, test.t.b->Column#53, test.t.d->Column#54, date_format(test.t.d, %Y)->Column#55, test.t.c->Column#56",
+          "                            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select d, count(distinct c), sum(a), max(b), count(*) from t group by d;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select d, count(distinct c), sum(a), max(b), count(*) from t group by d;",
         "Plan": [
-          "TableReader_57 8000.00 root  MppVersion: 3, data:ExchangeSender_56",
-          "└─ExchangeSender_56 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_8 8000.00 mpp[tiflash]  test.t.d, Column#8, Column#9, Column#10, cast(Column#15, bigint(21) BINARY)->Column#11",
-          "    └─Projection_52 8000.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#15, test.t.d",
-          "      └─HashAgg_53 8000.00 mpp[tiflash]  group by:test.t.d, funcs:sum(Column#46)->Column#8, funcs:sum(Column#47)->Column#9, funcs:max(Column#48)->Column#10, funcs:sum(Column#49)->Column#15, funcs:firstrow(test.t.d)->test.t.d",
-          "        └─ExchangeReceiver_55 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_54 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary]",
-          "            └─HashAgg_51 8000.00 mpp[tiflash]  group by:Column#59, funcs:count(Column#55)->Column#46, funcs:sum(Column#56)->Column#47, funcs:max(Column#57)->Column#48, funcs:sum(Column#58)->Column#49",
-          "              └─Projection_59 8000.00 mpp[tiflash]  test.t.c->Column#55, Column#12->Column#56, Column#13->Column#57, cast(Column#14, decimal(20,0) BINARY)->Column#58, test.t.d->Column#59",
-          "                └─Projection_38 8000.00 mpp[tiflash]  test.t.c, Column#12, Column#13, Column#14, test.t.d",
-          "                  └─HashAgg_39 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, funcs:firstrow(test.t.c)->test.t.c, funcs:sum(Column#32)->Column#12, funcs:max(Column#33)->Column#13, funcs:sum(Column#34)->Column#14, funcs:firstrow(test.t.d)->test.t.d",
-          "                    └─ExchangeReceiver_41 8000.00 mpp[tiflash]  ",
-          "                      └─ExchangeSender_40 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary], [name: test.t.c, collate: binary]",
-          "                        └─HashAgg_37 8000.00 mpp[tiflash]  group by:Column#53, Column#54, funcs:sum(Column#51)->Column#32, funcs:max(Column#52)->Column#33, funcs:count(1)->Column#34",
-          "                          └─Projection_58 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#51, test.t.b->Column#52, test.t.d->Column#53, test.t.c->Column#54",
-          "                            └─TableFullScan_27 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  test.t.d, Column#8, Column#9, Column#10, cast(Column#15, bigint(21) BINARY)->Column#11",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#15, test.t.d",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.d, funcs:sum(Column#46)->Column#8, funcs:sum(Column#47)->Column#9, funcs:max(Column#48)->Column#10, funcs:sum(Column#49)->Column#15, funcs:firstrow(test.t.d)->test.t.d",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#59, funcs:count(Column#55)->Column#46, funcs:sum(Column#56)->Column#47, funcs:max(Column#57)->Column#48, funcs:sum(Column#58)->Column#49",
+          "              └─Projection 8000.00 mpp[tiflash]  test.t.c->Column#55, Column#12->Column#56, Column#13->Column#57, cast(Column#14, decimal(20,0) BINARY)->Column#58, test.t.d->Column#59",
+          "                └─Projection 8000.00 mpp[tiflash]  test.t.c, Column#12, Column#13, Column#14, test.t.d",
+          "                  └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.c, test.t.d, funcs:firstrow(test.t.c)->test.t.c, funcs:sum(Column#32)->Column#12, funcs:max(Column#33)->Column#13, funcs:sum(Column#34)->Column#14, funcs:firstrow(test.t.d)->test.t.d",
+          "                    └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                      └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.d, collate: binary], [name: test.t.c, collate: binary]",
+          "                        └─HashAgg 8000.00 mpp[tiflash]  group by:Column#53, Column#54, funcs:sum(Column#51)->Column#32, funcs:max(Column#52)->Column#33, funcs:count(1)->Column#34",
+          "                          └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#51, test.t.b->Column#52, test.t.d->Column#53, test.t.c->Column#54",
+          "                            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select date_format(d,'%Y') as df, count(distinct c) from t group by date_format(d,'%Y');",
+        "SQL": "EXPLAIN FORMAT = 'brief' select date_format(d,'%Y') as df, count(distinct c) from t group by date_format(d,'%Y');",
         "Plan": [
-          "TableReader_56 8000.00 root  MppVersion: 3, data:ExchangeSender_55",
-          "└─ExchangeSender_55 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_7 8000.00 mpp[tiflash]  date_format(test.t.d, %Y)->Column#9, Column#8",
-          "    └─Projection_51 8000.00 mpp[tiflash]  Column#8, test.t.d",
-          "      └─HashAgg_52 8000.00 mpp[tiflash]  group by:Column#30, funcs:sum(Column#31)->Column#8, funcs:firstrow(Column#32)->test.t.d",
-          "        └─ExchangeReceiver_54 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_53 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#30, collate: utf8mb4_bin]",
-          "            └─HashAgg_50 8000.00 mpp[tiflash]  group by:Column#38, funcs:count(Column#36)->Column#31, funcs:firstrow(Column#37)->Column#32",
-          "              └─Projection_58 8000.00 mpp[tiflash]  test.t.c->Column#36, test.t.d->Column#37, date_format(test.t.d, %Y)->Column#38",
-          "                └─Projection_37 8000.00 mpp[tiflash]  test.t.c, test.t.d",
-          "                  └─HashAgg_38 8000.00 mpp[tiflash]  group by:Column#21, test.t.c, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(Column#23)->test.t.d",
-          "                    └─ExchangeReceiver_40 8000.00 mpp[tiflash]  ",
-          "                      └─ExchangeSender_39 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                        └─HashAgg_36 8000.00 mpp[tiflash]  group by:Column#34, Column#35, funcs:firstrow(Column#33)->Column#23",
-          "                          └─Projection_57 10000.00 mpp[tiflash]  test.t.d->Column#33, date_format(test.t.d, %Y)->Column#34, test.t.c->Column#35",
-          "                            └─TableFullScan_26 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  date_format(test.t.d, %Y)->Column#9, Column#8",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#8, test.t.d",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#30, funcs:sum(Column#31)->Column#8, funcs:firstrow(Column#32)->test.t.d",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#30, collate: utf8mb4_bin]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#38, funcs:count(Column#36)->Column#31, funcs:firstrow(Column#37)->Column#32",
+          "              └─Projection 8000.00 mpp[tiflash]  test.t.c->Column#36, test.t.d->Column#37, date_format(test.t.d, %Y)->Column#38",
+          "                └─Projection 8000.00 mpp[tiflash]  test.t.c, test.t.d",
+          "                  └─HashAgg 8000.00 mpp[tiflash]  group by:Column#21, test.t.c, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(Column#23)->test.t.d",
+          "                    └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                      └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                        └─HashAgg 8000.00 mpp[tiflash]  group by:Column#34, Column#35, funcs:firstrow(Column#33)->Column#23",
+          "                          └─Projection 10000.00 mpp[tiflash]  test.t.d->Column#33, date_format(test.t.d, %Y)->Column#34, test.t.c->Column#35",
+          "                            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select date_format(d,'%Y') as df, a, count(b), count(distinct c) from t group by date_format(d,'%Y'), a;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select date_format(d,'%Y') as df, a, count(b), count(distinct c) from t group by date_format(d,'%Y'), a;",
         "Plan": [
-          "TableReader_57 8000.00 root  MppVersion: 3, data:ExchangeSender_56",
-          "└─ExchangeSender_56 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_8 8000.00 mpp[tiflash]  date_format(test.t.d, %Y)->Column#10, test.t.a, cast(Column#13, bigint(21) BINARY)->Column#8, Column#9",
-          "    └─Projection_52 8000.00 mpp[tiflash]  Column#13, Column#9, test.t.a, test.t.d",
-          "      └─HashAgg_53 8000.00 mpp[tiflash]  group by:Column#45, test.t.a, funcs:sum(Column#46)->Column#13, funcs:sum(Column#47)->Column#9, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(Column#49)->test.t.d",
-          "        └─ExchangeReceiver_55 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_54 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "            └─HashAgg_51 8000.00 mpp[tiflash]  group by:Column#58, Column#59, funcs:sum(Column#55)->Column#46, funcs:count(Column#56)->Column#47, funcs:firstrow(Column#57)->Column#49",
-          "              └─Projection_59 8000.00 mpp[tiflash]  cast(Column#12, decimal(20,0) BINARY)->Column#55, test.t.c->Column#56, test.t.d->Column#57, date_format(test.t.d, %Y)->Column#58, test.t.a->Column#59",
-          "                └─Projection_38 8000.00 mpp[tiflash]  Column#12, test.t.c, test.t.a, test.t.d",
-          "                  └─HashAgg_39 8000.00 mpp[tiflash]  group by:Column#30, test.t.a, test.t.c, funcs:sum(Column#31)->Column#12, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(Column#34)->test.t.d",
-          "                    └─ExchangeReceiver_41 8000.00 mpp[tiflash]  ",
-          "                      └─ExchangeSender_40 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "                        └─HashAgg_37 8000.00 mpp[tiflash]  group by:Column#52, Column#53, Column#54, funcs:count(Column#50)->Column#31, funcs:firstrow(Column#51)->Column#34",
-          "                          └─Projection_58 10000.00 mpp[tiflash]  test.t.b->Column#50, test.t.d->Column#51, date_format(test.t.d, %Y)->Column#52, test.t.a->Column#53, test.t.c->Column#54",
-          "                            └─TableFullScan_27 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  date_format(test.t.d, %Y)->Column#10, test.t.a, cast(Column#13, bigint(21) BINARY)->Column#8, Column#9",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#13, Column#9, test.t.a, test.t.d",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#45, test.t.a, funcs:sum(Column#46)->Column#13, funcs:sum(Column#47)->Column#9, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(Column#49)->test.t.d",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#58, Column#59, funcs:sum(Column#55)->Column#46, funcs:count(Column#56)->Column#47, funcs:firstrow(Column#57)->Column#49",
+          "              └─Projection 8000.00 mpp[tiflash]  cast(Column#12, decimal(20,0) BINARY)->Column#55, test.t.c->Column#56, test.t.d->Column#57, date_format(test.t.d, %Y)->Column#58, test.t.a->Column#59",
+          "                └─Projection 8000.00 mpp[tiflash]  Column#12, test.t.c, test.t.a, test.t.d",
+          "                  └─HashAgg 8000.00 mpp[tiflash]  group by:Column#30, test.t.a, test.t.c, funcs:sum(Column#31)->Column#12, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(Column#34)->test.t.d",
+          "                    └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                      └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
+          "                        └─HashAgg 8000.00 mpp[tiflash]  group by:Column#52, Column#53, Column#54, funcs:count(Column#50)->Column#31, funcs:firstrow(Column#51)->Column#34",
+          "                          └─Projection 10000.00 mpp[tiflash]  test.t.b->Column#50, test.t.d->Column#51, date_format(test.t.d, %Y)->Column#52, test.t.a->Column#53, test.t.c->Column#54",
+          "                            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select date_format(d,'%Y') as df, a, count(b), avg(distinct c) from t group by date_format(d,'%Y'), a;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select date_format(d,'%Y') as df, a, count(b), avg(distinct c) from t group by date_format(d,'%Y'), a;",
         "Plan": [
-          "TableReader_57 8000.00 root  MppVersion: 3, data:ExchangeSender_56",
-          "└─ExchangeSender_56 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_8 8000.00 mpp[tiflash]  date_format(test.t.d, %Y)->Column#10, test.t.a, cast(Column#13, bigint(21) BINARY)->Column#8, Column#9",
-          "    └─Projection_52 8000.00 mpp[tiflash]  Column#13, div(Column#9, cast(case(eq(Column#48, 0), 1, Column#48), decimal(20,0) BINARY))->Column#9, test.t.a, test.t.d",
-          "      └─HashAgg_53 8000.00 mpp[tiflash]  group by:Column#49, test.t.a, funcs:sum(Column#50)->Column#13, funcs:sum(Column#51)->Column#48, funcs:sum(Column#52)->Column#9, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(Column#54)->test.t.d",
-          "        └─ExchangeReceiver_55 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_54 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "            └─HashAgg_51 8000.00 mpp[tiflash]  group by:Column#64, Column#65, funcs:sum(Column#60)->Column#50, funcs:count(Column#61)->Column#51, funcs:sum(Column#62)->Column#52, funcs:firstrow(Column#63)->Column#54",
-          "              └─Projection_59 8000.00 mpp[tiflash]  cast(Column#12, decimal(20,0) BINARY)->Column#60, test.t.c->Column#61, cast(test.t.c, decimal(20,0) BINARY)->Column#62, test.t.d->Column#63, date_format(test.t.d, %Y)->Column#64, test.t.a->Column#65",
-          "                └─Projection_38 8000.00 mpp[tiflash]  Column#12, test.t.c, test.t.a, test.t.d",
-          "                  └─HashAgg_39 8000.00 mpp[tiflash]  group by:Column#30, test.t.a, test.t.c, funcs:sum(Column#31)->Column#12, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(Column#34)->test.t.d",
-          "                    └─ExchangeReceiver_41 8000.00 mpp[tiflash]  ",
-          "                      └─ExchangeSender_40 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "                        └─HashAgg_37 8000.00 mpp[tiflash]  group by:Column#57, Column#58, Column#59, funcs:count(Column#55)->Column#31, funcs:firstrow(Column#56)->Column#34",
-          "                          └─Projection_58 10000.00 mpp[tiflash]  test.t.b->Column#55, test.t.d->Column#56, date_format(test.t.d, %Y)->Column#57, test.t.a->Column#58, test.t.c->Column#59",
-          "                            └─TableFullScan_27 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  date_format(test.t.d, %Y)->Column#10, test.t.a, cast(Column#13, bigint(21) BINARY)->Column#8, Column#9",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#13, div(Column#9, cast(case(eq(Column#48, 0), 1, Column#48), decimal(20,0) BINARY))->Column#9, test.t.a, test.t.d",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#49, test.t.a, funcs:sum(Column#50)->Column#13, funcs:sum(Column#51)->Column#48, funcs:sum(Column#52)->Column#9, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(Column#54)->test.t.d",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#64, Column#65, funcs:sum(Column#60)->Column#50, funcs:count(Column#61)->Column#51, funcs:sum(Column#62)->Column#52, funcs:firstrow(Column#63)->Column#54",
+          "              └─Projection 8000.00 mpp[tiflash]  cast(Column#12, decimal(20,0) BINARY)->Column#60, test.t.c->Column#61, cast(test.t.c, decimal(20,0) BINARY)->Column#62, test.t.d->Column#63, date_format(test.t.d, %Y)->Column#64, test.t.a->Column#65",
+          "                └─Projection 8000.00 mpp[tiflash]  Column#12, test.t.c, test.t.a, test.t.d",
+          "                  └─HashAgg 8000.00 mpp[tiflash]  group by:Column#30, test.t.a, test.t.c, funcs:sum(Column#31)->Column#12, funcs:firstrow(test.t.c)->test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(Column#34)->test.t.d",
+          "                    └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                      └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
+          "                        └─HashAgg 8000.00 mpp[tiflash]  group by:Column#57, Column#58, Column#59, funcs:count(Column#55)->Column#31, funcs:firstrow(Column#56)->Column#34",
+          "                          └─Projection 10000.00 mpp[tiflash]  test.t.b->Column#55, test.t.d->Column#56, date_format(test.t.d, %Y)->Column#57, test.t.a->Column#58, test.t.c->Column#59",
+          "                            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select d,e, min(b), count(distinct c), bit_or(a) from t group by e,d; -- bit agg func can't be pushed to TiFlash",
+        "SQL": "EXPLAIN FORMAT = 'brief' select d,e, min(b), count(distinct c), bit_or(a) from t group by e,d; -- bit agg func can't be pushed to TiFlash",
         "Plan": [
-          "Projection_4 8000.00 root  test.t.d, test.t.e, Column#8, Column#9, Column#10",
-          "└─HashAgg_8 8000.00 root  group by:test.t.d, test.t.e, funcs:min(test.t.b)->Column#8, funcs:count(distinct test.t.c)->Column#9, funcs:bit_or(test.t.a)->Column#10, funcs:firstrow(test.t.d)->test.t.d, funcs:firstrow(test.t.e)->test.t.e",
-          "  └─TableReader_15 10000.00 root  data:TableFullScan_14",
-          "    └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "Projection 8000.00 root  test.t.d, test.t.e, Column#8, Column#9, Column#10",
+          "└─HashAgg 8000.00 root  group by:test.t.d, test.t.e, funcs:min(test.t.b)->Column#8, funcs:count(distinct test.t.c)->Column#9, funcs:bit_or(test.t.a)->Column#10, funcs:firstrow(test.t.d)->test.t.d, funcs:firstrow(test.t.e)->test.t.e",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Aggregation can not be pushed to tiflash because AggFunc `bit_or` is not supported now",
@@ -1006,13 +1006,13 @@
         ]
       },
       {
-        "SQL": "EXPLAIN select a, count(b), avg(distinct c), count(distinct c) from t group by a; -- multi distinct funcs, bail out",
+        "SQL": "EXPLAIN FORMAT = 'brief' select a, count(b), avg(distinct c), count(distinct c) from t group by a; -- multi distinct funcs, bail out",
         "Plan": [
-          "Projection_4 8000.00 root  test.t.a, Column#8, Column#9, Column#10",
-          "└─HashAgg_8 8000.00 root  group by:Column#16, funcs:count(Column#13)->Column#8, funcs:avg(distinct Column#14)->Column#9, funcs:count(distinct Column#15)->Column#10, funcs:firstrow(Column#16)->test.t.a",
-          "  └─Projection_17 10000.00 root  test.t.b->Column#13, cast(test.t.c, decimal(20,0) BINARY)->Column#14, test.t.c->Column#15, test.t.a->Column#16",
-          "    └─TableReader_16 10000.00 root  data:TableFullScan_15",
-          "      └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "Projection 8000.00 root  test.t.a, Column#8, Column#9, Column#10",
+          "└─HashAgg 8000.00 root  group by:Column#16, funcs:count(Column#13)->Column#8, funcs:avg(distinct Column#14)->Column#9, funcs:count(distinct Column#15)->Column#10, funcs:firstrow(Column#16)->test.t.a",
+          "  └─Projection 10000.00 root  test.t.b->Column#13, cast(test.t.c, decimal(20,0) BINARY)->Column#14, test.t.c->Column#15, test.t.a->Column#16",
+          "    └─TableReader 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct",
@@ -1020,19 +1020,19 @@
         ]
       },
       {
-        "SQL": "EXPLAIN select count(b), count(distinct c) from t; -- single distinct func but no group key, bail out",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(b), count(distinct c) from t; -- single distinct func but no group key, bail out",
         "Plan": [
-          "TableReader_44 1.00 root  MppVersion: 3, data:ExchangeSender_43",
-          "└─ExchangeSender_43 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_37 1.00 mpp[tiflash]  Column#8, Column#9",
-          "    └─HashAgg_38 1.00 mpp[tiflash]  funcs:sum(Column#16)->Column#8, funcs:sum(Column#17)->Column#9",
-          "      └─ExchangeReceiver_42 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_38 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#16, funcs:count(distinct test.t.c)->Column#17",
-          "            └─ExchangeReceiver_40 1.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_39 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                └─HashAgg_36 1.00 mpp[tiflash]  group by:test.t.c, funcs:count(test.t.b)->Column#15",
-          "                  └─TableFullScan_20 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8, Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#16)->Column#8, funcs:sum(Column#17)->Column#9",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#16, funcs:count(distinct test.t.c)->Column#17",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.c, funcs:count(test.t.b)->Column#15",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -1047,193 +1047,193 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct b) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct b) from t;",
         "Plan": [
-          "TableReader_46 1.00 root  MppVersion: 3, data:ExchangeSender_45",
-          "└─ExchangeSender_45 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_39 1.00 mpp[tiflash]  Column#8",
-          "    └─HashAgg_40 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#8",
-          "      └─ExchangeReceiver_44 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_43 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_40 1.00 mpp[tiflash]  funcs:count(distinct test.t.b)->Column#10",
-          "            └─ExchangeReceiver_42 1.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "                └─HashAgg_38 1.00 mpp[tiflash]  group by:test.t.b, ",
-          "                  └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#8",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.b)->Column#10",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.b, ",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct c) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c) from t;",
         "Plan": [
-          "TableReader_46 1.00 root  MppVersion: 3, data:ExchangeSender_45",
-          "└─ExchangeSender_45 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_39 1.00 mpp[tiflash]  Column#8",
-          "    └─HashAgg_40 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#8",
-          "      └─ExchangeReceiver_44 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_43 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_40 1.00 mpp[tiflash]  funcs:count(distinct test.t.c)->Column#10",
-          "            └─ExchangeReceiver_42 1.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                └─HashAgg_38 1.00 mpp[tiflash]  group by:test.t.c, ",
-          "                  └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#8",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.c)->Column#10",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.c, ",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct e) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct e) from t;",
         "Plan": [
-          "TableReader_46 1.00 root  MppVersion: 3, data:ExchangeSender_45",
-          "└─ExchangeSender_45 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_39 1.00 mpp[tiflash]  Column#8",
-          "    └─HashAgg_40 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#8",
-          "      └─ExchangeReceiver_44 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_43 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_40 1.00 mpp[tiflash]  funcs:count(distinct test.t.e)->Column#10",
-          "            └─ExchangeReceiver_42 1.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.e, collate: utf8mb4_general_ci]",
-          "                └─HashAgg_38 1.00 mpp[tiflash]  group by:test.t.e, ",
-          "                  └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#8",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.e)->Column#10",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.e, collate: utf8mb4_general_ci]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.e, ",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct a,b,c,e) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a,b,c,e) from t;",
         "Plan": [
-          "TableReader_46 1.00 root  MppVersion: 3, data:ExchangeSender_45",
-          "└─ExchangeSender_45 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_39 1.00 mpp[tiflash]  Column#8",
-          "    └─HashAgg_40 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#8",
-          "      └─ExchangeReceiver_44 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_43 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_40 1.00 mpp[tiflash]  funcs:count(distinct test.t.a, test.t.b, test.t.c, test.t.e)->Column#10",
-          "            └─ExchangeReceiver_42 1.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: test.t.c, collate: binary], [name: test.t.e, collate: utf8mb4_general_ci]",
-          "                └─HashAgg_38 1.00 mpp[tiflash]  group by:test.t.a, test.t.b, test.t.c, test.t.e, ",
-          "                  └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#8",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a, test.t.b, test.t.c, test.t.e)->Column#10",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: test.t.c, collate: binary], [name: test.t.e, collate: utf8mb4_general_ci]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.a, test.t.b, test.t.c, test.t.e, ",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct c), count(a), count(*) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c), count(a), count(*) from t;",
         "Plan": [
-          "TableReader_46 1.00 root  MppVersion: 3, data:ExchangeSender_45",
-          "└─ExchangeSender_45 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_39 1.00 mpp[tiflash]  Column#8, Column#9, Column#10",
-          "    └─HashAgg_40 1.00 mpp[tiflash]  funcs:sum(Column#22)->Column#8, funcs:sum(Column#23)->Column#9, funcs:sum(Column#24)->Column#10",
-          "      └─ExchangeReceiver_44 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_43 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_40 1.00 mpp[tiflash]  funcs:count(distinct test.t.c)->Column#22, funcs:sum(Column#20)->Column#23, funcs:sum(Column#21)->Column#24",
-          "            └─ExchangeReceiver_42 1.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                └─HashAgg_38 1.00 mpp[tiflash]  group by:test.t.c, funcs:count(test.t.a)->Column#20, funcs:count(1)->Column#21",
-          "                  └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8, Column#9, Column#10",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#22)->Column#8, funcs:sum(Column#23)->Column#9, funcs:sum(Column#24)->Column#10",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.c)->Column#22, funcs:sum(Column#20)->Column#23, funcs:sum(Column#21)->Column#24",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.c, funcs:count(test.t.a)->Column#20, funcs:count(1)->Column#21",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select sum(b), count(a), count(*), count(distinct c) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b), count(a), count(*), count(distinct c) from t;",
         "Plan": [
-          "TableReader_46 1.00 root  MppVersion: 3, data:ExchangeSender_45",
-          "└─ExchangeSender_45 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_39 1.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#11",
-          "    └─HashAgg_40 1.00 mpp[tiflash]  funcs:sum(Column#28)->Column#8, funcs:sum(Column#29)->Column#9, funcs:sum(Column#30)->Column#10, funcs:sum(Column#31)->Column#11",
-          "      └─ExchangeReceiver_44 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_43 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_40 1.00 mpp[tiflash]  funcs:sum(Column#25)->Column#28, funcs:sum(Column#26)->Column#29, funcs:sum(Column#27)->Column#30, funcs:count(distinct test.t.c)->Column#31",
-          "            └─ExchangeReceiver_42 1.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                └─HashAgg_38 1.00 mpp[tiflash]  group by:Column#34, funcs:sum(Column#32)->Column#25, funcs:count(Column#33)->Column#26, funcs:count(1)->Column#27",
-          "                  └─Projection_47 10000.00 mpp[tiflash]  cast(test.t.b, decimal(20,0) BINARY)->Column#32, test.t.a->Column#33, test.t.c->Column#34",
-          "                    └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#11",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#28)->Column#8, funcs:sum(Column#29)->Column#9, funcs:sum(Column#30)->Column#10, funcs:sum(Column#31)->Column#11",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#25)->Column#28, funcs:sum(Column#26)->Column#29, funcs:sum(Column#27)->Column#30, funcs:count(distinct test.t.c)->Column#31",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:Column#34, funcs:sum(Column#32)->Column#25, funcs:count(Column#33)->Column#26, funcs:count(1)->Column#27",
+          "                  └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(20,0) BINARY)->Column#32, test.t.a->Column#33, test.t.c->Column#34",
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select sum(b+a), count(*), count(distinct c), count(a) from t having count(distinct c) > 2;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b+a), count(*), count(distinct c), count(a) from t having count(distinct c) > 2;",
         "Plan": [
-          "TableReader_53 0.80 root  MppVersion: 3, data:ExchangeSender_52",
-          "└─ExchangeSender_52 0.80 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Selection_51 0.80 mpp[tiflash]  gt(Column#10, 2)",
-          "    └─Projection_43 1.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#11",
-          "      └─HashAgg_44 1.00 mpp[tiflash]  funcs:sum(Column#32)->Column#8, funcs:sum(Column#33)->Column#9, funcs:sum(Column#34)->Column#10, funcs:sum(Column#35)->Column#11",
-          "        └─ExchangeReceiver_48 1.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_47 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "            └─HashAgg_44 1.00 mpp[tiflash]  funcs:sum(Column#29)->Column#32, funcs:sum(Column#30)->Column#33, funcs:count(distinct test.t.c)->Column#34, funcs:sum(Column#31)->Column#35",
-          "              └─ExchangeReceiver_46 1.00 mpp[tiflash]  ",
-          "                └─ExchangeSender_45 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                  └─HashAgg_42 1.00 mpp[tiflash]  group by:Column#38, funcs:sum(Column#36)->Column#29, funcs:count(1)->Column#30, funcs:count(Column#37)->Column#31",
-          "                    └─Projection_54 10000.00 mpp[tiflash]  cast(plus(test.t.b, test.t.a), decimal(20,0) BINARY)->Column#36, test.t.a->Column#37, test.t.c->Column#38",
-          "                      └─TableFullScan_25 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 0.80 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 0.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 0.80 mpp[tiflash]  gt(Column#10, 2)",
+          "    └─Projection 1.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#11",
+          "      └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#32)->Column#8, funcs:sum(Column#33)->Column#9, funcs:sum(Column#34)->Column#10, funcs:sum(Column#35)->Column#11",
+          "        └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "            └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#29)->Column#32, funcs:sum(Column#30)->Column#33, funcs:count(distinct test.t.c)->Column#34, funcs:sum(Column#31)->Column#35",
+          "              └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "                └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                  └─HashAgg 1.00 mpp[tiflash]  group by:Column#38, funcs:sum(Column#36)->Column#29, funcs:count(1)->Column#30, funcs:count(Column#37)->Column#31",
+          "                    └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.b, test.t.a), decimal(20,0) BINARY)->Column#36, test.t.a->Column#37, test.t.c->Column#38",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select sum(b+a), count(*), count(a) from t having count(distinct c) > 2;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b+a), count(*), count(a) from t having count(distinct c) > 2;",
         "Plan": [
-          "TableReader_54 0.80 root  MppVersion: 3, data:ExchangeSender_53",
-          "└─ExchangeSender_53 0.80 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_7 0.80 mpp[tiflash]  Column#8->Column#12, Column#9->Column#13, Column#10->Column#14",
-          "    └─Selection_52 0.80 mpp[tiflash]  gt(Column#11, 2)",
-          "      └─Projection_44 1.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#11",
-          "        └─HashAgg_45 1.00 mpp[tiflash]  funcs:sum(Column#31)->Column#8, funcs:sum(Column#32)->Column#9, funcs:sum(Column#33)->Column#10, funcs:sum(Column#34)->Column#11",
-          "          └─ExchangeReceiver_49 1.00 mpp[tiflash]  ",
-          "            └─ExchangeSender_48 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "              └─HashAgg_45 1.00 mpp[tiflash]  funcs:sum(Column#28)->Column#31, funcs:sum(Column#29)->Column#32, funcs:sum(Column#30)->Column#33, funcs:count(distinct test.t.c)->Column#34",
-          "                └─ExchangeReceiver_47 1.00 mpp[tiflash]  ",
-          "                  └─ExchangeSender_46 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                    └─HashAgg_43 1.00 mpp[tiflash]  group by:Column#37, funcs:sum(Column#35)->Column#28, funcs:count(1)->Column#29, funcs:count(Column#36)->Column#30",
-          "                      └─Projection_55 10000.00 mpp[tiflash]  cast(plus(test.t.b, test.t.a), decimal(20,0) BINARY)->Column#35, test.t.a->Column#36, test.t.c->Column#37",
-          "                        └─TableFullScan_26 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 0.80 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 0.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 0.80 mpp[tiflash]  Column#8->Column#12, Column#9->Column#13, Column#10->Column#14",
+          "    └─Selection 0.80 mpp[tiflash]  gt(Column#11, 2)",
+          "      └─Projection 1.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#11",
+          "        └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#31)->Column#8, funcs:sum(Column#32)->Column#9, funcs:sum(Column#33)->Column#10, funcs:sum(Column#34)->Column#11",
+          "          └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "              └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#28)->Column#31, funcs:sum(Column#29)->Column#32, funcs:sum(Column#30)->Column#33, funcs:count(distinct test.t.c)->Column#34",
+          "                └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                    └─HashAgg 1.00 mpp[tiflash]  group by:Column#37, funcs:sum(Column#35)->Column#28, funcs:count(1)->Column#29, funcs:count(Column#36)->Column#30",
+          "                      └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.b, test.t.a), decimal(20,0) BINARY)->Column#35, test.t.a->Column#36, test.t.c->Column#37",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select sum(b+a), max(b), count(distinct c), count(*) from t having count(a) > 2;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b+a), max(b), count(distinct c), count(*) from t having count(a) > 2;",
         "Plan": [
-          "TableReader_54 0.80 root  MppVersion: 3, data:ExchangeSender_53",
-          "└─ExchangeSender_53 0.80 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_7 0.80 mpp[tiflash]  Column#8->Column#13, Column#9->Column#14, Column#10->Column#15, Column#11->Column#16",
-          "    └─Selection_52 0.80 mpp[tiflash]  gt(Column#12, 2)",
-          "      └─Projection_44 1.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#11, Column#12",
-          "        └─HashAgg_45 1.00 mpp[tiflash]  funcs:sum(Column#38)->Column#8, funcs:max(Column#39)->Column#9, funcs:sum(Column#40)->Column#10, funcs:sum(Column#41)->Column#11, funcs:sum(Column#42)->Column#12",
-          "          └─ExchangeReceiver_49 1.00 mpp[tiflash]  ",
-          "            └─ExchangeSender_48 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "              └─HashAgg_45 1.00 mpp[tiflash]  funcs:sum(Column#34)->Column#38, funcs:max(Column#35)->Column#39, funcs:count(distinct test.t.c)->Column#40, funcs:sum(Column#36)->Column#41, funcs:sum(Column#37)->Column#42",
-          "                └─ExchangeReceiver_47 1.00 mpp[tiflash]  ",
-          "                  └─ExchangeSender_46 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
-          "                    └─HashAgg_43 1.00 mpp[tiflash]  group by:Column#46, funcs:sum(Column#43)->Column#34, funcs:max(Column#44)->Column#35, funcs:count(1)->Column#36, funcs:count(Column#45)->Column#37",
-          "                      └─Projection_55 10000.00 mpp[tiflash]  cast(plus(test.t.b, test.t.a), decimal(20,0) BINARY)->Column#43, test.t.b->Column#44, test.t.a->Column#45, test.t.c->Column#46",
-          "                        └─TableFullScan_26 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 0.80 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 0.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 0.80 mpp[tiflash]  Column#8->Column#13, Column#9->Column#14, Column#10->Column#15, Column#11->Column#16",
+          "    └─Selection 0.80 mpp[tiflash]  gt(Column#12, 2)",
+          "      └─Projection 1.00 mpp[tiflash]  Column#8, Column#9, Column#10, Column#11, Column#12",
+          "        └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#38)->Column#8, funcs:max(Column#39)->Column#9, funcs:sum(Column#40)->Column#10, funcs:sum(Column#41)->Column#11, funcs:sum(Column#42)->Column#12",
+          "          └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "              └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#34)->Column#38, funcs:max(Column#35)->Column#39, funcs:count(distinct test.t.c)->Column#40, funcs:sum(Column#36)->Column#41, funcs:sum(Column#37)->Column#42",
+          "                └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c, collate: binary]",
+          "                    └─HashAgg 1.00 mpp[tiflash]  group by:Column#46, funcs:sum(Column#43)->Column#34, funcs:max(Column#44)->Column#35, funcs:count(1)->Column#36, funcs:count(Column#45)->Column#37",
+          "                      └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.b, test.t.a), decimal(20,0) BINARY)->Column#43, test.t.b->Column#44, test.t.a->Column#45, test.t.c->Column#46",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select sum(b), count(distinct a, b, e), count(a+b) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b), count(distinct a, b, e), count(a+b) from t;",
         "Plan": [
-          "TableReader_46 1.00 root  MppVersion: 3, data:ExchangeSender_45",
-          "└─ExchangeSender_45 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_39 1.00 mpp[tiflash]  Column#8, Column#9, Column#10",
-          "    └─HashAgg_40 1.00 mpp[tiflash]  funcs:sum(Column#22)->Column#8, funcs:sum(Column#23)->Column#9, funcs:sum(Column#24)->Column#10",
-          "      └─ExchangeReceiver_44 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_43 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_40 1.00 mpp[tiflash]  funcs:sum(Column#20)->Column#22, funcs:count(distinct test.t.a, test.t.b, test.t.e)->Column#23, funcs:sum(Column#21)->Column#24",
-          "            └─ExchangeReceiver_42 1.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: test.t.e, collate: utf8mb4_general_ci]",
-          "                └─HashAgg_38 1.00 mpp[tiflash]  group by:Column#27, Column#28, Column#29, funcs:sum(Column#25)->Column#20, funcs:count(Column#26)->Column#21",
-          "                  └─Projection_47 10000.00 mpp[tiflash]  cast(test.t.b, decimal(20,0) BINARY)->Column#25, plus(test.t.a, test.t.b)->Column#26, test.t.a->Column#27, test.t.b->Column#28, test.t.e->Column#29",
-          "                    └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8, Column#9, Column#10",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#22)->Column#8, funcs:sum(Column#23)->Column#9, funcs:sum(Column#24)->Column#10",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#20)->Column#22, funcs:count(distinct test.t.a, test.t.b, test.t.e)->Column#23, funcs:sum(Column#21)->Column#24",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: test.t.e, collate: utf8mb4_general_ci]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:Column#27, Column#28, Column#29, funcs:sum(Column#25)->Column#20, funcs:count(Column#26)->Column#21",
+          "                  └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(20,0) BINARY)->Column#25, plus(test.t.a, test.t.b)->Column#26, test.t.a->Column#27, test.t.b->Column#28, test.t.e->Column#29",
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct b), json_objectagg(d,c) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct b), json_objectagg(d,c) from t;",
         "Plan": [
-          "HashAgg_8 1.00 root  funcs:count(distinct Column#10)->Column#8, funcs:json_objectagg(Column#11, Column#12)->Column#9",
-          "└─Projection_27 10000.00 root  test.t.b->Column#10, cast(test.t.d, var_string(10))->Column#11, test.t.c->Column#12",
-          "  └─TableReader_18 10000.00 root  MppVersion: 3, data:ExchangeSender_17",
-          "    └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(distinct Column#10)->Column#8, funcs:json_objectagg(Column#11, Column#12)->Column#9",
+          "└─Projection 10000.00 root  test.t.b->Column#10, cast(test.t.d, var_string(10))->Column#11, test.t.c->Column#12",
+          "  └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Aggregation can not be pushed to tiflash because AggFunc `json_objectagg` is not supported now",
@@ -1243,32 +1243,32 @@
         ]
       },
       {
-        "SQL": "EXPLAIN select count(distinct c+a), count(a) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct c+a), count(a) from t;",
         "Plan": [
-          "TableReader_42 1.00 root  MppVersion: 3, data:ExchangeSender_41",
-          "└─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_37 1.00 mpp[tiflash]  Column#8, Column#9",
-          "    └─HashAgg_38 1.00 mpp[tiflash]  funcs:count(distinct Column#16)->Column#8, funcs:sum(Column#17)->Column#9",
-          "      └─ExchangeReceiver_40 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_39 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_36 1.00 mpp[tiflash]  group by:Column#19, funcs:count(Column#18)->Column#17",
-          "            └─Projection_43 10000.00 mpp[tiflash]  test.t.a->Column#18, plus(test.t.c, test.t.a)->Column#19",
-          "              └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8, Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#16)->Column#8, funcs:sum(Column#17)->Column#9",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  group by:Column#19, funcs:count(Column#18)->Column#17",
+          "            └─Projection 10000.00 mpp[tiflash]  test.t.a->Column#18, plus(test.t.c, test.t.a)->Column#19",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select sum(b), count(distinct c+a, b, e), count(a+b) from t;",
+        "SQL": "EXPLAIN FORMAT = 'brief' select sum(b), count(distinct c+a, b, e), count(a+b) from t;",
         "Plan": [
-          "TableReader_42 1.00 root  MppVersion: 3, data:ExchangeSender_41",
-          "└─ExchangeSender_41 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_37 1.00 mpp[tiflash]  Column#8, Column#9, Column#10",
-          "    └─HashAgg_38 1.00 mpp[tiflash]  funcs:sum(Column#20)->Column#8, funcs:count(distinct Column#21, test.t.b, test.t.e)->Column#9, funcs:sum(Column#22)->Column#10",
-          "      └─ExchangeReceiver_40 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_39 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_36 1.00 mpp[tiflash]  group by:Column#25, Column#26, Column#27, funcs:sum(Column#23)->Column#20, funcs:count(Column#24)->Column#22",
-          "            └─Projection_43 10000.00 mpp[tiflash]  cast(test.t.b, decimal(20,0) BINARY)->Column#23, plus(test.t.a, test.t.b)->Column#24, plus(test.t.c, test.t.a)->Column#25, test.t.b->Column#26, test.t.e->Column#27",
-          "              └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#8, Column#9, Column#10",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#20)->Column#8, funcs:count(distinct Column#21, test.t.b, test.t.e)->Column#9, funcs:sum(Column#22)->Column#10",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  group by:Column#25, Column#26, Column#27, funcs:sum(Column#23)->Column#20, funcs:count(Column#24)->Column#22",
+          "            └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(20,0) BINARY)->Column#23, plus(test.t.a, test.t.b)->Column#24, plus(test.t.c, test.t.a)->Column#25, test.t.b->Column#26, test.t.e->Column#27",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -1278,19 +1278,19 @@
     "Name": "TestMPPMultiDistinct3Stage",
     "Cases": [
       {
-        "SQL": "EXPLAIN select count(distinct a) from t",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a) from t",
         "Plan": [
-          "TableReader_37 1.00 root  MppVersion: 3, data:ExchangeSender_36",
-          "└─ExchangeSender_36 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_30 1.00 mpp[tiflash]  Column#7",
-          "    └─HashAgg_31 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#7",
-          "      └─ExchangeReceiver_35 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_34 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_31 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#9",
-          "            └─ExchangeReceiver_33 1.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_32 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "                └─HashAgg_29 1.00 mpp[tiflash]  group by:test.t.a, ",
-          "                  └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#7",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#9",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.a, ",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1302,20 +1302,20 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct a), count(distinct b) from t",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a), count(distinct b) from t",
         "Plan": [
-          "TableReader_43 1.00 root  MppVersion: 3, data:ExchangeSender_42",
-          "└─ExchangeSender_42 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_33 1.00 mpp[tiflash]  Column#7, Column#8",
-          "    └─HashAgg_34 1.00 mpp[tiflash]  funcs:sum(Column#13)->Column#7, funcs:sum(Column#14)->Column#8",
-          "      └─ExchangeReceiver_41 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_40 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_36 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#13, funcs:count(distinct test.t.b)->Column#14",
-          "            └─ExchangeReceiver_39 16000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_38 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#12, collate: binary]",
-          "                └─HashAgg_32 16000.00 mpp[tiflash]  group by:Column#12, test.t.a, test.t.b, ",
-          "                  └─Expand_35 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#12, [{<test.t.a>},{<test.t.b>}]",
-          "                    └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#13)->Column#7, funcs:sum(Column#14)->Column#8",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#13, funcs:count(distinct test.t.b)->Column#14",
+          "            └─ExchangeReceiver 16000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#12, collate: binary]",
+          "                └─HashAgg 16000.00 mpp[tiflash]  group by:Column#12, test.t.a, test.t.b, ",
+          "                  └─Expand 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#12, [{<test.t.a>},{<test.t.b>}]",
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1327,21 +1327,21 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct a), count(distinct b), count(c) from t",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a), count(distinct b), count(c) from t",
         "Plan": [
-          "TableReader_43 1.00 root  MppVersion: 3, data:ExchangeSender_42",
-          "└─ExchangeSender_42 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_33 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
-          "    └─HashAgg_34 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#7, funcs:sum(Column#20)->Column#8, funcs:sum(Column#21)->Column#9",
-          "      └─ExchangeReceiver_41 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_40 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_36 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#19, funcs:count(distinct test.t.b)->Column#20, funcs:sum(Column#16)->Column#21",
-          "            └─ExchangeReceiver_39 16000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_38 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#17, collate: binary]",
-          "                └─HashAgg_32 16000.00 mpp[tiflash]  group by:Column#17, test.t.a, test.t.b, funcs:count(Column#18)->Column#16",
-          "                  └─Projection_37 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, Column#17, case(eq(Column#17, 1), test.t.c, <nil>)->Column#18",
-          "                    └─Expand_35 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#17, [{<test.t.a>},{<test.t.b>}]",
-          "                      └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#7, funcs:sum(Column#20)->Column#8, funcs:sum(Column#21)->Column#9",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#19, funcs:count(distinct test.t.b)->Column#20, funcs:sum(Column#16)->Column#21",
+          "            └─ExchangeReceiver 16000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#17, collate: binary]",
+          "                └─HashAgg 16000.00 mpp[tiflash]  group by:Column#17, test.t.a, test.t.b, funcs:count(Column#18)->Column#16",
+          "                  └─Projection 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, Column#17, case(eq(Column#17, 1), test.t.c, <nil>)->Column#18",
+          "                    └─Expand 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#17, [{<test.t.a>},{<test.t.b>}]",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1353,21 +1353,21 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct a), count(distinct b), count(c+1) from t",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a), count(distinct b), count(c+1) from t",
         "Plan": [
-          "TableReader_43 1.00 root  MppVersion: 3, data:ExchangeSender_42",
-          "└─ExchangeSender_42 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_33 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
-          "    └─HashAgg_34 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#7, funcs:sum(Column#20)->Column#8, funcs:sum(Column#21)->Column#9",
-          "      └─ExchangeReceiver_41 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_40 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_36 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#19, funcs:count(distinct test.t.b)->Column#20, funcs:sum(Column#16)->Column#21",
-          "            └─ExchangeReceiver_39 16000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_38 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#17, collate: binary]",
-          "                └─HashAgg_32 16000.00 mpp[tiflash]  group by:Column#17, test.t.a, test.t.b, funcs:count(Column#18)->Column#16",
-          "                  └─Projection_37 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, Column#17, case(eq(Column#17, 1), plus(test.t.c, 1), <nil>)->Column#18",
-          "                    └─Expand_35 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#17, [{<test.t.a>},{<test.t.b>}]",
-          "                      └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#7, funcs:sum(Column#20)->Column#8, funcs:sum(Column#21)->Column#9",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#19, funcs:count(distinct test.t.b)->Column#20, funcs:sum(Column#16)->Column#21",
+          "            └─ExchangeReceiver 16000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#17, collate: binary]",
+          "                └─HashAgg 16000.00 mpp[tiflash]  group by:Column#17, test.t.a, test.t.b, funcs:count(Column#18)->Column#16",
+          "                  └─Projection 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, Column#17, case(eq(Column#17, 1), plus(test.t.c, 1), <nil>)->Column#18",
+          "                    └─Expand 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#17, [{<test.t.a>},{<test.t.b>}]",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1379,22 +1379,22 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct a), count(distinct b), sum(c) from t",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a), count(distinct b), sum(c) from t",
         "Plan": [
-          "TableReader_43 1.00 root  MppVersion: 3, data:ExchangeSender_42",
-          "└─ExchangeSender_42 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_33 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
-          "    └─HashAgg_34 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#7, funcs:sum(Column#20)->Column#8, funcs:sum(Column#21)->Column#9",
-          "      └─ExchangeReceiver_41 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_40 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_36 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#19, funcs:count(distinct test.t.b)->Column#20, funcs:sum(Column#16)->Column#21",
-          "            └─ExchangeReceiver_39 16000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_38 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#17, collate: binary]",
-          "                └─HashAgg_32 16000.00 mpp[tiflash]  group by:Column#23, Column#24, Column#25, funcs:sum(Column#22)->Column#16",
-          "                  └─Projection_44 20000.00 mpp[tiflash]  cast(Column#18, decimal(10,0) BINARY)->Column#22, test.t.a->Column#23, test.t.b->Column#24, Column#17->Column#25",
-          "                    └─Projection_37 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, Column#17, case(eq(Column#17, 1), test.t.c, <nil>)->Column#18",
-          "                      └─Expand_35 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#17, [{<test.t.a>},{<test.t.b>}]",
-          "                        └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#7, funcs:sum(Column#20)->Column#8, funcs:sum(Column#21)->Column#9",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#19, funcs:count(distinct test.t.b)->Column#20, funcs:sum(Column#16)->Column#21",
+          "            └─ExchangeReceiver 16000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#17, collate: binary]",
+          "                └─HashAgg 16000.00 mpp[tiflash]  group by:Column#23, Column#24, Column#25, funcs:sum(Column#22)->Column#16",
+          "                  └─Projection 20000.00 mpp[tiflash]  cast(Column#18, decimal(10,0) BINARY)->Column#22, test.t.a->Column#23, test.t.b->Column#24, Column#17->Column#25",
+          "                    └─Projection 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, Column#17, case(eq(Column#17, 1), test.t.c, <nil>)->Column#18",
+          "                      └─Expand 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#17, [{<test.t.a>},{<test.t.b>}]",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1406,17 +1406,17 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
         "Plan": [
-          "TableReader_33 1.00 root  MppVersion: 3, data:ExchangeSender_32",
-          "└─ExchangeSender_32 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_28 1.00 mpp[tiflash]  Column#7, Column#8, Column#9, Column#10",
-          "    └─HashAgg_29 1.00 mpp[tiflash]  funcs:count(distinct test.t.a, test.t.b)->Column#7, funcs:count(distinct test.t.b)->Column#8, funcs:sum(Column#13)->Column#9, funcs:sum(Column#14)->Column#10",
-          "      └─ExchangeReceiver_31 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_30 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_27 1.00 mpp[tiflash]  group by:Column#17, Column#18, funcs:count(Column#15)->Column#13, funcs:sum(Column#16)->Column#14",
-          "            └─Projection_34 10000.00 mpp[tiflash]  test.t.c->Column#15, cast(test.t.d, decimal(10,0) BINARY)->Column#16, test.t.a->Column#17, test.t.b->Column#18",
-          "              └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8, Column#9, Column#10",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a, test.t.b)->Column#7, funcs:count(distinct test.t.b)->Column#8, funcs:sum(Column#13)->Column#9, funcs:sum(Column#14)->Column#10",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  group by:Column#17, Column#18, funcs:count(Column#15)->Column#13, funcs:sum(Column#16)->Column#14",
+          "            └─Projection 10000.00 mpp[tiflash]  test.t.c->Column#15, cast(test.t.d, decimal(10,0) BINARY)->Column#16, test.t.a->Column#17, test.t.b->Column#18",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Some grouping sets should be merged",
@@ -1434,17 +1434,17 @@
         ]
       },
       {
-        "SQL": "EXPLAIN select count(distinct a+b), sum(c) from t",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a+b), sum(c) from t",
         "Plan": [
-          "TableReader_33 1.00 root  MppVersion: 3, data:ExchangeSender_32",
-          "└─ExchangeSender_32 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_28 1.00 mpp[tiflash]  Column#7, Column#8",
-          "    └─HashAgg_29 1.00 mpp[tiflash]  funcs:count(distinct Column#11)->Column#7, funcs:sum(Column#12)->Column#8",
-          "      └─ExchangeReceiver_31 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_30 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_27 1.00 mpp[tiflash]  group by:Column#14, funcs:sum(Column#13)->Column#12",
-          "            └─Projection_34 10000.00 mpp[tiflash]  cast(test.t.c, decimal(10,0) BINARY)->Column#13, plus(test.t.a, test.t.b)->Column#14",
-          "              └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#11)->Column#7, funcs:sum(Column#12)->Column#8",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  group by:Column#14, funcs:sum(Column#13)->Column#12",
+          "            └─Projection 10000.00 mpp[tiflash]  cast(test.t.c, decimal(10,0) BINARY)->Column#13, plus(test.t.a, test.t.b)->Column#14",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1456,17 +1456,17 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select count(distinct a+b), count(distinct b+c), count(c) from t",
+        "SQL": "EXPLAIN FORMAT = 'brief' select count(distinct a+b), count(distinct b+c), count(c) from t",
         "Plan": [
-          "TableReader_33 1.00 root  MppVersion: 3, data:ExchangeSender_32",
-          "└─ExchangeSender_32 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_28 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
-          "    └─HashAgg_29 1.00 mpp[tiflash]  funcs:count(distinct Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9",
-          "      └─ExchangeReceiver_31 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_30 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_27 1.00 mpp[tiflash]  group by:Column#17, Column#18, funcs:count(Column#16)->Column#15",
-          "            └─Projection_34 10000.00 mpp[tiflash]  test.t.c->Column#16, plus(test.t.a, test.t.b)->Column#17, plus(test.t.b, test.t.c)->Column#18",
-          "              └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  group by:Column#17, Column#18, funcs:count(Column#16)->Column#15",
+          "            └─Projection 10000.00 mpp[tiflash]  test.t.c->Column#16, plus(test.t.a, test.t.b)->Column#17, plus(test.t.b, test.t.c)->Column#18",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1478,16 +1478,16 @@
         "Warn": null
       },
       {
-        "SQL": "explain select count(distinct a,c), count(distinct b,c), count(c) from t",
+        "SQL": "explain FORMAT = 'brief' select count(distinct a,c), count(distinct b,c), count(c) from t",
         "Plan": [
-          "TableReader_33 1.00 root  MppVersion: 3, data:ExchangeSender_32",
-          "└─ExchangeSender_32 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_28 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
-          "    └─HashAgg_29 1.00 mpp[tiflash]  funcs:count(distinct test.t.a, test.t.c)->Column#7, funcs:count(distinct test.t.b, test.t.c)->Column#8, funcs:sum(Column#11)->Column#9",
-          "      └─ExchangeReceiver_31 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_30 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_27 1.00 mpp[tiflash]  group by:test.t.a, test.t.b, test.t.c, funcs:count(test.t.c)->Column#11",
-          "            └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a, test.t.c)->Column#7, funcs:count(distinct test.t.b, test.t.c)->Column#8, funcs:sum(Column#11)->Column#9",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  group by:test.t.a, test.t.b, test.t.c, funcs:count(test.t.c)->Column#11",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1499,21 +1499,21 @@
         "Warn": null
       },
       {
-        "SQL": "explain select count(distinct a), count(distinct b), count(*) from t",
+        "SQL": "explain FORMAT = 'brief' select count(distinct a), count(distinct b), count(*) from t",
         "Plan": [
-          "TableReader_43 1.00 root  MppVersion: 3, data:ExchangeSender_42",
-          "└─ExchangeSender_42 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_33 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
-          "    └─HashAgg_34 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#7, funcs:sum(Column#20)->Column#8, funcs:sum(Column#21)->Column#9",
-          "      └─ExchangeReceiver_41 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_40 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_36 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#19, funcs:count(distinct test.t.b)->Column#20, funcs:sum(Column#16)->Column#21",
-          "            └─ExchangeReceiver_39 16000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_38 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#17, collate: binary]",
-          "                └─HashAgg_32 16000.00 mpp[tiflash]  group by:Column#17, test.t.a, test.t.b, funcs:count(Column#18)->Column#16",
-          "                  └─Projection_37 20000.00 mpp[tiflash]  test.t.a, test.t.b, Column#17, case(eq(Column#17, 1), 1, <nil>)->Column#18",
-          "                    └─Expand_35 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#17, [{<test.t.a>},{<test.t.b>}]",
-          "                      └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8, Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#7, funcs:sum(Column#20)->Column#8, funcs:sum(Column#21)->Column#9",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#19, funcs:count(distinct test.t.b)->Column#20, funcs:sum(Column#16)->Column#21",
+          "            └─ExchangeReceiver 16000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#17, collate: binary]",
+          "                └─HashAgg 16000.00 mpp[tiflash]  group by:Column#17, test.t.a, test.t.b, funcs:count(Column#18)->Column#16",
+          "                  └─Projection 20000.00 mpp[tiflash]  test.t.a, test.t.b, Column#17, case(eq(Column#17, 1), 1, <nil>)->Column#18",
+          "                    └─Expand 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#17, [{<test.t.a>},{<test.t.b>}]",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1525,22 +1525,22 @@
         "Warn": null
       },
       {
-        "SQL": "explain select count(distinct a), count(distinct b), avg(c+d) from t",
+        "SQL": "explain FORMAT = 'brief' select count(distinct a), count(distinct b), avg(c+d) from t",
         "Plan": [
-          "TableReader_43 1.00 root  MppVersion: 3, data:ExchangeSender_42",
-          "└─ExchangeSender_42 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_33 1.00 mpp[tiflash]  Column#7, Column#8, div(Column#9, cast(case(eq(Column#20, 0), 1, Column#20), decimal(20,0) BINARY))->Column#9",
-          "    └─HashAgg_34 1.00 mpp[tiflash]  funcs:sum(Column#26)->Column#7, funcs:sum(Column#27)->Column#8, funcs:sum(Column#28)->Column#20, funcs:sum(Column#29)->Column#9",
-          "      └─ExchangeReceiver_41 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_40 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg_36 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#26, funcs:count(distinct test.t.b)->Column#27, funcs:sum(Column#21)->Column#28, funcs:sum(Column#22)->Column#29",
-          "            └─ExchangeReceiver_39 16000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_38 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#23, collate: binary]",
-          "                └─HashAgg_32 16000.00 mpp[tiflash]  group by:Column#32, Column#33, Column#34, funcs:count(Column#30)->Column#21, funcs:sum(Column#31)->Column#22",
-          "                  └─Projection_44 20000.00 mpp[tiflash]  Column#24->Column#30, cast(Column#25, decimal(20,0) BINARY)->Column#31, test.t.a->Column#32, test.t.b->Column#33, Column#23->Column#34",
-          "                    └─Projection_37 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.d, Column#23, case(eq(Column#23, 1), plus(test.t.c, test.t.d), <nil>)->Column#24, case(eq(Column#23, 1), plus(test.t.c, test.t.d), <nil>)->Column#25",
-          "                      └─Expand_35 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#23, [{<test.t.a>},{<test.t.b>}]",
-          "                        └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7, Column#8, div(Column#9, cast(case(eq(Column#20, 0), 1, Column#20), decimal(20,0) BINARY))->Column#9",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#26)->Column#7, funcs:sum(Column#27)->Column#8, funcs:sum(Column#28)->Column#20, funcs:sum(Column#29)->Column#9",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.a)->Column#26, funcs:count(distinct test.t.b)->Column#27, funcs:sum(Column#21)->Column#28, funcs:sum(Column#22)->Column#29",
+          "            └─ExchangeReceiver 16000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 16000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#23, collate: binary]",
+          "                └─HashAgg 16000.00 mpp[tiflash]  group by:Column#32, Column#33, Column#34, funcs:count(Column#30)->Column#21, funcs:sum(Column#31)->Column#22",
+          "                  └─Projection 20000.00 mpp[tiflash]  Column#24->Column#30, cast(Column#25, decimal(20,0) BINARY)->Column#31, test.t.a->Column#32, test.t.b->Column#33, Column#23->Column#34",
+          "                    └─Projection 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.d, Column#23, case(eq(Column#23, 1), plus(test.t.c, test.t.d), <nil>)->Column#24, case(eq(Column#23, 1), plus(test.t.c, test.t.d), <nil>)->Column#25",
+          "                      └─Expand 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#23, [{<test.t.a>},{<test.t.b>}]",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -1555,134 +1555,134 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select * from t where t.a not in (select s.a from s); -- 1. anti semi join, one join key",
+        "SQL": "EXPLAIN FORMAT = 'brief' select * from t where t.a not in (select s.a from s); -- 1. anti semi join, one join key",
         "Plan": [
-          "TableReader_29 8000.00 root  MppVersion: 3, data:ExchangeSender_28",
-          "└─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_11, equal:[eq(test.t.a, test.s.a)]",
-          "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_11(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a)]",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select * from t where t.a not in (select s.a from s where t.c > s.c); -- 2. anti semi join, one join key + other condition",
+        "SQL": "EXPLAIN FORMAT = 'brief' select * from t where t.a not in (select s.a from s where t.c > s.c); -- 2. anti semi join, one join key + other condition",
         "Plan": [
-          "TableReader_30 8000.00 root  MppVersion: 3, data:ExchangeSender_29",
-          "└─ExchangeSender_29 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
-          "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select * from t where (t.a, t.b) not in (select s.a, s.b from s); -- 3. anti semi join, two join key",
+        "SQL": "EXPLAIN FORMAT = 'brief' select * from t where (t.a, t.b) not in (select s.a, s.b from s); -- 3. anti semi join, two join key",
         "Plan": [
-          "TableReader_29 8000.00 root  MppVersion: 3, data:ExchangeSender_28",
-          "└─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_11, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
-          "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_11(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select * from t where (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c); -- 4. anti semi join, two join key + other condition",
+        "SQL": "EXPLAIN FORMAT = 'brief' select * from t where (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c); -- 4. anti semi join, two join key + other condition",
         "Plan": [
-          "TableReader_30 8000.00 root  MppVersion: 3, data:ExchangeSender_29",
-          "└─ExchangeSender_29 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
-          "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select *, t.a not in (select s.a from s) from t; -- 5. left anti semi join, one join key",
+        "SQL": "EXPLAIN FORMAT = 'brief' select *, t.a not in (select s.a from s) from t; -- 5. left anti semi join, one join key",
         "Plan": [
-          "TableReader_29 10000.00 root  MppVersion: 3, data:ExchangeSender_28",
-          "└─ExchangeSender_28 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan_11, equal:[eq(test.t.a, test.s.a)]",
-          "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_11(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a)]",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select *, t.a not in (select s.a from s where t.c > s.c) from t; -- 6. left anti semi join, one join key + other condition",
+        "SQL": "EXPLAIN FORMAT = 'brief' select *, t.a not in (select s.a from s where t.c > s.c) from t; -- 6. left anti semi join, one join key + other condition",
         "Plan": [
-          "TableReader_30 10000.00 root  MppVersion: 3, data:ExchangeSender_29",
-          "└─ExchangeSender_29 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
-          "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s) from t; -- 7. left anti semi join, two join key",
+        "SQL": "EXPLAIN FORMAT = 'brief' select *, (t.a, t.b) not in (select s.a, s.b from s) from t; -- 7. left anti semi join, two join key",
         "Plan": [
-          "TableReader_29 10000.00 root  MppVersion: 3, data:ExchangeSender_28",
-          "└─ExchangeSender_28 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan_11, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
-          "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_11(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c) from t; -- 8. left anti semi join, two join key + other condition",
+        "SQL": "EXPLAIN FORMAT = 'brief' select *, (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c) from t; -- 8. left anti semi join, two join key + other condition",
         "Plan": [
-          "TableReader_30 10000.00 root  MppVersion: 3, data:ExchangeSender_29",
-          "└─ExchangeSender_29 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
-          "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(s@sel_2) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 9. anti semi join, one join key + other condition + hint",
+        "SQL": "EXPLAIN FORMAT = 'brief' select /*+ HASH_JOIN_BUILD(s@sel_2) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 9. anti semi join, one join key + other condition + hint",
         "Plan": [
-          "TableReader_30 8000.00 root  MppVersion: 3, data:ExchangeSender_29",
-          "└─ExchangeSender_29 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
-          "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti semi join with hash join version 1. Please remove these hints"
         ]
       },
       {
-        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(t@sel_1) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 10. anti semi join, one join key + other condition + hint",
+        "SQL": "EXPLAIN FORMAT = 'brief' select /*+ HASH_JOIN_BUILD(t@sel_1) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 10. anti semi join, one join key + other condition + hint",
         "Plan": [
-          "TableReader_30 8000.00 root  MppVersion: 3, data:ExchangeSender_29",
-          "└─ExchangeSender_29 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
-          "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
