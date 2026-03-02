@@ -874,11 +874,11 @@ drop table t;
 set tidb_enable_clustered_index=default;
 
 # TestAnlyzeIssue
-set @@tidb_analyze_version = 1;
+set @@tidb_analyze_version = 2;
 ## Issue15993
 drop table if exists t0;
 CREATE TABLE t0(c0 INT PRIMARY KEY);
-ANALYZE TABLE t0 INDEX PRIMARY;
+ANALYZE TABLE t0;
 ## Issue15751
 drop table if exists t0;
 CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1));
@@ -908,7 +908,7 @@ set @@session.tidb_analyze_skip_column_types = default;
 DROP TABLE IF EXISTS Issue34228;
 CREATE TABLE Issue34228 (id bigint NOT NULL, dt datetime NOT NULL) PARTITION BY RANGE COLUMNS(dt) (PARTITION p202201 VALUES LESS THAN ("2022-02-01"), PARTITION p202202 VALUES LESS THAN ("2022-03-01"));
 INSERT INTO Issue34228 VALUES (1, '2022-02-01 00:00:02'), (2, '2022-02-01 00:00:02');
-SET @@global.tidb_analyze_version = 1;
+SET @@global.tidb_analyze_version = 2;
 SET @@session.tidb_partition_prune_mode = 'static';
 ANALYZE TABLE Issue34228;
 SET @@session.tidb_partition_prune_mode = 'dynamic';
@@ -921,7 +921,7 @@ connect (conn1, localhost, root,, executor__analyze);
 DROP TABLE IF EXISTS Issue34228;
 CREATE TABLE Issue34228 (id bigint NOT NULL, dt datetime NOT NULL) PARTITION BY RANGE COLUMNS(dt) (PARTITION p202201 VALUES LESS THAN ("2022-02-01"), PARTITION p202202 VALUES LESS THAN ("2022-03-01"));
 INSERT INTO Issue34228 VALUES (1, '2022-02-01 00:00:02'), (2, '2022-02-01 00:00:02');
-SET @@global.tidb_analyze_version = 1;
+SET @@global.tidb_analyze_version = 2;
 SET @@session.tidb_partition_prune_mode = 'static';
 ANALYZE TABLE Issue34228;
 SET @@session.tidb_partition_prune_mode = 'dynamic';

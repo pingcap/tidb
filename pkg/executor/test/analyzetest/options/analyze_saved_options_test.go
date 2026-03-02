@@ -288,7 +288,7 @@ PARTITION BY RANGE ( a ) (
 		return
 	}
 	// set analyze version back to 1, will not use persisted
-	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t partition p2")
 	pi = tableInfo.GetPartitionInfo()
 	p2 = h.GetPhysicalTableStats(pi.Definitions[2].ID, tableInfo)

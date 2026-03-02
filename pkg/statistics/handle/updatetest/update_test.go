@@ -49,7 +49,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
+	testKit.MustExec("set @@session.tidb_analyze_version = 2")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 
@@ -759,7 +759,7 @@ func TestStatsVariables(t *testing.T) {
 	require.Equal(t, false, sctx.GetSessionVars().EnableAnalyzeSnapshot)
 	require.Equal(t, true, sctx.GetSessionVars().SkipMissingPartitionStats)
 
-	tk.MustExec(`set global tidb_analyze_version=1`)
+	tk.MustExec(`set global tidb_analyze_version = 2`)
 	tk.MustExec(`set global tidb_partition_prune_mode='static'`)
 	tk.MustExec(`set global tidb_enable_historical_stats=1`)
 	tk.MustExec(`set global tidb_enable_analyze_snapshot=1`)
@@ -770,7 +770,7 @@ func TestStatsVariables(t *testing.T) {
 	require.Equal(t, string(variable.Static), pruneMode)
 	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, sctx.GetSessionVars().AnalyzeVersion)
+	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
 	require.Equal(t, true, sctx.GetSessionVars().EnableHistoricalStats)
 	require.Equal(t, string(variable.Static), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, true, sctx.GetSessionVars().EnableAnalyzeSnapshot)
@@ -1118,7 +1118,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
+	testKit.MustExec("set @@session.tidb_analyze_version = 2")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 

@@ -3153,8 +3153,7 @@ func GetAnalyzeOptionDefaultV2ForTest() map[ast.AnalyzeOptionType]uint64 {
 	return analyzeOptionDefaultV2
 }
 
-// This function very similar to handleAnalyzeOptions, but it's used for analyze version 2.
-// Remove this function after we remove the support of analyze version 1.
+// This function is very similar to handleAnalyzeOptions, but it's used for analyze v2 option processing.
 func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
 	sampleNum, sampleRate := uint64(0), 0.0
@@ -3210,12 +3209,11 @@ func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.Analy
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-	if statsVer == statistics.Version1 {
-		maps.Copy(optMap, analyzeOptionDefault)
-	} else {
-		maps.Copy(optMap, analyzeOptionDefaultV2)
+	if statsVer < statistics.Version2 {
+		statsVer = statistics.Version2
 	}
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefaultV2))
+	maps.Copy(optMap, analyzeOptionDefaultV2)
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
@@ -3231,9 +3229,6 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
 			if err != nil {
 				return nil, err
-			}
-			if fVal > 0 && statsVer == statistics.Version1 {
-				return nil, errors.Errorf("Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2")
 			}
 			limit := math.Float64frombits(analyzeOptionLimit[opt.Type])
 			if fVal <= 0 || fVal > limit {
@@ -3254,10 +3249,6 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 	}
 	if sampleNum > 0 && sampleRate > 0 {
 		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them")
-	}
-	// Only version 1 has cmsketch.
-	if statsVer == statistics.Version1 && optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > CMSketchSizeLimit {
-		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
 	}
 	return optMap, nil
 }

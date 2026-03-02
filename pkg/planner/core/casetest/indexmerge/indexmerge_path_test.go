@@ -477,7 +477,7 @@ func testAnalyzeTiFlashIndex(createTableSQL, createIndexSQL string, t *testing.T
 		"Warning 1105 analyzing columnar index is not supported, skip idx",
 		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 
-	tk.MustExec("set tidb_analyze_version=1")
+	tk.MustExec("set tidb_analyze_version = 2")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Warning 1105 analyzing columnar index is not supported, skip idx",

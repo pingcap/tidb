@@ -8,7 +8,7 @@ set tidb_analyze_version=2;
 --enable_warnings
 analyze table t;
 analyze table t index idx;
-set tidb_analyze_version=1;
+set tidb_analyze_version = 2;
 analyze table t;
 analyze table t index idx;
 analyze table t index a;
