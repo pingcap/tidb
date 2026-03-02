@@ -639,6 +639,75 @@ func (*BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
 	return buf
 }
 
+// encodeOldDatumToArena is like encodeOldDatum but appends to a caller-provided arena
+// instead of allocating a new slice. Returns the encoded sub-slice and the updated arena.
+func encodeOldDatumToArena(tp byte, val []byte, arena []byte) (result []byte, newArena []byte) {
+	start := len(arena)
+	switch tp {
+	case BytesFlag:
+		arena = append(arena, CompactBytesFlag)
+		arena = codec.EncodeCompactBytes(arena, val)
+	case IntFlag:
+		arena = append(arena, VarintFlag)
+		arena = codec.EncodeVarint(arena, decodeInt(val))
+	case UintFlag:
+		arena = append(arena, VaruintFlag)
+		arena = codec.EncodeUvarint(arena, decodeUint(val))
+	default:
+		arena = append(arena, tp)
+		arena = append(arena, val...)
+	}
+	return arena[start:len(arena):len(arena)], arena
+}
+
+// DecodeToBytesNoHandleInto is like DecodeToBytesNoHandle but writes into a caller-provided
+// values slice and arena instead of allocating new ones. The arena is used for encodeOldDatum
+// allocations; caller should reset arena length between rows (arena = arena[:0]).
+// The values slice is cleared and reused.
+func (decoder *BytesDecoder) DecodeToBytesNoHandleInto(
+	outputOffset map[int64]int, value []byte, values [][]byte, arena []byte,
+) ([][]byte, []byte, error) {
+	var r row
+	err := r.fromBytes(value)
+	if err != nil {
+		return nil, arena, err
+	}
+	for i := range values {
+		values[i] = nil
+	}
+	for i := range decoder.columns {
+		col := &decoder.columns[i]
+		tp := fieldType2Flag(col.Ft.ArrayType().GetType(), col.Ft.GetFlag()&mysql.UnsignedFlag == 0)
+		colID := col.ID
+		offset := outputOffset[colID]
+		idx, isNil, notFound := r.findColID(colID)
+		if !notFound && !isNil {
+			val := r.getData(idx)
+			values[offset], arena = encodeOldDatumToArena(tp, val, arena)
+			continue
+		}
+
+		if isNil {
+			values[offset] = []byte{NilFlag}
+			continue
+		}
+
+		if decoder.defBytes != nil {
+			defVal, err := decoder.defBytes(i)
+			if err != nil {
+				return nil, arena, err
+			}
+			if len(defVal) > 0 {
+				values[offset] = defVal
+				continue
+			}
+		}
+
+		values[offset] = []byte{NilFlag}
+	}
+	return values, arena, nil
+}
+
 // fieldType2Flag transforms field type into kv type flag.
 func fieldType2Flag(tp byte, signed bool) (flag byte) {
 	switch tp {

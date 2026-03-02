@@ -843,6 +843,45 @@ func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]b
 	return resultValues, nil
 }
 
+// IndexRestoredDecoder caches the colIDs map and BytesDecoder across rows
+// to avoid per-row allocations in decodeRestoredValues.
+type IndexRestoredDecoder struct {
+	colIDs map[int64]int
+	rd     *rowcodec.BytesDecoder
+	values [][]byte // pre-allocated, reused across rows
+	arena  []byte   // arena for encodeOldDatum allocations
+}
+
+// NewIndexRestoredDecoder creates a new IndexRestoredDecoder for the given columns.
+// The decoder caches the column ID map and BytesDecoder so they are built only once
+// and reused across all rows in a scan.
+func NewIndexRestoredDecoder(columns []rowcodec.ColInfo) *IndexRestoredDecoder {
+	colIDs := make(map[int64]int, len(columns))
+	for i, col := range columns {
+		colIDs[col.ID] = i
+	}
+	rd := rowcodec.NewByteDecoder(columns, []int64{-1}, nil, nil)
+	return &IndexRestoredDecoder{
+		colIDs: colIDs,
+		rd:     rd,
+		values: make([][]byte, len(columns)),
+		arena:  make([]byte, 0, 256),
+	}
+}
+
+// Decode decodes restored values using cached state. The returned slice is reused
+// across calls; callers must consume results before calling Decode again.
+func (d *IndexRestoredDecoder) Decode(restoredVal []byte) ([][]byte, error) {
+	d.arena = d.arena[:0]
+	values, arena, err := d.rd.DecodeToBytesNoHandleInto(d.colIDs, restoredVal, d.values, d.arena)
+	d.arena = arena
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	d.values = values
+	return values, nil
+}
+
 // decodeRestoredValuesV5 decodes index values whose format is introduced in TiDB 5.0.
 // Unlike the format in TiDB 4.0, the new format is optimized for storage space:
 // 1. If the index is a composed index, only the non-binary string column's value need to write to value, not all.
@@ -961,14 +1000,18 @@ func getIndexVersion(value []byte) int {
 }
 
 // DecodeIndexKVEx looks like DecodeIndexKV, the difference is that it tries to reduce allocations.
-func DecodeIndexKVEx(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo, buf []byte, preAlloc [][]byte) ([][]byte, error) {
+func DecodeIndexKVEx(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo, buf []byte, preAlloc [][]byte, restoredDec ...*IndexRestoredDecoder) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		return decodeIndexKvOldCollation(key, value, hdStatus, buf, preAlloc)
 	}
 	if getIndexVersion(value) == 1 {
 		return decodeIndexKvForClusteredIndexVersion1(key, value, colsLen, hdStatus, columns, buf, preAlloc)
 	}
-	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns, buf, preAlloc)
+	var dec *IndexRestoredDecoder
+	if len(restoredDec) > 0 {
+		dec = restoredDec[0]
+	}
+	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns, buf, preAlloc, dec)
 }
 
 // DecodeIndexKV uses to decode index key values.
@@ -983,7 +1026,7 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 	if getIndexVersion(value) == 1 {
 		return decodeIndexKvForClusteredIndexVersion1(key, value, colsLen, hdStatus, columns, nil, preAlloc)
 	}
-	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns, nil, preAlloc)
+	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns, nil, preAlloc, nil)
 }
 
 // DecodeIndexHandle uses to decode the handle from index key/value.
@@ -1877,7 +1920,7 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 }
 
 // decodeIndexKvGeneral decodes index key value pair of new layout in an extensible way.
-func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo, buf []byte, preAlloc [][]byte) ([][]byte, error) {
+func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo, buf []byte, preAlloc [][]byte, restoredDec *IndexRestoredDecoder) ([][]byte, error) {
 	var keySuffix []byte
 	var handle kv.Handle
 	var err error
@@ -1888,7 +1931,11 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		return nil, err
 	}
 	if segs.RestoredValues != nil { // new collation
-		resultValues, err = decodeRestoredValues(columns[:colsLen], segs.RestoredValues)
+		if restoredDec != nil {
+			resultValues, err = restoredDec.Decode(segs.RestoredValues)
+		} else {
+			resultValues, err = decodeRestoredValues(columns[:colsLen], segs.RestoredValues)
+		}
 		if err != nil {
 			return nil, err
 		}

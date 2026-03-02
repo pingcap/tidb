@@ -66,9 +66,10 @@ type memIndexReader struct {
 	partitionIDMap map[int64]struct{}
 	compareExec
 
-	buf        [16]byte
-	decodeBuff [][]byte
-	resultRows []types.Datum
+	buf         [16]byte
+	decodeBuff  [][]byte
+	resultRows  []types.Datum
+	restoredDec *tablecodec.IndexRestoredDecoder // cached restored values decoder
 }
 
 func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -203,7 +204,10 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		m.decodeBuff = m.decodeBuff[: colsLen : colsLen+len(colInfos)]
 	}
 	buf := m.buf[:0]
-	values, err := tablecodec.DecodeIndexKVEx(key, value, colsLen, hdStatus, colInfos, buf, m.decodeBuff)
+	if m.restoredDec == nil {
+		m.restoredDec = tablecodec.NewIndexRestoredDecoder(colInfos[:colsLen])
+	}
+	values, err := tablecodec.DecodeIndexKVEx(key, value, colsLen, hdStatus, colInfos, buf, m.decodeBuff, m.restoredDec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
