@@ -4191,6 +4191,11 @@ func TestIssue66077ExchangePartitionDifferentDefinitionsWithShardRowIDBits(t *te
 	  KEY k_1 (k)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 
+	tblInfo, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("sbtest"), ast.NewCIStr("sbtest1"))
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), tblInfo.ShardRowIDBits)
+	require.Equal(t, uint64(4), tblInfo.MaxShardRowIDBits)
+
 	tk.MustExec(`CREATE TABLE sbtest1_partition (
 	  id int NOT NULL,
 	  k int NOT NULL DEFAULT '0',
