@@ -18,18 +18,24 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	crand "crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -413,7 +419,34 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	<-server2.RunInGoTestChan
 	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	ts.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
-	ts.WaitUntilServerOnline()
+	ts.WaitUntilServerCanConnect()
+
+	do, err := session.GetDomain(ts.store)
+	require.NoError(t, err)
+	ts.sh = optimizor.NewStatsHandler(do)
+}
+
+func (ts *basicHTTPHandlerTestSuite) startServerWithConfig(t *testing.T, cfg *config.Config) {
+	var err error
+	ts.store, err = teststore.NewMockStoreWithoutBootstrap()
+	require.NoError(t, err)
+	ts.domain, err = session.BootstrapSession(ts.store)
+	require.NoError(t, err)
+	ts.tidbdrv = server2.NewTiDBDriver(ts.store)
+
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	ts.server = server
+	ts.server.SetDomain(ts.domain)
+	go func() {
+		err := server.Run(ts.domain)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	ts.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	ts.WaitUntilServerCanConnect()
 
 	do, err := session.GetDomain(ts.store)
 	require.NoError(t, err)
@@ -481,6 +514,242 @@ partition by range (a)
 	dbt.MustExec("drop table if exists t")
 	dbt.MustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered, key idx(c))")
 	dbt.MustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
+}
+
+func TestInternalUserAdminAPIMTLS(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	artifacts := generateTLSArtifacts(t)
+
+	t.Run("forbidden without client cert", func(t *testing.T) {
+		ts := createBasicHTTPHandlerTestSuite()
+		cfg := util.NewTestConfig()
+		origCfg := config.GetGlobalConfig()
+		config.StoreGlobalConfig(cfg)
+		defer config.StoreGlobalConfig(origCfg)
+		cfg.Store = config.StoreTypeTiKV
+		cfg.Port = 0
+		cfg.Status.StatusPort = 0
+		cfg.Status.ReportStatus = true
+		cfg.Security.ClusterSSLCA = artifacts.caCert
+		cfg.Security.ClusterSSLCert = artifacts.serverCert
+		cfg.Security.ClusterSSLKey = artifacts.serverKey
+
+		ts.startServerWithConfig(t, cfg)
+		defer ts.stopServer(t)
+		ts.StatusScheme = "https"
+
+		client := newTLSHTTPClient(t, artifacts.caCert, "", "")
+		waitForStatus(t, client, ts.StatusURL("/status"))
+		resp, err := client.Post(ts.StatusURL("/internal/v1/users/testuser/reset-password"),
+			"application/json",
+			bytes.NewBufferString(`{"reason":"test","expire_now":true}`))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, resp.Body.Close()) }()
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("mtls success", func(t *testing.T) {
+		ts := createBasicHTTPHandlerTestSuite()
+		cfg := util.NewTestConfig()
+		origCfg := config.GetGlobalConfig()
+		config.StoreGlobalConfig(cfg)
+		defer config.StoreGlobalConfig(origCfg)
+		cfg.Store = config.StoreTypeTiKV
+		cfg.Port = 0
+		cfg.Status.StatusPort = 0
+		cfg.Status.ReportStatus = true
+		cfg.Security.ClusterSSLCA = artifacts.caCert
+		cfg.Security.ClusterSSLCert = artifacts.serverCert
+		cfg.Security.ClusterSSLKey = artifacts.serverKey
+		cfg.Security.ClusterVerifyCN = []string{"tidb-client"}
+
+		ts.startServerWithConfig(t, cfg)
+		defer ts.stopServer(t)
+		ts.StatusScheme = "https"
+
+		db, err := sql.Open("mysql", ts.GetDSN())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, db.Close()) }()
+		_, err = db.Exec("CREATE ROLE diagnoser_role")
+		require.NoError(t, err)
+
+		client := newTLSHTTPClient(t, artifacts.caCert, artifacts.clientCert, artifacts.clientKey)
+		waitForStatus(t, client, ts.StatusURL("/status"))
+
+		resp, err := client.Post(ts.StatusURL("/internal/v1/users"),
+			"application/json",
+			bytes.NewBufferString(`{"username":"testuser","password":"Passw0rd!"}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		resp, err := client.Post(ts.StatusURL("/internal/v1/users/testuser/reset-password"),
+			"application/json",
+			bytes.NewBufferString(`{"reason":"compromise","expire_now":true}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var resetResp struct {
+			Status      string `json:"status"`
+			NewPassword string `json:"new_password"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&resetResp))
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, "success", resetResp.Status)
+		require.NotEmpty(t, resetResp.NewPassword)
+
+		userDB, err := sql.Open("mysql", fmt.Sprintf("testuser:%s@tcp(127.0.0.1:%d)/test", resetResp.NewPassword, ts.Port))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, userDB.Close()) }()
+		require.NoError(t, userDB.Ping())
+
+		resp, err = client.Post(ts.StatusURL("/internal/v1/users/testuser/roles"),
+			"application/json",
+			bytes.NewBufferString(`{"roles":["diagnoser_role"]}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		req, err := http.NewRequest(http.MethodDelete, ts.StatusURL("/internal/v1/users/testuser"), nil)
+		require.NoError(t, err)
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusNoContent, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	})
+}
+
+type tlsArtifacts struct {
+	caCert     string
+	serverCert string
+	serverKey  string
+	clientCert string
+	clientKey  string
+}
+
+func generateTLSArtifacts(t *testing.T) tlsArtifacts {
+	dir := t.TempDir()
+	caKeyPath := filepath.Join(dir, "ca-key.pem")
+	caCertPath := filepath.Join(dir, "ca-cert.pem")
+	serverKeyPath := filepath.Join(dir, "server-key.pem")
+	serverCertPath := filepath.Join(dir, "server-cert.pem")
+	clientKeyPath := filepath.Join(dir, "client-key.pem")
+	clientCertPath := filepath.Join(dir, "client-cert.pem")
+
+	caCert, caKey := generateTestCert(t, 1, "tidb-ca", nil, nil, caKeyPath, caCertPath)
+	generateTestCert(t, 2, "localhost", caCert, caKey, serverKeyPath, serverCertPath, func(c *x509.Certificate) {
+		c.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+		c.DNSNames = []string{"localhost"}
+	})
+	generateTestCert(t, 3, "tidb-client", caCert, caKey, clientKeyPath, clientCertPath, func(c *x509.Certificate) {
+		c.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	})
+
+	return tlsArtifacts{
+		caCert:     caCertPath,
+		serverCert: serverCertPath,
+		serverKey:  serverKeyPath,
+		clientCert: clientCertPath,
+		clientKey:  clientKeyPath,
+	}
+}
+
+func generateTestCert(
+	t *testing.T,
+	serial int64,
+	commonName string,
+	parentCert *x509.Certificate,
+	parentKey *rsa.PrivateKey,
+	keyPath string,
+	certPath string,
+	opts ...func(*x509.Certificate),
+) (*x509.Certificate, *rsa.PrivateKey) {
+	privateKey, err := rsa.GenerateKey(crand.Reader, 1024)
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	template := x509.Certificate{
+		SerialNumber:          big.NewInt(serial),
+		Subject:               pkix.Name{CommonName: commonName},
+		DNSNames:              []string{commonName},
+		NotBefore:             now.Add(-10 * time.Minute),
+		NotAfter:              now.Add(2 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+	for _, opt := range opts {
+		opt(&template)
+	}
+
+	if parentCert == nil || parentKey == nil {
+		template.IsCA = true
+		template.KeyUsage |= x509.KeyUsageCertSign
+		parentCert = &template
+		parentKey = privateKey
+	}
+
+	if parentCert == nil || parentKey == nil {
+		template.IsCA = true
+		template.KeyUsage |= x509.KeyUsageCertSign
+		parentCert = &template
+		parentKey = privateKey
+	}
+
+	derBytes, err := x509.CreateCertificate(crand.Reader, &template, parentCert, &privateKey.PublicKey, parentKey)
+	require.NoError(t, err)
+
+	cert, err := x509.ParseCertificate(derBytes)
+	require.NoError(t, err)
+
+	certOut, err := os.Create(certPath)
+	require.NoError(t, err)
+	err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	require.NoError(t, err)
+	require.NoError(t, certOut.Close())
+
+	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	require.NoError(t, err)
+	err = pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	require.NoError(t, err)
+	require.NoError(t, keyOut.Close())
+
+	return cert, privateKey
+}
+
+func newTLSHTTPClient(t *testing.T, caFile, certFile, keyFile string) *http.Client {
+	caBytes, err := os.ReadFile(caFile)
+	require.NoError(t, err)
+	caPool := x509.NewCertPool()
+	require.True(t, caPool.AppendCertsFromPEM(caBytes))
+
+	tlsConfig := &tls.Config{
+		RootCAs: caPool,
+		// Allow test certificates with localhost CN/SAN.
+		InsecureSkipVerify: true,
+	}
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		require.NoError(t, err)
+		tlsConfig.Certificates = []tls.Certificate{cert}
+		tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return &cert, nil
+		}
+	}
+	tlsConfig.BuildNameToCertificate()
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
+}
+
+func waitForStatus(t *testing.T, client *http.Client, url string) {
+	for i := 0; i < 100; i++ {
+		resp, err := client.Get(url)
+		if err == nil {
+			_, _ = io.ReadAll(resp.Body)
+			require.NoError(t, resp.Body.Close())
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Fail(t, "status server not ready")
 }
 
 func decodeKeyMvcc(closer io.ReadCloser, t *testing.T, valid bool) {
