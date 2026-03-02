@@ -320,6 +320,10 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			}
 		}
 	}
+	// Rebuild FM sketches from samples instead of using ones pushed down from TiKV.
+	if err = e.rebuildFMSketchesFromSamples(rootRowCollector, indexesWithVirtualColOffsets); err != nil {
+		return 0, nil, nil, nil, nil, err
+	}
 
 	// Calculate handle from the row data for each row. It will be used to sort the samples.
 	for _, sample := range rootRowCollector.Base().Samples {
@@ -421,6 +425,111 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 
 	count = rootRowCollector.Base().Count
 	return
+}
+
+// rebuildFMSketchesFromSamples recalculates FM sketches using sampled rows in TiDB.
+// It keeps the FM sketches of special indexes (virtual/prefix) if their offsets are provided.
+func (e *AnalyzeColumnsExecV2) rebuildFMSketchesFromSamples(root statistics.RowSampleCollector, skipIdxOffsets []int) error {
+	if root == nil {
+		return nil
+	}
+	colLen := len(e.colsInfo)
+	colGroups := e.analyzePB.ColReq.ColumnGroups
+	totalLen := colLen + len(colGroups)
+	newSketches := make([]*statistics.FMSketch, totalLen)
+
+	skipIdx := make(map[int]struct{}, len(skipIdxOffsets))
+	for _, off := range skipIdxOffsets {
+		skipIdx[off] = struct{}{}
+	}
+
+	// Prepare collators for string columns.
+	collators := make([]collate.Collator, colLen)
+	for i, col := range e.colsInfo {
+		ft := col.FieldType
+		if ft.EvalType() == types.ETString && ft.GetType() != mysql.TypeEnum && ft.GetType() != mysql.TypeSet {
+			collators[i] = collate.GetCollator(ft.GetCollate())
+		}
+	}
+
+	// Build sketches for columns from samples.
+	for i := 0; i < colLen; i++ {
+		newSketches[i] = statistics.NewFMSketch(statistics.MaxSketchSize)
+	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for _, sample := range root.Base().Samples {
+		for i := 0; i < colLen; i++ {
+			val := sample.Columns[i]
+			if val.IsNull() {
+				continue
+			}
+			if collators[i] != nil {
+				tmp := val
+				tmp.SetBytes(collators[i].Key(val.GetString()))
+				val = tmp
+			}
+			if err := newSketches[i].InsertValue(sc, val); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Build sketches for column groups (indexes) from samples.
+	if len(colGroups) > 0 {
+		for gi, group := range colGroups {
+			idx := colLen + gi
+			if _, skip := skipIdx[gi]; skip {
+				newSketches[idx] = root.Base().FMSketches[idx]
+				continue
+			}
+			if len(group.ColumnOffsets) == 1 {
+				colIdx := int(group.ColumnOffsets[0])
+				newSketches[idx] = newSketches[colIdx].Copy()
+				continue
+			}
+			newSketches[idx] = statistics.NewFMSketch(statistics.MaxSketchSize)
+		}
+		datumBuffer := make([]types.Datum, 0, colLen)
+		for gi, group := range colGroups {
+			if _, skip := skipIdx[gi]; skip {
+				continue
+			}
+			if len(group.ColumnOffsets) == 1 {
+				continue
+			}
+			idx := colLen + gi
+			for _, sample := range root.Base().Samples {
+				datumBuffer = datumBuffer[:0]
+				for _, off := range group.ColumnOffsets {
+					colIdx := int(off)
+					val := sample.Columns[colIdx]
+					if collators[colIdx] != nil && !val.IsNull() {
+						tmp := val
+						tmp.SetBytes(collators[colIdx].Key(val.GetString()))
+						val = tmp
+					}
+					datumBuffer = append(datumBuffer, val)
+				}
+				if err := newSketches[idx].InsertRowValue(sc, datumBuffer); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// Replace sketches and recycle old ones we didn't reuse.
+	oldSketches := root.Base().FMSketches
+	for i, old := range oldSketches {
+		if old == nil {
+			continue
+		}
+		if i < len(newSketches) && newSketches[i] == old {
+			continue
+		}
+		old.DestroyAndPutToPool()
+	}
+	root.Base().FMSketches = newSketches
+	return nil
 }
 
 // handleNDVForSpecialIndexes deals with the logic to analyze the index containing the virtual column when the mode is full sampling.
