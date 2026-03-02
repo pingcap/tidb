@@ -233,6 +233,212 @@ func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 	require.Greater(t, totalRU, 0.0, "total reported RU should be positive")
 }
 
+func TestRUWindowAggregator_DropsLateDataAfterWindowReported(t *testing.T) {
+	// A closed [0,60) window can be reported only once, and later writes to that window must be dropped.
+	agg := newRUWindowAggregator()
+
+	agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
+		{
+			User:       "u1",
+			SQLDigest:  stmtstats.BinaryDigest("sql-a"),
+			PlanDigest: stmtstats.BinaryDigest("plan-a"),
+		}: {TotalRU: 10, ExecCount: 1, ExecDuration: 10},
+	})
+	first := agg.takeReportRecords(60, 60, []byte("ks"))
+	require.NotNil(t, first)
+	require.NotNil(t, findRURecordByDigest(first, "u1", "sql-a", "plan-a"))
+
+	// Late data for [0,60) should be ignored after reportEnd=60 was emitted.
+	agg.addBatchToBucket(10, stmtstats.RUIncrementMap{
+		{
+			User:       "u1",
+			SQLDigest:  stmtstats.BinaryDigest("sql-late"),
+			PlanDigest: stmtstats.BinaryDigest("plan-late"),
+		}: {TotalRU: 999, ExecCount: 1, ExecDuration: 1},
+	})
+	agg.addBatchToBucket(61, stmtstats.RUIncrementMap{
+		{
+			User:       "u1",
+			SQLDigest:  stmtstats.BinaryDigest("sql-cur"),
+			PlanDigest: stmtstats.BinaryDigest("plan-cur"),
+		}: {TotalRU: 1, ExecCount: 1, ExecDuration: 1},
+	})
+
+	second := agg.takeReportRecords(120, 60, []byte("ks"))
+	require.NotEmpty(t, second)
+	require.Nil(t, findRURecordByDigest(second, "u1", "sql-late", "plan-late"))
+	cur := findRURecordByDigest(second, "u1", "sql-cur", "plan-cur")
+	require.NotNil(t, cur)
+	require.Len(t, cur.Items, 1)
+	require.InDelta(t, 1.0, cur.Items[0].TotalRu, 1e-9)
+	// Also guard against "late data hidden in others".
+	require.InDelta(t, 1.0, totalRUFromTopRURecords(second), 1e-9)
+}
+
+func TestRUWindowAggregator_FinalReportCappedTo100x100(t *testing.T) {
+	// Final 60s output must enforce 100 users max and 100 SQL max per retained user.
+	agg := newRUWindowAggregator()
+	const (
+		numUsers       = 120
+		numSQLsPerUser = 120
+	)
+	batch := make(stmtstats.RUIncrementMap, numUsers*numSQLsPerUser)
+	for u := 0; u < numUsers; u++ {
+		for s := 0; s < numSQLsPerUser; s++ {
+			batch[stmtstats.RUKey{
+				User:       fmt.Sprintf("u%03d", u),
+				SQLDigest:  stmtstats.BinaryDigest(fmt.Sprintf("sql_%03d_%03d", u, s)),
+				PlanDigest: stmtstats.BinaryDigest("plan"),
+			}] = &stmtstats.RUIncrement{
+				// Keep deterministic ranking and avoid ties.
+				TotalRU:      float64((numUsers-u)*1000000 + (numSQLsPerUser - s)),
+				ExecCount:    1,
+				ExecDuration: 1,
+			}
+		}
+	}
+	agg.addBatchToBucket(1, batch)
+
+	records := agg.takeReportRecords(60, 60, []byte("ks"))
+	require.NotEmpty(t, records)
+
+	realUsers := map[string]int{}
+	var othersUserTotalRU float64
+	for i := range records {
+		rec := records[i]
+		if rec.User == keyRUOthersUser && len(rec.SqlDigest) == 0 && len(rec.PlanDigest) == 0 {
+			othersUserTotalRU += sumTopRUItems(rec.Items)
+			continue
+		}
+		if rec.User == keyRUOthersUser {
+			continue
+		}
+		if len(rec.SqlDigest) > 0 || len(rec.PlanDigest) > 0 {
+			realUsers[rec.User]++
+		} else {
+			if _, ok := realUsers[rec.User]; !ok {
+				realUsers[rec.User] = 0
+			}
+		}
+	}
+
+	require.LessOrEqual(t, len(realUsers), ruReportTopNUsers)
+	for user, sqlCount := range realUsers {
+		require.LessOrEqual(t, sqlCount, ruReportTopNSQLsPerUser, "user=%s", user)
+	}
+	require.Greater(t, othersUserTotalRU, 0.0)
+}
+
+func TestRUWindowAggregator_RegroupSparseBuckets_NoPhantomPoints(t *testing.T) {
+	cases := []struct {
+		name       string
+		interval   uint64
+		expectedTS []uint64
+		expectedRU []float64
+	}{
+		{
+			name:       "30s",
+			interval:   30,
+			expectedTS: []uint64{0, 30},
+			expectedRU: []float64{2, 3},
+		},
+		{
+			name:       "60s",
+			interval:   60,
+			expectedTS: []uint64{0},
+			expectedRU: []float64{5},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			agg := newRUWindowAggregator()
+			key := stmtstats.RUKey{
+				User:       "u-sparse",
+				SQLDigest:  stmtstats.BinaryDigest("sql-sparse"),
+				PlanDigest: stmtstats.BinaryDigest("plan-sparse"),
+			}
+			agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
+				key: {TotalRU: 2, ExecCount: 1, ExecDuration: 1},
+			})
+			agg.addBatchToBucket(31, stmtstats.RUIncrementMap{
+				key: {TotalRU: 3, ExecCount: 1, ExecDuration: 1},
+			})
+
+			records := agg.takeReportRecords(60, tc.interval, []byte("ks"))
+			require.Len(t, records, 1)
+			rec := findRURecordByDigest(records, "u-sparse", "sql-sparse", "plan-sparse")
+			require.NotNil(t, rec)
+			require.Len(t, rec.Items, len(tc.expectedTS))
+			for i := range tc.expectedTS {
+				require.Equal(t, tc.expectedTS[i], rec.Items[i].TimestampSec)
+				require.InDelta(t, tc.expectedRU[i], rec.Items[i].TotalRu, 1e-9)
+			}
+			require.InDelta(t, 5.0, totalRUFromTopRURecords(records), 1e-9)
+		})
+	}
+}
+
+func TestRUWindowAggregator_HotKeySurvivesUnderHighCardinality(t *testing.T) {
+	// Under high-cardinality long tail, the hot key should remain visible and not be folded into others.
+	agg := newRUWindowAggregator()
+	const (
+		lowKeyCount = 2000
+		hotRU       = 1e9
+	)
+	hotKey := stmtstats.RUKey{
+		User:       "u-hot",
+		SQLDigest:  stmtstats.BinaryDigest("sql-hot"),
+		PlanDigest: stmtstats.BinaryDigest("plan-hot"),
+	}
+	for _, ts := range []uint64{1, 16, 31, 46} {
+		agg.addBatchToBucket(ts, stmtstats.RUIncrementMap{
+			hotKey: {TotalRU: hotRU, ExecCount: 1, ExecDuration: 1},
+		})
+		for i := 0; i < lowKeyCount; i++ {
+			agg.addBatchToBucket(ts, stmtstats.RUIncrementMap{
+				{
+					User:       "u-hot",
+					SQLDigest:  stmtstats.BinaryDigest(fmt.Sprintf("sql-low-%04d", i)),
+					PlanDigest: stmtstats.BinaryDigest("plan-low"),
+				}: {TotalRU: 1, ExecCount: 1, ExecDuration: 1},
+			})
+		}
+	}
+
+	records := agg.takeReportRecords(60, 60, []byte("ks"))
+	require.NotEmpty(t, records)
+
+	hot := findRURecordByDigest(records, "u-hot", "sql-hot", "plan-hot")
+	require.NotNil(t, hot)
+	require.Len(t, hot.Items, 1)
+	require.InDelta(t, hotRU*4, hot.Items[0].TotalRu, 1e-6)
+
+	others := findRURecordByDigest(records, "u-hot", "", "")
+	require.NotNil(t, others)
+	othersTotal := sumTopRUItems(others.Items)
+	require.Greater(t, othersTotal, 0.0)
+	require.LessOrEqual(t, othersTotal, float64(lowKeyCount*4))
+
+	require.InDelta(t, hotRU*4+float64(lowKeyCount*4), totalRUFromTopRURecords(records), 1e-3)
+}
+
+func sumTopRUItems(items []*tipb.TopRURecordItem) float64 {
+	total := 0.0
+	for _, item := range items {
+		total += item.TotalRu
+	}
+	return total
+}
+
+func totalRUFromTopRURecords(records []tipb.TopRURecord) float64 {
+	total := 0.0
+	for _, rec := range records {
+		total += sumTopRUItems(rec.Items)
+	}
+	return total
+}
+
 func findRURecord(t *testing.T, records []tipb.TopRURecord, user, sqlDigest, planDigest string) tipb.TopRURecord {
 	t.Helper()
 	for _, rec := range records {
@@ -391,5 +597,63 @@ func BenchmarkFillAggregatorOnly_Medium(b *testing.B) {
 		agg := newRUWindowAggregator()
 		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
 		_ = agg
+	}
+}
+
+func BenchmarkTakeReportRecords_HotKey_15s(b *testing.B) {
+	keyspace := []byte("ks")
+	key := stmtstats.RUKey{
+		User:       "u_hot",
+		SQLDigest:  stmtstats.BinaryDigest("sql_hot"),
+		PlanDigest: stmtstats.BinaryDigest("plan_hot"),
+	}
+	batch := stmtstats.RUIncrementMap{
+		key: {TotalRU: 1, ExecCount: 1, ExecDuration: 1},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		agg.addBatchToBucket(1, batch)
+		agg.addBatchToBucket(16, batch)
+		agg.addBatchToBucket(31, batch)
+		agg.addBatchToBucket(46, batch)
+		_ = agg.takeReportRecords(60, 15, keyspace)
+	}
+}
+
+func BenchmarkTakeReportRecords_OverUserCap_60s(b *testing.B) {
+	keyspace := []byte("ks")
+	const numUsers, numSQLsPerUser = 600, 10 // exceed maxPreTopNUsers (400)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+		_ = agg.takeReportRecords(60, 60, keyspace)
+	}
+}
+
+func BenchmarkTakeReportRecords_OverSQLCapPerUser_60s(b *testing.B) {
+	keyspace := []byte("ks")
+	const numUsers, numSQLsPerUser = 10, 600 // exceed maxPreTopNSQLsPerUser (400)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		fillAggregatorForWindow(agg, 60, numUsers, numSQLsPerUser)
+		_ = agg.takeReportRecords(60, 60, keyspace)
+	}
+}
+
+func BenchmarkTakeReportRecords_LateTake_DropsOldWindows(b *testing.B) {
+	keyspace := []byte("ks")
+	const numUsers, numSQLsPerUser = 100, 100
+	batch := makeRUBatch(numUsers, numSQLsPerUser)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		agg := newRUWindowAggregator()
+		// Setup: write 3 windows and report only the last window.
+		for ts := uint64(1); ts < 180; ts += 15 {
+			agg.addBatchToBucket(ts, batch)
+		}
+		_ = agg.takeReportRecords(180, 60, keyspace)
 	}
 }

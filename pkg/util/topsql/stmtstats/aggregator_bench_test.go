@@ -103,3 +103,38 @@ func BenchmarkDrainAndPushRU_160kKeys(b *testing.B) {
 		a.drainAndPushRU()
 	}
 }
+
+func BenchmarkDrainAndPushRU_160kKeys_Preloaded(b *testing.B) {
+	state.EnableTopRU()
+	defer state.DisableTopRU()
+
+	const numUsers, numSQLsPerUser = 100, 100 // 10k keys per stats
+	const numStats = 16                       // 160k keys total
+	statsList := make([]*StatementStats, numStats)
+	for i := range statsList {
+		statsList[i] = &StatementStats{
+			data:             StatementStatsMap{},
+			finished:         atomic.NewBool(false),
+			finishedRUBuffer: RUIncrementMap{},
+		}
+	}
+	a := newAggregator()
+	for _, s := range statsList {
+		a.register(s)
+	}
+	a.registerRUCollector(&mockRUCollector{f: func(RUIncrementMap) {}})
+
+	// Setup: one immutable batch per stats with non-overlapping keys.
+	batches := make([]RUIncrementMap, numStats)
+	for i := range batches {
+		batches[i] = makeRUBatchForBench(numUsers, numSQLsPerUser, i*numUsers)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j, stats := range statsList {
+			stats.finishedRUBuffer = batches[j]
+		}
+		a.drainAndPushRU()
+	}
+}

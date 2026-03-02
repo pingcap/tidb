@@ -483,3 +483,92 @@ func TestSendTopRURecordsGatingAndErrors(t *testing.T) {
 		require.Len(t, stream.ruRecords, 1)
 	})
 }
+
+func TestPubSubDataSink_DoSend_OrderIsStable(t *testing.T) {
+	setGlobalTopRUEnabled := func(enabled bool) {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		if enabled {
+			topsqlstate.EnableTopRU()
+		}
+	}
+	t.Cleanup(func() {
+		setGlobalTopRUEnabled(false)
+	})
+	setGlobalTopRUEnabled(true)
+
+	responseKind := func(resp *tipb.TopSQLSubResponse) string {
+		switch resp.RespOneof.(type) {
+		case *tipb.TopSQLSubResponse_Record:
+			return "record"
+		case *tipb.TopSQLSubResponse_RuRecord:
+			return "ru_record"
+		case *tipb.TopSQLSubResponse_SqlMeta:
+			return "sql_meta"
+		case *tipb.TopSQLSubResponse_PlanMeta:
+			return "plan_meta"
+		default:
+			return "unknown"
+		}
+	}
+
+	data := &ReportData{
+		DataRecords: []tipb.TopSQLRecord{
+			{SqlDigest: []byte("S1"), PlanDigest: []byte("P1")},
+			{SqlDigest: []byte("S2"), PlanDigest: []byte("P2")},
+		},
+		RURecords: []tipb.TopRURecord{
+			{User: "u1", SqlDigest: []byte("R1"), PlanDigest: []byte("RP1")},
+			{User: "u2", SqlDigest: []byte("R2"), PlanDigest: []byte("RP2")},
+		},
+		SQLMetas: []tipb.SQLMeta{
+			{SqlDigest: []byte("S1"), NormalizedSql: "sql1"},
+		},
+		PlanMetas: []tipb.PlanMeta{
+			{PlanDigest: []byte("P1"), NormalizedPlan: "plan1"},
+		},
+	}
+
+	t.Run("stable send order", func(t *testing.T) {
+		stream := &mockPubSubDataSinkStream{}
+		gotOrder := make([]string, 0, 6)
+		stream.onSend = func(resp *tipb.TopSQLSubResponse, _ int) {
+			gotOrder = append(gotOrder, responseKind(resp))
+		}
+		ds := &pubSubDataSink{
+			stream:      stream,
+			enableTopRU: true,
+		}
+
+		err := ds.doSend(context.Background(), data)
+		require.NoError(t, err)
+		require.Equal(t,
+			[]string{"record", "record", "ru_record", "ru_record", "sql_meta", "plan_meta"},
+			gotOrder,
+		)
+	})
+
+	t.Run("context cancel stops sending", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		stream := &mockPubSubDataSinkStream{}
+		gotOrder := make([]string, 0, 6)
+		stream.onSend = func(resp *tipb.TopSQLSubResponse, count int) {
+			gotOrder = append(gotOrder, responseKind(resp))
+			if count == 3 {
+				cancel()
+			}
+		}
+		ds := &pubSubDataSink{
+			stream:      stream,
+			enableTopRU: true,
+		}
+
+		err := ds.doSend(ctx, data)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Len(t, gotOrder, 3)
+		require.Equal(t, []string{"record", "record", "ru_record"}, gotOrder)
+	})
+}

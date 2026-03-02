@@ -15,6 +15,8 @@
 package reporter
 
 import (
+	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -24,6 +26,9 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type mockSingleTargetDataSinkRegisterer struct{}
@@ -171,4 +176,67 @@ func TestSingleTargetDataSinkSendBatchTopRURecordRespectsTopRUState(t *testing.T
 	require.Len(t, latest, 1)
 	assert.Equal(t, "user1", latest[0].User)
 	assert.Equal(t, []byte("S1"), latest[0].SqlDigest)
+}
+
+type unimplementedTopRUAgentServer struct {
+	tipb.UnimplementedTopSQLAgentServer
+}
+
+func (s *unimplementedTopRUAgentServer) ReportTopRURecords(tipb.TopSQLAgent_ReportTopRURecordsServer) error {
+	return status.Error(codes.Unimplemented, "topru rpc not supported")
+}
+
+func TestSingleTargetDataSink_TopRU_Unimplemented_DegradesGracefully(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	grpcServer := grpc.NewServer()
+	tipb.RegisterTopSQLAgentServer(grpcServer, &unimplementedTopRUAgentServer{})
+	go func() {
+		_ = grpcServer.Serve(lis)
+	}()
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = lis.Close()
+	})
+
+	ds := NewSingleTargetDataSink(&mockSingleTargetDataSinkRegisterer{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, ds.tryEstablishConnection(ctx, lis.Addr().String()))
+	t.Cleanup(func() {
+		if ds.conn != nil {
+			_ = ds.conn.Close()
+			ds.conn = nil
+		}
+	})
+
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	topsqlstate.EnableTopRU()
+	t.Cleanup(func() {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+	})
+
+	records := []tipb.TopRURecord{{
+		User:      "user1",
+		SqlDigest: []byte("S1"),
+		Items: []*tipb.TopRURecordItem{{
+			TimestampSec: 1,
+			TotalRu:      1,
+			ExecCount:    1,
+			ExecDuration: 1,
+		}},
+	}}
+
+	err = ds.sendBatchTopRURecord(ctx, records)
+	require.NoError(t, err)
+	require.True(t, topsqlstate.TopRUEnabled())
+
+	err = ds.sendBatchTopRURecord(ctx, records)
+	require.NoError(t, err)
+	require.True(t, topsqlstate.TopRUEnabled())
 }

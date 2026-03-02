@@ -16,6 +16,7 @@ package reporter
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -102,6 +103,62 @@ func TestDefaultDataSinkRegistererTopRUDuplicateRegisterIsIdempotent(t *testing.
 	r.Deregister(ds)
 	require.False(t, topsqlstate.TopRUEnabled())
 	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
+}
+
+func TestDefaultDataSinkRegisterer_TopRURefCount_ConcurrentRegisterDeregister(t *testing.T) {
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	topsqlstate.DisableTopSQL()
+	topsqlstate.ResetTopRUItemInterval()
+	t.Cleanup(func() {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		topsqlstate.DisableTopSQL()
+		topsqlstate.ResetTopRUItemInterval()
+	})
+
+	r := NewDefaultDataSinkRegisterer(context.Background())
+	sinks := []*pubSubDataSink{
+		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S},
+		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S},
+		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_60S},
+		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S},
+		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S},
+		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_60S},
+	}
+
+	const (
+		goroutines = 4
+		loops      = 8
+	)
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		sink := sinks[g%len(sinks)]
+		go func(ds *pubSubDataSink) {
+			defer wg.Done()
+			for i := 0; i < loops; i++ {
+				if err := r.Register(ds); err != nil {
+					t.Errorf("register failed: %v", err)
+					return
+				}
+				r.Deregister(ds)
+			}
+		}(sink)
+	}
+	wg.Wait()
+
+	// Ensure all known sinks are removed before checking global state.
+	for _, sink := range sinks {
+		r.Deregister(sink)
+	}
+
+	require.False(t, topsqlstate.TopRUEnabled())
+	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
+	require.False(t, topsqlstate.TopSQLEnabled())
+	require.Empty(t, r.dataSinks)
 }
 
 type mockDataSink2 struct {
