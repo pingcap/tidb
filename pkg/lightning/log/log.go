@@ -193,24 +193,11 @@ func IsContextCanceledError(err error) bool {
 		return true
 	}
 
-<<<<<<< HEAD
-	// see https://github.com/aws/aws-sdk-go/blob/9d1f49ba/aws/credentials/credentials.go#L246-L249
-	// 2 cases that have meet:
-	// 	awserr.New("RequestCanceled", "request context canceled", err) and the nested err is context.Canceled
-	// 	awserr.New( "MultipartUpload", "upload multipart failed", err) and the nested err is the upper one
-	if v, ok := err.(awserr.BatchedErrors); ok {
-		for _, origErr := range v.OrigErrs() {
-			if IsContextCanceledError(origErr) {
-				return true
-			}
-		}
-=======
 	// https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/handle-errors.html
 	// In AWS SDK v2, check for smithy CanceledError type
 	var canceledError *smithy.CanceledError
 	if goerrors.As(err, &canceledError) {
 		return true
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 	}
 
 	// Check for smithy operation errors that wrap context cancellation

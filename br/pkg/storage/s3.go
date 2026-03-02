@@ -18,18 +18,6 @@ import (
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
 	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
-<<<<<<< HEAD
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/client"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3iface"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-=======
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -41,9 +29,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/logging"
-	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -98,14 +83,8 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
 type S3Storage struct {
-<<<<<<< HEAD
-	svc     s3iface.S3API
+	svc     S3API
 	options *backuppb.S3
-=======
-	svc       S3API
-	options   *backuppb.S3
-	accessRec *recording.AccessStats
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 }
 
 func (*S3Storage) MarkStrongConsistency() {
@@ -303,11 +282,7 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 }
 
 // NewS3StorageForTest creates a new S3Storage for testing only.
-<<<<<<< HEAD
-func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
-=======
-func NewS3StorageForTest(svc S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
+func NewS3StorageForTest(svc S3API, options *backuppb.S3) *S3Storage {
 	return &S3Storage{
 		svc:     svc,
 		options: options,
@@ -426,10 +401,6 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		}
 	}
 
-<<<<<<< HEAD
-	if qs.Endpoint != "" {
-		awsConfig.WithEndpoint(qs.Endpoint)
-=======
 	// Load the default configuration with our options
 	cfg, err := config.LoadDefaultConfig(ctx, configOpts...)
 	if err != nil {
@@ -465,29 +436,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(qs.Endpoint)
 		})
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 	}
 	if opts.HTTPClient != nil {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.HTTPClient = opts.HTTPClient
 		})
 	}
-<<<<<<< HEAD
-	cred, err := autoNewCred(&qs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if cred != nil {
-		awsConfig.WithCredentials(cred)
-	}
-	// awsConfig.WithLogLevel(aws.LogDebugWithSigning)
-	awsSessionOpts := session.Options{
-		Config: *awsConfig,
-	}
-	ses, err := session.NewSessionWithOptions(awsSessionOpts)
-	if err != nil {
-		return nil, errors.Trace(err)
-=======
 	// When using a profile, let AWS SDK handle credentials through the profile
 	// Don't call autoNewCred as it interferes with profile-based authentication
 	if qs.Profile == "" {
@@ -519,28 +473,6 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 		// Update config with assume role credentials
 		cfg.Credentials = assumeRoleProvider
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
-	}
-
-	if opts.AccessRecording != nil {
-		s3Opts = append(s3Opts, func(o *s3.Options) {
-			o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
-				return stack.Finalize.Add(middleware.FinalizeMiddlewareFunc(
-					"RecordRequests",
-					func(ctx context.Context, input middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
-						// Call the next middleware and get the result
-						output, metadata, err := next.HandleFinalize(ctx, input)
-
-						// Record the request if we have an HTTP request
-						if req, ok := input.Request.(*smithyhttp.Request); ok {
-							opts.AccessRecording.RecRequest(req.Request)
-						}
-
-						return output, metadata, err
-					},
-				), middleware.After)
-			})
-		})
 	}
 
 	// Create S3 client with all configured options
@@ -573,26 +505,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		}
 	}
 
-<<<<<<< HEAD
-	s3CliConfigs := []*aws.Config{}
-	// if role ARN and external ID are provided, try to get the credential using this way
-	if len(qs.RoleArn) > 0 {
-		creds := stscreds.NewCredentials(ses, qs.RoleArn, func(p *stscreds.AssumeRoleProvider) {
-			if len(qs.ExternalId) > 0 {
-				p.ExternalID = &qs.ExternalId
-			}
-		})
-		s3CliConfigs = append(s3CliConfigs,
-			aws.NewConfig().WithCredentials(creds),
-		)
-	}
-	c := s3.New(ses, s3CliConfigs...)
-
-	var region string
-=======
 	// Perform region detection and validation
 	var detectedRegion string
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 	if len(qs.Provider) == 0 || qs.Provider == "aws" {
 		// For AWS provider, detect the actual bucket region
 		// In AWS SDK v2, GetBucketRegion has a simpler signature
@@ -656,14 +570,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	// Create final S3Storage instance
 	s3Storage := &S3Storage{
-<<<<<<< HEAD
-		svc:     c,
+		svc:     client,
 		options: &qs,
-=======
-		svc:       client,
-		options:   &qs,
-		accessRec: opts.AccessRecording,
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 	}
 
 	// Check object lock status if requested
@@ -703,16 +611,10 @@ func getObjectCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
 		Bucket: aws.String(qs.Bucket),
 		Key:    aws.String("not-exists"),
 	}
-<<<<<<< HEAD
-	_, err := svc.GetObject(input)
-	if aerr, ok := err.(awserr.Error); ok {
-		if aerr.Code() == "NoSuchKey" {
-=======
 	_, err := svc.GetObject(ctx, input)
 	var aerr smithy.APIError
 	if goerrors.As(err, &aerr) {
 		if aerr.ErrorCode() == noSuchKey {
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 			// if key not exists and we reach this error, that
 			// means we have the correct permission to GetObject
 			// other we will get another error
@@ -737,22 +639,12 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc S3API, options *backuppb.S
 			Bucket: aws.String(options.Bucket),
 			Key:    aws.String(options.Prefix + file),
 		}
-<<<<<<< HEAD
-		_, err2 := svc.DeleteObjectWithContext(ctx, input)
-		if aerr, ok := err2.(awserr.Error); ok {
-			if aerr.Code() != "NoSuchKey" {
-				log.Warn("failed to delete object used for permission check",
-					zap.String("bucket", options.Bucket),
-					zap.String("key", *input.Key), zap.Error(err2))
-			}
-=======
 		_, err2 := svc.DeleteObject(ctx, input)
 		var noSuchKey *types.NoSuchKey
 		if !goerrors.As(err2, &noSuchKey) {
 			log.Warn("failed to delete object used for permission check",
 				zap.String("bucket", options.Bucket),
 				zap.String("key", *input.Key), zap.Error(err2))
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 		}
 		if err == nil {
 			err = errors.Trace(err2)
@@ -812,17 +704,13 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
-=======
 	// Use the proper waiter pattern in AWS SDK v2
 	waiter := s3.NewObjectExistsWaiter(rs.svc)
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 	hinput := &s3.HeadObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 	err = waiter.Wait(ctx, hinput, 30*time.Second)
-	rs.accessRec.RecWrite(len(data))
 	return errors.Trace(err)
 }
 
@@ -1452,9 +1340,6 @@ func (tr *tidbRetryer) IsErrorRetryable(err error) bool {
 	var isRetryable bool
 	defer func() {
 		log.Warn("failed to request s3, checking whether we can retry", zap.Error(err), zap.Bool("retry", isRetryable))
-		if isRetryable {
-			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
-		}
 	}()
 
 	// for unit test
@@ -1563,51 +1448,3 @@ func isHTTP2ConnAborted(err error) bool {
 	}
 	return false
 }
-<<<<<<< HEAD
-
-func (rl retryerWithLog) ShouldRetry(r *request.Request) (retry bool) {
-	defer func() {
-		log.Warn("failed to request s3, checking whether we can retry", zap.Error(r.Error), zap.Bool("retry", retry))
-	}()
-
-	// for unit test
-	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
-		log.Info("original error", zap.Error(r.Error))
-		if r.Error != nil {
-			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
-		}
-	})
-	if r.HTTPRequest.URL.Host == ec2MetaAddress && (isDeadlineExceedError(r.Error) || isConnectionResetError(r.Error)) {
-		// fast fail for unreachable linklocal address in EC2 containers.
-		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
-		return false
-	}
-	if isConnectionResetError(r.Error) {
-		return true
-	}
-	if isConnectionRefusedError(r.Error) {
-		return false
-	}
-	if isHTTP2ConnAborted(r.Error) {
-		return true
-	}
-	return rl.DefaultRetryer.ShouldRetry(r)
-}
-
-func (rl retryerWithLog) RetryRules(r *request.Request) time.Duration {
-	backoffTime := rl.DefaultRetryer.RetryRules(r)
-	log.Warn("failed to request s3, retrying", zap.Error(r.Error), zap.Duration("backoff", backoffTime))
-	return backoffTime
-}
-
-func defaultS3Retryer() request.Retryer {
-	return retryerWithLog{
-		DefaultRetryer: client.DefaultRetryer{
-			NumMaxRetries:    maxRetries,
-			MinRetryDelay:    1 * time.Second,
-			MinThrottleDelay: 2 * time.Second,
-		},
-	}
-}
-=======
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))

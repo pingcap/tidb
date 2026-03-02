@@ -447,8 +447,6 @@ def go_deps():
         ],
     )
     go_repository(
-<<<<<<< HEAD
-=======
         name = "com_github_aws_aws_sdk_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2",
@@ -748,7 +746,6 @@ def go_deps():
         ],
     )
     go_repository(
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
         name = "com_github_aymerick_douceur",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aymerick/douceur",

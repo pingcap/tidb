@@ -457,14 +457,8 @@ func TestS3Range(t *testing.T) {
 // TestWriteNoError ensures the WriteFile API issues a PutObject request and wait
 // until the object is available in the S3 bucket.
 func TestWriteNoError(t *testing.T) {
-<<<<<<< HEAD
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
-=======
-	accessRec := &recording.AccessStats{}
-	s := createS3SuiteWithRec(t, accessRec)
 	ctx := context.Background()
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 
 	putCall := s.s3.EXPECT().
 		PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -493,14 +487,8 @@ func TestWriteNoError(t *testing.T) {
 }
 
 func TestMultiUploadErrorNotOverwritten(t *testing.T) {
-<<<<<<< HEAD
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
-=======
-	accessRec := &recording.AccessStats{}
-	s := createS3SuiteWithRec(t, accessRec)
 	ctx := context.Background()
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 
 	s.s3.EXPECT().
 		CreateMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -519,14 +507,8 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 // TestReadNoError ensures the ReadFile API issues a GetObject request and correctly
 // read the entire body.
 func TestReadNoError(t *testing.T) {
-<<<<<<< HEAD
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
-=======
-	accessRec := &recording.AccessStats{}
-	s := createS3SuiteWithRec(t, accessRec)
 	ctx := context.Background()
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 
 	s.s3.EXPECT().
 		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -666,14 +648,8 @@ func TestFileExistsError(t *testing.T) {
 
 // TestOpenAsBufio checks that we can open a file for reading via bufio.
 func TestOpenAsBufio(t *testing.T) {
-<<<<<<< HEAD
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
-=======
-	accessRec := &recording.AccessStats{}
-	s := createS3SuiteWithRec(t, accessRec)
 	ctx := context.Background()
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 
 	s.s3.EXPECT().
 		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).

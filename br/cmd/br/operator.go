@@ -37,12 +37,7 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newMigrateToCommand())
 	cmd.AddCommand(newForceFlushCommand())
 	cmd.AddCommand(newChecksumCommand())
-<<<<<<< HEAD
-=======
 	cmd.AddCommand(newTestStorageCommand())
-	cmd.AddCommand(newPitrChecksumCommand())
-	cmd.AddCommand(newUpstreamChecksumCommand())
->>>>>>> 23262123f0 (br: upgrade AWS sdk from v1 to v2 (#64303))
 	return cmd
 }
 
