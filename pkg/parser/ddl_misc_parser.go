@@ -263,7 +263,14 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			}
 			p.accept(eq)
 			opt.Tp = ast.DatabaseOptionCharset
-			rawCharset := p.next().Lit
+			// yacc CharsetName → StringName | binaryType
+			// Reserved keywords like DEFAULT are not valid charset names.
+			csTok := p.next()
+			if !isIdentLike(csTok.Tp) && csTok.Tp != binaryType {
+				p.syntaxErrorAt(csTok)
+				return nil
+			}
+			rawCharset := csTok.Lit
 			cs, err := charset.GetCharsetInfo(rawCharset)
 			if err != nil || cs.Name == "" {
 				p.errs = append(p.errs, ErrUnknownCharacterSet.GenWithStackByArgs(rawCharset))
@@ -274,7 +281,13 @@ func (p *HandParser) parseDatabaseOptions() []*ast.DatabaseOption {
 			p.next()
 			p.accept(eq)
 			opt.Tp = ast.DatabaseOptionCollate
-			rawCollation := p.next().Lit
+			// yacc CollationName → StringName | binaryType
+			collTok := p.next()
+			if !isIdentLike(collTok.Tp) && collTok.Tp != binaryType {
+				p.syntaxErrorAt(collTok)
+				return nil
+			}
+			rawCollation := collTok.Lit
 			coll, err := charset.GetCollationByName(rawCollation)
 			if err != nil {
 				p.errs = append(p.errs, err)
