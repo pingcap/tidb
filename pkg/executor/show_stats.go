@@ -307,19 +307,24 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 		return nil
 	}
 	colNameToType := make(map[string]byte, statsTbl.ColNum())
+	colNameToCollation := make(map[string]string, statsTbl.ColNum())
 	for _, col := range statsTbl.StableOrderColSlice() {
-		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, nil)
+		coll := col.Info.GetCollate()
+		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, nil, []string{coll})
 		if err != nil {
 			return errors.Trace(err)
 		}
 		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
+		colNameToCollation[col.Info.Name.O] = coll
 	}
 	for _, idx := range statsTbl.StableOrderIdxSlice() {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
+		idxCollations := make([]string, 0, len(idx.Info.Columns))
 		for i := range idx.Info.Columns {
 			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
+			idxCollations = append(idxCollations, colNameToCollation[idx.Info.Columns[i].Name.O])
 		}
-		err := e.bucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram, idxColumnTypes)
+		err := e.bucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram, idxColumnTypes, idxCollations)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -370,19 +375,24 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 		return nil
 	}
 	colNameToType := make(map[string]byte, statsTbl.ColNum())
+	colNameToCollation := make(map[string]string, statsTbl.ColNum())
 	for _, col := range statsTbl.StableOrderColSlice() {
-		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.GetType()})
+		coll := col.Info.GetCollate()
+		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.GetType()}, []string{coll})
 		if err != nil {
 			return errors.Trace(err)
 		}
 		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
+		colNameToCollation[col.Info.Name.O] = coll
 	}
 	for _, idx := range statsTbl.StableOrderIdxSlice() {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
+		idxCollations := make([]string, 0, len(idx.Info.Columns))
 		for i := range idx.Info.Columns {
 			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
+			idxCollations = append(idxCollations, colNameToCollation[idx.Info.Columns[i].Name.O])
 		}
-		err := e.topNToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), 1, idx.TopN, idxColumnTypes)
+		err := e.topNToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), 1, idx.TopN, idxColumnTypes, idxCollations)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -390,14 +400,14 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 	return nil
 }
 
-func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, numOfCols int, isIndex int, topN *statistics.TopN, columnTypes []byte) error {
+func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, numOfCols int, isIndex int, topN *statistics.TopN, columnTypes []byte, collations []string) error {
 	if topN == nil {
 		return nil
 	}
 	var tmpDatum types.Datum
 	for i := range topN.TopN {
 		tmpDatum.SetBytes(topN.TopN[i].Encoded)
-		valStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), &tmpDatum, numOfCols, columnTypes)
+		valStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), &tmpDatum, numOfCols, columnTypes, collations...)
 		if err != nil {
 			return err
 		}
@@ -416,17 +426,17 @@ func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, nu
 
 // bucketsToRows converts histogram buckets to rows. If the histogram is built from index, then numOfCols equals to number
 // of index columns, else numOfCols is 0.
-func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string, numOfCols int, hist statistics.Histogram, idxColumnTypes []byte) error {
+func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string, numOfCols int, hist statistics.Histogram, idxColumnTypes []byte, collations []string) error {
 	isIndex := 0
 	if numOfCols > 0 {
 		isIndex = 1
 	}
 	for i := range hist.Len() {
-		lowerBoundStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), hist.GetLower(i), numOfCols, idxColumnTypes)
+		lowerBoundStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), hist.GetLower(i), numOfCols, idxColumnTypes, collations...)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		upperBoundStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), hist.GetUpper(i), numOfCols, idxColumnTypes)
+		upperBoundStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), hist.GetUpper(i), numOfCols, idxColumnTypes, collations...)
 		if err != nil {
 			return errors.Trace(err)
 		}
