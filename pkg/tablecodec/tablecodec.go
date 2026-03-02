@@ -793,18 +793,6 @@ const (
 	HandleNotNeeded
 )
 
-// reEncodeHandle encodes the handle as a Datum so it can be properly decoded later.
-// If it is common handle, it returns the encoded column values.
-// If it is int handle, it is encoded as int Datum or uint Datum decided by the unsigned.
-func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
-	handleColLen := 1
-	if !handle.IsInt() {
-		handleColLen = handle.NumCols()
-	}
-	result := make([][]byte, 0, handleColLen)
-	return reEncodeHandleTo(handle, unsigned, nil, result)
-}
-
 func reEncodeHandleTo(handle kv.Handle, unsigned bool, buf []byte, result [][]byte) ([][]byte, error) {
 	if !handle.IsInt() {
 		handleColLen := handle.NumCols()
@@ -978,9 +966,9 @@ func DecodeIndexKVEx(key, value []byte, colsLen int, hdStatus HandleStatus, colu
 		return decodeIndexKvOldCollation(key, value, hdStatus, buf, preAlloc)
 	}
 	if getIndexVersion(value) == 1 {
-		return decodeIndexKvForClusteredIndexVersion1(key, value, colsLen, hdStatus, columns)
+		return decodeIndexKvForClusteredIndexVersion1(key, value, colsLen, hdStatus, columns, buf, preAlloc)
 	}
-	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns)
+	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns, buf, preAlloc)
 }
 
 // DecodeIndexKV uses to decode index key values.
@@ -988,14 +976,14 @@ func DecodeIndexKVEx(key, value []byte, colsLen int, hdStatus HandleStatus, colu
 //	`colsLen` is expected to be index columns count.
 //	`columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+	preAlloc := make([][]byte, colsLen, colsLen+len(columns))
 	if len(value) <= MaxOldEncodeValueLen {
-		preAlloc := make([][]byte, colsLen, colsLen+len(columns))
 		return decodeIndexKvOldCollation(key, value, hdStatus, nil, preAlloc)
 	}
 	if getIndexVersion(value) == 1 {
-		return decodeIndexKvForClusteredIndexVersion1(key, value, colsLen, hdStatus, columns)
+		return decodeIndexKvForClusteredIndexVersion1(key, value, colsLen, hdStatus, columns, nil, preAlloc)
 	}
-	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns)
+	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns, nil, preAlloc)
 }
 
 // DecodeIndexHandle uses to decode the handle from index key/value.
@@ -1839,13 +1827,13 @@ func splitIndexValueForClusteredIndexVersion1(value []byte) (segs IndexValueSegm
 	return
 }
 
-func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
-	var resultValues [][]byte
+func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo, buf []byte, preAlloc [][]byte) ([][]byte, error) {
 	var keySuffix []byte
 	var handle kv.Handle
 	var err error
 	segs := splitIndexValueForClusteredIndexVersion1(value)
-	resultValues, keySuffix, err = CutIndexKeyNew(key, colsLen)
+	resultValues := preAlloc[:colsLen]
+	keySuffix, err = CutIndexKeyTo(key, resultValues)
 	if err != nil {
 		return nil, err
 	}
@@ -1889,13 +1877,13 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 }
 
 // decodeIndexKvGeneral decodes index key value pair of new layout in an extensible way.
-func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
-	var resultValues [][]byte
+func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo, buf []byte, preAlloc [][]byte) ([][]byte, error) {
 	var keySuffix []byte
 	var handle kv.Handle
 	var err error
 	segs := splitIndexValueForIndexValueVersion0(value)
-	resultValues, keySuffix, err = CutIndexKeyNew(key, colsLen)
+	resultValues := preAlloc[:colsLen]
+	keySuffix, err = CutIndexKeyTo(key, resultValues)
 	if err != nil {
 		return nil, err
 	}
@@ -1925,11 +1913,10 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 			return nil, err
 		}
 	}
-	handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+	resultValues, err = reEncodeHandleTo(handle, hdStatus == HandleIsUnsigned, buf, resultValues)
 	if err != nil {
 		return nil, err
 	}
-	resultValues = append(resultValues, handleBytes...)
 	if segs.PartitionID != nil {
 		_, pid, err := codec.DecodeInt(segs.PartitionID)
 		if err != nil {
