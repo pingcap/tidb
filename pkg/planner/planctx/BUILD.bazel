@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/planctx",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errctx",
         "//pkg/expression/exprctx",
         "//pkg/infoschema/context",
         "//pkg/kv",

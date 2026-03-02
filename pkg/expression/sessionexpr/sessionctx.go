@@ -189,6 +189,36 @@ func (ctx *EvalContext) Sctx() sessionctx.Context {
 	return ctx.sctx
 }
 
+// UnwrapInternalSctx returns the underlying internal session context as `any`.
+//
+// It is designed for callers that only have an `exprctx.EvalContext` (possibly wrapped) but need to reach the
+// original `sessionctx.Context`. We intentionally return `any` to avoid forcing low-level packages (e.g. exprctx)
+// to depend on `sessionctx` and form import cycles.
+func (ctx *EvalContext) UnwrapInternalSctx() any {
+	return ctx.sctx
+}
+
+// UnwrapInternalSctx tries to get sessionctx.Context from EvalContext wrappers.
+//
+// This helper is intentionally try-style: EvalContext can be valid without being bound
+// to a session (for example, static or test contexts). In those cases, returning nil is expected.
+func UnwrapInternalSctx(evalCtx exprctx.EvalContext) sessionctx.Context {
+	if evalCtx == nil {
+		return nil
+	}
+
+	if ctx, ok := evalCtx.(*EvalContext); ok {
+		return ctx.sctx
+	}
+
+	if u, ok := evalCtx.(exprctx.InternalSctxUnwrapper); ok {
+		if sctx, ok := u.UnwrapInternalSctx().(sessionctx.Context); ok {
+			return sctx
+		}
+	}
+	return nil
+}
+
 // CtxID returns the context id.
 func (ctx *EvalContext) CtxID() uint64 {
 	return ctx.sctx.GetSessionVars().StmtCtx.CtxID()

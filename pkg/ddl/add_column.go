@@ -613,7 +613,7 @@ func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast
 	var value any
 	var isSeqExpr bool
 	value, isSeqExpr, err = getDefaultValue(
-		exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelError),
+		exprctx.WithBuildCtxHandleTruncateErrLevel(ctx, errctx.LevelError),
 		col, option,
 	)
 	if err != nil {
@@ -1118,7 +1118,7 @@ func checkDefaultValue(ctx exprctx.BuildContext, c *table.Column, hasDefaultValu
 			return nil
 		}
 		_, err = table.GetColDefaultValue(
-			exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelError),
+			exprctx.WithBuildCtxHandleTruncateErrLevel(ctx, errctx.LevelError),
 			c.ToInfo(),
 		)
 		if err != nil {

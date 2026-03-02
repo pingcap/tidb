@@ -1124,7 +1124,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 		if col.IsVirtualGenerated() {
 			if !truncateIgnored {
 				// Ignore redundant warning here.
-				ctx = exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelIgnore)
+				ctx = exprctx.WithBuildCtxHandleTruncateErrLevel(ctx, errctx.LevelIgnore)
 				truncateIgnored = true
 			}
 
