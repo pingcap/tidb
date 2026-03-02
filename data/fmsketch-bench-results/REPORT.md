@@ -2,15 +2,17 @@
 
 ## Summary
 
-The PR (`simplify-fmsketch`) replaces `dolthub/swiss.Map[uint64, bool]` + `sync.Pool` with native Go `map[uint64]struct{}` and simple nil assignment. On Go 1.25.6 (which has Swiss-table-backed native maps), the PR is **the fastest configuration overall at ~12s vs 14-20s for alternatives**. The pool+Clear pattern that was intended as an optimization is actually a **40-70% performance regression** regardless of map implementation.
+The PR (`simplify-fmsketch`) replaces `dolthub/swiss.Map[uint64, bool]` + `sync.Pool` with native Go `map[uint64]struct{}` and simple nil assignment. On Go 1.25.6 (which has Swiss-table-backed native maps), the PR is **the fastest configuration overall at ~10.3s vs 14-20s for alternatives**. The pool+Clear pattern that was intended as an optimization is actually a **40-90% performance regression** regardless of map implementation.
+
+Pre-allocating the map to `maxSize` capacity in `NewFMSketch` avoids incremental grow-and-rehash cycles during merge, giving an additional 19% speedup over the initial PR version (12.0s -> 10.3s).
 
 | Configuration | Phase 1 | Phase 2 | Phase 3 | Total | Verdict |
 |---|---|---|---|---|---|
-| **PR (native map, no pool)** | **9.0s** | **2.5s** | 0.5s | **12.0s** | **Winner** |
-| Master (swiss, no destroy) | 9.8s | 3.8s | 0.35s | 13.9s | +16% slower |
-| Stash (native map + pool, no destroy) | 12.5s | 4.0s | 0.47s | 16.9s | +42% slower |
-| Master + destroy (swiss + pool+Clear) | 16.6s | 2.5s | 0.48s | 19.5s | +63% slower |
-| Stash + destroy (native map + pool+clear) | 13.9s | 2.5s | 0.56s | 17.0s | +42% slower |
+| **PR (native map, no pool)** | **7.3s** | **2.5s** | 0.49s | **10.3s** | **Winner** |
+| Master (swiss, no destroy) | 9.8s | 3.8s | 0.35s | 13.9s | +35% slower |
+| Stash (native map + pool, no destroy) | 12.5s | 4.0s | 0.47s | 16.9s | +64% slower |
+| Master + destroy (swiss + pool+Clear) | 16.6s | 2.5s | 0.48s | 19.5s | +89% slower |
+| Stash + destroy (native map + pool+clear) | 13.9s | 2.5s | 0.56s | 17.0s | +65% slower |
 
 ## Test configuration
 
@@ -28,8 +30,7 @@ This is the hot path during ANALYZE — each partition's region sketches are des
 
 | Configuration | Wall | Allocs | Alloc bytes | GC runs | GC pause |
 |---|---|---|---|---|---|
-| **PR** | **9.0s** | 2.6M | 13.1 GB | 35 | 1.9ms |
-| PR + destroy | 8.8s | 2.6M | 13.1 GB | 35 | 1.8ms |
+| **PR** | **7.3s** | 2.3M | 10.9 GB | 29 | 1.4ms |
 | Master | 9.8s | 4.2M | 9.2 GB | 33 | 1.9ms |
 | Master + destroy | 16.6s | 829K | 1.7 GB | 1 | 0.1ms |
 | Stash | 12.5s | 5.0M | 18.6 GB | 48 | 2.6ms |
@@ -37,7 +38,9 @@ This is the hot path during ANALYZE — each partition's region sketches are des
 
 Master+destroy and Stash+destroy show very few GC runs and allocations because the pool recycles objects. But the `Clear()` / `clear(map)` call on each return-to-pool is so expensive that the wall time is **far worse** despite avoiding GC. The pool suppresses GC but replaces it with something slower.
 
-The stash without destroy is slowest (12.5s) because `NewFMSketch` hits the pool, gets a pre-allocated map, but never returns it — worst of both worlds.
+The stash without destroy is slow (12.5s) because `NewFMSketch` hits the pool, gets a pre-allocated map, but never returns it — worst of both worlds.
+
+The PR's pre-allocation to `maxSize` capacity eliminates map growth during merge (2.3M allocs vs 2.6M before, 10.9 GB vs 13.1 GB), saving ~1.7s.
 
 ### Phase 2: Save/Load round-trip (8000 sketches)
 
@@ -45,7 +48,7 @@ Simulates persistence to `mysql.stats_fm_sketch`: encode each partition sketch, 
 
 | Configuration | Wall | Allocs | Alloc bytes | GC runs |
 |---|---|---|---|---|
-| **PR** | **2.5s** | 576K | 7.0 GB | 3 |
+| **PR** | **2.5s** | 576K | 7.0 GB | 4 |
 | Master | 3.8s | 448K | 7.8 GB | 5 |
 | Master + destroy | 2.5s | 304K | 4.7 GB | 3 |
 | Stash | 4.0s | 880K | 9.2 GB | 4 |
@@ -59,13 +62,13 @@ Simulates `blockingMergePartitionStats2GlobalStats`: merge all partition sketche
 
 | Configuration | Wall | Allocs |
 |---|---|---|
+| **PR** | 0.49s | 0 |
 | Master | 0.35s | 4 |
-| Stash | 0.47s | 0 |
 | Master + destroy | 0.48s | 22 |
-| **PR** | 0.50s | 0 |
+| Stash | 0.47s | 0 |
 | Stash + destroy | 0.56s | 20 |
 
-Master is slightly faster here (0.35s vs 0.50s) because swiss map iteration may be faster for the merge-into-global pattern. But Phase 3 is <5% of total time, so this doesn't matter.
+Master is slightly faster here (0.35s vs 0.49s) because swiss map iteration may be faster for the merge-into-global pattern. But Phase 3 is <5% of total time, so this doesn't matter.
 
 ## Key takeaways
 
@@ -75,7 +78,9 @@ Master is slightly faster here (0.35s vs 0.50s) because swiss map iteration may 
 
 3. **The PR's simplicity wins.** By removing both swiss maps AND the pool, the PR gets the cleanest allocation pattern and the best total performance. Fewer moving parts = fewer pathological interactions.
 
-4. **GC is not a problem at this scale.** 35 GC runs with 2ms total pause across 9s of work is negligible. The pool was solving a problem that didn't exist.
+4. **Pre-allocating to maxSize pays off.** Allocating `make(map[uint64]struct{}, maxSize)` up front avoids incremental rehashing during merge, cutting Phase 1 from 9.0s to 7.3s (-19%) at the cost of ~600 MB higher peak heap (3.7 GB vs 3.1 GB).
+
+5. **GC is not a problem at this scale.** 29 GC runs with 1.4ms total pause across 7.3s of work is negligible. The pool was solving a problem that didn't exist.
 
 ## Raw data
 
@@ -84,5 +89,5 @@ All raw output files are in this directory:
 - `master_destroy.txt` — swiss map, pool+Clear active
 - `stash_native_map_pool_no_destroy.txt` — native map, pool unused
 - `stash_native_map_pool_destroy.txt` — native map, pool+clear active
-- `pr_no_destroy.txt` — native map, no pool
-- `pr_destroy.txt` — native map, no pool (destroy = nil, same as no destroy)
+- `pr_no_destroy.txt` — native map, no pool (with maxSize pre-allocation)
+- `pr_destroy.txt` — native map, no pool (destroy = nil, same as no destroy; earlier run with cap-128 pre-allocation)
