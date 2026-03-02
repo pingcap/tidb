@@ -132,15 +132,13 @@ func crossEstimateIndexRowCount(sctx planctx.PlanContext,
 	dsStatsInfo, dsTableStats *property.StatsInfo, dsStatisticTable *statistics.Table,
 	path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	filtersLen := len(path.TableFilters) + len(path.IndexFilters)
-	sessVars := sctx.GetSessionVars()
-	if dsStatisticTable.Pseudo || filtersLen == 0 || !sessVars.EnableExtendedStats || !sctx.GetSessionVars().EnableCorrelationAdjustment {
+	if dsStatisticTable.Pseudo || filtersLen == 0 || !sctx.GetSessionVars().EnableCorrelationAdjustment {
 		return 0, false, 0
 	}
-	col, corr := getMostCorrCol4Index(path, dsStatisticTable, sessVars.CorrelationThreshold)
 	filters := make([]expression.Expression, 0, filtersLen)
 	filters = append(filters, path.TableFilters...)
 	filters = append(filters, path.IndexFilters...)
-	return crossEstimateRowCount(sctx, dsStatsInfo, dsTableStats, path, filters, col, corr, expectedCnt, desc)
+	return crossEstimateRowCount(sctx, dsStatsInfo, dsTableStats, path, filters, nil, 0, expectedCnt, desc)
 }
 
 // crossEstimateRowCount is the common logic of crossEstimateTableRowCount and crossEstimateIndexRowCount.
@@ -260,38 +258,6 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 		convertedRanges = []*ranger.Range{{LowVal: []types.Datum{{}}, HighVal: ranges[i].LowVal, HighExclude: !ranges[i].LowExclude, Collators: ranges[i].Collators}}
 	}
 	return convertedRanges, count, false
-}
-
-// getMostCorrCol4Index checks if column in the condition is correlated enough with the first index column. If the condition
-// contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
-func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
-	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
-		return nil, 0
-	}
-	cols := expression.ExtractColumnsMapFromExpressions(nil, append(path.TableFilters, path.IndexFilters...)...)
-	if len(cols) == 0 {
-		return nil, 0
-	}
-	var corr float64
-	var corrCol *expression.Column
-	for _, col := range cols {
-		curCorr := float64(0)
-		for _, item := range histColl.ExtendedStats.Stats {
-			if (col.ID == item.ColIDs[0] && path.FullIdxCols[0].ID == item.ColIDs[1]) ||
-				(col.ID == item.ColIDs[1] && path.FullIdxCols[0].ID == item.ColIDs[0]) {
-				curCorr = item.ScalarVals
-				break
-			}
-		}
-		if corrCol == nil || math.Abs(corr) < math.Abs(curCorr) {
-			corrCol = col
-			corr = curCorr
-		}
-	}
-	if len(cols) == 1 && math.Abs(corr) >= threshold {
-		return corrCol, corr
-	}
-	return nil, corr
 }
 
 // getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition

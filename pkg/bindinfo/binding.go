@@ -135,6 +135,11 @@ type BindingMatchInfo struct {
 
 // MatchSQLBinding returns the matched binding for this statement.
 func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
+	return MatchSQLBindingWithCache(sctx, stmtNode, nil)
+}
+
+// MatchSQLBindingWithCache matches binding with optional normalization cache.
+func MatchSQLBindingWithCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
 	sessionVars := sctx.GetSessionVars()
 	useBinding := sessionVars.UsePlanBaselines
 	if !useBinding || stmtNode == nil {
@@ -153,7 +158,7 @@ func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 	if cache != nil {
 		return cache.binding, cache.matched, cache.scope
 	}
-	return matchSQLBindingCore(sctx, sessionVars, stmtNode, nil)
+	return matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
 }
 
 func getMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode) (cache *BindingCacheItem) {

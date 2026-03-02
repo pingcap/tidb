@@ -58,7 +58,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
 	}
-	vardef.CloudStorageURI.Store("s3://bucket/path")
+	vardef.CloudStorageURI.Store("s3://bucket")
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
@@ -78,7 +78,7 @@ func TestInitDefaultOptions(t *testing.T) {
 		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	}
 
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
+	require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
@@ -156,7 +156,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI, sql)
+	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sql)
 
 	// override cloud storage uri using option
 	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"

@@ -77,7 +77,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 	h := dom.StatsHandle()
 	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t all columns")
-	tk.MustExec("explain select * from t where a = 'aaa'")
+	tk.MustExec("explain format = 'brief' select * from t where a = 'aaa'")
 	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	var (
 		input  []string
@@ -537,6 +537,74 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 1.0, countResult.Est)
 }
 
+// TestCanSkipIndexEstimation verifies that GetRowCountByIndexRanges uses the fast path
+// (canSkipIndexEstimation) when ranges include a full range with NULLs [NULL, +inf),
+// returning RealtimeCount directly without expensive histogram estimation.
+func TestCanSkipIndexEstimation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Use mock stats so Idx2ColUniqueIDs is populated (required by getIndexRowCountForStatsV2).
+	realtimeCount := int64(51) // 50 rows + 1 NULL
+	statsTbl := mockStatsTable(tblInfo, realtimeCount)
+	colValues, err := generateIntDatum(1, 51)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		statsTbl.SetCol(int64(i), &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	// Index histogram must store encoded key bytes (same as getIndexRowCountForStatsV2 uses for l/r).
+	idxValues := make([]types.Datum, 51)
+	for i := 0; i < 51; i++ {
+		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
+		require.NoError(t, err)
+		idxValues[i].SetBytes(enc)
+	}
+	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
+		Histogram: *mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob)),
+		Info:      tblInfo.Indices[0],
+		StatsVer:  2,
+	})
+	generateMapsForMockStatsTbl(statsTbl)
+
+	idxID := tblInfo.Indices[0].ID
+	sctx := mock.NewContext()
+
+	// Full range including NULLs [NULL, +inf) triggers canSkipIndexEstimation fast path.
+	// Result should equal RealtimeCount exactly (no histogram estimation).
+	fullRanges := ranger.FullRange()
+	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges, nil)
+	require.NoError(t, err)
+	require.Equal(t, float64(realtimeCount), countResult.Est,
+		"full range [NULL,+inf) should use fast path and return RealtimeCount")
+
+	// Full range excluding NULLs [MinNotNull, +inf) should NOT use fast path.
+	// It goes through histogram estimation.
+	fullNotNullRanges := ranger.FullNotNullRange()
+	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges, nil)
+	require.NoError(t, err)
+	require.LessOrEqual(t, countResult2.Est, float64(realtimeCount),
+		"full not-null range excludes NULLs, estimate should be <= RealtimeCount")
+
+	// Bounded range should NOT use fast path.
+	boundedRanges := getRange(1, 10)
+	countResult3, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, boundedRanges, nil)
+	require.NoError(t, err)
+	require.Less(t, countResult3.Est, float64(realtimeCount),
+		"bounded range should use histogram estimation, not fast path")
+}
+
 func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -666,8 +734,8 @@ func TestNewIndexWithColumnStats(t *testing.T) {
 
 	// Two row estimates should differ, even though both indexes have no statistics because t uses column statistics
 	// Estimation from table t should be very close to true row count
-	rows := testKit.MustQuery("explain analyze select * from t use index(idxa) where a > 5 and a < 25").Rows()
-	rows2 := testKit.MustQuery("explain select * from t2 use index(idxa) where a > 5 and a < 25").Rows()
+	rows := testKit.MustQuery("explain analyze format = 'brief' select * from t use index(idxa) where a > 5 and a < 25").Rows()
+	rows2 := testKit.MustQuery("explain format = 'brief' select * from t2 use index(idxa) where a > 5 and a < 25").Rows()
 	rowCnt1, _ := strconv.ParseFloat(rows[0][1].(string), 64)
 	trueRowCnt, _ := strconv.ParseFloat(rows[0][2].(string), 64)
 	rowCnt2, _ := strconv.ParseFloat(rows2[0][1].(string), 64)
@@ -732,7 +800,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 	// Make sure column stats has been loaded.
-	testKit.MustExec(`explain select * from t where a is null`)
+	testKit.MustExec(`explain format = 'brief' select * from t where a is null`)
 	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	for i := 5; i < len(input); i++ {
 		testdata.OnRecord(func() {
@@ -799,12 +867,12 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
 			selectivity:              0.006358024691358024,
-			selectivityAfterIncrease: 0.01117283950617284,
+			selectivityAfterIncrease: 0.011302469135802469,
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
 			selectivity:              0.012530864197530862,
-			selectivityAfterIncrease: 0.01734567901234568,
+			selectivityAfterIncrease: 0.017475308641975308,
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
@@ -819,7 +887,7 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              0.001851851851851852,
-			selectivityAfterIncrease: 0.0829,
+			selectivityAfterIncrease: 0.11122575925925926,
 		},
 		{
 			exprs:                    longExpr,
@@ -927,7 +995,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 
 	// Test issue 27294
 	testKit.MustExec("create table tt (COL1 blob DEFAULT NULL,COL2 decimal(37,4) DEFAULT NULL,COL3 timestamp NULL DEFAULT NULL,COL4 int(11) DEFAULT NULL,UNIQUE KEY U_M_COL4(COL1(10),COL2), UNIQUE KEY U_M_COL5(COL3,COL2));")
-	testKit.MustExec("explain select * from tt where col1 is not null or col2 not between 454623814170074.2771 and -975540642273402.9269 and col3 not between '2039-1-19 10:14:57' and '2002-3-27 14:40:23';")
+	testKit.MustExec("explain format = 'brief' select * from tt where col1 is not null or col2 not between 454623814170074.2771 and -975540642273402.9269 and col3 not between '2039-1-19 10:14:57' and '2002-3-27 14:40:23';")
 }
 
 func TestIndexEstimationCrossValidate(t *testing.T) {
@@ -1367,7 +1435,51 @@ func TestIssue39593(t *testing.T) {
 	countResult, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals), nil)
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table, use range to reduce test flakiness
-	require.InDelta(t, float64(3702.6), countResult.Est, float64(1))
+	require.InDelta(t, float64(5400), countResult.Est, float64(1))
+}
+
+func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, b int, c int, index idx_ab(a, b))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock only column stats and keep index stats missing, so estimation goes through partial column stats path.
+	statsTbl := mockStatsTable(tblInfo, 1000)
+	statsTbl.PhysicalID = tblInfo.ID
+	statsTbl.Version = 2
+	statsTbl.ColAndIdxExistenceMap = statistics.NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices))
+	colValues, err := generateIntDatum(1, 100)
+	require.NoError(t, err)
+	for i := range 3 {
+		colInfo := tblInfo.Columns[i]
+		statsTbl.SetCol(colInfo.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(colInfo.ID, colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              colInfo,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	h.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
+
+	// `idx_ab` is non-unique, planner may append handle column to execution ranges.
+	// The estimation path should still use ranges aligned with index columns.
+	require.NotPanics(t, func() {
+		tk.MustQuery("explain format='brief' select * from t use index(idx_ab) where a = 1 and b = 2 and id = 3").
+			Check(testkit.Rows(
+				`IndexLookUp 1.00 root  `,
+				`├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1 2 3,1 2 3], keep order:false, stats:partial[idx_ab:missing]`,
+				`└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[idx_ab:missing]`))
+	})
 }
 
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
@@ -2088,6 +2200,89 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	require.Less(t, count2, count3)
 }
 
+// TestOutOfRangeGeVsBetween tests two out-of-range queries: col >= 100 and col BETWEEN 100 AND 102.
+// Histogram has values 1-100 so the right uncertainty band (histR, boundR) is (100, 199).
+// [100, 102] overlaps that band (bounded gets a fraction); [100, MaxInt64] is unbounded and gets the full band.
+// Uses mock statistics only (no store/table/analyze). We verify:
+// 1. MaxEst for "col >= 100" is strictly larger than MaxEst for "col BETWEEN 100 AND 102".
+// 2. For every skewRatio, Est for "col >= 100" is strictly larger than Est for "col BETWEEN 100 AND 102".
+func TestOutOfRangeGeVsBetween(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("a"), Offset: 0, Length: -1},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Histogram 1-100 so boundR = 199; [100, 102] overlaps (100, 199), unbounded [100, MaxInt64] gets full band.
+	rowCount := int64(100)
+	statsTbl := mockStatsTable(tblInfo, rowCount)
+
+	colValues, err := generateIntDatum(1, 100)
+	require.NoError(t, err)
+	for i := range colValues {
+		colValues[i].SetInt64(int64(i) + 1)
+	}
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
+	sctx := mock.NewContext()
+	realtimeCount := rowCount * 10
+	modifyCount := realtimeCount * 2
+
+	rangeGe100 := getRange(100, math.MaxInt64)
+	rangeBetween100102 := getRange(100, 102)
+
+	sctx.GetSessionVars().RiskRangeSkewRatio = 0.5
+	est1, err := getColumnRowCount(sctx, col, rangeGe100, realtimeCount, modifyCount, false)
+	require.NoError(t, err)
+	est2, err := getColumnRowCount(sctx, col, rangeBetween100102, realtimeCount, modifyCount, false)
+	require.NoError(t, err)
+
+	t.Logf("col >= 100 (unbounded): Est=%.2f MinEst=%.2f MaxEst=%.2f", est1.Est, est1.MinEst, est1.MaxEst)
+	t.Logf("col BETWEEN 100 AND 102 (bounded): Est=%.2f MinEst=%.2f MaxEst=%.2f", est2.Est, est2.MinEst, est2.MaxEst)
+
+	for _, ratio := range []float64{0, 0.3, 0.5, 0.7, 1} {
+		sctx.GetSessionVars().RiskRangeSkewRatio = ratio
+		e1, err := getColumnRowCount(sctx, col, rangeGe100, realtimeCount, modifyCount, false)
+		require.NoError(t, err)
+		e2, err := getColumnRowCount(sctx, col, rangeBetween100102, realtimeCount, modifyCount, false)
+		require.NoError(t, err)
+		t.Logf("skew_ratio=%.1f: col >= 100 Est=%.2f MinEst=%.2f MaxEst=%.2f | BETWEEN 100 AND 102 Est=%.2f MinEst=%.2f MaxEst=%.2f",
+			ratio, e1.Est, e1.MinEst, e1.MaxEst, e2.Est, e2.MinEst, e2.MaxEst)
+		require.Greaterf(t, e1.Est, e2.Est,
+			"skew_ratio=%v: Est for col >= 100 (%v) must be larger than Est for col BETWEEN 100 AND 102 (%v)",
+			ratio, e1.Est, e2.Est)
+	}
+	require.Greaterf(t, est1.MaxEst, est2.MaxEst,
+		"MaxEst for col >= 100 (%v) must be larger than MaxEst for col BETWEEN 100 AND 102 (%v)",
+		est1.MaxEst, est2.MaxEst)
+}
+
 func TestLastBucketEndValueHeuristic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -2227,7 +2422,7 @@ func TestUninitializedStats(t *testing.T) {
 	tk.MustExec(`insert into t1 values(1, 1, '{"foo": "bar"}'), (2, 1, '{"foo": "bar"}');`)
 	tk.MustExec("analyze table t1;")
 	// Trigger load stats of idx_expr.
-	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';")
+	tk.MustQuery("explain analyze format = 'brief' select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';")
 	tk.MustQuery("show stats_histograms").CheckNotContain("allEvicted")
-	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
+	tk.MustQuery("explain analyze format = 'brief' select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
 }

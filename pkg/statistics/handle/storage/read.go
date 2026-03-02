@@ -16,17 +16,14 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -245,57 +242,6 @@ func CheckSkipColumnPartiion(sctx sessionctx.Context, tblID int64, isIndex int, 
 		return types.ErrPartitionColumnStatsMissing
 	}
 	return nil
-}
-
-// ExtendedStatsFromStorage reads extended stats from storage.
-func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, tableID int64, loadAll bool) (*statistics.Table, error) {
-	failpoint.Inject("injectExtStatsLoadErr", func() {
-		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
-	})
-	lastVersion := uint64(0)
-	if table.ExtendedStats != nil && !loadAll {
-		lastVersion = table.ExtendedStats.LastUpdateVersion
-	} else {
-		table.ExtendedStats = statistics.NewExtendedStatsColl()
-	}
-	rows, _, err := util.ExecRows(sctx, "select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?, %?) and version > %?",
-		tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsDeleted, lastVersion)
-	if err != nil || len(rows) == 0 {
-		return table, nil
-	}
-	for _, row := range rows {
-		lastVersion = max(lastVersion, row.GetUint64(5))
-		name := row.GetString(0)
-		status := uint8(row.GetInt64(1))
-		if status == statistics.ExtendedStatsDeleted || status == statistics.ExtendedStatsInited {
-			delete(table.ExtendedStats.Stats, name)
-		} else {
-			item := &statistics.ExtendedStatsItem{
-				Tp: uint8(row.GetInt64(2)),
-			}
-			colIDs := row.GetString(3)
-			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
-			if err != nil {
-				statslogutil.StatsLogger().Error("decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
-				return nil, err
-			}
-			statsStr := row.GetString(4)
-			if item.Tp == ast.StatsTypeCardinality || item.Tp == ast.StatsTypeCorrelation {
-				if statsStr != "" {
-					item.ScalarVals, err = strconv.ParseFloat(statsStr, 64)
-					if err != nil {
-						statslogutil.StatsLogger().Error("parse scalar stats failed", zap.String("stats", statsStr), zap.Error(err))
-						return nil, err
-					}
-				}
-			} else {
-				item.StringVals = statsStr
-			}
-			table.ExtendedStats.Stats[name] = item
-		}
-	}
-	table.ExtendedStats.LastUpdateVersion = lastVersion
-	return table, nil
 }
 
 func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
@@ -595,7 +541,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			table.StatsVer = statistics.Version0
 		}
 	}
-	return ExtendedStatsFromStorage(sctx, table.CopyAs(statistics.ExtendedStatsWritable), tableID, loadAll)
+	return table, nil
 }
 
 // LoadHistogram will load histogram from storage.

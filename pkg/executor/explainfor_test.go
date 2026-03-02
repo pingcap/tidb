@@ -75,13 +75,13 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, `TableReader_6 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0 data:TableFullScan_5 N/A N/A\n`+
-			`└─TableFullScan_5 10000\.00 0 cop\[tikv\] table:t1  keep order:false, stats:pseudo N/A N/A`,
+		require.Regexp(t, `TableReader(?:_\d+)? 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0 data:TableFullScan(?:_\d+)? N/A N/A\n`+
+			`└─TableFullScan(?:_\d+)? 10000\.00 0 cop\[tikv\] table:t1  keep order:false, stats:pseudo N/A N/A`,
 			buf.String())
 	}
 	tkRoot.MustQuery("select * from t1;")
 	check()
-	tkRoot.MustQuery("explain analyze select * from t1;")
+	tkRoot.MustQuery("explain analyze format = 'brief' select * from t1;")
 	check()
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	require.True(t, plannererrors.ErrAccessDenied.Equal(err))
@@ -161,8 +161,8 @@ func TestIssue11124(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	rs := tk.MustQuery("explain select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
-	rs2 := tk2.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
+	rs := tk.MustQuery("explain format = 'brief' select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
+	rs2 := tk2.MustQuery(fmt.Sprintf("explain format = 'brief' for connection %d", tkRootProcess.ID)).Rows()
 	for i := range rs {
 		require.Equal(t, rs2[i], rs[i])
 	}

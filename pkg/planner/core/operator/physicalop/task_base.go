@@ -400,6 +400,10 @@ type CopTask struct {
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
 
+	// PartialOrderMatchResult stores the match result for partial order optimization.
+	// Set by convertToIndexScan when a prefix index provides partial order for TopN.
+	PartialOrderMatchResult *property.PartialOrderMatchResult
+
 	// Warnings passed through different task copy attached with more upper operator specific Warnings. (not concurrent safe)
 	Warnings SimpleWarnings
 }
