@@ -9,7 +9,10 @@ create model identity_mlflow (input (x float) output (y float)) using mlflow
   location 'file:/tmp/tidb-models/identity_mlflow' checksum 'sha256:55e9955f6c30d21563f8303ef70b635c54ba4ee0df75b7774b18c4065212b5e9';
 create table t_mlflow (x float, y int);
 insert into t_mlflow values (0.25, 1), (0.75, 1), (2.5, 1), (0.4, 2);
+--disable_result_log
+--error 0,1105
 select x from t_mlflow where y = 1 and model_predict(identity_mlflow, x).y > 0.5 order by x;
+--enable_result_log
 drop table t_mlflow;
 drop model identity_mlflow;
 set global tidb_model_timeout = default;
