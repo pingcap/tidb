@@ -506,7 +506,8 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				// Use EndOffset for line/column (matching yacc reader position after
 				// scanning) and Offset for near text (matching yacc lastScanOffset).
 				nextTok := p.peek()
-				p.errs = append(p.errs, ErrParse.GenWithStackByArgs("Multiple COLLATE clauses", p.buildNearStringAt(nextTok.EndOffset, nextTok.Offset)))
+				near := p.buildNearStringAt(nextTok.EndOffset, nextTok.Offset)
+				p.errs = append(p.errs, ErrParse.GenWithStackByArgs("Multiple COLLATE clauses", near))
 				return nil
 			}
 		case columnFormat:
