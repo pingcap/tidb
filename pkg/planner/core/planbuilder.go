@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/mvmerge"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
@@ -3825,7 +3826,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	return p, nil
 }
 
-func (*PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
+func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
 	if stmt == nil || stmt.RefreshStmt == nil || stmt.RefreshStmt.ViewName == nil {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt/ViewName")
 	}
@@ -3833,7 +3834,129 @@ func (*PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stm
 	if stmt.RefreshStmt.Type != ast.RefreshMaterializedViewTypeFast {
 		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: only FAST refresh is supported, got %s", stmt.RefreshStmt.Type.String())
 	}
-	return nil, plannererrors.ErrUnsupportedType.GenWithStack("FAST refresh is not yet supported, please use COMPLETE refresh")
+
+	viewName := stmt.RefreshStmt.ViewName
+	dbName := viewName.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	mvTbl, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), viewName.Name)
+	if err != nil {
+		return nil, err
+	}
+	mvInfo := mvTbl.Meta()
+	if mvInfo == nil || mvInfo.MaterializedView == nil {
+		return nil, errors.Errorf("table %s.%s is not a materialized view", dbName, viewName.Name.O)
+	}
+
+	txn, err := b.ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	if txn == nil || !txn.Valid() {
+		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction")
+	}
+	toTS := txn.StartTS()
+	if toTS == 0 {
+		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction start tso")
+	}
+
+	if stmt.LastSuccessfulRefreshReadTSO < 0 {
+		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: invalid LastSuccessfulRefreshReadTSO %d", stmt.LastSuccessfulRefreshReadTSO)
+	}
+	fromTS := uint64(stmt.LastSuccessfulRefreshReadTSO)
+	if fromTS > toTS {
+		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: invalid refresh tso window (%d, %d]", fromTS, toTS)
+	}
+
+	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, types.NameSlice, error) {
+		nodeW := resolve.NewNodeW(sel)
+		sctx, ok := b.ctx.(sessionctx.Context)
+		if !ok {
+			return nil, nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
+		}
+		if err := Preprocess(optCtx, sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: b.is})); err != nil {
+			return nil, nil, err
+		}
+
+		// Build/optimize this derived SELECT with a standalone plan builder to avoid mutating the outer builder state.
+		savedBlockNames := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
+		defer b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(savedBlockNames)
+
+		innerBuilder, _ := NewPlanBuilder().Init(b.ctx, b.is, hint.NewQBHintHandler(nil))
+		p, err := innerBuilder.Build(optCtx, nodeW)
+		if err != nil {
+			return nil, nil, err
+		}
+		names := p.OutputNames()
+		logic, ok := p.(base.LogicalPlan)
+		if !ok {
+			return nil, nil, errors.Errorf("mvmerge: expected logical plan from select, got %T", p)
+		}
+		pp, _, err := DoOptimize(optCtx, b.ctx, innerBuilder.GetOptFlag(), logic)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pp, names, nil
+	}
+
+	local, err := mvmerge.BuildLocal(b.ctx, b.is, mvInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := mvmerge.BuildFromLocal(local, mvmerge.BuildOptions{FromTS: fromTS, ToTS: toTS}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.MergeSourceSelect == nil {
+		return nil, errors.New("mvmerge: merge source select is nil")
+	}
+	sourcePlan, sourceOutputNames, err := optimizeSelect(ctx, res.MergeSourceSelect)
+	if err != nil {
+		return nil, err
+	}
+	if sourcePlan.Schema().Len() != res.SourceColumnCount {
+		return nil, errors.Errorf(
+			"unexpected merge-source schema length: got %d, expected %d",
+			sourcePlan.Schema().Len(),
+			res.SourceColumnCount,
+		)
+	}
+	if len(sourceOutputNames) > 0 && len(sourceOutputNames) != res.SourceColumnCount {
+		return nil, errors.Errorf(
+			"unexpected merge-source output names length: got %d, expected %d",
+			len(sourceOutputNames),
+			res.SourceColumnCount,
+		)
+	}
+
+	plan := MVDeltaMerge{
+		Source:            sourcePlan,
+		SourceOutputNames: sourceOutputNames,
+		MVTableID:         res.MVTableID,
+		BaseTableID:       res.BaseTableID,
+		MLogTableID:       res.MLogTableID,
+		MVColumnCount:     res.MVColumnCount,
+		DeltaColumnCount:  res.DeltaColumnCount,
+		MVTablePKCols:     res.MVTablePKCols,
+		GroupKeyMVOffsets: res.GroupKeyMVOffsets,
+		CountStarMVOffset: res.CountStarMVOffset,
+		AggInfos:          res.AggInfos,
+		RemovedRowCountDelta: func() *mvmerge.DeltaColumn {
+			if res.RemovedRowCountDelta == nil {
+				return nil
+			}
+			c := *res.RemovedRowCountDelta
+			return &c
+		}(),
+	}.Init(b.ctx)
+	return plan, nil
 }
 
 func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
@@ -4059,7 +4182,6 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return nil, err
 	}
-
 	op := "INSERT"
 	if insert.IsReplace {
 		op = "REPLACE"
