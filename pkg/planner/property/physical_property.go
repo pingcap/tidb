@@ -384,6 +384,12 @@ type IndexJoinRuntimeProp struct {
 	TableRangeScan bool
 }
 
+// CloneEssentialFields clone the essential fields for IndexJoinRuntimeProp.
+func (ijr *IndexJoinRuntimeProp) CloneEssentialFields() *IndexJoinRuntimeProp {
+	one := *ijr
+	return &one
+}
+
 // NewPhysicalProperty builds property from columns.
 func NewPhysicalProperty(taskTp TaskType, cols []*expression.Column,
 	desc bool, expectCnt float64, enforced bool) *PhysicalProperty {

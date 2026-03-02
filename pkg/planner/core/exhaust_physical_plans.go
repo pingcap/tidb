@@ -119,6 +119,11 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
+	appendHashJoins := func(hjs []*physicalop.PhysicalHashJoin) {
+		for _, join := range hjs {
+			joins = append(joins, join)
+		}
+	}
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case base.SemiJoin, base.AntiSemiJoin:
@@ -126,13 +131,13 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		leftNAJoinKeys, _ := p.GetNAJoinKeys()
 		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && physicalop.CanUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
 			if !forceLeftToBuild {
-				joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+				appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 			}
 			if !forceRightToBuild {
-				joins = append(joins, getHashJoin(ge, p, prop, 1, true))
+				appendHashJoins(getHashJoin(ge, p, prop, 1, true))
 			}
 		} else {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 			if forceLeftToBuild || forceRightToBuild {
 				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
 					"The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s with hash join version 1. "+
@@ -143,7 +148,7 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 			}
 		}
 	case base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
-		joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+		appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
 				"HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s because the build side is fixed. "+
@@ -154,26 +159,26 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		}
 	case base.LeftOuterJoin:
 		if !forceLeftToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 		}
 		if !forceRightToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, true))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, true))
 		}
 	case base.RightOuterJoin:
 		if !forceLeftToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 0, true))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, true))
 		}
 		if !forceRightToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
 		}
 	case base.InnerJoin:
 		if forceLeftToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
 		} else if forceRightToBuild {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 		} else {
-			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
-			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
 		}
 	}
 
@@ -189,29 +194,48 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 	return
 }
 
-func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *physicalop.PhysicalHashJoin {
+func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) []*physicalop.PhysicalHashJoin {
 	var stats0, stats1 *property.StatsInfo
 	if ge != nil {
 		stats0, stats1, _, _ = ge.GetJoinChildStatsAndSchema()
 	} else {
 		stats0, stats1, _, _ = p.GetJoinChildStatsAndSchema()
 	}
-	chReqProps := make([]*property.PhysicalProperty, 2)
-	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
 	var outerStats *property.StatsInfo
 	if 1-innerIdx == 0 {
 		outerStats = stats0
 	} else {
 		outerStats = stats1
 	}
-	if prop.ExpectedCnt < p.StatsInfo().RowCount {
-		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
-		chReqProps[1-innerIdx].ExpectedCnt = outerStats.RowCount * expCntScale
+	newTwoBaseProps := func() [2]*property.PhysicalProperty {
+		return [2]*property.PhysicalProperty{
+			{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
+			{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
+		}
 	}
-	hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps...)
-	hashJoin.SetSchema(p.Schema())
-	return hashJoin
+	adjustStatsAndGetJoin := func(chReqProps [2]*property.PhysicalProperty) *physicalop.PhysicalHashJoin {
+		if prop.ExpectedCnt < p.StatsInfo().RowCount {
+			expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
+			chReqProps[1-innerIdx].ExpectedCnt = outerStats.RowCount * expCntScale
+		}
+		hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps[0], chReqProps[1])
+		hashJoin.SetSchema(p.Schema())
+		return hashJoin
+	}
+	res := make([]*physicalop.PhysicalHashJoin, 0, 2)
+	if prop.IndexJoinProp != nil {
+		// enumeration for push index join prop to one side.
+		for childIdx := range []int{0, 1} {
+			chReqProps := newTwoBaseProps()
+			ijp := prop.IndexJoinProp.CloneEssentialFields()
+			chReqProps[childIdx].IndexJoinProp = ijp
+			res = append(res, adjustStatsAndGetJoin(chReqProps))
+		}
+		return res
+	}
+	chReqProps := newTwoBaseProps()
+	res = append(res, adjustStatsAndGetJoin(chReqProps))
+	return res
 }
 
 // constructIndexHashJoinStatic is used to enumerate current a physical index hash join with undecided inner plan. Via index join prop
@@ -885,6 +909,13 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property
 		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return false
 		}
+	case *logicalop.LogicalJoin:
+		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return false
+		}
+		if x.JoinType != base.InnerJoin {
+			return false
+		}
 	case *logicalop.LogicalAggregation:
 		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return false
@@ -894,7 +925,7 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property
 		}
 
 	case *logicalop.LogicalUnionScan:
-	default: // index join inner side couldn't allow join, sort, limit, etc. todo: open it.
+	default: // index join inner side couldn't allow join, sort, limit, because they are Optimization Fence.
 		return false
 	}
 	return true
@@ -1843,6 +1874,10 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 // tryToEnumerateIndexJoin returns all available index join plans, which will require inner indexJoinProp downside
 // compared with original tryToGetIndexJoin.
 func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	if prop.IndexJoinProp != nil {
+		// Avoid nested index join enumeration under an index join inner side.
+		return nil
+	}
 	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
@@ -1887,6 +1922,10 @@ func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProp
 
 // tryToGetIndexJoin returns all available index join plans, and the second returned value indicates whether this plan is enforced by hints.
 func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (indexJoins []base.PhysicalPlan, canForced bool) {
+	if prop.IndexJoinProp != nil {
+		// Avoid nested index join enumeration under an index join inner side.
+		return nil, false
+	}
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
@@ -2731,7 +2770,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+	if p.SCtx().GetSessionVars().IsMPPAllowed() && prop.IndexJoinProp == nil {
 		// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
 		if hasMPPJoinHints(p.PreferJoinType) {
 			// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.
@@ -2765,7 +2804,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		return joins, true, nil
 	}
 
-	if !p.IsNAAJ() {
+	if !p.IsNAAJ() && prop.IndexJoinProp == nil { // gen merge join and index join only when non-naaj and index join prop is nil
 		// naaj refuse merge join and index join.
 		stats0, stats1, _, _ := getJoinChildStatsAndSchema(ge, p)
 		mergeJoins := physicalop.GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), stats0, stats1)
@@ -2840,7 +2879,11 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (preferPu
 
 // GetHashJoin is public for cascades planner.
 func GetHashJoin(ge base.GroupExpression, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *physicalop.PhysicalHashJoin {
-	return getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
+	joins := getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
+	if len(joins) == 0 {
+		panic("GetHashJoin for LogicalApply should always produce at least one hash join plan")
+	}
+	return joins[0]
 }
 
 // exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
