@@ -17,7 +17,6 @@ package traceevent
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
@@ -28,12 +27,50 @@ import (
 	"go.uber.org/zap"
 )
 
-// Trace implements Sink interface
-type Trace struct {
-	mu     sync.RWMutex
-	events []Event
-	bits   uint64
-	rand32 uint32
+// TraceBuf is the buffer for trace events.
+// The buffer might be discarded or dumped.
+type TraceBuf struct {
+	mu      sync.RWMutex
+	events  []Event
+	bits    uint64
+	traceID []byte
+}
+
+// GetTraceID gets the traceID field.
+func (t *TraceBuf) GetTraceID() []byte {
+	t.mu.RLock()
+	traceID := t.traceID
+	t.mu.RUnlock()
+	return traceID
+}
+
+// SetTraceID sets the traceID field.
+func (t *TraceBuf) SetTraceID(traceID []byte) {
+	t.mu.Lock()
+	t.traceID = traceID
+	t.mu.Unlock()
+}
+
+var _ tracing.TraceBuf = (*TraceBuf)(nil)
+
+// WithTraceBuf creates a context with the given TraceBuf.
+func WithTraceBuf(ctx context.Context, trace *TraceBuf) context.Context {
+	return tracing.WithTraceBuf(ctx, trace)
+}
+
+// GetTraceBuf returns the TraceBuf bound with this context.
+func GetTraceBuf(ctx context.Context) *TraceBuf {
+	val := tracing.GetTraceBuf(ctx)
+	if val == nil {
+		// For background job and internal session, it might be missing?
+		return nil
+	}
+	traceBuf, ok := val.(*TraceBuf)
+	if !ok {
+		logutil.BgLogger().Warn("getTraceBuf assertion fails, traceBuf object type mismatch")
+		return nil
+	}
+	return traceBuf
 }
 
 var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
@@ -348,15 +385,8 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 	if flightRecorder == nil {
 		return
 	}
-	// Sink should always be set, and it should be a Trace object
-	// TODO: For background job and internal session, it might be missing?
-	sink := tracing.GetSink(ctx)
-	if sink == nil {
-		return
-	}
-	trace, ok := sink.(*Trace)
-	if !ok {
-		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger assertion fails, sink should be a Trace object")
+	traceBuf := GetTraceBuf(ctx)
+	if traceBuf == nil {
 		return
 	}
 	idx, ok := flightRecorder.compiledDumpTriggerConfig.nameMapping[triggerName]
@@ -365,7 +395,7 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 	}
 	conf := flightRecorder.compiledDumpTriggerConfig.configRef[idx]
 	if check(conf) {
-		trace.markBits(idx)
+		traceBuf.markBits(idx)
 	}
 }
 
@@ -514,24 +544,22 @@ func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 	}
 }
 
-// NewTrace creates a new Trace.
-func NewTrace() *Trace {
-	return &Trace{
-		rand32: rand.Uint32(),
-	}
+// NewTraceBuf creates a new TraceBuf.
+func NewTraceBuf() *TraceBuf {
+	return &TraceBuf{}
 }
 
 // Record implements the FlightRecorder interface.
-func (r *Trace) Record(_ context.Context, event Event) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, event)
+func (t *TraceBuf) Record(_ context.Context, event Event) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.events = append(t.events, event)
 }
 
-func (r *Trace) markBits(idx int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.bits |= 1 << idx
+func (t *TraceBuf) markBits(idx int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.bits |= 1 << idx
 }
 
 const maxEvents = 4096
@@ -547,7 +575,7 @@ func (r *HTTPFlightRecorder) CheckSampling(conf *DumpTriggerConfig) bool {
 }
 
 // DiscardOrFlush will flush or discard the trace.
-func (r *Trace) DiscardOrFlush(ctx context.Context) {
+func (t *TraceBuf) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
 		var shouldFlush bool
@@ -556,28 +584,27 @@ func (r *Trace) DiscardOrFlush(ctx context.Context) {
 		// We must clone while holding the lock to avoid data races where
 		// concurrent Record() or DiscardOrFlush() calls might modify the
 		// backing array after we release RLock.
-		r.mu.RLock()
-		if sink.shouldKeep(r.bits) {
+		t.mu.RLock()
+		if sink.shouldKeep(t.bits) {
 			shouldFlush = true
-			eventsToFlush = slices.Clone(r.events) // Deep copy to avoid data race
+			eventsToFlush = slices.Clone(t.events) // Deep copy to avoid data race
 		}
-		r.mu.RUnlock()
+		t.mu.RUnlock()
 
 		// Process without holding any lock
 		if shouldFlush {
 			sink.collect(ctx, eventsToFlush)
 		}
 	}
-	newRand := rand.Uint32()
 	// Write phase: use Lock for cleanup
-	r.mu.Lock()
-	r.bits = 0
-	if len(r.events) > maxEvents {
+	t.mu.Lock()
+	t.bits = 0
+	if len(t.events) > maxEvents {
 		// avoid using too much memory for each session.
-		r.events = nil
+		t.events = nil
 	} else {
-		r.events = r.events[:0]
+		t.events = t.events[:0]
 	}
-	r.rand32 = newRand
-	r.mu.Unlock()
+	t.traceID = nil
+	t.mu.Unlock()
 }

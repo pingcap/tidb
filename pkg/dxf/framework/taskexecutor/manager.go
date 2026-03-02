@@ -72,7 +72,7 @@ type Manager struct {
 	logger       *zap.Logger
 	slotManager  *slotManager
 	nodeResource *proto.NodeResource
-	trace        *traceevent.Trace
+	trace        *traceevent.TraceBuf
 }
 
 // NewManager creates a new task executor Manager.
@@ -89,10 +89,10 @@ func NewManager(ctx context.Context, store kv.Storage, id string, taskTable Task
 		logger:       logger,
 		slotManager:  newSlotManager(resource.TotalCPU),
 		nodeResource: resource,
-		trace:        traceevent.NewTrace(),
+		trace:        traceevent.NewTraceBuf(),
 	}
 
-	ctx = tracing.WithFlightRecorder(ctx, m.trace)
+	ctx = traceevent.WithTraceBuf(ctx, m.trace)
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.taskExecutors = make(map[int64]TaskExecutor)
 
