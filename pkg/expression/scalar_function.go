@@ -349,12 +349,20 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
 	clonedBuiltinFunc := sf.Function.Clone()
+	var clonedReturnType *types.FieldType
+	if sf.RetType == sf.Function.getRetTp() {
+		// keep the original shallow ref.
+		clonedReturnType = clonedBuiltinFunc.getRetTp()
+	} else {
+		// address is different, use deep copy.
+		clonedReturnType = sf.RetType.DeepCopy()
+	}
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
 		// Preserve the original scalar return type shape during clone.
 		// This breaks shared mutable state without canonicalizing RetType
 		// against the cloned builtin function's internal return type.
-		RetType:  sf.RetType.DeepCopy(),
+		RetType:  clonedReturnType,
 		Function: clonedBuiltinFunc,
 	}
 	if sf.canonicalhashcode != nil {
