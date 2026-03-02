@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -289,12 +290,17 @@ type MySQLPrivilege struct {
 	// Either portion of user or host can contain wildcards,
 	// requiring the privileges system to use a list-like
 	// structure instead of a hash.
+<<<<<<< HEAD
 
 	// TiDB contains a sensible behavior difference from MySQL,
 	// which is that usernames can not contain wildcards.
 	// This means that DB-records are organized in both a
 	// slice (p.DB) and a Map (p.DBMap).
 	immutable
+=======
+	// TiDB contains a sensible behavior difference from MySQL,
+	// which is that usernames can not contain wildcards.
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 
 	extended
 }
@@ -691,9 +697,15 @@ func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sqlexec.RestrictedSQLExecutor) 
 	return nil
 }
 
+<<<<<<< HEAD
 // LoadGlobalGrantsTable loads the mysql.global_priv table from database.
 func (p *MySQLPrivilege) LoadGlobalGrantsTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	if err := p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow); err != nil {
+=======
+// LoadGlobalGrantsTable loads the mysql.global_grants table from database.
+func (p *MySQLPrivilege) LoadGlobalGrantsTable(exec sqlexec.SQLExecutor) error {
+	if err := loadTable(exec, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow(nil)); err != nil {
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 		return errors.Trace(err)
 	}
 	p.buildDynamicMap()
@@ -787,6 +799,7 @@ func (p *immutable) loadTable(sctx sqlexec.RestrictedSQLExecutor, sql string,
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	for _, row := range rows {
 		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
 		// The result will reference memory in the chunk, so the chunk must not be reused
@@ -795,6 +808,35 @@ func (p *immutable) loadTable(sctx sqlexec.RestrictedSQLExecutor, sql string,
 		if err != nil {
 			return errors.Trace(err)
 		}
+=======
+	defer terror.Call(rs.Close)
+	fs := rs.Fields()
+	req := rs.NewChunk(nil)
+	forceReset := false
+	failpoint.Inject("forceResetChunkForLoadTable", func(_ failpoint.Value) {
+		forceReset = true
+	})
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			return nil
+		}
+		it := chunk.NewIterator4Chunk(req)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			err = decodeTableRow(row, fs)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		if sql == sqlLoadColumnsPrivTable && forceReset {
+			req.Reset()
+		} else {
+			req.GrowAndReset(1024)
+		}
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 	}
 	return nil
 }
@@ -832,9 +874,9 @@ func parseHostIPNet(s string) *net.IPNet {
 func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *resolve.ResultField) {
 	switch f.ColumnAsName.L {
 	case "user":
-		record.User = row.GetString(i)
+		record.User = strings.Clone(row.GetString(i))
 	case "host":
-		record.Host = row.GetString(i)
+		record.Host = strings.Clone(row.GetString(i))
 		record.patChars, record.patTypes = stringutil.CompilePatternBinary(record.Host, '\\')
 		record.hostIPNet = parseHostIPNet(record.Host)
 	}
@@ -1084,6 +1126,22 @@ func (p *immutable) decodeColumnsPrivTableRow(row chunk.Row, fs []*resolve.Resul
 		default:
 			value.assignUserOrHost(row, i, f)
 		}
+<<<<<<< HEAD
+=======
+		if userList != nil {
+			if _, ok := userList[value.User]; !ok {
+				return nil
+			}
+		}
+
+		old, ok := p.columnsPriv.Get(itemColumnsPriv{username: value.User})
+		if !ok {
+			old.username = value.User
+		}
+		old.data = append(old.data, value)
+		p.columnsPriv.ReplaceOrInsert(old)
+		return nil
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 	}
 	p.columnsPriv = append(p.columnsPriv, value)
 	return nil
@@ -1209,8 +1267,13 @@ func (p *MySQLPrivilege) matchResoureGroup(resourceGroupName string) *UserRecord
 func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	records, exists := p.UserMap[user]
 	if exists {
+<<<<<<< HEAD
 		for i := 0; i < len(records); i++ {
 			record := &records[i]
+=======
+		for i := range records.data {
+			record := &records.data[i]
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 			if record.Host == host { // exact match
 				return record
 			}
@@ -1224,7 +1287,12 @@ func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
 	if !exists {
 		return nil
 	}
+<<<<<<< HEAD
 	for i := 0; i < len(uGlobal); i++ {
+=======
+	uGlobal := item.data
+	for i := range uGlobal {
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 		record := &uGlobal[i]
 		if record.match(user, host) {
 			return record
@@ -1236,7 +1304,12 @@ func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
 func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 	records, exists := p.UserMap[user]
 	if exists {
+<<<<<<< HEAD
 		for i := 0; i < len(records); i++ {
+=======
+		records := item.data
+		for i := range records {
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 			record := &records[i]
 			if record.match(user, host) {
 				return record
@@ -1249,7 +1322,12 @@ func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 func (p *MySQLPrivilege) matchDB(user, host, db string) *dbRecord {
 	records, exists := p.DBMap[user]
 	if exists {
+<<<<<<< HEAD
 		for i := 0; i < len(records); i++ {
+=======
+		records := item.data
+		for i := range records {
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 			record := &records[i]
 			if record.match(user, host, db) {
 				return record
@@ -1262,7 +1340,12 @@ func (p *MySQLPrivilege) matchDB(user, host, db string) *dbRecord {
 func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRecord {
 	records, exists := p.TablesPrivMap[user]
 	if exists {
+<<<<<<< HEAD
 		for i := 0; i < len(records); i++ {
+=======
+		records := item.data
+		for i := range records {
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 			record := &records[i]
 			if record.match(user, host, db, table) {
 				return record
@@ -1272,11 +1355,23 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 	return nil
 }
 
+<<<<<<< HEAD
 func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *columnsPrivRecord {
 	for i := 0; i < len(p.columnsPriv); i++ {
 		record := &p.columnsPriv[i]
 		if record.match(user, host, db, table, column) {
 			return record
+=======
+// MatchColumns is exported only for test
+func (p *MySQLPrivilege) MatchColumns(user, host, db, table, column string) *columnsPrivRecord {
+	item, exists := p.columnsPriv.Get(itemColumnsPriv{username: user})
+	if exists {
+		for i := range item.data {
+			record := &item.data[i]
+			if record.match(user, host, db, table, column) {
+				return record
+			}
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 		}
 	}
 	return nil
@@ -1562,16 +1657,25 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	// A map of "DB.Table" => Priv(col1, col2 ...)
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
+<<<<<<< HEAD
 	for i := range p.columnsPriv {
 		record := p.columnsPriv[i]
 		if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
 			for _, r := range allRoles {
 				collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable, sqlMode)
+=======
+	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		for _, record := range itm.data {
+			if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
+				for _, r := range allRoles {
+					collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable, sqlMode)
+				}
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 			}
 		}
 	}
 	for k, v := range columnPrivTable {
-		privCols := privOnColumnsToString(v)
+		privCols := privOnColumnsToString(v, sqlMode)
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
@@ -1648,10 +1752,10 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 }
 
 type columnStr = string
-type columnStrs = []columnStr
+type columnStrs = map[columnStr]struct{}
 type privOnColumns = map[mysql.PrivilegeType]columnStrs
 
-func privOnColumnsToString(p privOnColumns) string {
+func privOnColumnsToString(p privOnColumns, sqlMode mysql.SQLMode) string {
 	var buf bytes.Buffer
 	idx := 0
 	for _, priv := range mysql.AllColumnPrivs {
@@ -1665,11 +1769,16 @@ func privOnColumnsToString(p privOnColumns) string {
 		}
 		privStr := PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
 		fmt.Fprintf(&buf, "%s(", privStr)
-		for i, col := range v {
+		columns := make([]columnStr, 0, len(v))
+		for col := range v {
+			columns = append(columns, col)
+		}
+		slices.Sort(columns)
+		for i, col := range columns {
 			if i > 0 {
 				fmt.Fprintf(&buf, ", ")
 			}
-			buf.WriteString(col)
+			buf.WriteString(stringutil.Escape(col, sqlMode))
 		}
 		buf.WriteString(")")
 		idx++
@@ -1688,8 +1797,10 @@ func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPriv
 
 		for _, priv := range mysql.AllColumnPrivs {
 			if priv&record.ColumnPriv > 0 {
-				old := privColumns[priv]
-				privColumns[priv] = append(old, record.ColumnName)
+				if privColumns[priv] == nil {
+					privColumns[priv] = make(map[columnStr]struct{})
+				}
+				privColumns[priv][record.ColumnName] = struct{}{}
 				columnPrivTable[recordKey] = privColumns
 			}
 		}
@@ -1842,10 +1953,59 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
+<<<<<<< HEAD
 // Update loads all the privilege info from kv storage.
 func (h *Handle) Update() error {
 	var priv MySQLPrivilege
 	err := priv.LoadAll(h.sctx)
+=======
+// UpdateAll loads all the users' privilege info from kv storage.
+func (h *Handle) UpdateAll() error {
+	priv := newMySQLPrivilege()
+	res, err := h.sctx.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer h.sctx.Put(res)
+	exec := res.(sqlexec.SQLExecutor)
+
+	err = priv.LoadAll(exec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	h.priv.Store(priv)
+	return nil
+}
+
+// Update loads the privilege info from kv storage for the list of users.
+func (h *Handle) Update(userList []string) error {
+	if len(userList) > 100 {
+		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
+	}
+
+	return h.updateUsers(userList)
+}
+
+func (h *Handle) updateUsers(userList []string) error {
+	res, err := h.sctx.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer h.sctx.Put(res)
+	exec := res.(sqlexec.SQLExecutor)
+
+	p := newMySQLPrivilege()
+	// Load the full role edge table first.
+	p.roleGraph = make(map[auth.RoleIdentity]roleGraphEdgesTable)
+	err = loadTable(exec, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Including the user and also their roles
+	userAndRoles := findUserAndAllRoles(userList, p.roleGraph)
+	err = p.loadSomeUsers(exec, userAndRoles)
+>>>>>>> 548bc6612c1 (privilege: fix some bugs for privilege cache and `show grants` (#63728))
 	if err != nil {
 		return err
 	}
