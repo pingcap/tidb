@@ -392,7 +392,7 @@ func TestStmtSummaryBinaryValues(t *testing.T) {
 	sampleText := rows[0][0].(string)
 	// Verify the invalid UTF-8 bytes are preserved as \xNN hex escapes rather
 	// than being replaced by '?'.
-	require.NotContains(t, sampleText, "?")
+	require.Equal(t, "select * from t1 where c1 = '\\xd2䦸\\xc1\\xf3\\xe5ש\\xb2\\xc4\\xd6\\xe8\\xf1\\xa3\\xb5'", sampleText)
 }
 
 func TestStmtSummarySensitiveQuery(t *testing.T) {
