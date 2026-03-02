@@ -1626,9 +1626,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 	case *PointGetExecutor, *BatchPointGetExec,
-		// PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
-		// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
-		// TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
+	// PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+	// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+	// TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
 		*TableDualExec,
 		*TableSampleExecutor:
 		return originReader
@@ -5020,7 +5020,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		err = exec.OpenSelf()
 		return exec, err
 	case *physicalop.PhysicalHashJoin:
-		childIdx, ok := builder.indexJoinLookupChildIdx(v, lookUpContents)
+		childIdx, ok := builder.indexJoinLookupChildIdx(v)
 		if !ok {
 			return nil, errors.New("index join inner hash join cannot locate lookup child")
 		}
@@ -5084,7 +5084,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
 
-func (builder *dataReaderBuilder) indexJoinLookupChildIdx(p *physicalop.PhysicalHashJoin, lookUpContents []*join.IndexJoinLookUpContent) (int, bool) {
+func (builder *dataReaderBuilder) indexJoinLookupChildIdx(p *physicalop.PhysicalHashJoin) (int, bool) {
 	keyUniqueIDs := builder.indexJoinKeyUniqueIDs
 	if len(keyUniqueIDs) == 0 {
 		return 0, false
