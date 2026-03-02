@@ -35,41 +35,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*statsutil.JSONExtendedStats {
-	if statsColl == nil || len(statsColl.Stats) == 0 {
-		return nil
-	}
-	stats := make([]*statsutil.JSONExtendedStats, 0, len(statsColl.Stats))
-	for name, item := range statsColl.Stats {
-		js := &statsutil.JSONExtendedStats{
-			StatsName:  name,
-			ColIDs:     item.ColIDs,
-			Tp:         item.Tp,
-			ScalarVals: item.ScalarVals,
-			StringVals: item.StringVals,
-		}
-		stats = append(stats, js)
-	}
-	return stats
-}
-
-func extendedStatsFromJSON(statsColl []*statsutil.JSONExtendedStats) *statistics.ExtendedStatsColl {
-	if len(statsColl) == 0 {
-		return nil
-	}
-	stats := statistics.NewExtendedStatsColl()
-	for _, js := range statsColl {
-		item := &statistics.ExtendedStatsItem{
-			ColIDs:     js.ColIDs,
-			Tp:         js.Tp,
-			ScalarVals: js.ScalarVals,
-			StringVals: js.StringVals,
-		}
-		stats.Stats[js.StatsName] = item
-	}
-	return stats
-}
-
 func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *statsutil.JSONColumn {
 	jsonCol := &statsutil.JSONColumn{
 		Histogram:         statistics.HistogramToProto(hist),
@@ -142,7 +107,6 @@ func GenJSONTableFromStats(
 	if outerErr != nil {
 		return nil, outerErr
 	}
-	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
 	if colStatsUsage != nil {
 		// nilIfNil checks if the provided *time.Time is nil and returns a nil or its string representation accordingly.
 		nilIfNil := func(t *types.Time) *string {
@@ -259,7 +223,6 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 			tbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, true)
 		}
 	}
-	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)
 	return tbl, nil
 }
 
