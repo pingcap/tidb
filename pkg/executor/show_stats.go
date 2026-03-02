@@ -16,15 +16,12 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -34,82 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
 )
-
-func (e *ShowExec) fetchShowStatsExtended(ctx context.Context) error {
-	do := domain.GetDomain(e.Ctx())
-	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemaNames()
-	for _, db := range dbs {
-		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tblInfo := range tables {
-			pi := tblInfo.GetPartitionInfo()
-			// Extended statistics for partitioned table is not supported now.
-			if pi != nil {
-				continue
-			}
-			e.appendTableForStatsExtended(db.L, tblInfo, h.GetPhysicalTableStats(tblInfo.ID, tblInfo))
-		}
-	}
-	return nil
-}
-
-func (e *ShowExec) appendTableForStatsExtended(dbName string, tbl *model.TableInfo, statsTbl *statistics.Table) {
-	if statsTbl.Pseudo || statsTbl.ExtendedStats == nil || len(statsTbl.ExtendedStats.Stats) == 0 {
-		return
-	}
-	colID2Name := make(map[int64]string, len(tbl.Columns))
-	for _, col := range tbl.Columns {
-		colID2Name[col.ID] = col.Name.L
-	}
-	var sb strings.Builder
-	for statsName, item := range statsTbl.ExtendedStats.Stats {
-		sb.Reset()
-		sb.WriteString("[")
-		allColsExist := true
-		for i, colID := range item.ColIDs {
-			name, ok := colID2Name[colID]
-			if !ok {
-				allColsExist = false
-				break
-			}
-			sb.WriteString(name)
-			if i != len(item.ColIDs)-1 {
-				sb.WriteString(",")
-			}
-		}
-		// The column may have been dropped, while the extended stats have not been removed by GC yet.
-		if !allColsExist {
-			continue
-		}
-		sb.WriteString("]")
-		colNames := sb.String()
-		var statsType, statsVal string
-		switch item.Tp {
-		case ast.StatsTypeCorrelation:
-			statsType = "correlation"
-			statsVal = fmt.Sprintf("%f", item.ScalarVals)
-		case ast.StatsTypeDependency:
-			statsType = "dependency"
-			statsVal = item.StringVals
-		case ast.StatsTypeCardinality:
-			statsType = "cardinality"
-			statsVal = item.StringVals
-		}
-		e.appendRow([]any{
-			dbName,
-			tbl.Name.L,
-			statsName,
-			colNames,
-			statsType,
-			statsVal,
-			// Same LastUpdateVersion for records of the same table, mainly for debug purpose on product env.
-			statsTbl.ExtendedStats.LastUpdateVersion,
-		})
-	}
-}
 
 func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())

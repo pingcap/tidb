@@ -721,33 +721,6 @@ func TestIndexEqualUnknown(t *testing.T) {
 	})
 }
 
-func TestLimitIndexEstimation(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
-		tk.MustExec("set session tidb_enable_extended_stats = on")
-		// Values in column a are from 1 to 1000000, values in column b are from 1000000 to 1,
-		// these 2 columns are strictly correlated in reverse order.
-		require.NoError(t, testkit.LoadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom))
-		var input []string
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-
-		analyzeSuiteData := GetAnalyzeSuiteData()
-		analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, tt := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			})
-			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-		}
-	})
-}
-
 func TestIndexJoinPreferIndexCoversMoreJoinKeyCols(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")

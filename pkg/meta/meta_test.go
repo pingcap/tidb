@@ -117,6 +117,79 @@ func TestPlacementPolicy(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestMaskingPolicy(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMutator(txn)
+	policy := &model.MaskingPolicyInfo{
+		ID:          1,
+		Name:        ast.NewCIStr("mp1"),
+		TableID:     10,
+		ColumnID:    11,
+		MaskingType: model.MaskingPolicyTypeMaskFull,
+		Expression:  "mask_full(c)",
+		RestrictOps: ast.MaskingPolicyRestrictOpInsertIntoSelect | ast.MaskingPolicyRestrictOpDeleteSelect,
+		Status:      model.MaskingPolicyStatusEnabled,
+		CreatedBy:   "root@%",
+		UpdatedBy:   "root@%",
+		State:       model.StatePublic,
+	}
+	err = m.CreateMaskingPolicy(policy)
+	require.NoError(t, err)
+	require.Equal(t, policy.ID, int64(1))
+
+	err = m.CreateMaskingPolicy(policy)
+	require.Error(t, err)
+	require.True(t, meta.ErrMaskingPolicyExists.Equal(err))
+	require.ErrorContains(t, err, "masking policy already exists")
+	require.ErrorContains(t, err, "masking policy id : 1 already exists")
+
+	_, err = m.GetMaskingPolicy(2)
+	require.Error(t, err)
+	require.True(t, meta.ErrMaskingPolicyNotExists.Equal(err))
+	require.ErrorContains(t, err, "masking policy doesn't exist")
+	require.ErrorContains(t, err, "masking policy id : 2 doesn't exist")
+
+	val, err := m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	policy.Expression = "mask_partial(c, 0, 2, '*')"
+	policy.Status = model.MaskingPolicyStatusDisabled
+	err = m.UpdateMaskingPolicy(policy)
+	require.NoError(t, err)
+
+	val, err = m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	ps, err := m.ListMaskingPolicies()
+	require.NoError(t, err)
+	require.Equal(t, []*model.MaskingPolicyInfo{policy}, ps)
+
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+
+	m = meta.NewMutator(txn)
+	val, err = m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+}
+
 func TestResourceGroup(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

@@ -349,6 +349,9 @@ func (e *BaseTaskExecutor) Run() {
 			e.logger.Warn("get first subtask meets error", zap.Error(err))
 			continue
 		} else if subtask == nil {
+			failpoint.Inject("avoidTaskExecutorExitWhenNoSubtask", func() {
+				noSubtaskCheckCnt = 0
+			})
 			if noSubtaskCheckCnt >= maxChecksWhenNoSubtask {
 				e.logger.Info("no subtask to run for a while, exit")
 				break
