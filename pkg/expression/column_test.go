@@ -127,12 +127,13 @@ func TestCloneDeepCopy(t *testing.T) {
 	}
 	clonedCorCol := corCol.Clone().(*CorrelatedColumn)
 	require.NotSame(t, corCol, clonedCorCol)
-	require.NotSame(t, corCol.Data, clonedCorCol.Data)
+	// Correlated column deep clone is a special case, the data inside, should be the same.
+	require.Same(t, corCol.Data, clonedCorCol.Data)
 	require.NotSame(t, corCol.RetType, clonedCorCol.RetType)
 
 	clonedBytes := clonedCorCol.Data.GetBytes()
 	clonedBytes[0] = 'z'
-	require.Equal(t, byte('a'), corCol.Data.GetBytes()[0])
+	require.Equal(t, byte('z'), corCol.Data.GetBytes()[0])
 }
 
 func TestColumnHashCode(t *testing.T) {
