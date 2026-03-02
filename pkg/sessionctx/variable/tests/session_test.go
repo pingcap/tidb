@@ -346,6 +346,24 @@ func TestSlowLogFormat(t *testing.T) {
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
 	require.False(t, seVar.CurrentDBChanged)
 
+	// Verify SessionConnectAttrs serialization.
+	logItems.SessionConnectAttrs = map[string]string{
+		"_client_name": "libmysql",
+		"_os":          "Linux",
+		"app_name":     "test_svc",
+	}
+	logString = seVar.SlowLogFormat(logItems)
+	// json.Encoder sorts map keys, so the output is deterministic.
+	expectedAttrsLine := `# Session_connect_attrs: {"_client_name":"libmysql","_os":"Linux","app_name":"test_svc"}`
+	require.Contains(t, logString, expectedAttrsLine)
+	// Session_connect_attrs should appear after Storage_from_mpp and before the SQL.
+	attrsIdx := strings.Index(logString, "Session_connect_attrs")
+	sqlIdx := strings.Index(logString, sql)
+	require.Greater(t, attrsIdx, 0)
+	require.Less(t, attrsIdx, sqlIdx, "Session_connect_attrs should appear before the SQL statement")
+	// Restore for subsequent assertions.
+	logItems.SessionConnectAttrs = nil
+
 	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
 		Fields: map[string]struct{}{

@@ -219,6 +219,8 @@ const (
 	SlowLogExecRetryCount = "Exec_retry_count"
 	// SlowLogResourceGroup is the resource group name that the current session bind.
 	SlowLogResourceGroup = "Resource_group"
+	// SlowLogSessionConnectAttrs is the session connection attributes from the client.
+	SlowLogSessionConnectAttrs = "Session_connect_attrs"
 	// SlowLogCopMVCCReadAmplification is total_keys / processed_keys in coprocessor scan detail.
 	SlowLogCopMVCCReadAmplification = "cop_mvcc_read_amplification"
 )
@@ -303,6 +305,9 @@ type SlowQueryLogItems struct {
 	StorageKV         bool // query read from TiKV
 	StorageMPP        bool // query read from TiFlash
 	MemArbitration    float64
+	// SessionConnectAttrs holds the client connection attributes (e.g. _client_name, _os).
+	// This is a shared reference to ConnectionInfo.Attributes and must not be modified.
+	SessionConnectAttrs map[string]string
 }
 
 const zeroStr = "0"
@@ -556,6 +561,14 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
 
+	if len(logItems.SessionConnectAttrs) > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogSessionConnectAttrs + SlowLogSpaceMarkStr)
+		encoder := json.NewEncoder(&buf)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(logItems.SessionConnectAttrs); err != nil {
+			buf.WriteString("{}\n")
+		}
+	}
 	if s.CurrentDBChanged {
 		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB)))
 		s.CurrentDBChanged = false
