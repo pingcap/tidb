@@ -341,12 +341,13 @@ func (c *Constant) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) 
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	tp := c.GetType(ctx)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
 	} else if dt.Kind() == types.KindBinaryLiteral {
 		val, err := dt.GetBinaryLiteral().ToInt(typeCtx(ctx))
 		return int64(val), err != nil, err
-	} else if c.GetType(ctx).Hybrid() || dt.Kind() == types.KindString {
+	} else if tp.Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(typeCtx(ctx))
 		return res, false, err
 	} else if dt.Kind() == types.KindMysqlBit {
@@ -365,10 +366,11 @@ func (c *Constant) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, erro
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	tp := c.GetType(ctx)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
 	}
-	if c.GetType(ctx).Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
+	if tp.Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
 		res, err := dt.ToFloat64(typeCtx(ctx))
 		return res, false, err
 	}

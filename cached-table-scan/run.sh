@@ -33,7 +33,6 @@ for f in "${WORK_FILES[@]}"; do
     echo "Completed: $name"
     echo ""
 
-    sleep 1200
 done
 
 echo "All work files processed."
