@@ -41,6 +41,19 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		}
 		return p.showSyntaxError()
 
+	case masking:
+		// SHOW MASKING POLICIES FOR TableName [WHERE ...]
+		p.next() // consume MASKING
+		p.expect(policies)
+		p.expect(forKwd)
+		stmt.Tp = ast.ShowMaskingPolicies
+		stmt.Table = p.parseTableName()
+		if p.peek().Tp == where {
+			p.next()
+			stmt.Where = p.parseExpression(precNone)
+		}
+		return stmt
+
 	case replica:
 		// SHOW REPLICA STATUS
 		p.next()

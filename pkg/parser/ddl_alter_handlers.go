@@ -79,6 +79,10 @@ func (p *HandParser) parseAlterAdd(spec *ast.AlterTableSpec) {
 			}
 			p.expect(')')
 		}
+	} else if p.peek().Tp == masking && p.peekN(1).Tp == policy {
+		// ADD MASKING POLICY ...
+		p.next() // consume MASKING
+		p.parseAlterAddMaskingPolicy(spec)
 	} else if isConstraintToken(p.peek().Tp) {
 		spec.Tp = ast.AlterTableAddConstraint
 		spec.Constraint = p.parseConstraint()
@@ -179,6 +183,11 @@ func (p *HandParser) parseAlterDrop(spec *ast.AlterTableSpec) {
 			c.Name = tok.Lit
 			spec.Constraint = c
 		}
+	} else if p.peek().Tp == masking && p.peekN(1).Tp == policy {
+		// DROP MASKING POLICY PolicyName
+		p.next() // consume MASKING
+		p.next() // consume POLICY
+		p.parseAlterDropMaskingPolicy(spec)
 	} else if _, ok := p.accept(statsExtended); ok {
 		spec.Tp = ast.AlterTableDropStatistics
 		spec.IfExists = p.acceptIfExists()
@@ -764,12 +773,28 @@ func (p *HandParser) parseAlterTableOptions(spec *ast.AlterTableSpec) bool {
 		return true
 
 	case enable, disable:
-		if p.next().Tp == enable {
-			spec.Tp = ast.AlterTableEnableKeys
+		isEnable := p.next().Tp == enable
+		if p.peek().Tp == masking {
+			// ENABLE/DISABLE MASKING POLICY PolicyName
+			p.next() // consume MASKING
+			p.expect(policy)
+			if isEnable {
+				spec.Tp = ast.AlterTableEnableMaskingPolicy
+			} else {
+				spec.Tp = ast.AlterTableDisableMaskingPolicy
+			}
+			if tok, ok := p.expectIdentLike(); ok {
+				spec.MaskingPolicyName = ast.NewCIStr(tok.Lit)
+			}
 		} else {
-			spec.Tp = ast.AlterTableDisableKeys
+			// ENABLE/DISABLE KEYS
+			if isEnable {
+				spec.Tp = ast.AlterTableEnableKeys
+			} else {
+				spec.Tp = ast.AlterTableDisableKeys
+			}
+			p.expect(keys)
 		}
-		p.expect(keys)
 		return true
 	}
 

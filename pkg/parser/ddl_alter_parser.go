@@ -94,6 +94,13 @@ func (p *HandParser) parseAlterTableSpec() *ast.AlterTableSpec {
 
 	case modify, change:
 		isChange := p.next().Tp == change
+		// MODIFY MASKING POLICY ... (only for MODIFY, not CHANGE)
+		if !isChange && p.peek().Tp == masking && p.peekN(1).Tp == policy {
+			p.next() // consume MASKING
+			p.next() // consume POLICY
+			p.parseAlterModifyMaskingPolicy(spec)
+			return spec
+		}
 		p.accept(column)
 		if isChange {
 			spec.Tp = ast.AlterTableChangeColumn

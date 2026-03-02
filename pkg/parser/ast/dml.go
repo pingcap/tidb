@@ -3090,6 +3090,7 @@ const (
 	ShowCreateSequence
 	ShowCreatePlacementPolicy
 	ShowGrants
+	ShowMaskingPolicies
 	ShowTriggers
 	ShowProcedureStatus
 	ShowFunctionStatus
@@ -3272,6 +3273,17 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE USER ")
 		if err := n.User.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.User")
+		}
+	case ShowMaskingPolicies:
+		ctx.WriteKeyWord("MASKING POLICIES FOR ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+		}
+		if n.Where != nil {
+			ctx.WriteKeyWord(" WHERE ")
+			if err := n.Where.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Where")
+			}
 		}
 	case ShowGrants:
 		ctx.WriteKeyWord("GRANTS")

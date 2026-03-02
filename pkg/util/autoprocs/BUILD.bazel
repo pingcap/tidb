@@ -1,0 +1,8 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "autoprocs_test",
+    timeout = "short",
+    srcs = ["autoprocs_benchmark_test.go"],
+    flaky = True,
+)

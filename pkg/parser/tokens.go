@@ -485,6 +485,7 @@ const (
 	lowerThanWith              = 58217
 	lowerThenOrder             = 58229
 	lsh                        = 58207
+	masking                    = 58240
 	master                     = 57774
 	match                      = 57488
 	max                        = 58046
@@ -605,6 +606,7 @@ const (
 	planCache                  = 58055
 	plugins                    = 57836
 	point                      = 57837
+	policies                   = 58241
 	policy                     = 57838
 	position                   = 58057
 	preSplitRegions            = 57842

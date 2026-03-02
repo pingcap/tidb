@@ -98,13 +98,16 @@ func isIdentLike(tp int) bool {
 	if tp == identifier || tp == stringLit {
 		return true
 	}
-	// Multi-char operator tokens (andnot=58200 through not2=58213, plus
-	// paramMarker=58211) have Tp > 0xFF but are NOT identifiers/keywords.
+	// Multi-char operator tokens (andnot=58200 through higherThanComma=58239)
+	// have Tp > 0xFF but are NOT identifiers/keywords.
 	// Also exclude hintComment, andand (&&), and pipes (||).
 	if tp == hintComment || tp == andand || tp == pipes {
 		return false
 	}
-	if tp >= andnot {
+	// Operator and precedence tokens occupy 58200..58239. Keyword tokens
+	// added after that range (masking=58240, policies=58241, ...) ARE
+	// valid unreserved keywords and should fall through to the IsReserved check.
+	if tp >= andnot && tp <= higherThanComma {
 		return false
 	}
 	if tp > 0xFF {

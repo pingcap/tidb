@@ -369,6 +369,9 @@ func (p *HandParser) parseCreateStmt() ast.StmtNode {
 	case placement:
 		p.lexer.Restore(mark)
 		return p.parseCreatePlacementPolicyStmt()
+	case masking:
+		p.lexer.Restore(mark)
+		return p.parseCreateMaskingPolicyStmt()
 	case or:
 		// CREATE OR REPLACE ... — peek past OR REPLACE to disambiguate.
 		mark2 := p.lexer.Mark()
@@ -381,6 +384,9 @@ func (p *HandParser) parseCreateStmt() ast.StmtNode {
 		case view, algorithm, definer, sql:
 			p.lexer.Restore(mark)
 			return p.parseCreateViewStmt()
+		case masking:
+			p.lexer.Restore(mark)
+			return p.parseCreateMaskingPolicyStmt()
 		}
 
 		p.lexer.Restore(mark)
