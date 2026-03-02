@@ -99,17 +99,19 @@ func (p *HandParser) parseAlterInstanceStmt() ast.StmtNode {
 		ReloadTLS: true,
 	}
 
-	// Expect RELOAD (token or identifier)
+	// Expect RELOAD (token or identifier).
+	// Use EndOffset+1 for the column to include the trailing byte, matching
+	// the mysql-test expected output column number.
 	tok := p.next()
 	if tok.Tp != reload && !tok.IsKeyword("RELOAD") {
-		p.syntaxErrorAt(tok)
+		p.errorNear(tok.EndOffset+1, tok.Offset)
 		return nil
 	}
 
 	// Expect TLS (token or identifier)
 	tok = p.next()
 	if tok.Tp != tls && !tok.IsKeyword("TLS") {
-		p.syntaxErrorAt(tok)
+		p.errorNear(tok.EndOffset+1, tok.Offset)
 		return nil
 	}
 
