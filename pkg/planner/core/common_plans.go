@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/mvmerge"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -566,6 +567,127 @@ func (p *Delete) MemoryUsage() (sum int64) {
 	return
 }
 
+// MVDeltaMerge represents a fast-refresh merge plan for materialized view maintenance.
+// It consumes `Source` rows (MV snapshot + delta payload) and applies them to the MV table.
+type MVDeltaMerge struct {
+	baseSchemaProducer
+
+	// Source is the merge-source physical plan. Its row layout is:
+	//  1. delta columns first
+	//  2. MV output columns after delta columns (count = MVColumnCount)
+	//  3. optional handle-only columns (for example _tidb_rowid) after MV columns
+	Source base.PhysicalPlan
+
+	// SourceOutputNames matches the result schema of Source (delta columns first, then MV columns).
+	// Physical plans may not keep output names, so they are carried explicitly for executor-side usage/debug.
+	SourceOutputNames types.NameSlice `plan-cache-clone:"shallow"`
+
+	MVTableID   int64
+	BaseTableID int64
+	MLogTableID int64
+
+	MVColumnCount    int
+	DeltaColumnCount int
+	// MVTablePKCols stores MV table handle columns with positions in Source row layout.
+	MVTablePKCols     util.HandleCols `plan-cache-clone:"shallow"`
+	GroupKeyMVOffsets []int           `plan-cache-clone:"shallow"`
+	CountStarMVOffset int
+
+	AggInfos []mvmerge.AggInfo `plan-cache-clone:"shallow"`
+
+	RemovedRowCountDelta *mvmerge.DeltaColumn `plan-cache-clone:"shallow"`
+}
+
+// ExplainInfo returns aggregate dependency information for MV delta merge.
+func (p *MVDeltaMerge) ExplainInfo() string {
+	if len(p.AggInfos) == 0 {
+		return "agg_deps:[]"
+	}
+
+	var builder strings.Builder
+	builder.WriteString("agg_deps:[")
+	for i := range p.AggInfos {
+		if i > 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString(formatMVDeltaMergeAggDependency(p.AggInfos[i]))
+	}
+	builder.WriteString("]")
+	return builder.String()
+}
+
+func formatMVDeltaMergeAggDependency(aggInfo mvmerge.AggInfo) string {
+	var builder strings.Builder
+	builder.WriteString(formatMVDeltaMergeAggName(aggInfo))
+	builder.WriteString("@")
+	builder.WriteString(strconv.Itoa(aggInfo.MVOffset))
+	builder.WriteString("->")
+	builder.WriteString(formatMVDeltaMergeOffsets(aggInfo.Dependencies))
+	return builder.String()
+}
+
+func formatMVDeltaMergeAggName(aggInfo mvmerge.AggInfo) string {
+	if aggInfo.Kind == mvmerge.AggCountStar {
+		return "count(*)"
+	}
+	aggKindName := formatMVDeltaMergeAggKind(aggInfo.Kind)
+	if aggInfo.ArgColName == "" {
+		return aggKindName
+	}
+	return aggKindName + "(" + aggInfo.ArgColName + ")"
+}
+
+func formatMVDeltaMergeAggKind(kind mvmerge.AggKind) string {
+	switch kind {
+	case mvmerge.AggCount:
+		return "count"
+	case mvmerge.AggSum:
+		return "sum"
+	case mvmerge.AggMin:
+		return "min"
+	case mvmerge.AggMax:
+		return "max"
+	default:
+		return fmt.Sprintf("agg(%d)", kind)
+	}
+}
+
+func formatMVDeltaMergeOffsets(offsets []int) string {
+	if len(offsets) == 0 {
+		return "[]"
+	}
+
+	var builder strings.Builder
+	builder.WriteByte('[')
+	for i := range offsets {
+		if i > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString(strconv.Itoa(offsets[i]))
+	}
+	builder.WriteByte(']')
+	return builder.String()
+}
+
+// MemoryUsage returns the memory usage of MVDeltaMerge.
+func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64*3 + size.SizeOfInt*3 + size.SizeOfSlice*2 + size.SizeOfPointer
+	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
+	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
+	sum += int64(cap(p.SourceOutputNames)) * size.SizeOfPointer
+	for _, name := range p.SourceOutputNames {
+		sum += name.MemoryUsage()
+	}
+	if p.Source != nil {
+		sum += p.Source.MemoryUsage()
+	}
+	return
+}
+
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
 type AnalyzeInfo struct {
 	DBName        string
@@ -750,6 +872,13 @@ type RefreshMaterializedView struct {
 	baseSchemaProducer
 
 	Statement *ast.RefreshMaterializedViewStmt
+}
+
+// PurgeMaterializedViewLog represents a "PURGE MATERIALIZED VIEW LOG ..." plan.
+type PurgeMaterializedViewLog struct {
+	baseSchemaProducer
+
+	Statement *ast.PurgeMaterializedViewLogStmt
 }
 
 // SelectInto represents a select-into plan.

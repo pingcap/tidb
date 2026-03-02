@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/mvmerge"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
@@ -570,6 +571,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case *ast.RefreshMaterializedViewStmt:
 		return b.buildRefreshMaterializedView(ctx, x)
+	case *ast.PurgeMaterializedViewLogStmt:
+		return b.buildPurgeMaterializedViewLog(ctx, x)
 	case *ast.RefreshMaterializedViewImplementStmt:
 		return b.buildRefreshMaterializedViewImplement(ctx, x)
 	case ast.DDLNode:
@@ -3554,7 +3557,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			p.Extractor = extractor
 			buildPattern = false
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowCreateMaterializedViewLog, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
@@ -3576,6 +3579,17 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
 	case ast.ShowCreateView:
+		var err error
+		user := b.ctx.GetSessionVars().User
+		if user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+		if user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowCreateMaterializedView:
 		var err error
 		user := b.ctx.GetSessionVars().User
 		if user != nil {
@@ -3825,7 +3839,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	return p, nil
 }
 
-func (*PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
+func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context, stmt *ast.RefreshMaterializedViewImplementStmt) (base.Plan, error) {
 	if stmt == nil || stmt.RefreshStmt == nil || stmt.RefreshStmt.ViewName == nil {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt/ViewName")
 	}
@@ -3833,7 +3847,114 @@ func (*PlanBuilder) buildRefreshMaterializedViewImplement(_ context.Context, stm
 	if stmt.RefreshStmt.Type != ast.RefreshMaterializedViewTypeFast {
 		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: only FAST refresh is supported, got %s", stmt.RefreshStmt.Type.String())
 	}
-	return nil, plannererrors.ErrUnsupportedType.GenWithStack("FAST refresh is not yet supported, please use COMPLETE refresh")
+
+	viewName := stmt.RefreshStmt.ViewName
+	dbName := viewName.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	mvTbl, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), viewName.Name)
+	if err != nil {
+		return nil, err
+	}
+	mvInfo := mvTbl.Meta()
+	if mvInfo == nil || mvInfo.MaterializedView == nil {
+		return nil, errors.Errorf("table %s.%s is not a materialized view", dbName, viewName.Name.O)
+	}
+
+	if stmt.LastSuccessfulRefreshReadTSO < 0 {
+		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: invalid LastSuccessfulRefreshReadTSO %d", stmt.LastSuccessfulRefreshReadTSO)
+	}
+	fromTS := uint64(stmt.LastSuccessfulRefreshReadTSO)
+
+	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, types.NameSlice, error) {
+		nodeW := resolve.NewNodeW(sel)
+		sctx, ok := b.ctx.(sessionctx.Context)
+		if !ok {
+			return nil, nil, errors.New("RefreshMaterializedViewImplementStmt: invalid session context")
+		}
+		if err := Preprocess(optCtx, sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: b.is})); err != nil {
+			return nil, nil, err
+		}
+
+		// Build/optimize this derived SELECT with a standalone plan builder to avoid mutating the outer builder state.
+		savedBlockNames := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
+		defer b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(savedBlockNames)
+
+		innerBuilder, _ := NewPlanBuilder().Init(b.ctx, b.is, hint.NewQBHintHandler(nil))
+		p, err := innerBuilder.Build(optCtx, nodeW)
+		if err != nil {
+			return nil, nil, err
+		}
+		names := p.OutputNames()
+		logic, ok := p.(base.LogicalPlan)
+		if !ok {
+			return nil, nil, errors.Errorf("mvmerge: expected logical plan from select, got %T", p)
+		}
+		pp, _, err := DoOptimize(optCtx, b.ctx, innerBuilder.GetOptFlag(), logic)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pp, names, nil
+	}
+
+	local, err := mvmerge.BuildLocal(b.ctx, b.is, mvInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := mvmerge.BuildFromLocal(local, mvmerge.BuildOptions{FromTS: fromTS}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.MergeSourceSelect == nil {
+		return nil, errors.New("mvmerge: merge source select is nil")
+	}
+	sourcePlan, sourceOutputNames, err := optimizeSelect(ctx, res.MergeSourceSelect)
+	if err != nil {
+		return nil, err
+	}
+	if sourcePlan.Schema().Len() != res.SourceColumnCount {
+		return nil, errors.Errorf(
+			"unexpected merge-source schema length: got %d, expected %d",
+			sourcePlan.Schema().Len(),
+			res.SourceColumnCount,
+		)
+	}
+	if len(sourceOutputNames) > 0 && len(sourceOutputNames) != res.SourceColumnCount {
+		return nil, errors.Errorf(
+			"unexpected merge-source output names length: got %d, expected %d",
+			len(sourceOutputNames),
+			res.SourceColumnCount,
+		)
+	}
+
+	plan := MVDeltaMerge{
+		Source:            sourcePlan,
+		SourceOutputNames: sourceOutputNames,
+		MVTableID:         res.MVTableID,
+		BaseTableID:       res.BaseTableID,
+		MLogTableID:       res.MLogTableID,
+		MVColumnCount:     res.MVColumnCount,
+		DeltaColumnCount:  res.DeltaColumnCount,
+		MVTablePKCols:     res.MVTablePKCols,
+		GroupKeyMVOffsets: res.GroupKeyMVOffsets,
+		CountStarMVOffset: res.CountStarMVOffset,
+		AggInfos:          res.AggInfos,
+		RemovedRowCountDelta: func() *mvmerge.DeltaColumn {
+			if res.RemovedRowCountDelta == nil {
+				return nil
+			}
+			c := *res.RemovedRowCountDelta
+			return &c
+		}(),
+	}.Init(b.ctx)
+	return plan, nil
 }
 
 func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
@@ -5188,6 +5309,30 @@ func (b *PlanBuilder) buildRefreshMaterializedView(_ context.Context, stmt *ast.
 	return p, nil
 }
 
+func (b *PlanBuilder) buildPurgeMaterializedViewLog(_ context.Context, stmt *ast.PurgeMaterializedViewLogStmt) (base.Plan, error) {
+	dbName := stmt.Table.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	var authErr error
+	if user := b.ctx.GetSessionVars().User; user != nil {
+		authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+			"ALTER",
+			user.AuthUsername,
+			user.AuthHostname,
+			stmt.Table.Name.L,
+		)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName, stmt.Table.Name.L, "", authErr)
+
+	p := &PurgeMaterializedViewLog{Statement: stmt}
+	return p, nil
+}
+
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan, error) {
 	var authErr error
 	switch v := node.(type) {
@@ -5942,6 +6087,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		}
 	case ast.ShowCreateView:
 		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
+	case ast.ShowCreateMaterializedView:
+		names = []string{"Materialized View", "Create Materialized View", "character_set_client", "collation_connection"}
+	case ast.ShowCreateMaterializedViewLog:
+		names = []string{"Materialized View Log", "Create Materialized View Log"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
