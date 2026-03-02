@@ -4173,3 +4173,36 @@ func TestExchangeTiDBRowID(t *testing.T) {
 		"6 6 3",
 		"8 8 30001"))
 }
+
+func TestIssue66077ExchangePartitionDifferentDefinitionsWithShardRowIDBits(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@session.tidb_enable_clustered_index = off")
+	tk.MustExec("set @@session.tidb_shard_row_id_bits = 4")
+	tk.MustExec("create database sbtest")
+	tk.MustExec("use sbtest")
+
+	tk.MustExec(`CREATE TABLE sbtest1 (
+	  id int NOT NULL,
+	  k int NOT NULL DEFAULT '0',
+	  c char(120) NOT NULL DEFAULT '',
+	  pad char(60) NOT NULL DEFAULT '',
+	  PRIMARY KEY (id) /*T![clustered_index] NONCLUSTERED */,
+	  KEY k_1 (k)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+
+	tk.MustExec(`CREATE TABLE sbtest1_partition (
+	  id int NOT NULL,
+	  k int NOT NULL DEFAULT '0',
+	  c char(120) NOT NULL DEFAULT '',
+	  pad char(60) NOT NULL DEFAULT '',
+	  PRIMARY KEY (id) /*T![clustered_index] NONCLUSTERED */,
+	  KEY k_1 (k)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 */
+	PARTITION BY RANGE (id)
+	(PARTITION 1M VALUES LESS THAN (1000000),
+	 PARTITION 5M VALUES LESS THAN (5000000),
+	 PARTITION 10M VALUES LESS THAN (10000000),
+	 PARTITION 100M VALUES LESS THAN (100000000))`)
+	tk.MustExec("alter table sbtest1_partition exchange partition 1M with table sbtest1")
+}
