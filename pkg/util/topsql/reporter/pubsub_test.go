@@ -35,6 +35,31 @@ func (r *mockPubSubDataSinkRegisterer) Register(dataSink DataSink) error { retur
 
 func (r *mockPubSubDataSinkRegisterer) Deregister(dataSink DataSink) {}
 
+func mockTopRURecord() tipb.TopRURecord {
+	return tipb.TopRURecord{
+		User:      "user1",
+		SqlDigest: []byte("S1"),
+		Items: []*tipb.TopRURecordItem{{
+			TimestampSec: 1,
+			TotalRu:      1.0,
+			ExecCount:    1,
+			ExecDuration: 1,
+		}},
+	}
+}
+
+func mockTopRUSubRequest(itemInterval tipb.ItemInterval) *tipb.TopSQLSubRequest {
+	return &tipb.TopSQLSubRequest{
+		Collectors: []tipb.CollectorType{
+			tipb.CollectorType_COLLECTOR_TYPE_TOPSQL,
+			tipb.CollectorType_COLLECTOR_TYPE_TOPRU,
+		},
+		Topru: &tipb.TopRUConfig{
+			ItemIntervalSeconds: itemInterval,
+		},
+	}
+}
+
 type mockPubSubDataSinkStream struct {
 	ctx       context.Context
 	records   []*tipb.TopSQLRecord
@@ -125,16 +150,7 @@ func TestPubSubDataSink(t *testing.T) {
 				StmtDurationSumNs: 1,
 			}},
 		}},
-		RURecords: []tipb.TopRURecord{{
-			User:      "user1",
-			SqlDigest: []byte("S1"),
-			Items: []*tipb.TopRURecordItem{{
-				TimestampSec: 1,
-				TotalRu:      1.0,
-				ExecCount:    1,
-				ExecDuration: 1,
-			}},
-		}},
+		RURecords: []tipb.TopRURecord{mockTopRURecord()},
 		SQLMetas: []tipb.SQLMeta{{
 			SqlDigest:     []byte("S1"),
 			NormalizedSql: "SQL-1",
@@ -159,17 +175,11 @@ func TestPubSubDataSink(t *testing.T) {
 	require.NoError(t, failpoint.Disable(panicPath))
 }
 
+// TestPubSubDataSinkEnableTopRU verifies TopRU-enabled subscriptions send
+// RU records through the pubsub sink when global TopRU is on.
 func TestPubSubDataSinkEnableTopRU(t *testing.T) {
 	mockStream := &mockPubSubDataSinkStream{}
-	req := &tipb.TopSQLSubRequest{
-		Collectors: []tipb.CollectorType{
-			tipb.CollectorType_COLLECTOR_TYPE_TOPSQL,
-			tipb.CollectorType_COLLECTOR_TYPE_TOPRU,
-		},
-		Topru: &tipb.TopRUConfig{
-			ItemIntervalSeconds: tipb.ItemInterval_ITEM_INTERVAL_15S,
-		},
-	}
+	req := mockTopRUSubRequest(tipb.ItemInterval_ITEM_INTERVAL_15S)
 	ds := newPubSubDataSink(req, mockStream, &mockPubSubDataSinkRegisterer{})
 
 	topsqlstate.EnableTopRU()
@@ -179,16 +189,7 @@ func TestPubSubDataSinkEnableTopRU(t *testing.T) {
 		}
 	}()
 
-	err := ds.sendTopRURecords(context.Background(), []tipb.TopRURecord{{
-		User:      "user1",
-		SqlDigest: []byte("S1"),
-		Items: []*tipb.TopRURecordItem{{
-			TimestampSec: 1,
-			TotalRu:      1.0,
-			ExecCount:    1,
-			ExecDuration: 1,
-		}},
-	}})
+	err := ds.sendTopRURecords(context.Background(), []tipb.TopRURecord{mockTopRURecord()})
 	require.NoError(t, err)
 
 	mockStream.Lock()
@@ -196,9 +197,10 @@ func TestPubSubDataSinkEnableTopRU(t *testing.T) {
 	mockStream.Unlock()
 }
 
+// TestPubSubMultiSubscriberIsolation verifies TopRU enablement is ref-counted
+// across subscribers and the item interval follows the latest subscriber while enabled.
+// It relies on require.Eventually with bounded timeouts to avoid timing-sensitive asserts.
 func TestPubSubMultiSubscriberIsolation(t *testing.T) {
-	// Contract: TopRU enable is reference-counted across subscribers, while
-	// item interval is last-write-wins until the last subscriber exits.
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
 	}
@@ -219,24 +221,8 @@ func TestPubSubMultiSubscriberIsolation(t *testing.T) {
 	stream1 := &mockPubSubDataSinkStream{ctx: ctx1}
 	stream2 := &mockPubSubDataSinkStream{ctx: ctx2}
 
-	req1 := &tipb.TopSQLSubRequest{
-		Collectors: []tipb.CollectorType{
-			tipb.CollectorType_COLLECTOR_TYPE_TOPSQL,
-			tipb.CollectorType_COLLECTOR_TYPE_TOPRU,
-		},
-		Topru: &tipb.TopRUConfig{
-			ItemIntervalSeconds: tipb.ItemInterval(30),
-		},
-	}
-	req2 := &tipb.TopSQLSubRequest{
-		Collectors: []tipb.CollectorType{
-			tipb.CollectorType_COLLECTOR_TYPE_TOPSQL,
-			tipb.CollectorType_COLLECTOR_TYPE_TOPRU,
-		},
-		Topru: &tipb.TopRUConfig{
-			ItemIntervalSeconds: tipb.ItemInterval(15),
-		},
-	}
+	req1 := mockTopRUSubRequest(tipb.ItemInterval(30))
+	req2 := mockTopRUSubRequest(tipb.ItemInterval(15))
 
 	// Eventually checks make this test robust to async subscribe goroutines.
 	go func() { _ = svc.Subscribe(req1, stream1) }()
@@ -266,42 +252,50 @@ func (r *errPubSubDataSinkRegisterer) Register(DataSink) error { return errors.N
 
 func (r *errPubSubDataSinkRegisterer) Deregister(DataSink) {}
 
+// TestSubscribeRegisterFailDoesNotEnableTopRU verifies a failed registration
+// does not leak global TopRU enablement.
 func TestSubscribeRegisterFailDoesNotEnableTopRU(t *testing.T) {
-	// Registration failure must not leak global TopRU state.
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
 	}
 
-	req := &tipb.TopSQLSubRequest{
-		Collectors: []tipb.CollectorType{
-			tipb.CollectorType_COLLECTOR_TYPE_TOPSQL,
-			tipb.CollectorType_COLLECTOR_TYPE_TOPRU,
-		},
-		Topru: &tipb.TopRUConfig{
-			ItemIntervalSeconds: tipb.ItemInterval_ITEM_INTERVAL_15S,
-		},
-	}
+	req := mockTopRUSubRequest(tipb.ItemInterval_ITEM_INTERVAL_15S)
 	svc := NewTopSQLPubSubService(&errPubSubDataSinkRegisterer{})
 	err := svc.Subscribe(req, &mockPubSubDataSinkStream{})
 	require.Error(t, err)
 	require.False(t, topsqlstate.TopRUEnabled())
 }
 
-func TestNormalizeTopRUItemIntervalInvalid(t *testing.T) {
-	req := &tipb.TopSQLSubRequest{
-		Collectors: []tipb.CollectorType{
-			tipb.CollectorType_COLLECTOR_TYPE_TOPSQL,
-			tipb.CollectorType_COLLECTOR_TYPE_TOPRU,
-		},
-		Topru: &tipb.TopRUConfig{
-			ItemIntervalSeconds: tipb.ItemInterval(99),
-		},
+// TestSubscribeInvalidTopRUItemIntervalDoesNotEnableTopRU verifies invalid
+// TopRU intervals are rejected and do not enable TopRU.
+func TestSubscribeInvalidTopRUItemIntervalDoesNotEnableTopRU(t *testing.T) {
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
 	}
+	topsqlstate.ResetTopRUItemInterval()
+
+	registererCtx, registererCancel := context.WithCancel(context.Background())
+	t.Cleanup(registererCancel)
+	registerer := NewDefaultDataSinkRegisterer(registererCtx)
+	svc := NewTopSQLPubSubService(&registerer)
+
+	req := mockTopRUSubRequest(tipb.ItemInterval(99))
+	err := svc.Subscribe(req, &mockPubSubDataSinkStream{})
+	require.ErrorIs(t, err, topsqlstate.ErrInvalidTopRUItemInterval)
+	require.False(t, topsqlstate.TopRUEnabled())
+	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
+}
+
+// TestNormalizeTopRUItemIntervalInvalid verifies pubsub stores the raw
+// interval value even when it is outside the supported enum range.
+func TestNormalizeTopRUItemIntervalInvalid(t *testing.T) {
+	req := mockTopRUSubRequest(tipb.ItemInterval(99))
 	ds := newPubSubDataSink(req, &mockPubSubDataSinkStream{}, &mockPubSubDataSinkRegisterer{})
-	// pubsub stores the raw interval; normalization happens in state.SetTopRUItemInterval.
 	require.Equal(t, tipb.ItemInterval(99), ds.itemInterval)
 }
 
+// TestParseTopRUSubscription verifies parsing for nil, missing, and valid
+// TopRU requests, including passthrough of unknown intervals.
 func TestParseTopRUSubscription(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -335,16 +329,8 @@ func TestParseTopRUSubscription(t *testing.T) {
 			itemInterval: tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED,
 		},
 		{
-			name: "enabled with valid collector",
-			req: &tipb.TopSQLSubRequest{
-				Collectors: []tipb.CollectorType{
-					tipb.CollectorType_COLLECTOR_TYPE_TOPSQL,
-					tipb.CollectorType_COLLECTOR_TYPE_TOPRU,
-				},
-				Topru: &tipb.TopRUConfig{
-					ItemIntervalSeconds: tipb.ItemInterval_ITEM_INTERVAL_30S,
-				},
-			},
+			name:         "enabled with valid collector",
+			req:          mockTopRUSubRequest(tipb.ItemInterval_ITEM_INTERVAL_30S),
 			enableTopRU:  true,
 			itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S,
 		},
@@ -370,6 +356,8 @@ func TestParseTopRUSubscription(t *testing.T) {
 	}
 }
 
+// TestSendTopRURecordsGatingAndErrors verifies TopRU record sending is gated
+// by sink/global enablement and surfaces stream errors or context cancellation.
 func TestSendTopRURecordsGatingAndErrors(t *testing.T) {
 	setGlobalTopRUEnabled := func(enabled bool) {
 		for topsqlstate.TopRUEnabled() {
@@ -484,6 +472,8 @@ func TestSendTopRURecordsGatingAndErrors(t *testing.T) {
 	})
 }
 
+// TestPubSubDataSinkDoSendOrderIsStable verifies doSend emits records in a
+// deterministic order and stops cleanly on context cancellation.
 func TestPubSubDataSinkDoSendOrderIsStable(t *testing.T) {
 	setGlobalTopRUEnabled := func(enabled bool) {
 		for topsqlstate.TopRUEnabled() {
