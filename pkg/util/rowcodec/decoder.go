@@ -188,6 +188,14 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 type ChunkDecoder struct {
 	decoder
 	defDatum func(i int, chk *chunk.Chunk) error
+
+	// colMapping caches the column index in not-null columns array for decoder.columns[i].
+	// It can skip binary search for stable not-null columns layout. The cached index
+	// is validated on each row and falls back to findColID when layout changes.
+	// -1 means not cached and needs to call findColID for each row.
+	colMapping     []int
+	mappingInited  bool
+	mappingRowCols int
 }
 
 // NewChunkDecoder creates a NewChunkDecoder.
@@ -209,6 +217,14 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 		return err
 	}
 
+	// Build (or rebuild) column mapping cache for stable schema.
+	rowCols := int(decoder.row.numNotNullCols) + int(decoder.row.numNullCols)
+	if !decoder.mappingInited || decoder.mappingRowCols != rowCols {
+		decoder.buildColMapping()
+		decoder.mappingInited = true
+		decoder.mappingRowCols = rowCols
+	}
+
 	for colIdx := range decoder.columns {
 		col := &decoder.columns[colIdx]
 		// fill the virtual column value after row calculation
@@ -218,6 +234,16 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 		}
 		if col.ID == model.ExtraRowChecksumID {
 			chk.AppendNull(colIdx)
+			continue
+		}
+
+		mappedIdx := decoder.colMapping[colIdx]
+		if mappedIdx >= 0 && decoder.matchNotNullColID(mappedIdx, col.ID) {
+			colData := decoder.getData(mappedIdx)
+			err := decoder.decodeColToChunk(colIdx, col, colData, chk)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -254,6 +280,43 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 		}
 	}
 	return nil
+}
+
+func (decoder *ChunkDecoder) buildColMapping() {
+	if cap(decoder.colMapping) < len(decoder.columns) {
+		decoder.colMapping = make([]int, len(decoder.columns))
+	} else {
+		decoder.colMapping = decoder.colMapping[:len(decoder.columns)]
+	}
+	for i := range decoder.colMapping {
+		decoder.colMapping[i] = -1
+	}
+
+	for i := range decoder.columns {
+		col := &decoder.columns[i]
+		if col.VirtualGenCol || col.ID == model.ExtraRowChecksumID {
+			continue
+		}
+		// Only attempt to cache columns declared NOT NULL. Nullable columns can move between
+		// not-null and null segments, and other columns' NULL changes may also shift indices.
+		if col.Ft == nil || !mysql.HasNotNullFlag(col.Ft.GetFlag()) {
+			continue
+		}
+		idx, isNil, notFound := decoder.row.findColID(col.ID)
+		if !notFound && !isNil {
+			decoder.colMapping[i] = idx
+		}
+	}
+}
+
+func (decoder *ChunkDecoder) matchNotNullColID(idx int, colID int64) bool {
+	if idx < 0 || idx >= int(decoder.row.numNotNullCols) {
+		return false
+	}
+	if decoder.row.large() {
+		return int64(decoder.row.colIDs32[idx]) == colID
+	}
+	return int64(decoder.row.colIDs[idx]) == colID
 }
 
 func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, handle kv.Handle, chk *chunk.Chunk) bool {
