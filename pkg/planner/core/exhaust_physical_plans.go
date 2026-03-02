@@ -213,11 +213,14 @@ func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *proper
 			{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
 		}
 	}
-	adjustStats := func(chReqProps [2]*property.PhysicalProperty) {
+	adjustStatsAndGetJoin := func(chReqProps [2]*property.PhysicalProperty) *physicalop.PhysicalHashJoin {
 		if prop.ExpectedCnt < p.StatsInfo().RowCount {
 			expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
 			chReqProps[1-innerIdx].ExpectedCnt = outerStats.RowCount * expCntScale
 		}
+		hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps[0], chReqProps[1])
+		hashJoin.SetSchema(p.Schema())
+		return hashJoin
 	}
 	res := make([]*physicalop.PhysicalHashJoin, 0, 2)
 	if prop.IndexJoinProp != nil {
@@ -226,18 +229,12 @@ func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *proper
 			chReqProps := newTwoBaseProps()
 			ijp := prop.IndexJoinProp.CloneEssentialFields()
 			chReqProps[childIdx].IndexJoinProp = ijp
-			adjustStats(chReqProps)
-			hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps[0], chReqProps[1])
-			hashJoin.SetSchema(p.Schema())
-			res = append(res, hashJoin)
+			res = append(res, adjustStatsAndGetJoin(chReqProps))
 		}
 		return res
 	}
 	chReqProps := newTwoBaseProps()
-	adjustStats(chReqProps)
-	hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps[0], chReqProps[1])
-	hashJoin.SetSchema(p.Schema())
-	res = append(res, hashJoin)
+	res = append(res, adjustStatsAndGetJoin(chReqProps))
 	return res
 }
 

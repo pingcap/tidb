@@ -93,7 +93,6 @@ type InnerMergeCtx struct {
 	JoinKeys                []*expression.Column
 	KeyCols                 []int
 	KeyColIDs               []int64
-	KeyColUniqueIDs         []int64
 	KeyCollators            []collate.Collator
 	CompareFuncs            []expression.CompareFunc
 	ColLens                 []int
@@ -695,10 +694,9 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		dLookupKey = append(dLookupKey, innerValue)
 	}
 	return &IndexJoinLookUpContent{
-		Keys:            dLookupKey,
-		Row:             task.outerResult.GetRow(idx),
-		KeyColIDs:       imw.KeyColIDs,
-		KeyColUniqueIDs: imw.KeyColUniqueIDs,
+		Keys:      dLookupKey,
+		Row:       task.outerResult.GetRow(idx),
+		KeyColIDs: imw.KeyColIDs,
 	}, nil
 }
 

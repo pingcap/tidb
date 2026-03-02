@@ -86,10 +86,11 @@ func TestBuildExecutorForIndexJoinHashJoinErrorCleansChildren(t *testing.T) {
 	execBuilder.dataReaderTS = 1
 	readerBuilder, err := execBuilder.newDataReaderBuilder(hashJoinPlan)
 	require.NoError(t, err)
+	readerBuilder.indexJoinKeyUniqueIDs = []int64{1}
 
 	_, err = readerBuilder.BuildExecutorForIndexJoin(
 		context.Background(),
-		[]*join.IndexJoinLookUpContent{{KeyColUniqueIDs: []int64{1}}},
+		[]*join.IndexJoinLookUpContent{{}},
 		nil,
 		nil,
 		nil,

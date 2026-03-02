@@ -108,15 +108,14 @@ type IndexJoinExecutorBuilder interface {
 
 // InnerCtx is the inner side ctx used in index lookup join
 type InnerCtx struct {
-	ReaderBuilder   IndexJoinExecutorBuilder
-	RowTypes        []*types.FieldType
-	KeyCols         []int
-	KeyColIDs       []int64 // the original ID in its table, used by dynamic partition pruning
-	KeyColUniqueIDs []int64
-	KeyCollators    []collate.Collator
-	HashTypes       []*types.FieldType
-	HashCols        []int
-	HashCollators   []collate.Collator
+	ReaderBuilder IndexJoinExecutorBuilder
+	RowTypes      []*types.FieldType
+	KeyCols       []int
+	KeyColIDs     []int64 // the original ID in its table, used by dynamic partition pruning
+	KeyCollators  []collate.Collator
+	HashTypes     []*types.FieldType
+	HashCols      []int
+	HashCollators []collate.Collator
 	// HashIsNullEQ marks which hash keys are null-safe equal (<=>).
 	// The slice aligns with HashCols; positions corresponding to join keys can be true.
 	HashIsNullEQ []bool
@@ -540,11 +539,10 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 
 // IndexJoinLookUpContent is the content used in index lookup join
 type IndexJoinLookUpContent struct {
-	Keys            []types.Datum
-	Row             chunk.Row
-	keyCols         []int
-	KeyColIDs       []int64 // the original ID in its table, used by dynamic partition pruning
-	KeyColUniqueIDs []int64
+	Keys      []types.Datum
+	Row       chunk.Row
+	keyCols   []int
+	KeyColIDs []int64 // the original ID in its table, used by dynamic partition pruning
 }
 
 func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) error {
@@ -629,11 +627,10 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 				// So we don't need to do it here.
 			}
 			lookUpContents = append(lookUpContents, &IndexJoinLookUpContent{
-				Keys:            dLookUpKey,
-				Row:             chk.GetRow(rowIdx),
-				keyCols:         iw.KeyCols,
-				KeyColIDs:       iw.KeyColIDs,
-				KeyColUniqueIDs: iw.KeyColUniqueIDs,
+				Keys:      dLookUpKey,
+				Row:       chk.GetRow(rowIdx),
+				keyCols:   iw.KeyCols,
+				KeyColIDs: iw.KeyColIDs,
 			})
 		}
 	}

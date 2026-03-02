@@ -3692,7 +3692,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 	e.OuterCtx.KeyCols = outerKeyCols
 	e.InnerCtx.KeyCols = innerKeyCols
 	e.InnerCtx.KeyColIDs = innerKeyColIDs
-	e.InnerCtx.KeyColUniqueIDs = innerKeyColUniqueIDs
 	e.InnerCtx.KeyCollators = keyCollators
 
 	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
@@ -3792,7 +3791,6 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 			JoinKeys:                v.InnerJoinKeys,
 			KeyCols:                 innerKeyCols,
 			KeyColIDs:               innerKeyColIDs,
-			KeyColUniqueIDs:         innerKeyColUniqueIDs,
 			KeyCollators:            keyCollators,
 			CompareFuncs:            v.CompareFuncs,
 			ColLens:                 v.IdxColLens,
@@ -4049,10 +4047,7 @@ func (b *executorBuilder) buildTableReader(v *physicalop.PhysicalTableReader) ex
 	ret.ranges = ts.Ranges
 	ret.groupedRanges = ts.GroupedRanges
 	ret.groupByColIdxs = ts.GroupByColIdxs
-	b.withStmtCtxLock(func() {
-		sctx := b.ctx.GetSessionVars().StmtCtx
-		sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
-	})
+	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ret
@@ -4448,10 +4443,8 @@ func (b *executorBuilder) buildIndexReader(v *physicalop.PhysicalIndexReader) ex
 	}
 
 	ret.ranges = is.Ranges
-	b.withStmtCtxLock(func() {
-		sctx := b.ctx.GetSessionVars().StmtCtx
-		sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
-	})
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ret
@@ -4713,11 +4706,9 @@ func (b *executorBuilder) buildIndexLookUpReader(v *physicalop.PhysicalIndexLook
 	ret.ranges = is.Ranges
 	executor_metrics.ExecutorCounterIndexLookUpExecutor.Inc()
 
-	b.withStmtCtxLock(func() {
-		sctx := b.ctx.GetSessionVars().StmtCtx
-		sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
-		sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
-	})
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ret
@@ -4889,10 +4880,8 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
 			assertByItemsAreColumns(is.ByItems)
 			ret.ranges = append(ret.ranges, is.Ranges)
-			b.withStmtCtxLock(func() {
-				sctx := b.ctx.GetSessionVars().StmtCtx
-				sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
-			})
+			sctx := b.ctx.GetSessionVars().StmtCtx
+			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 			if is.Index.Global {
 				hasGlobalIndex = true
 			}
@@ -4902,17 +4891,13 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 			ret.ranges = append(ret.ranges, partialTS.Ranges)
 			if ret.table.Meta().IsCommonHandle {
 				tblInfo := ret.table.Meta()
-				b.withStmtCtxLock(func() {
-					sctx := b.ctx.GetSessionVars().StmtCtx
-					sctx.IndexNames = append(sctx.IndexNames, tblInfo.Name.O+":"+tables.FindPrimaryIndex(tblInfo).Name.O)
-				})
+				sctx := b.ctx.GetSessionVars().StmtCtx
+				sctx.IndexNames = append(sctx.IndexNames, tblInfo.Name.O+":"+tables.FindPrimaryIndex(tblInfo).Name.O)
 			}
 		}
 	}
-	b.withStmtCtxLock(func() {
-		sctx := b.ctx.GetSessionVars().StmtCtx
-		sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
-	})
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	executor_metrics.ExecutorCounterIndexMergeReaderExecutor.Inc()
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -5081,16 +5066,12 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 				err = builder.executorBuilder.err
 				return nil, err
 			}
-			err = joinExec.OpenSelf()
-			if err != nil {
+		} else {
+			joinExec = builder.executorBuilder.buildHashJoinFromChildExecs(childExecs[0], childExecs[1], v)
+			if builder.executorBuilder.err != nil {
+				err = builder.executorBuilder.err
 				return nil, err
 			}
-			return joinExec, nil
-		}
-		joinExec = builder.executorBuilder.buildHashJoinFromChildExecs(childExecs[0], childExecs[1], v)
-		if builder.executorBuilder.err != nil {
-			err = builder.executorBuilder.err
-			return nil, err
 		}
 		err = joinExec.OpenSelf()
 		if err != nil {
@@ -5104,13 +5085,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 }
 
 func (builder *dataReaderBuilder) indexJoinLookupChildIdx(p *physicalop.PhysicalHashJoin, lookUpContents []*join.IndexJoinLookUpContent) (int, bool) {
-	var keyUniqueIDs []int64
-	if len(lookUpContents) > 0 {
-		keyUniqueIDs = lookUpContents[0].KeyColUniqueIDs
-	}
-	if len(keyUniqueIDs) == 0 {
-		keyUniqueIDs = builder.indexJoinKeyUniqueIDs
-	}
+	keyUniqueIDs := builder.indexJoinKeyUniqueIDs
 	if len(keyUniqueIDs) == 0 {
 		return 0, false
 	}
@@ -5952,10 +5927,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 	}
 
 	if plan.IndexInfo != nil {
-		b.withStmtCtxLock(func() {
-			sctx := b.ctx.GetSessionVars().StmtCtx
-			sctx.IndexNames = append(sctx.IndexNames, plan.TblInfo.Name.O+":"+plan.IndexInfo.Name.O)
-		})
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, plan.TblInfo.Name.O+":"+plan.IndexInfo.Name.O)
 	}
 
 	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
