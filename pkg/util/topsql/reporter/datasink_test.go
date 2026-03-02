@@ -105,7 +105,7 @@ func TestDefaultDataSinkRegistererTopRUDuplicateRegisterIsIdempotent(t *testing.
 	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
 }
 
-func TestDefaultDataSinkRegisterer_TopRURefCount_ConcurrentRegisterDeregister(t *testing.T) {
+func TestDefaultDataSinkRegistererTopRURefCountConcurrentRegisterDeregister(t *testing.T) {
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
 	}

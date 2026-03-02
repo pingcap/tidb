@@ -186,7 +186,7 @@ func (s *unimplementedTopRUAgentServer) ReportTopRURecords(tipb.TopSQLAgent_Repo
 	return status.Error(codes.Unimplemented, "topru rpc not supported")
 }
 
-func TestSingleTargetDataSink_TopRU_Unimplemented_DegradesGracefully(t *testing.T) {
+func TestSingleTargetDataSinkTopRUUnimplementedDegradesGracefully(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 

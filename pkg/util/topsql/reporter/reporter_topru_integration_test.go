@@ -35,7 +35,7 @@ func (s *reporterRUSignalSink) TrySend(data *ReportData, _ time.Time) error {
 
 func (s *reporterRUSignalSink) OnReporterClosing() {}
 
-func TestRemoteTopSQLReporter_TopRU_CollectRUIncrements_FlowsToReport(t *testing.T) {
+func TestRemoteTopSQLReporterTopRUCollectRUIncrementsFlowsToReport(t *testing.T) {
 	origNowFunc := nowFunc
 	var currentUnix int64 = 1
 	nowFunc = func() time.Time {

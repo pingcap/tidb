@@ -233,7 +233,7 @@ func TestRUWindowAggregatorConcurrentPressure(t *testing.T) {
 	require.Greater(t, totalRU, 0.0, "total reported RU should be positive")
 }
 
-func TestRUWindowAggregator_DropsLateDataAfterWindowReported(t *testing.T) {
+func TestRUWindowAggregatorDropsLateDataAfterWindowReported(t *testing.T) {
 	// A closed [0,60) window can be reported only once, and later writes to that window must be dropped.
 	agg := newRUWindowAggregator()
 
@@ -275,7 +275,7 @@ func TestRUWindowAggregator_DropsLateDataAfterWindowReported(t *testing.T) {
 	require.InDelta(t, 1.0, totalRUFromTopRURecords(second), 1e-9)
 }
 
-func TestRUWindowAggregator_FinalReportCappedTo100x100(t *testing.T) {
+func TestRUWindowAggregatorFinalReportCappedTo100x100(t *testing.T) {
 	// Final 60s output must enforce 100 users max and 100 SQL max per retained user.
 	agg := newRUWindowAggregator()
 	const (
@@ -329,7 +329,7 @@ func TestRUWindowAggregator_FinalReportCappedTo100x100(t *testing.T) {
 	require.Greater(t, othersUserTotalRU, 0.0)
 }
 
-func TestRUWindowAggregator_RegroupSparseBuckets_NoPhantomPoints(t *testing.T) {
+func TestRUWindowAggregatorRegroupSparseBucketsNoPhantomPoints(t *testing.T) {
 	cases := []struct {
 		name       string
 		interval   uint64
@@ -379,7 +379,7 @@ func TestRUWindowAggregator_RegroupSparseBuckets_NoPhantomPoints(t *testing.T) {
 	}
 }
 
-func TestRUWindowAggregator_HotKeySurvivesUnderHighCardinality(t *testing.T) {
+func TestRUWindowAggregatorHotKeySurvivesUnderHighCardinality(t *testing.T) {
 	// Under high-cardinality long tail, the hot key should remain visible and not be folded into others.
 	agg := newRUWindowAggregator()
 	const (

@@ -484,7 +484,7 @@ func TestSendTopRURecordsGatingAndErrors(t *testing.T) {
 	})
 }
 
-func TestPubSubDataSink_DoSend_OrderIsStable(t *testing.T) {
+func TestPubSubDataSinkDoSendOrderIsStable(t *testing.T) {
 	setGlobalTopRUEnabled := func(enabled bool) {
 		for topsqlstate.TopRUEnabled() {
 			topsqlstate.DisableTopRU()

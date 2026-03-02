@@ -33,7 +33,7 @@ func (s *structuredSignalSink) TrySend(data *ReportData, _ time.Time) error {
 
 func (s *structuredSignalSink) OnReporterClosing() {}
 
-func TestTopRUReporter_MockDataSinkStructured(t *testing.T) {
+func TestTopRUReporterMockDataSinkStructured(t *testing.T) {
 	// End-to-end contract: a closed RU window should emit RURecords together with
 	// SQL/Plan meta for the same digests in one ReportData payload.
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)

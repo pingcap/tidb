@@ -198,7 +198,7 @@ func TestCollectAndEvicted(t *testing.T) {
 	}
 }
 
-func TestEffectiveReportIntervalSeconds_TopSQLIndependentFromTopRU(t *testing.T) {
+func TestEffectiveReportIntervalSecondsTopSQLIndependentFromTopRU(t *testing.T) {
 	// Contract: TopRU item interval changes must not mutate TopSQL report interval.
 	// We toggle TopRU enable/disable and invalid interval inputs to verify isolation.
 	topsqlstate.DisableTopSQL()
