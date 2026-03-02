@@ -69,6 +69,12 @@ func (b encodingBase) Transform(dest *bytes.Buffer, src []byte, op Op) (result [
 			if op&opTruncateTrim != 0 {
 				return false
 			}
+			if op&opTruncateHexReplace != 0 {
+				for _, b := range from {
+					fmt.Fprintf(dest, "\\x%02x", b)
+				}
+				return true
+			}
 			if op&opTruncateReplace != 0 {
 				dest.WriteByte('?')
 				return true

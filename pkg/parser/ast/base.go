@@ -58,7 +58,7 @@ func (n *node) Text() string {
 			n.utf8Text = n.text
 			return
 		}
-		utf8Lit, _ := n.enc.Transform(nil, charset.HackSlice(n.text), charset.OpDecodeReplace)
+		utf8Lit, _ := n.enc.Transform(nil, charset.HackSlice(n.text), charset.OpDecodeHexReplace)
 		n.utf8Text = charset.HackString(utf8Lit)
 	})
 	return n.utf8Text
