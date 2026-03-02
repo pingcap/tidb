@@ -3532,6 +3532,15 @@ var defaultSysVars = []*SysVar{
 		s.SharedLockPromotion = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxDistTaskNodes, Value: strconv.Itoa(DefTiDBMaxDistTaskNodes), Type: TypeInt, MinValue: -1, MaxValue: 128,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			maxNodes := TidbOptInt(normalizedValue, DefTiDBMaxDistTaskNodes)
+			if maxNodes == 0 {
+				return normalizedValue, errors.New("max_dist_task_nodes should be -1 or [1, 128]")
+			}
+			return normalizedValue, nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBTSOClientRPCMode, Value: DefTiDBTSOClientRPCMode, Type: TypeEnum, PossibleValues: []string{TSOClientRPCModeDefault, TSOClientRPCModeParallel, TSOClientRPCModeParallelFast},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
