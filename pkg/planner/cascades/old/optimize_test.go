@@ -179,7 +179,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	//   IndexScan_8 table:t, index:f, g
 	// Group#4 Schema:[test.t.a,test.t.f]
 	//   IndexScan_6 table:t, index:f
-	propMap := make(map[*memo.Group][][]*expression.Column)
+	propMap := make(map[*memo.Group]*base.PossiblePropertiesInfo)
 	aggProp := preparePossibleProperties(group, propMap)
 	// We only have one prop for Group0 : f
 	require.Len(t, aggProp.Orders, 1)
