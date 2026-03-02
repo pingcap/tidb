@@ -2878,6 +2878,10 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		canUseCache = false
 	}
 
+	outerExpectedCnt := math.MaxFloat64
+	if !prop.IsSortItemEmpty() {
+		outerExpectedCnt = prop.ExpectedCnt
+	}
 	apply := physicalop.PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
@@ -2885,7 +2889,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt),
 		la.QueryBlockOffset(),
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: true},
+		&property.PhysicalProperty{ExpectedCnt: outerExpectedCnt, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: true},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
 	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil
