@@ -15,9 +15,12 @@
 package tikvhandler
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/stretchr/testify/require"
 )
@@ -39,4 +42,27 @@ func TestParseAdminCheckIndexLimit(t *testing.T) {
 
 	_, err = parseAdminCheckIndexLimit(&http.Request{Form: map[string][]string{handler.Limit: {"-1"}}})
 	require.ErrorContains(t, err, "greater than 0")
+}
+
+func TestDDLCheckHandlerAdminCheckIndexCancelContext(t *testing.T) {
+	h := DDLCheckHandler{
+		adminCheckIndexFn: func(ctx context.Context, _, _, _ string, _ int) (*executor.AdminCheckIndexInconsistentSummary, error) {
+			require.ErrorIs(t, ctx.Err(), context.Canceled)
+			return nil, ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/admin/check/index", nil).WithContext(ctx)
+	req.Form = map[string][]string{
+		handler.DBName:    {"test"},
+		handler.TableName: {"t"},
+		handler.IndexName: {"idx_a"},
+	}
+
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	require.NotEqual(t, http.StatusOK, resp.Code)
+	require.Contains(t, resp.Body.String(), context.Canceled.Error())
 }

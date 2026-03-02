@@ -740,9 +740,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			switch {
 			case !hasTable:
 				if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
-					tableRecord = lastTableRecord
-				}
-				if reportInconsistent(reporter, AdminCheckIndexIndexWithoutRow, indexRecord.Handle, indexRecord, tableRecord) {
+					if reportInconsistent(reporter, AdminCheckIndexRowIndexMismatch, indexRecord.Handle, indexRecord, lastTableRecord) {
+						return true
+					}
+				} else if reportInconsistent(reporter, AdminCheckIndexIndexWithoutRow, indexRecord.Handle, indexRecord, nil) {
 					return true
 				}
 				indexRecord, indexRow, hasIndex, err = nextRecord(indexStream)
@@ -932,7 +933,7 @@ func compareChecksumBuckets(tableChecksum, indexChecksum []groupByChecksum) []mi
 	i, j := 0, 0
 	for i < len(tableChecksum) && j < len(indexChecksum) {
 		if tableChecksum[i].bucket == indexChecksum[j].bucket {
-			if tableChecksum[i].checksum != indexChecksum[j].checksum {
+			if tableChecksum[i].checksum != indexChecksum[j].checksum || tableChecksum[i].count != indexChecksum[j].count {
 				mismatch = append(mismatch, mismatchBucket{bucket: tableChecksum[i].bucket, count: max(tableChecksum[i].count, indexChecksum[j].count)})
 			}
 			i++

@@ -2278,6 +2278,50 @@ func TestAdminCheckIndexCollectInconsistentMultiLayerLocate(t *testing.T) {
 	}, summary.Rows)
 }
 
+func TestAdminCheckIndexCollectInconsistentTrailingDuplicateIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_collect_tail")
+	tk.MustExec("create table admin_collect_tail (id int primary key, a int, key idx_a(a))")
+	tk.MustExec("insert admin_collect_tail values (1, 10), (2, 20)")
+
+	sctx := mock.NewContext()
+	sctx.Store = store
+	is := domain.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("admin_collect_tail"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.FindIndexByName("idx_a")
+	require.NotNil(t, idxInfo)
+	idxOp := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+
+	// Inject an extra trailing index entry for an existing handle without removing
+	// the original one. It should be classified as row_index_mismatch.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	_, err = idxOp.Create(sctx.GetTableCtx(), txn, types.MakeDatums(200), kv.IntHandle(2), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	tk.MustExec("set @@tidb_enable_fast_table_check = ON")
+	tk.MustExec("set @@tidb_fast_check_table_collect_inconsistent = ON")
+
+	sessVars := tk.Session().GetSessionVars()
+	sessVars.FastCheckTableInconsistentLimit = 0
+	sessVars.FastCheckTableInconsistentSummary = nil
+	_, err = tk.ExecWithContext(context.Background(), "admin check index admin_collect_tail idx_a")
+	require.Error(t, err)
+	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+
+	summary, _ := sessVars.FastCheckTableInconsistentSummary.(*executor.AdminCheckIndexInconsistentSummary)
+	require.NotNil(t, summary)
+	require.Contains(t, summary.Rows, executor.AdminCheckIndexInconsistentRow{Handle: "2", MismatchType: executor.AdminCheckIndexRowIndexMismatch})
+	require.NotContains(t, summary.Rows, executor.AdminCheckIndexInconsistentRow{Handle: "2", MismatchType: executor.AdminCheckIndexIndexWithoutRow})
+}
+
 func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
