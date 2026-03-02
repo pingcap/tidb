@@ -1768,6 +1768,9 @@ const (
 	DefTiDBMemArbitratorQueryReservedText             = "0"
 	DefTiDBMemArbitratorWaitAverse                    = "0"
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
+	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
+	// This matches the MySQL default for performance_schema_session_connect_attrs_size.
+	DefConnectAttrsSize int64 = 4096
 )
 
 // Process global variables.
@@ -1903,6 +1906,14 @@ var (
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 	EnableBindingUsage         = atomic.NewBool(DefTiDBEnableBindingUsage)
+
+	// ConnectAttrsSize is the max aggregate byte size of connection attributes allowed per connection.
+	// Corresponds to performance_schema_session_connect_attrs_size. Default 4096.
+	ConnectAttrsSize = atomic.NewInt64(DefConnectAttrsSize)
+	// ConnectAttrsLongestSeen tracks the largest connection attribute aggregate size seen so far.
+	ConnectAttrsLongestSeen = atomic.NewInt64(0)
+	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
+	ConnectAttrsLost = atomic.NewInt64(0)
 )
 
 func serverMemoryLimitDefaultValue() string {

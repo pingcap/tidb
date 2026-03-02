@@ -18,10 +18,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
+	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -129,12 +133,18 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 			return nil
 		}
 		if num, null, intOff := util2.ParseLengthEncodedInt(data[offset:]); !null {
+			if num > 1<<20 { // 1 MiB hard limit
+				return errors.New("connection refused: session connection attributes exceed the 1 MiB hard limit")
+			}
 			offset += intOff // Length of variable length encoded integer itself in bytes
 			row := data[offset : offset+int(num)]
-			attrs, err := parseAttrs(row)
+			attrs, warning, err := parseAttrs(row)
 			if err != nil {
 				logutil.Logger(ctx).Warn("parse attrs failed", zap.Error(err))
 				return nil
+			}
+			if warning != "" {
+				logutil.Logger(ctx).Warn(warning)
 			}
 			packet.Attrs = attrs
 			offset += int(num) // Length of attributes
@@ -148,22 +158,66 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 	return nil
 }
 
-func parseAttrs(data []byte) (map[string]string, error) {
+func parseAttrs(data []byte) (map[string]string, string, error) {
 	attrs := make(map[string]string)
 	pos := 0
+	var totalSize int64
+	var acceptedSize int64
+	truncated := false
+	limit := vardef.ConnectAttrsSize.Load()
+
 	for pos < len(data) {
 		key, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return attrs, err
+			return attrs, "", err
 		}
 		pos += off
 		value, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return attrs, err
+			return attrs, "", err
 		}
 		pos += off
 
-		attrs[string(key)] = string(value)
+		kvSize := int64(len(key)) + int64(len(value))
+		totalSize += kvSize
+
+		if limit >= 0 && totalSize > limit {
+			if !truncated {
+				truncated = true
+				vardef.ConnectAttrsLost.Add(1)
+			}
+			continue
+		}
+
+		if !truncated {
+			attrs[string(key)] = string(value)
+			acceptedSize += kvSize
+		}
 	}
-	return attrs, nil
+
+	// Update LongestSeen only for normal-sized payloads (< 64 KiB).
+	// Abnormally large payloads are still accepted (up to 1 MiB) but should
+	// not skew this monitoring metric.
+	if totalSize < 65536 {
+		for {
+			old := vardef.ConnectAttrsLongestSeen.Load()
+			if totalSize <= old {
+				break
+			}
+			if vardef.ConnectAttrsLongestSeen.CompareAndSwap(old, totalSize) {
+				break
+			}
+		}
+	}
+
+	var warning string
+	if truncated {
+		truncatedBytes := totalSize - acceptedSize
+		attrs["_truncated"] = strconv.FormatInt(truncatedBytes, 10)
+		warning = fmt.Sprintf(
+			"session connection attributes truncated: total size %d bytes exceeds "+
+				"performance_schema_session_connect_attrs_size (%d), %d bytes were discarded",
+			totalSize, limit, truncatedBytes)
+	}
+	return attrs, warning, nil
 }
