@@ -330,6 +330,11 @@ var (
 		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
 	}
+	// systemTablesOfMaskingPolicyNextGenVersion contains system tables introduced in
+	// the masking-policy bootstrap version.
+	systemTablesOfMaskingPolicyNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBMaskingPolicyTableID, Name: "tidb_masking_policy", SQL: metadef.CreateTiDBMaskingPolicyTable},
+	}
 )
 
 type versionedBootstrapSchema struct {
@@ -346,6 +351,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfBaseNextGenVersion},
 		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
+	}},
+	{ver: meta.MaskingPolicyNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaskingPolicyNextGenVersion},
 	}},
 }
 

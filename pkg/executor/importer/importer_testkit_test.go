@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -49,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -346,7 +349,6 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-		var scanedRows uint64 = 3
 		ti := getTableImporter(ctx, t, store, "t", "", importer.DataFormatCSV, nil)
 		defer func() {
 			ti.LoadDataController.Close()
@@ -381,20 +383,34 @@ func TestProcessChunkWith(t *testing.T) {
 		}
 		close(chkCh)
 		ti.SetSelectedChunkCh(chkCh)
+		writtenDataKVs := make([]common.KvPair, 0, 3)
 		kvWriter := mock.NewMockEngineWriter(ctrl)
-		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ []string, rows encode.Rows) error {
+				writtenDataKVs = append(writtenDataKVs, backendkv.Rows2KvPairs(rows)...)
+				return nil
+			},
+		).AnyTimes()
 		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
 		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, zap.NewExample(), checksum, nil)
 		require.NoError(t, err)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		if kerneltype.IsClassic() {
-			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111, 3, 18171781844378606789),
-				*checksumMap[verify.DataKVGroupID])
-		} else if kerneltype.IsNextGen() {
-			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111+scanedRows*prefixLenForOneRow, 3, 9366516372087212007),
-				*checksumMap[verify.DataKVGroupID])
+		require.Len(t, writtenDataKVs, 3)
+		rowIDs := make([]int64, 0, len(writtenDataKVs))
+		for _, pair := range writtenDataKVs {
+			handle, err := tablecodec.DecodeRowKey(pair.Key)
+			require.NoError(t, err)
+			rowIDs = append(rowIDs, handle.IntValue())
 		}
+		require.ElementsMatch(t, []int64{1, 2, 3}, rowIDs)
+
+		expectedDataChecksum := verify.NewKVChecksumWithKeyspace(keyspace)
+		expectedDataChecksum.Update(writtenDataKVs)
+		actualDataChecksum := checksumMap[verify.DataKVGroupID]
+		require.Equal(t, expectedDataChecksum.SumSize(), actualDataChecksum.SumSize())
+		require.Equal(t, expectedDataChecksum.SumKVS(), actualDataChecksum.SumKVS())
+		require.Equal(t, expectedDataChecksum.Sum(), actualDataChecksum.Sum())
 	})
 }
 
