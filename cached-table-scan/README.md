@@ -29,6 +29,9 @@ Prepared Statement + Plan Cache + UnionScan 场景下的两大性能问题：
 | [WORK06](WORK06.md) | 批量 DecodeToChunk + Filter | P0 | ~15-25% CPU |
 | [WORK07](WORK07.md) | findColID 列映射缓存 | P1 | ~3-4% CPU |
 | [WORK08](WORK08.md) | DecodeRowKey 快速路径 | P2 | ~1-2% CPU |
+| [WORK09](WORK09.md) | DecodeToChunk 热点基线 + 宽表 benchmark | P0 | 为 WORK10/11 提供可复现对比 |
+| [WORK10](WORK10.md) | chunk fixed-len 追加 fast path | P1 | 降低 finishAppendFixed/appendNullBitmap |
+| [WORK11](WORK11.md) | rowcodec 按列预编译解码器 | P2 | 降低 decodeColToChunk 分发/构造开销 |
 
 ## 建议执行顺序
 
@@ -45,3 +48,8 @@ Prepared Statement + Plan Cache + UnionScan 场景下的两大性能问题：
 ### 第三阶段：收尾
 7. **WORK08** — DecodeRowKey 快速路径
 8. 重新采集 profile，评估是否需要 WORK04 或其他优化
+
+### 第四阶段：DecodeToChunk 深入优化（底层）
+9. **WORK09** — 补齐可复现基线与宽表 benchmark（优化不跑偏）
+10. **WORK10** — chunk fixed-len 追加 fast path（降低 append 热点）
+11. **WORK11** — rowcodec 按列预编译解码器（减少 per-cell 固定开销）

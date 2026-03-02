@@ -724,6 +724,77 @@ func TestToString(t *testing.T) {
 	require.Equal(t, "1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n", chk.ToString(fieldTypes))
 }
 
+func TestColumnAppendFixedValuesConsistency(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong), // uint64 stored as fixed-len
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDatetime),
+		types.NewFieldType(mysql.TypeNewDecimal),
+	}
+	fieldTypes[1].SetFlag(fieldTypes[1].GetFlag() | mysql.UnsignedFlag)
+
+	chk := NewChunkWithCapacity(fieldTypes, 8)
+
+	expectTimes := []types.Time{
+		types.NewTime(types.FromDate(2024, 1, 2, 3, 4, 5, 0), mysql.TypeDatetime, 0),
+		types.NewTime(types.FromDate(2025, 2, 3, 4, 5, 6, 0), mysql.TypeDatetime, 0),
+		types.NewTime(types.FromDate(2026, 3, 4, 5, 6, 7, 0), mysql.TypeDatetime, 0),
+	}
+	expectDecs := []*types.MyDecimal{
+		types.NewDecFromInt(42),
+		types.NewDecFromInt(-7),
+		types.NewDecFromUint(123456),
+	}
+
+	for i := range 3 {
+		chk.AppendInt64(0, int64(-1*(i+1)))
+		chk.AppendUint64(1, uint64(100+i))
+		chk.AppendFloat32(2, float32(i)+1.25)
+		chk.AppendFloat64(3, float64(i)*-2.5)
+		chk.AppendTime(4, expectTimes[i])
+		chk.AppendMyDecimal(5, expectDecs[i])
+	}
+
+	require.Equal(t, 3, chk.NumRows())
+	for i := range 3 {
+		row := chk.GetRow(i)
+		require.False(t, row.IsNull(0))
+		require.Equal(t, int64(-1*(i+1)), row.GetInt64(0))
+		require.False(t, row.IsNull(1))
+		require.Equal(t, uint64(100+i), row.GetUint64(1))
+		require.False(t, row.IsNull(2))
+		require.Equal(t, float32(i)+1.25, row.GetFloat32(2))
+		require.False(t, row.IsNull(3))
+		require.Equal(t, float64(i)*-2.5, row.GetFloat64(3))
+		require.False(t, row.IsNull(4))
+		require.Equal(t, 0, row.GetTime(4).Compare(expectTimes[i]))
+		require.False(t, row.IsNull(5))
+		require.Equal(t, 0, row.GetMyDecimal(5).Compare(expectDecs[i]))
+	}
+}
+
+func TestColumnNullBitmapAfterAppend(t *testing.T) {
+	fieldTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	chk := NewChunkWithCapacity(fieldTypes, 8)
+
+	chk.AppendInt64(0, 1)
+	chk.AppendNull(0)
+	chk.AppendInt64(0, 2)
+	chk.AppendNull(0)
+
+	require.Equal(t, 4, chk.NumRows())
+	col := chk.Column(0)
+	require.False(t, col.IsNull(0))
+	require.True(t, col.IsNull(1))
+	require.False(t, col.IsNull(2))
+	require.True(t, col.IsNull(3))
+
+	require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
+	require.Equal(t, int64(2), chk.GetRow(2).GetInt64(0))
+}
+
 func BenchmarkAppendInt(b *testing.B) {
 	b.ReportAllocs()
 	chk := newChunk(8)
@@ -765,6 +836,37 @@ func BenchmarkAppendRow(b *testing.B) {
 	chk := newChunk(8, 8, 0, 0)
 	for range b.N {
 		appendRow(chk, rowChk.GetRow(0))
+	}
+}
+
+func BenchmarkAppendMixedColumns(b *testing.B) {
+	b.ReportAllocs()
+
+	const (
+		rows     = 1024
+		bytesLen = 32
+	)
+
+	fieldTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeTimestamp),
+	}
+	chk := NewChunkWithCapacity(fieldTypes, rows)
+
+	bs := make([]byte, bytesLen)
+	for i := range bs {
+		bs[i] = byte('a' + (i % 26))
+	}
+	tm := types.NewTime(types.FromDate(2024, 1, 2, 3, 4, 5, 0), mysql.TypeTimestamp, 0)
+
+	for range b.N {
+		chk.Reset()
+		for i := 0; i < rows; i++ {
+			chk.AppendInt64(0, int64(i))
+			chk.AppendBytes(1, bs)
+			chk.AppendTime(2, tm)
+		}
 	}
 }
 

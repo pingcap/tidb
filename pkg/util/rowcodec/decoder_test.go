@@ -157,3 +157,79 @@ func TestChunkDecoderColMappingSchemaChange(t *testing.T) {
 	require.Equal(t, int64(22), r2.GetInt64(1))
 	require.Equal(t, int64(33), r2.GetInt64(2))
 }
+
+func TestChunkDecoderCompiledColsCorrectness(t *testing.T) {
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+	ftUint := types.NewFieldType(mysql.TypeLonglong)
+	ftUint.SetFlag(ftUint.GetFlag() | mysql.UnsignedFlag)
+	ftBytes := types.NewFieldType(mysql.TypeVarchar)
+	ftDT := types.NewFieldType(mysql.TypeDatetime)
+	ftDT.SetDecimal(0)
+	ftTS := types.NewFieldType(mysql.TypeTimestamp)
+	ftTS.SetDecimal(0)
+
+	cols := []ColInfo{
+		{ID: 1, Ft: ftInt},
+		{ID: 2, Ft: ftUint},
+		{ID: 3, Ft: ftBytes},
+		{ID: 4, Ft: ftDT},
+		{ID: 5, Ft: ftTS},
+	}
+	fts := []*types.FieldType{ftInt, ftUint, ftBytes, ftDT, ftTS}
+	colIDs := []int64{1, 2, 3, 4, 5}
+
+	dt := types.NewTime(types.FromDate(2024, 1, 2, 3, 4, 5, 0), mysql.TypeDatetime, 0)
+	ts := types.NewTime(types.FromDate(2024, 2, 3, 4, 5, 6, 0), mysql.TypeTimestamp, 0)
+
+	type testCase struct {
+		name      string
+		encodeLoc *time.Location
+		decodeLoc *time.Location
+		expectTS  types.Time
+	}
+	testCases := []testCase{
+		{
+			name:      "loc_nil",
+			encodeLoc: nil,
+			decodeLoc: nil,
+			expectTS:  ts,
+		},
+		{
+			name:      "loc_local",
+			encodeLoc: time.Local,
+			decodeLoc: time.Local,
+			expectTS:  ts,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var encoder Encoder
+			rowData, err := encoder.Encode(tc.encodeLoc, colIDs, []types.Datum{
+				types.NewIntDatum(123),
+				types.NewUintDatum(456),
+				types.NewBytesDatum([]byte("abc")),
+				types.NewTimeDatum(dt),
+				types.NewTimeDatum(ts),
+			}, nil, nil)
+			require.NoError(t, err)
+
+			decoder := NewChunkDecoder(cols, []int64{-1}, nil, tc.decodeLoc)
+			chk := chunk.NewChunkWithCapacity(fts, 1)
+			require.NoError(t, decoder.DecodeToChunk(rowData, kv.IntHandle(-1), chk))
+			require.Equal(t, 1, chk.NumRows())
+
+			row := chk.GetRow(0)
+			require.False(t, row.IsNull(0))
+			require.Equal(t, int64(123), row.GetInt64(0))
+			require.False(t, row.IsNull(1))
+			require.Equal(t, uint64(456), row.GetUint64(1))
+			require.False(t, row.IsNull(2))
+			require.Equal(t, []byte("abc"), row.GetBytes(2))
+			require.False(t, row.IsNull(3))
+			require.Equal(t, 0, row.GetTime(3).Compare(dt))
+			require.False(t, row.IsNull(4))
+			require.Equal(t, 0, row.GetTime(4).Compare(tc.expectTS))
+		})
+	}
+}

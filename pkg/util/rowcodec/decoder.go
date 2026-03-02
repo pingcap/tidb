@@ -189,6 +189,9 @@ type ChunkDecoder struct {
 	decoder
 	defDatum func(i int, chk *chunk.Chunk) error
 
+	compiledCols       []compiledCol
+	compiledColsInited bool
+
 	// colMapping caches the column index in not-null columns array for decoder.columns[i].
 	// It can skip binary search for stable not-null columns layout. The cached index
 	// is validated on each row and falls back to findColID when layout changes.
@@ -196,6 +199,26 @@ type ChunkDecoder struct {
 	colMapping     []int
 	mappingInited  bool
 	mappingRowCols int
+}
+
+type compiledColKind uint8
+
+const (
+	compiledColOther compiledColKind = iota
+	compiledColInt
+	compiledColUint
+	compiledColFloat32
+	compiledColFloat64
+	compiledColBytes
+	compiledColTime
+	compiledColDuration
+)
+
+type compiledCol struct {
+	kind          compiledColKind
+	tp            byte
+	fsp           int
+	needTZConvert bool
 }
 
 // NewChunkDecoder creates a NewChunkDecoder.
@@ -210,11 +233,61 @@ func NewChunkDecoder(columns []ColInfo, handleColIDs []int64, defDatum func(i in
 	}
 }
 
+func (decoder *ChunkDecoder) initCompiledCols() {
+	if decoder.compiledColsInited {
+		return
+	}
+	if cap(decoder.compiledCols) < len(decoder.columns) {
+		decoder.compiledCols = make([]compiledCol, len(decoder.columns))
+	} else {
+		decoder.compiledCols = decoder.compiledCols[:len(decoder.columns)]
+	}
+	for i := range decoder.columns {
+		col := &decoder.columns[i]
+		if col.Ft == nil {
+			decoder.compiledCols[i] = compiledCol{kind: compiledColOther}
+			continue
+		}
+		tp := col.Ft.GetType()
+		cc := compiledCol{kind: compiledColOther, tp: tp}
+		switch tp {
+		case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
+			if mysql.HasUnsignedFlag(col.Ft.GetFlag()) {
+				cc.kind = compiledColUint
+			} else {
+				cc.kind = compiledColInt
+			}
+		case mysql.TypeYear:
+			cc.kind = compiledColInt
+		case mysql.TypeFloat:
+			cc.kind = compiledColFloat32
+		case mysql.TypeDouble:
+			cc.kind = compiledColFloat64
+		case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			cc.kind = compiledColBytes
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			cc.kind = compiledColTime
+			cc.fsp = col.Ft.GetDecimal()
+			cc.needTZConvert = tp == mysql.TypeTimestamp && decoder.loc != nil
+		case mysql.TypeDuration:
+			cc.kind = compiledColDuration
+			cc.fsp = col.Ft.GetDecimal()
+		}
+		decoder.compiledCols[i] = cc
+	}
+	decoder.compiledColsInited = true
+}
+
 // DecodeToChunk decodes a row to chunk.
 func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk *chunk.Chunk) error {
 	err := decoder.fromBytes(rowData)
 	if err != nil {
 		return err
+	}
+
+	if !decoder.compiledColsInited {
+		decoder.initCompiledCols()
 	}
 
 	// Build (or rebuild) column mapping cache for stable schema.
@@ -341,30 +414,56 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 }
 
 func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData []byte, chk *chunk.Chunk) error {
-	switch col.Ft.GetType() {
-	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
-		if mysql.HasUnsignedFlag(col.Ft.GetFlag()) {
-			chk.AppendUint64(colIdx, decodeUint(colData))
-		} else {
-			chk.AppendInt64(colIdx, decodeInt(colData))
-		}
-	case mysql.TypeYear:
+	cc := decoder.compiledCols[colIdx]
+	switch cc.kind {
+	case compiledColInt:
 		chk.AppendInt64(colIdx, decodeInt(colData))
-	case mysql.TypeFloat:
+		return nil
+	case compiledColUint:
+		chk.AppendUint64(colIdx, decodeUint(colData))
+		return nil
+	case compiledColFloat32:
 		_, fVal, err := codec.DecodeFloat(colData)
 		if err != nil {
 			return err
 		}
 		chk.AppendFloat32(colIdx, float32(fVal))
-	case mysql.TypeDouble:
+		return nil
+	case compiledColFloat64:
 		_, fVal, err := codec.DecodeFloat(colData)
 		if err != nil {
 			return err
 		}
 		chk.AppendFloat64(colIdx, fVal)
-	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return nil
+	case compiledColBytes:
 		chk.AppendBytes(colIdx, colData)
+		return nil
+	case compiledColTime:
+		var t types.Time
+		t.SetType(cc.tp)
+		t.SetFsp(cc.fsp)
+		err := t.FromPackedUint(decodeUint(colData))
+		if err != nil {
+			return err
+		}
+		if cc.needTZConvert && !t.IsZero() {
+			err = t.ConvertTimeZone(time.UTC, decoder.loc)
+			if err != nil {
+				return err
+			}
+		}
+		chk.AppendTime(colIdx, t)
+		return nil
+	case compiledColDuration:
+		var dur types.Duration
+		dur.Duration = time.Duration(decodeInt(colData))
+		dur.Fsp = cc.fsp
+		chk.AppendDuration(colIdx, dur)
+		return nil
+	}
+
+	switch cc.tp {
 	case mysql.TypeNewDecimal:
 		_, dec, _, frac, err := codec.DecodeDecimal(colData)
 		if err != nil {
@@ -379,26 +478,6 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 			dec = to
 		}
 		chk.AppendMyDecimal(colIdx, dec)
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		var t types.Time
-		t.SetType(col.Ft.GetType())
-		t.SetFsp(col.Ft.GetDecimal())
-		err := t.FromPackedUint(decodeUint(colData))
-		if err != nil {
-			return err
-		}
-		if col.Ft.GetType() == mysql.TypeTimestamp && decoder.loc != nil && !t.IsZero() {
-			err = t.ConvertTimeZone(time.UTC, decoder.loc)
-			if err != nil {
-				return err
-			}
-		}
-		chk.AppendTime(colIdx, t)
-	case mysql.TypeDuration:
-		var dur types.Duration
-		dur.Duration = time.Duration(decodeInt(colData))
-		dur.Fsp = col.Ft.GetDecimal()
-		chk.AppendDuration(colIdx, dur)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
 		enum, err := types.ParseEnumValue(col.Ft.GetElems(), decodeUint(colData))
@@ -427,7 +506,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		}
 		chk.AppendVectorFloat32(colIdx, v)
 	default:
-		return errors.Errorf("unknown type %d", col.Ft.GetType())
+		return errors.Errorf("unknown type %d", cc.tp)
 	}
 	return nil
 }
