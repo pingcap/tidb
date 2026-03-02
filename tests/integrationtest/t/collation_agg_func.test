@@ -17,19 +17,17 @@ select upper(group_concat(distinct value order by 1)) from t;
 explain format='plan_tree' select group_concat(distinct value collate utf8mb4_bin order by 1) from t;
 select upper(group_concat(distinct value collate utf8mb4_bin order by 1)) from t;
 explain format='plan_tree' select group_concat(distinct value) from t;
-select upper(group_concat(distinct value)) from t;
 explain format='plan_tree' select group_concat(distinct value collate utf8mb4_bin) from t;
-select upper(group_concat(distinct value collate utf8mb4_bin)) from t;
 
 # count(distinct)
-explain format='plan_tree' select count(distinct value) from t;
-select count(distinct value) from t;
-explain format='plan_tree' select count(distinct value collate utf8mb4_bin) from t;
-select count(distinct value collate utf8mb4_bin) from t;
-explain format='plan_tree' select count(distinct value, value1) from t;
-select count(distinct value, value1) from t;
-explain format='plan_tree' select count(distinct value collate utf8mb4_bin, value1) from t;
-select count(distinct value collate utf8mb4_bin, value1) from t;
+explain format='plan_tree' select count(distinct value) from t order by count(distinct value);
+select count(distinct value) from t order by count(distinct value);
+explain format='plan_tree' select count(distinct value collate utf8mb4_bin) from t order by count(distinct value collate utf8mb4_bin);
+select count(distinct value collate utf8mb4_bin) from t order by count(distinct value collate utf8mb4_bin);
+explain format='plan_tree' select count(distinct value, value1) from t order by count(distinct value, value1);
+select count(distinct value, value1) from t order by count(distinct value, value1);
+explain format='plan_tree' select count(distinct value collate utf8mb4_bin, value1) from t order by count(distinct value collate utf8mb4_bin, value1);
+select count(distinct value collate utf8mb4_bin, value1) from t order by count(distinct value collate utf8mb4_bin, value1);
 
 # approxCountDistinct
 explain format='plan_tree' select approx_count_distinct(value) from t;

@@ -15,9 +15,72 @@
 package set
 
 import (
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
+
+// StringToStringSetWithMemoryUsage is a string-string set with memory usage.
+type StringToStringSetWithMemoryUsage struct {
+	hack.MemAwareMap[string, string]
+
+	// For tracking large memory usage in time.
+	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
+	tracker *memory.Tracker
+}
+
+// NewStringToStringSetWithMemoryUsage builds a string set.
+func NewStringToStringSetWithMemoryUsage() (setWithMemoryUsage StringToStringSetWithMemoryUsage, delta int64) {
+	set := make(map[string]string)
+	delta = setWithMemoryUsage.Init(set)
+	return setWithMemoryUsage, delta
+}
+
+// Insert inserts `val` into `s` and return delta.
+func (s *StringToStringSetWithMemoryUsage) Insert(key string, val string) (delta int64) {
+	delta = s.Set(key, val)
+	if delta != 0 && s.tracker != nil {
+		s.tracker.Consume(delta)
+		delta = 0
+	}
+	return delta
+}
+
+// SetTracker sets memory tracker for StringToStringSetWithMemoryUsage
+func (s *StringToStringSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
+	s.tracker = t
+}
+
+// StringToDecimalSetWithMemoryUsage is a string-decimal set with memory usage.
+type StringToDecimalSetWithMemoryUsage struct {
+	hack.MemAwareMap[string, *types.MyDecimal]
+
+	// For tracking large memory usage in time.
+	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
+	tracker *memory.Tracker
+}
+
+// NewStringToDecimalSetWithMemoryUsage builds a string set.
+func NewStringToDecimalSetWithMemoryUsage() (setWithMemoryUsage StringToDecimalSetWithMemoryUsage, delta int64) {
+	set := make(map[string]*types.MyDecimal)
+	delta = setWithMemoryUsage.Init(set)
+	return setWithMemoryUsage, delta
+}
+
+// Insert inserts `val` into `s` and return delta.
+func (s *StringToDecimalSetWithMemoryUsage) Insert(key string, val *types.MyDecimal) (delta int64) {
+	delta = s.Set(key, val)
+	if delta != 0 && s.tracker != nil {
+		s.tracker.Consume(delta)
+		delta = 0
+	}
+	return delta
+}
+
+// SetTracker sets memory tracker for StringToDecimalSetWithMemoryUsage
+func (s *StringToDecimalSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
+	s.tracker = t
+}
 
 // StringSetWithMemoryUsage is a string set with memory usage.
 type StringSetWithMemoryUsage struct {

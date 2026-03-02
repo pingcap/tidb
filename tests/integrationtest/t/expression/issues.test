@@ -1035,7 +1035,7 @@ insert into t1 values (1), (2), (3),(1),(2),(3);
 drop table if exists t2;
 create table t2 (c_int int not null);
 insert into t2 values (1), (2), (3),(1),(2),(3);
-select  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c1,  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c2 from t1 group by c_int;
+select  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c1,  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c2 from t1 group by c_int order by c1, c2;
 
 # TestIssue27233
 drop table if exists t;
@@ -1045,7 +1045,7 @@ CREATE TABLE `t` (
   PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 insert into t values(122,100),(124,-22),(124,34),(127,103);
-SELECT col2 FROM t AS T1 WHERE ( SELECT count(DISTINCT COL1, COL2) FROM t AS T2 WHERE T2.COL1 > T1.COL1  ) > 2 ;
+SELECT col2 FROM t AS T1 WHERE ( SELECT count(DISTINCT COL1, COL2) FROM t AS T2 WHERE T2.COL1 > T1.COL1 ORDER BY count(DISTINCT COL1, COL2)) > 2 ;
 
 # TestIssue27236
 select extract(hour_second from "-838:59:59.00");
@@ -1407,15 +1407,15 @@ select * from t where a = 'A';
 drop table if exists tx;
 CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL);
 insert into tx values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
-select count(distinct(b)) from tx;
+select count(distinct(b)) from tx order by count(distinct(b));
 
 # TestIssue27091
 drop table if exists tx;
 CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL, `c` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL);
 insert into tx values (1, 'a', 'a'), (2, 'A ', 'a '), (3, 'A', 'A'), (4, 'a ', 'A ');
-select count(distinct b) from tx;
-select count(distinct c) from tx;
-select count(distinct b, c) from tx where a < 3;
+select count(distinct b) from tx order by count(distinct b);
+select count(distinct c) from tx order by count(distinct c);
+select count(distinct b, c) from tx where a < 3 order by count(distinct b, c);
 select approx_count_distinct(b) from tx;
 select approx_count_distinct(c) from tx;
 select approx_count_distinct(b, c) from tx where a < 3;

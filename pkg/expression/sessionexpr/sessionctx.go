@@ -135,6 +135,11 @@ func (ctx *ExprContext) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
 }
 
+// SetGroupConcatMaxLenForTest sets the `GroupConcatMaxLen` only for test
+func (ctx *ExprContext) SetGroupConcatMaxLenForTest(val uint64) {
+	ctx.sctx.GetSessionVars().GroupConcatMaxLen = val
+}
+
 // ConnectionID indicates the connection ID of the current session.
 // If the context is not in a session, it should return 0.
 func (ctx *ExprContext) ConnectionID() uint64 {
