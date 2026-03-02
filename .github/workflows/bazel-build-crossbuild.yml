@@ -9,12 +9,13 @@ on:
 jobs:
   master:
     name: Bazel Crossbuild
-    runs-on: ${{ matrix.os }}-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os:
-          - macos
-          - ubuntu
+          - macos-latest
+          - ubuntu-latest
+          - ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
       - name: Build Prepare
