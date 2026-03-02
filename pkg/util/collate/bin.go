@@ -60,6 +60,12 @@ func (*binCollator) Clone() Collator {
 	return new(binCollator)
 }
 
+// ImmutablePrefixKey implements Collator interface
+func (*binCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+	bytes := hack.Slice(str)
+	return bytes[:min(prefixCharCount, len(bytes))]
+}
+
 type derivedBinCollator struct {
 	binCollator
 }
@@ -67,6 +73,11 @@ type derivedBinCollator struct {
 // Pattern implements Collator interface.
 func (*derivedBinCollator) Pattern() WildcardPattern {
 	return &derivedBinPattern{}
+}
+
+// ImmutablePrefixKey implements Collator interface
+func (*derivedBinCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+	return stringutil.GetUtf8SubStringBytes(str, prefixCharCount)
 }
 
 type binPaddingCollator struct {
@@ -106,6 +117,12 @@ func (*binPaddingCollator) Clone() Collator {
 	return new(binPaddingCollator)
 }
 
+// ImmutablePrefixKey implements Collator interface
+func (*binPaddingCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+	bytes := hack.Slice(truncateTailingSpace(str))
+	return bytes[:min(prefixCharCount, len(bytes))]
+}
+
 type derivedBinPattern struct {
 	patChars []rune
 	patTypes []byte
@@ -134,4 +151,13 @@ func (p *binPattern) Compile(patternStr string, escape byte) {
 // DoMatch implements WildcardPattern interface.
 func (p *binPattern) DoMatch(str string) bool {
 	return stringutil.DoMatchBinary(str, p.patChars, p.patTypes)
+}
+
+type utf8BinPaddingCollator struct {
+	binPaddingCollator
+}
+
+// ImmutablePrefixKey implements Collator interface
+func (*utf8BinPaddingCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+	return stringutil.GetUtf8SubStringBytes(truncateTailingSpace(str), prefixCharCount)
 }

@@ -22,16 +22,27 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
+
+type truncateKey struct {
+	val    string
+	isNull bool
+}
 
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
@@ -68,6 +79,16 @@ type TopNExec struct {
 
 	// ColumnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	ColumnIdxsUsedByChild []int
+
+	typeCtx types.Context
+
+	TruncateKeyExprs            []expression.Expression
+	truncateFieldTypes          []*types.FieldType
+	truncateFieldCollators      []collate.Collator
+	truncateKeyColIdxs          []int
+	TruncateKeyPrefixCharCounts []int
+	prevTruncateKeys            []truncateKey
+	truncateKeyCount            int
 }
 
 // Open implements the Executor Open interface.
@@ -86,6 +107,10 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.inMemoryThenSpillFlag = false
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
+
+	if len(e.TruncateKeyPrefixCharCounts) > 0 {
+		e.typeCtx = e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
+	}
 
 	if vardef.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
@@ -262,16 +287,32 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 		}
 	}()
 
-	err := e.loadChunksUntilTotalLimit(ctx)
-	if err != nil {
+	if e.Limit.Count == 0 {
 		close(e.resultChannel)
-		return err
+		return nil
 	}
-	go e.executeTopN(ctx)
+
+	if len(e.TruncateKeyExprs) > 0 {
+		err := e.loadChunksUntilTotalLimitForRankTopN(ctx)
+		if err != nil {
+			close(e.resultChannel)
+			return err
+		}
+
+		go e.executeRankTopN()
+	} else {
+		err := e.loadChunksUntilTotalLimit(ctx)
+		if err != nil {
+			close(e.resultChannel)
+			return err
+		}
+		go e.executeTopN(ctx)
+	}
+
 	return nil
 }
 
-func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
+func (e *TopNExec) initBeforeLoadingChunks() error {
 	err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
 	if err != nil {
 		return err
@@ -282,7 +323,39 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		return err
 	}
 
+	e.truncateKeyCount = len(e.TruncateKeyExprs)
+	e.truncateFieldCollators = make([]collate.Collator, 0, e.truncateKeyCount)
+	e.truncateFieldTypes = make([]*types.FieldType, 0, e.truncateKeyCount)
+	e.truncateKeyColIdxs = make([]int, 0, e.truncateKeyCount)
+	for i := range e.TruncateKeyExprs {
+		fieldType := e.TruncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
+		e.truncateFieldTypes = append(e.truncateFieldTypes, fieldType)
+		switch fieldType.GetType() {
+		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			collateName := fieldType.GetCollate()
+			e.truncateFieldCollators = append(e.truncateFieldCollators, collate.GetCollator(collateName))
+		default:
+			e.truncateFieldCollators = append(e.truncateFieldCollators, nil)
+		}
+
+		switch col := e.TruncateKeyExprs[i].(type) {
+		case *expression.Column:
+			e.truncateKeyColIdxs = append(e.truncateKeyColIdxs, col.Index)
+		default:
+			return errors.NewNoStackError("Get unexpected expression")
+		}
+	}
+
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
+	return nil
+}
+
+func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
+	err := e.initBeforeLoadingChunks()
+	if err != nil {
+		return err
+	}
+
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		// TopN requires its child to return all data, so don't need to set RequiredRows here according to the limit.
@@ -306,6 +379,125 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 
 	e.chkHeap.initPtrs()
 	return nil
+}
+
+func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) error {
+	err := e.initBeforeLoadingChunks()
+	if err != nil {
+		return err
+	}
+
+	needMoreChunks := true
+	for (uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit) || needMoreChunks {
+		srcChk := exec.TryNewCacheChunk(e.Children(0))
+		err := exec.Next(ctx, e.Children(0), srcChk)
+		if err != nil {
+			return err
+		}
+		if srcChk.NumRows() == 0 {
+			break
+		}
+
+		endIdx, err := e.findEndIdx(srcChk)
+		if err != nil {
+			return err
+		}
+
+		if endIdx < srcChk.NumRows() {
+			srcChk.TruncateTo(endIdx)
+
+			// Truncation means that we have found the end row
+			// and unnecessary to receive more chunks
+			needMoreChunks = false
+		}
+
+		if srcChk.NumRows() > 0 {
+			e.chkHeap.rowChunks.Add(srcChk)
+		}
+
+		injectTopNRandomFail(1)
+	}
+
+	e.chkHeap.initPtrs()
+	return nil
+}
+
+func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
+	prefixKeys := make([]truncateKey, 0, e.truncateKeyCount)
+	for i := range e.truncateFieldCollators {
+		if row.IsNull(e.truncateKeyColIdxs[i]) {
+			prefixKeys = append(prefixKeys, truncateKey{isNull: true})
+			continue
+		}
+		if e.TruncateKeyPrefixCharCounts[i] == -1 {
+			bytes, err := row.SerializeToBytesForOneColumn(
+				e.typeCtx,
+				e.truncateFieldTypes[i],
+				e.truncateKeyColIdxs[i],
+				e.truncateFieldCollators[i])
+			if err != nil {
+				return nil, err
+			}
+			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(bytes))})
+		} else {
+			key := row.GetString(e.truncateKeyColIdxs[i])
+			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.TruncateKeyPrefixCharCounts[i])))})
+		}
+	}
+	return prefixKeys, nil
+}
+
+func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
+	var err error
+	idx := 0
+	rowCnt := chk.NumRows()
+	savedRowCount := e.chkHeap.rowChunks.Len()
+	totalLimit := int(e.chkHeap.totalLimit)
+
+	if savedRowCount+rowCnt <= totalLimit {
+		// Fast path
+		e.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
+		return rowCnt, err
+	}
+
+	// Maybe savedRowCount is greater than totalLimit
+	remainingNeedRowCnt := max(0, totalLimit-savedRowCount)
+
+	if remainingNeedRowCnt > 0 {
+		idx += remainingNeedRowCnt
+	}
+
+	// both idx == 0 and len(e.prevPrefixKeys) == 0 is impossible
+	if idx > 0 {
+		e.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(idx - 1))
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	// Now, len(e.prevPrefixKeys) must be greater than 0 when we reach to here
+
+	lastRowPrefixKeys, err := e.getPrefixKeys(chk.GetRow(rowCnt - 1))
+	if err != nil {
+		return 0, err
+	}
+
+	if slices.Equal(lastRowPrefixKeys, e.prevTruncateKeys) {
+		// Fast path: if the last row in the chunk is equal to the current prefix key,
+		// we can skip this chunk
+		return rowCnt, nil
+	}
+
+	for ; idx < rowCnt; idx++ {
+		currentPrefixKeys, err := e.getPrefixKeys(chk.GetRow(idx))
+		if err != nil {
+			return 0, err
+		}
+		if !slices.Equal(currentPrefixKeys, e.prevTruncateKeys) {
+			return idx, nil
+		}
+	}
+	return idx, nil
 }
 
 const topNCompactionFactor = 4
@@ -483,6 +675,26 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 	e.generateTopNResults()
 }
 
+func (e *TopNExec) executeRankTopN() {
+	defer func() {
+		if r := recover(); r != nil {
+			processPanicAndLog(e.resultChannel, r)
+		}
+
+		close(e.resultChannel)
+	}()
+
+	// The input rows are prefix-ordered, it's
+	// unnecessary to receive more chunks as we
+	// have received all chunks now.
+	slices.SortFunc(e.chkHeap.rowPtrs, e.chkHeap.keyColumnsCompare)
+
+	rowCount := len(e.chkHeap.rowPtrs)
+	for ; e.chkHeap.idx < int(e.chkHeap.totalLimit) && e.chkHeap.idx < rowCount; e.chkHeap.idx++ {
+		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
+	}
+}
+
 // Return true when spill is triggered
 func (e *TopNExec) generateTopNResultsWhenNoSpillTriggered() bool {
 	rowPtrNum := len(e.chkHeap.rowPtrs)
@@ -658,4 +870,10 @@ func GetResultForTest(topnExec *TopNExec) []int64 {
 		}
 		result = append(result, row.row.GetInt64(0))
 	}
+}
+
+// SetTruncateKeyMetasForTest sets truncate key fields for testing the RankTopN path.
+func (e *TopNExec) SetTruncateKeyMetasForTest(truncateKeyExprs []expression.Expression, truncateKeyCharCounts []int) {
+	e.TruncateKeyExprs = truncateKeyExprs
+	e.TruncateKeyPrefixCharCounts = truncateKeyCharCounts
 }

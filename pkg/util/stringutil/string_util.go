@@ -447,6 +447,22 @@ func Utf8Len(b byte) int {
 	return length
 }
 
+// GetUtf8SubStringBytes returns the substring bytes
+func GetUtf8SubStringBytes(s string, n int) []byte {
+	if n <= 0 {
+		return []byte{}
+	}
+
+	count := 0
+	for i := range s {
+		if count == n {
+			return hack.Slice(s[:i])
+		}
+		count++
+	}
+	return hack.Slice(s)
+}
+
 // TrimUtf8String needs the string input should always be valid which means
 // that it should always return true in utf8.ValidString(str)
 func TrimUtf8String(str *string, trimmedNum int64) int64 {
