@@ -205,13 +205,19 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_4611686018427387904", mvPreSplit.Meta().ID))
 	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_6917529027641081856", mvPreSplit.Meta().ID))
 
-	// Index DDL on MV-related tables: base remains forbidden, MV table is allowed.
-	err = tk.ExecToErr("create index idx_forbidden_base on t (b)")
-	require.ErrorContains(t, err, "CREATE INDEX on base table with materialized view dependencies")
-	err = tk.ExecToErr("drop index idx_bac on t_minmax_ok")
-	require.ErrorContains(t, err, "DROP INDEX on base table with materialized view dependencies")
+	// Index DDL on MV-related tables:
+	// base table and MV table are allowed, MV LOG table is disallowed.
+	tk.MustExec("create index idx_base_b on t (b)")
+	tk.MustExec("drop index idx_base_b on t")
 	tk.MustExec("create index idx_mv_s on mv (s)")
 	tk.MustExec("drop index idx_mv_s on mv")
+	tk.MustExec("alter table t add column c int")
+	tk.MustExec("alter table t add index idx_base_c_alter (c)")
+	err = tk.ExecToErr("alter table t modify column a bigint")
+	require.ErrorContains(t, err, "referenced by materialized view log")
+	tk.MustExec("alter table t drop index idx_base_c_alter")
+	tk.MustExec("alter table mv add index idx_mv_s_alter (s)")
+	tk.MustExec("alter table mv drop index idx_mv_s_alter")
 
 	// ALTER TABLE ... SET TIFLASH REPLICA is allowed on both base table and MV table.
 	err = tk.ExecToErr("alter table t set tiflash replica 1")
