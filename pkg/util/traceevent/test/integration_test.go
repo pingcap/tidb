@@ -117,6 +117,15 @@ func waitForStmtStartPrevTraceID(eventCh <-chan []traceevent.Event, traceID []by
 	}
 }
 
+func waitForAnyEvents(eventCh <-chan []traceevent.Event, timeout time.Duration) ([]traceevent.Event, bool) {
+	select {
+	case events := <-eventCh:
+		return events, true
+	case <-time.After(timeout):
+		return nil, false
+	}
+}
+
 func assertNoTraceID(t *testing.T, eventCh <-chan []traceevent.Event, traceID []byte, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -304,6 +313,57 @@ func TestTraceControlIntegration(t *testing.T) {
 	require.True(t, flags.Has(trace.FlagTiKVCategoryRequest))
 	require.True(t, flags.Has(trace.FlagTiKVCategoryWriteDetails))
 	require.False(t, flags.Has(trace.FlagTiKVCategoryReadDetails))
+}
+
+func TestTxnEndTraceEventRecorded(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("trace events only work for next-gen kernel")
+	}
+
+	eventCh := make(chan []traceevent.Event, eventChannelBufferSize)
+	var conf traceevent.FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"txn_lifecycle"}
+	fr, err := traceevent.StartHTTPFlightRecorder(eventCh, &conf)
+	require.NoError(t, err)
+	defer fr.Close()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	traceBuf := traceevent.NewTraceBuf()
+	ctx := tracing.WithTraceBuf(context.Background(), traceBuf)
+
+	tk.MustExecWithContext(ctx, "use test")
+	tk.MustExecWithContext(ctx, "drop table if exists trace_event_txn_end")
+	tk.MustExecWithContext(ctx, "create table trace_event_txn_end (id int primary key)")
+	traceBuf.DiscardOrFlush(ctx)
+	drainEvents(eventCh)
+
+	tk.MustExecWithContext(ctx, "begin")
+	tk.MustExecWithContext(ctx, "insert into trace_event_txn_end values (1)")
+	tk.MustExecWithContext(ctx, "commit")
+	commitTraceID := cloneTraceID(tk.Session().GetSessionVars().PrevTraceID)
+	require.NotEmpty(t, commitTraceID)
+	traceBuf.DiscardOrFlush(ctx)
+
+	events, ok := waitForAnyEvents(eventCh, 5*time.Second)
+	require.True(t, ok)
+
+	var hasTxnEnter bool
+	var txnEndEvent *traceevent.Event
+	for i := range events {
+		switch events[i].Name {
+		case "txn.enter":
+			hasTxnEnter = true
+		case "txn.end":
+			txnEndEvent = &events[i]
+		}
+	}
+	require.True(t, hasTxnEnter, "txn.enter should be recorded")
+	require.NotNil(t, txnEndEvent, "txn.end should be recorded")
+	require.NotEmpty(t, txnEndEvent.TraceID, "txn.end should carry trace id")
+	require.Equal(t, commitTraceID, txnEndEvent.TraceID)
 }
 
 func TestFlightRecorder(t *testing.T) {

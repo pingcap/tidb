@@ -106,6 +106,26 @@ type traceBufKeyType struct{}
 
 var traceBufKey traceBufKeyType = struct{}{}
 
+type traceIDProvider interface {
+	GetTraceID() []byte
+}
+
+func copyTraceID(traceID []byte) []byte {
+	if len(traceID) == 0 {
+		return nil
+	}
+	copied := make([]byte, len(traceID))
+	copy(copied, traceID)
+	return copied
+}
+
+func traceIDFromTraceBuf(traceBuf TraceBuf) []byte {
+	if provider, ok := traceBuf.(traceIDProvider); ok {
+		return copyTraceID(provider.GetTraceID())
+	}
+	return nil
+}
+
 // GetTraceBuf returns the TraceBuf from the context.
 func GetTraceBuf(ctx context.Context) any {
 	return ctx.Value(traceBufKey)
@@ -138,6 +158,7 @@ func StartRegion(ctx context.Context, regionType string) Region {
 				Name:      regionType,
 				Phase:     PhaseBegin,
 				Timestamp: time.Now(),
+				TraceID:   traceIDFromTraceBuf(traceBuf),
 			}
 			traceBuf.Record(ctx, event)
 			ret.span.event = &event
@@ -312,6 +333,9 @@ func (r Region) End() {
 	}
 	r.Region.End()
 	if r.span.event != nil {
+		if len(r.span.event.TraceID) == 0 {
+			r.span.event.TraceID = traceIDFromTraceBuf(r.span.traceBuf)
+		}
 		r.span.event.Phase = PhaseEnd
 		r.span.event.Timestamp = time.Now()
 		r.span.traceBuf.Record(r.span.ctx, *r.span.event)

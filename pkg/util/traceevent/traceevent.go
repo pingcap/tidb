@@ -514,6 +514,7 @@ func extractRandFromTraceID(traceID []byte) uint32 {
 // ConvertEventsForRendering converts []Event to []RenderEvent for trace event rendering.
 func ConvertEventsForRendering(events []Event) []RenderEvent {
 	var tid uint32
+	var hasValidTraceID bool
 	res := make([]RenderEvent, 0, len(events))
 	for _, event := range events {
 		e := RenderEvent{
@@ -523,17 +524,17 @@ func ConvertEventsForRendering(events []Event) []RenderEvent {
 			PID:      0,
 			Category: event.Category.String(),
 		}
-		if tid == 0 {
-			tid = extractRandFromTraceID(event.TraceID)
-		} else {
+		if len(event.TraceID) == 20 {
 			val := extractRandFromTraceID(event.TraceID)
-			if tid != val {
+			if !hasValidTraceID {
+				tid = val
+				hasValidTraceID = true
+			} else if tid != val {
 				logutil.BgLogger().Info("wrong traceid",
 					zap.Uint32("expect", tid),
 					zap.Uint32("get", val))
 			}
-		}
-		if len(event.TraceID) > 0 && len(event.TraceID) != 20 {
+		} else if len(event.TraceID) > 0 {
 			logutil.BgLogger().Info("wrong traceid format",
 				zap.String("trace_id", string(event.TraceID)))
 		}
@@ -554,9 +555,6 @@ func ConvertEventsForRendering(events []Event) []RenderEvent {
 			e.Args = buf.Bytes()
 		}
 		res = append(res, e)
-	}
-	if tid == 0 {
-		logutil.BgLogger().Info("wrong traceid")
 	}
 	for i := range res {
 		res[i].TID = tid
