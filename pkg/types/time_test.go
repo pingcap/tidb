@@ -2340,11 +2340,11 @@ func BenchmarkStrToDate(b *testing.B) {
 
 func TestTimeAppendString(t *testing.T) {
 	tests := []struct {
-		name string
-		tp   byte
-		fsp  int
+		name                                          string
+		tp                                            byte
+		fsp                                           int
 		year, month, day, hour, minute, second, micro int
-		expected                                       string
+		expected                                      string
 	}{
 		{"Date", mysql.TypeDate, 0, 2024, 1, 2, 0, 0, 0, 0, "2024-01-02"},
 		{"Datetime FSP=0", mysql.TypeDatetime, 0, 2024, 1, 2, 3, 4, 5, 0, "2024-01-02 03:04:05"},
