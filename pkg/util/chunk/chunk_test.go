@@ -862,7 +862,7 @@ func BenchmarkAppendMixedColumns(b *testing.B) {
 
 	for range b.N {
 		chk.Reset()
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			chk.AppendInt64(0, int64(i))
 			chk.AppendBytes(1, bs)
 			chk.AppendTime(2, tm)
