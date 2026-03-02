@@ -124,6 +124,18 @@ func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.Lo
 	return p
 }
 
+// GetHasTiFlash returns whether the logical plan's subtree has TiFlash replica.
+func GetHasTiFlash(lp base.LogicalPlan) bool {
+	if lp == nil {
+		return false
+	}
+	baseLP, ok := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
+	if !ok || baseLP == nil {
+		return false
+	}
+	return baseLP.hasTiflash
+}
+
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)

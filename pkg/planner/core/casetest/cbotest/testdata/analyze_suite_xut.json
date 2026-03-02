@@ -290,8 +290,8 @@
         "  └─TableFullScan_10 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
       ],
       [
-        "TableReader_6 10000.00 root  data:TableFullScan_5",
-        "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        "TableReader_5 10000.00 root  data:TableFullScan_4",
+        "└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
         "Batch_Point_Get_6 2.00 root table:t handle:[1 2], keep order:false, desc:false"
@@ -556,10 +556,6 @@
         ],
         "Warn": [
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'."
         ]
       },

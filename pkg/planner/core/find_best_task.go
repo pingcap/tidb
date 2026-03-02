@@ -85,6 +85,21 @@ type enumerateState struct {
 	limitCopExist bool
 }
 
+func buildPhysPlanPartInfo(ds *logicalop.DataSource) *physicalop.PhysPlanPartInfo {
+	columnNames, err := rule.ReconstructTableColNames(ds)
+	if err != nil {
+		// Keep planning resilient. If reconstructing names fails, fall back to output
+		// names to avoid aborting optimization.
+		columnNames = ds.OutputNames()
+	}
+	return &physicalop.PhysPlanPartInfo{
+		PruningConds:   ds.AllConds,
+		PartitionNames: ds.PartitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    columnNames,
+	}
+}
+
 // The reason the physical plan is a slice of slices is to allow preferring a specific type of plan within a slice,
 // while still performing cost comparison between slices.
 // There are three types of task in the following code: hintTask, normalPreferTask, and normalIterTask.
@@ -1925,7 +1940,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			// prefer tiflash, while current table path is tikv, skip it.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+			if ds.PreferStoreType&h.PreferTiFlash != 0 && (path.StoreType == kv.TiKV || super.SCtx().GetSessionVars().IsMPPAllowed()) {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
@@ -2053,6 +2068,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}
+			if !ds.HasTiflash() && path.StoreType == kv.TiFlash {
+				continue
+			}
 			var tblTask base.Task
 			if ds.SampleInfo != nil {
 				tblTask, err = convertToSampleTable(ds, prop, candidate)
@@ -2126,12 +2144,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		IndexPlanFinished: false,
 		TblColHists:       ds.TblColHists,
 	}
-	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	// Add sort items for index scan for merge-sort operation between partitions.
 	byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 	for _, si := range prop.SortItems {
@@ -2330,12 +2343,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if candidate.partialOrderMatchResult.Matched {
 		cop.PartialOrderMatchResult = &candidate.partialOrderMatchResult
 	}
-	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
@@ -2553,13 +2561,16 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
 		return base.InvalidTask, nil
 	}
+	hasTiflash := ds.HasTiflash()
+	mppAllowed := ds.SCtx().GetSessionVars().IsMPPAllowed()
+	hasTiflashForMPP := hasTiflash && mppAllowed
 	ts, _ := physicalop.GetOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.matchPropResult.Matched())
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
-	isTiFlashPath := ts.StoreType == kv.TiFlash
-	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
-	canMppConvertToRootForDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
-	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
+	isTiFlashPath := hasTiflash && ts.StoreType == kv.TiFlash
+	canMppConvertToRoot := hasTiflashForMPP && prop.TaskTp == property.RootTaskType && isTiFlashPath
+	canMppConvertToRootForDisaggregatedTiFlash := hasTiflashForMPP && config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
+	canMppConvertToRootForWhenTiFlashCopIsBanned := hasTiflashForMPP && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
 
 	// Fast checks
 	if isTiFlashPath && ts.KeepOrder && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
@@ -2589,7 +2600,8 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 
 	// MPP task
-	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
+	useMPP := prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned
+	if useMPP {
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
 			// Only the corresponding index can generate a valid task.
 			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
@@ -2630,31 +2642,28 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			return base.InvalidTask, nil
 		}
 		// ********************************** future deprecated end **************************/
-		mppTask := physicalop.NewMppTask(ts, property.AnyType, nil, ds.TblColHists, nil)
-		ts.PlanPartInfo = &physicalop.PhysPlanPartInfo{
-			PruningConds:   ds.AllConds,
-			PartitionNames: ds.PartitionNames,
-			Columns:        ds.TblCols,
-			ColumnNames:    ds.OutputNames(),
-		}
-		mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
-		var task base.Task = mppTask
-		if !mppTask.Invalid() {
-			if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
-				// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
-				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
-				task = base.InvalidTask
-			} else if prop.TaskTp == property.RootTaskType {
-				// When got here, canMppConvertToRootX is true.
-				// This is for situations like cannot generate mppTask for some operators.
-				// Such as when the build side of HashJoin is Projection,
-				// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
-				// So HashJoin cannot pushdown to tiflash. But we still want TableScan to run on tiflash.
-				task = mppTask
-				task = task.ConvertToRootTask(ds.SCtx())
+		if useMPP {
+			mppTask := physicalop.NewMppTask(ts, property.AnyType, nil, ds.TblColHists, nil)
+			ts.PlanPartInfo = buildPhysPlanPartInfo(ds)
+			mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
+			var task base.Task = mppTask
+			if !mppTask.Invalid() {
+				if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
+					// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
+					// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
+					task = base.InvalidTask
+				} else if prop.TaskTp == property.RootTaskType {
+					// When got here, canMppConvertToRootX is true.
+					// This is for situations like cannot generate mppTask for some operators.
+					// Such as when the build side of HashJoin is Projection,
+					// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
+					// So HashJoin cannot pushdown to tiflash. But we still want TableScan to run on tiflash.
+					task = mppTask
+					task = task.ConvertToRootTask(ds.SCtx())
+				}
 			}
+			return task, nil
 		}
-		return task, nil
 	}
 	// Cop task
 	copTask := &physicalop.CopTask{
@@ -2662,12 +2671,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		IndexPlanFinished: true,
 		TblColHists:       ds.TblColHists,
 	}
-	copTask.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	copTask.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	ts.PlanPartInfo = copTask.PhysPlanPartInfo
 	var task base.Task = copTask
 	if candidate.matchPropResult.Matched() {

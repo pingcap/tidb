@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -104,6 +105,14 @@ func TestLogicalApplyClone(t *testing.T) {
 	clonedApply.EqualConditions[1] = tmp
 	require.True(t, clonedApply.EqualConditions[0].FuncName.L == "f2")
 	require.True(t, apply.EqualConditions[0].FuncName.L == "f2")
+}
+
+func TestLogicalCTEPreparePossiblePropertiesSkipNilChild(t *testing.T) {
+	ctx := mock.NewContext()
+	cte := logicalop.LogicalCTE{}.Init(ctx, 0)
+	props := cte.PreparePossibleProperties(nil, nil, &base.PossiblePropertiesInfo{HasTiflash: true})
+	require.NotNil(t, props)
+	require.True(t, props.HasTiflash)
 }
 
 func TestLogicalProjectionPushDownTopN(t *testing.T) {

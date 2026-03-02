@@ -4382,6 +4382,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 	tableInfo := tbl.Meta()
+	if b.ctx.GetSessionVars().IsMPPAllowed() &&
+		tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 && tableInfo.TiFlashReplica.Available {
+		sessionVars.StmtCtx.IsTiFlash.Store(true)
+	}
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)

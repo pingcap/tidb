@@ -28,6 +28,7 @@ type LogicalProperty struct {
 	FD            *fd.FDSet
 	MaxOneRow     bool
 	PossibleProps [][]*expression.Column
+	HasTiflash    bool
 }
 
 // NewLogicalProp returns a new empty LogicalProperty.

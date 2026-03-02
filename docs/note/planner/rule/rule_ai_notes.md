@@ -46,6 +46,35 @@ Test and verification:
 - Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation -tags=intest,deadlock -record`.
 - Add integration test to `tests/integrationtest/t/select.test` and record via `pushd tests/integrationtest && ./run-tests.sh -r select && popd` (integration tests use `-r`, not `-record`).
 
+## 2026-02-12 - TiFlash `HasTiflash` propagation and plan-shape regression triage
+
+Background:
+- A refactor centralized `HasTiflash` propagation and changed `PreparePossibleProperties` behavior, which triggered broad plan output changes in TiFlash-related suites.
+- One real regression appeared in partition pruning: `Unknown column 'a' in expression` from `MakePartitionByFnCol` when the physical partition info was built from output names instead of real table column names.
+
+Key takeaways:
+- The primary fix should stay in the `PhysPlanPartInfo` producer path, not in ad-hoc downstream guards.
+- For partition pruning, always build pruning expressions with reconstructed table column names (`ReconstructTableColNames`) rather than post-projection/output names.
+- Avoid adding planner warning logs in this hot path for fallback behavior; keep the planning path deterministic and quiet unless there is actionable operator-level context.
+- When moving logic into `BaseLogicalPlan.PreparePossibleProperties`, verify both `p.hasTiflash` propagation and return-value semantics against operators that previously had custom implementations.
+
+Plan output triage checklist:
+1. Classify diffs before recording:
+- Plan ID only (`_5` vs `_6`) -> safe to update testdata.
+- Engine/mode change (`cop[tiflash]` vs `mpp[tiflash]`) -> validate session knobs and expected default behavior.
+- Structural/semantic shape change (new/removed operators or root/Mpp boundary shifts) -> treat as suspicious until proved intentional.
+2. For suspicious changes, compare the same case against `master` before re-recording.
+3. Keep lock-related expectations explicit:
+- `FOR UPDATE` can keep `SelectLock` at root while child subtree runs on MPP; this shape can be valid.
+4. Update only targeted result files after confirmation; avoid broad re-record without classification.
+
+Suggested validation set after this class of changes:
+- `go test -run TestTiflashPartitionTableScan --tags=intest ./pkg/executor/test/tiflashtest`
+- `go test -run TestTiFlashCostModel --tags=intest ./pkg/planner/core/casetest/cbotest`
+- `go test -run TestReadFromStorageHint --tags=intest ./pkg/planner/core/casetest/hint`
+- `go test -run TestPushDownToTiFlashWithKeepOrder --tags=intest ./pkg/planner/core/casetest/pushdown`
+- `go test -run TestPushDownProjectionForTiFlash --tags=intest ./pkg/planner/core/casetest/pushdown`
+
 ## 2026-02-16 - Index range dimension mismatch with appended handle column (issue #66291)
 
 Background:
