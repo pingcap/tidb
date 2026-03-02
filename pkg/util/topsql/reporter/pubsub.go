@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -45,8 +46,8 @@ var _ tipb.TopSQLPubSubServer = &TopSQLPubSubService{}
 
 // Subscribe registers dataSinks to the reporter and redirects data received from reporter
 // to subscribers associated with those dataSinks.
-func (ps *TopSQLPubSubService) Subscribe(_ *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer) error {
-	ds := newPubSubDataSink(stream, ps.dataSinkRegisterer)
+func (ps *TopSQLPubSubService) Subscribe(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer) error {
+	ds := newPubSubDataSink(req, stream, ps.dataSinkRegisterer)
 	if err := ps.dataSinkRegisterer.Register(ds); err != nil {
 		return err
 	}
@@ -62,12 +63,47 @@ type pubSubDataSink struct {
 
 	// for deregister
 	registerer DataSinkRegisterer
+
+	// TopRU subscription config
+	enableTopRU  bool
+	itemInterval tipb.ItemInterval
 }
 
-func newPubSubDataSink(stream tipb.TopSQLPubSub_SubscribeServer, registerer DataSinkRegisterer) *pubSubDataSink {
-	ctx, cancel := context.WithCancel(stream.Context())
+func parseTopRUSubscription(req *tipb.TopSQLSubRequest) (bool, tipb.ItemInterval) {
+	if req == nil {
+		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
+	}
 
-	return &pubSubDataSink{
+	cfg := req.GetTopru()
+	if cfg == nil {
+		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
+	}
+
+	enabled := false
+	for _, collector := range req.GetCollectors() {
+		if collector == tipb.CollectorType_COLLECTOR_TYPE_TOPRU {
+			enabled = true
+			break
+		}
+	}
+	if !enabled {
+		return false, tipb.ItemInterval_ITEM_INTERVAL_UNSPECIFIED
+	}
+
+	return true, cfg.GetItemIntervalSeconds()
+}
+
+// newPubSubDataSink creates a DataSink for PubSub subscription.
+//
+// It parses TopRU options from the request and stores them in the sink.
+// Register enables TopRU when the sink has enableTopRU; Deregister disables it when the last such sink is removed.
+// item_interval_seconds controls TopRURecordItem.timestamp_sec (15s/30s/60s).
+// Requests without the TOPRU collector entry keep TopRU disabled for backward compatibility.
+func newPubSubDataSink(req *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer, registerer DataSinkRegisterer) *pubSubDataSink {
+	ctx, cancel := context.WithCancel(stream.Context())
+	enableTopRU, itemInterval := parseTopRUSubscription(req)
+
+	ds := &pubSubDataSink{
 		ctx:    ctx,
 		cancel: cancel,
 
@@ -75,7 +111,12 @@ func newPubSubDataSink(stream tipb.TopSQLPubSub_SubscribeServer, registerer Data
 		sendTaskCh: make(chan sendTask, 1),
 
 		registerer: registerer,
+
+		enableTopRU:  enableTopRU,
+		itemInterval: itemInterval,
 	}
+
+	return ds
 }
 
 var _ DataSink = &pubSubDataSink{}
@@ -87,7 +128,7 @@ func (ds *pubSubDataSink) TrySend(data *ReportData, deadline time.Time) error {
 	case <-ds.ctx.Done():
 		return ds.ctx.Err()
 	default:
-		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
+		metrics.IgnoreReportChannelFullCounter.Inc()
 		return errors.New("the channel of pubsub dataSink is full")
 	}
 }
@@ -120,9 +161,9 @@ func (ds *pubSubDataSink) run() error {
 				defer cancel(err)
 				err = ds.doSend(ctx, task.data)
 				if err != nil {
-					reporter_metrics.ReportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+					metrics.ReportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
 				} else {
-					reporter_metrics.ReportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+					metrics.ReportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 				}
 			}, nil)
 
@@ -160,6 +201,9 @@ func (ds *pubSubDataSink) doSend(ctx context.Context, data *ReportData) error {
 	if err := ds.sendTopSQLRecords(ctx, data.DataRecords); err != nil {
 		return err
 	}
+	if err := ds.sendTopRURecords(ctx, data.RURecords); err != nil {
+		return err
+	}
 	if err := ds.sendSQLMeta(ctx, data.SQLMetas); err != nil {
 		return err
 	}
@@ -174,11 +218,11 @@ func (ds *pubSubDataSink) sendTopSQLRecords(ctx context.Context, records []tipb.
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportRecordCounterHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportRecordCounterHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -203,6 +247,52 @@ func (ds *pubSubDataSink) sendTopSQLRecords(ctx context.Context, records []tipb.
 	return
 }
 
+// sendTopRURecords sends TopRU records to subscriber via PubSub stream.
+//
+// It returns early if there is no record or TopRU is disabled.
+// It uses TopSQLSubResponse_RuRecord (protocol field 4).
+func (ds *pubSubDataSink) sendTopRURecords(ctx context.Context, records []tipb.TopRURecord) (err error) {
+	if len(records) == 0 {
+		return
+	}
+
+	// Defense in depth: only send RU records when TopRU is enabled.
+	if !ds.enableTopRU || !topsqlstate.TopRUEnabled() {
+		return
+	}
+
+	start := time.Now()
+	sentCount := 0
+	defer func() {
+		metrics.TopSQLReportRURecordCounterHistogram.Observe(float64(sentCount))
+		if err != nil {
+			metrics.ReportRURecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		} else {
+			metrics.ReportRURecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+		}
+	}()
+
+	topRURecord := &tipb.TopSQLSubResponse_RuRecord{}
+	r := &tipb.TopSQLSubResponse{RespOneof: topRURecord}
+
+	for i := range records {
+		topRURecord.RuRecord = &records[i]
+		if err = ds.stream.Send(r); err != nil {
+			return
+		}
+		sentCount++
+
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return
+		default:
+		}
+	}
+
+	return
+}
+
 func (ds *pubSubDataSink) sendSQLMeta(ctx context.Context, sqlMetas []tipb.SQLMeta) (err error) {
 	if len(sqlMetas) == 0 {
 		return
@@ -211,11 +301,11 @@ func (ds *pubSubDataSink) sendSQLMeta(ctx context.Context, sqlMetas []tipb.SQLMe
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportSQLCountHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportSQLCountHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -248,11 +338,11 @@ func (ds *pubSubDataSink) sendPlanMeta(ctx context.Context, planMetas []tipb.Pla
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportPlanCountHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportPlanCountHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 

@@ -41,17 +41,23 @@ type DataSinkRegisterer interface {
 	Deregister(dataSink DataSink)
 }
 
-// ReportData contains data that reporter sends to the agent.
+// ReportData contains the payload sent from reporter to agent.
+// DataRecords stores TopSQL CPU records, and RURecords stores TopRU records.
+// SQLMetas and PlanMetas are shared by both record types.
 type ReportData struct {
 	// DataRecords contains the topN records of each second and the `others`
 	// record which aggregation all []tipb.TopSQLRecord that is out of Top N.
 	DataRecords []tipb.TopSQLRecord
-	SQLMetas    []tipb.SQLMeta
-	PlanMetas   []tipb.PlanMeta
+	// RURecords contains TopRU records aggregated by (user, sql_digest, plan_digest).
+	// Stored separately to avoid mixing with CPU-based TopSQLRecord.
+	// Populated by reporter after two-level TopN filtering.
+	RURecords []tipb.TopRURecord
+	SQLMetas  []tipb.SQLMeta
+	PlanMetas []tipb.PlanMeta
 }
 
 func (d *ReportData) hasData() bool {
-	return len(d.DataRecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
+	return len(d.DataRecords) != 0 || len(d.RURecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
 }
 
 var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
@@ -80,12 +86,22 @@ func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
 	case <-r.ctx.Done():
 		return errors.New("DefaultDataSinkRegisterer closed")
 	default:
+		if _, ok := r.dataSinks[dataSink]; ok {
+			return nil
+		}
 		if len(r.dataSinks) >= 10 {
 			return errors.New("too many datasinks")
 		}
 		r.dataSinks[dataSink] = struct{}{}
 		if len(r.dataSinks) > 0 {
 			topsqlstate.EnableTopSQL()
+		}
+
+		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopRU {
+			if err := topsqlstate.SetTopRUItemInterval(ds.itemInterval); err != nil {
+				return err
+			}
+			topsqlstate.EnableTopRU()
 		}
 		return nil
 	}
@@ -99,9 +115,17 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 	select {
 	case <-r.ctx.Done():
 	default:
+		if _, ok := r.dataSinks[dataSink]; !ok {
+			return
+		}
+
 		delete(r.dataSinks, dataSink)
 		if len(r.dataSinks) == 0 {
 			topsqlstate.DisableTopSQL()
+		}
+
+		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopRU {
+			topsqlstate.DisableTopRU()
 		}
 	}
 }

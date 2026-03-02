@@ -23,13 +23,16 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -161,7 +164,7 @@ func (ds *SingleTargetDataSink) TrySend(data *ReportData, deadline time.Time) er
 	case <-ds.ctx.Done():
 		return ds.ctx.Err()
 	default:
-		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
+		metrics.IgnoreReportChannelFullCounter.Inc()
 		return errors.New("the channel of single target dataSink is full")
 	}
 }
@@ -191,9 +194,9 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	defer func() {
 		if err != nil {
 			logutil.BgLogger().Warn("single target data sink failed to send data to receiver", zap.String("category", "top-sql"), zap.Error(err))
-			reporter_metrics.ReportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -205,8 +208,8 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	}
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, 3)
-	wg.Add(3)
+	errCh := make(chan error, 4)
+	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
@@ -219,6 +222,10 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	go func() {
 		defer wg.Done()
 		errCh <- ds.sendBatchTopSQLRecord(ctx, task.data.DataRecords)
+	}()
+	go func() {
+		defer wg.Done()
+		errCh <- ds.sendBatchTopRURecord(ctx, task.data.RURecords)
 	}()
 	wg.Wait()
 	close(errCh)
@@ -238,11 +245,11 @@ func (ds *SingleTargetDataSink) sendBatchTopSQLRecord(ctx context.Context, recor
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportRecordCounterHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportRecordCounterHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -263,6 +270,52 @@ func (ds *SingleTargetDataSink) sendBatchTopSQLRecord(ctx context.Context, recor
 	return
 }
 
+// sendBatchTopRURecord sends a batch of TopRU records by stream.
+// It uses the ReportTopRURecords RPC.
+func (ds *SingleTargetDataSink) sendBatchTopRURecord(ctx context.Context, records []tipb.TopRURecord) (err error) {
+	if len(records) == 0 {
+		return nil
+	}
+	if !topsqlstate.TopRUEnabled() {
+		return nil
+	}
+
+	start := time.Now()
+	sentCount := 0
+	defer func() {
+		metrics.TopSQLReportRURecordCounterHistogram.Observe(float64(sentCount))
+		if err != nil {
+			metrics.ReportRURecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		} else {
+			metrics.ReportRURecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+		}
+	}()
+
+	client := tipb.NewTopSQLAgentClient(ds.conn)
+	stream, err := client.ReportTopRURecords(ctx)
+	if err != nil {
+		if status.Code(err) == codes.Unimplemented {
+			return nil
+		}
+		return err
+	}
+	for i := range records {
+		if err = stream.Send(&records[i]); err != nil {
+			if status.Code(err) == codes.Unimplemented {
+				return nil
+			}
+			return
+		}
+		sentCount++
+	}
+
+	_, err = stream.CloseAndRecv()
+	if status.Code(err) == codes.Unimplemented {
+		return nil
+	}
+	return
+}
+
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
 func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas []tipb.SQLMeta) (err error) {
 	if len(sqlMetas) == 0 {
@@ -272,11 +325,11 @@ func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas [
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportSQLCountHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportSQLCountHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -307,11 +360,11 @@ func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMetas
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		reporter_metrics.TopSQLReportPlanCountHistogram.Observe(float64(sentCount))
+		metrics.TopSQLReportPlanCountHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reporter_metrics.ReportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reporter_metrics.ReportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			metrics.ReportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 

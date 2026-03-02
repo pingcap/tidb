@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "aggregator.go",
         "kv_exec_count.go",
+        "rustats.go",
         "stmtstats.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/topsql/stmtstats",
@@ -13,6 +14,7 @@ go_library(
         "//pkg/util/topsql/state",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
+        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
     ],
 )
