@@ -15,13 +15,16 @@
 package tablecodec
 
 import (
+	"encoding/binary"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
 
 func BenchmarkEncodeRowKeyWithHandle(b *testing.B) {
@@ -83,6 +86,96 @@ func BenchmarkDecodeIndexKeyCommonHandle(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		DecodeHandleInIndexValue(idxVal)
 	}
+}
+
+func BenchmarkDecodeIndexKVGeneral(b *testing.B) {
+	// Benchmark version-0 unique int handle index (no restored data).
+	// This exercises the general path: CutIndexKeyTo + reEncodeHandleTo.
+	colValues := []types.Datum{types.NewIntDatum(42), types.NewIntDatum(100)}
+	encodedCols, _ := codec.EncodeKey(time.UTC, nil, colValues...)
+	key := EncodeIndexSeekKey(1, 1, encodedCols)
+
+	// Build version 0 value with int handle in tail (unique index).
+	var value []byte
+	value = append(value, 8) // tailLen = 8
+	value = append(value, 0, 0)
+	var hBuf [8]byte
+	binary.BigEndian.PutUint64(hBuf[:], uint64(7))
+	value = append(value, hBuf[:]...)
+
+	colsLen := 2
+	columns := []rowcodec.ColInfo{
+		{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Ft: types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 3, Ft: types.NewFieldType(mysql.TypeLonglong)},
+	}
+
+	b.Run("WithPreAlloc", func(b *testing.B) {
+		preAlloc := make([][]byte, colsLen, colsLen+1)
+		var buf [9]byte
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			preAlloc = preAlloc[:colsLen:colsLen+1]
+			_, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, buf[:0], preAlloc)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("WithoutPreAlloc", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := DecodeIndexKV(key, value, colsLen, HandleDefault, columns)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+func BenchmarkDecodeIndexKVGeneralNonUnique(b *testing.B) {
+	// Benchmark version-0 non-unique int handle index (handle in key suffix).
+	handleVal := int64(7)
+	colValues := []types.Datum{types.NewIntDatum(42), types.NewIntDatum(100)}
+	allDatums := append(colValues, types.NewIntDatum(handleVal))
+	encodedAll, _ := codec.EncodeKey(time.UTC, nil, allDatums...)
+	key := EncodeIndexSeekKey(1, 1, encodedAll)
+
+	// Build version 0 non-unique value (no handle in value, padded > 9 bytes).
+	var value []byte
+	value = append(value, 0) // tailLen = 0
+	value = append(value, make([]byte, 9)...)
+
+	colsLen := 2
+	columns := []rowcodec.ColInfo{
+		{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Ft: types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 3, Ft: types.NewFieldType(mysql.TypeLonglong)},
+	}
+
+	b.Run("WithPreAlloc", func(b *testing.B) {
+		preAlloc := make([][]byte, colsLen, colsLen+1)
+		var buf [9]byte
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			preAlloc = preAlloc[:colsLen:colsLen+1]
+			_, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, buf[:0], preAlloc)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("WithoutPreAlloc", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := DecodeIndexKV(key, value, colsLen, HandleDefault, columns)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
 
 func TestBenchDaily(t *testing.T) {
