@@ -268,7 +268,11 @@ func (p *HandParser) parseRoleIdentity() *auth.RoleIdentity {
 		// to match yacc RolenameComposed (StringName '@' StringName).
 		p.next()
 	} else {
-		p.syntaxErrorAt(tok)
+		// Consume the bad token to match yacc behavior: yacc shifts the
+		// unexpected keyword and then fails on the following token (often EOF),
+		// producing near text from that later position.
+		p.next()
+		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 	role.Username = tok.Lit
