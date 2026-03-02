@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"encoding/binary"
 	"math"
 	"slices"
 
@@ -421,6 +422,7 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	intHandle := !m.table.IsCommonHandle
 	if m.cacheTable != nil {
 		batchChk := chunk.New(m.retFieldTypes, cachedTableBatchSize, cachedTableBatchSize)
 		return &memRowsBatchIterForTable{
@@ -431,6 +433,7 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 			sel:            make([]int, 0, cachedTableBatchSize),
 			datumRow:       make([]types.Datum, len(m.retFieldTypes)),
 			retFieldTypes:  m.retFieldTypes,
+			intHandle:      intHandle,
 			memTableReader: m,
 		}, nil
 	}
@@ -439,6 +442,7 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 		cd:             m.buffer.cd,
 		chk:            chunk.New(m.retFieldTypes, 1, 1),
 		datumRow:       make([]types.Datum, len(m.retFieldTypes)),
+		intHandle:      intHandle,
 		memTableReader: m,
 	}, nil
 }
@@ -485,7 +489,7 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 }
 
 func (m *memTableReader) decodeRecordKeyValue(key, value []byte, resultRows *[]types.Datum) ([]types.Datum, error) {
-	handle, err := tablecodec.DecodeRowKey(key)
+	handle, err := decodeHandleFromRowKey(key, !m.table.IsCommonHandle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -570,8 +574,9 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 // getMemRowsHandle is called when memIndexMergeReader.partialPlans[i] is TableScan.
 func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
 	handles := make([]kv.Handle, 0, 16)
+	intHandle := !m.table.IsCommonHandle
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, _ []byte) error {
-		handle, err := tablecodec.DecodeRowKey(key)
+		handle, err := decodeHandleFromRowKey(key, intHandle)
 		if err != nil {
 			return err
 		}
@@ -918,10 +923,11 @@ func (*defaultRowsIter) Close() {}
 
 // memRowsIterForTable combine a kv.Iterator and a kv decoder to get a memRowsIter.
 type memRowsIterForTable struct {
-	kvIter   *txnMemBufferIter // txnMemBufferIter is the kv.Iterator
-	cd       *rowcodec.ChunkDecoder
-	chk      *chunk.Chunk
-	datumRow []types.Datum
+	kvIter    *txnMemBufferIter // txnMemBufferIter is the kv.Iterator
+	cd        *rowcodec.ChunkDecoder
+	chk       *chunk.Chunk
+	datumRow  []types.Datum
+	intHandle bool
 	*memTableReader
 }
 
@@ -939,7 +945,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 		if len(value) == 0 {
 			continue
 		}
-		handle, err := tablecodec.DecodeRowKey(key)
+		handle, err := decodeHandleFromRowKey(key, iter.intHandle)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -948,7 +954,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 		if !rowcodec.IsNewFormat(value) {
 			// TODO: remove the legacy code!
 			// fallback to the old way.
-			iter.datumRow, err = iter.memTableReader.decodeRecordKeyValue(key, value, &iter.datumRow)
+			iter.datumRow, err = iter.memTableReader.decodeRowData(handle, value, &iter.datumRow)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1003,6 +1009,7 @@ type memRowsBatchIterForTable struct {
 	cursor        int
 	datumRow      []types.Datum
 	retFieldTypes []*types.FieldType
+	intHandle     bool
 	*memTableReader
 }
 
@@ -1036,7 +1043,7 @@ func (iter *memRowsBatchIterForTable) Next() ([]types.Datum, error) {
 				continue
 			}
 
-			handle, err := tablecodec.DecodeRowKey(key)
+			handle, err := decodeHandleFromRowKey(key, iter.intHandle)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1102,6 +1109,19 @@ func (iter *memRowsBatchIterForTable) Next() ([]types.Datum, error) {
 			}
 		}
 	}
+}
+
+func decodeHandleFromRowKey(key kv.Key, intHandle bool) (kv.Handle, error) {
+	if !intHandle {
+		return tablecodec.DecodeRowKey(key)
+	}
+	// Int handle record keys are fixed-length. Decode handle directly from the last 8 bytes to
+	// avoid the additional checks in tablecodec.DecodeRowKey.
+	if len(key) != tablecodec.RecordRowKeyLen {
+		return tablecodec.DecodeRowKey(key)
+	}
+	u := binary.BigEndian.Uint64(key[len(key)-8:])
+	return kv.IntHandle(codec.DecodeCmpUintToInt(u)), nil
 }
 
 func (iter *memRowsBatchIterForTable) Close() {
