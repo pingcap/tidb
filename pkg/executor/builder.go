@@ -4957,6 +4957,9 @@ func (*mockPhysicalIndexReader) MemoryUsage() (sum int64) {
 }
 
 func (builder *dataReaderBuilder) cloneForIndexJoinBuild() *dataReaderBuilder {
+	// This is intentionally a shallow copy: each inner worker build needs an isolated err field,
+	// while plan/once/stmtCtxLock must stay shared. If executorBuilder later gains mutable map/slice
+	// fields used during concurrent inner builds, revisit this clone to avoid sharing them unsafely.
 	clonedExecBuilder := *builder.executorBuilder
 	clonedExecBuilder.err = nil
 	return &dataReaderBuilder{
