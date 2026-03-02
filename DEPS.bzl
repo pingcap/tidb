@@ -411,13 +411,13 @@ def go_deps():
         name = "com_github_ashanbrown_makezero",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ashanbrown/makezero",
-        sha256 = "46c7b3da763b02a05f70272662bb247475d5c50d928b55004876ad31b40744e9",
-        strip_prefix = "github.com/ashanbrown/makezero@v1.1.1",
+        sha256 = "442f927083fd8011c9c4857cb165ea359377588a679c82bb3c6a8e44d207fee0",
+        strip_prefix = "github.com/ashanbrown/makezero@v1.2.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ashanbrown/makezero/com_github_ashanbrown_makezero-v1.1.1.zip",
-            "http://ats.apps.svc/gomod/github.com/ashanbrown/makezero/com_github_ashanbrown_makezero-v1.1.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ashanbrown/makezero/com_github_ashanbrown_makezero-v1.1.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ashanbrown/makezero/com_github_ashanbrown_makezero-v1.1.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ashanbrown/makezero/com_github_ashanbrown_makezero-v1.2.0.zip",
+            "http://ats.apps.svc/gomod/github.com/ashanbrown/makezero/com_github_ashanbrown_makezero-v1.2.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ashanbrown/makezero/com_github_ashanbrown_makezero-v1.2.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ashanbrown/makezero/com_github_ashanbrown_makezero-v1.2.0.zip",
         ],
     )
     go_repository(
@@ -730,19 +730,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/aws/smithy-go/com_github_aws_smithy_go-v1.22.5.zip",
             "https://cache.hawkingrei.com/gomod/github.com/aws/smithy-go/com_github_aws_smithy_go-v1.22.5.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/smithy-go/com_github_aws_smithy_go-v1.22.5.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_aymanbagabas_go_osc52_v2",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/aymanbagabas/go-osc52/v2",
-        sha256 = "939ebf2a5481f2172e1a5e0c318d05aef5b6d950a960556216c3da7879a927f8",
-        strip_prefix = "github.com/aymanbagabas/go-osc52/v2@v2.0.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aymanbagabas/go-osc52/v2/com_github_aymanbagabas_go_osc52_v2-v2.0.1.zip",
-            "http://ats.apps.svc/gomod/github.com/aymanbagabas/go-osc52/v2/com_github_aymanbagabas_go_osc52_v2-v2.0.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aymanbagabas/go-osc52/v2/com_github_aymanbagabas_go_osc52_v2-v2.0.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aymanbagabas/go-osc52/v2/com_github_aymanbagabas_go_osc52_v2-v2.0.1.zip",
         ],
     )
     go_repository(
