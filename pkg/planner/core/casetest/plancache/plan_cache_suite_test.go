@@ -1175,7 +1175,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: access tables in system schema",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
-		"skip non-prepared plan-cache: constant predicate elimination on parameter marker",
+		"skip non-prepared plan-cache: constant predicate elimination on mutable constant",
 	}
 
 	all := append(supported, unsupported...)

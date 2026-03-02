@@ -37,15 +37,16 @@ func TestParamMarkerConstantPredicateElimination(t *testing.T) {
 	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30)")
 	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
 
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-
 	// Case 1: WHERE ? with ?=true should eliminate the Selection and NOT cache.
 	tk.MustExec(`prepare stmt1 from 'select * from t where ?'`)
 	tk.MustExec(`set @v=true`)
 	tk.MustQuery(`execute stmt1 using @v`).Sort().Check(testkit.Rows("1 10", "2 20", "3 30"))
+	// Capture ProcessInfo AFTER the execute so the plan is current.
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Greater(t, len(rows), 0, "EXPLAIN FOR CONNECTION should return rows")
 	for _, row := range rows {
 		op := row[0].(string)
 		require.False(t, strings.Contains(op, "Selection"),
@@ -75,7 +76,12 @@ func TestParamMarkerConstantPredicateElimination(t *testing.T) {
 	tk.MustExec(`prepare stmt3 from 'select a, sum(b) from t group by a having ?'`)
 	tk.MustExec(`set @v=true`)
 	tk.MustQuery(`execute stmt3 using @v`).Sort().Check(testkit.Rows("1 10", "2 20", "3 30"))
+	// Re-capture ProcessInfo after executing stmt3.
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Greater(t, len(rows), 0, "EXPLAIN FOR CONNECTION should return rows")
 	for _, row := range rows {
 		op := row[0].(string)
 		if strings.Contains(op, "Selection") {
