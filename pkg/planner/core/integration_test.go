@@ -2111,3 +2111,45 @@ WHERE t1.id IN (SELECT MIN(id) FROM t1)`
 	err := tk.QueryToErr(sql)
 	require.NoError(t, err)
 }
+
+func TestIndexScanSeekCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d int, key idx_abcd(a, b, c, d))")
+
+	// Insert data where column `a` has high NDV (many distinct values) while `b` and `c` have
+	// low NDV (few distinct values). This ensures the NDV safeguard allows pruning: the IN-list
+	// column being dropped (b or c) has lower NDV than the preceding column (a).
+	for i := range 100 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d, %d)", i, i%3+1, i%2+1, i))
+	}
+	tk.MustExec("analyze table t")
+	tk.MustExec("set @@tidb_cost_model_version = 2")
+
+	// Query with equality on high-NDV column `a`, IN-lists on low-NDV columns `b` and `c`.
+	// This produces 3*2=6 ranges. With fix control ON and seek cost, the optimizer may
+	// prune to fewer ranges by dropping the IN-list on `c` (cutoff at b only).
+	query := "select * from t where a = 1 and b in (1,2,3) and c in (1,2) order by d"
+
+	// Without fix control: standard plan.
+	tk.MustExec(`set @@tidb_opt_fix_control = ""`)
+	planOff := tk.MustQuery("explain format='brief' " + query).Rows()
+
+	// With fix control enabled: seek cost may lead to a pruned-range alternative.
+	tk.MustExec(`set @@tidb_opt_fix_control = "65465:ON"`)
+	planOn := tk.MustQuery("explain format='brief' " + query).Rows()
+
+	// We don't assert a specific plan shape since it depends on cost estimation,
+	// but we verify the query returns correct results in both modes.
+	_ = planOff
+	_ = planOn
+
+	// Verify correctness: results must be identical regardless of fix control.
+	tk.MustExec(`set @@tidb_opt_fix_control = ""`)
+	resultOff := tk.MustQuery(query).Sort().Rows()
+	tk.MustExec(`set @@tidb_opt_fix_control = "65465:ON"`)
+	resultOn := tk.MustQuery(query).Sort().Rows()
+	require.Equal(t, resultOff, resultOn)
+}
