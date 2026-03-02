@@ -822,7 +822,7 @@ func TestPBPlanBuilderPushDownLimitToSlowQueryRetriever(t *testing.T) {
 	data := infoschema.NewData()
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	newISBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
-	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := newISBuilder.Build(math.MaxUint64)
 	tbl, err := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.ClusterTableSlowLog))
