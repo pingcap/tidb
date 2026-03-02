@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -3087,6 +3088,189 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 		"46 46",
 		"57 57"))
 	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
+}
+
+// Modifying an indexed column on a range-partitioned table should advance reorg progress to the next physical partition in recreate-index stage.
+func TestModifyColumnPartitionedTableRecreateIndexCursorReset(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_cursor_reset")
+	tk.MustExec(`create table t_cursor_reset (
+		a int primary key,
+		b int,
+		key idx_b(b)
+	) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30),
+		partition pMax values less than (MAXVALUE)
+	)`)
+	tk.MustExec(`insert into t_cursor_reset values
+		(1,1),(2,2),
+		(11,11),(12,12),
+		(21,21),(22,22),
+		(31,31),(32,32)`)
+
+	tblMeta := external.GetTableByName(t, tk, "test", "t_cursor_reset").Meta()
+	require.NotNil(t, tblMeta.Partition)
+	partIDs := make([]int64, 0, len(tblMeta.Partition.Definitions))
+	for _, def := range tblMeta.Partition.Definitions {
+		partIDs = append(partIDs, def.ID)
+	}
+	require.Len(t, partIDs, 4)
+
+	var firstNextPID atomic.Int64
+	// Read ddl_reorg progress inside the callback and keep only the first observed physical_id for recreate-index stage.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdatePartitionReorgInfo", func(job *model.Job) {
+		if firstNextPID.Load() != 0 {
+			return
+		}
+		if job.Type != model.ActionModifyColumn || job.ReorgMeta == nil || job.ReorgMeta.Stage != model.ReorgStageModifyColumnRecreateIndex {
+			return
+		}
+		observer := testkit.NewTestKit(t, store)
+		rows := observer.MustQuery(fmt.Sprintf("select physical_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)).Rows()
+		if len(rows) == 0 || len(rows[0]) == 0 {
+			return
+		}
+		pid, err := strconv.ParseInt(fmt.Sprintf("%v", rows[0][0]), 10, 64)
+		if err != nil {
+			return
+		}
+		firstNextPID.CompareAndSwap(0, pid)
+	})
+
+	tk.MustExec("alter table t_cursor_reset modify column b int unsigned")
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec("admin check table t_cursor_reset")
+	require.Equal(t, partIDs[1], firstNextPID.Load())
+}
+
+// A forced failure during modify-column should roll back cleanly without leaving reorg rows or transient schema states.
+func TestModifyColumnPartitionedTableRollbackCleanup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_rb")
+	tk.MustExec(`create table t_rb (
+		a int primary key,
+		b int,
+		key idx_b(b)
+	) partition by range (a) (
+		partition p0 values less than (30),
+		partition p1 values less than (60),
+		partition p2 values less than (90),
+		partition pMax values less than (MAXVALUE)
+	)`)
+
+	for i := range 128 {
+		tk.MustExec("insert into t_rb values (?, ?)", i+1, i+1)
+	}
+
+	tblMeta := external.GetTableByName(t, tk, "test", "t_rb").Meta()
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionModifyColumn && job.TableID == tblMeta.ID {
+			jobID = job.ID
+		}
+	})
+
+	// Force index-record decode failure so the DDL enters rollback path deterministically.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr"))
+	}()
+
+	err := tk.ExecToErr("alter table t_rb modify column b bigint unsigned")
+	require.ErrorContains(t, err, "Cannot decode index value")
+	require.NotZero(t, jobID)
+
+	jobIDStr := strconv.FormatInt(jobID, 10)
+	tk.MustQuery("select job_id from mysql.tidb_ddl_history where job_id = " + jobIDStr).Check(testkit.Rows(jobIDStr))
+	tk.MustQuery("select job_id, ele_id, ele_type, physical_id from mysql.tidb_ddl_reorg where job_id = " + jobIDStr).Check(testkit.Rows())
+
+	tblMeta = external.GetTableByName(t, tk, "test", "t_rb").Meta()
+	for _, col := range tblMeta.Columns {
+		require.False(t, col.IsChanging(), "unexpected changing column left after rollback: %s", col.Name.O)
+		require.False(t, col.IsRemoving(), "unexpected removing column left after rollback: %s", col.Name.O)
+	}
+	for _, idx := range tblMeta.Indices {
+		require.False(t, idx.IsChanging(), "unexpected changing index left after rollback: %s", idx.Name.O)
+		require.False(t, idx.IsRemoving(), "unexpected removing index left after rollback: %s", idx.Name.O)
+	}
+
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec("admin check table t_rb")
+}
+
+// Modifying a globally indexed column on a partitioned table should keep global-index lookup and uniqueness consistent.
+func TestModifyColumnPartitionedTableGlobalIndexConsistency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_global_idx")
+	tk.MustExec(`create table t_global_idx (
+		a int primary key,
+		b int,
+		c int,
+		unique key uk_c(c) global
+	) partition by hash (a) partitions 4`)
+	tk.MustExec(`insert into t_global_idx values (1,10,10),(2,20,20),(3,30,30),(4,40,40)`)
+
+	tk.MustExec(`alter table t_global_idx modify column c bigint unsigned`)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec("admin check table t_global_idx")
+	tk.MustQuery("select a, b, c from t_global_idx use index(uk_c) where c = 30").Check(testkit.Rows("3 30 30"))
+	tk.MustContainErrMsg("insert into t_global_idx values (100,1,30)", "Duplicate entry '30'")
+	tk.MustExec("insert into t_global_idx values (100,100,100)")
+	tk.MustQuery("select count(*) from t_global_idx").Check(testkit.Rows("5"))
+}
+
+// Covers modify-column on LIST COLUMNS and KEY partitioned tables and verifies index-read correctness after type change.
+func TestModifyColumnPartitionedTableListAndKeyPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	// LIST COLUMNS partition variant.
+	t.Run("list columns", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_list_mod")
+		tk.MustExec(`create table t_list_mod (
+			a int,
+			b int,
+			c int,
+			primary key (a, b),
+			key idx_c(c)
+		) partition by list columns (a) (
+			partition p0 values in (1, 2),
+			partition p1 values in (3, 4)
+		)`)
+		tk.MustExec(`insert into t_list_mod values (1,1,10),(2,2,20),(3,3,30),(4,4,40)`)
+		tk.MustExec(`alter table t_list_mod modify column c bigint unsigned`)
+		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+		tk.MustExec(`admin check table t_list_mod`)
+		tk.MustQuery(`select a, b, c from t_list_mod use index(idx_c) where c = 20`).Check(testkit.Rows("2 2 20"))
+	})
+
+	// KEY partition variant.
+	t.Run("key partition", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_key_mod")
+		tk.MustExec(`create table t_key_mod (
+			a int,
+			b int,
+			c int,
+			primary key (a, b),
+			key idx_c(c)
+		) partition by key (a, b) partitions 3`)
+		tk.MustExec(`insert into t_key_mod values (1,1,10),(2,2,20),(3,3,30),(4,4,40),(5,5,50),(6,6,60)`)
+		tk.MustExec(`alter table t_key_mod modify column c bigint unsigned`)
+		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+		tk.MustExec(`admin check table t_key_mod`)
+		tk.MustQuery(`select a, b, c from t_key_mod use index(idx_c) where c = 60`).Check(testkit.Rows("6 6 60"))
+	})
 }
 
 func TestRemoveKeyPartitioning(t *testing.T) {

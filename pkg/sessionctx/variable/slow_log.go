@@ -641,6 +641,14 @@ func matchGE[T numericComparable](threshold any, v T) bool {
 	return ok && v >= tv
 }
 
+// uint64FromNonNegative converts a signed value to uint64 if it is non-negative.
+func uint64FromNonNegative(v int64) (uint64, bool) {
+	if v < 0 {
+		return 0, false
+	}
+	return uint64(v), true
+}
+
 func matchZero(threshold any) bool {
 	switch v := threshold.(type) {
 	case int:
@@ -913,7 +921,8 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			if d.ScanDetail == nil {
 				return matchZero(threshold)
 			}
-			return matchGE(threshold, d.ScanDetail.TotalKeys)
+			totalKeys, ok := uint64FromNonNegative(d.ScanDetail.TotalKeys)
+			return ok && matchGE(threshold, totalKeys)
 		}),
 	strings.ToLower(execdetails.ProcessKeysStr): makeExecDetailAccessor(
 		parseUint64,
@@ -921,7 +930,8 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			if d.ScanDetail == nil {
 				return matchZero(threshold)
 			}
-			return matchGE(threshold, d.ScanDetail.ProcessedKeys)
+			processedKeys, ok := uint64FromNonNegative(d.ScanDetail.ProcessedKeys)
+			return ok && matchGE(threshold, processedKeys)
 		}),
 	strings.ToLower(SlowLogCopMVCCReadAmplification): makeExecDetailAccessor(
 		parseFloat64,
@@ -953,7 +963,8 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			if d.CommitDetail == nil {
 				return matchZero(threshold)
 			}
-			return matchGE(threshold, int64(d.CommitDetail.WriteKeys))
+			writeKeys, ok := uint64FromNonNegative(int64(d.CommitDetail.WriteKeys))
+			return ok && matchGE(threshold, writeKeys)
 		}),
 	strings.ToLower(execdetails.WriteSizeStr): makeExecDetailAccessor(
 		parseUint64,
@@ -961,7 +972,8 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			if d.CommitDetail == nil {
 				return matchZero(threshold)
 			}
-			return matchGE(threshold, int64(d.CommitDetail.WriteSize))
+			writeSize, ok := uint64FromNonNegative(int64(d.CommitDetail.WriteSize))
+			return ok && matchGE(threshold, writeSize)
 		}),
 	strings.ToLower(execdetails.PrewriteRegionStr): makeExecDetailAccessor(
 		parseUint64,
@@ -969,7 +981,9 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			if d.CommitDetail == nil {
 				return matchZero(threshold)
 			}
-			return matchGE(threshold, int64(atomic.LoadInt32(&d.CommitDetail.PrewriteRegionNum)))
+			prewriteRegionNum := atomic.LoadInt32(&d.CommitDetail.PrewriteRegionNum)
+			prewriteRegion, ok := uint64FromNonNegative(int64(prewriteRegionNum))
+			return ok && matchGE(threshold, prewriteRegion)
 		}),
 }
 

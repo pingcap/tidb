@@ -17,9 +17,11 @@
 package testkit
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -776,7 +778,13 @@ func LoadTableStats(fileName string, dom *domain.Domain) error {
 	statsPath := filepath.Join("testdata", fileName)
 	bytes, err := os.ReadFile(statsPath)
 	if err != nil {
-		return err
+		if !os.IsNotExist(err) {
+			return err
+		}
+		bytes, err = loadTableStatsFromZip(fileName)
+		if err != nil {
+			return err
+		}
 	}
 	statsTbl := &statisticsutil.JSONTable{}
 	err = json.Unmarshal(bytes, statsTbl)
@@ -789,6 +797,48 @@ func LoadTableStats(fileName string, dom *domain.Domain) error {
 		return err
 	}
 	return nil
+}
+
+func loadTableStatsFromZip(fileName string) ([]byte, error) {
+	zipPath := filepath.Join("testdata", "stats.zip")
+	zipReader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return nil, err
+	}
+	closeZip := func(prevErr error) error {
+		closeErr := zipReader.Close()
+		if prevErr == nil {
+			return closeErr
+		}
+		if closeErr == nil {
+			return prevErr
+		}
+		return errors.Errorf("%v (close %s failed: %v)", prevErr, zipPath, closeErr)
+	}
+
+	for _, file := range zipReader.File {
+		if file.Name != fileName {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			return nil, closeZip(err)
+		}
+
+		bytes, readErr := io.ReadAll(rc)
+		closeEntryErr := rc.Close()
+		if readErr != nil {
+			if closeEntryErr != nil {
+				readErr = errors.Errorf("%v (close stats entry %s failed: %v)", readErr, file.Name, closeEntryErr)
+			}
+			return nil, closeZip(readErr)
+		}
+		if closeEntryErr != nil {
+			return nil, closeZip(closeEntryErr)
+		}
+		return bytes, closeZip(nil)
+	}
+	return nil, closeZip(os.ErrNotExist)
 }
 
 // MockGCSavePoint mocks a GC save point. It's used in tests that need to set TiDB snapshot.

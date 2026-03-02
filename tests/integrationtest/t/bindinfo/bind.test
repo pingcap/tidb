@@ -136,7 +136,7 @@ create table t(a int, b int, key(a));
 create global binding for select * from t using select * from t use index(a);
 select original_sql, bind_sql from mysql.bind_info where bind_sql = 'SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)';
 --enable_warnings;
-explain format = 'verbose' select * from t;
+explain format = 'brief' select * from t;
 --disable_warnings;
 drop global binding for select * from t using select * from t use index(a);
 

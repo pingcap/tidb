@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -54,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
@@ -66,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
@@ -164,9 +167,19 @@ type DDLResignOwnerHandler struct {
 	store kv.Storage
 }
 
+// DDLCheckHandler is the handler for triggering admin check index.
+type DDLCheckHandler struct {
+	*handler.TikvHandlerTool
+}
+
 // NewDDLResignOwnerHandler creates a new DDLResignOwnerHandler.
 func NewDDLResignOwnerHandler(store kv.Storage) *DDLResignOwnerHandler {
 	return &DDLResignOwnerHandler{store}
+}
+
+// NewDDLCheckHandler creates a new DDLCheckHandler.
+func NewDDLCheckHandler(tool *handler.TikvHandlerTool) *DDLCheckHandler {
+	return &DDLCheckHandler{tool}
 }
 
 // ServerInfoHandler is the handler for getting statistics.
@@ -1173,6 +1186,83 @@ func (h DDLResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	handler.WriteData(w, "success!")
 }
 
+// ServeHTTP handles request of triggering admin check index.
+// This endpoint is used for online diagnosis and relies on fast check table mode.
+func (h DDLCheckHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	params := mux.Vars(req)
+	dbName := params[handler.DBName]
+	tableName := params[handler.TableName]
+	indexName := params[handler.IndexName]
+	if dbName == "" || tableName == "" || indexName == "" {
+		handler.WriteError(w, errors.Errorf("db, table and index are required"))
+		return
+	}
+
+	sctx, err := session.CreateSession(h.Store)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	defer sctx.Close()
+
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	quotedTableName := executor.TableName(dbName, tableName)
+	quotedIndexName := "`" + strings.ReplaceAll(indexName, "`", "``") + "`"
+	checkSQL := fmt.Sprintf("admin check index %s %s", quotedTableName, quotedIndexName)
+
+	rs, err := sctx.Execute(req.Context(), checkSQL)
+	rows, rowsErr := collectRecordSetRows(req.Context(), sctx, rs)
+	if rowsErr != nil {
+		handler.WriteError(w, rowsErr)
+		return
+	}
+
+	result := map[string]any{
+		"db":        dbName,
+		"table":     tableName,
+		"index":     indexName,
+		"check_sql": checkSQL,
+	}
+	if len(rows) > 0 {
+		result["rows"] = rows
+	}
+
+	if err != nil {
+		result["result"] = "failed"
+		result["error"] = err.Error()
+		handler.WriteData(w, result)
+		return
+	}
+
+	result["result"] = "success"
+	handler.WriteData(w, result)
+}
+
+func collectRecordSetRows(ctx context.Context, se sessionapi.Session, rss []sqlexec.RecordSet) ([][]string, error) {
+	rows := make([][]string, 0)
+	for _, one := range rss {
+		if one == nil {
+			continue
+		}
+		sRows, err := session.ResultSetToStringSlice(ctx, se, one)
+		if err != nil {
+			terror.Call(one.Close)
+			return nil, err
+		}
+		rows = append(rows, sRows...)
+	}
+	return rows, nil
+}
+
 func (h *TableHandler) getPDAddr() ([]string, error) {
 	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
@@ -1919,6 +2009,124 @@ func (h *TestHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	default:
 		handler.WriteError(w, errors.NotSupportedf("module(%s)", mod))
 	}
+}
+
+type rowKeyDeleteResponse struct {
+	Key string `json:"key"`
+}
+
+// DeleteKeyHandler is the handler for deleting row/index keys. It's used for testing GC and lock resolving.
+type DeleteKeyHandler struct {
+	*handler.TikvHandlerTool
+}
+
+// NewDeleteKeyHandler creates a new DeleteKeyHandler.
+func NewDeleteKeyHandler(tool *handler.TikvHandlerTool) *DeleteKeyHandler {
+	return &DeleteKeyHandler{
+		TikvHandlerTool: tool,
+	}
+}
+
+// Supported operations:
+//   - /test/delete/rowkey/{db}/{table}?handle={intHandle}
+//   - /test/delete/rowkey/{db}/{table}?{pkCol}={pkVal}[&{pkCol2}={pkVal2}...]
+//     (for clustered common handle tables)
+//   - /test/delete/indexkey/{db}/{table}/{index}?handle={intHandle}&{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]
+//   - /test/delete/indexkey/{db}/{table}/{index}?{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]
+//     (for index keys; clustered common handle tables can use PK columns instead of handle)
+func (h *DeleteKeyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+	pathParams := mux.Vars(req)
+	values := make(url.Values)
+	if err := parseQuery(req.URL.RawQuery, values, true); err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	indexName := pathParams[handler.IndexName]
+	handleStr := values.Get(handler.Handle)
+	dbName := pathParams[handler.DBName]
+	if dbName == "" {
+		handler.WriteError(w, errors.BadRequestf("db is required"))
+		return
+	}
+	tableName := pathParams[handler.TableName]
+	if tableName == "" {
+		handler.WriteError(w, errors.BadRequestf("table is required"))
+		return
+	}
+
+	tb, err := h.GetTable(dbName, tableName)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	handleParams := make(map[string]string, 1)
+	if handleStr != "" {
+		handleParams[handler.Handle] = handleStr
+	}
+	handle, err := h.GetHandle(tb, handleParams, values)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	store, ok := h.Store.(kv.Storage)
+	if !ok {
+		handler.WriteError(w, errors.New("store does not support kv operations"))
+		return
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTools)
+	var encodedKey []byte
+	if indexName == "" {
+		encodedKey = tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
+	} else {
+		var idxCols []*model.ColumnInfo
+		var idx table.Index
+		for _, v := range tb.Indices() {
+			if strings.EqualFold(v.Meta().Name.String(), indexName) {
+				for _, c := range v.Meta().Columns {
+					idxCols = append(idxCols, tb.Meta().Columns[c.Offset])
+				}
+				idx = v
+				break
+			}
+		}
+		if idx == nil {
+			handler.WriteError(w, errors.NotFoundf("Index %s not found!", indexName))
+			return
+		}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+		idxRow, err := h.FormValue2DatumRow(sc, values, idxCols)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		encodedKey, _, err = idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow, handle, nil)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+	}
+	err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		if intest.InTest {
+			// since CheckResourceTagForTopSQLInGoTest is enabled in TestMain,
+			// this tagger is required.
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+		}
+		return txn.Delete(encodedKey)
+	})
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	handler.WriteData(w, rowKeyDeleteResponse{Key: strings.ToUpper(hex.EncodeToString(encodedKey))})
 }
 
 // Supported operations:
