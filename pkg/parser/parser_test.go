@@ -656,6 +656,18 @@ func TestDMLStmt(t *testing.T) {
 		{"TABLE t ORDER BY b LIMIT 3", true, "TABLE `t` ORDER BY `b` LIMIT 3"},
 		{"TABLE t ORDER BY b LIMIT 3 OFFSET 2", true, "TABLE `t` ORDER BY `b` LIMIT 2,3"},
 		{"TABLE t ORDER BY b LIMIT 2,3", true, "TABLE `t` ORDER BY `b` LIMIT 2,3"},
+
+		// LIMIT with uint64 max value should succeed
+		{"SELECT * FROM t LIMIT 18446744073709551615", true, "SELECT * FROM `t` LIMIT 18446744073709551615"},
+		// LIMIT with uint64 overflow should fail (value exceeds max uint64)
+		{"SELECT * FROM t LIMIT 18446744073709551616 OFFSET 3", false, ""},
+		// OFFSET with uint64 overflow should also fail
+		{"SELECT * FROM t LIMIT 10 OFFSET 18446744073709551616", false, ""},
+		// LIMIT offset,count with overflow in offset position
+		{"SELECT * FROM t LIMIT 18446744073709551616, 10", false, ""},
+		// LIMIT offset,count with overflow in count position
+		{"SELECT * FROM t LIMIT 10, 18446744073709551616", false, ""},
+
 		{"INSERT INTO ta TABLE tb", true, "INSERT INTO `ta` TABLE `tb`"},
 		{"INSERT INTO t.a TABLE t.b", true, "INSERT INTO `t`.`a` TABLE `t`.`b`"},
 		{"REPLACE INTO ta TABLE tb", true, "REPLACE INTO `ta` TABLE `tb`"},
@@ -1260,6 +1272,7 @@ func TestDBAStmt(t *testing.T) {
 		{`SHOW KEYS FROM t FROM test where true;`, true, "SHOW INDEX IN `test`.`t` WHERE TRUE"},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true, "SHOW EVENTS IN `test_db` WHERE `definer`=_UTF8MB4'current_user'"},
 		{`SHOW PLUGINS`, true, "SHOW PLUGINS"},
+		{`SHOW PLUGINS LIKE 'Validate%'`, true, "SHOW PLUGINS LIKE _UTF8MB4'Validate%'"},
 		{`SHOW PROFILES`, true, "SHOW PROFILES"},
 		{`SHOW PROFILE`, true, "SHOW PROFILE"},
 		{`SHOW PROFILE FOR QUERY 1`, true, "SHOW PROFILE FOR QUERY 1"},
@@ -1346,10 +1359,14 @@ func TestDBAStmt(t *testing.T) {
 		{"lock stats test.t", true, "LOCK STATS `test`.`t`"},
 		{"lock stats t, t2", true, "LOCK STATS `t`, `t2`"},
 		{"lock stats t partition (p0, p1)", true, "LOCK STATS `t` PARTITION(`p0`, `p1`)"},
+		{"lock stats t partition p0", true, "LOCK STATS `t` PARTITION(`p0`)"},
+		{"lock stats t partition p0, p1", true, "LOCK STATS `t` PARTITION(`p0`, `p1`)"},
 		// for unlock stats
 		{"unlock stats test.t", true, "UNLOCK STATS `test`.`t`"},
 		{"unlock stats t, t2", true, "UNLOCK STATS `t`, `t2`"},
 		{"unlock stats t partition (p0, p1)", true, "UNLOCK STATS `t` PARTITION(`p0`, `p1`)"},
+		{"unlock stats t partition p0", true, "UNLOCK STATS `t` PARTITION(`p0`)"},
+		{"unlock stats t partition p0, p1", true, "UNLOCK STATS `t` PARTITION(`p0`, `p1`)"},
 		// set
 		// user defined
 		{"SET @ = 1", true, "SET @``=1"},
@@ -5203,6 +5220,7 @@ func TestPrivilege(t *testing.T) {
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true, "ALTER USER `root`@`localhost` IDENTIFIED BY 'new-password', `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`ALTER USER USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER USER() IDENTIFIED BY 'new-password'"},
 		{`ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'"},
+		{`ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'`, false, ""},
 		{"alter user 'test@localhost' password expire;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE"},
 		{"alter user 'test@localhost' password expire never;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE NEVER"},
 		{"alter user 'test@localhost' password expire default;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE DEFAULT"},
@@ -6891,6 +6909,21 @@ func TestQuotedSystemVariables(t *testing.T) {
 	}
 }
 
+func TestDottedSystemVariableInExpr(t *testing.T) {
+	p := parser.New()
+	// @@validate_password.length should keep the full dotted name,
+	// NOT split "validate_password" as scope and "length" as name.
+	st, err := p.ParseOneStmt("select @@validate_password.length", "", "")
+	require.NoError(t, err)
+	ss := st.(*ast.SelectStmt)
+	ve := ss.Fields.Fields[0].Expr.(*ast.VariableExpr)
+	require.Equal(t, "validate_password.length", ve.Name)
+	require.False(t, ve.IsGlobal)
+	require.False(t, ve.IsInstance)
+	require.True(t, ve.IsSystem)
+	require.False(t, ve.ExplicitScope)
+}
+
 // See https://github.com/pingcap/parser/issue/95
 func TestQuotedVariableColumnName(t *testing.T) {
 	p := parser.New()
@@ -6955,7 +6988,7 @@ func TestUnderscoreCharset(t *testing.T) {
 		if tt.parseFail {
 			require.EqualError(t, err, fmt.Sprintf("line 1 column %d near \"'3F')\" ", len(tt.cs)+17))
 		} else if tt.unSupport {
-			require.EqualError(t, err, ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", tt.cs).Error())
+			require.EqualError(t, err, parser.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", tt.cs).Error())
 		} else {
 			require.NoError(t, err)
 		}
@@ -7781,11 +7814,11 @@ func TestCharsetIntroducer(t *testing.T) {
 	defer charset.RemoveCharset("gbk")
 	// `_gbk` is treated as a character set.
 	_, _, err := p.Parse("select _gbk 'a';", "", "")
-	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	require.EqualError(t, err, "[parser:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
-	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	require.EqualError(t, err, "[parser:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
-	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	require.EqualError(t, err, "[parser:1115]Unsupported character introducer: 'gbk'")
 }
 
 func TestNonTransactionalDML(t *testing.T) {

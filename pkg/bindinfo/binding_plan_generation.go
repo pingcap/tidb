@@ -271,10 +271,11 @@ func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema, sql, charset, 
 		}
 	}
 	indexHintOptions := extractSelectIndexHints(sctx, defaultSchema, stmt)
-	return breadthFirstPlanSearch(sctx, stmt, vars, fixes, possibleLeading2, indexHintOptions)
+	plans, err = breadthFirstPlanSearch(sctx, sql, charset, collation, vars, fixes, possibleLeading2, indexHintOptions)
+	return plans, err
 }
 
-func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
+func breadthFirstPlanSearch(sctx sessionctx.Context, sql, charset, collation string,
 	vars []string, fixes []uint64, possibleLeading2 [][2]*tableName, indexHintOptions [][]*indexHint) (plans []*genedPlan, err error) {
 	// init BFS structures
 	visitedStates := make(map[string]struct{})  // map[encodedState]struct{}, all visited states
@@ -293,7 +294,7 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 	maxPlans, maxExploreState := 30, 10000
 	for len(visitedPlans) < maxPlans && len(visitedStates) < maxExploreState && stateList.Len() > 0 {
 		currState := stateList.Remove(stateList.Front()).(*state)
-		plan, err := genPlanUnderState(sctx, stmt, currState)
+		plan, err := genPlanUnderState(sctx, sql, charset, collation, currState)
 		if err != nil {
 			return nil, err
 		}
@@ -353,7 +354,15 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 }
 
 // genPlanUnderState returns a plan generated under the given state (vars and fix-controls).
-func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state) (plan *genedPlan, err error) {
+// It re-parses the SQL for each call to get a fresh AST, because Preprocess/Optimize
+// modify the AST in-place (name resolution, wildcard expansion, auxiliary field injection)
+// and these mutations corrupt the AST for subsequent iterations.
+func genPlanUnderState(sctx sessionctx.Context, sql, charset, collation string, state *state) (plan *genedPlan, err error) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, charset, collation)
+	if err != nil {
+		return nil, err
+	}
 	for i, varName := range state.varNames {
 		switch varName {
 		case vardef.TiDBOptIndexScanCostFactor:

@@ -1809,7 +1809,6 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				// Nothing to do now.
 			}
 		case ast.AlterTableDropForeignKey:
-			// NOTE: we do not check `if not exists` and `if exists` for ForeignKey now.
 			err = e.DropForeignKey(sctx, ident, ast.NewCIStr(spec.Name))
 		case ast.AlterTableModifyColumn:
 			err = e.ModifyColumn(ctx, sctx, ident, spec)

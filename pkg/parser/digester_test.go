@@ -247,11 +247,13 @@ func genRandDigest(str string) []byte {
 	return hasher.Sum(nil)
 }
 
+var benchSink string // prevent compiler optimization in benchmarks
+
 func BenchmarkDigestHexEncode(b *testing.B) {
 	digest1 := genRandDigest("abc")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		hex.EncodeToString(digest1)
+		benchSink = hex.EncodeToString(digest1)
 	}
 }
 
@@ -259,6 +261,6 @@ func BenchmarkDigestSprintf(b *testing.B) {
 	digest1 := genRandDigest("abc")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		fmt.Sprintf("%x", digest1)
+		benchSink = fmt.Sprintf("%x", digest1)
 	}
 }

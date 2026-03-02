@@ -458,10 +458,12 @@ func (a *ExecStmt) IsPrepared() bool {
 }
 
 // IsReadOnly returns true if a statement is read only.
-// If current StmtNode is an ExecuteStmt, we can get its prepared stmt,
-// then using ast.IsReadOnly function to determine a statement is read only or not.
-func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
-	return plannercore.IsReadOnly(a.StmtNode, vars)
+// Uses the value cached by Compiler.Compile to avoid re-traversing the AST
+// after Preprocess/Optimize may have mutated it (e.g., expanded wildcards,
+// added auxiliary fields, arena-allocated nodes whose backing memory may have
+// been collected by the GC).
+func (*ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
+	return vars.StmtCtx.IsReadOnly
 }
 
 // RebuildPlan rebuilds current execute statement plan.
@@ -712,13 +714,15 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	// Extract trace ID from context to store in recordSet for lazy execution
 	traceID := tikvtrace.TraceIDFromContext(ctx)
 
-	return &recordSet{
+	retRS := &recordSet{
 		executor:   e,
 		schema:     e.Schema(),
 		stmt:       a,
 		txnStartTS: txnStartTS,
 		traceID:    traceID,
-	}, nil
+	}
+
+	return retRS, nil
 }
 
 func (a *ExecStmt) inheritContextFromExecuteStmt() {

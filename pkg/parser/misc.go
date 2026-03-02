@@ -29,17 +29,6 @@ func isIdentExtend(ch byte) bool {
 	return ch >= 0x80
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
-func isInCorrectIdentifierName(name string) bool {
-	if len(name) == 0 {
-		return true
-	}
-	if name[len(name)-1] == ' ' {
-		return true
-	}
-	return false
-}
-
 // Initialize a lookup table for isUserVarChar
 var isUserVarCharTable [256]bool
 
@@ -91,7 +80,7 @@ func initTokenFunc(str string, fn func(s *Scanner) (int, Pos, string)) {
 }
 
 func init() {
-	// invalid is a special token defined in parser.y, when parser meet
+	// invalid is a special token defined in tokens.go, when parser meet
 	// this token, it will throw an error.
 	// set root trie node's token to invalid, so when input match nothing
 	// in the trie, invalid will be the default return token.
@@ -145,12 +134,6 @@ func init() {
 	initTokenFunc("`", scanQuotedIdent)
 	initTokenFunc("0123456789", startWithNumber)
 	initTokenFunc("'\"", startString)
-}
-
-// isInTokenMap indicates whether the target string is contained in tokenMap.
-func isInTokenMap(target string) bool {
-	_, ok := tokenMap[target]
-	return ok
 }
 
 // tokenMap is a map of known identifiers to the parser token ID.
@@ -959,34 +942,34 @@ var btFuncTokenMap = map[string]int{
 	"BIT_AND":               builtinBitAnd,
 	"BIT_OR":                builtinBitOr,
 	"BIT_XOR":               builtinBitXor,
-	"CAST":                  builtinCast,
-	"COUNT":                 builtinCount,
+	"CAST":                  builtinFnCast,
+	"COUNT":                 builtinFnCount,
 	"APPROX_COUNT_DISTINCT": builtinApproxCountDistinct,
 	"APPROX_PERCENTILE":     builtinApproxPercentile,
-	"CURDATE":               builtinCurDate,
-	"CURTIME":               builtinCurTime,
-	"DATE_ADD":              builtinDateAdd,
-	"DATE_SUB":              builtinDateSub,
-	"EXTRACT":               builtinExtract,
-	"GROUP_CONCAT":          builtinGroupConcat,
-	"MAX":                   builtinMax,
-	"MID":                   builtinSubstring,
-	"MIN":                   builtinMin,
-	"NOW":                   builtinNow,
-	"POSITION":              builtinPosition,
-	"STD":                   builtinStddevPop,
-	"STDDEV":                builtinStddevPop,
-	"STDDEV_POP":            builtinStddevPop,
-	"STDDEV_SAMP":           builtinStddevSamp,
-	"SUBSTR":                builtinSubstring,
-	"SUBSTRING":             builtinSubstring,
-	"SUM":                   builtinSum,
+	"CURDATE":               builtinFnCurDate,
+	"CURTIME":               builtinFnCurTime,
+	"DATE_ADD":              builtinFnDateAdd,
+	"DATE_SUB":              builtinFnDateSub,
+	"EXTRACT":               builtinFnExtract,
+	"GROUP_CONCAT":          builtinFnGroupConcat,
+	"MAX":                   builtinFnMax,
+	"MID":                   builtinFnSubstring,
+	"MIN":                   builtinFnMin,
+	"NOW":                   builtinFnNow,
+	"POSITION":              builtinFnPosition,
+	"STD":                   builtinFnStddevPop,
+	"STDDEV":                builtinFnStddevPop,
+	"STDDEV_POP":            builtinFnStddevPop,
+	"STDDEV_SAMP":           builtinFnStddevSamp,
+	"SUBSTR":                builtinFnSubstring,
+	"SUBSTRING":             builtinFnSubstring,
+	"SUM":                   builtinFnSum,
 	"SYSDATE":               builtinSysDate,
 	"TRANSLATE":             builtinTranslate,
-	"TRIM":                  builtinTrim,
-	"VARIANCE":              builtinVarPop,
-	"VAR_POP":               builtinVarPop,
-	"VAR_SAMP":              builtinVarSamp,
+	"TRIM":                  builtinFnTrim,
+	"VARIANCE":              builtinFnVarPop,
+	"VAR_POP":               builtinFnVarPop,
+	"VAR_SAMP":              builtinFnVarSamp,
 }
 
 var windowFuncTokenMap = map[string]int{
@@ -1004,14 +987,6 @@ var windowFuncTokenMap = map[string]int{
 	"RANK":         rank,
 	"ROW_NUMBER":   rowNumber,
 	"WINDOW":       window,
-}
-
-// aliases are strings directly map to another string and use the same token.
-var aliases = map[string]string{
-	"SCHEMA":  "DATABASE",
-	"SCHEMAS": "DATABASES",
-	"DEC":     "DECIMAL",
-	"SUBSTR":  "SUBSTRING",
 }
 
 // hintedTokens is a set of tokens which recognizes a hint.

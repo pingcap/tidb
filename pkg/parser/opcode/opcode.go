@@ -55,6 +55,7 @@ const (
 	IsNull
 	IsTruth
 	IsFalsity
+	Binary
 )
 
 var ops = [...]struct {
@@ -215,6 +216,11 @@ var ops = [...]struct {
 	IsFalsity: {
 		name:      "isfalse",
 		literal:   "IS FALSE",
+		isKeyword: true,
+	},
+	Binary: {
+		name:      "binary",
+		literal:   "BINARY",
 		isKeyword: true,
 	},
 }
