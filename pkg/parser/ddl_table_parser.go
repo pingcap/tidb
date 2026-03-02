@@ -478,10 +478,11 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 					}
 				}
 			}
-			if isDuplicate {
-				p.errs = append(p.errs, ErrParse.GenWithStackByArgs("Multiple COLLATE clauses", p.buildNearString(p.peek().Offset)))
-				return nil
-			}
+			// Consume COLLATE and CollationName BEFORE checking duplicate,
+			// matching yacc: the ColumnOption rule "COLLATE" CollationName
+			// consumes both tokens, then the action code checks for duplicates.
+			// This makes the error position point to the token AFTER the
+			// collation name (e.g. ')'), not at the COLLATE keyword.
 			p.next()
 			option.Tp = ast.ColumnOptionCollate
 			// yacc: ColumnOption "COLLATE" CollationName — no EqOpt (unlike table-level COLLATE)
@@ -499,6 +500,13 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 				p.next()
 			} else {
 				p.syntaxErrorAt(tok)
+				return nil
+			}
+			if isDuplicate {
+				// Use EndOffset for line/column (matching yacc reader position after
+				// scanning) and Offset for near text (matching yacc lastScanOffset).
+				nextTok := p.peek()
+				p.errs = append(p.errs, ErrParse.GenWithStackByArgs("Multiple COLLATE clauses", p.buildNearStringAt(nextTok.EndOffset, nextTok.Offset)))
 				return nil
 			}
 		case columnFormat:
