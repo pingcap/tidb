@@ -275,6 +275,7 @@ func (s *Server) startHTTPServer() {
 
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
+	router.Handle("/admin/check/index", tikvhandler.NewDDLCheckHandler(tikvHandlerTool)).Name("AdminCheckIndex")
 
 	// HTTP path for ingest configurations
 	router.Handle("/ingest/max-batch-split-ranges", tikvhandler.NewIngestConcurrencyHandler(
