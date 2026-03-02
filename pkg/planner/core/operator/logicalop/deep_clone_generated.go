@@ -321,6 +321,7 @@ func (op *LogicalMemTable) DeepClone() base.LogicalPlan {
 		return nil
 	}
 	cloned := new(LogicalMemTable)
+	// here will shallow share the extractor
 	*cloned = *op
 	cloned.LogicalSchemaProducer = cloneLogicalSchemaProducer(&op.LogicalSchemaProducer, cloned)
 	cloned.Columns = cloneModelColumnInfoSlice(op.Columns)

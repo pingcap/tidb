@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -152,6 +154,43 @@ func TestLogicalPlanDeepClone(t *testing.T) {
 	require.Equal(t, 1, join.Schema().Len())
 	require.Equal(t, "origin", join.DefaultValues[0].GetString())
 	require.Equal(t, 1, left.Schema().Len())
+}
+
+func TestLogicalPlanDeepCloneClearsOptimizerCaches(t *testing.T) {
+	ctx := mock.NewContext()
+	left := logicalop.LogicalTableDual{}.Init(ctx, 0)
+	left.SetSchema(expression.NewSchema(&expression.Column{ID: 1}))
+	right := logicalop.LogicalTableDual{}.Init(ctx, 0)
+	right.SetSchema(expression.NewSchema(&expression.Column{ID: 2}))
+
+	join := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join.SetChildren(left, right)
+
+	basePlan := join.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
+	basePlan.SetFDs(&fd.FDSet{HashCodeToUniqueID: map[string]int{"expr": 1}})
+	basePlan.SetStats(&property.StatsInfo{
+		RowCount: 1,
+		ColNDVs:  map[int64]float64{1: 1},
+	})
+	basePlan.SetMaxOneRow(true)
+	basePlan.SetPlanIDsHash(123)
+
+	prop := &property.PhysicalProperty{}
+	task := &physicalop.RootTask{}
+	basePlan.StoreTask(prop, task)
+	require.Same(t, task, basePlan.GetTask(prop))
+
+	cloned := join.DeepClone().(*logicalop.LogicalJoin)
+	clonedBase := cloned.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
+
+	require.Nil(t, cloned.StatsInfo())
+	require.Nil(t, clonedBase.FDs())
+	require.Nil(t, clonedBase.GetTask(prop))
+
+	clonedTask := &physicalop.RootTask{}
+	clonedBase.StoreTask(prop, clonedTask)
+	require.Same(t, clonedTask, clonedBase.GetTask(prop))
+	require.Same(t, task, basePlan.GetTask(prop))
 }
 
 func TestLogicalPlanDeepCloneComplexTree(t *testing.T) {

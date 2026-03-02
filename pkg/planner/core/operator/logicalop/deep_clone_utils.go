@@ -15,7 +15,6 @@
 package logicalop
 
 import (
-	"maps"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -34,11 +33,13 @@ import (
 func cloneBaseLogicalPlan(op *BaseLogicalPlan, newSelf base.LogicalPlan) BaseLogicalPlan {
 	cloned := *op
 	cloned.self = newSelf
-	if op.taskMap != nil {
-		cloned.taskMap = maps.Clone(op.taskMap)
-	}
-	cloned.taskMapBak = slices.Clone(op.taskMapBak)
-	cloned.taskMapBakTS = slices.Clone(op.taskMapBakTS)
+	// logical operator clone doesn't contain the states: stats, taskMap, fdSet.
+	// these element will be fetched bottom when necessary.
+	cloned.Plan.SetStats(nil)
+	cloned.taskMap = make(map[string]base.Task)
+	cloned.taskMapBak = make([]string, 0, 10)
+	cloned.taskMapBakTS = make([]uint64, 0, 10)
+	cloned.fdSet = nil
 	if op.children != nil {
 		cloned.children = make([]base.LogicalPlan, len(op.children))
 		for i, child := range op.children {
