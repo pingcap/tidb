@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -40,7 +39,7 @@ import (
 // SampleItem is an item of sampled column value.
 type SampleItem struct {
 	// Value is the sampled column value.
-	Value *types.Datum
+	Value types.Datum
 	// Handle is the handle of the sample in its key.
 	// This property is used to calculate Ordinal in fast analyze.
 	Handle kv.Handle
@@ -49,38 +48,25 @@ type SampleItem struct {
 	Ordinal int
 }
 
-// EmptySampleItemSize is the size of an empty SampleItem on 64-bit platforms: 32 = 8 (Value pointer) + 16 (Handle interface) + 8 (Ordinal int).
+// EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
 const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
-// CopySampleItems returns a deep copy of SampleItem slice.
+// CopySampleItems returns a copy of SampleItem slice. Each SampleItem struct is copied,
+// but Datum internals (e.g. byte slices) are shared with the original.
 func CopySampleItems(items []*SampleItem) []*SampleItem {
 	n := make([]*SampleItem, len(items))
 	for i, item := range items {
-		ni := &SampleItem{
-			Handle:  item.Handle,
-			Ordinal: item.Ordinal,
-		}
-		if item.Value != nil {
-			ni.Value = &types.Datum{}
-			item.Value.Copy(ni.Value)
-		}
-		n[i] = ni
+		ni := *item
+		n[i] = &ni
 	}
 	return n
 }
 
 func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	var err error
-	if intest.InTest {
-		for _, item := range items {
-			if item.Value == nil {
-				return errors.Errorf("sample item value is nil")
-			}
-		}
-	}
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
 		var cmp int
-		cmp, err = i.Value.Compare(sc.TypeCtx(), j.Value, collate.GetBinaryCollator())
+		cmp, err = i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
 		if err != nil {
 			return -1
 		}
@@ -115,11 +101,7 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 		terror.Log(errors.Trace(err))
 	}
 	for _, item := range rc.Samples {
-		if item.Value == nil {
-			terror.Log(errors.Errorf("sample item value is nil"))
-			continue
-		}
-		err := c.collect(sc, *item.Value)
+		err := c.collect(sc, item.Value)
 		terror.Log(errors.Trace(err))
 	}
 }
@@ -158,8 +140,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	for _, val := range collector.Samples {
 		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
 		if len(val) <= MaxSampleValueLength {
-			tmp := types.NewBytesDatum(val)
-			item := &SampleItem{Value: &tmp}
+			item := &SampleItem{Value: types.NewBytesDatum(val)}
 			s.Samples = append(s.Samples, item)
 		}
 	}
@@ -187,15 +168,15 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.
 	if len(c.Samples) < int(c.MaxSampleSize) {
-		newItem := &SampleItem{Value: &types.Datum{}}
-		d.Copy(newItem.Value)
+		newItem := &SampleItem{}
+		d.Copy(&newItem.Value)
 		c.Samples = append(c.Samples, newItem)
 	} else {
 		shouldAdd := int64(fastrand.Uint64N(uint64(c.seenValues))) < c.MaxSampleSize
 		if shouldAdd {
 			idx := int(fastrand.Uint32N(uint32(c.MaxSampleSize)))
-			newItem := &SampleItem{Value: &types.Datum{}}
-			d.Copy(newItem.Value)
+			newItem := &SampleItem{}
+			d.Copy(&newItem.Value)
 			// To keep the order of the elements, we use delete and append, not direct replacement.
 			c.Samples = slices.Delete(c.Samples, idx, idx+1)
 			c.Samples = append(c.Samples, newItem)
