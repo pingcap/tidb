@@ -341,7 +341,22 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	if e.partitionTableMode {
 		keyRanges = e.partitionKeyRanges[workID]
 	} else {
-		keyRanges = [][]kv.KeyRange{e.keyRanges[workID]}
+		// Check if this partial path has GroupedRanges (for IN conditions with ORDER BY).
+		// If so, we need to build separate key ranges for each group to enable merge sort.
+		is := e.partialPlans[workID][0].(*physicalop.PhysicalIndexScan)
+		if len(is.GroupedRanges) > 0 {
+			dctx := e.Ctx().GetDistSQLCtx()
+			keyRanges = make([][]kv.KeyRange, 0, len(is.GroupedRanges))
+			for _, groupRanges := range is.GroupedRanges {
+				kvRange, err := distsql.IndexRangesToKVRanges(dctx, getPhysicalTableID(e.table), e.indexes[workID].ID, groupRanges)
+				if err != nil {
+					return err
+				}
+				keyRanges = append(keyRanges, kvRange.FirstPartitionRange())
+			}
+		} else {
+			keyRanges = [][]kv.KeyRange{e.keyRanges[workID]}
+		}
 	}
 	failpoint.Inject("startPartialIndexWorkerErr", func() error {
 		return errors.New("inject an error before start partialIndexWorker")
@@ -504,6 +519,9 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					netDataSize:                e.partialNetDataSizes[workID],
 					keepOrder:                  ts.KeepOrder,
 					byItems:                    ts.ByItems,
+					// Copy GroupedRanges for merge sort support with IN conditions.
+					groupedRanges:  ts.GroupedRanges,
+					groupByColIdxs: ts.GroupByColIdxs,
 				}
 
 				worker := &partialTableWorker{
