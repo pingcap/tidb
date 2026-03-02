@@ -54,6 +54,8 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 		dagReq.CollectExecutionSummaries = &collExec
 	}
 	dagReq.Flags = sc.PushDownFlags()
+	sqlMode := uint64(ctx.GetSessionVars().SQLMode)
+	dagReq.SqlMode = &sqlMode
 	if ctx.GetSessionVars().GetDivPrecisionIncrement() != vardef.DefDivPrecisionIncrement {
 		var divPrecIncr uint32 = uint32(ctx.GetSessionVars().GetDivPrecisionIncrement())
 		dagReq.DivPrecisionIncrement = &divPrecIncr
