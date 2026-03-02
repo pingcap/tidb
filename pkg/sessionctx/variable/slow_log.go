@@ -16,17 +16,24 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
+	"github.com/tikv/client-go/v2/util"
 )
 
 const (
@@ -52,40 +59,19 @@ const (
 	SlowLogUserStr = "User"
 	// SlowLogHostStr only for slow_query table usage.
 	SlowLogHostStr = "Host"
-	// SlowLogConnIDStr is slow log field name.
-	SlowLogConnIDStr = "Conn_ID"
-	// SlowLogSessAliasStr is the session alias set by user
-	SlowLogSessAliasStr = "Session_alias"
-	// SlowLogQueryTimeStr is slow log field name.
-	SlowLogQueryTimeStr = "Query_time"
-	// SlowLogParseTimeStr is the parse sql time.
-	SlowLogParseTimeStr = "Parse_time"
-	// SlowLogCompileTimeStr is the compile plan time.
-	SlowLogCompileTimeStr = "Compile_time"
 	// SlowLogRewriteTimeStr is the rewrite time.
 	SlowLogRewriteTimeStr = "Rewrite_time"
-	// SlowLogOptimizeTimeStr is the optimization time.
-	SlowLogOptimizeTimeStr = "Optimize_time"
-	// SlowLogWaitTSTimeStr is the time of waiting TS.
-	SlowLogWaitTSTimeStr = "Wait_TS"
 	// SlowLogPreprocSubQueriesStr is the number of pre-processed sub-queries.
 	SlowLogPreprocSubQueriesStr = "Preproc_subqueries"
 	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processing sub-queries.
 	SlowLogPreProcSubQueryTimeStr = "Preproc_subqueries_time"
-	// SlowLogDBStr is slow log field name.
-	SlowLogDBStr = "DB"
-	// SlowLogIsInternalStr is slow log field name.
-	SlowLogIsInternalStr = "Is_internal"
+
 	// SlowLogIndexNamesStr is slow log field name.
 	SlowLogIndexNamesStr = "Index_names"
-	// SlowLogDigestStr is slow log field name.
-	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
 	// SlowLogStatsInfoStr is plan stats info.
 	SlowLogStatsInfoStr = "Stats"
-	// SlowLogNumCopTasksStr is the number of cop-tasks.
-	SlowLogNumCopTasksStr = "Num_cop_tasks"
 	// SlowLogCopProcAvg is the average process time of all cop-tasks.
 	SlowLogCopProcAvg = "Cop_proc_avg"
 	// SlowLogCopProcP90 is the p90 process time of all cop-tasks.
@@ -104,10 +90,6 @@ const (
 	SlowLogCopWaitAddr = "Cop_wait_addr" // #nosec G101
 	// SlowLogCopBackoffPrefix contains backoff information.
 	SlowLogCopBackoffPrefix = "Cop_backoff_"
-	// SlowLogMemMax is the max number bytes of memory used in this statement.
-	SlowLogMemMax = "Mem_max"
-	// SlowLogDiskMax is the max number bytes of disk used in this statement.
-	SlowLogDiskMax = "Disk_max"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
 	SlowLogPrepared = "Prepared"
 	// SlowLogPlanFromCache is used to indicate whether this plan is from plan cache.
@@ -116,14 +98,10 @@ const (
 	SlowLogPlanFromBinding = "Plan_from_binding"
 	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
 	SlowLogHasMoreResults = "Has_more_results"
-	// SlowLogSucc is used to indicate whether this sql execute successfully.
-	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
 	SlowLogPrevStmt = "Prev_stmt"
 	// SlowLogPlan is used to record the query plan.
 	SlowLogPlan = "Plan"
-	// SlowLogPlanDigest is used to record the query plan digest.
-	SlowLogPlanDigest = "Plan_digest"
 	// SlowLogBinaryPlan is used to record the binary plan.
 	SlowLogBinaryPlan = "Binary_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
@@ -134,16 +112,8 @@ const (
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
-	// SlowLogKVTotal is the total time waiting for kv.
-	SlowLogKVTotal = "KV_total"
-	// SlowLogPDTotal is the total time waiting for pd.
-	SlowLogPDTotal = "PD_total"
 	// SlowLogBackoffTotal is the total time doing backoff.
 	SlowLogBackoffTotal = "Backoff_total"
-	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
-	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
-	// SlowLogExecRetryCount is the execution retry count.
-	SlowLogExecRetryCount = "Exec_retry_count"
 	// SlowLogExecRetryTime is the execution retry time.
 	SlowLogExecRetryTime = "Exec_retry_time"
 	// SlowLogBackoffDetail is the detail of backoff.
@@ -159,8 +129,6 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
 	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
-	// SlowLogResourceGroup is the resource group name that the current session bind.
-	SlowLogResourceGroup = "Resource_group"
 	// SlowLogRRU is the read request_unit(RU) cost
 	SlowLogRRU = "Request_unit_read"
 	// SlowLogWRU is the write request_unit(RU) cost
@@ -175,6 +143,50 @@ const (
 	SlowLogStorageFromKV = "Storage_from_kv"
 	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
 	SlowLogStorageFromMPP = "Storage_from_mpp"
+
+	// The following constants define the set of fields for SlowQueryLogItems
+	// that are relevant to evaluating and triggering SlowLogRules.
+
+	// SlowLogConnIDStr is slow log field name.
+	SlowLogConnIDStr = "Conn_ID"
+	// SlowLogSessAliasStr is the session alias set by user
+	SlowLogSessAliasStr = "Session_alias"
+	// SlowLogQueryTimeStr is slow log field name.
+	SlowLogQueryTimeStr = "Query_time"
+	// SlowLogParseTimeStr is the parse sql time.
+	SlowLogParseTimeStr = "Parse_time"
+	// SlowLogCompileTimeStr is the compile plan time.
+	SlowLogCompileTimeStr = "Compile_time"
+	// SlowLogOptimizeTimeStr is the optimization time.
+	SlowLogOptimizeTimeStr = "Optimize_time"
+	// SlowLogWaitTSTimeStr is the time of waiting TS.
+	SlowLogWaitTSTimeStr = "Wait_TS"
+	// SlowLogDBStr is slow log field name.
+	SlowLogDBStr = "DB"
+	// SlowLogIsInternalStr is slow log field name.
+	SlowLogIsInternalStr = "Is_internal"
+	// SlowLogDigestStr is slow log field name.
+	SlowLogDigestStr = "Digest"
+	// SlowLogNumCopTasksStr is the number of cop-tasks.
+	SlowLogNumCopTasksStr = "Num_cop_tasks"
+	// SlowLogMemMax is the max number bytes of memory used in this statement.
+	SlowLogMemMax = "Mem_max"
+	// SlowLogDiskMax is the max number bytes of disk used in this statement.
+	SlowLogDiskMax = "Disk_max"
+	// SlowLogKVTotal is the total time waiting for kv.
+	SlowLogKVTotal = "KV_total"
+	// SlowLogPDTotal is the total time waiting for pd.
+	SlowLogPDTotal = "PD_total"
+	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
+	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
+	// SlowLogSucc is used to indicate whether this sql execute successfully.
+	SlowLogSucc = "Succ"
+	// SlowLogPlanDigest is used to record the query plan digest.
+	SlowLogPlanDigest = "Plan_digest"
+	// SlowLogExecRetryCount is the execution retry count.
+	SlowLogExecRetryCount = "Exec_retry_count"
+	// SlowLogResourceGroup is the resource group name that the current session bind.
+	SlowLogResourceGroup = "Resource_group"
 )
 
 // JSONSQLWarnForSlowLog helps to print the SQLWarn through the slow log in JSON format.
@@ -184,6 +196,33 @@ type JSONSQLWarnForSlowLog struct {
 	// IsExtra means this SQL Warn is expected to be recorded only under some conditions (like in EXPLAIN) and should
 	// haven't been recorded as a warning now, but we recorded it anyway to help diagnostics.
 	IsExtra bool `json:",omitempty"`
+}
+
+func extractMsgFromSQLWarn(sqlWarn *contextutil.SQLWarn) string {
+	// CollectWarningsForSlowLog guarantees sqlWarn is not nil.
+	warn := errors.Cause(sqlWarn.Err)
+	if x, ok := warn.(*terror.Error); ok && x != nil {
+		sqlErr := terror.ToSQLError(x)
+		return sqlErr.Message
+	}
+	return warn.Error()
+}
+
+// CollectWarningsForSlowLog collects warnings from statement context for slow log output.
+func CollectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []JSONSQLWarnForSlowLog {
+	warnings := stmtCtx.GetWarnings()
+	extraWarnings := stmtCtx.GetExtraWarnings()
+	res := make([]JSONSQLWarnForSlowLog, len(warnings)+len(extraWarnings))
+	for i := range warnings {
+		res[i].Level = warnings[i].Level
+		res[i].Message = extractMsgFromSQLWarn(&warnings[i])
+	}
+	for i := range extraWarnings {
+		res[len(warnings)+i].Level = extraWarnings[i].Level
+		res[len(warnings)+i].Message = extractMsgFromSQLWarn(&extraWarnings[i])
+		res[len(warnings)+i].IsExtra = true
+	}
+	return res
 }
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -201,7 +240,7 @@ type SlowQueryLogItems struct {
 	TimeWaitTS        time.Duration
 	IndexNames        string
 	CopTasks          *execdetails.CopTasksDetails
-	ExecDetail        execdetails.ExecDetails
+	ExecDetail        *execdetails.ExecDetails
 	MemMax            int64
 	DiskMax           int64
 	Succ              bool
@@ -218,7 +257,8 @@ type SlowQueryLogItems struct {
 	PDTotal           time.Duration
 	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
-	ExecRetryCount    uint
+	KVExecDetail      *util.ExecDetails
+	ExecRetryCount    uint64
 	ExecRetryTime     time.Duration
 	ResultRows        int64
 	IsExplicitTxn     bool
@@ -227,6 +267,7 @@ type SlowQueryLogItems struct {
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
 	ResourceGroupName string
+	RUDetails         *util.RUDetails
 	RRU               float64
 	WRU               float64
 	WaitRUDuration    time.Duration
@@ -306,8 +347,10 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(logItems.TimeOptimize.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogWaitTSTimeStr, strconv.FormatFloat(logItems.TimeWaitTS.Seconds(), 'f', -1, 64))
 
-	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
+	if logItems.ExecDetail != nil {
+		if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
+			buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
+		}
 	}
 
 	if len(s.CurrentDB) > 0 {
@@ -400,9 +443,23 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogPlanFromBinding, strconv.FormatBool(logItems.PlanFromBinding))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
-	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
+	kvTotal := logItems.KVTotal
+	pdTotal := logItems.PDTotal
+	backoffTotal := logItems.BackoffTotal
+	if logItems.KVExecDetail != nil {
+		if kvTotal == 0 {
+			kvTotal = time.Duration(logItems.KVExecDetail.WaitKVRespDuration)
+		}
+		if pdTotal == 0 {
+			pdTotal = time.Duration(logItems.KVExecDetail.WaitPDRespDuration)
+		}
+		if backoffTotal == 0 {
+			backoffTotal = time.Duration(logItems.KVExecDetail.BackoffDuration)
+		}
+	}
+	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(kvTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(pdTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(backoffTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	if len(logItems.Warnings) > 0 {
@@ -434,14 +491,28 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.ResourceGroupName != "" {
 		writeSlowLogItem(&buf, SlowLogResourceGroup, logItems.ResourceGroupName)
 	}
-	if logItems.RRU > 0.0 {
-		writeSlowLogItem(&buf, SlowLogRRU, strconv.FormatFloat(logItems.RRU, 'f', -1, 64))
+	rru := logItems.RRU
+	wru := logItems.WRU
+	waitRUDuration := logItems.WaitRUDuration
+	if logItems.RUDetails != nil {
+		if rru == 0.0 {
+			rru = logItems.RUDetails.RRU()
+		}
+		if wru == 0.0 {
+			wru = logItems.RUDetails.WRU()
+		}
+		if waitRUDuration == 0 {
+			waitRUDuration = logItems.RUDetails.RUWaitDuration()
+		}
 	}
-	if logItems.WRU > 0.0 {
-		writeSlowLogItem(&buf, SlowLogWRU, strconv.FormatFloat(logItems.WRU, 'f', -1, 64))
+	if rru > 0.0 {
+		writeSlowLogItem(&buf, SlowLogRRU, strconv.FormatFloat(rru, 'f', -1, 64))
 	}
-	if logItems.WaitRUDuration > time.Duration(0) {
-		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
+	if wru > 0.0 {
+		writeSlowLogItem(&buf, SlowLogWRU, strconv.FormatFloat(wru, 'f', -1, 64))
+	}
+	if waitRUDuration > 0 {
+		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(waitRUDuration.Seconds(), 'f', -1, 64))
 	}
 	if logItems.CPUUsages.TidbCPUTime > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogTidbCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TidbCPUTime.Seconds(), 'f', -1, 64))
@@ -471,4 +542,367 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+// SlowLogCondition defines a single condition within a slow log rule.
+type SlowLogCondition struct {
+	Field     string // Name of the slow log field to check (e.g., "Conn_ID", "Query_time").
+	Threshold any    // Threshold value for triggering the condition.
+}
+
+// SlowLogRule represents a single slow log rule.
+// A rule is triggered only if **all** of its Conditions are satisfied (logical AND).
+type SlowLogRule struct {
+	Conditions []SlowLogCondition // List of conditions combined with logical AND.
+}
+
+// SlowLogRules represents all slow log rules defined for the current scope (e.g., session/global).
+// The rules are evaluated using logical OR between them: if any rule matches, it triggers the slow log.
+type SlowLogRules struct {
+	AllConditionFields map[string]struct{} // Set of all unique field names used in all conditions.
+	Rules              []SlowLogRule       // List of rules combined with logical OR.
+}
+
+// SlowLogFieldAccessor defines how to get or set a specific field in SlowQueryLogItems.
+// - Parse converts a user-provided threshold string into the proper type for comparison.
+// - Setter is optional and pre-fills the field before matching if it needs explicit preparation.
+// - Match evaluates whether the field in SlowQueryLogItems meets a specific threshold.
+//   - threshold is the value to compare against when determining a match.
+type SlowLogFieldAccessor struct {
+	Parse  func(string) (any, error)
+	Setter func(ctx context.Context, seVars *SessionVars, items *SlowQueryLogItems)
+	Match  func(seVars *SessionVars, items *SlowQueryLogItems, threshold any) bool
+}
+
+func makeExecDetailAccessor(parse func(string) (any, error),
+	match func(*execdetails.ExecDetails, any) bool) SlowLogFieldAccessor {
+	return SlowLogFieldAccessor{
+		Parse: parse,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			if items.ExecDetail == nil {
+				execDetail := seVars.StmtCtx.GetExecDetails()
+				items.ExecDetail = &execDetail
+			}
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			if items.ExecDetail == nil {
+				return false
+			}
+			return match(items.ExecDetail, threshold)
+		},
+	}
+}
+
+func makeKVExecDetailAccessor(parse func(string) (any, error),
+	match func(*util.ExecDetails, any) bool) SlowLogFieldAccessor {
+	return SlowLogFieldAccessor{
+		Parse: parse,
+		Setter: func(ctx context.Context, _ *SessionVars, items *SlowQueryLogItems) {
+			if items.KVExecDetail == nil {
+				tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
+				if tikvExecDetailRaw != nil {
+					items.KVExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+				}
+			}
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			if items.KVExecDetail == nil {
+				return false
+			}
+			return match(items.KVExecDetail, threshold)
+		},
+	}
+}
+
+// numericComparable defines a set of numeric types that support ordering operations (like >=).
+type numericComparable interface {
+	~int | ~int64 | ~uint64 | ~float64
+}
+
+// MatchEqual compares a value `v` with a threshold and returns true if they are equal.
+func MatchEqual[T comparable](threshold any, v T) bool {
+	tv, ok := threshold.(T)
+	return ok && v == tv
+}
+
+func matchGE[T numericComparable](threshold any, v T) bool {
+	tv, ok := threshold.(T)
+	return ok && v >= tv
+}
+
+// ParseString converts the input string to lowercase and returns it.
+func ParseString(v string) (any, error)  { return strings.ToLower(v), nil }
+func parseInt64(v string) (any, error)   { return strconv.ParseInt(v, 10, 64) }
+func parseUint64(v string) (any, error)  { return strconv.ParseUint(v, 10, 64) }
+func parseFloat64(v string) (any, error) { return strconv.ParseFloat(v, 64) }
+func parseBool(v string) (any, error)    { return strconv.ParseBool(v) }
+
+// SlowLogRuleFieldAccessors defines the set of field accessors for SlowQueryLogItems
+// that are relevant to evaluating and triggering SlowLogRules.
+// It's exporting for testing.
+var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
+	strings.ToLower(SlowLogConnIDStr): {
+		Parse: parseUint64,
+		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, seVars.ConnectionID)
+		},
+	},
+	strings.ToLower(SlowLogSessAliasStr): {
+		Parse: ParseString,
+		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
+			return MatchEqual(threshold, strings.ToLower(seVars.SessionAlias))
+		},
+	},
+	strings.ToLower(SlowLogDBStr): {
+		Parse: ParseString,
+		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
+			return MatchEqual(threshold, strings.ToLower(seVars.CurrentDB))
+		},
+	},
+	strings.ToLower(SlowLogExecRetryCount): {
+		Parse: parseUint64,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.ExecRetryCount = seVars.StmtCtx.ExecRetryCount
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, items.ExecRetryCount)
+		},
+	},
+	strings.ToLower(SlowLogQueryTimeStr): {
+		Parse: parseFloat64,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.TimeTotal = seVars.GetTotalCostDuration()
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, items.TimeTotal.Seconds())
+		},
+	},
+	strings.ToLower(SlowLogParseTimeStr): {
+		Parse: parseFloat64,
+		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, seVars.DurationParse.Seconds())
+		},
+	},
+	strings.ToLower(SlowLogCompileTimeStr): {
+		Parse: parseFloat64,
+		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, seVars.DurationCompile.Seconds())
+		},
+	},
+	strings.ToLower(SlowLogOptimizeTimeStr): {
+		Parse: parseFloat64,
+		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, seVars.DurationOptimization.Seconds())
+		},
+	},
+	strings.ToLower(SlowLogWaitTSTimeStr): {
+		Parse: parseFloat64,
+		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, seVars.DurationWaitTS.Seconds())
+		},
+	},
+	strings.ToLower(SlowLogIsInternalStr): {
+		Parse: parseBool,
+		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
+			return MatchEqual(threshold, seVars.InRestrictedSQL)
+		},
+	},
+	strings.ToLower(SlowLogDigestStr): {
+		Parse: ParseString,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			_, digest := seVars.StmtCtx.SQLDigest()
+			items.Digest = digest.String()
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return MatchEqual(threshold, strings.ToLower(items.Digest))
+		},
+	},
+	strings.ToLower(SlowLogNumCopTasksStr): {
+		Parse: parseInt64,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			copTasksDetail := seVars.StmtCtx.CopTasksDetails()
+			items.CopTasks = copTasksDetail
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, int64(items.CopTasks.NumCopTasks))
+		},
+	},
+	strings.ToLower(SlowLogMemMax): {
+		Parse: parseInt64,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.MemMax = seVars.MemTracker.MaxConsumed()
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, items.MemMax)
+		},
+	},
+	strings.ToLower(SlowLogDiskMax): {
+		Parse: parseInt64,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.DiskMax = seVars.DiskTracker.MaxConsumed()
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, items.DiskMax)
+		},
+	},
+	strings.ToLower(SlowLogWriteSQLRespTotal): {
+		Parse: parseFloat64,
+		Setter: func(ctx context.Context, _ *SessionVars, items *SlowQueryLogItems) {
+			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
+			if stmtDetailRaw != nil {
+				stmtDetail := *(stmtDetailRaw.(*execdetails.StmtExecDetails))
+				items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
+			}
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, items.WriteSQLRespTotal.Seconds())
+		},
+	},
+	strings.ToLower(SlowLogSucc): {
+		Parse: parseBool,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.Succ = seVars.StmtCtx.ExecSuccess
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return MatchEqual(threshold, items.Succ)
+		},
+	},
+	strings.ToLower(SlowLogResourceGroup): {
+		Parse: ParseString,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.ResourceGroupName = seVars.StmtCtx.ResourceGroupName
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return MatchEqual(threshold, strings.ToLower(items.ResourceGroupName))
+		},
+	},
+	// The following fields are related to util.ExecDetails.
+	strings.ToLower(SlowLogKVTotal): makeKVExecDetailAccessor(
+		parseFloat64,
+		func(d *util.ExecDetails, threshold any) bool {
+			return matchGE(threshold, time.Duration(d.WaitKVRespDuration).Seconds())
+		},
+	),
+	strings.ToLower(SlowLogPDTotal): makeKVExecDetailAccessor(
+		parseFloat64,
+		func(d *util.ExecDetails, threshold any) bool {
+			return matchGE(threshold, time.Duration(d.WaitPDRespDuration).Seconds())
+		},
+	),
+	// The following fields are related to execdetails.ExecDetails.
+	strings.ToLower(execdetails.ProcessTimeStr): makeExecDetailAccessor(
+		parseFloat64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			return matchGE(threshold, d.TimeDetail.ProcessTime.Seconds())
+		}),
+	strings.ToLower(execdetails.BackoffTimeStr): makeExecDetailAccessor(
+		parseFloat64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			return matchGE(threshold, d.BackoffTime.Seconds())
+		}),
+	strings.ToLower(execdetails.TotalKeysStr): makeExecDetailAccessor(
+		parseUint64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			return matchGE(threshold, d.ScanDetail.TotalKeys)
+		}),
+	strings.ToLower(execdetails.ProcessKeysStr): makeExecDetailAccessor(
+		parseUint64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			return matchGE(threshold, d.ScanDetail.ProcessedKeys)
+		}),
+	strings.ToLower(execdetails.PreWriteTimeStr): makeExecDetailAccessor(
+		parseFloat64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			return matchGE(threshold, d.CommitDetail.PrewriteTime.Seconds())
+		}),
+	strings.ToLower(execdetails.CommitTimeStr): makeExecDetailAccessor(
+		parseFloat64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			return matchGE(threshold, d.CommitDetail.CommitTime.Seconds())
+		}),
+	strings.ToLower(execdetails.WriteKeysStr): makeExecDetailAccessor(
+		parseUint64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			return matchGE(threshold, int64(d.CommitDetail.WriteKeys))
+		}),
+	strings.ToLower(execdetails.WriteSizeStr): makeExecDetailAccessor(
+		parseUint64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			return matchGE(threshold, int64(d.CommitDetail.WriteSize))
+		}),
+	strings.ToLower(execdetails.PrewriteRegionStr): makeExecDetailAccessor(
+		parseUint64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			return matchGE(threshold, int64(atomic.LoadInt32(&d.CommitDetail.PrewriteRegionNum)))
+		}),
+}
+
+// slowLogFieldRe is uses to compile field:value
+var slowLogFieldRe = regexp.MustCompile(`\s*(\w+)\s*:\s*([^,]+)\s*`)
+
+// ParseSlowLogRules parses a raw slow log rules string into a structured SlowLogRules object.
+// Each rule is separated by a semicolon (';'), and within each rule, fields are separated by commas (',').
+// Each field is a key-value pair separated by a colon (':').
+// Example:
+//
+//	"field1:val1,field2:val2;field2:val2,field3:val3;field4:val4"
+func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
+	rawRules = strings.TrimSpace(rawRules)
+	if rawRules == "" {
+		return nil, nil
+	}
+
+	rules := strings.Split(rawRules, ";")
+	if len(rules) > 10 {
+		return nil, errors.Errorf("invalid slow log rules count:%d, limit is 10", len(rules))
+	}
+
+	slowLogRules := &SlowLogRules{
+		AllConditionFields: make(map[string]struct{}),
+		Rules:              make([]SlowLogRule, 0, len(rules))}
+	for _, rule := range rules {
+		rule = strings.TrimSpace(rule)
+		if rule == "" {
+			continue
+		}
+
+		matches := slowLogFieldRe.FindAllStringSubmatch(rule, -1)
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("invalid slow log rule format:%s", rule)
+		}
+		fieldMap := make(map[string]any, len(matches))
+		for _, match := range matches {
+			if len(match) != 3 {
+				return nil, errors.Errorf("invalid slow log condition format:%s", match)
+			}
+
+			fieldName := strings.ToLower(strings.TrimSpace(match[1]))
+			value := strings.TrimSpace(match[2])
+			fieldValue, err := ParseSlowLogFieldValue(fieldName, strings.Trim(value, "\"'"))
+			if err != nil {
+				return nil, errors.Errorf("invalid slow log format, value:%s, err:%s", value, err)
+			}
+			fieldMap[fieldName] = fieldValue
+		}
+		slowLogRule := SlowLogRule{Conditions: make([]SlowLogCondition, 0, len(fieldMap))}
+		for fieldName, fieldValue := range fieldMap {
+			slowLogRule.Conditions = append(slowLogRule.Conditions, SlowLogCondition{
+				Field:     fieldName,
+				Threshold: fieldValue,
+			})
+			slowLogRules.AllConditionFields[fieldName] = struct{}{}
+		}
+		slowLogRules.Rules = append(slowLogRules.Rules, slowLogRule)
+	}
+	return slowLogRules, nil
+}
+
+// ParseSlowLogFieldValue is exporting for testing.
+func ParseSlowLogFieldValue(fieldName string, value string) (any, error) {
+	parser, ok := SlowLogRuleFieldAccessors[strings.ToLower(fieldName)]
+	if !ok {
+		return nil, errors.Errorf("unknown slow log field name:%s", fieldName)
+	}
+
+	return parser.Parse(value)
 }

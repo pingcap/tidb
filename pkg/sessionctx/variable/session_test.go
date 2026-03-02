@@ -156,7 +156,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
-	execDetail := execdetails.ExecDetails{
+	execDetail := &execdetails.ExecDetails{
 		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
 		ScanDetail: &util.ScanDetail{
