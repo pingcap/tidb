@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"math"
 	"slices"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -70,6 +71,10 @@ type memIndexReader struct {
 	decodeBuff  [][]byte
 	resultRows  []types.Datum
 	restoredDec *tablecodec.IndexRestoredDecoder // cached restored values decoder
+
+	hdStatus tablecodec.HandleStatus // cached, computed once per scan
+	loc      *time.Location          // cached from session vars
+	evalCtx  expression.EvalContext  // cached from expr context
 }
 
 func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -115,6 +120,9 @@ func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 	tps := m.getTypes()
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
 	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, m.table)
+	if m.evalCtx == nil {
+		m.evalCtx = m.ctx.GetExprCtx().GetEvalCtx()
+	}
 	return &memRowsIterForIndex{
 		kvIter:         kvIter,
 		tps:            tps,
@@ -156,6 +164,9 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
 	colInfos = tables.TryAppendCommonHandleRowcodecColInfos(colInfos, m.table)
 
+	if m.evalCtx == nil {
+		m.evalCtx = m.ctx.GetExprCtx().GetEvalCtx()
+	}
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
 		data, err := m.decodeIndexKeyValue(key, value, tps, colInfos)
@@ -164,7 +175,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		}
 
 		mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(m.evalCtx, m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
@@ -191,10 +202,14 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 }
 
 func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType, colInfos []rowcodec.ColInfo) ([]types.Datum, error) {
-	hdStatus := tablecodec.HandleDefault
-	// `HandleIsUnsigned` only affects IntHandle which always has one column.
-	if mysql.HasUnsignedFlag(tps[len(m.index.Columns)].GetFlag()) {
-		hdStatus = tablecodec.HandleIsUnsigned
+	// Lazy init cached per-scan invariants.
+	if m.loc == nil {
+		m.loc = m.ctx.GetSessionVars().Location()
+		m.hdStatus = tablecodec.HandleDefault
+		// `HandleIsUnsigned` only affects IntHandle which always has one column.
+		if mysql.HasUnsignedFlag(tps[len(m.index.Columns)].GetFlag()) {
+			m.hdStatus = tablecodec.HandleIsUnsigned
+		}
 	}
 
 	colsLen := len(m.index.Columns)
@@ -207,7 +222,7 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 	if m.restoredDec == nil {
 		m.restoredDec = tablecodec.NewIndexRestoredDecoder(colInfos[:colsLen])
 	}
-	values, err := tablecodec.DecodeIndexKVEx(key, value, colsLen, hdStatus, colInfos, buf, m.decodeBuff, m.restoredDec)
+	values, err := tablecodec.DecodeIndexKVEx(key, value, colsLen, m.hdStatus, colInfos, buf, m.decodeBuff, m.restoredDec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -230,11 +245,10 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		if offset > physTblIDColumnIdx {
 			offset = offset - 1
 		}
-		d, err := tablecodec.DecodeColumnValue(values[offset], tps[offset], m.ctx.GetSessionVars().Location())
-		if err != nil {
+		ds = append(ds, types.Datum{})
+		if err := tablecodec.DecodeColumnValueWithDatum(values[offset], tps[offset], m.loc, &ds[len(ds)-1]); err != nil {
 			return nil, err
 		}
-		ds = append(ds, d)
 	}
 	return ds, nil
 }
@@ -1181,7 +1195,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 		}
 
 		iter.mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(iter.memIndexReader.ctx.GetExprCtx().GetEvalCtx(), iter.memIndexReader.conditions, iter.mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(iter.memIndexReader.evalCtx, iter.memIndexReader.conditions, iter.mutableRow.ToRow())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
