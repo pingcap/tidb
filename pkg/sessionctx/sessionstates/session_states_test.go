@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/stretchr/testify/require"
 )
@@ -780,6 +781,8 @@ func TestStatementCtx(t *testing.T) {
 }
 
 func TestPreparedStatements(t *testing.T) {
+	ctxWithExecDetails := execdetails.ContextWithInitializedExecDetails(context.Background())
+
 	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
@@ -1066,7 +1069,7 @@ func TestPreparedStatements(t *testing.T) {
 				return stmtID
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
+				rs, err := tk.Session().ExecutePreparedStmt(ctxWithExecDetails, param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -1074,7 +1077,7 @@ func TestPreparedStatements(t *testing.T) {
 		{
 			// no such prepared statement
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
-				_, err := tk.Session().ExecutePreparedStmt(context.Background(), 1, nil)
+				_, err := tk.Session().ExecutePreparedStmt(ctxWithExecDetails, 1, nil)
 				errEqualsCode(t, err, errno.ErrPreparedStmtNotFound)
 			},
 		},
@@ -1088,7 +1091,7 @@ func TestPreparedStatements(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
 				tk.MustQuery("execute stmt").Check(testkit.Rows("10"))
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
+				rs, err := tk.Session().ExecutePreparedStmt(ctxWithExecDetails, param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -1117,12 +1120,12 @@ func TestPreparedStatements(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
 				stmtIDs := param.([]uint32)
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
+				rs, err := tk.Session().ExecutePreparedStmt(ctxWithExecDetails, stmtIDs[1], nil)
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows())
-				_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[0], expression.Args2Expressions4Test(1, 2, 3))
+				_, err = tk.Session().ExecutePreparedStmt(ctxWithExecDetails, stmtIDs[0], expression.Args2Expressions4Test(1, 2, 3))
 				require.NoError(t, err)
-				rs, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
+				rs, err = tk.Session().ExecutePreparedStmt(ctxWithExecDetails, stmtIDs[1], nil)
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1", "2", "3"))
 			},
