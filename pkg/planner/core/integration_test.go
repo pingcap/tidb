@@ -2111,3 +2111,200 @@ WHERE t1.id IN (SELECT MIN(id) FROM t1)`
 	err := tk.QueryToErr(sql)
 	require.NoError(t, err)
 }
+
+// https://github.com/pingcap/tidb/issues/63487
+func TestINListMatchPruning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_cost_model_version=2")
+
+	tk.MustExec(`create table t1 (
+		a int,
+		b int,
+		c int,
+		d int,
+		e int,
+		primary key(a, b, c, d, e) /*T![clustered_index] NONCLUSTERED */
+	)`)
+
+	// Insert 100K rows: a=1, b=1, c=1-200, d=1-500, e=0
+	tk.MustExec("set @@cte_max_recursion_depth=100000")
+	tk.MustExec(`insert into t1 (a, b, c, d, e)
+		select * from (
+			with recursive tt as (
+				select 1 as a, 1 as b, 1 as c, 1 as d, 0 as e
+				union all
+				select
+					a,
+					b,
+					case when d = 500 then c + 1 else c end,
+					case when d = 500 then 1 else d + 1 end,
+					e
+				from tt
+				where c < 200 or (c = 200 and d < 500)
+			)
+			select * from tt
+		) t
+	`)
+
+	// sleep(1) is necessary for statistics to reflect recently committed changes
+	tk.MustQuery("select sleep(1)")
+	tk.MustExec("analyze table t1 all columns")
+
+	rows := tk.MustQuery("show stats_meta where table_name = 't1'").Rows()
+	for _, row := range rows {
+		t.Logf("t1 stats_meta: %v", row)
+	}
+
+	// Helper function to build the query using different in conditions for c and d
+	buildQuery := func(cValues, dValues []string) string {
+		return fmt.Sprintf(`
+			select c, d, e from t1
+			where a = 1
+				and b = 1
+				and c in (%s)
+				and d in (%s)
+		`, strings.Join(cValues, ","), strings.Join(dValues, ","))
+	}
+
+	tests := []struct {
+		name         string
+		cValuesFunc  func() []string
+		dValuesFunc  func() []string
+		expectedPlan func(cValues, dValues []string) [][]any
+	}{
+		// all_c_exist_all_d_exist tests that the ranges constructed are on [a, b, c] rather than
+		// [a, b, c, d]. Assuming that a seek is 30x as expensive as a next operation, the cost
+		// is roughly as follows:
+		// - Ranges on [a, b, c, d]: 40,000 x 30 + 40,000 = 1,240,000
+		// - Ranges [a, b, c]: 200 x 30 + 100,000 = 106,000
+		// - Ranges [a, b]: 1 x 30 + 100,000 = 100,030
+		{
+			name: "all_c_exist_all_d_exist",
+			cValuesFunc: func() []string {
+				var values []string
+				for i := 1; i <= 200; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				return values
+			},
+			dValuesFunc: func() []string {
+				var values []string
+				for i := 1; i <= 200; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				return values
+			},
+			expectedPlan: func(cValues, dValues []string) [][]any {
+				cValuesStr := strings.Join(cValues, ", ")
+				dValuesStr := strings.Join(dValues, ", ")
+				return [][]any{
+					{"IndexReader", "root", "", "index:Projection"},
+					{"└─Projection", "cop[tikv]", "", "test.t1.c, test.t1.d, test.t1.e"},
+					{"  └─Selection", "cop[tikv]", "", fmt.Sprintf("in(test.t1.c, %s), in(test.t1.d, %s)", cValuesStr, dValuesStr)},
+					{"    └─IndexRangeScan", "cop[tikv]", "table:t1, index:PRIMARY(a, b, c, d, e)", "range:[1 1,1 1], keep order:false"},
+				}
+			},
+		},
+		// 10pct_c_exist_all_d_exist tests the ranges constructed are on [a, b, c]
+		// rather than [a, b, c, d]. Assuming that a seek is 30x as expensive
+		// as a next operation, the cost is roughly as follows:
+		// - Ranges on PRIMARY[a, b, c, d]: 40,000 × 30 + 2,000 = 1,202,000
+		// - Ranges on PRIMARY[a, b, c]: 200 × 30 + 5,000 = 11,000
+		// - Ranges on PRIMARY[a, b]: 1 × 30 + 100,000 = 100,000
+		{
+			name: "10pct_c_exist_all_d_exist",
+			cValuesFunc: func() []string {
+				var values []string
+				// 1-10: exist
+				for i := 1; i <= 10; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				// 201-390: don't exist
+				for i := 201; i <= 390; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				return values
+			},
+			dValuesFunc: func() []string {
+				var values []string
+				for i := 1; i <= 200; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				return values
+			},
+			expectedPlan: func(cValues, dValues []string) [][]any {
+				// Build ranges on (a, b, c)
+				var ranges []string
+				for _, c := range cValues {
+					ranges = append(ranges, fmt.Sprintf("[1 1 %s,1 1 %s]", c, c))
+				}
+				rangesStr := strings.Join(ranges, ", ")
+				dValuesStr := strings.Join(dValues, ", ")
+				return [][]any{
+					{"IndexReader", "root", "", "index:Projection"},
+					{"└─Projection", "cop[tikv]", "", "test.t1.c, test.t1.d, test.t1.e"},
+					{"  └─Selection", "cop[tikv]", "", fmt.Sprintf("in(test.t1.d, %s)", dValuesStr)},
+					{"    └─IndexRangeScan", "cop[tikv]", "table:t1, index:PRIMARY(a, b, c, d, e)", fmt.Sprintf("range:%s, keep order:false", rangesStr)},
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cValues := tt.cValuesFunc()
+			dValues := tt.dValuesFunc()
+			query := buildQuery(cValues, dValues)
+
+			// CheckAt skips column 1 (cost) which can vary between runs due to statistics sampling
+			tk.MustQuery("explain format='brief' "+query).CheckAt([]int{0, 2, 3, 4}, tt.expectedPlan(cValues, dValues))
+		})
+	}
+
+	// pruning_accounts_for_sort_cost tests that the sort cost is properly accounted for during
+	// in-list match pruning. Assuming that a seek is 30x as expensive as a next operation and a sort
+	// is 1/135x as expensive as a next operation, the cost is roughly as follows:
+	// - Ranges on [a, b]: 10 x 30 + 10 = 310
+	// - Ranges on [a]: 10 x 30 + 10 + 10/135 = 310.07
+	t.Run("pruning_accounts_for_sort_cost", func(t *testing.T) {
+		tk.MustExec(`create table t2 (
+			a int,
+			b int,
+			c int,
+			primary key(a, b, c) /*T![clustered_index] NONCLUSTERED */
+		)`)
+
+		// Insert 100 rows with b=1, c=0 for all: (1,1,0), (2,1,0), (3,1,0), ..., (100,1,0)
+		tk.MustExec(`insert into t2 (a, b, c)
+			select * from (
+				with recursive tt as (
+					select 1 as a, 1 as b, 0 as c
+					union all
+					select a + 1, 1, 0
+					from tt
+					where a < 100
+				)
+				select * from tt
+			) t
+		`)
+
+		// sleep(1) is necessary for statistics to reflect recently committed changes
+		tk.MustQuery("select sleep(1)")
+		tk.MustExec("analyze table t2 all columns")
+
+		var ranges []string
+		for i := 1; i <= 10; i++ {
+			ranges = append(ranges, fmt.Sprintf("[%d 1,%d 1]", i, i))
+		}
+
+		query := "select * from t2 where a in (1,2,3,4,5,6,7,8,9,10) and b in (1)"
+		expectedPlan := [][]any{
+			{"IndexReader", "root", "", "index:IndexRangeScan"},
+			{"└─IndexRangeScan", "cop[tikv]", "table:t2, index:PRIMARY(a, b, c)", fmt.Sprintf("range:%s, keep order:false", strings.Join(ranges, ", "))},
+		}
+
+		tk.MustQuery("explain format='brief' "+query).CheckAt([]int{0, 2, 3, 4}, expectedPlan)
+	})
+}
