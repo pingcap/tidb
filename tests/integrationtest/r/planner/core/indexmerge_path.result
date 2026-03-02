@@ -12,18 +12,25 @@ Level	Code	Message
 Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"
 Warning	1105	The version 2 would collect all statistics not only the selected indexes
 set tidb_analyze_version=1;
+Level	Code	Message
+Warning	1287	'tidb_analyze_version=1' is deprecated and will be removed in a future release. Please use tidb_analyze_version=2 instead
 analyze table t;
 Level	Code	Message
 Warning	1105	analyzing multi-valued indexes is not supported, skip idx
 Warning	1105	analyzing multi-valued indexes is not supported, skip idx2
+Warning	1681	ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.
 analyze table t index idx;
 Level	Code	Message
 Warning	1105	analyzing multi-valued indexes is not supported, skip idx
+Warning	1681	ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.
 analyze table t index a;
+Level	Code	Message
+Warning	1681	ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.
 analyze table t index a, idx, idx2;
 Level	Code	Message
 Warning	1105	analyzing multi-valued indexes is not supported, skip idx
 Warning	1105	analyzing multi-valued indexes is not supported, skip idx2
+Warning	1681	ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.
 drop table if exists t;
 create table t(
 a int, j0 json, j1 json,
