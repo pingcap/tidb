@@ -421,6 +421,19 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if m.cacheTable != nil {
+		batchChk := chunk.New(m.retFieldTypes, cachedTableBatchSize, cachedTableBatchSize)
+		return &memRowsBatchIterForTable{
+			kvIter:         kvIter,
+			cd:             m.buffer.cd,
+			batchChk:       batchChk,
+			batchIt:        chunk.NewIterator4Chunk(batchChk),
+			sel:            make([]int, 0, cachedTableBatchSize),
+			datumRow:       make([]types.Datum, len(m.retFieldTypes)),
+			retFieldTypes:  m.retFieldTypes,
+			memTableReader: m,
+		}, nil
+	}
 	return &memRowsIterForTable{
 		kvIter:         kvIter,
 		cd:             m.buffer.cd,
@@ -975,6 +988,134 @@ func (iter *memRowsIterForTable) Close() {
 	if iter.kvIter != nil {
 		iter.kvIter.Close()
 	}
+}
+
+const cachedTableBatchSize = 64
+
+// memRowsBatchIterForTable batch decodes cached table rows into a chunk and applies filters in vectorized mode when possible.
+type memRowsBatchIterForTable struct {
+	kvIter        *txnMemBufferIter
+	cd            *rowcodec.ChunkDecoder
+	batchChk      *chunk.Chunk
+	batchIt       *chunk.Iterator4Chunk
+	selected      []bool
+	sel           []int
+	cursor        int
+	datumRow      []types.Datum
+	retFieldTypes []*types.FieldType
+	*memTableReader
+}
+
+func (iter *memRowsBatchIterForTable) Next() ([]types.Datum, error) {
+	curr := iter.kvIter
+	evalCtx := iter.ctx.GetExprCtx().GetEvalCtx()
+	vecEnabled := iter.ctx.GetSessionVars().EnableVectorizedExpression
+
+	for {
+		// Return remaining matched rows in current batch.
+		if iter.cursor < len(iter.sel) {
+			row := iter.batchChk.GetRow(iter.sel[iter.cursor])
+			iter.cursor++
+			return row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow), nil
+		}
+
+		// Fill a new batch.
+		iter.batchChk.Reset()
+		iter.sel = iter.sel[:0]
+		iter.cursor = 0
+
+		for iter.batchChk.NumRows() < cachedTableBatchSize && curr.Valid() {
+			key := curr.Key()
+			value := curr.Value()
+
+			// check whether the key was been deleted.
+			if len(value) == 0 {
+				if err := curr.Next(); err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
+			}
+
+			handle, err := tablecodec.DecodeRowKey(key)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			if !rowcodec.IsNewFormat(value) {
+				// Keep the scan order: flush current batch first.
+				if iter.batchChk.NumRows() > 0 {
+					break
+				}
+
+				if err := curr.Next(); err != nil {
+					return nil, errors.Trace(err)
+				}
+
+				// TODO: remove the legacy code!
+				iter.datumRow, err = iter.memTableReader.decodeRowData(handle, value, &iter.datumRow)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
+				mutableRow.SetDatums(iter.datumRow...)
+				matched, _, err := expression.EvalBool(evalCtx, iter.conditions, mutableRow.ToRow())
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if !matched {
+					continue
+				}
+				return iter.datumRow, nil
+			}
+
+			if err := curr.Next(); err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			err = iter.cd.DecodeToChunk(value, handle, iter.batchChk)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		if iter.batchChk.NumRows() == 0 {
+			return nil, nil
+		}
+
+		if len(iter.conditions) == 0 {
+			for i := 0; i < iter.batchChk.NumRows(); i++ {
+				iter.sel = append(iter.sel, i)
+			}
+			continue
+		}
+
+		iter.batchIt.ResetChunk(iter.batchChk)
+		iter.selected = iter.selected[:0]
+		var err error
+		iter.selected, err = expression.VectorizedFilter(evalCtx, vecEnabled, iter.conditions, iter.batchIt, iter.selected)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for i := range iter.selected {
+			if iter.selected[i] {
+				iter.sel = append(iter.sel, i)
+			}
+		}
+	}
+}
+
+func (iter *memRowsBatchIterForTable) Close() {
+	if iter.kvIter != nil {
+		iter.kvIter.Close()
+	}
+	iter.batchChk = nil
+	iter.batchIt = nil
+	iter.selected = nil
+	iter.sel = nil
+	iter.cursor = 0
+	iter.datumRow = nil
+	iter.retFieldTypes = nil
+	iter.memTableReader = nil
 }
 
 type memRowsIterForIndex struct {
