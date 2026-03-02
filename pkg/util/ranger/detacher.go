@@ -398,6 +398,24 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	if emptyRange {
 		return res, nil
 	}
+	if len(accessConds) == 1 {
+		// `t1.c1 <=> ? and t1.c1 <=> ?`cannot be simplified by predicate simplifier,
+		// ExtractEqAndInCondition can fold them into one constant value, but we cannot use it to build range.
+		// So we check whether the only access condition is a constant here.
+		if value, ok := accessConds[0].(*expression.Constant); ok {
+			if value.Value.IsNull() {
+				return res, nil
+			}
+			isTrue, err := value.Value.ToBool(d.sctx.TypeCtx)
+			if err != nil {
+				return nil, err
+			}
+			if isTrue == 1 {
+				res.Ranges = FullRange()
+			}
+			return res, nil
+		}
+	}
 	var remainedConds []expression.Expression
 	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(len(accessConds), accessConds)
 	if err != nil {
