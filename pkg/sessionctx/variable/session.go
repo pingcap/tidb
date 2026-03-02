@@ -1724,6 +1724,12 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// InPacketBytes records the total incoming packet bytes from clients for current session.
+	InPacketBytes atomic.Uint64
+
+	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
+	OutPacketBytes atomic.Uint64
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
