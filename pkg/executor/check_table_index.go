@@ -21,7 +21,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -223,7 +222,10 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 		return err
 	}
 	if e.table.Meta().GetPartitionInfo() == nil {
-		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		idx, err := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		if err != nil {
+			return err
+		}
 		return admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, e.table, idx)
 	}
 
@@ -231,7 +233,10 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := e.table.(table.PartitionedTable).GetPartition(pid)
-		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
+		idx, err := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
+		if err != nil {
+			return err
+		}
 		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, partition, idx); err != nil {
 			return errors.Trace(err)
 		}
@@ -250,9 +255,7 @@ type FastCheckTableExec struct {
 	table      table.Table
 	indexInfos []*model.IndexInfo
 	done       bool
-	err        *atomic.Pointer[error]
 	collector  *AdminCheckIndexInconsistentCollector
-	wg         sync.WaitGroup
 	contextCtx context.Context
 }
 
@@ -468,17 +471,23 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
+	wctx := workerpool.NewContext(ctx)
+	taskCh := make(chan checkIndexTask)
 	workerPool := workerpool.NewWorkerPool("checkIndex",
 		poolutil.CheckTable, 3, e.createWorker)
-	workerPool.Start(ctx)
+	workerPool.SetTaskReceiver(taskCh)
+	workerPool.Start(wctx)
 
-	e.wg.Add(len(e.indexInfos))
+OUTER:
 	for i := range e.indexInfos {
-		workerPool.AddTask(checkIndexTask{indexOffset: i, err: e.err})
+		select {
+		case taskCh <- checkIndexTask{indexOffset: i}:
+		case <-wctx.Done():
+			break OUTER
+		}
 	}
-
-	e.wg.Wait()
-	workerPool.ReleaseAndWait()
+	close(taskCh)
+	workerPool.Release()
 
 	if e.collector != nil {
 		sessVars.FastCheckTableInconsistentSummary = e.collector.Summary()
@@ -487,11 +496,10 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 	}
 
-	p := e.err.Load()
-	if p == nil {
-		return nil
+	if opErr := wctx.OperatorErr(); opErr != nil {
+		return opErr
 	}
-	return *p
+	return nil
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
@@ -534,15 +542,19 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 }
 
 // HandleTask implements the Worker interface.
-func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
-	defer w.e.wg.Done()
+func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) (retErr error) {
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
 
 	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
 
 	trySaveErr := func(err error) {
-		w.e.err.CompareAndSwap(nil, &err)
+		if err == nil {
+			return
+		}
+		if retErr == nil {
+			retErr = err
+		}
 	}
 	reportErr := func(err error) bool {
 		if err == nil {
@@ -899,22 +911,21 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			queue = append(queue, nextTask)
 		}
 	}
+	return retErr
 }
 
 // Close implements the Worker interface.
-func (*checkIndexWorker) Close() {}
+func (*checkIndexWorker) Close() error {
+	return nil
+}
 
 type checkIndexTask struct {
 	indexOffset int
-	err         *atomic.Pointer[error]
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "fast_check_table", "RecoverArgs", func() {
-		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", c.indexOffset)
-		c.err.CompareAndSwap(nil, &err)
-	}, false
+func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "fast_check_table", "RecoverArgs", errors.Errorf("checkIndexTask panicked, indexOffset: %d", c.indexOffset)
 }
 
 type groupByChecksum struct {
