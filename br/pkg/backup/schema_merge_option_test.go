@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/ddl/label"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -113,7 +113,7 @@ func TestBackupSchemaWithMergeOption(t *testing.T) {
 	skipChecksum := true // Skip checksum for faster test
 
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, vardef.DefChecksumTableConcurrency, skipChecksum, updateCh)
+		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), updateCh.get())
 
