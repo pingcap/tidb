@@ -59,11 +59,15 @@ func (p *HandParser) parseCommaJoin() (*ast.Join, bool) {
 			return nil, false
 		}
 
-		// Use makeCrossJoin (matching yacc's NewCrossJoin) to perform tree rotation
-		// when the right side is a join tree with ON/USING. This ensures correct
-		// precedence: "t1, t2 JOIN t3 ON c" → "(t1, t2) JOIN t3 ON c", not
-		// "t1, (t2 JOIN t3 ON c)".
-		innerJoin = p.makeCrossJoin(innerJoin, right)
+		// Comma join creates a plain CrossJoin — matching yacc's
+		// TableRefs ',' EscapedTableRef { $$ = &ast.Join{Left: $1, Right: $3, Tp: ast.CrossJoin} }
+		// Note: tree rotation (NewCrossJoin/makeCrossJoin) is NOT used here;
+		// it is only used in parseJoin() for keyword cross joins without ON/USING.
+		newJoin := p.arena.AllocJoin()
+		newJoin.Left = innerJoin
+		newJoin.Right = right
+		newJoin.Tp = ast.CrossJoin
+		innerJoin = newJoin
 	}
 	return innerJoin, hasComma
 }
