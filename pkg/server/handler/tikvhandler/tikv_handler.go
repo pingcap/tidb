@@ -82,6 +82,7 @@ import (
 const (
 	requestDefaultTimeout       = 10 * time.Second
 	adminCheckIndexDefaultLimit = 1000
+	adminCheckIndexMaxLimit     = 10000
 )
 
 // SettingsHandler is the handler for list tidb server settings.
@@ -1368,6 +1369,9 @@ func parseAdminCheckIndexLimit(req *http.Request) (int, error) {
 	}
 	if limit <= 0 {
 		return 0, errors.New("limit must be greater than 0")
+	}
+	if limit > adminCheckIndexMaxLimit {
+		return adminCheckIndexMaxLimit, nil
 	}
 	return limit, nil
 }

@@ -2212,7 +2212,8 @@ func TestAdminCheckIndexCollectInconsistentBySessionVar(t *testing.T) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx_a")
 	require.NotNil(t, idxInfo)
-	idxOp := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	idxOp, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -2283,7 +2284,8 @@ func TestAdminCheckIndexCollectInconsistentMultiLayerLocate(t *testing.T) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx_a")
 	require.NotNil(t, idxInfo)
-	idxOp := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	idxOp, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	// Remove one index row so this handle becomes row_without_index.
 	txn, err := store.Begin()
@@ -2332,7 +2334,8 @@ func TestAdminCheckIndexCollectInconsistentTrailingDuplicateIndex(t *testing.T) 
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx_a")
 	require.NotNil(t, idxInfo)
-	idxOp := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	idxOp, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	// Inject an extra trailing index entry for an existing handle without removing
 	// the original one. It should be classified as row_index_mismatch.

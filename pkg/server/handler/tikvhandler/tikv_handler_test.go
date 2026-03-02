@@ -42,6 +42,10 @@ func TestParseAdminCheckIndexLimit(t *testing.T) {
 
 	_, err = parseAdminCheckIndexLimit(&http.Request{Form: map[string][]string{handler.Limit: {"-1"}}})
 	require.ErrorContains(t, err, "greater than 0")
+
+	limit, err = parseAdminCheckIndexLimit(&http.Request{Form: map[string][]string{handler.Limit: {"999999"}}})
+	require.NoError(t, err)
+	require.Equal(t, adminCheckIndexMaxLimit, limit)
 }
 
 func TestDDLCheckHandlerAdminCheckIndexCancelContext(t *testing.T) {

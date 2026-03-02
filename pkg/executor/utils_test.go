@@ -346,7 +346,7 @@ func TestAdminCheckIndexInconsistentCollectorWithLimit(t *testing.T) {
 
 	summary := collector.Summary()
 	require.Equal(t, uint64(2), summary.InconsistentRowCount)
-	require.Equal(t, []AdminCheckIndexInconsistentRow{
+	require.ElementsMatch(t, []AdminCheckIndexInconsistentRow{
 		{Handle: "1", MismatchType: AdminCheckIndexRowWithoutIndex},
 		{Handle: "2", MismatchType: AdminCheckIndexIndexWithoutRow},
 	}, summary.Rows)

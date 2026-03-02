@@ -23,6 +23,8 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -37,12 +39,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/admin"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+var errCheckPartialIndexWithoutFastCheck = dbterror.ClassExecutor.NewStd(errno.ErrCheckPartialIndexWithoutFastCheck)
 
 // CheckTableExec represents a check table executor.
 // It is built from the "admin check table" statement, and it checks if the
@@ -140,6 +146,9 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for _, idx := range e.indexInfos {
 		if idx.MVIndex || idx.IsColumnarIndex() {
 			continue
+		}
+		if idx.HasCondition() {
+			return errors.Trace(errCheckPartialIndexWithoutFastCheck)
 		}
 		idxNames = append(idxNames, idx.Name.O)
 	}
@@ -513,11 +522,30 @@ type checkIndexWorker struct {
 
 func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	sessVars := se.GetSessionVars()
+	srcVars := w.sctx.GetSessionVars()
+
 	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
 	originMemQuotaQuery := sessVars.MemQuotaQuery
+	originDistSQLScanConcurrency := sessVars.DistSQLScanConcurrency()
+	originExecutorConcurrency := sessVars.ExecutorConcurrency
+	originMaxExecutionTime := sessVars.MaxExecutionTime
+	originTiKVClientReadTimeout := sessVars.TiKVClientReadTimeout
+	originMemTrackerBytesLimit := int64(0)
+	if sessVars.MemTracker != nil {
+		originMemTrackerBytesLimit = sessVars.MemTracker.GetBytesLimit()
+	}
 
 	sessVars.OptimizerUseInvisibleIndexes = true
-	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	sessVars.MemQuotaQuery = srcVars.MemQuotaQuery
+	sessVars.SetDistSQLScanConcurrency(srcVars.DistSQLScanConcurrency())
+	sessVars.ExecutorConcurrency = srcVars.ExecutorConcurrency
+	sessVars.MaxExecutionTime = srcVars.MaxExecutionTime
+	sessVars.TiKVClientReadTimeout = srcVars.TiKVClientReadTimeout
+	if sessVars.MemTracker != nil {
+		sessVars.MemTracker.SetBytesLimit(sessVars.MemQuotaQuery)
+	}
+	failpoint.InjectCall("fastCheckTableAfterInitSessCtx", sessVars, new(error))
+
 	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
 	if snapshot != 0 {
 		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
@@ -529,6 +557,13 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	return func() {
 		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 		sessVars.MemQuotaQuery = originMemQuotaQuery
+		sessVars.SetDistSQLScanConcurrency(originDistSQLScanConcurrency)
+		sessVars.ExecutorConcurrency = originExecutorConcurrency
+		sessVars.MaxExecutionTime = originMaxExecutionTime
+		sessVars.TiKVClientReadTimeout = originTiKVClientReadTimeout
+		if sessVars.MemTracker != nil {
+			sessVars.MemTracker.SetBytesLimit(originMemTrackerBytesLimit)
+		}
 		if snapshot != 0 {
 			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
 			if err != nil {
@@ -709,6 +744,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		w.e.collector.recordInconsistent(handle.String(), mismatchType, err)
 		return false
 	}
+	idxCondition := ""
+	if idxInfo.HasCondition() {
+		idxCondition = fmt.Sprintf("(%s) AND ", idxInfo.ConditionExprString)
+	}
 
 	nextRecord := func(stream *leafRowStream) (*consistency.RecordData, chunk.Row, bool, error) {
 		row, ok, err := stream.Next()
@@ -722,7 +761,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		return record, row, true, nil
 	}
 	checkLeafBucket := func(task checksumBucketTask) bool {
-		tableSQL, indexSQL := buildRowQueries(md5Handle, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name.O, task)
+		tableSQL, indexSQL := buildRowQueries(md5Handle, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name.O, idxCondition, task)
 		tableStream, err := newLeafRowStream(ctx, se, tableSQL)
 		if err != nil {
 			return reportErr(err)
@@ -818,7 +857,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		task := queue[0]
 		queue = queue[1:]
 
-		tblQuery, idxQuery := buildChecksumQueries(md5Handle, md5HandleAndIndexCol, tblName, idxInfo.Name.O, task, task.depth == 0, bucketSize)
+		tblQuery, idxQuery := buildChecksumQueries(md5Handle, md5HandleAndIndexCol, tblName, idxInfo.Name.O, idxCondition, task, task.depth == 0, bucketSize)
 		logger := logutil.BgLogger().With(
 			zap.String("table name", tblMeta.Name.String()),
 			zap.String("index name", idxInfo.Name.String()),
@@ -975,36 +1014,40 @@ func sumChecksumCount(checksums []groupByChecksum) int64 {
 func buildChecksumQueries(
 	md5Handle, md5HandleAndIndexCol, tblName string,
 	idxName string,
+	idxCondition string,
 	task checksumBucketTask,
 	forceRoot bool,
 	bucketSize int,
 ) (tblQuery, idxQuery string) {
+	quotedIdxName := ColumnName(idxName)
 	whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, task.offset, task.mod)
 	if forceRoot {
 		whereKey = "0"
 	}
 	groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle, task.offset, task.mod, bucketSize)
 	tblQuery = fmt.Sprintf(
-		"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
-		tblName, md5HandleAndIndexCol, groupByKey, tblName, whereKey, groupByKey)
+		"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s(%s = 0) group by %s",
+		tblName, md5HandleAndIndexCol, groupByKey, tblName, idxCondition, whereKey, groupByKey)
 	idxQuery = fmt.Sprintf(
-		"select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
-		md5HandleAndIndexCol, groupByKey, tblName, idxName, whereKey, groupByKey)
+		"select bit_xor(%s), %s, count(*) from %s use index(%s) where %s(%s = 0) group by %s",
+		md5HandleAndIndexCol, groupByKey, tblName, quotedIdxName, idxCondition, whereKey, groupByKey)
 	return tblQuery, idxQuery
 }
 
 func buildRowQueries(
 	md5Handle, handleColumns, indexColumns, md5HandleAndIndexCol, tblName string,
 	idxName string,
+	idxCondition string,
 	task checksumBucketTask,
 ) (tableSQL, indexSQL string) {
+	quotedIdxName := ColumnName(idxName)
 	groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, task.offset, task.mod)
 	indexSQL = fmt.Sprintf(
-		"select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s",
-		handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxName, groupByKey, handleColumns)
+		"select %s, %s, %s from %s use index(%s) where %s(%s = 0) order by %s",
+		handleColumns, indexColumns, md5HandleAndIndexCol, tblName, quotedIdxName, idxCondition, groupByKey, handleColumns)
 	tableSQL = fmt.Sprintf(
-		"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s",
-		tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
+		"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s(%s = 0) order by %s",
+		tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxCondition, groupByKey, handleColumns)
 	return tableSQL, indexSQL
 }
 
@@ -1042,6 +1085,7 @@ func logChecksumBucketDiffs(logger *zap.Logger, tableChecksum, indexChecksum []g
 }
 func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
 	if err != nil {
 		return nil, err
