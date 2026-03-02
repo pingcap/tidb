@@ -1184,7 +1184,9 @@ func TestMVDeltaMergeAggRuntimeStatsString(t *testing.T) {
 	require.Contains(t, s, "max:20ms")
 	require.Contains(t, s, "avg:15ms")
 	require.Contains(t, s, "reader:15ms")
-	require.Contains(t, s, "writer:8ms")
+	require.Contains(t, s, "writer:{time:8ms")
+	require.Contains(t, s, "chunks:0")
+	require.Contains(t, s, "row_ops:0")
 }
 
 func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
@@ -1193,12 +1195,30 @@ func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 		readerTime:      3 * time.Millisecond,
 		writerTime:      4 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{5 * time.Millisecond, 7 * time.Millisecond},
+		writerDetail: mvDeltaMergeAggWriterStats{
+			chunks:           1,
+			rowOps:           10,
+			insertRows:       3,
+			updateRows:       5,
+			deleteRows:       2,
+			getTxnTime:       2 * time.Millisecond,
+			updateRecordTime: 6 * time.Millisecond,
+		},
 	})
 	right := newMVDeltaMergeAggRuntimeStats(3)
 	right.fillFromPipelineStats(&mvDeltaMergeAggPipelineStats{
 		readerTime:      2 * time.Millisecond,
 		writerTime:      1 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{1 * time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond},
+		writerDetail: mvDeltaMergeAggWriterStats{
+			chunks:           2,
+			rowOps:           7,
+			insertRows:       1,
+			updateRows:       4,
+			deleteRows:       2,
+			getTxnTime:       1 * time.Millisecond,
+			updateRecordTime: 3 * time.Millisecond,
+		},
 	})
 
 	left.Merge(right)
@@ -1209,11 +1229,19 @@ func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 		9 * time.Millisecond,
 		9 * time.Millisecond,
 	}, left.mergeWorkerTime)
+	require.Equal(t, int64(3), left.writerDetail.chunks)
+	require.Equal(t, int64(17), left.writerDetail.rowOps)
+	require.Equal(t, int64(4), left.writerDetail.insertRows)
+	require.Equal(t, int64(9), left.writerDetail.updateRows)
+	require.Equal(t, int64(4), left.writerDetail.deleteRows)
+	require.Equal(t, 3*time.Millisecond, left.writerDetail.getTxnTime)
+	require.Equal(t, 9*time.Millisecond, left.writerDetail.updateRecordTime)
 
 	cloned, ok := left.Clone().(*mvDeltaMergeAggRuntimeStats)
 	require.True(t, ok)
 	require.Equal(t, left.readerTime, cloned.readerTime)
 	require.Equal(t, left.writerTime, cloned.writerTime)
 	require.Equal(t, left.mergeWorkerTime, cloned.mergeWorkerTime)
+	require.Equal(t, left.writerDetail, cloned.writerDetail)
 	require.Equal(t, execdetails.TpMVDeltaMergeAggRuntimeStats, left.Tp())
 }

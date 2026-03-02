@@ -199,12 +199,57 @@ type mvDeltaMergeAggPipelineStats struct {
 	readerTime      time.Duration
 	writerTime      time.Duration
 	mergeWorkerTime []time.Duration
+	writerDetail    mvDeltaMergeAggWriterStats
 }
 
 type mvDeltaMergeAggRuntimeStats struct {
 	readerTime      time.Duration
 	writerTime      time.Duration
 	mergeWorkerTime []time.Duration
+	writerDetail    mvDeltaMergeAggWriterStats
+}
+
+type mvDeltaMergeAggWriterStats struct {
+	chunks int64
+	rowOps int64
+
+	noopRows   int64
+	insertRows int64
+	updateRows int64
+	deleteRows int64
+
+	validateTime     time.Duration
+	getTxnTime       time.Duration
+	buildInsertTime  time.Duration
+	buildUpdateTime  time.Duration
+	buildDeleteTime  time.Duration
+	buildTouchedTime time.Duration
+	buildHandleTime  time.Duration
+	addRecordTime    time.Duration
+	updateRecordTime time.Duration
+	removeRecordTime time.Duration
+	mayFlushTime     time.Duration
+}
+
+func (s *mvDeltaMergeAggWriterStats) merge(other mvDeltaMergeAggWriterStats) {
+	s.chunks += other.chunks
+	s.rowOps += other.rowOps
+	s.noopRows += other.noopRows
+	s.insertRows += other.insertRows
+	s.updateRows += other.updateRows
+	s.deleteRows += other.deleteRows
+
+	s.validateTime += other.validateTime
+	s.getTxnTime += other.getTxnTime
+	s.buildInsertTime += other.buildInsertTime
+	s.buildUpdateTime += other.buildUpdateTime
+	s.buildDeleteTime += other.buildDeleteTime
+	s.buildTouchedTime += other.buildTouchedTime
+	s.buildHandleTime += other.buildHandleTime
+	s.addRecordTime += other.addRecordTime
+	s.updateRecordTime += other.updateRecordTime
+	s.removeRecordTime += other.removeRecordTime
+	s.mayFlushTime += other.mayFlushTime
 }
 
 func newMVDeltaMergeAggRuntimeStats(workerCnt int) *mvDeltaMergeAggRuntimeStats {
@@ -241,6 +286,7 @@ func (s *mvDeltaMergeAggRuntimeStats) fillFromPipelineStats(stats *mvDeltaMergeA
 	}
 	s.mergeWorkerTime = s.mergeWorkerTime[:len(stats.mergeWorkerTime)]
 	copy(s.mergeWorkerTime, stats.mergeWorkerTime)
+	s.writerDetail = stats.writerDetail
 }
 
 func (s *mvDeltaMergeAggRuntimeStats) String() string {
@@ -278,8 +324,46 @@ func (s *mvDeltaMergeAggRuntimeStats) String() string {
 	buf.WriteString("}")
 	buf.WriteString(", reader:")
 	buf.WriteString(execdetails.FormatDuration(s.readerTime))
-	buf.WriteString(", writer:")
+	buf.WriteString(", writer:{time:")
 	buf.WriteString(execdetails.FormatDuration(s.writerTime))
+	buf.WriteString(", chunks:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.chunks, 10))
+	buf.WriteString(", row_ops:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.rowOps, 10))
+	buf.WriteString(", rows:{insert:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.insertRows, 10))
+	buf.WriteString(", update:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.updateRows, 10))
+	buf.WriteString(", delete:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.deleteRows, 10))
+	buf.WriteString(", noop:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.noopRows, 10))
+	buf.WriteString("}")
+	buf.WriteString(", validate:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.validateTime))
+	buf.WriteString(", get_txn:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.getTxnTime))
+	buf.WriteString(", build_row:{insert:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildInsertTime))
+	buf.WriteString(", update:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildUpdateTime))
+	buf.WriteString(", delete:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildDeleteTime))
+	buf.WriteString("}")
+	buf.WriteString(", build_touched:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildTouchedTime))
+	buf.WriteString(", build_handle:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.buildHandleTime))
+	buf.WriteString(", dml:{insert:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.addRecordTime))
+	buf.WriteString(", update:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.updateRecordTime))
+	buf.WriteString(", delete:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.removeRecordTime))
+	buf.WriteString("}")
+	buf.WriteString(", may_flush:")
+	buf.WriteString(execdetails.FormatDuration(s.writerDetail.mayFlushTime))
+	buf.WriteString("}")
 	buf.WriteString("}")
 	return buf.String()
 }
@@ -292,6 +376,7 @@ func (s *mvDeltaMergeAggRuntimeStats) Clone() execdetails.RuntimeStats {
 		readerTime:      s.readerTime,
 		writerTime:      s.writerTime,
 		mergeWorkerTime: make([]time.Duration, len(s.mergeWorkerTime)),
+		writerDetail:    s.writerDetail,
 	}
 	copy(newStats.mergeWorkerTime, s.mergeWorkerTime)
 	return newStats
@@ -304,6 +389,7 @@ func (s *mvDeltaMergeAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	}
 	s.readerTime += tmp.readerTime
 	s.writerTime += tmp.writerTime
+	s.writerDetail.merge(tmp.writerDetail)
 	if len(tmp.mergeWorkerTime) == 0 {
 		return
 	}
@@ -394,7 +480,12 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 		pipelineStats = &mvDeltaMergeAggPipelineStats{
 			mergeWorkerTime: make([]time.Duration, workerCnt),
 		}
+		if statsWriter, ok := e.Writer.(writerRuntimeStatsAware); ok {
+			statsWriter.setRuntimeStats(&pipelineStats.writerDetail)
+		}
 		defer e.runtimeStats.fillFromPipelineStats(pipelineStats)
+	} else if statsWriter, ok := e.Writer.(writerRuntimeStatsAware); ok {
+		statsWriter.setRuntimeStats(nil)
 	}
 
 	inputBufSize := max(workerCnt*2, 2)
