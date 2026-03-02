@@ -496,10 +496,7 @@ OUTER:
 		}
 	}
 
-	if opErr := wctx.OperatorErr(); opErr != nil {
-		return opErr
-	}
-	return nil
+	return wctx.OperatorErr()
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
