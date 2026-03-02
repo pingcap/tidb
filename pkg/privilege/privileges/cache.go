@@ -634,7 +634,6 @@ func compareHost(x, y string) int {
 		if y == "%" {
 			return -1
 		}
-		// x == '%'
 		return 1
 	}
 
@@ -646,7 +645,6 @@ func compareHost(x, y string) int {
 		if y == "" {
 			return -1
 		}
-		// x == ""
 		return 1
 	}
 
