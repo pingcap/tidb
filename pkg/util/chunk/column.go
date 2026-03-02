@@ -38,8 +38,10 @@ func (c *Column) AppendDuration(dur types.Duration) {
 
 // AppendMyDecimal appends a MyDecimal value into this Column.
 func (c *Column) AppendMyDecimal(dec *types.MyDecimal) {
-	*(*types.MyDecimal)(unsafe.Pointer(&c.elemBuf[0])) = *dec
-	c.finishAppendFixed()
+	start := c.extendDataForAppendFixed(types.MyDecimalStructSize)
+	*(*types.MyDecimal)(unsafe.Pointer(&c.data[start])) = *dec
+	c.appendNullBitmap(true)
+	c.length++
 }
 
 func (c *Column) appendNameValue(name string, val uint64) {
@@ -314,11 +316,22 @@ func (c *Column) AppendNNulls(n int) {
 func (c *Column) AppendNull() {
 	c.appendNullBitmap(false)
 	if c.isFixed() {
-		c.data = append(c.data, c.elemBuf...)
+		_ = c.extendDataForAppendFixed(len(c.elemBuf))
 	} else {
 		c.offsets = append(c.offsets, c.offsets[c.length])
 	}
 	c.length++
+}
+
+func (c *Column) extendDataForAppendFixed(typeSize int) int {
+	start := len(c.data)
+	newLen := start + typeSize
+	if cap(c.data) >= newLen {
+		c.data = c.data[:newLen]
+		return start
+	}
+	c.data = append(c.data, emptyBuf[:typeSize]...)
+	return start
 }
 
 func (c *Column) finishAppendFixed() {
@@ -329,26 +342,34 @@ func (c *Column) finishAppendFixed() {
 
 // AppendInt64 appends an int64 value into this Column.
 func (c *Column) AppendInt64(i int64) {
-	*(*int64)(unsafe.Pointer(&c.elemBuf[0])) = i
-	c.finishAppendFixed()
+	start := c.extendDataForAppendFixed(sizeInt64)
+	*(*int64)(unsafe.Pointer(&c.data[start])) = i
+	c.appendNullBitmap(true)
+	c.length++
 }
 
 // AppendUint64 appends a uint64 value into this Column.
 func (c *Column) AppendUint64(u uint64) {
-	*(*uint64)(unsafe.Pointer(&c.elemBuf[0])) = u
-	c.finishAppendFixed()
+	start := c.extendDataForAppendFixed(sizeUint64)
+	*(*uint64)(unsafe.Pointer(&c.data[start])) = u
+	c.appendNullBitmap(true)
+	c.length++
 }
 
 // AppendFloat32 appends a float32 value into this Column.
 func (c *Column) AppendFloat32(f float32) {
-	*(*float32)(unsafe.Pointer(&c.elemBuf[0])) = f
-	c.finishAppendFixed()
+	start := c.extendDataForAppendFixed(sizeFloat32)
+	*(*float32)(unsafe.Pointer(&c.data[start])) = f
+	c.appendNullBitmap(true)
+	c.length++
 }
 
 // AppendFloat64 appends a float64 value into this Column.
 func (c *Column) AppendFloat64(f float64) {
-	*(*float64)(unsafe.Pointer(&c.elemBuf[0])) = f
-	c.finishAppendFixed()
+	start := c.extendDataForAppendFixed(sizeFloat64)
+	*(*float64)(unsafe.Pointer(&c.data[start])) = f
+	c.appendNullBitmap(true)
+	c.length++
 }
 
 func (c *Column) finishAppendVar() {
@@ -371,8 +392,10 @@ func (c *Column) AppendBytes(b []byte) {
 
 // AppendTime appends a time value into this Column.
 func (c *Column) AppendTime(t types.Time) {
-	*(*types.Time)(unsafe.Pointer(&c.elemBuf[0])) = t
-	c.finishAppendFixed()
+	start := c.extendDataForAppendFixed(sizeTime)
+	*(*types.Time)(unsafe.Pointer(&c.data[start])) = t
+	c.appendNullBitmap(true)
+	c.length++
 }
 
 // AppendEnum appends a Enum value into this Column.

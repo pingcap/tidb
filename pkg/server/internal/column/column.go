@@ -152,7 +152,7 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 	if d == nil {
 		d = NewResultEncoder(charset.CharsetUTF8MB4)
 	}
-	tmp := make([]byte, 0, 20)
+	tmp := make([]byte, 0, 32)
 	for i, col := range columns {
 		if row.IsNull(i) {
 			buffer = append(buffer, 0xfb)
@@ -199,7 +199,8 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 			d.UpdateDataEncoding(col.Charset)
 			buffer = dump.LengthEncodedString(buffer, d.EncodeData(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			buffer = dump.LengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
+			tmp = row.GetTime(i).AppendString(tmp[:0])
+			buffer = dump.LengthEncodedString(buffer, tmp)
 		case mysql.TypeDuration:
 			dur := row.GetDuration(i, int(col.Decimal))
 			buffer = dump.LengthEncodedString(buffer, hack.Slice(dur.String()))

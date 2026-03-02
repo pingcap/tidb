@@ -727,6 +727,370 @@ func TestTempIndexValueCodec(t *testing.T) {
 	require.False(t, isUnique)
 }
 
+func TestDecodeIndexKVExGeneral(t *testing.T) {
+	tableID := int64(1)
+	indexID := int64(1)
+
+	// Helper to build a version-0 index value with int handle in tail.
+	// Format: [tailLen] [body...] [intHandle 8 bytes BE]
+	buildVersion0ValueIntHandle := func(handleVal int64) []byte {
+		var val []byte
+		val = append(val, 8) // tailLen = 8 (for int handle)
+		// Pad body to make total > MaxOldEncodeValueLen (9).
+		val = append(val, 0, 0) // padding in body
+		// Append int handle as 8 bytes big-endian.
+		var hBuf [8]byte
+		binary.BigEndian.PutUint64(hBuf[:], uint64(handleVal))
+		val = append(val, hBuf[:]...)
+		return val
+	}
+
+	// Helper to build a version-0 non-unique index value (handle in key suffix).
+	// Format: [tailLen=0] [padding...] to make len > 9
+	buildVersion0ValueNonUnique := func() []byte {
+		var val []byte
+		val = append(val, 0) // tailLen = 0
+		// Pad to > MaxOldEncodeValueLen.
+		val = append(val, make([]byte, 9)...)
+		return val
+	}
+
+	t.Run("UniqueIntHandle", func(t *testing.T) {
+		// Build key: prefix + tableID + indexID + encodedCol1 + encodedCol2
+		colValues := []types.Datum{types.NewIntDatum(42), types.NewIntDatum(100)}
+		encodedCols, err := codec.EncodeKey(time.UTC, nil, colValues...)
+		require.NoError(t, err)
+		key := EncodeIndexSeekKey(tableID, indexID, encodedCols)
+
+		handleVal := int64(7)
+		value := buildVersion0ValueIntHandle(handleVal)
+
+		colsLen := 2
+		columns := []rowcodec.ColInfo{
+			{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 2, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 3, Ft: types.NewFieldType(mysql.TypeLonglong)}, // handle column
+		}
+		preAlloc := make([][]byte, colsLen, colsLen+1)
+		result, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc)
+		require.NoError(t, err)
+		require.Len(t, result, 3)
+
+		// Verify index column values match.
+		for i, expected := range colValues {
+			got, err := DecodeColumnValue(result[i], columns[i].Ft, nil)
+			require.NoError(t, err)
+			require.Equal(t, expected.GetInt64(), got.GetInt64())
+		}
+		// Verify handle.
+		handleDatum, err := DecodeColumnValue(result[2], columns[2].Ft, nil)
+		require.NoError(t, err)
+		require.Equal(t, handleVal, handleDatum.GetInt64())
+	})
+
+	t.Run("UniqueUnsignedIntHandle", func(t *testing.T) {
+		colValues := []types.Datum{types.NewIntDatum(42)}
+		encodedCols, err := codec.EncodeKey(time.UTC, nil, colValues...)
+		require.NoError(t, err)
+		key := EncodeIndexSeekKey(tableID, indexID, encodedCols)
+
+		handleVal := int64(999)
+		value := buildVersion0ValueIntHandle(handleVal)
+
+		colsLen := 1
+		ft := types.NewFieldType(mysql.TypeLonglong)
+		ft.AddFlag(mysql.UnsignedFlag)
+		columns := []rowcodec.ColInfo{
+			{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 2, Ft: ft}, // handle column unsigned
+		}
+		preAlloc := make([][]byte, colsLen, colsLen+1)
+		result, err := DecodeIndexKVEx(key, value, colsLen, HandleIsUnsigned, columns, nil, preAlloc)
+		require.NoError(t, err)
+		require.Len(t, result, 2)
+
+		// Verify handle is unsigned.
+		handleDatum, err := DecodeColumnValue(result[1], columns[1].Ft, nil)
+		require.NoError(t, err)
+		require.Equal(t, uint64(handleVal), handleDatum.GetUint64())
+	})
+
+	t.Run("NonUniqueIntHandle", func(t *testing.T) {
+		// For non-unique index, handle is in key suffix.
+		handleVal := int64(7)
+		colValues := []types.Datum{types.NewIntDatum(42), types.NewIntDatum(100)}
+		handleDatum := types.NewIntDatum(handleVal)
+		allDatums := append(colValues, handleDatum)
+		encodedAll, err := codec.EncodeKey(time.UTC, nil, allDatums...)
+		require.NoError(t, err)
+		key := EncodeIndexSeekKey(tableID, indexID, encodedAll)
+
+		value := buildVersion0ValueNonUnique()
+
+		colsLen := 2
+		columns := []rowcodec.ColInfo{
+			{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 2, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 3, Ft: types.NewFieldType(mysql.TypeLonglong)}, // handle column
+		}
+		preAlloc := make([][]byte, colsLen, colsLen+1)
+		result, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc)
+		require.NoError(t, err)
+		require.Len(t, result, 3)
+
+		// Verify index column values.
+		for i, expected := range colValues {
+			got, err := DecodeColumnValue(result[i], columns[i].Ft, nil)
+			require.NoError(t, err)
+			require.Equal(t, expected.GetInt64(), got.GetInt64())
+		}
+		// Verify handle.
+		gotHandle, err := DecodeColumnValue(result[2], columns[2].Ft, nil)
+		require.NoError(t, err)
+		require.Equal(t, handleVal, gotHandle.GetInt64())
+	})
+
+	t.Run("HandleNotNeeded", func(t *testing.T) {
+		colValues := []types.Datum{types.NewIntDatum(42)}
+		encodedCols, err := codec.EncodeKey(time.UTC, nil, colValues...)
+		require.NoError(t, err)
+		key := EncodeIndexSeekKey(tableID, indexID, encodedCols)
+
+		value := buildVersion0ValueIntHandle(7)
+
+		colsLen := 1
+		columns := []rowcodec.ColInfo{
+			{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+		}
+		preAlloc := make([][]byte, colsLen, colsLen+1)
+		result, err := DecodeIndexKVEx(key, value, colsLen, HandleNotNeeded, columns, nil, preAlloc)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+
+		got, err := DecodeColumnValue(result[0], columns[0].Ft, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(42), got.GetInt64())
+	})
+
+	t.Run("UniqueCommonHandle", func(t *testing.T) {
+		// Build key with only index columns.
+		colValues := []types.Datum{types.NewIntDatum(42)}
+		encodedCols, err := codec.EncodeKey(time.UTC, nil, colValues...)
+		require.NoError(t, err)
+		key := EncodeIndexSeekKey(tableID, indexID, encodedCols)
+
+		// Build common handle.
+		handleDatums := []types.Datum{types.NewIntDatum(10), types.NewIntDatum(20)}
+		encodedHandle, err := codec.EncodeKey(time.UTC, nil, handleDatums...)
+		require.NoError(t, err)
+		ch, err := kv.NewCommonHandle(encodedHandle)
+		require.NoError(t, err)
+
+		// Build version 0 value with common handle.
+		var val []byte
+		val = append(val, 0) // tailLen placeholder
+		val = encodeCommonHandle(val, ch)
+		// Pad to >= 10 bytes if needed.
+		tailLen := 0
+		if len(val) < 10 {
+			padding := 10 - len(val)
+			tailLen = padding
+			val = append(val, make([]byte, padding)...)
+		}
+		val[0] = byte(tailLen)
+
+		colsLen := 1
+		columns := []rowcodec.ColInfo{
+			{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 2, Ft: types.NewFieldType(mysql.TypeLonglong)}, // handle col 1
+			{ID: 3, Ft: types.NewFieldType(mysql.TypeLonglong)}, // handle col 2
+		}
+		preAlloc := make([][]byte, colsLen, colsLen+2)
+		result, err := DecodeIndexKVEx(key, val, colsLen, HandleDefault, columns, nil, preAlloc)
+		require.NoError(t, err)
+		require.Len(t, result, 3) // 1 index col + 2 handle cols
+
+		// Verify index column.
+		got, err := DecodeColumnValue(result[0], columns[0].Ft, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(42), got.GetInt64())
+
+		// Verify handle columns.
+		for i, expected := range handleDatums {
+			got, err := DecodeColumnValue(result[1+i], columns[1+i].Ft, nil)
+			require.NoError(t, err)
+			require.Equal(t, expected.GetInt64(), got.GetInt64())
+		}
+	})
+
+	// Verify that DecodeIndexKV (non-Ex) still works correctly through the general path.
+	t.Run("DecodeIndexKVNonEx", func(t *testing.T) {
+		colValues := []types.Datum{types.NewIntDatum(42)}
+		encodedCols, err := codec.EncodeKey(time.UTC, nil, colValues...)
+		require.NoError(t, err)
+		key := EncodeIndexSeekKey(tableID, indexID, encodedCols)
+
+		handleVal := int64(7)
+		value := buildVersion0ValueIntHandle(handleVal)
+
+		colsLen := 1
+		columns := []rowcodec.ColInfo{
+			{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 2, Ft: types.NewFieldType(mysql.TypeLonglong)},
+		}
+		result, err := DecodeIndexKV(key, value, colsLen, HandleDefault, columns)
+		require.NoError(t, err)
+		require.Len(t, result, 2)
+
+		got, err := DecodeColumnValue(result[0], columns[0].Ft, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(42), got.GetInt64())
+
+		handleDatum, err := DecodeColumnValue(result[1], columns[1].Ft, nil)
+		require.NoError(t, err)
+		require.Equal(t, handleVal, handleDatum.GetInt64())
+	})
+}
+
+func TestIndexRestoredDecoderCorrectness(t *testing.T) {
+	// Helper to build version-0 index value with restored data.
+	// Format: [tailLen=8] [padding] [restoredValues (rowcodec encoded)] [intHandle 8 bytes BE]
+	buildRestoredValue := func(handleVal int64, colIDs []int64, datums []types.Datum) []byte {
+		// Encode restored values using rowcodec.
+		rd := rowcodec.Encoder{Enable: true}
+		restoredBytes, err := rd.Encode(time.UTC, colIDs, datums, nil, nil)
+		require.NoError(t, err)
+
+		// Build version 0 value: [tailLen=8] [restoredBytes (starts with CodecVer=RestoreDataFlag)] [intHandle 8 bytes]
+		var val []byte
+		val = append(val, 8) // tailLen = 8 (for int handle)
+		val = append(val, restoredBytes...)
+		var hBuf [8]byte
+		binary.BigEndian.PutUint64(hBuf[:], uint64(handleVal))
+		val = append(val, hBuf[:]...)
+		return val
+	}
+
+	t.Run("MatchesOriginal", func(t *testing.T) {
+		columns := []rowcodec.ColInfo{
+			{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 2, Ft: types.NewFieldType(mysql.TypeVarchar)},
+			{ID: 3, Ft: types.NewFieldType(mysql.TypeLonglong)}, // handle column
+		}
+		colsLen := 2
+
+		colIDs := []int64{1, 2}
+		datums := []types.Datum{types.NewIntDatum(42), types.NewBytesDatum([]byte("hello"))}
+
+		colValues := []types.Datum{types.NewIntDatum(42), types.NewBytesDatum([]byte("hello"))}
+		encodedCols, err := codec.EncodeKey(time.UTC, nil, colValues...)
+		require.NoError(t, err)
+		key := EncodeIndexSeekKey(1, 1, encodedCols)
+
+		value := buildRestoredValue(7, colIDs, datums)
+
+		// Decode with original path.
+		preAlloc1 := make([][]byte, colsLen, colsLen+1)
+		orig, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc1)
+		require.NoError(t, err)
+
+		// Decode with IndexRestoredDecoder.
+		dec := NewIndexRestoredDecoder(columns[:colsLen])
+		preAlloc2 := make([][]byte, colsLen, colsLen+1)
+		opt, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc2, dec)
+		require.NoError(t, err)
+
+		require.Equal(t, len(orig), len(opt))
+		for i := range orig {
+			require.Equal(t, orig[i], opt[i], "mismatch at index %d", i)
+		}
+	})
+
+	t.Run("MultiRowReuse", func(t *testing.T) {
+		// Verify no state leakage across multiple rows with the same decoder.
+		columns := []rowcodec.ColInfo{
+			{ID: 1, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 2, Ft: types.NewFieldType(mysql.TypeVarchar)},
+			{ID: 3, Ft: types.NewFieldType(mysql.TypeLonglong)}, // handle
+		}
+		colsLen := 2
+
+		dec := NewIndexRestoredDecoder(columns[:colsLen])
+
+		rows := []struct {
+			intVal    int64
+			strVal    string
+			handleVal int64
+		}{
+			{42, "hello", 1},
+			{100, "world", 2},
+			{0, "", 3},
+			{-999, "long string with spaces   ", 4},
+		}
+
+		for _, row := range rows {
+			colIDs := []int64{1, 2}
+			datums := []types.Datum{types.NewIntDatum(row.intVal), types.NewBytesDatum([]byte(row.strVal))}
+
+			colValues := []types.Datum{types.NewIntDatum(row.intVal), types.NewBytesDatum([]byte(row.strVal))}
+			encodedCols, err := codec.EncodeKey(time.UTC, nil, colValues...)
+			require.NoError(t, err)
+			key := EncodeIndexSeekKey(1, 1, encodedCols)
+			value := buildRestoredValue(row.handleVal, colIDs, datums)
+
+			// Decode with original path for reference.
+			preAlloc1 := make([][]byte, colsLen, colsLen+1)
+			orig, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc1)
+			require.NoError(t, err)
+
+			// Decode with reused IndexRestoredDecoder.
+			preAlloc2 := make([][]byte, colsLen, colsLen+1)
+			opt, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc2, dec)
+			require.NoError(t, err)
+
+			require.Equal(t, len(orig), len(opt))
+			for i := range orig {
+				require.Equal(t, orig[i], opt[i], "mismatch at row handle=%d, index=%d", row.handleVal, i)
+			}
+		}
+	})
+
+	t.Run("UintAndNilColumns", func(t *testing.T) {
+		uft := types.NewFieldType(mysql.TypeLonglong)
+		uft.AddFlag(mysql.UnsignedFlag)
+		columns := []rowcodec.ColInfo{
+			{ID: 1, Ft: uft},
+			{ID: 2, Ft: types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 3, Ft: types.NewFieldType(mysql.TypeLonglong)}, // handle
+		}
+		colsLen := 2
+
+		// Only encode col 1, leave col 2 as nil in the rowcodec.
+		colIDs := []int64{1}
+		datums := []types.Datum{types.NewUintDatum(999)}
+
+		colValues := []types.Datum{types.NewUintDatum(999), types.NewDatum(nil)}
+		encodedCols, err := codec.EncodeKey(time.UTC, nil, colValues...)
+		require.NoError(t, err)
+		key := EncodeIndexSeekKey(1, 1, encodedCols)
+		value := buildRestoredValue(5, colIDs, datums)
+
+		preAlloc1 := make([][]byte, colsLen, colsLen+1)
+		orig, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc1)
+		require.NoError(t, err)
+
+		dec := NewIndexRestoredDecoder(columns[:colsLen])
+		preAlloc2 := make([][]byte, colsLen, colsLen+1)
+		opt, err := DecodeIndexKVEx(key, value, colsLen, HandleDefault, columns, nil, preAlloc2, dec)
+		require.NoError(t, err)
+
+		require.Equal(t, len(orig), len(opt))
+		for i := range orig {
+			require.Equal(t, orig[i], opt[i], "mismatch at index %d", i)
+		}
+	})
+}
+
 func TestV2TableCodec(t *testing.T) {
 	const tableID int64 = 31415926
 	key := EncodeTablePrefix(tableID)

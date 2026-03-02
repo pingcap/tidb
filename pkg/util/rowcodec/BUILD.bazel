@@ -29,6 +29,7 @@ go_test(
     timeout = "short",
     srcs = [
         "bench_test.go",
+        "decoder_test.go",
         "main_test.go",
         "rowcodec_test.go",
     ],

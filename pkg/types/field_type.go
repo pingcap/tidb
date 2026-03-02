@@ -50,6 +50,17 @@ func NewFieldType(tp byte) *FieldType {
 		BuildP()
 }
 
+// InitUnspecifiedFieldType initializes a FieldType for TypeUnspecified
+// without heap allocation. The caller should pass a stack-allocated FieldType.
+func InitUnspecifiedFieldType(tp *FieldType) {
+	tp.SetType(mysql.TypeUnspecified)
+	tp.SetFlag(0)
+	tp.SetFlen(UnspecifiedLength)
+	tp.SetDecimal(UnspecifiedLength)
+	tp.SetCharset(charset.CharsetBin)
+	tp.SetCollate(charset.CollationBin)
+}
+
 // NewFieldTypeWithCollation returns a FieldType,
 // with a type and other information about field type.
 func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {

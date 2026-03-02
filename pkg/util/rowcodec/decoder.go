@@ -189,6 +189,37 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 type ChunkDecoder struct {
 	decoder
 	defDatum func(i int, chk *chunk.Chunk) error
+
+	compiledCols       []compiledCol
+	compiledColsInited bool
+
+	// colMapping caches the column index in not-null columns array for decoder.columns[i].
+	// It can skip binary search for stable not-null columns layout. The cached index
+	// is validated on each row and falls back to findColID when layout changes.
+	// -1 means not cached and needs to call findColID for each row.
+	colMapping     []int
+	mappingInited  bool
+	mappingRowCols int
+}
+
+type compiledColKind uint8
+
+const (
+	compiledColOther compiledColKind = iota
+	compiledColInt
+	compiledColUint
+	compiledColFloat32
+	compiledColFloat64
+	compiledColBytes
+	compiledColTime
+	compiledColDuration
+)
+
+type compiledCol struct {
+	kind          compiledColKind
+	tp            byte
+	fsp           int
+	needTZConvert bool
 }
 
 // NewChunkDecoder creates a NewChunkDecoder.
@@ -203,11 +234,69 @@ func NewChunkDecoder(columns []ColInfo, handleColIDs []int64, defDatum func(i in
 	}
 }
 
+func (decoder *ChunkDecoder) initCompiledCols() {
+	if decoder.compiledColsInited {
+		return
+	}
+	if cap(decoder.compiledCols) < len(decoder.columns) {
+		decoder.compiledCols = make([]compiledCol, len(decoder.columns))
+	} else {
+		decoder.compiledCols = decoder.compiledCols[:len(decoder.columns)]
+	}
+	for i := range decoder.columns {
+		col := &decoder.columns[i]
+		if col.Ft == nil {
+			decoder.compiledCols[i] = compiledCol{kind: compiledColOther}
+			continue
+		}
+		tp := col.Ft.GetType()
+		cc := compiledCol{kind: compiledColOther, tp: tp}
+		switch tp {
+		case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
+			if mysql.HasUnsignedFlag(col.Ft.GetFlag()) {
+				cc.kind = compiledColUint
+			} else {
+				cc.kind = compiledColInt
+			}
+		case mysql.TypeYear:
+			cc.kind = compiledColInt
+		case mysql.TypeFloat:
+			cc.kind = compiledColFloat32
+		case mysql.TypeDouble:
+			cc.kind = compiledColFloat64
+		case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			cc.kind = compiledColBytes
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			cc.kind = compiledColTime
+			cc.fsp = col.Ft.GetDecimal()
+			cc.needTZConvert = tp == mysql.TypeTimestamp && decoder.loc != nil
+		case mysql.TypeDuration:
+			cc.kind = compiledColDuration
+			cc.fsp = col.Ft.GetDecimal()
+		}
+		decoder.compiledCols[i] = cc
+	}
+	decoder.compiledColsInited = true
+}
+
 // DecodeToChunk decodes a row to chunk.
 func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, commitTS uint64, handle kv.Handle, chk *chunk.Chunk) error {
 	err := decoder.fromBytes(rowData)
 	if err != nil {
 		return err
+	}
+
+	if !decoder.compiledColsInited {
+		decoder.initCompiledCols()
+	}
+
+	// Build (or rebuild) column mapping cache for stable schema.
+	rowCols := int(decoder.row.numNotNullCols) + int(decoder.row.numNullCols)
+	if !decoder.mappingInited || decoder.mappingRowCols != rowCols {
+		decoder.buildColMapping()
+		decoder.mappingInited = true
+		decoder.mappingRowCols = rowCols
 	}
 
 	for colIdx := range decoder.columns {
@@ -228,6 +317,16 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, commitTS uint64, hand
 		}
 		if col.ID == model.ExtraRowChecksumID {
 			chk.AppendNull(colIdx)
+			continue
+		}
+
+		mappedIdx := decoder.colMapping[colIdx]
+		if mappedIdx >= 0 && decoder.matchNotNullColID(mappedIdx, col.ID) {
+			colData := decoder.getData(mappedIdx)
+			err := decoder.decodeColToChunk(colIdx, col, colData, chk)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -266,6 +365,43 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, commitTS uint64, hand
 	return nil
 }
 
+func (decoder *ChunkDecoder) buildColMapping() {
+	if cap(decoder.colMapping) < len(decoder.columns) {
+		decoder.colMapping = make([]int, len(decoder.columns))
+	} else {
+		decoder.colMapping = decoder.colMapping[:len(decoder.columns)]
+	}
+	for i := range decoder.colMapping {
+		decoder.colMapping[i] = -1
+	}
+
+	for i := range decoder.columns {
+		col := &decoder.columns[i]
+		if col.VirtualGenCol || col.ID == model.ExtraRowChecksumID {
+			continue
+		}
+		// Only attempt to cache columns declared NOT NULL. Nullable columns can move between
+		// not-null and null segments, and other columns' NULL changes may also shift indices.
+		if col.Ft == nil || !mysql.HasNotNullFlag(col.Ft.GetFlag()) {
+			continue
+		}
+		idx, isNil, notFound := decoder.row.findColID(col.ID)
+		if !notFound && !isNil {
+			decoder.colMapping[i] = idx
+		}
+	}
+}
+
+func (decoder *ChunkDecoder) matchNotNullColID(idx int, colID int64) bool {
+	if idx < 0 || idx >= int(decoder.row.numNotNullCols) {
+		return false
+	}
+	if decoder.row.large() {
+		return int64(decoder.row.colIDs32[idx]) == colID
+	}
+	return int64(decoder.row.colIDs[idx]) == colID
+}
+
 func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, handle kv.Handle, chk *chunk.Chunk) bool {
 	if handle == nil {
 		return false
@@ -288,30 +424,56 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 }
 
 func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData []byte, chk *chunk.Chunk) error {
-	switch col.Ft.GetType() {
-	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
-		if mysql.HasUnsignedFlag(col.Ft.GetFlag()) {
-			chk.AppendUint64(colIdx, decodeUint(colData))
-		} else {
-			chk.AppendInt64(colIdx, decodeInt(colData))
-		}
-	case mysql.TypeYear:
+	cc := decoder.compiledCols[colIdx]
+	switch cc.kind {
+	case compiledColInt:
 		chk.AppendInt64(colIdx, decodeInt(colData))
-	case mysql.TypeFloat:
+		return nil
+	case compiledColUint:
+		chk.AppendUint64(colIdx, decodeUint(colData))
+		return nil
+	case compiledColFloat32:
 		_, fVal, err := codec.DecodeFloat(colData)
 		if err != nil {
 			return err
 		}
 		chk.AppendFloat32(colIdx, float32(fVal))
-	case mysql.TypeDouble:
+		return nil
+	case compiledColFloat64:
 		_, fVal, err := codec.DecodeFloat(colData)
 		if err != nil {
 			return err
 		}
 		chk.AppendFloat64(colIdx, fVal)
-	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return nil
+	case compiledColBytes:
 		chk.AppendBytes(colIdx, colData)
+		return nil
+	case compiledColTime:
+		var t types.Time
+		t.SetType(cc.tp)
+		t.SetFsp(cc.fsp)
+		err := t.FromPackedUint(decodeUint(colData))
+		if err != nil {
+			return err
+		}
+		if cc.needTZConvert && !t.IsZero() {
+			err = t.ConvertTimeZone(time.UTC, decoder.loc)
+			if err != nil {
+				return err
+			}
+		}
+		chk.AppendTime(colIdx, t)
+		return nil
+	case compiledColDuration:
+		var dur types.Duration
+		dur.Duration = time.Duration(decodeInt(colData))
+		dur.Fsp = cc.fsp
+		chk.AppendDuration(colIdx, dur)
+		return nil
+	}
+
+	switch cc.tp {
 	case mysql.TypeNewDecimal:
 		_, dec, _, frac, err := codec.DecodeDecimal(colData)
 		if err != nil {
@@ -326,26 +488,6 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 			dec = to
 		}
 		chk.AppendMyDecimal(colIdx, dec)
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		var t types.Time
-		t.SetType(col.Ft.GetType())
-		t.SetFsp(col.Ft.GetDecimal())
-		err := t.FromPackedUint(decodeUint(colData))
-		if err != nil {
-			return err
-		}
-		if col.Ft.GetType() == mysql.TypeTimestamp && decoder.loc != nil && !t.IsZero() {
-			err = t.ConvertTimeZone(time.UTC, decoder.loc)
-			if err != nil {
-				return err
-			}
-		}
-		chk.AppendTime(colIdx, t)
-	case mysql.TypeDuration:
-		var dur types.Duration
-		dur.Duration = time.Duration(decodeInt(colData))
-		dur.Fsp = col.Ft.GetDecimal()
-		chk.AppendDuration(colIdx, dur)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
 		enum, err := types.ParseEnumValue(col.Ft.GetElems(), decodeUint(colData))
@@ -374,7 +516,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		}
 		chk.AppendVectorFloat32(colIdx, v)
 	default:
-		return errors.Errorf("unknown type %d", col.Ft.GetType())
+		return errors.Errorf("unknown type %d", cc.tp)
 	}
 	return nil
 }
@@ -505,6 +647,75 @@ func (*BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
 		buf = append(buf, val...)
 	}
 	return buf
+}
+
+// encodeOldDatumToArena is like encodeOldDatum but appends to a caller-provided arena
+// instead of allocating a new slice. Returns the encoded sub-slice and the updated arena.
+func encodeOldDatumToArena(tp byte, val []byte, arena []byte) (result []byte, newArena []byte) {
+	start := len(arena)
+	switch tp {
+	case BytesFlag:
+		arena = append(arena, CompactBytesFlag)
+		arena = codec.EncodeCompactBytes(arena, val)
+	case IntFlag:
+		arena = append(arena, VarintFlag)
+		arena = codec.EncodeVarint(arena, decodeInt(val))
+	case UintFlag:
+		arena = append(arena, VaruintFlag)
+		arena = codec.EncodeUvarint(arena, decodeUint(val))
+	default:
+		arena = append(arena, tp)
+		arena = append(arena, val...)
+	}
+	return arena[start:len(arena):len(arena)], arena
+}
+
+// DecodeToBytesNoHandleInto is like DecodeToBytesNoHandle but writes into a caller-provided
+// values slice and arena instead of allocating new ones. The arena is used for encodeOldDatum
+// allocations; caller should reset arena length between rows (arena = arena[:0]).
+// The values slice is cleared and reused.
+func (decoder *BytesDecoder) DecodeToBytesNoHandleInto(
+	outputOffset map[int64]int, value []byte, values [][]byte, arena []byte,
+) ([][]byte, []byte, error) {
+	var r row
+	err := r.fromBytes(value)
+	if err != nil {
+		return nil, arena, err
+	}
+	for i := range values {
+		values[i] = nil
+	}
+	for i := range decoder.columns {
+		col := &decoder.columns[i]
+		tp := fieldType2Flag(col.Ft.ArrayType().GetType(), col.Ft.GetFlag()&mysql.UnsignedFlag == 0)
+		colID := col.ID
+		offset := outputOffset[colID]
+		idx, isNil, notFound := r.findColID(colID)
+		if !notFound && !isNil {
+			val := r.getData(idx)
+			values[offset], arena = encodeOldDatumToArena(tp, val, arena)
+			continue
+		}
+
+		if isNil {
+			values[offset] = []byte{NilFlag}
+			continue
+		}
+
+		if decoder.defBytes != nil {
+			defVal, err := decoder.defBytes(i)
+			if err != nil {
+				return nil, arena, err
+			}
+			if len(defVal) > 0 {
+				values[offset] = defVal
+				continue
+			}
+		}
+
+		values[offset] = []byte{NilFlag}
+	}
+	return values, arena, nil
 }
 
 // fieldType2Flag transforms field type into kv type flag.
