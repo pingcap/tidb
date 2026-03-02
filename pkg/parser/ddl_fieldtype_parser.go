@@ -31,7 +31,6 @@ import (
 // parseFieldType parses a data type definition: INT(10) UNSIGNED, VARCHAR(255) CHARSET utf8, etc.
 func (p *HandParser) parseFieldType() *types.FieldType {
 	tp := types.NewFieldType(mysql.TypeUnspecified)
-	p.lastFieldTypeExplicitCollate = false // reset for this column
 
 	token := p.peek()
 	switch token.Tp {
@@ -473,35 +472,11 @@ func (p *HandParser) parseStringOptions(tp *types.FieldType) {
 			tp.SetCollate(charset.CollationBin)
 		}
 	}
-	if p.peek().Tp == collate {
-		p.lastFieldTypeExplicitCollate = true // track explicit COLLATE for duplicate detection
-		p.next()
-		tok := p.peek()
-		if s := tok.Lit; s != "" {
-			info, err := charset.GetCollationByName(s)
-			if err != nil {
-				p.errs = append(p.errs, err)
-				return
-			}
-			tp.SetCollate(info.Name)
-			p.next()
-		} else if s, ok := tok.Item.(string); ok && s != "" {
-			info, err := charset.GetCollationByName(s)
-			if err != nil {
-				p.errs = append(p.errs, err)
-				return
-			}
-			tp.SetCollate(info.Name)
-			p.next()
-		} else if tok.Tp == binaryType || tok.Tp == byteType {
-			tp.SetCollate(charset.CollationBin)
-			p.next()
-		} else {
-			p.syntaxErrorAt(tok)
-		}
-	}
+	// NOTE: COLLATE is NOT consumed here. In the yacc grammar, OptBinary does
+	// not include a COLLATE alternative — COLLATE is always handled as a
+	// ColumnOption in the ColumnOptionList production.
 
-	// Parse optional trailing BINARY: [CHARACTER SET ...] [COLLATE ...] [BINARY]
+	// Parse optional trailing BINARY: [CHARACTER SET ...] [BINARY]
 	if p.peek().Tp == binaryType {
 		p.next()
 		tp.AddFlag(mysql.BinaryFlag)

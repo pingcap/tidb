@@ -235,7 +235,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 			{Tp: ast.ColumnOptionUniqKey},
 		}
 		// Parse optional additional column options after SERIAL
-		col.Options = append(col.Options, p.parseColumnOptions(col.Tp, false)...)
+		col.Options = append(col.Options, p.parseColumnOptions(col.Tp)...)
 		if err := col.Validate(); err != nil {
 			p.errs = append(p.errs, err)
 			return nil
@@ -250,10 +250,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 		return nil
 	}
 
-	// Parse column options. Tell parseColumnOptions whether the field type
-	// already consumed an explicit COLLATE (so a second one is a duplicate).
-	hasExplicitCollate := p.lastFieldTypeExplicitCollate
-	col.Options = p.parseColumnOptions(col.Tp, hasExplicitCollate)
+	col.Options = p.parseColumnOptions(col.Tp)
 
 	// Validate column definition (e.g., generated column + DEFAULT is illegal).
 	if err := col.Validate(); err != nil {
@@ -265,7 +262,7 @@ func (p *HandParser) parseColumnDef() *ast.ColumnDef {
 }
 
 // parseColumnOptions parses column options: NOT NULL, DEFAULT 1, PRIMARY KEY, etc.
-func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate bool) []*ast.ColumnOption {
+func (p *HandParser) parseColumnOptions(_ *types.FieldType) []*ast.ColumnOption {
 	var options []*ast.ColumnOption
 	for {
 		option := Alloc[ast.ColumnOption](p.arena)
@@ -465,19 +462,12 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType, hasExplicitCollate b
 			option.Tp = ast.ColumnOptionReference
 			option.Refer = p.parseReferenceDef()
 		case collate:
-			// Check for duplicate COLLATE: either already consumed by
-			// parseStringOptions on the field type, or already present
-			// as a prior column option. Implicit type collation (e.g. BINARY)
-			// does NOT count as duplicate.
-			isDuplicate := hasExplicitCollate
-			if !isDuplicate {
-				for _, prev := range options {
-					if prev.Tp == ast.ColumnOptionCollate {
-						isDuplicate = true
-						break
-					}
-				}
-			}
+			// Check for duplicate COLLATE using the same logic as the yacc
+			// ColumnOptionList rule: HasCollateOption is set to true ONLY in
+			// the base case (first option), and checked-but-never-updated in
+			// the recursive case. This means duplicates are only detected
+			// when COLLATE is the very first column option.
+			isDuplicate := len(options) > 0 && options[0].Tp == ast.ColumnOptionCollate
 			// Consume COLLATE and CollationName BEFORE checking duplicate,
 			// matching yacc: the ColumnOption rule "COLLATE" CollationName
 			// consumes both tokens, then the action code checks for duplicates.

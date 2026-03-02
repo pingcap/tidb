@@ -45,11 +45,6 @@ type HandParser struct {
 	// strictDoubleFieldType controls if DOUBLE(len) is allowed (it should be rejected if strict).
 	strictDoubleFieldType bool
 
-	// lastFieldTypeExplicitCollate is set to true by parseStringOptions when it
-	// consumes an explicit COLLATE clause. parseColumnDef uses this to detect
-	// duplicate COLLATE in column options. Reset at the start of parseFieldType.
-	lastFieldTypeExplicitCollate bool
-
 	// hintParser parses optimizer hint comments (/*+ ... */) directly.
 	hintParser *hintParser
 
