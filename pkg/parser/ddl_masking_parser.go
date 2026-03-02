@@ -41,7 +41,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 //	  [RESTRICT ON '(' RestrictOperationList ')' | RESTRICT ON NONE]
 //	  [ENABLE | DISABLE]
 func (p *HandParser) parseCreateMaskingPolicyStmt() ast.StmtNode {
-	stmt := &ast.CreateMaskingPolicyStmt{}
+	stmt := Alloc[ast.CreateMaskingPolicyStmt](p.arena)
 
 	p.expect(create)
 	if _, ok := p.accept(or); ok {
@@ -54,7 +54,7 @@ func (p *HandParser) parseCreateMaskingPolicyStmt() ast.StmtNode {
 	stmt.IfNotExists = p.acceptIfNotExists()
 
 	if stmt.OrReplace && stmt.IfNotExists {
-		p.syntaxErrorAt(p.peek())
+		p.error(p.peek().Offset, "'OR REPLACE' and 'IF NOT EXISTS' are mutually exclusive")
 		return nil
 	}
 
