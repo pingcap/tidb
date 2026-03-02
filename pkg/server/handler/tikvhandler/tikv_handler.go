@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
@@ -170,6 +171,7 @@ type DDLResignOwnerHandler struct {
 // DDLCheckHandler is the handler for triggering admin check index.
 type DDLCheckHandler struct {
 	*handler.TikvHandlerTool
+	adminCheckIndexFn func(ctx context.Context, dbName, tableName, indexName string, limit int) (*executor.AdminCheckIndexInconsistentSummary, error)
 }
 
 // NewDDLResignOwnerHandler creates a new DDLResignOwnerHandler.
@@ -179,7 +181,7 @@ func NewDDLResignOwnerHandler(store kv.Storage) *DDLResignOwnerHandler {
 
 // NewDDLCheckHandler creates a new DDLCheckHandler.
 func NewDDLCheckHandler(tool *handler.TikvHandlerTool) *DDLCheckHandler {
-	return &DDLCheckHandler{tool}
+	return &DDLCheckHandler{TikvHandlerTool: tool}
 }
 
 // ServerInfoHandler is the handler for getting statistics.
@@ -1271,8 +1273,12 @@ func (h DDLCheckHandler) serveAdminCheckIndexSummary(w http.ResponseWriter, req 
 		return
 	}
 
-	summary, err := h.checkIndexByName(dbName, tableName, indexName, limit)
-	if err != nil && summary == nil {
+	checkIndexByNameFn := h.checkIndexByName
+	if h.adminCheckIndexFn != nil {
+		checkIndexByNameFn = h.adminCheckIndexFn
+	}
+	summary, err := checkIndexByNameFn(req.Context(), dbName, tableName, indexName, limit)
+	if err != nil && (!consistency.ErrAdminCheckInconsistent.Equal(err) || summary == nil) {
 		handler.WriteError(w, err)
 		return
 	}
@@ -1301,7 +1307,7 @@ func collectRecordSetRows(ctx context.Context, se sessionapi.Session, rss []sqle
 	return rows, nil
 }
 
-func (h DDLCheckHandler) checkIndexByName(dbName, tableName, indexName string, limit int) (*executor.AdminCheckIndexInconsistentSummary, error) {
+func (h DDLCheckHandler) checkIndexByName(ctx context.Context, dbName, tableName, indexName string, limit int) (*executor.AdminCheckIndexInconsistentSummary, error) {
 	se, err := session.CreateSession(h.Store)
 	if err != nil {
 		return nil, err
@@ -1325,7 +1331,7 @@ func (h DDLCheckHandler) checkIndexByName(dbName, tableName, indexName string, l
 
 	checkSQL := fmt.Sprintf("admin check index %s %s", quoteTable(dbName, tableName), quoteName(indexName))
 
-	rs, execErr := se.Execute(context.Background(), checkSQL)
+	rs, execErr := se.Execute(ctx, checkSQL)
 	for _, one := range rs {
 		if one != nil {
 			terror.Call(one.Close)
@@ -1338,6 +1344,9 @@ func (h DDLCheckHandler) checkIndexByName(dbName, tableName, indexName string, l
 	}
 	// Return SQL error only when no inconsistency rows were collected.
 	// If rows are collected, ServeHTTP still returns the summary payload.
+	if execErr != nil && !consistency.ErrAdminCheckInconsistent.Equal(execErr) {
+		return nil, execErr
+	}
 	if execErr != nil && summary.InconsistentRowCount == 0 {
 		return nil, execErr
 	}
