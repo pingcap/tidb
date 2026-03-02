@@ -48,20 +48,24 @@ func TestDefaultDataSinkRegistererTopRUTwoSinksRefCountAndReset(t *testing.T) {
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
 	}
+	topsqlstate.DisableTopSQL()
 	topsqlstate.ResetTopRUItemInterval()
 	t.Cleanup(func() {
 		for topsqlstate.TopRUEnabled() {
 			topsqlstate.DisableTopRU()
 		}
+		topsqlstate.DisableTopSQL()
 		topsqlstate.ResetTopRUItemInterval()
 	})
 
 	r := NewDefaultDataSinkRegisterer(context.Background())
 	ds1 := &pubSubDataSink{
+		enableTopSQL: true,
 		enableTopRU:  true,
 		itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S,
 	}
 	ds2 := &pubSubDataSink{
+		enableTopSQL: true,
 		enableTopRU:  true,
 		itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S,
 	}
@@ -86,16 +90,19 @@ func TestDefaultDataSinkRegistererTopRUDuplicateRegisterIsIdempotent(t *testing.
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
 	}
+	topsqlstate.DisableTopSQL()
 	topsqlstate.ResetTopRUItemInterval()
 	t.Cleanup(func() {
 		for topsqlstate.TopRUEnabled() {
 			topsqlstate.DisableTopRU()
 		}
+		topsqlstate.DisableTopSQL()
 		topsqlstate.ResetTopRUItemInterval()
 	})
 
 	r := NewDefaultDataSinkRegisterer(context.Background())
 	ds := &pubSubDataSink{
+		enableTopSQL: true,
 		enableTopRU:  true,
 		itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S,
 	}
@@ -129,9 +136,9 @@ func TestDefaultDataSinkRegistererTopRURefCountConcurrentRegisterDeregister(t *t
 
 	r := NewDefaultDataSinkRegisterer(context.Background())
 	sinks := []*pubSubDataSink{
-		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S},
-		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S},
-		{enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_60S},
+		{enableTopSQL: true, enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S},
+		{enableTopSQL: true, enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_30S},
+		{enableTopSQL: true, enableTopRU: true, itemInterval: tipb.ItemInterval_ITEM_INTERVAL_60S},
 	}
 
 	const (
@@ -164,6 +171,48 @@ func TestDefaultDataSinkRegistererTopRURefCountConcurrentRegisterDeregister(t *t
 	require.Equal(t, int64(topsqlstate.DefTiDBTopRUItemIntervalSeconds), topsqlstate.GetTopRUItemInterval())
 	require.False(t, topsqlstate.TopSQLEnabled())
 	require.Empty(t, r.dataSinks)
+}
+
+// TestDefaultDataSinkRegistererTopSQLRespectsTopRUOnly verifies TopSQL is only
+// enabled for sinks that request it, while TopRU-only sinks do not toggle TopSQL.
+func TestDefaultDataSinkRegistererTopSQLRespectsTopRUOnly(t *testing.T) {
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	topsqlstate.DisableTopSQL()
+	topsqlstate.ResetTopRUItemInterval()
+	t.Cleanup(func() {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		topsqlstate.DisableTopSQL()
+		topsqlstate.ResetTopRUItemInterval()
+	})
+
+	r := NewDefaultDataSinkRegisterer(context.Background())
+	topSQLSink := &pubSubDataSink{
+		enableTopSQL: true,
+	}
+	topRUSink := &pubSubDataSink{
+		enableTopRU:  true,
+		itemInterval: tipb.ItemInterval_ITEM_INTERVAL_15S,
+	}
+
+	require.NoError(t, r.Register(topSQLSink))
+	require.True(t, topsqlstate.TopSQLEnabled())
+	require.False(t, topsqlstate.TopRUEnabled())
+
+	require.NoError(t, r.Register(topRUSink))
+	require.True(t, topsqlstate.TopSQLEnabled())
+	require.True(t, topsqlstate.TopRUEnabled())
+
+	r.Deregister(topSQLSink)
+	require.False(t, topsqlstate.TopSQLEnabled())
+	require.True(t, topsqlstate.TopRUEnabled())
+
+	r.Deregister(topRUSink)
+	require.False(t, topsqlstate.TopSQLEnabled())
+	require.False(t, topsqlstate.TopRUEnabled())
 }
 
 type mockDataSink2 struct {
