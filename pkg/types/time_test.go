@@ -2337,3 +2337,82 @@ func BenchmarkStrToDate(b *testing.B) {
 	benchmarkStrToDate(b, "strToDate %r ddMMyyyy", typeCtx, "04:13:56 AM 13/05/2019", "%r %d/%c/%Y")
 	benchmarkStrToDate(b, "strToDate %T ddMMyyyy", typeCtx, " 4:13:56 13/05/2019", "%T %d/%c/%Y")
 }
+
+func TestTimeAppendString(t *testing.T) {
+	tests := []struct {
+		name string
+		tp   byte
+		fsp  int
+		year, month, day, hour, minute, second, micro int
+		expected                                       string
+	}{
+		{"Date", mysql.TypeDate, 0, 2024, 1, 2, 0, 0, 0, 0, "2024-01-02"},
+		{"Datetime FSP=0", mysql.TypeDatetime, 0, 2024, 1, 2, 3, 4, 5, 0, "2024-01-02 03:04:05"},
+		{"Timestamp FSP=3", mysql.TypeTimestamp, 3, 2024, 1, 2, 3, 4, 5, 123000, "2024-01-02 03:04:05.123"},
+		{"Datetime FSP=6", mysql.TypeDatetime, 6, 2024, 1, 2, 3, 4, 5, 123456, "2024-01-02 03:04:05.123456"},
+		{"Zero Date", mysql.TypeDate, 0, 0, 0, 0, 0, 0, 0, 0, "0000-00-00"},
+		{"Zero Datetime", mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, 0, "0000-00-00 00:00:00"},
+		{"Boundary month=1 day=1", mysql.TypeDatetime, 0, 2024, 1, 1, 0, 0, 0, 0, "2024-01-01 00:00:00"},
+		{"Boundary month=12 day=31", mysql.TypeDatetime, 0, 2024, 12, 31, 23, 59, 59, 0, "2024-12-31 23:59:59"},
+		{"FSP=1", mysql.TypeDatetime, 1, 2024, 6, 15, 12, 30, 45, 100000, "2024-06-15 12:30:45.1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ct := types.FromDate(tt.year, tt.month, tt.day, tt.hour, tt.minute, tt.second, tt.micro)
+			v := types.NewTime(ct, tt.tp, tt.fsp)
+
+			// Verify AppendString output matches expected.
+			buf := v.AppendString(nil)
+			require.Equal(t, tt.expected, string(buf))
+
+			// Verify AppendString and String produce the same result.
+			require.Equal(t, v.String(), string(buf))
+		})
+	}
+}
+
+func BenchmarkTimeString(b *testing.B) {
+	b.Run("Date", func(b *testing.B) {
+		v := types.NewTime(types.FromDate(2024, 1, 2, 0, 0, 0, 0), mysql.TypeDate, 0)
+		for i := 0; i < b.N; i++ {
+			_ = v.String()
+		}
+	})
+	b.Run("Datetime FSP=0", func(b *testing.B) {
+		v := types.NewTime(types.FromDate(2024, 1, 2, 3, 4, 5, 0), mysql.TypeDatetime, 0)
+		for i := 0; i < b.N; i++ {
+			_ = v.String()
+		}
+	})
+	b.Run("Datetime FSP=6", func(b *testing.B) {
+		v := types.NewTime(types.FromDate(2024, 1, 2, 3, 4, 5, 123456), mysql.TypeDatetime, 6)
+		for i := 0; i < b.N; i++ {
+			_ = v.String()
+		}
+	})
+}
+
+func BenchmarkTimeAppendString(b *testing.B) {
+	b.Run("Date", func(b *testing.B) {
+		v := types.NewTime(types.FromDate(2024, 1, 2, 0, 0, 0, 0), mysql.TypeDate, 0)
+		buf := make([]byte, 0, 26)
+		for i := 0; i < b.N; i++ {
+			buf = v.AppendString(buf[:0])
+		}
+	})
+	b.Run("Datetime FSP=0", func(b *testing.B) {
+		v := types.NewTime(types.FromDate(2024, 1, 2, 3, 4, 5, 0), mysql.TypeDatetime, 0)
+		buf := make([]byte, 0, 26)
+		for i := 0; i < b.N; i++ {
+			buf = v.AppendString(buf[:0])
+		}
+	})
+	b.Run("Datetime FSP=6", func(b *testing.B) {
+		v := types.NewTime(types.FromDate(2024, 1, 2, 3, 4, 5, 123456), mysql.TypeDatetime, 6)
+		buf := make([]byte, 0, 26)
+		for i := 0; i < b.N; i++ {
+			buf = v.AppendString(buf[:0])
+		}
+	})
+}

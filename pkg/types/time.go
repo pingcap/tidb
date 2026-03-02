@@ -373,22 +373,9 @@ func (t *Time) ConvertTimeZone(from, to *gotime.Location) error {
 }
 
 func (t Time) String() string {
-	if t.Type() == mysql.TypeDate {
-		// We control the format, so no error would occur.
-		str, err := t.DateFormat("%Y-%m-%d")
-		terror.Log(errors.Trace(err))
-		return str
-	}
-
-	str, err := t.DateFormat("%Y-%m-%d %H:%i:%s")
-	terror.Log(errors.Trace(err))
-	fsp := t.Fsp()
-	if fsp > 0 {
-		tmp := fmt.Sprintf(".%06d", t.Microsecond())
-		str = str + tmp[:1+fsp]
-	}
-
-	return str
+	buf := make([]byte, 0, 26)
+	buf = t.AppendString(buf)
+	return string(buf)
 }
 
 // IsZero returns a boolean indicating whether the time is equal to ZeroCoreTime.
@@ -2898,6 +2885,58 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	}
 
 	return nil
+}
+
+// appendInt2 appends a 2-digit zero-padded integer to buf.
+func appendInt2(buf []byte, v int) []byte {
+	return append(buf, byte('0'+v/10), byte('0'+v%10))
+}
+
+// appendInt4 appends a 4-digit zero-padded integer to buf.
+func appendInt4(buf []byte, v int) []byte {
+	return append(buf,
+		byte('0'+v/1000),
+		byte('0'+(v/100)%10),
+		byte('0'+(v/10)%10),
+		byte('0'+v%10),
+	)
+}
+
+// AppendString appends the formatted time string to buf and returns the result.
+// Zero allocations — all formatting is done via direct byte writes.
+func (t Time) AppendString(buf []byte) []byte {
+	buf = appendInt4(buf, t.Year())
+	buf = append(buf, '-')
+	buf = appendInt2(buf, t.Month())
+	buf = append(buf, '-')
+	buf = appendInt2(buf, t.Day())
+
+	if t.Type() == mysql.TypeDate {
+		return buf
+	}
+
+	buf = append(buf, ' ')
+	buf = appendInt2(buf, t.Hour())
+	buf = append(buf, ':')
+	buf = appendInt2(buf, t.Minute())
+	buf = append(buf, ':')
+	buf = appendInt2(buf, t.Second())
+
+	fsp := t.Fsp()
+	if fsp > 0 {
+		buf = append(buf, '.')
+		micro := t.Microsecond()
+		digits := [6]byte{
+			byte('0' + micro/100000),
+			byte('0' + (micro/10000)%10),
+			byte('0' + (micro/1000)%10),
+			byte('0' + (micro/100)%10),
+			byte('0' + (micro/10)%10),
+			byte('0' + micro%10),
+		}
+		buf = append(buf, digits[:fsp]...)
+	}
+	return buf
 }
 
 // FormatIntWidthN uses to format int with width. Insufficient digits are filled by 0.
