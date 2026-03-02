@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
+// CreateModel executes the CREATE MODEL statement.
 func (e *executor) CreateModel(ctx sessionctx.Context, stmt *ast.CreateModelStmt) error {
 	schema := stmt.Name.Schema
 	if schema.L == "" {
@@ -95,6 +96,7 @@ func (e *executor) CreateModel(ctx sessionctx.Context, stmt *ast.CreateModelStmt
 	return errors.Trace(err)
 }
 
+// AlterModel executes the ALTER MODEL statement.
 func (e *executor) AlterModel(ctx sessionctx.Context, stmt *ast.AlterModelStmt) error {
 	schema := stmt.Name.Schema
 	if schema.L == "" {
@@ -166,6 +168,7 @@ func (e *executor) AlterModel(ctx sessionctx.Context, stmt *ast.AlterModelStmt) 
 	return errors.Trace(err)
 }
 
+// DropModel executes the DROP MODEL statement.
 func (e *executor) DropModel(ctx sessionctx.Context, stmt *ast.DropModelStmt) error {
 	schema := stmt.Name.Schema
 	if schema.L == "" {

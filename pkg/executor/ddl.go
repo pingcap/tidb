@@ -777,13 +777,7 @@ func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {
 	return e.ddlExecutor.AlterSequence(e.Ctx(), s)
 }
 
-func (e *DDLExec) executeCreateModel(s *ast.CreateModelStmt) error {
-	if !vardef.EnableModelDDL.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
-		return infoschema.ErrModelDDLDisabled
-	}
-	return e.ddlExecutor.CreateModel(e.Ctx(), s)
-}
-
+// executeAlterModel executes the ALTER MODEL statement.
 func (e *DDLExec) executeAlterModel(s *ast.AlterModelStmt) error {
 	if !vardef.EnableModelDDL.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrModelDDLDisabled
@@ -791,6 +785,7 @@ func (e *DDLExec) executeAlterModel(s *ast.AlterModelStmt) error {
 	return e.ddlExecutor.AlterModel(e.Ctx(), s)
 }
 
+// executeDropModel executes the DROP MODEL statement.
 func (e *DDLExec) executeDropModel(s *ast.DropModelStmt) error {
 	if !vardef.EnableModelDDL.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrModelDDLDisabled

@@ -55,6 +55,7 @@ var (
 	})
 )
 
+// modelPredictFunctionClass implements the functionClass interface for MODEL_PREDICT.
 type modelPredictFunctionClass struct {
 	baseFunctionClass
 }
@@ -79,6 +80,7 @@ func (c *modelPredictFunctionClass) getFunction(ctx BuildContext, args []Express
 	return &builtinModelPredictSig{baseBuiltinFunc: bf}, nil
 }
 
+// modelPredictOutputFunctionClass implements the functionClass interface for MODEL_PREDICT_OUTPUT.
 type modelPredictOutputFunctionClass struct {
 	baseFunctionClass
 }
@@ -105,6 +107,7 @@ func (c *modelPredictOutputFunctionClass) getFunction(ctx BuildContext, args []E
 	return &builtinModelPredictOutputSig{baseBuiltinFunc: bf}, nil
 }
 
+// builtinModelPredictSig implements the builtinFunc interface for MODEL_PREDICT.
 type builtinModelPredictSig struct {
 	baseBuiltinFunc
 	expropt.SessionVarsPropReader
@@ -189,6 +192,7 @@ func (b *builtinModelPredictSig) init(ctx EvalContext, inputOffset int) error {
 	return b.initErr
 }
 
+// builtinModelPredictOutputSig implements the builtinFunc interface for MODEL_PREDICT_OUTPUT.
 type builtinModelPredictOutputSig struct {
 	baseBuiltinFunc
 	expropt.SessionVarsPropReader
@@ -416,6 +420,7 @@ func (b *builtinModelPredictOutputSig) init(ctx EvalContext, inputOffset int) er
 	return b.initErr
 }
 
+// modelPredictMeta holds metadata and runtime state for model prediction.
 type modelPredictMeta struct {
 	modelID     int64
 	version     int64
@@ -430,11 +435,13 @@ type modelPredictMeta struct {
 	allowCustom bool
 }
 
+// modelSchemaColumn represents a column in model input/output schema.
 type modelSchemaColumn struct {
 	name ast.CIStr
 	tp   *types.FieldType
 }
 
+// predict runs model inference for a single input row.
 func (m *modelPredictMeta) predict(inputs []float32) ([]float32, error) {
 	outputs, err := m.backend.Infer(context.Background(), m.artifact, m.inputNames, m.outputNames, inputs, m.inferOpts)
 	if err != nil {
@@ -443,6 +450,7 @@ func (m *modelPredictMeta) predict(inputs []float32) ([]float32, error) {
 	return outputs, nil
 }
 
+// predictBatch runs model inference for multiple input rows.
 func (m *modelPredictMeta) predictBatch(inputs [][]float32) ([][]float32, error) {
 	if !m.batchable {
 		results := make([][]float32, len(inputs))
@@ -462,6 +470,7 @@ func (m *modelPredictMeta) predictBatch(inputs [][]float32) ([][]float32, error)
 	return outputs, nil
 }
 
+// wrapInferenceError wraps inference errors with model-specific context.
 func (m *modelPredictMeta) wrapInferenceError(err error) error {
 	if err == nil {
 		return nil
@@ -472,18 +481,21 @@ func (m *modelPredictMeta) wrapInferenceError(err error) error {
 	return err
 }
 
+// getModelPredictOutputHook returns the registered output hook for testing.
 func getModelPredictOutputHook() func(modelName, outputName string, inputs []float32) (float64, error) {
 	modelPredictHookMu.RLock()
 	defer modelPredictHookMu.RUnlock()
 	return modelPredictOutputHook
 }
 
+// getModelPredictBatchHook returns the registered batch hook for testing.
 func getModelPredictBatchHook() func(modelName, outputName string, inputs [][]float32) ([]float64, error) {
 	modelPredictHookMu.RLock()
 	defer modelPredictHookMu.RUnlock()
 	return modelPredictBatchHook
 }
 
+// loadModelPredictMeta loads model metadata from the database for prediction.
 func loadModelPredictMeta(ctx EvalContext, vars *variable.SessionVars, exec expropt.SQLExecutor, modelName string, inputArgCount int) (*modelPredictMeta, error) {
 	schemaName, modelIdent, err := splitModelName(modelName, ctx.CurrentDB())
 	if err != nil {
@@ -710,6 +722,7 @@ func isBatchShape(shape []int64) bool {
 	return len(shape) == 2 && shape[1] == 1 && (shape[0] == 1 || shape[0] == -1)
 }
 
+// splitModelName parses a model name into schema and model components.
 func splitModelName(name, currentDB string) (schema string, model string, err error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -732,6 +745,7 @@ func splitModelName(name, currentDB string) (schema string, model string, err er
 	}
 }
 
+// snapshotForModelMeta returns the snapshot timestamp for model metadata queries.
 func snapshotForModelMeta(vars *variable.SessionVars) uint64 {
 	if vars == nil {
 		return 0

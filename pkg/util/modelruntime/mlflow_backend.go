@@ -25,6 +25,7 @@ import (
 	"github.com/yalue/onnxruntime_go"
 )
 
+// mlflowBackend is the MLflow sidecar backend implementation for model inference.
 type mlflowBackend struct {
 	client *mlflow.Client
 }

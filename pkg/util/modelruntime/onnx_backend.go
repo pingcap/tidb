@@ -16,6 +16,7 @@ package modelruntime
 
 import "context"
 
+// onnxBackend is the ONNX Runtime backend implementation for model inference.
 type onnxBackend struct{}
 
 func (*onnxBackend) InspectIO(_ context.Context, artifact Artifact) (ModelIOInfo, error) {

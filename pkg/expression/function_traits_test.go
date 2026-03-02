@@ -192,6 +192,8 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"minus",
 		"minute",
 		"mod",
+		"model_predict",
+		"model_predict_output",
 		"month",
 		"monthname",
 		"mul",
