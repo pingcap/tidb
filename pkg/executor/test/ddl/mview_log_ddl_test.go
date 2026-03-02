@@ -416,8 +416,9 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	tk.MustExec("create materialized view log on t_ddl_mv (a, b)")
 	tk.MustExec("create materialized view mv_ddl_mv (a, cnt) refresh fast next now() as select a, count(1) from t_ddl_mv group by a")
 
-	err := tk.ExecToErr("alter table t_ddl_mv add column c int")
-	require.ErrorContains(t, err, "ALTER TABLE on base table with materialized view dependencies")
+	tk.MustExec("alter table t_ddl_mv add column c int")
+	err := tk.ExecToErr("alter table t_ddl_mv modify column a bigint")
+	require.ErrorContains(t, err, "referenced by materialized view log")
 	err = tk.ExecToErr("drop table t_ddl_mv")
 	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view dependencies")
 	err = tk.ExecToErr("rename table t_ddl_mv to t_ddl_mv2")
@@ -429,6 +430,19 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	require.ErrorContains(t, err, "DROP TABLE on materialized view table")
 	err = tk.ExecToErr("rename table mv_ddl_mv to mv_ddl_mv2")
 	require.ErrorContains(t, err, "RENAME TABLE on materialized view table")
+
+	err = tk.ExecToErr("alter table `$mlog$t_ddl_mv` set tiflash replica 1")
+	if err != nil {
+		require.NotContains(t, err.Error(), "ALTER TABLE on materialized view log table")
+	}
+	err = tk.ExecToErr("alter table `$mlog$t_ddl_mv` add index idx_mlog_b(b)")
+	require.ErrorContains(t, err, "ALTER TABLE on materialized view log table")
+	err = tk.ExecToErr("alter table `$mlog$t_ddl_mv` add column c int")
+	require.ErrorContains(t, err, "ALTER TABLE on materialized view log table")
+	err = tk.ExecToErr("create index idx_mlog_b_create on `$mlog$t_ddl_mv`(b)")
+	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")
+	err = tk.ExecToErr("drop index idx_mlog_b_create on `$mlog$t_ddl_mv`")
+	require.ErrorContains(t, err, "DROP INDEX on materialized view log table")
 }
 
 func TestTruncateOrdinaryTableStillWorks(t *testing.T) {
