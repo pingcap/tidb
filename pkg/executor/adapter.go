@@ -1282,6 +1282,10 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 		}
 		e = executorExec.stmtExec
+	} else {
+		// For non-prepared queries, wrap with result set cache here.
+		// Prepared statements are wrapped inside ExecuteExec.Build().
+		e = b.wrapWithResultCache(e, a.StmtNode, a.Plan)
 	}
 	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt && !stmtCtx.InInsertStmt)
 	return e, nil

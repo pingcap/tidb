@@ -121,6 +121,10 @@ type executorBuilder struct {
 
 	// Used when building MPPGather.
 	encounterUnionScan bool
+
+	// cachedTbl is set when a cached table's KV cache is hit during building.
+	// Used to attach a result set cache wrapper around the final executor.
+	cachedTbl table.CachedTable
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -1502,6 +1506,10 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			vars.StmtCtx.ReadFromTableCache = true
 			x.setDummy()
 			us.cacheTable = cacheData
+			// Record the first cached table for result set caching.
+			if b.cachedTbl == nil {
+				b.cachedTbl = cachedTable
+			}
 		} else if loading {
 			return
 		} else {
@@ -5749,17 +5757,48 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 	}
 	sessVars := b.ctx.GetSessionVars()
 	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-	cacheData, loading := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
+	cachedTable := tbl.(table.CachedTable)
+	cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
 		sessVars.StmtCtx.ReadFromTableCache = true
+		// Record the first cached table for result set caching.
+		if b.cachedTbl == nil {
+			b.cachedTbl = cachedTable
+		}
 		return cacheData
 	} else if loading {
 		return nil
 	}
 	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
+		cachedTable.UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
 	}
 	return nil
+}
+
+// wrapWithResultCache wraps the top-level executor with CachedResultExec when
+// the query is eligible for result set caching on a cached table.
+func (b *executorBuilder) wrapWithResultCache(e exec.Executor, stmtNode ast.StmtNode, plan base.Plan) exec.Executor {
+	if b.cachedTbl == nil {
+		return e
+	}
+	inDML := b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt
+	physPlan, ok := plan.(base.PhysicalPlan)
+	if !ok {
+		return e
+	}
+	if !plannercore.CanCacheResultSet(stmtNode, physPlan, inDML) {
+		return e
+	}
+	key, ok := plannercore.BuildResultCacheKey(b.ctx)
+	if !ok {
+		return e
+	}
+	return &CachedResultExec{
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, e.Schema(), 0, e),
+		original:     e,
+		cachedTable:  b.cachedTbl,
+		cacheKey:     key,
+	}
 }
 
 func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) exec.Executor {

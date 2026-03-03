@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -325,6 +326,19 @@ func (c *cachedTable) getOrCreateResultCache() *resultSetCache {
 
 func (c *cachedTable) invalidateResultCache() {
 	c.resultCache.Store(nil)
+}
+
+func (c *cachedTable) GetCachedResult(key table.ResultCacheKey) ([]*chunk.Chunk, []*types.FieldType, bool) {
+	rc := c.getResultCache()
+	if rc == nil {
+		return nil, nil, false
+	}
+	return rc.Get(key)
+}
+
+func (c *cachedTable) PutCachedResult(key table.ResultCacheKey, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
+	rc := c.getOrCreateResultCache()
+	return rc.Put(key, chunks, fieldTypes)
 }
 
 const cacheTableWriteLease = 5 * time.Second

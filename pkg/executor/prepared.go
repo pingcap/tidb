@@ -187,6 +187,8 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))
 		return errors.Trace(b.err)
 	}
+	// Wrap with result set cache for cached table queries.
+	stmtExec = b.wrapWithResultCache(stmtExec, e.stmt, e.plan)
 	e.stmtExec = stmtExec
 	if e.Ctx().GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		e.lowerPriority = needLowerPriority(e.plan)
