@@ -3866,10 +3866,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return nil, errors.Errorf("table %s.%s is not a materialized view", dbName, viewName.Name.O)
 	}
 
-	if stmt.LastSuccessfulRefreshReadTSO < 0 {
-		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: invalid LastSuccessfulRefreshReadTSO %d", stmt.LastSuccessfulRefreshReadTSO)
-	}
-	fromTS := uint64(stmt.LastSuccessfulRefreshReadTSO)
+	fromTS := stmt.LastSuccessfulRefreshReadTSO
 
 	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, types.NameSlice, error) {
 		nodeW := resolve.NewNodeW(sel)
