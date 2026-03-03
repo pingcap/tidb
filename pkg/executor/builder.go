@@ -1368,6 +1368,59 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) e
 	return b.buildUnionScanFromReader(reader, v)
 }
 
+// removeRedundantAccessConditions removes access conditions from allConds that are
+// already satisfied by the index kvRanges and don't need to be reserved (i.e., the
+// condition references only full-length index columns). This mirrors the ranger's
+// shouldReserve logic: a condition is safe to remove only when all its referenced
+// columns are full-length index columns (IdxColLens[i] == types.UnspecifiedLength
+// or IdxColLens[i] == col.GetFlen()).
+func removeRedundantAccessConditions(
+	allConds []expression.Expression,
+	accessConds []expression.Expression,
+	idxCols []*expression.Column,
+	idxColLens []int,
+	evalCtx expression.EvalContext,
+) []expression.Expression {
+	// Build a set of full-length index column UniqueIDs.
+	fullLenColIDs := make(map[int64]struct{}, len(idxCols))
+	for i, col := range idxCols {
+		if i < len(idxColLens) {
+			length := idxColLens[i]
+			if length == types.UnspecifiedLength || length == col.GetType(evalCtx).GetFlen() {
+				fullLenColIDs[col.UniqueID] = struct{}{}
+			}
+		}
+	}
+
+	// Build the set of canonical hash codes for access conditions that are safe to remove.
+	safeToRemove := make(map[string]struct{}, len(accessConds))
+	for _, ac := range accessConds {
+		cols := expression.ExtractColumns(ac)
+		allFullLen := true
+		for _, col := range cols {
+			if _, ok := fullLenColIDs[col.UniqueID]; !ok {
+				allFullLen = false
+				break
+			}
+		}
+		if allFullLen {
+			safeToRemove[string(ac.CanonicalHashCode())] = struct{}{}
+		}
+	}
+	if len(safeToRemove) == 0 {
+		return allConds
+	}
+
+	// Filter out conditions whose canonical hash matches a safe-to-remove access condition.
+	result := make([]expression.Expression, 0, len(allConds))
+	for _, cond := range allConds {
+		if _, ok := safeToRemove[string(cond.CanonicalHashCode())]; !ok {
+			result = append(result, cond)
+		}
+	}
+	return result
+}
+
 // buildUnionScanFromReader builds union scan executor from child executor.
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
@@ -1434,6 +1487,18 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 			}
 		}
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		// Remove access conditions already satisfied by kvRanges to avoid redundant EvalBool.
+		if idxReader, ok := v.Children()[0].(*plannercore.PhysicalIndexReader); ok {
+			if idxScan, ok := idxReader.IndexPlans[0].(*plannercore.PhysicalIndexScan); ok {
+				if len(idxScan.AccessCondition) > 0 && len(us.conditions) > 0 {
+					us.conditions = removeRedundantAccessConditions(
+						us.conditions, idxScan.AccessCondition,
+						idxScan.IdxCols, idxScan.IdxColLens,
+						b.ctx.GetExprCtx().GetEvalCtx(),
+					)
+				}
+			}
+		}
 		us.columns = x.columns
 		us.partitionIDMap = x.partitionIDMap
 		us.table = x.table

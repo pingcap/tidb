@@ -180,10 +180,12 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 			return err
 		}
 
-		mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(m.evalCtx, m.conditions, mutableRow.ToRow())
-		if err != nil || !matched {
-			return err
+		if len(m.conditions) > 0 {
+			mutableRow.SetDatums(data...)
+			matched, _, err := expression.EvalBool(m.evalCtx, m.conditions, mutableRow.ToRow())
+			if err != nil || !matched {
+				return err
+			}
 		}
 		m.addedRows = append(m.addedRows, data)
 		m.resultRows = make([]types.Datum, 0, len(data))
@@ -1228,6 +1230,7 @@ type memCachedDatumIter struct {
 	cacheFieldTypes []*types.FieldType
 	datumRow        []types.Datum
 	retFieldTypes   []*types.FieldType
+	mutableRow      chunk.MutRow
 
 	// filter
 	conditions []expression.Expression
@@ -1302,8 +1305,11 @@ func (iter *memCachedDatumIter) Next() ([]types.Datum, error) {
 
 		// Apply filter conditions.
 		if len(iter.conditions) > 0 {
-			mutableRow := chunk.MutRowFromDatums(iter.datumRow)
-			matched, _, err := expression.EvalBool(iter.evalCtx, iter.conditions, mutableRow.ToRow())
+			if iter.mutableRow.ToRow().Chunk() == nil {
+				iter.mutableRow = chunk.MutRowFromTypes(iter.retFieldTypes)
+			}
+			iter.mutableRow.SetDatums(iter.datumRow...)
+			matched, _, err := expression.EvalBool(iter.evalCtx, iter.conditions, iter.mutableRow.ToRow())
 			if err != nil {
 				return nil, err
 			}
@@ -1362,6 +1368,7 @@ func (m *memTableReader) buildDatumCacheIter() *memCachedDatumIter {
 		cacheFieldTypes: m.datumCache.FieldTypes,
 		datumRow:        make([]types.Datum, len(m.columns)),
 		retFieldTypes:   m.retFieldTypes,
+		mutableRow:      chunk.MutRowFromTypes(m.retFieldTypes),
 		conditions:      m.conditions,
 		evalCtx:         m.ctx.GetExprCtx().GetEvalCtx(),
 		needTZConvert:   needTZConvert,
@@ -1419,13 +1426,15 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			return nil, err
 		}
 
-		iter.mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(iter.memIndexReader.evalCtx, iter.memIndexReader.conditions, iter.mutableRow.ToRow())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !matched {
-			continue
+		if len(iter.memIndexReader.conditions) > 0 {
+			iter.mutableRow.SetDatums(data...)
+			matched, _, err := expression.EvalBool(iter.memIndexReader.evalCtx, iter.memIndexReader.conditions, iter.mutableRow.ToRow())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
 		}
 		ret = data
 		break
