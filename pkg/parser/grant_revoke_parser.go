@@ -117,15 +117,10 @@ func (p *HandParser) parseGrantStmt() ast.StmtNode {
 	p.expect(to)
 
 	// Parse user list
-	for {
-		user := p.parseUserIdentity()
-		if user == nil {
-			return nil
-		}
-		stmt.Users = append(stmt.Users, user)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	var ok bool
+	stmt.Users, ok = parseCommaListPtr(p, p.parseUserIdentity)
+	if !ok {
+		return nil
 	}
 
 	return stmt
@@ -140,16 +135,9 @@ func (p *HandParser) parseGrantProxyStmt() ast.StmtNode {
 		return nil
 	}
 	p.expect(to)
-	var users []*auth.UserIdentity
-	for {
-		user := p.parseUserIdentity()
-		if user == nil {
-			return nil
-		}
-		users = append(users, user)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	users, ok := parseCommaListPtr(p, p.parseUserIdentity)
+	if !ok {
+		return nil
 	}
 	withGrant := false
 	if _, ok := p.accept(with); ok {
@@ -286,15 +274,10 @@ func (p *HandParser) parseRevokeStmt() ast.StmtNode {
 	p.expect(from)
 
 	// Parse user list
-	for {
-		user := p.parseUserIdentity()
-		if user == nil {
-			return nil
-		}
-		stmt.Users = append(stmt.Users, user)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	var ok bool
+	stmt.Users, ok = parseCommaListPtr(p, p.parseUserIdentity)
+	if !ok {
+		return nil
 	}
 	return stmt
 }

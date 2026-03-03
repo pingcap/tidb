@@ -48,16 +48,7 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		if _, ok := p.accept(forKwd); ok {
 			stmt.User = p.parseUserIdentity()
 			if _, ok := p.accept(using); ok {
-				for {
-					role := p.parseRoleIdentity()
-					if role == nil {
-						break
-					}
-					stmt.Roles = append(stmt.Roles, role)
-					if _, ok := p.accept(','); !ok {
-						break
-					}
-				}
+				stmt.Roles, _ = parseCommaListPtr(p, p.parseRoleIdentity)
 			}
 		}
 		return stmt
@@ -337,17 +328,17 @@ func (p *HandParser) parseShowCreate() ast.StmtNode {
 	case tableKwd:
 		p.next()
 		stmt.Tp = ast.ShowCreateTable
-		stmt.Table = p.parseTableName()
+		stmt.Table = p.expectTableName()
 		return stmt
 	case view:
 		p.next()
 		stmt.Tp = ast.ShowCreateView
-		stmt.Table = p.parseTableName()
+		stmt.Table = p.expectTableName()
 		return stmt
 	case procedure:
 		p.next()
 		stmt.Tp = ast.ShowCreateProcedure
-		stmt.Procedure = p.parseTableName()
+		stmt.Procedure = p.expectTableName()
 		return stmt
 	case database:
 		p.next()
@@ -363,7 +354,7 @@ func (p *HandParser) parseShowCreate() ast.StmtNode {
 	case sequence:
 		p.next()
 		stmt.Tp = ast.ShowCreateSequence
-		stmt.Table = p.parseTableName()
+		stmt.Table = p.expectTableName()
 		return stmt
 	case user:
 		p.next()

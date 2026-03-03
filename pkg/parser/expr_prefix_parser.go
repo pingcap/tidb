@@ -96,7 +96,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 	case singleAtIdentifier, doubleAtIdentifier:
 		return p.parseVariableExpr()
 
-	case currentDate, currentTime, currentTs, currentUser, currentRole, localTime, localTs, curDate, curTime:
+	case currentDate, currentTime, currentTs, currentUser, currentRole, localTime, localTs, utcDate, utcTime, utcTimestamp:
 		return p.parseCurrentFunc()
 
 	case builtinFnCast:
@@ -158,7 +158,7 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 	// NowSymFunc: NOW(), CURRENT_TIMESTAMP(), LOCALTIME(), LOCALTIMESTAMP()
 	// Originally, these all produce FnName "CURRENT_TIMESTAMP" (canonical name).
 	// The scanner may produce either builtinFnNow or now depending on context.
-	case builtinFnNow, now, builtinFnCurTime, builtinSysDate:
+	case builtinFnNow, now, builtinFnCurTime:
 		return p.tryBuiltinFunc(p.parseOptPrecisionFunc)
 
 	case builtinFnCurDate:
@@ -190,22 +190,10 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 		if p.peekN(1).Tp != '(' {
 			p.next() // consume INTERVAL
 			intervalExpr := p.parseExpression(precNone)
-			if intervalExpr == nil {
-				return nil
-			}
 			unit := p.parseTimeUnit()
-			if unit == nil {
-				return nil
-			}
-			// Expect '+' then date expression.
-			// yacc: INTERVAL Expression TimeUnit '+' BitExpr
-			if _, ok := p.expect('+'); !ok {
-				return nil
-			}
-			dateExpr := p.parseExpression(precPredicate + 1) // BitExpr level
-			if dateExpr == nil {
-				return nil
-			}
+			// Expect '+' then date expression
+			p.expect('+')
+			dateExpr := p.parseExpression(precNone)
 			return &ast.FuncCallExpr{
 				FnName: ast.NewCIStr("DATE_ADD"),
 				Args:   []ast.ExprNode{dateExpr, intervalExpr, unit},
@@ -239,22 +227,25 @@ func (p *HandParser) parsePrefixKeywordExpr(minPrec int) ast.ExprNode { //revive
 			node.Args = []ast.ExprNode{seqArg}
 			return node
 		}
-		// Fallback: any keyword token (Tp >= identifier) can be used in
-		// expression context. Reserved clause-introducing keywords (FROM, WHERE,
-		// etc.) must NOT be consumed — they terminate the current expression.
+		// Fallback: any keyword token (Tp >= identifier) can be used as an
+		// identifier in expression context. MySQL allows most non-reserved keywords
+		// as column/table names. However, reserved clause-introducing keywords
+		// (FROM, WHERE, etc.) must NOT be consumed as identifiers — they terminate
+		// the current expression/field list.
 		if tok.Tp >= identifier && !isReservedClauseKeyword(tok.Tp) {
 			if p.peekN(1).Tp == '(' {
-				// keyword followed by '(' → function call (e.g., LEFT(...))
+				// keyword followed by '(' → function call (e.g., AVG(...))
 				p.next() // consume the keyword token
 				return p.parseFuncCall(tok.Lit)
 			}
-			// Bare keyword → treat as column name only for unreserved keywords.
-			// Reserved keywords (OF, RANGE, etc.) cannot be bare identifiers.
-			if isIdentLike(tok.Tp) {
-				return p.parseIdentOrFuncCall()
-			}
+			// Bare keyword → treat as column name reference (e.g., subject, score)
+			return p.parseIdentOrFuncCall()
 		}
-		p.syntaxErrorAt(tok)
+		tokLen := len(tok.Lit)
+		if tokLen == 0 {
+			tokLen = 1 // single-char tokens have empty Lit
+		}
+		p.errorNear(tok.Offset+tokLen, tok.Offset)
 		return nil
 	}
 }

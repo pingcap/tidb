@@ -47,7 +47,7 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		p.expect(policies)
 		p.expect(forKwd)
 		stmt.Tp = ast.ShowMaskingPolicies
-		stmt.Table = p.parseTableName()
+		stmt.Table = p.expectTableName()
 		if p.peek().Tp == where {
 			p.next()
 			stmt.Where = p.parseExpression(precNone)
@@ -300,7 +300,7 @@ func (p *HandParser) parseShowPlacement(stmt *ast.ShowStmt) ast.StmtNode {
 			stmt.Tp = ast.ShowPlacementForDatabase
 			stmt.DBName = tok.Lit
 		} else if _, ok := p.accept(tableKwd); ok {
-			stmt.Table = p.parseTableName()
+			stmt.Table = p.expectTableName()
 			if _, ok := p.accept(partition); ok {
 				// SHOW PLACEMENT FOR TABLE tbl PARTITION p
 				tok := p.next()
@@ -345,9 +345,8 @@ func (p *HandParser) parseShowTable(stmt *ast.ShowStmt) ast.StmtNode {
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	}
-	table := p.parseTableName()
+	table := p.expectTableName()
 	if table == nil {
-		p.syntaxErrorAt(p.peek())
 		return nil
 	}
 	stmt.Table = table
@@ -420,7 +419,7 @@ func (p *HandParser) parseShowDatabaseNameOpt() string {
 // In yacc, ShowTableAliasOpt has only FROM/IN TableName — no empty alternative.
 func (p *HandParser) parseShowTableClause(stmt *ast.ShowStmt) {
 	p.expectFromOrIn()
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	stmt.DBName = p.parseShowDatabaseNameOpt()
 }
 
@@ -429,7 +428,7 @@ func (p *HandParser) parseShowTableClause(stmt *ast.ShowStmt) {
 func (p *HandParser) parseShowIndexStmt(stmt *ast.ShowStmt) {
 	stmt.Tp = ast.ShowIndex
 	p.expectFromOrIn()
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	if stmt.Table == nil {
 		return
 	}

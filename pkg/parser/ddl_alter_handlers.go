@@ -468,7 +468,7 @@ func (p *HandParser) parseAlterPartitionAction(spec *ast.AlterTableSpec) bool {
 
 		p.expect(with)
 		p.expect(tableKwd)
-		spec.NewTable = p.parseTableName()
+		spec.NewTable = p.expectTableName()
 
 		spec.WithValidation = true
 		if _, ok := p.accept(without); ok {

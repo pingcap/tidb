@@ -30,7 +30,7 @@ func (p *HandParser) parseImportIntoStmt() ast.StmtNode {
 	p.expect(importKwd)
 	p.expect(into)
 
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	if stmt.Table == nil {
 		return nil
 	}
@@ -285,16 +285,7 @@ func (p *HandParser) parseBRIEStmt() ast.StmtNode {
 		p.next() // consume SCHEMA (alias for DATABASE)
 		p.parseBRIEDatabaseList(stmt)
 	} else if _, ok := p.accept(tableKwd); ok {
-		for {
-			tn := p.parseTableName()
-			if tn == nil {
-				break
-			}
-			stmt.Tables = append(stmt.Tables, tn)
-			if _, ok := p.accept(','); !ok {
-				break
-			}
-		}
+		stmt.Tables, _ = parseCommaListPtr(p, p.parseTableName)
 	} else {
 		// Missing DATABASE/TABLE/LOGS → error
 		p.syntaxErrorAt(p.peek())

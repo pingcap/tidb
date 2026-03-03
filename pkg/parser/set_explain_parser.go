@@ -397,19 +397,12 @@ func (p *HandParser) parseSetDefaultRole() ast.StmtNode {
 	p.expect(to)
 
 	// Parse user list (similar to role list but returning *auth.UserIdentity)
-	var users []*auth.UserIdentity
-	for {
-		user := p.parseUserIdentity()
-		if user == nil {
-			p.syntaxErrorAt(p.peek())
-			return nil
-		}
-		users = append(users, user)
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	var ok bool
+	stmt.UserList, ok = parseCommaListPtr(p, p.parseUserIdentity)
+	if !ok {
+		p.syntaxErrorAt(p.peek())
+		return nil
 	}
-	stmt.UserList = users
 
 	return stmt
 }
@@ -686,7 +679,7 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 	default:
 		// EXPLAIN|DESCRIBE tablename → maps to SHOW COLUMNS
 		if p.peek().Tp == identifier || p.peek().Tp > 0xFF {
-			tn := p.parseTableName()
+			tn := p.expectTableName()
 			if tn == nil {
 				return nil
 			}
@@ -755,7 +748,7 @@ func (p *HandParser) parseLockTablesStmt() ast.StmtNode {
 
 // parseTableLock parses: tablename READ [LOCAL] | WRITE [LOCAL]
 func (p *HandParser) parseTableLock() (ast.TableLock, bool) {
-	tn := p.parseTableName()
+	tn := p.expectTableName()
 	if tn == nil {
 		return ast.TableLock{}, false
 	}

@@ -41,14 +41,20 @@ func (p *HandParser) parseCurrentFunc() ast.ExprNode {
 		node.FnName = ast.NewCIStr("CURRENT_DATE")
 	case currentTime:
 		node.FnName = ast.NewCIStr("CURRENT_TIME")
-	case currentUser:
-		node.FnName = ast.NewCIStr("CURRENT_USER")
-	case currentRole:
-		node.FnName = ast.NewCIStr("CURRENT_ROLE")
 	case localTime:
 		node.FnName = ast.NewCIStr("LOCALTIME")
 	case localTs:
 		node.FnName = ast.NewCIStr("LOCALTIMESTAMP")
+	case utcDate:
+		node.FnName = ast.NewCIStr("UTC_DATE")
+	case utcTime:
+		node.FnName = ast.NewCIStr("UTC_TIME")
+	case utcTimestamp:
+		node.FnName = ast.NewCIStr("UTC_TIMESTAMP")
+	case currentUser:
+		node.FnName = ast.NewCIStr("CURRENT_USER")
+	case currentRole:
+		node.FnName = ast.NewCIStr("CURRENT_ROLE")
 	case curDate:
 		node.FnName = ast.NewCIStr("CURDATE")
 	case curTime:

@@ -60,7 +60,7 @@ func (p *HandParser) parseLoadDataStmt() ast.StmtNode {
 
 	p.expect(into)
 	p.expect(tableKwd)
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 
 	// CharsetOpt: CHARACTER SET CharsetName
 	// yacc: CharsetName = StringName | binaryType

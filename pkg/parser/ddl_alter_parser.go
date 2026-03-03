@@ -26,7 +26,7 @@ func (p *HandParser) parseAlterTableStmt() ast.StmtNode {
 	p.accept(ignore) // optional IGNORE keyword (parsed but not used, matching MySQL)
 	p.expect(tableKwd)
 
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	if stmt.Table == nil {
 		return nil
 	}

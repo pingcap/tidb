@@ -67,7 +67,7 @@ func (p *HandParser) parseCreateIndexStmt() ast.StmtNode {
 
 	// ON table_name
 	p.expect(on)
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 
 	// (col1, col2, ...)
 	stmt.IndexPartSpecifications = p.parseIndexPartSpecifications()
@@ -179,7 +179,7 @@ func (p *HandParser) parseRecoverTableStmt() ast.StmtNode {
 	}
 
 	// tablename [int64]
-	stmt.Table = p.parseTableName()
+	stmt.Table = p.expectTableName()
 	if tok, ok := p.acceptAny(intLit); ok {
 		v, valid := tokenItemToInt64(tok.Item)
 		if !valid {

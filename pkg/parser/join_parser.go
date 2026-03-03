@@ -514,7 +514,7 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 
 	default:
 		// Table name, possibly qualified: [schema.]table
-		tn := p.parseTableName()
+		tn := p.expectTableName()
 		if tn == nil {
 			return nil
 		}
