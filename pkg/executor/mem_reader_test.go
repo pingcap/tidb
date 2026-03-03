@@ -2,6 +2,7 @@ package executor
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -10,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -215,4 +217,311 @@ func BenchmarkMemRowsIterForTable(b *testing.B) {
 		}
 		memReaderBenchSink = sum
 	})
+}
+
+// buildTestDatumCache builds a CachedDatumData with 3 columns: int64 (id), varchar (name), int64 (val).
+// rows is a list of (id, name, val) tuples.
+func buildTestDatumCache(rows [][]any) *tables.CachedDatumData {
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+	ftStr := types.NewFieldType(mysql.TypeVarchar)
+	ftStr.SetFlen(64)
+	ftVal := types.NewFieldType(mysql.TypeLonglong)
+	fieldTypes := []*types.FieldType{ftInt, ftStr, ftVal}
+
+	chk := chunk.New(fieldTypes, 1024, 1024)
+	for _, row := range rows {
+		chk.AppendInt64(0, row[0].(int64))
+		chk.AppendString(1, row[1].(string))
+		chk.AppendInt64(2, row[2].(int64))
+	}
+
+	return &tables.CachedDatumData{
+		Chunks:     []*chunk.Chunk{chk},
+		FieldTypes: fieldTypes,
+		TotalRows:  len(rows),
+	}
+}
+
+func TestMemCachedDatumIterProjection(t *testing.T) {
+	data := buildTestDatumCache([][]any{
+		{int64(1), "alice", int64(100)},
+		{int64(2), "bob", int64(200)},
+		{int64(3), "charlie", int64(300)},
+	})
+
+	// SELECT id, val (skip name column) — project columns 0 and 2 from cache.
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+	ftVal := types.NewFieldType(mysql.TypeLonglong)
+	iter := &memCachedDatumIter{
+		data:           data,
+		colProjection:  []int{0, 2}, // query col 0 -> cache col 0 (id), query col 1 -> cache col 2 (val)
+		cacheFieldTypes: data.FieldTypes,
+		datumRow:       make([]types.Datum, 2),
+		retFieldTypes:  []*types.FieldType{ftInt, ftVal},
+	}
+
+	row, err := iter.Next()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Len(t, row, 2)
+	require.Equal(t, int64(1), row[0].GetInt64())
+	require.Equal(t, int64(100), row[1].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), row[0].GetInt64())
+	require.Equal(t, int64(200), row[1].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(3), row[0].GetInt64())
+	require.Equal(t, int64(300), row[1].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Nil(t, row)
+}
+
+func TestMemCachedDatumIterProjectionAllCols(t *testing.T) {
+	data := buildTestDatumCache([][]any{
+		{int64(1), "alice", int64(100)},
+		{int64(2), "bob", int64(200)},
+	})
+
+	// SELECT * — all columns in same order.
+	iter := &memCachedDatumIter{
+		data:           data,
+		colProjection:  []int{0, 1, 2},
+		cacheFieldTypes: data.FieldTypes,
+		datumRow:       make([]types.Datum, 3),
+		retFieldTypes:  data.FieldTypes,
+	}
+
+	row, err := iter.Next()
+	require.NoError(t, err)
+	require.Len(t, row, 3)
+	require.Equal(t, int64(1), row[0].GetInt64())
+	require.Equal(t, "alice", row[1].GetString())
+	require.Equal(t, int64(100), row[2].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), row[0].GetInt64())
+	require.Equal(t, "bob", row[1].GetString())
+	require.Equal(t, int64(200), row[2].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Nil(t, row)
+}
+
+func TestMemCachedDatumIterDesc(t *testing.T) {
+	data := buildTestDatumCache([][]any{
+		{int64(1), "alice", int64(100)},
+		{int64(2), "bob", int64(200)},
+		{int64(3), "charlie", int64(300)},
+	})
+
+	iter := &memCachedDatumIter{
+		data:           data,
+		desc:           true,
+		chunkIdx:       len(data.Chunks) - 1,
+		rowIdx:         data.Chunks[len(data.Chunks)-1].NumRows() - 1,
+		colProjection:  []int{0, 1, 2},
+		cacheFieldTypes: data.FieldTypes,
+		datumRow:       make([]types.Datum, 3),
+		retFieldTypes:  data.FieldTypes,
+	}
+
+	// Descending: should yield rows 3, 2, 1.
+	row, err := iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(3), row[0].GetInt64())
+	require.Equal(t, "charlie", row[1].GetString())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), row[0].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), row[0].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Nil(t, row)
+}
+
+func TestMemCachedDatumIterDescWithFilter(t *testing.T) {
+	sctx := mock.NewContext()
+
+	data := buildTestDatumCache([][]any{
+		{int64(1), "alice", int64(100)},
+		{int64(2), "bob", int64(200)},
+		{int64(3), "charlie", int64(300)},
+		{int64(4), "dave", int64(400)},
+	})
+
+	// Filter: val < 300 (should match rows 1 and 2).
+	ftVal := types.NewFieldType(mysql.TypeLonglong)
+	// Projected columns: id (idx 0), val (idx 1).
+	col := &expression.Column{UniqueID: 1, Index: 1, RetType: ftVal} // val is at projected index 1
+	constVal := &expression.Constant{Value: types.NewIntDatum(300), RetType: ftVal}
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	filter, err := expression.NewFunction(sctx.GetExprCtx(), ast.LT, tinyTp, col, constVal)
+	require.NoError(t, err)
+
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+	iter := &memCachedDatumIter{
+		data:           data,
+		desc:           true,
+		chunkIdx:       len(data.Chunks) - 1,
+		rowIdx:         data.Chunks[len(data.Chunks)-1].NumRows() - 1,
+		colProjection:  []int{0, 2}, // query col 0 -> id, query col 1 -> val
+		cacheFieldTypes: data.FieldTypes,
+		datumRow:       make([]types.Datum, 2),
+		retFieldTypes:  []*types.FieldType{ftInt, ftVal},
+		conditions:     []expression.Expression{filter},
+		evalCtx:        sctx.GetExprCtx().GetEvalCtx(),
+	}
+
+	// DESC + filter: row 4 (val=400) skipped, row 3 (val=300) skipped, row 2 (val=200) matched, row 1 (val=100) matched.
+	row, err := iter.Next()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, int64(2), row[0].GetInt64())  // id=2
+	require.Equal(t, int64(200), row[1].GetInt64()) // val=200
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, int64(1), row[0].GetInt64())  // id=1
+	require.Equal(t, int64(100), row[1].GetInt64()) // val=100
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Nil(t, row)
+}
+
+func TestMemCachedDatumIterProjectionWithTimestamp(t *testing.T) {
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+	ftStr := types.NewFieldType(mysql.TypeVarchar)
+	ftStr.SetFlen(64)
+	ftTs := types.NewFieldType(mysql.TypeTimestamp)
+	ftTs.SetDecimal(0)
+	cacheFieldTypes := []*types.FieldType{ftInt, ftStr, ftTs}
+
+	// Build chunk with TIMESTAMP stored in UTC.
+	chk := chunk.New(cacheFieldTypes, 1024, 1024)
+	utcTime1, err := types.ParseTimestamp(types.DefaultStmtNoWarningContext, "2025-01-15 10:00:00")
+	require.NoError(t, err)
+	utcTime2, err := types.ParseTimestamp(types.DefaultStmtNoWarningContext, "2025-06-20 18:30:00")
+	require.NoError(t, err)
+
+	chk.AppendInt64(0, 1)
+	chk.AppendString(1, "alice")
+	chk.AppendTime(2, utcTime1)
+	chk.AppendInt64(0, 2)
+	chk.AppendString(1, "bob")
+	chk.AppendTime(2, utcTime2)
+
+	data := &tables.CachedDatumData{
+		Chunks:     []*chunk.Chunk{chk},
+		FieldTypes: cacheFieldTypes,
+		TotalRows:  2,
+	}
+
+	sessionLoc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+
+	// SELECT id, ts (skip name) — project columns 0 and 2.
+	// TIMESTAMP at projected index 1.
+	iter := &memCachedDatumIter{
+		data:            data,
+		colProjection:   []int{0, 2},
+		cacheFieldTypes: cacheFieldTypes,
+		datumRow:        make([]types.Datum, 2),
+		retFieldTypes:   []*types.FieldType{ftInt, ftTs},
+		needTZConvert:   true,
+		sessionLoc:      sessionLoc,
+		tsColProjected:  []int{1}, // projected index 1 is the TIMESTAMP column
+	}
+
+	row, err := iter.Next()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, int64(1), row[0].GetInt64())
+	// UTC 10:00:00 → Asia/Shanghai +8 → 18:00:00
+	ts := row[1].GetMysqlTime()
+	require.Equal(t, "2025-01-15 18:00:00", ts.String())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), row[0].GetInt64())
+	// UTC 18:30:00 → Asia/Shanghai +8 → next day 02:30:00
+	ts = row[1].GetMysqlTime()
+	require.Equal(t, "2025-06-21 02:30:00", ts.String())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Nil(t, row)
+}
+
+func TestMemCachedDatumIterDescMultiChunk(t *testing.T) {
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+	ftStr := types.NewFieldType(mysql.TypeVarchar)
+	ftStr.SetFlen(64)
+	ftVal := types.NewFieldType(mysql.TypeLonglong)
+	fieldTypes := []*types.FieldType{ftInt, ftStr, ftVal}
+
+	// Create 2 chunks to test cross-chunk descending iteration.
+	chk1 := chunk.New(fieldTypes, 1024, 1024)
+	chk1.AppendInt64(0, 1)
+	chk1.AppendString(1, "a")
+	chk1.AppendInt64(2, 10)
+	chk1.AppendInt64(0, 2)
+	chk1.AppendString(1, "b")
+	chk1.AppendInt64(2, 20)
+
+	chk2 := chunk.New(fieldTypes, 1024, 1024)
+	chk2.AppendInt64(0, 3)
+	chk2.AppendString(1, "c")
+	chk2.AppendInt64(2, 30)
+
+	data := &tables.CachedDatumData{
+		Chunks:     []*chunk.Chunk{chk1, chk2},
+		FieldTypes: fieldTypes,
+		TotalRows:  3,
+	}
+
+	iter := &memCachedDatumIter{
+		data:           data,
+		desc:           true,
+		chunkIdx:       1,         // last chunk
+		rowIdx:         0,         // last chunk has 1 row, index 0
+		colProjection:  []int{0, 2}, // id and val only
+		cacheFieldTypes: fieldTypes,
+		datumRow:       make([]types.Datum, 2),
+		retFieldTypes:  []*types.FieldType{ftInt, ftVal},
+	}
+
+	// DESC across chunks: 3, 2, 1.
+	row, err := iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(3), row[0].GetInt64())
+	require.Equal(t, int64(30), row[1].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), row[0].GetInt64())
+	require.Equal(t, int64(20), row[1].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), row[0].GetInt64())
+	require.Equal(t, int64(10), row[1].GetInt64())
+
+	row, err = iter.Next()
+	require.NoError(t, err)
+	require.Nil(t, row)
 }
